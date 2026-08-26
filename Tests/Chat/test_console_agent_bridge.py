@@ -44,14 +44,18 @@ from tldw_chatbook.Chat.console_chat_models import (
     ConsoleActivityPresentation,
     ConsoleChatMessage,
     ConsoleMessageRole,
+    ConsoleRunState,
+    ConsoleRunStatus,
 )
 from tldw_chatbook.Chat.console_chat_store import (
     ConsoleChatStore,
     ConsoleThinkingCompatibilityError,
 )
 from tldw_chatbook.Chat.console_chat_controller import (
+    ConsoleChatController,
     USER_DENIED_REFUSAL as CONTROLLER_USER_DENIED_REFUSAL,
 )
+from tldw_chatbook.Chat.chat_persistence_service import ChatPersistenceService
 from tldw_chatbook.Chat.console_display_state import format_diff_feedback_disclosure
 from tldw_chatbook.Chat.console_dispatch_checkpoint import (
     ConsoleEgressClass,
@@ -64,6 +68,7 @@ from tldw_chatbook.Chat.provider_continuation import (
     ContinuationRestoreTarget,
     ContinuationRound,
     ProviderContinuationCheckpoint,
+    parse_provider_continuation_json,
 )
 from tldw_chatbook.Chat.trajectory import derive_trajectory
 from tldw_chatbook.Chat.console_provider_gateway import (
@@ -76,6 +81,7 @@ from tldw_chatbook.Chat.console_provider_gateway import (
 )
 from tldw_chatbook.Chat.console_thinking_capture import ThinkingCapture
 from tldw_chatbook.DB.AgentRuns_DB import AgentRunsDB
+from tldw_chatbook.DB.ChaChaNotes_DB import CharactersRAGDB
 from tldw_chatbook.Agents.agent_models import (
     DIRECT_DISCLOSE_THRESHOLD,
     LOAD_TOOLS_NAME,
@@ -6417,6 +6423,184 @@ def test_agent_stop_after_thinking_does_not_pull_the_next_answer_chunk(
     assert assistant.content == ""
     assert assistant.thinking is not None
     assert assistant.thinking.blocks[0].status == "stopped"
+
+
+def test_agent_late_thinking_after_controller_stop_is_durably_settled(
+    tmp_path,
+) -> None:
+    """A detached bridge must durably hand late evidence to the stopped owner."""
+
+    class GatedThinkingGateway:
+        def __init__(self) -> None:
+            self.entered = threading.Event()
+            self.release = threading.Event()
+
+        async def stream_chat(self, resolution, messages, **kwargs):
+            self.entered.set()
+            await asyncio.to_thread(self.release.wait)
+            yield ProviderThinkingDelta(
+                text="late but delivered",
+                provider="llama_cpp",
+                model="reasoner",
+                protocol="chat_completions",
+                source_format="start_anchored_think",
+            )
+
+    checkpoint = parse_provider_continuation_json(
+        {
+            "schema_version": 1,
+            "checkpoint_revision": 1,
+            "provider": "deepseek",
+            "protocol": "responses",
+            "model": "deepseek-v4-flash",
+            "api_base_url": "https://api.deepseek.com/v1",
+            "state": "complete",
+            "rounds": [
+                {
+                    "assistant_content": "paired answer",
+                    "reasoning_blocks": ["paired private state"],
+                    "calls": [
+                        {
+                            "call_id": "paired-call",
+                            "name": "lookup",
+                            "arguments": "{}",
+                            "state": "completed",
+                            "result": "done",
+                        }
+                    ],
+                }
+            ],
+        }
+    )
+    chat_db = CharactersRAGDB(tmp_path / "chat.sqlite", "late-thinking")
+    runs_db = AgentRunsDB(tmp_path / "runs.sqlite", client_id="late-thinking")
+    try:
+        store = ConsoleChatStore(persistence=ChatPersistenceService(chat_db))
+        session = store.create_session(title="late thinking")
+        store.append_message(
+            session.id,
+            role=ConsoleMessageRole.USER,
+            content="question",
+            persist=True,
+        )
+        assistant = store.append_message(
+            session.id,
+            role=ConsoleMessageRole.ASSISTANT,
+            content="paired answer",
+            persist=True,
+        )
+        owned = store._message_or_raise(assistant.id)
+        owned.provider_continuation = checkpoint
+        assert store.persist_selected_generation(assistant.id) is True
+        owned.status = "streaming"
+        owned.assistant_generation_state = "streaming"
+
+        gateway = GatedThinkingGateway()
+        bridge = ConsoleAgentBridge(
+            agent_runs_db=runs_db,
+            store=store,
+            provider_gateway=gateway,
+        )
+        controller = ConsoleChatController(
+            store=store,
+            provider_gateway=gateway,
+            agent_bridge=bridge,
+        )
+        cancel_event = threading.Event()
+        controller._active_cancel_events[session.id] = cancel_event
+        controller._active_assistant_message_ids[session.id] = assistant.id
+        controller._set_run_state(
+            ConsoleRunState(ConsoleRunStatus.STREAMING, "Thinking"),
+            session_id=session.id,
+        )
+        result: dict[str, object] = {}
+
+        def run_bridge() -> None:
+            try:
+                result["reply"] = bridge.run_reply(
+                    conversation_id=session.persisted_conversation_id,
+                    session_id=session.id,
+                    resolution=_test_resolution(
+                        model="reasoner",
+                        thinking_stream_disposition="displayable",
+                        thinking_round_trip_version=1,
+                    ),
+                    assistant_message_id=assistant.id,
+                    model="reasoner",
+                    session_system_prompt="",
+                    agent_messages=[{"role": "user", "content": "question"}],
+                    should_cancel=cancel_event.is_set,
+                )
+            except BaseException as exc:  # pragma: no cover - asserted below
+                result["error"] = exc
+
+        worker = threading.Thread(target=run_bridge, daemon=True)
+        worker.start()
+        assert gateway.entered.wait(timeout=3)
+        assert controller.stop_active_run(record_user_stop=False) is True
+        assert session.persisted_conversation_id is not None
+        assert assistant.persisted_message_id is not None
+        stopped_row = chat_db.get_message_by_id(assistant.persisted_message_id)
+        assert stopped_row is not None
+        assert stopped_row["assistant_generation_state"] == "stopped"
+        assert stopped_row["thinking_blocks_json"] is None
+
+        gateway.release.set()
+        worker.join(timeout=5)
+        assert not worker.is_alive()
+        assert "error" not in result
+        _run_id, outcome = result["reply"]
+        assert outcome.status == RUN_CANCELLED
+
+        settled_row = chat_db.get_message_by_id(assistant.persisted_message_id)
+        assert settled_row is not None
+        settled_version = settled_row["version"]
+        settled = store.get_message(assistant.id)
+        assert settled.thinking is not None
+        store.settle_message_thinking(assistant.id, settled.thinking)
+        assert chat_db.get_message_by_id(assistant.persisted_message_id)["version"] == (
+            settled_version
+        )
+
+        rows = chat_db.get_messages_for_conversation(
+            session.persisted_conversation_id, limit=100
+        )
+        nodes = [
+            ConsoleChatMessage(
+                id=str(row["id"]),
+                role=ConsoleMessageRole(str(row["role"])),
+                content=str(row.get("content") or ""),
+                persisted_message_id=str(row["id"]),
+                parent_message_id=row.get("parent_message_id"),
+            )
+            for row in rows
+        ]
+        reloaded_store = ConsoleChatStore(persistence=ChatPersistenceService(chat_db))
+        reloaded_store.restore_persisted_session(
+            title="late thinking reload",
+            workspace_id=None,
+            persisted_conversation_id=session.persisted_conversation_id,
+            all_nodes=nodes,
+            active_leaf_persisted_id=assistant.persisted_message_id,
+        )
+        reloaded = reloaded_store.get_message(assistant.persisted_message_id)
+        assistants = [
+            message
+            for message in reloaded_store.messages_for_session(
+                reloaded_store.active_session_id
+            )
+            if message.role is ConsoleMessageRole.ASSISTANT
+        ]
+        assert len(assistants) == 1
+        assert reloaded.content == "paired answer"
+        assert reloaded.assistant_generation_state == "stopped"
+        assert reloaded.provider_continuation == checkpoint
+        assert reloaded.thinking is not None
+        assert reloaded.thinking.blocks[0].text == "late but delivered"
+        assert reloaded.thinking.blocks[0].status == "stopped"
+    finally:
+        runs_db.close()
+        chat_db.close_connection()
 
 
 def test_agent_adapter_preflights_backend_before_provider_contact() -> None:

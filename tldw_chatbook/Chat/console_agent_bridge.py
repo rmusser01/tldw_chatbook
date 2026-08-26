@@ -4831,7 +4831,7 @@ class ConsoleAgentBridge:
         )
         capture_update = thinking_capture.settle(capture_outcome)
         if capture_update.envelope is not None:
-            self._store.replace_message_thinking(
+            self._store.settle_message_thinking(
                 assistant_message_id, capture_update.envelope
             )
         for step in outcome.steps:

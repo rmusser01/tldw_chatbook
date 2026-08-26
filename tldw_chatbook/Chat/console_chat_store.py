@@ -9366,6 +9366,46 @@ class ConsoleChatStore:
         message.thinking_warning = None
         return self._snapshot(message)
 
+    def settle_message_thinking(
+        self, message_id: str, envelope: ThinkingEnvelope
+    ) -> ConsoleChatMessage:
+        """Settle captured thinking, durably joining a detached terminal owner.
+
+        Agent execution runs in a worker thread.  Stop can therefore commit
+        the selected generation before that worker observes a typed thinking
+        item which the provider had already delivered.  For that terminal
+        race, project the whole selected generation again so content,
+        thinking, continuation, state, and usage remain one optimistic write.
+        Ordinary in-flight settlement stays process-local for the controller's
+        existing terminal projection.
+        """
+        message = self._message_or_raise(message_id)
+        if message.role is not ConsoleMessageRole.ASSISTANT:
+            raise ValueError("Only assistant messages can own thinking.")
+        if message.assistant_generation_state not in {"stopped", "failed"}:
+            return self.replace_message_thinking(message_id, envelope)
+
+        current = self._generation_variant(message)
+        target = replace(
+            current,
+            thinking=envelope,
+            opaque_thinking_json=None,
+            thinking_warning=None,
+            thinking_actions_enabled=True,
+        )
+        if target == current:
+            return self._snapshot(message)
+        durably_committed, committed_version = self._persist_generation_variant(
+            message,
+            target,
+            current=current,
+        )
+        self._apply_generation_variant(message, target)
+        if durably_committed and committed_version is not None:
+            message.provider_continuation_message_version = committed_version
+            message.provider_continuation_remote = False
+        return self._snapshot(message)
+
     def begin_variant_stream(self, message_id: str) -> ConsoleChatMessage:
         """Snapshot current content as the base and reset the buffer for a new variant.
 

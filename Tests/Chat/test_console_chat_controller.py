@@ -1,4 +1,5 @@
 import asyncio
+import copy
 import json
 import threading
 from dataclasses import replace
@@ -32,16 +33,19 @@ from tldw_chatbook.Chat.console_provider_gateway import (
 )
 from tldw_chatbook.Chat.provider_continuation import parse_provider_continuation_json
 from tldw_chatbook.Chat.console_chat_models import (
+    ConsoleChatMessage,
     ConsoleNextSendHistoryProjection,
     ConsoleMessageRole,
     ConsoleProviderSelection,
     ConsoleRunState,
     ConsoleRunStatus,
     ConsoleStagedSource,
+    ConsoleVariantSet,
     ConsoleWorkspaceContext,
     MessageAttachment,
 )
 from tldw_chatbook.Chat.console_session_settings import ConsoleSessionSettings
+from tldw_chatbook.Chat.console_thinking_capture import ThinkingCapture
 from tldw_chatbook.Chat.console_project_instructions import (
     ProjectInstructionControlState,
 )
@@ -6824,3 +6828,282 @@ async def test_thinking_backend_preflight_runs_before_direct_provider_contact() 
     await controller.submit_draft("hello")
 
     assert gateway.provider_contacts == 0
+
+
+class _UnsupportedThinkingPersistence:
+    """Delegate every persistence operation except thinking V1 support."""
+
+    def __init__(self, delegate: ChatPersistenceService) -> None:
+        self._delegate = delegate
+        self.db = delegate.db
+
+    @staticmethod
+    def thinking_round_trip_version() -> int:
+        return 0
+
+    def __getattr__(self, name: str):
+        return getattr(self._delegate, name)
+
+
+def _seed_durable_generation_with_private_state(
+    store: ConsoleChatStore,
+    session_id: str,
+    *,
+    status: str,
+) -> ConsoleChatMessage:
+    store.append_message(
+        session_id,
+        role=ConsoleMessageRole.USER,
+        content="question",
+        persist=True,
+    )
+    assistant = store.append_message(
+        session_id,
+        role=ConsoleMessageRole.ASSISTANT,
+        content="prior answer",
+        persist=True,
+    )
+    capture = ThinkingCapture(assistant_owner_id=assistant.id)
+    capture.observe(
+        ProviderThinkingDelta(
+            text="private prior reasoning",
+            provider="llama_cpp",
+            model="reasoner",
+            protocol="chat_completions",
+            source_format="start_anchored_think",
+        )
+    )
+    owned = store._message_or_raise(assistant.id)
+    owned.thinking = capture.settle(
+        "failed" if status == "failed" else "complete"
+    ).envelope
+    owned.provider_continuation = _controller_history_checkpoint(
+        "PREFLIGHT-PRIVATE-CANARY"
+    )
+    owned.status = status
+    owned.assistant_generation_state = status
+    assert store.persist_selected_generation(assistant.id) is True
+    selected = store._generation_variant(owned)
+    owned.variants = ConsoleVariantSet.from_generations(
+        turn_id=owned.id,
+        generations=[replace(selected, content="older answer"), selected],
+        selected_index=1,
+    )
+    return store.get_message(assistant.id)
+
+
+@pytest.mark.asyncio
+async def test_agent_retry_preflight_preserves_selected_generation_exactly(
+    tmp_path,
+) -> None:
+    chat_db = CharactersRAGDB(tmp_path / "retry-chat.sqlite", "retry-preflight")
+    runs_db = AgentRunsDB(tmp_path / "retry-runs.sqlite", client_id="retry-preflight")
+    try:
+        persistence = ChatPersistenceService(chat_db)
+        store = ConsoleChatStore(persistence=persistence)
+        session = _arm_session(store)
+        failed = _seed_durable_generation_with_private_state(
+            store, session.id, status="failed"
+        )
+        gateway = ThinkingStreamingGateway("must not be contacted")
+        bridge = ConsoleAgentBridge(
+            agent_runs_db=runs_db,
+            store=store,
+            provider_gateway=gateway,
+        )
+        controller = ConsoleChatController(
+            store=store,
+            provider_gateway=gateway,
+            agent_bridge=bridge,
+            agent_runtime_enabled=True,
+        )
+        before_live = copy.deepcopy(store._message_or_raise(failed.id))
+        before_row = copy.deepcopy(
+            chat_db.get_message_by_id(failed.persisted_message_id)
+        )
+        store.persistence = _UnsupportedThinkingPersistence(persistence)
+
+        result = await controller.retry_message(failed.id)
+
+        after_live = store._message_or_raise(failed.id)
+        after_row = chat_db.get_message_by_id(failed.persisted_message_id)
+        assert result.accepted is False
+        assert gateway.provider_contacts == 0
+        assert after_live == before_live
+        assert after_row == before_row
+        assert after_row["thinking_blocks_json"] == before_row["thinking_blocks_json"]
+        assert (
+            after_row["provider_continuation_json"]
+            == (before_row["provider_continuation_json"])
+        )
+        assert after_row["version"] == before_row["version"]
+    finally:
+        runs_db.close()
+        chat_db.close_connection()
+
+
+@pytest.mark.asyncio
+async def test_agent_regenerate_preflight_does_not_create_a_sibling(
+    tmp_path,
+) -> None:
+    chat_db = CharactersRAGDB(
+        tmp_path / "regenerate-chat.sqlite", "regenerate-preflight"
+    )
+    runs_db = AgentRunsDB(
+        tmp_path / "regenerate-runs.sqlite", client_id="regenerate-preflight"
+    )
+    try:
+        persistence = ChatPersistenceService(chat_db)
+        store = ConsoleChatStore(persistence=persistence)
+        session = _arm_session(store)
+        original = _seed_durable_generation_with_private_state(
+            store, session.id, status="complete"
+        )
+        gateway = ThinkingStreamingGateway("must not be contacted")
+        bridge = ConsoleAgentBridge(
+            agent_runs_db=runs_db,
+            store=store,
+            provider_gateway=gateway,
+        )
+        controller = ConsoleChatController(
+            store=store,
+            provider_gateway=gateway,
+            agent_bridge=bridge,
+            agent_runtime_enabled=True,
+        )
+        before_live = copy.deepcopy(store._message_or_raise(original.id))
+        before_path = store.active_path_message_ids(session.id)
+        before_rows = copy.deepcopy(
+            chat_db.get_messages_for_conversation(
+                session.persisted_conversation_id, limit=100
+            )
+        )
+        store.persistence = _UnsupportedThinkingPersistence(persistence)
+
+        result = await controller.regenerate_message(original.id)
+
+        assert result.accepted is False
+        assert gateway.provider_contacts == 0
+        assert store._message_or_raise(original.id) == before_live
+        assert store.active_path_message_ids(session.id) == before_path
+        assert (
+            chat_db.get_messages_for_conversation(
+                session.persisted_conversation_id, limit=100
+            )
+            == before_rows
+        )
+    finally:
+        runs_db.close()
+        chat_db.close_connection()
+
+
+def _reload_console_message(
+    db: CharactersRAGDB,
+    *,
+    conversation_id: str,
+    active_leaf_persisted_id: str,
+) -> ConsoleChatMessage:
+    rows = db.get_messages_for_conversation(conversation_id, limit=100)
+    nodes = [
+        ConsoleChatMessage(
+            id=str(row["id"]),
+            role=ConsoleMessageRole(str(row["role"])),
+            content=str(row.get("content") or ""),
+            persisted_message_id=str(row["id"]),
+            parent_message_id=row.get("parent_message_id"),
+        )
+        for row in rows
+    ]
+    restored = ConsoleChatStore(persistence=ChatPersistenceService(db))
+    restored.restore_persisted_session(
+        title="thinking-race-reload",
+        workspace_id=None,
+        persisted_conversation_id=conversation_id,
+        all_nodes=nodes,
+        active_leaf_persisted_id=active_leaf_persisted_id,
+    )
+    return restored.get_message(active_leaf_persisted_id)
+
+
+@pytest.mark.asyncio
+async def test_direct_stop_after_typed_yield_persists_stopped_thinking(
+    tmp_path,
+) -> None:
+    """A delivered typed item must be captured before the Stop poll wins."""
+
+    class YieldThenStopGateway(ThinkingStreamingGateway):
+        def __init__(self) -> None:
+            super().__init__()
+            self.controller = None
+            self.session_id = None
+
+        def stream_chat(self, resolution, messages, **kwargs):
+            event = ProviderThinkingDelta(
+                text="delivered before stop",
+                provider="llama_cpp",
+                model="test-model",
+                protocol="chat_completions",
+                source_format="start_anchored_think",
+            )
+            controller = self.controller
+            session_id = self.session_id
+
+            class DeliveredItem:
+                delivered = False
+
+                def __aiter__(self):
+                    return self
+
+                async def __anext__(self):
+                    if self.delivered:
+                        raise StopAsyncIteration
+                    self.delivered = True
+                    delivered = asyncio.get_running_loop().create_future()
+
+                    def deliver_then_stop() -> None:
+                        # Completing ``__anext__`` makes the typed event the
+                        # consumer's next item. Stop is set in the same loop
+                        # callback before the consumer can poll it.
+                        delivered.set_result(event)
+                        controller._signal_stop(session_id=session_id)
+
+                    asyncio.get_running_loop().call_soon(deliver_then_stop)
+                    return await delivered
+
+            return DeliveredItem()
+
+    db = CharactersRAGDB(tmp_path / "direct-thinking-stop.sqlite", "thinking-stop")
+    try:
+        gateway = YieldThenStopGateway()
+        store = ConsoleChatStore(persistence=ChatPersistenceService(db))
+        controller = ConsoleChatController(store=store, provider_gateway=gateway)
+        session = _arm_session(store)
+        gateway.controller = controller
+        gateway.session_id = session.id
+
+        result = await controller.submit_draft("hello", session_id=session.id)
+
+        assistant = next(
+            message
+            for message in store.messages_for_session(session.id)
+            if message.role is ConsoleMessageRole.ASSISTANT
+        )
+        assert result.accepted is True
+        assert assistant.status == "stopped"
+        assert assistant.content == ""
+        assert assistant.thinking is not None
+        assert assistant.thinking.blocks[0].status == "stopped"
+        assert assistant.persisted_message_id is not None
+        assert session.persisted_conversation_id is not None
+
+        reloaded = _reload_console_message(
+            db,
+            conversation_id=session.persisted_conversation_id,
+            active_leaf_persisted_id=assistant.persisted_message_id,
+        )
+        assert reloaded.content == ""
+        assert reloaded.thinking is not None
+        assert reloaded.thinking.blocks[0].text == "delivered before stop"
+        assert reloaded.thinking.blocks[0].status == "stopped"
+    finally:
+        db.close_connection()

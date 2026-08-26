@@ -100,6 +100,7 @@ from tldw_chatbook.Chat.console_chat_store import (
     ConsoleDurableAcceptanceRetired,
     ConsoleDurableAcceptanceFingerprint,
     ConsoleDurableTurnCommit,
+    ConsoleThinkingCompatibilityError,
     TerminalCitationFinalizer,
     require_thinking_persistence_support,
 )
@@ -308,6 +309,8 @@ from tldw_chatbook.Chat.console_cost_tracker import (
 from tldw_chatbook.Chat.console_provider_gateway import (
     ConsoleProviderResolution,
     ConsoleProviderStreamSignals,
+    ProviderProprietaryThinkingEvidence,
+    ProviderThinkingDelta,
 )
 from tldw_chatbook.Chat.console_thinking_capture import ThinkingCapture
 from tldw_chatbook.Chat.provider_readiness import provider_config_key
@@ -10742,6 +10745,12 @@ class ConsoleChatController:
             )
             return self._block(session_id, visible_copy)
         assert turn_context is not None
+        thinking_block = self._thinking_persistence_preflight(
+            session_id=session_id,
+            resolution=resolution,
+        )
+        if thinking_block is not None:
+            return thinking_block
 
         provider_messages = self._provider_messages_for_session(
             session_id,
@@ -11010,6 +11019,12 @@ class ConsoleChatController:
             )
             return self._block(session_id, visible_copy)
         assert turn_context is not None
+        thinking_block = self._thinking_persistence_preflight(
+            session_id=session_id,
+            resolution=resolution,
+        )
+        if thinking_block is not None:
+            return thinking_block
 
         provider_messages = self._provider_messages_for_session(
             session_id,
@@ -15378,6 +15393,30 @@ class ConsoleChatController:
             "Console shut down before provider dispatch.",
         )
 
+    def _thinking_persistence_preflight(
+        self,
+        *,
+        session_id: str,
+        resolution: Any,
+    ) -> ConsoleSubmitResult | None:
+        """Reject an unsupported durable thinking stream without transcript writes."""
+        try:
+            require_thinking_persistence_support(
+                self.store.persistence,
+                persistent=(
+                    self.store.persistence is not None
+                    and not self.store.session_is_ephemeral(session_id)
+                ),
+                may_emit_thinking=bool(getattr(resolution, "may_emit_thinking", False)),
+            )
+        except ConsoleThinkingCompatibilityError as exc:
+            visible_copy = str(exc)
+            self._set_run_state(
+                ConsoleRunState.blocked(visible_copy), session_id=session_id
+            )
+            return ConsoleSubmitResult(False, False, visible_copy)
+        return None
+
     async def _run_direct_provider_reply(
         self,
         *,
@@ -15525,6 +15564,27 @@ class ConsoleChatController:
             async for chunk in provider_stream:
                 if not chunk:
                     continue
+                thinking_event = isinstance(
+                    chunk,
+                    (ProviderThinkingDelta, ProviderProprietaryThinkingEvidence),
+                )
+                if thinking_event:
+                    if prepare_retry and not retry_prepared:
+                        self.store.prepare_message_retry(assistant_message_id)
+                        retry_prepared = True
+                        if character_emote_snapshot is not None:
+                            self.store.begin_character_emote_capture(
+                                assistant_message_id,
+                                character_emote_snapshot,
+                            )
+                        if prefill:
+                            try:
+                                self.store.append_stream_chunk(
+                                    assistant_message_id, prefill
+                                )
+                            except KeyError:
+                                return self._session_closed_result(session_id=owner_id)
+                    project_thinking(thinking_capture.observe(chunk))
                 if cancel_event.is_set():
                     self.store.record_trajectory_timing(
                         assistant_message_id, model_status="cancelled"
@@ -15551,6 +15611,8 @@ class ConsoleChatController:
                         return self._session_closed_result(session_id=owner_id)
                     self._consume_one_shot_prefill(assistant_message_id, one_shot_used)
                     return ConsoleSubmitResult(True, True, stopped.content)
+                if thinking_event:
+                    continue
                 if type(chunk) is not str:
                     if prepare_retry and not retry_prepared:
                         self.store.prepare_message_retry(assistant_message_id)
@@ -16114,6 +16176,12 @@ class ConsoleChatController:
         scratch_snapshot = turn_context.scratch_space
         if scratch_snapshot is None:
             return self._block(session_id, "Private scratch space is unavailable.")
+        thinking_block = self._thinking_persistence_preflight(
+            session_id=session_id,
+            resolution=resolution,
+        )
+        if thinking_block is not None:
+            return thinking_block
         scratch_lease = functools.partial(
             self._scratch_spaces.lease,
             scratch_snapshot,
