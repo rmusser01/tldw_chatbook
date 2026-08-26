@@ -65,6 +65,7 @@ class PersonasConversationsController:
         # handler can tell an in-flight load from a completed one.
         self._loaded_conversation_id: str | None = None
         self._failed_conversation_id: str | None = None
+        self._preview_attempt: object | None = None
         self._resume_in_flight_attempts: dict[str, object] = {}
 
     def reset(self) -> None:
@@ -75,6 +76,7 @@ class PersonasConversationsController:
         self._open_conversation_truncated = False
         self._loaded_conversation_id = None
         self._failed_conversation_id = None
+        self._preview_attempt = None
         self._resume_in_flight_attempts = {}
 
     # ===== Listing =====
@@ -144,6 +146,8 @@ class PersonasConversationsController:
         replaces it with the content (or a newer selection supersedes it).
         """
         screen = self.screen
+        preview_attempt = object()
+        self._preview_attempt = preview_attempt
         screen._edit_mode = "view"
         self._open_conversation_id = conversation_id
         self._open_conversation_title = self._conversation_rows.get(
@@ -159,22 +163,34 @@ class PersonasConversationsController:
             view = screen.query_one(PersonasConversationTranscriptWidget)
             view.set_title(self._open_conversation_title or "Conversation")
             await view.show_loading()
+            if not self._owns_preview(conversation_id, preview_attempt):
+                return
             screen._show_center(_CONVERSATION_VIEW_ID)
             # Sync header title and console actions for the open transcript.
             screen._sync_title_and_console_actions()
         except QueryError:
             logger.warning("Conversation transcript widget is not mounted.")
+        if not self._owns_preview(conversation_id, preview_attempt):
+            return
         self.load_conversation_messages(
-            conversation_id, screen.state.selected_entity_name or "Character"
+            conversation_id,
+            screen.state.selected_entity_name or "Character",
+            preview_attempt,
         )
 
     def load_conversation_messages(
-        self, conversation_id: str, character_name: str
+        self,
+        conversation_id: str,
+        character_name: str,
+        preview_attempt: object,
     ) -> None:
         """Schedule the transcript fetch on the screen's worker pool."""
         self.screen.run_worker(
             partial(
-                self._load_conversation_messages_sync, conversation_id, character_name
+                self._load_conversation_messages_sync,
+                conversation_id,
+                character_name,
+                preview_attempt,
             ),
             thread=True,
             exclusive=True,
@@ -182,7 +198,10 @@ class PersonasConversationsController:
         )
 
     def _load_conversation_messages_sync(
-        self, conversation_id: str, character_name: str
+        self,
+        conversation_id: str,
+        character_name: str,
+        preview_attempt: object,
     ) -> None:
         """Fetch and shape the conversation's messages off the UI thread."""
         try:
@@ -201,7 +220,7 @@ class PersonasConversationsController:
                 f"Could not load messages for conversation {conversation_id}.",
             )
             self.screen.app.call_from_thread(
-                self.show_conversation_error, conversation_id
+                self.show_conversation_error, conversation_id, preview_attempt
             )
             return
         messages: list[dict] = []
@@ -222,6 +241,7 @@ class PersonasConversationsController:
             messages,
             transcript,
             truncated,
+            preview_attempt,
             # The on-screen transcript names speakers ("You"/the character),
             # matching the staged handoff body built above.
             {"user": "You", "assistant": character_name},
@@ -233,54 +253,70 @@ class PersonasConversationsController:
         messages: list[dict],
         transcript: str,
         truncated: bool,
+        preview_attempt: object,
         speaker_names: dict[str, str] | None = None,
     ) -> None:
         """UI-thread continuation: display the read-only transcript view."""
+        if not self._owns_preview(conversation_id, preview_attempt):
+            return
         screen = self.screen
-        if not screen.is_mounted or screen.state.active_mode != "characters":
-            return
-        if (
-            screen.state.selected_entity_kind != "character"
-            or self._open_conversation_id != conversation_id
-        ):
-            # The selection or the requested conversation changed mid-flight.
-            return
-        self._open_conversation_transcript = transcript
-        self._open_conversation_truncated = truncated
-        self._loaded_conversation_id = conversation_id
         try:
             view = screen.query_one(PersonasConversationTranscriptWidget)
         except QueryError:
             logger.warning("Conversation transcript widget is not mounted.")
             return
-        view.set_title(self._open_conversation_title or "Conversation")
         await view.load_messages(messages, speaker_names=speaker_names)
+        if not self._owns_preview(conversation_id, preview_attempt):
+            return
+        self._open_conversation_transcript = transcript
+        self._open_conversation_truncated = truncated
+        self._loaded_conversation_id = conversation_id
         screen._show_center(_CONVERSATION_VIEW_ID)
         # Sync header title and actions without moving focus away from the
         # conversations list the user is browsing.
         screen._sync_title_and_console_actions()
 
-    async def show_conversation_error(self, conversation_id: str) -> None:
+    async def show_conversation_error(
+        self, conversation_id: str, preview_attempt: object
+    ) -> None:
         """Display a recoverable error for the current preview only."""
+        if not self._owns_preview(conversation_id, preview_attempt):
+            return
         screen = self.screen
-        if not screen.is_mounted or screen.state.active_mode != "characters":
-            return
-        if (
-            screen.state.selected_entity_kind != "character"
-            or self._open_conversation_id != conversation_id
-        ):
-            return
-        self._loaded_conversation_id = None
-        self._failed_conversation_id = conversation_id
-        self._open_conversation_transcript = ""
-        self._open_conversation_truncated = False
         try:
             view = screen.query_one(PersonasConversationTranscriptWidget)
         except QueryError:
             return
         await view.show_error()
+        if not self._owns_preview(conversation_id, preview_attempt):
+            return
+        self._loaded_conversation_id = None
+        self._failed_conversation_id = conversation_id
+        self._open_conversation_transcript = ""
+        self._open_conversation_truncated = False
         screen._show_center(_CONVERSATION_VIEW_ID)
         screen._sync_title_and_console_actions()
+
+    def close_conversation_preview(self) -> None:
+        """Invalidate the open preview so delayed continuations lose ownership."""
+        self._preview_attempt = None
+        self._open_conversation_id = None
+        self._open_conversation_title = ""
+        self._open_conversation_transcript = ""
+        self._open_conversation_truncated = False
+        self._loaded_conversation_id = None
+        self._failed_conversation_id = None
+
+    def _owns_preview(self, conversation_id: str, preview_attempt: object) -> bool:
+        """Return whether an async continuation still owns the open preview."""
+        screen = self.screen
+        return bool(
+            self._preview_attempt is preview_attempt
+            and self._open_conversation_id == conversation_id
+            and screen.is_mounted
+            and screen.state.active_mode == "characters"
+            and screen.state.selected_entity_kind == "character"
+        )
 
     # ===== Conversation actions =====
 

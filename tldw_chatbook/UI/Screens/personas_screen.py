@@ -6345,6 +6345,7 @@ class PersonasScreen(BaseAppScreen):
     @on(Button.Pressed, "#personas-conversation-back")
     def _handle_conversation_back(self, event: Button.Pressed) -> None:
         event.stop()
+        self.conversations.close_conversation_preview()
         self._show_center("#ccp-character-card-view")
         self._sync_title_and_console_actions()
         self._focus_conversations_list()
@@ -15100,6 +15101,7 @@ class PersonasScreen(BaseAppScreen):
             transcript = None
         if transcript is not None and transcript.display:
             # Same path as the "Back to card" button.
+            self.conversations.close_conversation_preview()
             self._show_center("#ccp-character-card-view")
             self._sync_title_and_console_actions()
             self._focus_conversations_list()
