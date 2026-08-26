@@ -389,6 +389,22 @@ def test_detect_audio_cpp_binary_returns_none_without_mutating_a_draft(
     assert settings_model.detect_audio_cpp_server_binary() is None
 
 
+def test_detect_audio_cpp_binary_uses_exact_windows_executable_name(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    detected = r"C:\Tools\audio.cpp\audiocpp_server.exe"
+    calls: list[str] = []
+    monkeypatch.setattr(settings_model.platform, "system", lambda: "Windows")
+    monkeypatch.setattr(
+        settings_model.shutil,
+        "which",
+        lambda command: calls.append(command) or detected,
+    )
+
+    assert settings_model.detect_audio_cpp_server_binary() == detected
+    assert calls == ["audiocpp_server.exe"]
+
+
 def _managed_values(binary_path: str, server_json_path: str) -> dict[str, object]:
     return {
         **AudioCppConfig(

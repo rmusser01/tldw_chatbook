@@ -30,14 +30,49 @@ from .audio_cpp_recipes import (
     AudioCppRecipeRegistry,
     _managed_artifact_matches_recipe,
 )
+from .windows_artifact_fs import (
+    OS_WINDOWS_ARTIFACT_FILESYSTEM,
+    WindowsArtifactError,
+    WindowsArtifactFilesystem,
+    WindowsFileIdentity,
+    windows_audio_cpp_platform_supported,
+)
 
 
 _scandir = os.scandir
+_windows_artifact_filesystem: WindowsArtifactFilesystem | None = (
+    OS_WINDOWS_ARTIFACT_FILESYSTEM if windows_audio_cpp_platform_supported() else None
+)
 _REPARSE_ATTRIBUTE = getattr(stat, "FILE_ATTRIBUTE_REPARSE_POINT", 0x400)
+_SCAN_CLEANUP_OWNER = "_audio_cpp_scan_cleanup_owner"
 
 
 class AudioCppPackageScanError(ValueError):
     """Stable path-independent error for an unusable selected root."""
+
+    __slots__ = ("_cleanup_owner",)
+
+    def __init__(self, message: str, *, cleanup_owner: object | None = None) -> None:
+        self._cleanup_owner = cleanup_owner
+        super().__init__(message)
+
+    def take_cleanup_owner(self) -> object | None:
+        """Transfer one exact retained Windows handle owner once."""
+
+        owner = self._cleanup_owner
+        self._cleanup_owner = None
+        return owner
+
+
+def take_audio_cpp_scan_cleanup_owner(error: BaseException) -> object | None:
+    """Transfer one retained Windows scan handle from an error or cancellation."""
+
+    if isinstance(error, AudioCppPackageScanError):
+        return AudioCppPackageScanError.take_cleanup_owner(error)
+    owner = getattr(error, _SCAN_CLEANUP_OWNER, None)
+    if owner is not None:
+        setattr(error, _SCAN_CLEANUP_OWNER, None)
+    return owner
 
 
 class AudioCppScanOutcome(StrEnum):
@@ -187,6 +222,18 @@ def _filesystem_identity(info: os.stat_result) -> str:
     return sha256(encoded.encode("ascii")).hexdigest()
 
 
+def _windows_filesystem_identity(identity: WindowsFileIdentity) -> str:
+    encoded = b"\0".join(
+        (
+            identity.volume_serial_number.to_bytes(8, "little", signed=False),
+            identity.file_id,
+            identity.kind.encode("ascii"),
+            identity.reparse_tag.to_bytes(4, "little", signed=False),
+        )
+    )
+    return sha256(encoded).hexdigest()
+
+
 def _is_reparse_or_symlink(info: Any) -> bool:
     """Return whether a no-follow stat identifies a link/reparse object."""
     return stat.S_ISLNK(info.st_mode) or bool(
@@ -309,6 +356,178 @@ class _ScanState:
         return False
 
 
+def _close_windows_owner(
+    owner: Any,
+    *,
+    state: _ScanState | None,
+    relative_parts: tuple[str, ...],
+    safe_name: str,
+) -> None:
+    close = getattr(owner, "close", None)
+    if not callable(close):
+        raise AudioCppPackageScanError(
+            "Windows audio.cpp package handle cleanup did not complete.",
+            cleanup_owner=owner,
+        )
+    retained = owner
+    failed_once = False
+    for _attempt in range(2):
+        try:
+            close = getattr(retained, "close")
+            close()
+            if failed_once and state is not None:
+                state.add_incomplete(
+                    AudioCppScanIssueCode.UNREADABLE,
+                    relative_parts,
+                    safe_name,
+                )
+            return
+        except WindowsArtifactError as error:
+            failed_once = True
+            retained = error.take_cleanup_owner() or retained
+    raise AudioCppPackageScanError(
+        "Windows audio.cpp package handle cleanup did not complete.",
+        cleanup_owner=retained,
+    ) from None
+
+
+def _pin_windows_directory_identity(
+    path: Path,
+    *,
+    state: _ScanState | None = None,
+    relative_parts: tuple[str, ...] = (),
+) -> str:
+    filesystem = _windows_artifact_filesystem
+    if filesystem is None:
+        raise AudioCppPackageScanError(
+            "Windows audio.cpp package handles are unavailable."
+        )
+    try:
+        owner = filesystem.pin_directory_no_reparse(path)
+    except WindowsArtifactError as error:
+        raise AudioCppPackageScanError(
+            "Selected audio.cpp package root is unavailable.",
+            cleanup_owner=error.take_cleanup_owner(),
+        ) from None
+    except OSError:
+        raise AudioCppPackageScanError(
+            "Selected audio.cpp package root is unavailable."
+        ) from None
+    try:
+        identity = owner.identity
+        if identity.kind != "directory" or identity.reparse_tag:
+            raise AudioCppPackageScanError(
+                "Selected audio.cpp package root is unavailable."
+            )
+        return _windows_filesystem_identity(identity)
+    finally:
+        _close_windows_owner(
+            owner,
+            state=state,
+            relative_parts=relative_parts,
+            safe_name=path.name,
+        )
+
+
+def _inspect_file_windows(
+    path: Path,
+    relative_parts: tuple[str, ...],
+    info: os.stat_result,
+    signal: AudioCppFileSignal,
+    state: _ScanState,
+) -> AudioCppPackageFileEvidence:
+    filesystem = _windows_artifact_filesystem
+    if filesystem is None:
+        raise AssertionError("Windows artifact filesystem is not selected")
+    required_bytes = _required_metadata_bytes(signal.kind)
+    readable = True
+    valid = info.st_size >= signal.minimum_size_bytes
+    identity = _filesystem_identity(info)
+    if required_bytes > state.limits.max_metadata_bytes_per_file:
+        state.add_limit(AudioCppScanLimit.METADATA_PER_FILE)
+        valid = False
+        required_bytes = 0
+    elif (
+        state.metadata_bytes_read + required_bytes
+        > state.limits.max_metadata_bytes_total
+    ):
+        state.add_limit(AudioCppScanLimit.METADATA_TOTAL)
+        valid = False
+        required_bytes = 0
+
+    owner: Any = None
+    try:
+        owner = filesystem.open_file_no_reparse(path)
+        opened_identity = owner.identity
+        opened_info = os.stat(path, follow_symlinks=False)
+        if (
+            opened_identity.kind != "file"
+            or opened_identity.reparse_tag
+            or not stat.S_ISREG(opened_info.st_mode)
+            or not _same_source(info, opened_info)
+        ):
+            readable = False
+            valid = False
+            state.add_incomplete(
+                AudioCppScanIssueCode.SOURCE_CHANGED,
+                relative_parts,
+                path.name,
+            )
+        else:
+            if required_bytes:
+                data = owner.read(required_bytes)
+                state.metadata_bytes_read += len(data)
+                valid = valid and _metadata_is_valid(
+                    signal.kind,
+                    data,
+                    opened_info.st_size,
+                )
+            identity = _windows_filesystem_identity(opened_identity)
+            info = opened_info
+    except PermissionError:
+        readable = False
+        valid = False
+        state.add_permission(relative_parts, path.name)
+    except WindowsArtifactError as error:
+        cleanup = error.take_cleanup_owner()
+        if cleanup is not None:
+            raise AudioCppPackageScanError(
+                "Windows audio.cpp package handle cleanup did not complete.",
+                cleanup_owner=cleanup,
+            ) from None
+        readable = False
+        valid = False
+        state.add_incomplete(
+            AudioCppScanIssueCode.UNREADABLE,
+            relative_parts,
+            path.name,
+        )
+    except OSError:
+        readable = False
+        valid = False
+        state.add_incomplete(
+            AudioCppScanIssueCode.UNREADABLE,
+            relative_parts,
+            path.name,
+        )
+    finally:
+        if owner is not None:
+            _close_windows_owner(
+                owner,
+                state=state,
+                relative_parts=relative_parts,
+                safe_name=path.name,
+            )
+
+    return AudioCppPackageFileEvidence(
+        relative_path=signal.relative_path,
+        size_bytes=info.st_size,
+        identity=identity,
+        readable=readable,
+        metadata_valid=valid,
+    )
+
+
 def _inspect_file(
     path: Path,
     relative_parts: tuple[str, ...],
@@ -316,6 +535,8 @@ def _inspect_file(
     signal: AudioCppFileSignal,
     state: _ScanState,
 ) -> AudioCppPackageFileEvidence:
+    if _windows_artifact_filesystem is not None:
+        return _inspect_file_windows(path, relative_parts, info, signal, state)
     required_bytes = _required_metadata_bytes(signal.kind)
     readable = True
     valid = info.st_size >= signal.minimum_size_bytes
@@ -502,13 +723,14 @@ def _cancelled_result(
     canonical_root: Path,
     root_info: os.stat_result,
     root_was_symlink: bool,
+    root_identity: str | None = None,
 ) -> AudioCppPackageScanResult:
     return AudioCppPackageScanResult(
         outcome=AudioCppScanOutcome.CANCELLED,
         request_revision=request_revision,
         selected_root_name=_safe_name(canonical_root.name),
         canonical_root=str(canonical_root),
-        canonical_root_identity=_filesystem_identity(root_info),
+        canonical_root_identity=root_identity or _filesystem_identity(root_info),
         root_was_symlink=root_was_symlink,
         discoveries=(),
         limits_reached=(),
@@ -593,7 +815,11 @@ def _require_managed_exact_result(
         and result.canonical_root == expected_root == str(final_root)
         and result.canonical_root_identity
         == expected_root_identity
-        == _filesystem_identity(final_info)
+        == (
+            _pin_windows_directory_identity(final_root)
+            if _windows_artifact_filesystem is not None
+            else _filesystem_identity(final_info)
+        )
     ):
         raise AudioCppPackageScanError(
             "Managed audio.cpp package no longer matches its installed identity."
@@ -652,7 +878,11 @@ def scan_audio_cpp_package_root(
         root,
         allow_root_symlink=allow_root_symlink,
     )
-    selected_root_identity = _filesystem_identity(root_info)
+    selected_root_identity = (
+        _pin_windows_directory_identity(canonical_root)
+        if _windows_artifact_filesystem is not None
+        else _filesystem_identity(root_info)
+    )
     if managed_contract is not None and (
         str(canonical_root) != managed_contract[1] or root_was_symlink
     ):
@@ -670,14 +900,13 @@ def scan_audio_cpp_package_root(
             canonical_root=canonical_root,
             root_info=root_info,
             root_was_symlink=root_was_symlink,
+            root_identity=selected_root_identity,
         )
 
     state = _ScanState(active_limits, _monotonic(), cancellation)
     signals = _signal_index(registry)
     queue: deque[tuple[Path, tuple[str, ...], int]] = deque(((canonical_root, (), 0),))
-    directory_identities: dict[tuple[str, ...], str] = {
-        (): _filesystem_identity(root_info)
-    }
+    directory_identities: dict[tuple[str, ...], str] = {(): selected_root_identity}
     candidate_evidence: dict[
         tuple[str, ...],
         dict[str, AudioCppPackageFileEvidence],
@@ -692,43 +921,106 @@ def scan_audio_cpp_package_root(
         if state.cancellation_or_total_limit():
             break
         iterator: object | None = None
+        windows_directory_owner: Any = None
         try:
-            current_info = os.stat(directory, follow_symlinks=False)
-            if (
-                _is_reparse_or_symlink(current_info)
-                or not stat.S_ISDIR(current_info.st_mode)
-                or _filesystem_identity(current_info)
-                != directory_identities[relative_directory]
-            ):
-                state.add_incomplete(
-                    AudioCppScanIssueCode.SOURCE_CHANGED,
-                    relative_directory,
-                    directory.name,
+            if _windows_artifact_filesystem is not None:
+                windows_directory_owner = (
+                    _windows_artifact_filesystem.pin_directory_no_reparse(directory)
                 )
-                continue
+                opened_identity = windows_directory_owner.identity
+                if (
+                    opened_identity.kind != "directory"
+                    or opened_identity.reparse_tag
+                    or _windows_filesystem_identity(opened_identity)
+                    != directory_identities[relative_directory]
+                ):
+                    state.add_incomplete(
+                        AudioCppScanIssueCode.SOURCE_CHANGED,
+                        relative_directory,
+                        directory.name,
+                    )
+                    _close_windows_owner(
+                        windows_directory_owner,
+                        state=state,
+                        relative_parts=relative_directory,
+                        safe_name=directory.name,
+                    )
+                    windows_directory_owner = None
+                    continue
+            else:
+                current_info = os.stat(directory, follow_symlinks=False)
+                if (
+                    _is_reparse_or_symlink(current_info)
+                    or not stat.S_ISDIR(current_info.st_mode)
+                    or _filesystem_identity(current_info)
+                    != directory_identities[relative_directory]
+                ):
+                    state.add_incomplete(
+                        AudioCppScanIssueCode.SOURCE_CHANGED,
+                        relative_directory,
+                        directory.name,
+                    )
+                    continue
             iterator = _scandir(directory)
-            opened_info = os.stat(directory, follow_symlinks=False)
-            if (
-                _is_reparse_or_symlink(opened_info)
-                or not stat.S_ISDIR(opened_info.st_mode)
-                or _filesystem_identity(opened_info)
-                != directory_identities[relative_directory]
-            ):
-                state.add_incomplete(
-                    AudioCppScanIssueCode.SOURCE_CHANGED,
-                    relative_directory,
-                    directory.name,
-                )
-                _close_directory_iterator(iterator, state, directory.name)
-                continue
+            if _windows_artifact_filesystem is None:
+                opened_info = os.stat(directory, follow_symlinks=False)
+                if (
+                    _is_reparse_or_symlink(opened_info)
+                    or not stat.S_ISDIR(opened_info.st_mode)
+                    or _filesystem_identity(opened_info)
+                    != directory_identities[relative_directory]
+                ):
+                    state.add_incomplete(
+                        AudioCppScanIssueCode.SOURCE_CHANGED,
+                        relative_directory,
+                        directory.name,
+                    )
+                    _close_directory_iterator(iterator, state, directory.name)
+                    continue
         except PermissionError:
             if iterator is not None:
                 _close_directory_iterator(iterator, state, directory.name)
+            if windows_directory_owner is not None:
+                _close_windows_owner(
+                    windows_directory_owner,
+                    state=state,
+                    relative_parts=relative_directory,
+                    safe_name=directory.name,
+                )
             state.add_permission(relative_directory, directory.name)
+            continue
+        except WindowsArtifactError as error:
+            cleanup = error.take_cleanup_owner()
+            if cleanup is not None:
+                raise AudioCppPackageScanError(
+                    "Windows audio.cpp package handle cleanup did not complete.",
+                    cleanup_owner=cleanup,
+                ) from None
+            if iterator is not None:
+                _close_directory_iterator(iterator, state, directory.name)
+            if windows_directory_owner is not None:
+                _close_windows_owner(
+                    windows_directory_owner,
+                    state=state,
+                    relative_parts=relative_directory,
+                    safe_name=directory.name,
+                )
+            state.add_incomplete(
+                AudioCppScanIssueCode.UNREADABLE,
+                relative_directory,
+                directory.name,
+            )
             continue
         except OSError:
             if iterator is not None:
                 _close_directory_iterator(iterator, state, directory.name)
+            if windows_directory_owner is not None:
+                _close_windows_owner(
+                    windows_directory_owner,
+                    state=state,
+                    relative_parts=relative_directory,
+                    safe_name=directory.name,
+                )
             state.add_incomplete(
                 AudioCppScanIssueCode.UNREADABLE,
                 relative_directory,
@@ -736,6 +1028,7 @@ def scan_audio_cpp_package_root(
             )
             continue
         try:
+            windows_names: set[str] = set()
             for entry in iterator:
                 if state.cancellation_or_total_limit():
                     break
@@ -746,6 +1039,16 @@ def scan_audio_cpp_package_root(
                 state.visited_entries += 1
                 entry_started = _monotonic()
                 relative_parts = (*relative_directory, entry.name)
+                if _windows_artifact_filesystem is not None:
+                    folded_name = entry.name.casefold()
+                    if folded_name in windows_names:
+                        state.add_incomplete(
+                            AudioCppScanIssueCode.SOURCE_CHANGED,
+                            relative_directory,
+                            entry.name,
+                        )
+                        continue
+                    windows_names.add(folded_name)
                 try:
                     info = entry.stat(follow_symlinks=False)
                 except PermissionError:
@@ -774,8 +1077,14 @@ def scan_audio_cpp_package_root(
                     if depth >= active_limits.max_depth:
                         state.add_limit(AudioCppScanLimit.DEPTH)
                     else:
-                        directory_identities[relative_parts] = _filesystem_identity(
-                            info
+                        directory_identities[relative_parts] = (
+                            _pin_windows_directory_identity(
+                                entry_path,
+                                state=state,
+                                relative_parts=relative_parts,
+                            )
+                            if _windows_artifact_filesystem is not None
+                            else _filesystem_identity(info)
                         )
                         queue.append((entry_path, relative_parts, depth + 1))
                 elif stat.S_ISREG(info.st_mode):
@@ -842,6 +1151,13 @@ def scan_audio_cpp_package_root(
             )
         finally:
             _close_directory_iterator(iterator, state, directory.name)
+            if windows_directory_owner is not None:
+                _close_windows_owner(
+                    windows_directory_owner,
+                    state=state,
+                    relative_parts=relative_directory,
+                    safe_name=directory.name,
+                )
 
     state.cancellation_or_total_limit()
     if cancellation.is_set():
@@ -850,6 +1166,7 @@ def scan_audio_cpp_package_root(
             canonical_root=canonical_root,
             root_info=root_info,
             root_was_symlink=root_was_symlink,
+            root_identity=selected_root_identity,
         )
 
     global_partial = bool(state.limits_reached)
@@ -931,7 +1248,7 @@ def scan_audio_cpp_package_root(
         request_revision=request_revision,
         selected_root_name=_safe_name(canonical_root.name),
         canonical_root=str(canonical_root),
-        canonical_root_identity=_filesystem_identity(root_info),
+        canonical_root_identity=selected_root_identity,
         root_was_symlink=root_was_symlink,
         discoveries=tuple(discoveries),
         limits_reached=limits_reached,
@@ -997,10 +1314,23 @@ async def scan_audio_cpp_package_root_async(
         )
     )
     try:
-        return await work
-    except asyncio.CancelledError:
+        return await asyncio.shield(work)
+    except asyncio.CancelledError as cancelled:
         cancellation.set()
-        raise
+        while not work.done():
+            try:
+                await asyncio.shield(work)
+            except asyncio.CancelledError:
+                continue
+            except BaseException:
+                break
+        if work.done() and not work.cancelled():
+            error = work.exception()
+            if isinstance(error, AudioCppPackageScanError):
+                cleanup = error.take_cleanup_owner()
+                if cleanup is not None:
+                    setattr(cancelled, _SCAN_CLEANUP_OWNER, cleanup)
+        raise cancelled
 
 
 __all__ = (
@@ -1014,4 +1344,5 @@ __all__ = (
     "AudioCppScanOutcome",
     "scan_audio_cpp_package_root",
     "scan_audio_cpp_package_root_async",
+    "take_audio_cpp_scan_cleanup_owner",
 )

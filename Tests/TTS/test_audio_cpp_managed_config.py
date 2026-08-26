@@ -299,6 +299,29 @@ def test_managed_binary_preserves_an_approved_symlink_path(tmp_path: Path) -> No
     assert launch.binary_path != binary_target
 
 
+def test_windows_managed_binary_uses_the_shared_pe_admission(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from tldw_chatbook.TTS import audio_cpp_guided_launch as guided_launch
+
+    binary = tmp_path / "audiocpp_server.exe"
+    binary.write_bytes(b"bounded-pe-fixture")
+    server_json = _write_server_json(tmp_path / "server.json")
+    calls: list[str] = []
+    monkeypatch.setattr(managed_config_module.platform, "system", lambda: "Windows")
+    monkeypatch.setattr(
+        guided_launch,
+        "_validate_binary",
+        lambda value: calls.append(value) or binary,
+    )
+
+    launch = _validate_launch(_launch_config(binary, server_json))
+
+    assert launch.binary_path == binary
+    assert calls == [str(binary)]
+
+
 def test_server_json_requires_readable_regular_utf8_object(tmp_path: Path) -> None:
     binary = _write_executable(tmp_path / "audiocpp_server")
     server_json = tmp_path / "server.json"

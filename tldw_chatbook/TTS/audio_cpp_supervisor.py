@@ -12,7 +12,7 @@ from collections.abc import Awaitable, Callable, Mapping, Set as AbstractSet
 from contextvars import ContextVar
 from dataclasses import dataclass, field, replace
 from pathlib import Path
-from typing import Any, Literal, TypeVar
+from typing import Any, Literal, TypeVar, cast
 from urllib.parse import urlsplit
 
 from rich.markup import escape as escape_rich_markup
@@ -259,6 +259,12 @@ AudioCppProcessState = Literal[
     "stopping",
     "unavailable",
 ]
+AudioCppArtifactPrivacyPosture = Literal[
+    "not_applicable",
+    "unverified",
+    "posix_owner_only",
+    "windows_account_protected",
+]
 AudioCppTTSCapability = Literal["available", "not_configured", "unknown"]
 AudioCppContractProbe = Callable[[], Awaitable[AudioCppTTSCapability]]
 AudioCppHealthProbe = Callable[[], Awaitable[bool]]
@@ -322,12 +328,16 @@ class AudioCppProcessSnapshot:
     last_failure: AudioCppProcessFailure | None
     diagnostics: tuple[AudioCppDiagnosticLine, ...]
     dropped_diagnostic_lines: int
+    generated_artifact_privacy_posture: AudioCppArtifactPrivacyPosture = (
+        "not_applicable"
+    )
 
 
 @dataclass(frozen=True, slots=True)
 class _OwnedAudioCppProcess:
     process: Any
     close_parent_pipes: Callable[[], None]
+    close_native_transport: Callable[[], None] = lambda: None
 
 
 _ProcessLauncher = Callable[
@@ -430,6 +440,7 @@ class _ProcessGeneration:
     artifact_cleanup_succeeded: bool = False
     cleanup_failure: AudioCppProcessFailure | None = None
     parent_pipes_closed: bool = False
+    native_transport_closed: bool = False
 
 
 def _failure_for(
@@ -468,6 +479,22 @@ def _close_process_parent_pipes(process: Any) -> None:
             close()
 
 
+def _process_native_transport_closer(process: Any) -> Callable[[], None]:
+    closed = False
+
+    def close_once() -> None:
+        nonlocal closed
+        if closed:
+            return
+        transport = getattr(process, "_transport", None)
+        close = getattr(transport, "close", None)
+        if callable(close):
+            close()
+        closed = True
+
+    return close_once
+
+
 async def _default_process_launcher(
     launch: AudioCppManagedLaunchConfig,
     child_environment: dict[str, str],
@@ -492,7 +519,50 @@ async def _default_process_launcher(
     return _OwnedAudioCppProcess(
         process=process,
         close_parent_pipes=lambda: _close_process_parent_pipes(process),
+        close_native_transport=_process_native_transport_closer(process),
     )
+
+
+async def _settle_process_launcher(
+    launcher: Awaitable[_OwnedAudioCppProcess],
+    *,
+    timeout: float,
+) -> tuple[
+    asyncio.CancelledError | None,
+    bool,
+    _OwnedAudioCppProcess | None,
+    BaseException | None,
+]:
+    """Settle one retained spawn task before exposing cancellation or timeout."""
+
+    task: asyncio.Future[_OwnedAudioCppProcess] = asyncio.ensure_future(launcher)
+    cancellation: asyncio.CancelledError | None = None
+    timed_out = False
+    waiter = asyncio.current_task()
+    cancellation_requests = waiter.cancelling() if waiter is not None else 0
+    try:
+        done, _pending = await asyncio.wait({task}, timeout=max(0.0, timeout))
+        timed_out = task not in done
+    except asyncio.CancelledError as error:
+        cancellation = error
+    if (timed_out or cancellation is not None) and not task.done():
+        task.cancel()
+    while not task.done():
+        try:
+            await asyncio.shield(task)
+        except asyncio.CancelledError as error:
+            next_requests = waiter.cancelling() if waiter is not None else 0
+            if next_requests > cancellation_requests:
+                cancellation = cancellation or error
+                cancellation_requests = next_requests
+        except BaseException:
+            if not task.done():
+                raise
+            break
+    try:
+        return cancellation, timed_out, task.result(), None
+    except BaseException as error:
+        return cancellation, timed_out, None, error
 
 
 async def _default_port_preflight(port: int, timeout: float) -> _PortPreflightResult:
@@ -561,6 +631,20 @@ class AudioCppSupervisor:
     def snapshot(self) -> AudioCppProcessSnapshot:
         """Return the current immutable process observation."""
         diagnostics, dropped = self._diagnostics.snapshot()
+        launch = (
+            self._generation.launch
+            if self._generation is not None
+            else self._pre_spawn_launch
+        )
+        artifact = launch.generated_artifact if launch is not None else None
+        posture = getattr(artifact, "privacy_posture", "not_applicable")
+        if posture not in {
+            "not_applicable",
+            "unverified",
+            "posix_owner_only",
+            "windows_account_protected",
+        }:
+            posture = "unverified"
         return AudioCppProcessSnapshot(
             state=self._state,
             process_generation=self._process_generation,
@@ -571,6 +655,10 @@ class AudioCppSupervisor:
             last_failure=self._last_failure,
             diagnostics=diagnostics,
             dropped_diagnostic_lines=dropped,
+            generated_artifact_privacy_posture=cast(
+                AudioCppArtifactPrivacyPosture,
+                posture,
+            ),
         )
 
     def _record_internal_diagnostic(
@@ -895,23 +983,27 @@ class AudioCppSupervisor:
             spawn_timeout = _remaining(deadline, self._monotonic)
             if spawn_timeout <= 0:
                 raise _operation_error(_failure_for(_STARTUP_TIMEOUT_FAILURE, None))
-            spawn_failed = False
-            try:
-                owned = await asyncio.wait_for(
-                    self._process_launcher(validated, dict(self._child_environment)),
-                    timeout=spawn_timeout,
-                )
-            except asyncio.TimeoutError:
-                spawn_failed = True
-            except asyncio.CancelledError:
-                raise
-            except BaseException:
-                spawn_failed = True
-            if spawn_failed:
+            (
+                spawn_cancellation,
+                spawn_timed_out,
+                owned,
+                spawn_error,
+            ) = await _settle_process_launcher(
+                self._process_launcher(validated, dict(self._child_environment)),
+                timeout=spawn_timeout,
+            )
+            if owned is None:
+                if spawn_cancellation is not None:
+                    raise spawn_cancellation
                 raise _operation_error(_failure_for(_SPAWN_FAILURE, None))
 
             async with self._lock:
-                stale = self._lifecycle_epoch != epoch or self._state != "starting"
+                stale = (
+                    spawn_cancellation is not None
+                    or spawn_timed_out
+                    or self._lifecycle_epoch != epoch
+                    or self._state != "starting"
+                )
                 if self._generation is not None:
                     raise RuntimeError("audio.cpp process ownership invariant failed")
                 self._process_generation += 1
@@ -939,6 +1031,14 @@ class AudioCppSupervisor:
                 )
                 record.exit_monitor = asyncio.create_task(self._monitor_exit(record))
                 self._observation_version += 1
+            if spawn_cancellation is not None:
+                record.hooks_ready.set()
+                raise spawn_cancellation
+            if spawn_timed_out or spawn_error is not None:
+                record.hooks_ready.set()
+                failure = _failure_for(_SPAWN_FAILURE, record.generation)
+                await self._rollback_generation(record, failure, deadline=deadline)
+                raise _operation_error(failure)
             if stale:
                 record.hooks_ready.set()
                 raise asyncio.CancelledError
@@ -1436,12 +1536,12 @@ class AudioCppSupervisor:
 
         await self._join_output_drains(record)
         self._close_parent_pipes(record)
-        cleanup_succeeded, artifact_succeeded = await self._cleanup_generation(record)
+        cleanup_succeeded, ownership_succeeded = await self._cleanup_generation(record)
 
         async with self._lock:
             if self._generation is not record:
                 return
-            if artifact_succeeded:
+            if ownership_succeeded:
                 self._generation = None
             if not cleanup_succeeded:
                 cleanup_failure = _failure_for(
@@ -1534,12 +1634,26 @@ class AudioCppSupervisor:
             record.artifact_cleanup_succeeded = await self._cleanup_launch_artifact(
                 record.launch
             )
+        transport_succeeded = self._close_native_transport(record)
         if control_flow is not None:
             raise control_flow
         return (
-            record.hooks_cleanup_succeeded and record.artifact_cleanup_succeeded,
-            record.artifact_cleanup_succeeded,
+            record.hooks_cleanup_succeeded
+            and record.artifact_cleanup_succeeded
+            and transport_succeeded,
+            record.artifact_cleanup_succeeded and transport_succeeded,
         )
+
+    @staticmethod
+    def _close_native_transport(record: _ProcessGeneration) -> bool:
+        if record.native_transport_closed:
+            return True
+        try:
+            record.owned.close_native_transport()
+        except Exception:
+            return False
+        record.native_transport_closed = True
+        return True
 
     async def _cleanup_launch_artifact(
         self,
@@ -1724,10 +1838,10 @@ class AudioCppSupervisor:
                 ):
                     (
                         cleanup_succeeded,
-                        artifact_succeeded,
+                        ownership_succeeded,
                     ) = await self._cleanup_generation(record)
                     async with self._lock:
-                        if self._generation is record and artifact_succeeded:
+                        if self._generation is record and ownership_succeeded:
                             self._generation = None
                         if cleanup_succeeded:
                             record.cleanup_failure = None

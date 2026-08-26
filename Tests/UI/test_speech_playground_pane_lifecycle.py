@@ -102,6 +102,7 @@ from tldw_chatbook.UI.stts_playground_catalog import (
 )
 from tldw_chatbook.UI.Speech.speech_playground_pane import SpeechPlaygroundPane
 from tldw_chatbook.UI.Speech import speech_playground_pane as playground_pane_module
+from tldw_chatbook.UI.Speech import speech_clone_setup as speech_clone_setup_module
 from tldw_chatbook.UI.Speech.speech_clone_setup import SpeechCloneSetup
 from tldw_chatbook.UI.Speech.audio_cpp_runtime_card import (
     AudioCppRuntimeCardObservation,
@@ -157,6 +158,7 @@ def _runtime_observation(
     saved_guided_text_ready: bool = False,
     applied_guided_text_ready: bool = False,
     clone_setup: AudioCppCloneSetupProjection | None = None,
+    artifact_privacy_posture: str = "not_applicable",
 ) -> AudioCppRuntimeObservation:
     return AudioCppRuntimeObservation(
         saved_mode=saved_mode,  # type: ignore[arg-type]
@@ -175,6 +177,7 @@ def _runtime_observation(
             last_failure=None,
             diagnostics=diagnostics,
             dropped_diagnostic_lines=dropped_diagnostics,
+            generated_artifact_privacy_posture=artifact_privacy_posture,  # type: ignore[arg-type]
         ),
         catalog_revision=catalog_revision,
         catalog_fresh=catalog_fresh,
@@ -241,9 +244,9 @@ def test_clone_transcript_boundary_runs_shared_input_validation(
         validate_text_input,
     )
 
-    assert playground_pane_module._validate_clone_transcript_input("  spoken words  ") == (
-        "spoken words"
-    )
+    assert playground_pane_module._validate_clone_transcript_input(
+        "  spoken words  "
+    ) == ("spoken words")
     assert calls == [("  spoken words  ", 4_096, True)]
 
 
@@ -294,6 +297,11 @@ async def test_ready_clone_model_mounts_and_canonicalizes_path_free_setup(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
 ) -> None:
+    monkeypatch.setattr(
+        speech_clone_setup_module,
+        "windows_audio_cpp_platform_supported",
+        lambda: True,
+    )
     model_id = "<opaque:model>"
     service = _RuntimeObservationService(
         _runtime_observation(
@@ -310,6 +318,7 @@ async def test_ready_clone_model_mounts_and_canonicalizes_path_free_setup(
             saved_guided_default_model_id=model_id,
             applied_guided_default_model_id=model_id,
             clone_setup=_clone_setup(model_id),
+            artifact_privacy_posture="windows_account_protected",
         )
     )
     monkeypatch.setattr(
@@ -335,9 +344,21 @@ async def test_ready_clone_model_mounts_and_canonicalizes_path_free_setup(
         )
         pane = app.query_one(SpeechPlaygroundPane)
         setup = app.query_one(SpeechCloneSetup)
-        assert "plaintext" in str(
-            setup.query_one("#speech-clone-privacy", Static).render()
-        ).lower()
+        assert (
+            "plaintext"
+            in str(setup.query_one("#speech-clone-privacy", Static).render()).lower()
+        )
+        privacy = str(setup.query_one("#speech-clone-privacy", Static).render()).lower()
+        assert "account protected" in privacy
+        assert "administrators and system retain access" in privacy
+        runtime_privacy = str(
+            app.query_one(
+                "#audio-cpp-runtime-artifact-privacy",
+                Static,
+            ).render()
+        )
+        assert "Account protected" in runtime_privacy
+        assert "administrators and SYSTEM retain access" in runtime_privacy
         app.query_one("#tts-text-input", TextArea).text = "Generate cloned speech."
         await pilot.pause()
         ordinary_generate = app.query_one("#tts-generate-btn", Button)
@@ -448,9 +469,9 @@ async def test_applied_clone_generation_change_clears_prior_private_draft(
     async with app.run_test(size=(100, 30)) as pilot:
         await _wait_until(pilot, lambda: len(app.query(SpeechCloneSetup)) == 1)
         pane = app.query_one(SpeechPlaygroundPane)
-        app.query_one("#speech-clone-reference-text", TextArea).text = (
-            "Exact words from the old applied generation."
-        )
+        app.query_one(
+            "#speech-clone-reference-text", TextArea
+        ).text = "Exact words from the old applied generation."
         pane._handle_clone_reference_selection(source)
         await _wait_until(pilot, lambda: pane._clone_setup_canonical is not None)
         prior_calls = service.runtime_observation_calls
@@ -696,13 +717,13 @@ async def test_clone_picker_cancel_and_field_errors_preserve_the_other_input(
         pane._handle_clone_reference_selection(tmp_path)
         await _wait_until(
             pilot,
-            lambda: pane._clone_setup_error
-            == "Choose a valid, bounded PCM WAV reference.",
+            lambda: (
+                pane._clone_setup_error == "Choose a valid, bounded PCM WAV reference."
+            ),
         )
         await _wait_until(
             pilot,
-            lambda: getattr(app.focused, "id", None)
-            == "speech-clone-reference-choose",
+            lambda: getattr(app.focused, "id", None) == "speech-clone-reference-choose",
         )
         assert transcript.text == "Exact words from the valid WAV."
         assert pane._clone_setup_source_path == tmp_path
@@ -1011,6 +1032,36 @@ def test_audio_cpp_runtime_projection_describes_generation_and_catalog_truth() -
     assert projection.catalog_copy == "Catalog: Stale · revision 11"
 
 
+@pytest.mark.parametrize(
+    ("posture", "expected"),
+    (
+        (
+            "windows_account_protected",
+            "Account protected · administrators and SYSTEM retain access · "
+            "plaintext, not encryption",
+        ),
+        (
+            "posix_owner_only",
+            "Owner-only filesystem mode · plaintext, not encryption",
+        ),
+        ("unverified", "Not verified — review required"),
+        (
+            "not_applicable",
+            "Not active · protection is applied only for a Guided start",
+        ),
+    ),
+)
+def test_audio_cpp_runtime_projection_reports_exact_artifact_privacy_posture(
+    posture: str,
+    expected: str,
+) -> None:
+    projection = project_audio_cpp_runtime_card(
+        _runtime_observation(artifact_privacy_posture=posture)
+    )
+
+    assert projection.artifact_privacy_copy == f"Generated launch privacy: {expected}"
+
+
 def test_staged_managed_projection_keeps_applied_external_truth() -> None:
     projection = project_audio_cpp_runtime_card(
         _runtime_observation(
@@ -1077,13 +1128,15 @@ async def test_runtime_diagnostics_are_collapsed_and_interactions_are_passive(
         diagnostics = app.query_one("#audio-cpp-runtime-diagnostics", Collapsible)
         await _wait_until(
             pilot,
-            lambda: "generation: 5"
-            in str(
-                app.query_one(
-                    "#audio-cpp-diagnostics-generation",
-                    Static,
-                ).render()
-            ).lower(),
+            lambda: (
+                "generation: 5"
+                in str(
+                    app.query_one(
+                        "#audio-cpp-diagnostics-generation",
+                        Static,
+                    ).render()
+                ).lower()
+            ),
         )
 
         assert diagnostics.collapsed is True
@@ -2765,9 +2818,9 @@ async def test_ready_clone_setup_preserves_editable_text_and_current_result_geom
         )
         pane = screen.query_one(SpeechPlaygroundPane)
         screen.query_one("#tts-text-input", TextArea).text = "Generate speech."
-        screen.query_one("#speech-clone-reference-text", TextArea).text = (
-            "Exact words in the reference."
-        )
+        screen.query_one(
+            "#speech-clone-reference-text", TextArea
+        ).text = "Exact words in the reference."
         pane._handle_clone_reference_selection(source)
         await _wait_until(pilot, lambda: pane._clone_setup_canonical is not None)
         generated = _native_profile_artifact(tmp_path / "generated.wav")

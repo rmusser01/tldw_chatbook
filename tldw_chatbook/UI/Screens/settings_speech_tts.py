@@ -9,8 +9,8 @@ from __future__ import annotations
 
 import math
 import os
+import platform
 import shutil
-import stat
 import unicodedata
 from collections.abc import Mapping
 from copy import deepcopy
@@ -29,6 +29,7 @@ from tldw_chatbook.TTS.audio_cpp_guided_config import (
     AudioCppSettingsConfig,
 )
 from tldw_chatbook.TTS.audio_cpp_guided_launch import (
+    _validate_binary,
     select_audio_cpp_guided_backend,
 )
 from tldw_chatbook.TTS.audio_cpp_managed_config import (
@@ -60,7 +61,6 @@ from tldw_chatbook.Utils.input_validation import (
     provider_api_key_validation_error,
     validate_url,
 )
-from tldw_chatbook.Utils.path_validation import validate_path_simple
 
 BUILT_IN_TTS_PROVIDER_ORDER = (
     "audio_cpp",
@@ -1361,7 +1361,12 @@ def detect_audio_cpp_server_binary() -> str | None:
         The exact detected executable path, or ``None`` when it is unavailable.
     """
 
-    detected = shutil.which("audiocpp_server")
+    command = (
+        "audiocpp_server.exe"
+        if platform.system().casefold() == "windows"
+        else "audiocpp_server"
+    )
+    detected = shutil.which(command)
     return detected if isinstance(detected, str) and detected else None
 
 
@@ -1397,19 +1402,7 @@ def validate_audio_cpp_managed_settings(values: Mapping[str, object]) -> None:
                 "managed_setup_source",
                 "Review the Guided audio.cpp settings.",
             ) from None
-        try:
-            binary = validate_path_simple(
-                config.guided_binary_path,
-                require_exists=True,
-            )
-            info = binary.stat()
-            executable = (
-                binary.is_absolute()
-                and stat.S_ISREG(info.st_mode)
-                and os.access(binary, os.X_OK)
-            )
-        except OSError:
-            executable = False
+        executable = _validate_binary(config.guided_binary_path) is not None
         if not executable:
             raise GlobalSpeechTTSValidationError(
                 "audio_cpp",

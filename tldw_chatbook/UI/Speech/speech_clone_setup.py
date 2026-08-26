@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import os
+
 from textual.app import ComposeResult
 from textual.containers import Horizontal, Vertical
 from textual.css.query import NoMatches
@@ -9,6 +11,9 @@ from textual.widgets import Button, Static, TextArea
 
 from tldw_chatbook.TTS import AudioCppCloneSetupProjection
 from tldw_chatbook.TTS.profile_reference_types import MAX_REFERENCE_TEXT_CHARACTERS
+from tldw_chatbook.TTS.windows_artifact_fs import (
+    windows_audio_cpp_platform_supported,
+)
 from .audio_cpp_runtime_card import AudioCppCloneDraftState
 
 
@@ -53,8 +58,7 @@ class SpeechCloneSetup(Vertical):
             markup=False,
         )
         yield Static(
-            "Reference audio and transcript remain local plaintext while in use. "
-            "Filesystem permissions are not encryption; deletion is best effort.",
+            self._privacy_copy(),
             id="speech-clone-privacy",
             classes="speech-clone-privacy",
             markup=False,
@@ -106,6 +110,27 @@ class SpeechCloneSetup(Vertical):
                 classes="workbench-action",
                 compact=True,
             )
+
+    @staticmethod
+    def _privacy_copy() -> str:
+        if windows_audio_cpp_platform_supported():
+            return (
+                "Operation-scoped reference audio and transcript remain local "
+                "plaintext and are account protected while in use. Administrators "
+                "and SYSTEM retain access; this is not encryption. Deletion is "
+                "best effort."
+            )
+        if os.name == "nt":
+            return (
+                "Reference audio and transcript remain local plaintext while in "
+                "use. Windows account protection is not verified; deletion is "
+                "best effort."
+            )
+        return (
+            "Reference audio and transcript remain local plaintext while in use. "
+            "Owner-only filesystem permissions are not encryption; deletion is "
+            "best effort."
+        )
 
     @staticmethod
     def _transcript_guidance(transcript: str) -> str:

@@ -70,6 +70,9 @@ from tldw_chatbook.TTS.audio_cpp_recipes import (
     AudioCppMatchState,
     AudioCppReferenceRequirement,
 )
+from tldw_chatbook.TTS.windows_artifact_fs import (
+    windows_audio_cpp_platform_supported,
+)
 from tldw_chatbook.Third_Party.textual_fspicker import (
     FileOpen,
     Filters,
@@ -163,7 +166,14 @@ _LANGUAGE_OPTIONS = [
 LeaveChoice = Literal["save", "discard", "cancel"]
 _GLOBAL_SPEECH_TTS_STACK_WIDTH = 104
 _COLLAPSIBLE_TITLE_FOCUS_SUFFIX = "::collapsible-title"
-_AUDIO_CPP_MANAGED_UI_SUPPORTED = os.name != "nt"
+
+
+def _audio_cpp_managed_ui_supported(*, platform_name: str | None = None) -> bool:
+    selected_platform = os.name if platform_name is None else platform_name
+    return selected_platform != "nt" or windows_audio_cpp_platform_supported()
+
+
+_AUDIO_CPP_MANAGED_UI_SUPPORTED = _audio_cpp_managed_ui_supported()
 _AUDIO_CPP_MANAGED_FIELD_IDS = frozenset(
     {
         "managed_binary_path",
@@ -2661,7 +2671,7 @@ class SpeechTTSSettingsPanel(Vertical):
                 elif configured_mode == "managed":
                     mode_options.append(
                         (
-                            "Managed local server (unavailable on Windows)",
+                            "Managed local server (unsupported on this Windows host)",
                             "managed",
                         )
                     )
@@ -2673,8 +2683,9 @@ class SpeechTTSSettingsPanel(Vertical):
                 )
                 if not _AUDIO_CPP_MANAGED_UI_SUPPORTED:
                     yield Static(
-                        "Managed local server is unavailable on Windows until its "
-                        "native process lifecycle is qualified. Use External server.",
+                        "Managed local server requires Windows 10 or later, x86 or "
+                        "x64, and Python 3.12 or later. Windows ARM is not supported. "
+                        "Use External server on this host.",
                         id="settings-speech-audio-cpp-managed-platform-notice",
                         classes="settings-status-row",
                         markup=False,
@@ -2714,6 +2725,16 @@ class SpeechTTSSettingsPanel(Vertical):
                         "file only after a deliberate Speech Lab, Console, or "
                         "Roleplay speech action. Review and trust the binary first.",
                         id="settings-speech-audio-cpp-managed-trust",
+                        classes="settings-status-row",
+                        markup=False,
+                    )
+                    yield Static(
+                        "Generated Guided launch files are local plaintext, not "
+                        "encryption. On supported Windows, account protection "
+                        "will be applied; administrators and SYSTEM retain access. "
+                        "Applied protection is reported only after launch-time "
+                        "verification.",
+                        id="settings-speech-audio-cpp-managed-privacy",
                         classes="settings-status-row",
                         markup=False,
                     )
@@ -4805,8 +4826,8 @@ class SpeechTTSSettingsPanel(Vertical):
             self.state.providers["audio_cpp"]["mode"] = "external"
             self._apply_audio_cpp_mode_visibility()
             self._set_result(
-                "Managed local server is unavailable on Windows. Use External "
-                "server instead.",
+                "Managed local server requires Windows 10 or later, x86 or x64, "
+                "and Python 3.12 or later. Use External server on this host.",
                 severity="warning",
             )
             return

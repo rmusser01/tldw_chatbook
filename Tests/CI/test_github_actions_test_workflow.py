@@ -9,6 +9,24 @@ ARTIFACT_LEASE_TEST_TARGETS = (
     "Tests/Model_Artifacts/test_operation_leases.py",
     "Tests/Model_Artifacts/test_operation_leases_process.py",
 )
+WINDOWS_AUDIO_CPP_TEST_TARGETS = (
+    "Tests/TTS/test_windows_artifact_fs.py",
+    "Tests/TTS/test_audio_cpp_package_scanner.py",
+    "Tests/TTS/test_audio_cpp_guided_launch.py",
+    "Tests/TTS/test_profile_reference_materialization_windows.py",
+    "Tests/TTS/test_audio_cpp_supervisor.py",
+    "Tests/TTS/test_audio_cpp_recipes.py",
+    "Tests/TTS/test_audio_cpp_managed_config.py",
+    "Tests/TTS/test_audio_cpp_windows_uat_harness.py",
+    "Tests/UI/test_settings_speech_tts_panel.py::test_windows_managed_ui_gate_uses_shared_platform_capability",
+    "Tests/UI/test_settings_speech_tts_panel.py::test_supported_windows_offers_managed_mode_with_bounded_privacy_copy",
+    "Tests/UI/test_speech_playground_pane_lifecycle.py::test_ready_clone_model_mounts_and_canonicalizes_path_free_setup",
+    "Tests/UI/test_speech_playground_pane_lifecycle.py::test_audio_cpp_runtime_projection_reports_exact_artifact_privacy_posture",
+    "Tests/UI/test_speech_playground_pane_lifecycle.py::test_server_shutdown_is_distinct_from_playback_stop_and_does_not_restart",
+    "Tests/TTS/test_stts_audio_cpp_generation.py::test_audio_cpp_native_generation_consumes_and_closes_one_wav_response",
+    "Tests/TTS/test_stts_audio_cpp_generation.py::test_audio_cpp_native_generation_propagates_cancellation_and_closes",
+    "Tests/TTS/test_stts_audio_cpp_generation.py::test_native_local_failures_use_fixed_recovery_copy",
+)
 
 
 def _workflow_text() -> str:
@@ -62,6 +80,13 @@ def _artifact_lease_shape_job_block() -> str:
     return workflow[start:end]
 
 
+def _windows_audio_cpp_job_block() -> str:
+    workflow = _workflow_text()
+    start = workflow.index("  windows-audio-cpp:")
+    end = workflow.index("  ui-tests:", start)
+    return workflow[start:end]
+
+
 def _artifact_lease_gate_job_block() -> str:
     workflow = _workflow_text()
     start = workflow.index("  artifact-lease-gate:")
@@ -91,7 +116,7 @@ def _pytest_invocations(block: str) -> list[list[str]]:
         if command != "pytest" and not command.startswith("pytest "):
             continue
 
-        while command.endswith("\\"):
+        while command.endswith(("\\", "`")):
             command = f"{command[:-1].rstrip()} {next(lines).strip()}"
         pytest_invocations.append(shlex.split(command))
 
@@ -167,8 +192,8 @@ def test_ci_exercises_mcp_against_minimum_textual() -> None:
     assert "Tests/UI/test_mcp_workbench.py" in textual_minimum
     assert "Tests/UI/test_mcp_tools_mode.py" in textual_minimum
     assert (
-        "needs: [core-tests, ui-tests, textual-minimum, artifact-lease-gate]"
-        in test_summary
+        "needs: [core-tests, ui-tests, textual-minimum, artifact-lease-gate, "
+        "windows-audio-cpp]" in test_summary
     )
 
 
@@ -242,6 +267,34 @@ def test_artifact_lease_gate_exposes_stable_required_context() -> None:
     )
     assert "exit 1" in gate
     assert "artifact-lease-gate" in test_summary
+
+
+def test_windows_audio_cpp_lifecycle_is_a_required_hermetic_x86_x64_gate() -> None:
+    block = _windows_audio_cpp_job_block()
+    summary = _test_summary_job_block()
+
+    assert "runs-on: windows-latest" in block
+    assert 'python-version: "3.12"' in block
+    assert "architecture: [x86, x64]" in block
+    assert "architecture: ${{ matrix.architecture }}" in block
+    assert "timeout-minutes:" in block
+    assert "shell: pwsh" in block
+    assert "[System.Management.Automation.Language.Parser]::ParseFile" in block
+    assert "pip install -e ." in block
+    assert "pip install pytest pytest-asyncio pytest-timeout" in block
+    assert "requirements-test.txt" not in block
+    assert "requirements.txt" not in block
+    assert "curl" not in block.casefold()
+    assert "invoke-webrequest" not in block.casefold()
+    assert "download" not in block.casefold()
+    invocations = _pytest_invocations(block)
+    assert len(invocations) == 1
+    assert (
+        tuple(token for token in invocations[0][1:] if token.startswith("Tests/"))
+        == WINDOWS_AUDIO_CPP_TEST_TARGETS
+    )
+    assert "--timeout=180" in invocations[0]
+    assert "windows-audio-cpp" in summary
 
 
 def test_pr_gate_shards_cover_the_whole_tree_in_parallel() -> None:

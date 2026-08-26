@@ -2110,7 +2110,68 @@ async def test_panel_does_not_offer_unqualified_managed_mode_on_windows(
             ).render()
         ).lower()
         assert "windows" in notice
+        assert "x86" in notice
+        assert "python 3.12" in notice
         assert "external" in notice
+
+
+def test_windows_managed_ui_gate_uses_shared_platform_capability(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(
+        speech_tts_settings_panel_module,
+        "windows_audio_cpp_platform_supported",
+        lambda: True,
+    )
+    assert (
+        speech_tts_settings_panel_module._audio_cpp_managed_ui_supported(
+            platform_name="nt"
+        )
+        is True
+    )
+    monkeypatch.setattr(
+        speech_tts_settings_panel_module,
+        "windows_audio_cpp_platform_supported",
+        lambda: False,
+    )
+    assert (
+        speech_tts_settings_panel_module._audio_cpp_managed_ui_supported(
+            platform_name="nt"
+        )
+        is False
+    )
+    assert (
+        speech_tts_settings_panel_module._audio_cpp_managed_ui_supported(
+            platform_name="posix"
+        )
+        is True
+    )
+
+
+@pytest.mark.asyncio
+async def test_supported_windows_offers_managed_mode_with_bounded_privacy_copy(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(
+        speech_tts_settings_panel_module,
+        "_AUDIO_CPP_MANAGED_UI_SUPPORTED",
+        True,
+    )
+    app = _PanelHarness(configure_provider="audio_cpp")
+
+    async with app.run_test(size=(150, 60)):
+        mode = app.query_one("#settings-speech-audio_cpp-mode", Select)
+        assert [value for _label, value in mode._options] == ["external", "managed"]
+        privacy = str(
+            app.query_one(
+                "#settings-speech-audio-cpp-managed-privacy",
+                Static,
+            ).render()
+        ).lower()
+        assert "will be applied" in privacy
+        assert "administrators and system retain access" in privacy
+        assert "plaintext" in privacy
+        assert "not encryption" in privacy
 
 
 @pytest.mark.asyncio

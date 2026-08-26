@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import hashlib
 import os
 import re
 import stat
@@ -23,6 +24,15 @@ from tldw_chatbook.TTS.profile_reference_types import (
 )
 from tldw_chatbook.Utils.private_paths import secure_private_directory
 
+from .windows_artifact_fs import (
+    OS_WINDOWS_ARTIFACT_FILESYSTEM,
+    WindowsArtifactFilesystem,
+    WindowsFileIdentity,
+    WindowsPinnedHandle,
+    take_windows_artifact_cleanup_owner,
+    windows_audio_cpp_platform_supported,
+)
+
 _NOFOLLOW = getattr(os, "O_NOFOLLOW", 0)
 _DIRECTORY = getattr(os, "O_DIRECTORY", 0)
 _CLOEXEC = getattr(os, "O_CLOEXEC", 0)
@@ -41,6 +51,9 @@ _OWNER_PATTERN: Final = re.compile(r"clone-v1-[0-9a-f]{32}\Z")
 _ASSET_PATTERN: Final = re.compile(r"asset-[0-9a-f]{32}\.wav\Z")
 _HANDLE_TOKEN = object()
 _T = TypeVar("_T")
+_windows_artifact_filesystem: WindowsArtifactFilesystem | None = (
+    OS_WINDOWS_ARTIFACT_FILESYSTEM if windows_audio_cpp_platform_supported() else None
+)
 
 
 class TTSCloneMaterializationError(RuntimeError):
@@ -76,6 +89,87 @@ class _MaterializationRecord:
     lock_identity: tuple[int, int]
 
 
+@dataclass(slots=True)
+class _WindowsMaterializationRecord:
+    filesystem: WindowsArtifactFilesystem
+    owner_name: str
+    asset_name: str
+    asset_path: Path
+    root_handle: WindowsPinnedHandle
+    owner_handle: WindowsPinnedHandle
+    lock_handle: WindowsPinnedHandle
+    asset_handle: WindowsPinnedHandle
+    root_identity: WindowsFileIdentity
+    owner_identity: WindowsFileIdentity
+    asset_identity: WindowsFileIdentity
+    lock_identity: WindowsFileIdentity
+    asset_size: int
+    asset_sha256: str
+    cleanup_started: bool = False
+    asset_removed: bool = False
+    lock_released: bool = False
+    lock_removed: bool = False
+    owner_removed: bool = False
+    root_closed: bool = False
+
+
+_OwnedMaterializationRecord = _MaterializationRecord | _WindowsMaterializationRecord
+
+
+@dataclass(slots=True)
+class _WindowsPartialCleanup:
+    root_handle: WindowsPinnedHandle | None
+    owner_handle: WindowsPinnedHandle | None
+    lock_handle: WindowsPinnedHandle | None
+    asset_handle: WindowsPinnedHandle | None
+    extras: list[WindowsPinnedHandle]
+    lock_released: bool = False
+
+    def cleanup(self) -> None:
+        """Retire only the exact partially-created objects, retaining failures."""
+
+        retained_extras: list[WindowsPinnedHandle] = []
+        for handle in self.extras:
+            try:
+                handle.close()
+            except Exception:
+                retained_extras.append(handle)
+        self.extras = retained_extras
+        if self.asset_handle is not None:
+            self.asset_handle.delete_exact()
+            self.asset_handle.close()
+            self.asset_handle = None
+        if self.lock_handle is not None:
+            if not self.lock_released:
+                self.lock_handle.unlock()
+                self.lock_released = True
+            self.lock_handle.delete_exact()
+            self.lock_handle.close()
+            self.lock_handle = None
+        if self.owner_handle is not None:
+            self.owner_handle.delete_exact()
+            self.owner_handle.close()
+            self.owner_handle = None
+        if self.root_handle is not None:
+            self.root_handle.close()
+            self.root_handle = None
+        if self.extras:
+            raise OSError("partial cleanup incomplete")
+
+
+class _WindowsPartialCleanupFailure(RuntimeError):
+    __slots__ = ("cleanup", "primary")
+
+    def __init__(
+        self,
+        cleanup: _WindowsPartialCleanup,
+        primary: BaseException,
+    ) -> None:
+        super().__init__("Windows clone cleanup is incomplete")
+        self.cleanup = cleanup
+        self.primary = primary
+
+
 class TTSCloneReferenceMaterialization:
     """An opaque live owner of one materialized clone reference."""
 
@@ -85,7 +179,7 @@ class TTSCloneReferenceMaterialization:
         self,
         token: object,
         materializer: TTSCloneReferenceMaterializer,
-        record: _MaterializationRecord,
+        record: _OwnedMaterializationRecord,
         reference_text: str,
     ) -> None:
         if token is not _HANDLE_TOKEN:
@@ -130,11 +224,12 @@ class TTSCloneReferenceMaterializer:
         self._sweep_lock = asyncio.Lock()
         self._cleanup_lock = asyncio.Lock()
         self._sweep_complete = False
-        self._root_identity: tuple[int, int] | None = None
+        self._root_identity: tuple[int, int] | WindowsFileIdentity | None = None
         self._worker_tasks: set[asyncio.Task[object]] = set()
         self._materialize_calls: set[asyncio.Task[object]] = set()
         self._handle_calls: set[asyncio.Task[object]] = set()
         self._active: dict[object, TTSCloneReferenceMaterialization] = {}
+        self._pending_windows_cleanup: list[_WindowsPartialCleanup] = []
 
     async def materialize(
         self,
@@ -157,15 +252,16 @@ class TTSCloneReferenceMaterializer:
         call = cast(asyncio.Task[object] | None, asyncio.current_task())
         if call is not None:
             self._materialize_calls.add(call)
-        record: _MaterializationRecord | None = None
+        record: _OwnedMaterializationRecord | None = None
         try:
             if self._closed:
                 raise TTSCloneMaterializationError("closed")
-            if not _POSIX_SUPPORTED:
+            if not _POSIX_SUPPORTED and _windows_artifact_filesystem is None:
                 raise TTSCloneMaterializationError("unsupported")
             if type(reference) not in (TTSCloneReference, CanonicalTTSCloneReference):
                 raise TTSCloneMaterializationError("unavailable")
 
+            await self._drain_pending_windows_cleanup()
             await self._ensure_swept()
             if self._closed:
                 raise TTSCloneMaterializationError("closed")
@@ -179,20 +275,15 @@ class TTSCloneReferenceMaterializer:
             cancelled, result, failure = await _await_retained_result(worker)
             self._worker_tasks.discard(worker)
             if failure is not None:
+                if isinstance(failure, _WindowsPartialCleanupFailure):
+                    self._pending_windows_cleanup.append(failure.cleanup)
+                    if _is_control_flow(failure.primary):
+                        raise failure.primary
+                    raise TTSCloneMaterializationError("cleanup_failed") from None
                 if _is_control_flow(failure):
                     raise failure
                 raise TTSCloneMaterializationError("unavailable") from None
-            record = cast(_MaterializationRecord, result)
-
-            if cancelled is not None or self._closed:
-                cleanup = self._start_worker(_cleanup_materialization_sync, record)
-                _, _, cleanup_failure = await _await_retained_result(cleanup)
-                self._worker_tasks.discard(cleanup)
-                if cleanup_failure is not None:
-                    _abandon_record(record)
-                if cancelled is not None:
-                    raise cancelled
-                raise TTSCloneMaterializationError("closed")
+            record = cast(_OwnedMaterializationRecord, result)
 
             handle = TTSCloneReferenceMaterialization(
                 _HANDLE_TOKEN,
@@ -201,6 +292,19 @@ class TTSCloneReferenceMaterializer:
                 reference.reference_text,
             )
             self._active[handle._token] = handle
+
+            if cancelled is not None or self._closed:
+                cleanup = self._start_worker(_cleanup_materialization_sync, record)
+                _, _, cleanup_failure = await _await_retained_result(cleanup)
+                self._worker_tasks.discard(cleanup)
+                if cleanup_failure is None:
+                    self._active.pop(handle._token, None)
+                if cancelled is not None:
+                    raise cancelled
+                if cleanup_failure is not None and _is_control_flow(cleanup_failure):
+                    raise cleanup_failure
+                raise TTSCloneMaterializationError("closed")
+
             return handle
         finally:
             if call is not None:
@@ -216,13 +320,31 @@ class TTSCloneReferenceMaterializer:
             if cancelled is not None:
                 raise cancelled
             if failure is not None:
+                if isinstance(failure, _WindowsPartialCleanupFailure):
+                    self._pending_windows_cleanup.append(failure.cleanup)
+                    if _is_control_flow(failure.primary):
+                        raise failure.primary
+                    raise TTSCloneMaterializationError("cleanup_failed") from None
+                cleanup_owner = take_windows_artifact_cleanup_owner(failure)
+                if cleanup_owner is not None:
+                    self._pending_windows_cleanup.append(
+                        _WindowsPartialCleanup(
+                            root_handle=None,
+                            owner_handle=None,
+                            lock_handle=None,
+                            asset_handle=None,
+                            extras=[cleanup_owner],
+                            lock_released=True,
+                        )
+                    )
+                    raise TTSCloneMaterializationError("cleanup_failed") from None
                 if _is_control_flow(failure):
                     raise failure
                 raise TTSCloneMaterializationError("unavailable") from None
             if self._closed:
                 raise TTSCloneMaterializationError("closed")
             self._root, self._root_identity = cast(
-                tuple[Path, tuple[int, int]], prepared_root
+                tuple[Path, tuple[int, int] | WindowsFileIdentity], prepared_root
             )
             self._sweep_complete = True
 
@@ -242,10 +364,13 @@ class TTSCloneReferenceMaterializer:
         if self._close_task is None:
             self.seal()
             self._close_task = asyncio.create_task(self._complete_close())
-        cancelled, _, failure = await _await_retained_result(self._close_task)
+        close_task = self._close_task
+        cancelled, _, failure = await _await_retained_result(close_task)
         if cancelled is not None:
             raise cancelled
         if failure is not None:
+            if self._close_task is close_task:
+                self._close_task = None
             if _is_control_flow(failure):
                 raise failure
             raise TTSCloneMaterializationError("cleanup_failed") from None
@@ -267,6 +392,16 @@ class TTSCloneReferenceMaterializer:
         failed = False
         control_flow: BaseException | None = None
         async with self._cleanup_lock:
+            for cleanup in tuple(self._pending_windows_cleanup):
+                worker = self._start_worker(cleanup.cleanup)
+                _, _, failure = await _await_retained_result(worker)
+                self._worker_tasks.discard(worker)
+                if failure is None:
+                    self._pending_windows_cleanup.remove(cleanup)
+                else:
+                    failed = True
+                    if _is_control_flow(failure) and control_flow is None:
+                        control_flow = failure
             for handle in tuple(self._active.values()):
                 record = handle._record
                 worker = self._start_worker(_cleanup_materialization_sync, record)
@@ -278,12 +413,28 @@ class TTSCloneReferenceMaterializer:
                     failed = True
                     if _is_control_flow(failure) and control_flow is None:
                         control_flow = failure
-                    _abandon_record(record)
-                    self._active.pop(handle._token, None)
         if control_flow is not None:
             raise control_flow
         if failed:
             raise TTSCloneMaterializationError("cleanup_failed")
+
+    async def _drain_pending_windows_cleanup(self) -> None:
+        async with self._cleanup_lock:
+            failed = False
+            for cleanup in tuple(self._pending_windows_cleanup):
+                worker = self._start_worker(cleanup.cleanup)
+                cancelled, _, failure = await _await_retained_result(worker)
+                self._worker_tasks.discard(worker)
+                if failure is None:
+                    self._pending_windows_cleanup.remove(cleanup)
+                else:
+                    failed = True
+                    if _is_control_flow(failure):
+                        raise failure
+                if cancelled is not None:
+                    raise cancelled
+            if failed:
+                raise TTSCloneMaterializationError("cleanup_failed")
 
     async def _close_handle(self, handle: TTSCloneReferenceMaterialization) -> None:
         call = cast(asyncio.Task[object] | None, asyncio.current_task())
@@ -383,7 +534,7 @@ def _identity(info: os.stat_result) -> tuple[int, int]:
 
 
 def _is_control_flow(error: BaseException) -> bool:
-    return isinstance(error, (asyncio.CancelledError, KeyboardInterrupt, SystemExit))
+    return not isinstance(error, Exception)
 
 
 def _private_directory(info: os.stat_result) -> bool:
@@ -437,6 +588,25 @@ def _unlock(descriptor: int) -> None:
 
 
 def _create_materialization_sync(
+    root: Path,
+    expected_root_identity: tuple[int, int] | WindowsFileIdentity | None,
+    wav_bytes: bytes,
+) -> _OwnedMaterializationRecord:
+    if _windows_artifact_filesystem is not None:
+        return _create_windows_materialization_sync(
+            _windows_artifact_filesystem,
+            root,
+            cast(WindowsFileIdentity | None, expected_root_identity),
+            wav_bytes,
+        )
+    return _create_posix_materialization_sync(
+        root,
+        cast(tuple[int, int] | None, expected_root_identity),
+        wav_bytes,
+    )
+
+
+def _create_posix_materialization_sync(
     root: Path,
     expected_root_identity: tuple[int, int] | None,
     wav_bytes: bytes,
@@ -565,7 +735,13 @@ def _create_materialization_sync(
         raise
 
 
-def _validate_materialization_sync(record: _MaterializationRecord) -> Path:
+def _validate_materialization_sync(record: _OwnedMaterializationRecord) -> Path:
+    if isinstance(record, _WindowsMaterializationRecord):
+        return _validate_windows_materialization_sync(record.filesystem, record)
+    return _validate_posix_materialization_sync(record)
+
+
+def _validate_posix_materialization_sync(record: _MaterializationRecord) -> Path:
     root_info = os.fstat(record.root_fd)
     named_root_info = os.stat(
         record.asset_path.parent.parent,
@@ -627,7 +803,15 @@ def _validate_materialization_sync(record: _MaterializationRecord) -> Path:
     return record.asset_path
 
 
-def _prepare_runtime_root_sync(root: Path) -> tuple[Path, tuple[int, int]]:
+def _prepare_runtime_root_sync(
+    root: Path,
+) -> tuple[Path, tuple[int, int] | WindowsFileIdentity]:
+    if _windows_artifact_filesystem is not None:
+        return _prepare_windows_runtime_root_sync(_windows_artifact_filesystem, root)
+    return _prepare_posix_runtime_root_sync(root)
+
+
+def _prepare_posix_runtime_root_sync(root: Path) -> tuple[Path, tuple[int, int]]:
     result = secure_private_directory(root, create=True, application_owned=True)
     selected = result.lexical_path
     root_fd = os.open(selected, _DIRECTORY_FLAGS)
@@ -737,7 +921,294 @@ def _sweep_orphans(root_fd: int) -> None:
                 os.close(owner_fd)
 
 
-def _cleanup_materialization_sync(record: _MaterializationRecord) -> None:
+def _prepare_windows_runtime_root_sync(
+    filesystem: WindowsArtifactFilesystem,
+    root: Path,
+) -> tuple[Path, WindowsFileIdentity]:
+    root.parent.mkdir(parents=True, exist_ok=True)
+    root_handle = (
+        filesystem.protect_private_directory(root)
+        if root.exists()
+        else filesystem.create_private_directory(root)
+    )
+    try:
+        if (
+            root_handle.identity.kind != "directory"
+            or root_handle.identity.reparse_tag
+            or not root_handle.verify_private_acl()
+        ):
+            raise OSError("unsafe runtime root")
+        _sweep_windows_orphans(filesystem, root, root_handle.identity)
+        return root, root_handle.identity
+    finally:
+        root_handle.close()
+
+
+def _sweep_windows_orphans(
+    filesystem: WindowsArtifactFilesystem,
+    root: Path,
+    root_identity: WindowsFileIdentity,
+) -> None:
+    """Remove only recognized, unlocked, completely pinned orphan owners."""
+
+    for owner_path in tuple(root.iterdir()):
+        if _OWNER_PATTERN.fullmatch(owner_path.name) is None:
+            continue
+        owner_handle: WindowsPinnedHandle | None = None
+        lock_handle: WindowsPinnedHandle | None = None
+        asset_handle: WindowsPinnedHandle | None = None
+        locked = False
+        try:
+            root_check = filesystem.pin_directory_no_reparse(root)
+            try:
+                if root_check.identity != root_identity:
+                    continue
+            finally:
+                root_check.close()
+            owner_handle = filesystem.pin_directory_no_reparse(owner_path)
+            if not owner_handle.verify_private_acl():
+                continue
+            entries = tuple(owner_path.iterdir())
+            names = {entry.name for entry in entries}
+            assets = tuple(
+                entry for entry in entries if _ASSET_PATTERN.fullmatch(entry.name)
+            )
+            if not entries:
+                owner_handle.delete_exact()
+                owner_handle.close()
+                owner_handle = None
+                continue
+            if (
+                "owner.lock" not in names
+                or len(assets) > 1
+                or names != {"owner.lock", *(entry.name for entry in assets)}
+            ):
+                continue
+            lock_handle = filesystem.open_file_no_reparse(
+                owner_path / "owner.lock", writable=True
+            )
+            if not lock_handle.verify_private_acl():
+                continue
+            try:
+                lock_handle.lock_exclusive_nonblocking()
+                locked = True
+            except Exception as error:
+                if getattr(error, "code", None) == "busy":
+                    continue
+                raise
+            if assets:
+                asset_handle = filesystem.open_file_no_reparse(assets[0])
+                if not asset_handle.verify_private_acl():
+                    continue
+                asset_handle.delete_exact()
+                asset_handle.close()
+                asset_handle = None
+            lock_handle.unlock()
+            locked = False
+            lock_handle.delete_exact()
+            lock_handle.close()
+            lock_handle = None
+            owner_handle.delete_exact()
+            owner_handle.close()
+            owner_handle = None
+        except Exception:
+            continue
+        finally:
+            if locked and lock_handle is not None:
+                try:
+                    lock_handle.unlock()
+                except Exception:
+                    pass
+            for handle in (asset_handle, lock_handle, owner_handle):
+                if handle is not None:
+                    try:
+                        handle.close()
+                    except Exception:
+                        pass
+
+
+def _create_windows_materialization_sync(
+    filesystem: WindowsArtifactFilesystem,
+    root: Path,
+    expected_root_identity: WindowsFileIdentity | None,
+    wav_bytes: bytes,
+) -> _WindowsMaterializationRecord:
+    root_handle = filesystem.pin_directory_no_reparse(root)
+    owner_handle: WindowsPinnedHandle | None = None
+    lock_handle: WindowsPinnedHandle | None = None
+    asset_handle: WindowsPinnedHandle | None = None
+    extras: list[WindowsPinnedHandle] = []
+    lock_acquired = False
+    owner_name = ""
+    asset_name = ""
+    try:
+        if (
+            expected_root_identity is None
+            or root_handle.identity != expected_root_identity
+            or not root_handle.verify_private_acl()
+        ):
+            raise OSError("unsafe runtime root")
+        for _ in range(16):
+            owner_name = f"clone-v1-{token_hex(16)}"
+            try:
+                owner_handle = filesystem.create_private_directory(root / owner_name)
+                break
+            except Exception as error:
+                if getattr(error, "code", None) != "unavailable":
+                    raise
+        if owner_handle is None:
+            raise OSError("could not allocate owner")
+        if not owner_handle.verify_private_acl():
+            raise OSError("unsafe owner")
+
+        lock_handle = filesystem.create_private_file(
+            root / owner_name / "owner.lock",
+            b"",
+        )
+        if not lock_handle.verify_private_acl():
+            raise OSError("unsafe lock")
+        lock_handle.lock_exclusive_nonblocking()
+        lock_acquired = True
+
+        asset_name = f"asset-{token_hex(16)}.wav"
+        asset_handle = filesystem.create_private_file(
+            root / owner_name / asset_name,
+            wav_bytes,
+            read_only=True,
+        )
+        if not asset_handle.verify_private_acl():
+            raise OSError("unsafe asset")
+        if {path.name for path in (root / owner_name).iterdir()} != {
+            "owner.lock",
+            asset_name,
+        }:
+            raise OSError("unsafe owner entries")
+        return _WindowsMaterializationRecord(
+            filesystem=filesystem,
+            owner_name=owner_name,
+            asset_name=asset_name,
+            asset_path=root / owner_name / asset_name,
+            root_handle=root_handle,
+            owner_handle=owner_handle,
+            lock_handle=lock_handle,
+            asset_handle=asset_handle,
+            root_identity=root_handle.identity,
+            owner_identity=owner_handle.identity,
+            lock_identity=lock_handle.identity,
+            asset_identity=asset_handle.identity,
+            asset_size=len(wav_bytes),
+            asset_sha256=hashlib.sha256(wav_bytes).hexdigest(),
+        )
+    except BaseException as error:
+        attached = take_windows_artifact_cleanup_owner(error)
+        if attached is not None:
+            extras.append(attached)
+        cleanup = _WindowsPartialCleanup(
+            root_handle=root_handle,
+            owner_handle=owner_handle,
+            lock_handle=lock_handle,
+            asset_handle=asset_handle,
+            extras=extras,
+            lock_released=not lock_acquired,
+        )
+        try:
+            cleanup.cleanup()
+        except BaseException as cleanup_error:
+            if _is_control_flow(cleanup_error):
+                raise _WindowsPartialCleanupFailure(cleanup, cleanup_error) from None
+            raise _WindowsPartialCleanupFailure(cleanup, error) from None
+        raise error
+
+
+def _open_matching_windows_handle(
+    filesystem: WindowsArtifactFilesystem,
+    path: Path,
+    expected: WindowsFileIdentity,
+) -> None:
+    handle = (
+        filesystem.pin_directory_no_reparse(path)
+        if expected.kind == "directory"
+        else filesystem.open_file_no_reparse(path)
+    )
+    try:
+        if handle.identity != expected or not handle.verify_private_acl():
+            raise OSError("owned materialization changed")
+    finally:
+        handle.close()
+
+
+def _validate_windows_materialization_sync(
+    filesystem: WindowsArtifactFilesystem,
+    record: _WindowsMaterializationRecord,
+) -> Path:
+    if record.cleanup_started:
+        raise OSError("owned materialization is closing")
+    for handle, expected in (
+        (record.root_handle, record.root_identity),
+        (record.owner_handle, record.owner_identity),
+        (record.lock_handle, record.lock_identity),
+        (record.asset_handle, record.asset_identity),
+    ):
+        if handle.identity != expected or not handle.verify_private_acl():
+            raise OSError("owned materialization changed")
+    _open_matching_windows_handle(
+        filesystem, record.asset_path.parent.parent, record.root_identity
+    )
+    _open_matching_windows_handle(
+        filesystem, record.asset_path.parent, record.owner_identity
+    )
+    _open_matching_windows_handle(
+        filesystem, record.asset_path.parent / "owner.lock", record.lock_identity
+    )
+    _open_matching_windows_handle(filesystem, record.asset_path, record.asset_identity)
+    if {path.name for path in record.asset_path.parent.iterdir()} != {
+        "owner.lock",
+        record.asset_name,
+    }:
+        raise OSError("owned materialization changed")
+    data = record.asset_handle.read(record.asset_size + 1)
+    if (
+        len(data) != record.asset_size
+        or hashlib.sha256(data).hexdigest() != record.asset_sha256
+    ):
+        raise OSError("owned materialization changed")
+    return record.asset_path
+
+
+def _cleanup_windows_materialization_sync(
+    record: _WindowsMaterializationRecord,
+) -> None:
+    if not record.cleanup_started:
+        _validate_windows_materialization_sync(record.filesystem, record)
+        record.cleanup_started = True
+    if not record.asset_removed:
+        record.asset_handle.delete_exact()
+        record.asset_handle.close()
+        record.asset_removed = True
+    if not record.lock_released:
+        record.lock_handle.unlock()
+        record.lock_released = True
+    if not record.lock_removed:
+        record.lock_handle.delete_exact()
+        record.lock_handle.close()
+        record.lock_removed = True
+    if not record.owner_removed:
+        record.owner_handle.delete_exact()
+        record.owner_handle.close()
+        record.owner_removed = True
+    if not record.root_closed:
+        record.root_handle.close()
+        record.root_closed = True
+
+
+def _cleanup_materialization_sync(record: _OwnedMaterializationRecord) -> None:
+    if isinstance(record, _WindowsMaterializationRecord):
+        _cleanup_windows_materialization_sync(record)
+        return
+    _cleanup_posix_materialization_sync(record)
+
+
+def _cleanup_posix_materialization_sync(record: _MaterializationRecord) -> None:
     root_info = os.fstat(record.root_fd)
     if _identity(root_info) != record.root_identity or not _private_directory(
         root_info
@@ -804,7 +1275,9 @@ def _cleanup_materialization_sync(record: _MaterializationRecord) -> None:
     _abandon_record(record)
 
 
-def _abandon_record(record: _MaterializationRecord) -> None:
+def _abandon_record(record: _OwnedMaterializationRecord) -> None:
+    if isinstance(record, _WindowsMaterializationRecord):
+        return
     for descriptor in (record.lock_fd, record.owner_fd, record.root_fd):
         try:
             os.close(descriptor)
