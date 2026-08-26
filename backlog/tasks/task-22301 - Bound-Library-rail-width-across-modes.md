@@ -1,17 +1,19 @@
 ---
 id: TASK-22301
 title: Bound Library rail width across modes
-status: To Do
-assignee: []
+status: In Progress
+assignee:
+  - '@codex'
 created_date: '2026-08-26 03:31'
+updated_date: '2026-08-26 05:05'
 labels:
   - library
   - ux
   - layout
 dependencies: []
-priority: high
 references:
   - Docs/superpowers/specs/2026-08-25-library-rail-bounded-width-design.md
+priority: high
 ---
 
 ## Description
@@ -30,3 +32,19 @@ Keep the persistent Library navigation rail visually stable across every Library
 - [ ] #6 Production-styled tests cover the exact projection and sub-24 escape oracles, wide/compact box-model inputs, initial/settled mount, every enumerated route and state-aware emergency return, Notes Navigator/work/explicit-priority adaptive branches, scoped recompose, equality-guarded live resize, custom compression/restoration boundaries, and specified 235-, 170-, 120-, 100-, 80-, and 60-column geometry states without resize-time data/config work.
 - [ ] #7 Library Settings copy, defaults, ADR-086, the adaptive-reader design, and user documentation describe bounded fractional defaults separately from explicit 24–48-cell custom widths.
 <!-- AC:END -->
+
+## Implementation Plan
+
+<!-- SECTION:PLAN:BEGIN -->
+1. Add a pure shared 3:13 bounded rail-width policy and exact custom-width resolver.
+2. Make adaptive readers consume one projected or custom requested rail width in every branch.
+3. Apply reversible equality-guarded ordinary rail contracts from one normalized settings snapshot.
+4. Add the route-general below-64 single-stage layout and one guarded pinned Library return action.
+5. Lock production box-model geometry, accessibility, and resize no-work behavior with mounted tests.
+6. Align fresh/reset defaults, Settings copy, and user documentation without migrating stored widths.
+7. Run targeted static/test verification and approved real-PTY UAT, then close the task.
+
+ADR required: yes
+ADR path: backlog/decisions/086-library-adaptive-reader-shell.md
+Reason: ADR-086 owns the long-lived cross-route Library responsive shell contract and has been amended for this change.
+<!-- SECTION:PLAN:END -->
