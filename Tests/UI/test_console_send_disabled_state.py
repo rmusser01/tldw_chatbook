@@ -25,6 +25,7 @@ from unittest.mock import Mock
 import pytest
 from textual.widgets import Button, Static
 
+from Tests.UI.app_factory import attach_chachanotes_db
 from Tests.UI.test_console_command_composer import _spy_submit_draft
 from Tests.UI.test_console_dictation import _mounted_console, _ready_host
 from Tests.UI.test_console_native_chat_flow import (
@@ -90,9 +91,7 @@ async def test_empty_draft_disables_send_with_visible_idle_reason():
         send_button = composer.query_one("#console-send-message", Button)
         reason = composer.query_one("#console-send-disabled-reason", Static)
 
-        await _wait_for_condition(
-            pilot, lambda: reason.styles.display == "block"
-        )
+        await _wait_for_condition(pilot, lambda: reason.styles.display == "block")
 
         assert send_button.disabled is True
         assert reason.renderable.plain == "Send disabled: type a message"
@@ -116,7 +115,8 @@ async def test_typing_enables_send_and_clears_reason_immediately():
         composer.insert_text("h")
         assert send_button.disabled is False
         assert reason.styles.display == "none"
-        assert send_button.tooltip == "Send the active Console session draft."
+        assert send_button.label.plain == "Send | $"
+        assert str(send_button.tooltip).startswith("Next request:")
 
         # Deleting back to empty restores both, again synchronously.
         composer.delete_left()
@@ -149,8 +149,7 @@ async def test_setup_block_shows_reason_and_clears_when_unblocked():
         assert reason.renderable.plain == "Send blocked — choose a model to continue"
         assert not reason.has_class("console-send-disabled-reason-idle")
         assert (
-            send_button.tooltip
-            == "Choose a model in Console Settings before sending."
+            send_button.tooltip == "Choose a model in Console Settings before sending."
         )
 
         # Configuring the model unblocks: same sync, blockers cleared.
@@ -165,7 +164,8 @@ async def test_setup_block_shows_reason_and_clears_when_unblocked():
 
         assert send_button.disabled is False
         assert reason.styles.display == "none"
-        assert send_button.tooltip == "Send the active Console session draft."
+        assert send_button.label.plain == "Send | $"
+        assert str(send_button.tooltip).startswith("Next request:")
 
 
 @pytest.mark.asyncio
@@ -262,6 +262,7 @@ async def test_idle_stop_button_has_no_unreachable_tooltip():
 async def test_enter_hotkey_still_sends_when_send_is_enabled():
     gateway = CapturingGateway()
     app, host = _ready_host()
+    attach_chachanotes_db(app)
     app.console_provider_gateway_factory = lambda: gateway
 
     async with host.run_test(size=(140, 42)) as pilot:
@@ -285,6 +286,7 @@ async def test_enter_hotkey_still_sends_when_send_is_enabled():
 async def test_enter_hotkey_queues_draft_behind_accepted_run():
     """An accepted live turn changes Send to Queue and preserves exact text."""
     app = _build_test_app()
+    attach_chachanotes_db(app)
     app.chat_api_provider_value = "llama_cpp"
     app.chat_api_model_value = "test-model"
     gateway = GatedGateway()
@@ -333,23 +335,21 @@ async def test_enter_hotkey_queues_draft_behind_accepted_run():
 
             await _wait_for_condition(
                 pilot,
-                lambda: console._ensure_console_chat_controller()
-                .prompt_queue_registry.snapshot(store.active_session_id)
-                .total_count
-                == 1,
+                lambda: (
+                    console._ensure_console_chat_controller()
+                    .prompt_queue_registry.snapshot(store.active_session_id)
+                    .total_count
+                    == 1
+                ),
             )
-            snapshot = (
-                console._ensure_console_chat_controller()
-                .prompt_queue_registry.snapshot(store.active_session_id)
+            snapshot = console._ensure_console_chat_controller().prompt_queue_registry.snapshot(
+                store.active_session_id
             )
             queued = snapshot.entries[0]
-            text = (
-                console._ensure_console_chat_controller()
-                .prompt_queue_registry.read_waiting_text(
-                    store.active_session_id,
-                    entry_id=queued.entry_id,
-                    expected_revision=snapshot.revision,
-                )
+            text = console._ensure_console_chat_controller().prompt_queue_registry.read_waiting_text(
+                store.active_session_id,
+                entry_id=queued.entry_id,
+                expected_revision=snapshot.revision,
             )
             assert text.text == "queued behind run"
             assert composer.draft_text() == ""

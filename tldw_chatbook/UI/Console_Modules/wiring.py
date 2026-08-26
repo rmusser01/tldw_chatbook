@@ -78,6 +78,7 @@ from .prompt_queue import (
 from .prompts import ConsolePromptsController
 from .reaction_preview import get_console_reaction_preview_coordinator
 from .retrieval import ConsoleRetrievalController
+from .send_price import ConsoleSendPriceController
 from .session import ConsoleSessionController
 from .skill import ConsoleSkillController
 from .video import ConsoleVideoController
@@ -193,13 +194,14 @@ def build_console_controllers(
     rag_source_types_accessor: Callable[[], tuple[str, ...]],
     rag_top_k_accessor: Callable[[], int],
 ) -> None:
-    """Construct the Console screen's fourteen controllers and attach them.
+    """Construct the Console screen's fifteen controllers and attach them.
 
     Assigns, in this order, `screen._image`, `screen._video`,
     `screen._retrieval`, `screen._skill`, `screen._workspace`,
     `screen._character`, `screen._fleet`, `screen._session`, `screen._dictation`,
     `screen._hands_free`, `screen._message`, `screen._prompts`, `screen._agent`, and
-    `screen._prompt_queue`. The order is documentation, not a constraint:
+    `screen._prompt_queue`, and `screen._send_price`. The order is
+    documentation, not a constraint:
     every cross-controller dependency below is resolved at call time (see the
     module docstring), so no controller reads a sibling that does not exist
     yet.
@@ -207,7 +209,7 @@ def build_console_controllers(
     `ChatScreen.__init__` calls this at exactly the point the first
     construction used to occupy. That position matters: the ~250 attribute
     assignments around it in `__init__` include names these lambdas read, and
-    none of the fourteen constructors reads mutable state off `screen` eagerly
+    none of the fifteen constructors reads mutable state off `screen` eagerly
     (each stores its inputs and callables), so the call needs to sit where it
     can see everything the pre-move constructions could.
 
@@ -1356,4 +1358,18 @@ def build_console_controllers(
             )
         ),
         sync_ui=lambda: screen._sync_native_console_chat_ui(),
+    )
+    screen._send_price = ConsoleSendPriceController(
+        settings_accessor=(
+            lambda: screen._session._ensure_active_console_session_settings()
+        ),
+        chat_store_accessor=lambda: screen._console_chat_store,
+        provider_history_accessor=(
+            lambda session_id: (
+                screen._ensure_console_chat_controller().provider_messages_for_next_send_estimate(
+                    session_id
+                )
+            )
+        ),
+        pending_launch_accessor=lambda: screen._pending_console_launch_context,
     )

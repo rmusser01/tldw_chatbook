@@ -30,6 +30,7 @@ from tldw_chatbook.Chat.console_provider_gateway import (
 )
 from tldw_chatbook.Chat.provider_continuation import parse_provider_continuation_json
 from tldw_chatbook.Chat.console_chat_models import (
+    ConsoleNextSendHistoryProjection,
     ConsoleMessageRole,
     ConsoleProviderSelection,
     ConsoleRunState,
@@ -2802,6 +2803,182 @@ def test_image_budget_counts_images_newest_first(monkeypatch):
 
     decoded = base64.b64decode(older_images[0]["image_url"]["url"].split(",", 1)[1])
     assert decoded == b"old-0"
+
+
+def test_provider_messages_for_next_send_estimate_uses_lightweight_projection_without_media_serialization(
+    monkeypatch,
+):
+    monkeypatch.setattr(controller_module, "is_vision_capable", lambda p, m: True)
+    monkeypatch.setattr(controller_module, "max_history_images", lambda p, m: 1)
+    monkeypatch.setattr(
+        controller_module,
+        "image_url_part",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(
+            AssertionError("estimate serialized media")
+        ),
+    )
+    store = ConsoleChatStore()
+    session = store.create_session(ephemeral=True)
+    controller = ConsoleChatController(
+        store=store,
+        provider_gateway=StreamingGateway(),
+        model="vision-model",
+        system_prompt="system",
+    )
+    store.append_message(
+        session.id, role=ConsoleMessageRole.SYSTEM, content="transcript system"
+    )
+    store.append_message(session.id, role=ConsoleMessageRole.ASSISTANT, content="hello")
+    failed = store.append_message(
+        session.id, role=ConsoleMessageRole.USER, content="failed"
+    )
+    store.mark_message_send_blocked(failed.id)
+    store.append_message(
+        session.id,
+        role=ConsoleMessageRole.USER,
+        content="(no speech detected)",
+        metadata=MessageMetadata(engine="realtime", transcript_status="empty"),
+    )
+    disallowed = store.append_message(
+        session.id, role=ConsoleMessageRole.ASSISTANT, content="not admitted"
+    )
+    store._message_or_raise(disallowed.id).assistant_generation_state = "failed"
+    store.append_message(
+        session.id,
+        role=ConsoleMessageRole.USER,
+        content="older",
+        attachments=(MessageAttachment(b"old", "image/png", "old.png", 0),),
+    )
+    store.append_message(
+        session.id, role=ConsoleMessageRole.ASSISTANT, content="answer"
+    )
+    store.append_message(
+        session.id,
+        role=ConsoleMessageRole.USER,
+        content="newer",
+        attachments=(MessageAttachment(b"new", "image/png", "new.png", 0),),
+    )
+    live = store.append_message(
+        session.id, role=ConsoleMessageRole.ASSISTANT, content=""
+    )
+    store.append_stream_chunk(live.id, "buffered answer")
+    live_content = store._message_or_raise(live.id).content
+    revisions = (
+        dict(store._stream_materialized_counts),
+        dict(store._payload_revisions),
+        dict(store._message_speech_revisions),
+    )
+
+    result = controller.provider_messages_for_next_send_estimate(session.id)
+
+    assert result == ConsoleNextSendHistoryProjection(
+        rows=(
+            (
+                "system",
+                "system\n\nYou already opened this conversation with the following "
+                "message, which the user has seen:\nhello",
+            ),
+            ("user", "older"),
+            ("assistant", "answer"),
+            ("user", "newer"),
+            ("assistant", "buffered answer"),
+        ),
+        historical_media_count=1,
+    )
+    assert store._message_or_raise(live.id).content == live_content == ""
+    assert revisions == (
+        dict(store._stream_materialized_counts),
+        dict(store._payload_revisions),
+        dict(store._message_speech_revisions),
+    )
+
+
+def test_provider_messages_for_next_send_estimate_uses_owning_session_selection(
+    monkeypatch,
+):
+    monkeypatch.setattr(
+        controller_module,
+        "is_vision_capable",
+        lambda provider, model: (provider, model)
+        == ("openai", "session-vision-model"),
+    )
+    monkeypatch.setattr(
+        controller_module,
+        "max_history_images",
+        lambda provider, model: (
+            1
+            if (provider, model)
+            == ("openai", "session-vision-model")
+            else 0
+        ),
+    )
+    store = ConsoleChatStore()
+    session = store.create_session(
+        settings=ConsoleSessionSettings(
+            provider="openai",
+            model="session-vision-model",
+            system_prompt="session system",
+        ),
+        ephemeral=True,
+    )
+    controller = ConsoleChatController(
+        store=store,
+        provider_gateway=StreamingGateway(),
+        provider="anthropic",
+        model="global-text-model",
+        system_prompt="global system",
+    )
+    store.append_message(
+        session.id,
+        role=ConsoleMessageRole.USER,
+        content="image question",
+        attachments=(MessageAttachment(b"image", "image/png", "image.png", 0),),
+    )
+
+    result = controller.provider_messages_for_next_send_estimate(session.id)
+
+    assert result.rows[0] == ("system", "session system")
+    assert result.historical_media_count == 1
+
+
+def test_provider_message_payloads_serializes_only_after_lightweight_projection(
+    monkeypatch,
+):
+    monkeypatch.setattr(controller_module, "is_vision_capable", lambda p, m: True)
+    monkeypatch.setattr(controller_module, "max_history_images", lambda p, m: 1)
+    calls = []
+
+    def _serialize(data, mime_type):
+        calls.append((data, mime_type))
+        return {"type": "image_url", "image_url": {"url": "serialized"}}
+
+    monkeypatch.setattr(controller_module, "image_url_part", _serialize)
+    store = ConsoleChatStore()
+    session = store.create_session(ephemeral=True)
+    controller = ConsoleChatController(
+        store=store, provider_gateway=StreamingGateway(), model="vision-model"
+    )
+    store.append_message(
+        session.id,
+        role=ConsoleMessageRole.USER,
+        content="look",
+        attachments=(MessageAttachment(b"image", "", "image.png", 0),),
+    )
+
+    payloads = controller._provider_message_payloads(
+        store.messages_for_session(session.id), skip_failed=True
+    )
+
+    assert calls == [(b"image", "image/png")]
+    assert payloads == [
+        {
+            "role": "user",
+            "content": [
+                {"type": "text", "text": "look"},
+                {"type": "image_url", "image_url": {"url": "serialized"}},
+            ],
+        }
+    ]
 
 
 def test_history_image_with_empty_mime_type_falls_back_to_default_mime(monkeypatch):
