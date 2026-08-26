@@ -5447,6 +5447,53 @@ def _assert_task6_production_bounds(screen: LibraryScreen, *panes) -> None:
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize(
+    ("terminal_width", "expected_rail_width"),
+    ((100, 24), (80, 24), (60, None)),
+)
+async def test_library_production_width_matrix_graduated_startup_landing(
+    terminal_width: int,
+    expected_rail_width: int | None,
+) -> None:
+    """A restored full Library starts with the ordinary landing contract."""
+    app = _build_test_app()
+    app.app_config.setdefault("library", {}).setdefault("rail_state", {})[
+        "lifecycle"
+    ] = "graduated"
+    _seed_conversations(app, _two_conversations(), notes=_two_notes())
+    host = LibraryProductionCSSHarness(app)
+
+    async with host.run_test(size=(terminal_width, 48)) as pilot:
+        screen = _active_library_screen(host)
+        await _wait_for_library_shell(screen, pilot)
+        shell = screen.query_one("#library-shell-grid")
+        rail = screen.query_one("#library-rail", LibraryRail)
+        canvas = screen.query_one("#library-canvas")
+
+        assert screen._library_lifecycle is LibraryLifecycle.GRADUATED
+        assert screen._library_selected_row_id == ""
+        assert shell.content_region.width == terminal_width
+        if expected_rail_width is None:
+            assert rail.display and not canvas.display
+            assert rail.region.width == terminal_width
+        else:
+            assert rail.display and canvas.display
+            assert rail.region.width == expected_rail_width
+            assert canvas.region.width == terminal_width - expected_rail_width
+            if terminal_width == 80:
+                screen.query_one("#library-rail-collapse", Button).press()
+                await pilot.pause()
+                assert not rail.display and canvas.display
+                rail_open = screen.query_one("#library-rail-open", Button)
+                assert rail_open.display
+                rail_open.press()
+                await pilot.pause()
+                assert rail.display and canvas.display
+                assert rail.region.width == expected_rail_width
+        _assert_task6_production_bounds(screen, rail, canvas)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
     ("terminal_width", "expected_content_width", "expected_rail_width"),
     (
         (235, 231, 34),
@@ -25560,7 +25607,7 @@ def test_library_landing_projection_and_retained_sync_add_no_source_io() -> None
 
 
 @pytest.mark.asyncio
-async def test_library_returning_landing_geometry_keyboard_and_compact_focus_transfer() -> (
+async def test_library_returning_landing_geometry_keyboard_and_compact_focus_stability() -> (
     None
 ):
     app = _build_test_app()
@@ -25652,13 +25699,12 @@ async def test_library_returning_landing_geometry_keyboard_and_compact_focus_tra
             pilot,
             lambda: (
                 screen._library_notes_compact
-                and screen.focused is not None
-                and screen.focused.id == f"library-row-{LIBRARY_ROW_BROWSE_MEDIA}"
+                and continue_button.has_focus
+                and screen.query_one("#library-rail").display
+                and screen.query_one("#library-canvas").display
             ),
-            message="Compact transition did not transfer Continue to Media rail.",
+            message="Compact landing did not retain its two-pane focus contract.",
         )
-        assert screen.query_one("#library-rail").display is True
-        assert screen.query_one("#library-canvas").display is False
         assert screen._library_continue_receipt == receipt
         assert screen._library_landing_attention_action() is not None
 

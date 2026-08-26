@@ -5324,19 +5324,8 @@ class LibraryScreen(BaseAppScreen):
         return "rail"
 
     def _library_notes_compact_stage_applies(self) -> bool:
-        """Scope single-stage behavior to Library entry and active Notes routes."""
-        if self._library_notes_compact_workflow_active():
-            return True
-        if self._library_selected_row_id or self._library_rail_collapsed:
-            return False
-        return (
-            self._library_lifecycle
-            not in (
-                LibraryLifecycle.UNKNOWN,
-                LibraryLifecycle.STARTER,
-            )
-            and self._library_notes_stage == "rail"
-        )
+        """Scope compact single-stage behavior to active Notes routes."""
+        return self._library_notes_compact_workflow_active()
 
     def _library_ordinary_route_active(self) -> bool:
         """Return whether the retained two-pane ordinary shell owns the route."""
@@ -6505,7 +6494,11 @@ class LibraryScreen(BaseAppScreen):
     ) -> None:
         """Cross the one measured compact/wide boundary losslessly."""
         landing_prefix = "landing-control:"
-        if compact and identity.semantic_role.startswith(landing_prefix):
+        if (
+            compact
+            and self._library_notes_compact_stage_applies()
+            and identity.semantic_role.startswith(landing_prefix)
+        ):
             control_id = identity.semantic_role.removeprefix(landing_prefix)
             row_id = self._library_landing_control_row_id(control_id)
             if row_id:
