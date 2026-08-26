@@ -12,6 +12,7 @@ import re
 import threading
 import webbrowser
 from collections.abc import Callable, Collection, Mapping, Sequence
+from contextlib import nullcontext
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
@@ -706,6 +707,7 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
         self._items_snapshot_count = 0
         self._items_pending_arrivals = 0
         self._items_pending_query_key: tuple[Any, ...] | None = None
+        self._pending_tree_scope: TreeScope | None = None
         self._items_snapshot_generation = 0
         self._items_page_presentation_lock = asyncio.Lock()
         self._items_inflight_replacement: tuple[
@@ -3598,10 +3600,10 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
     def _apply_tree_scope(self, scope: TreeScope) -> None:
         """The single reconciliation point for "the tree scope is now `scope`".
 
-        Used by both a real tree click (`_on_tree_scope_changed`) and a
-        breadcrumb promotion (`handle_breadcrumb_scope_selected`) -- Task 5
-        fix round 2, Finding 3 -- since promoting a breadcrumb means exactly
-        the same thing a tree click at that node would.
+        Read navigation reaches this only after its first page mounts;
+        management navigation may commit immediately. Both tree clicks and
+        breadcrumb promotion enter through `_request_tree_scope` so an
+        attempted Read scope cannot relabel the committed Reader early.
 
         Clears `selected_entity` (Finding 1): the entity, if any, was
         selected from a pane row under whatever scope was previously in
@@ -3640,6 +3642,88 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
         self._clear_pane_selections()
         self.selected_scope = scope
         self.tree_scope = scope
+
+    def _scope_display_label(self, scope: TreeScope) -> str:
+        """Return the unescaped user-facing label for an explicit scope."""
+        if scope.kind == "starred":
+            return "Starred"
+        if scope.kind == "unread":
+            return "All Unread"
+        if scope.kind == "today":
+            return "Today"
+        if scope.kind == "unassigned":
+            return "Unassigned"
+        if scope.kind == "watchlist" and scope.watchlist_id is not None:
+            return self._watchlist_display_name(scope.watchlist_id)
+        if scope.kind == "source" and scope.source_id is not None:
+            labels = self._resolve_breadcrumb_labels(scope)
+            return labels[-1] if labels else f"Source {scope.source_id}"
+        return "All Sources"
+
+    def _notify_pending_scope_failure(self, attempted: TreeScope) -> None:
+        """Explain a failed navigation without relabelling committed rows."""
+        self._notify_watchlists(
+            f"Couldn't open {self._scope_display_label(attempted)}; still showing "
+            f"{self._scope_display_label(self.tree_scope)}.",
+            severity="error",
+            markup=False,
+        )
+
+    def _invalidate_parked_reader(self, *, loading: bool) -> None:
+        """Drop every Reader authority after an immediate management move."""
+        self._reset_items_paging_for_context(loading=loading)
+        self._items_snapshot = None
+        self._loaded_items = []
+        self._items_snapshot_count = 0
+        self._items_pending_arrivals = 0
+        self._selected_content_item = None
+        self._selected_content_page_key = None
+        try:
+            pane = self.query_one("#watchlists-items-pane", ArticleListPane)
+        except NoMatches:
+            pass
+        else:
+            pane.items = []
+            pane.selected_item = None
+            pane.show_new_items_pill(0)
+            self._push_items_pager_state()
+        try:
+            content = self.query_one("#watchlists-content-pane", ContentPane)
+        except NoMatches:
+            pass
+        else:
+            content.item = None
+            content.position = ""
+
+    def _commit_management_tree_scope(self, scope: TreeScope) -> None:
+        """Commit non-Read navigation and invalidate parked Reader state."""
+        with self.app.batch_update():
+            self._pending_tree_scope = None
+            self._apply_tree_scope(scope)
+            self._invalidate_parked_reader(loading=False)
+
+    def _request_tree_scope(self, scope: TreeScope) -> None:
+        """Request Read navigation, or commit management navigation now."""
+        if self.active_section == "items" and self.runtime_backend == "local":
+            self._pending_tree_scope = scope
+            self._supersede_items_query_intent(scope=scope)
+            try:
+                self.query_one("#wl-tree", WatchlistTree).active_scope = (
+                    self.tree_scope
+                )
+            except NoMatches:
+                pass
+            self.run_worker(
+                self._replace_items_snapshot(
+                    scope=scope,
+                    reason="scope",
+                    clear_reader_on_commit=True,
+                ),
+                exclusive=True,
+                group="wc_items",
+            )
+            return
+        self._commit_management_tree_scope(scope)
 
     def _clear_pane_selections(self) -> None:
         """Clear the mounted panes' OWN selection copies, not just the
@@ -3708,7 +3792,7 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
         `WatchlistTree` that would otherwise lose the selection.
         """
         event.stop()
-        self._apply_tree_scope(event.scope)
+        self._request_tree_scope(event.scope)
 
     @on(BreadcrumbScopeSelected)
     def handle_breadcrumb_scope_selected(self, event: BreadcrumbScopeSelected) -> None:
@@ -3721,7 +3805,7 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
         the tree to that node.
         """
         event.stop()
-        self._apply_tree_scope(event.scope)
+        self._request_tree_scope(event.scope)
 
     # --- task-895: the tree's write verbs -------------------------------
     #
@@ -3903,7 +3987,7 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
         # Scope the tree to what was just made, so the rail's Rename/Delete/
         # Add-source verbs are armed on it immediately rather than requiring
         # a second click to select the thing the user just created.
-        self._apply_tree_scope(
+        self._request_tree_scope(
             TreeScope(kind="watchlist", watchlist_id=int(created["id"]))
         )
         self._notify_watchlists(
@@ -3982,7 +4066,7 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
         if not confirmed:
             return
         service.delete(watchlist_id)
-        self._apply_tree_scope(TreeScope(kind="unassigned"))
+        self._request_tree_scope(TreeScope(kind="unassigned"))
         self._notify_watchlists(
             f'Watchlist "{escape_markup(name)}" deleted. Its {source_count} '
             f"{noun} moved to Unassigned."
@@ -4190,7 +4274,9 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
         service.remove_source(watchlist_id, source_id)
         # The scope named a node that no longer exists; fall back to its
         # parent watchlist, which does.
-        self._apply_tree_scope(TreeScope(kind="watchlist", watchlist_id=watchlist_id))
+        self._request_tree_scope(
+            TreeScope(kind="watchlist", watchlist_id=watchlist_id)
+        )
         self._notify_watchlists(
             f'Removed "{escape_markup(source_name)}" from '
             f'"{escape_markup(watchlist_name)}". The source itself is kept.'
@@ -4255,24 +4341,6 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
         if not self.is_mounted:
             return
         self._refresh_centre_header_for_scope()
-        read_is_active = (
-            self.active_section == "items" and self.runtime_backend == "local"
-        )
-        if read_is_active:
-            self._supersede_items_query_intent()
-            # Own group, not the default one: `exclusive=True` in the
-            # default group would cancel every in-flight default-group
-            # worker (`_create_source`, `_delete_source`, ...) -- the
-            # hazard `_request_surface_refresh` documents for its drainer.
-            self.run_worker(
-                self._replace_items_snapshot(
-                    scope=self.tree_scope,
-                    reason="scope",
-                    clear_reader_on_commit=True,
-                ),
-                exclusive=True,
-                group="wc_items",
-            )
         # TASK-2304 AC#2. The Sources table follows the same scope the
         # centre header just took, so the two counts of "how many sources
         # are in view" cannot disagree. An in-place push on the pane's own
@@ -4873,7 +4941,13 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
             # `exclusive=True` in the default group would cancel every
             # in-flight default-group worker (`_create_source`, ...).
             self.run_worker(
-                self._replace_items_snapshot(reason="initial"),
+                self._replace_items_snapshot(
+                    reason=(
+                        "return_to_read"
+                        if self._items_snapshot is None
+                        else "initial"
+                    )
+                ),
                 exclusive=True,
                 group="wc_items",
             )
@@ -9876,9 +9950,11 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
             and query_key == self._items_pending_query_key
         )
 
-    def _supersede_items_query_intent(self) -> None:
+    def _supersede_items_query_intent(
+        self, *, scope: TreeScope | None = None
+    ) -> None:
         """Park old rows while immediately invalidating older query work."""
-        query = self._reader_item_query()
+        query = self._reader_item_query(scope=scope)
         self._items_snapshot_generation += 1
         self._items_pending_query_key = query.context_key
         self._items_inflight_replacement = None
@@ -9893,46 +9969,49 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
         focus_first: bool,
         is_current: Callable[[], bool],
         commit: Callable[[], None],
+        atomic_batch: bool = False,
     ) -> bool:
         """Mount rows and commit their authority together, with rollback."""
         notify = getattr(self.app_instance, "notify", None)
         async with self._items_page_presentation_lock:
             if not is_current():
                 return False
-            prior_rows = self._loaded_items
-            pane: ArticleListPane | None = None
-            prior_authority = self._items_search_results_authoritative
-            if self._dom_is_live:
-                try:
-                    pane = self.query_one("#watchlists-items-pane", ArticleListPane)
-                    prior_authority = pane.search_results_authoritative
-                    pane.search_results_authoritative = True
-                    await pane.apply_page_items(rows, focus_first=focus_first)
-                except NoMatches:
-                    pane = None
-                except asyncio.CancelledError:
+            batch = self.app.batch_update() if atomic_batch else nullcontext()
+            with batch:
+                prior_rows = self._loaded_items
+                pane: ArticleListPane | None = None
+                prior_authority = self._items_search_results_authoritative
+                if self._dom_is_live:
+                    try:
+                        pane = self.query_one("#watchlists-items-pane", ArticleListPane)
+                        prior_authority = pane.search_results_authoritative
+                        pane.search_results_authoritative = True
+                        await pane.apply_page_items(rows, focus_first=focus_first)
+                    except NoMatches:
+                        pane = None
+                    except asyncio.CancelledError:
+                        if pane is not None:
+                            pane.search_results_authoritative = prior_authority
+                            await pane.apply_page_items(prior_rows, focus_first=False)
+                        raise
+                    except Exception as exc:
+                        if pane is not None:
+                            pane.search_results_authoritative = prior_authority
+                            await pane.apply_page_items(prior_rows, focus_first=False)
+                        logger.debug(
+                            "Failed to present watchlist items (exception_type={}).",
+                            type(exc).__name__,
+                        )
+                        if callable(notify):
+                            notify("Failed to load watchlist items.", severity="error")
+                        return False
+                if not is_current():
                     if pane is not None:
                         pane.search_results_authoritative = prior_authority
                         await pane.apply_page_items(prior_rows, focus_first=False)
-                    raise
-                except Exception as exc:
-                    if pane is not None:
-                        pane.search_results_authoritative = prior_authority
-                        await pane.apply_page_items(prior_rows, focus_first=False)
-                    logger.debug(
-                        "Failed to present watchlist items (exception_type={}).",
-                        type(exc).__name__,
-                    )
-                    if callable(notify):
-                        notify("Failed to load watchlist items.", severity="error")
                     return False
-            if not is_current():
-                if pane is not None:
-                    pane.search_results_authoritative = prior_authority
-                    await pane.apply_page_items(prior_rows, focus_first=False)
-                return False
-            commit()
-            return True
+                commit()
+                return True
 
     async def _replace_items_snapshot(
         self,
@@ -10022,15 +10101,27 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
                 self._items_page_loading = False
                 self._items_pending_query_key = None
                 if clear_reader_on_commit:
+                    if scope is not None:
+                        self._apply_tree_scope(scope)
                     self._selected_content_item = None
                     self._selected_content_page_key = None
+                    try:
+                        pane = self.query_one(
+                            "#watchlists-items-pane", ArticleListPane
+                        )
+                        pane.selected_item = None
+                    except NoMatches:
+                        pass
                     try:
                         content = self.query_one(
                             "#watchlists-content-pane", ContentPane
                         )
                         content.item = None
+                        content.position = ""
                     except NoMatches:
                         pass
+                    if self._pending_tree_scope == scope:
+                        self._pending_tree_scope = None
                 self._push_items_pager_state()
                 self._restore_items_view_state()
 
@@ -10041,15 +10132,22 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
                     generation, query_key
                 ),
                 commit=commit,
+                atomic_batch=clear_reader_on_commit,
             )
             if not result and self._items_request_is_current(generation, query_key):
                 self._items_page_loading = False
                 self._push_items_pager_state()
+                if clear_reader_on_commit and scope is not None:
+                    self._notify_pending_scope_failure(scope)
+                    if self._pending_tree_scope == scope:
+                        self._pending_tree_scope = None
             return result
         except asyncio.CancelledError:
             if self._items_request_is_current(generation, query_key):
                 self._items_page_loading = False
                 self._push_items_pager_state()
+                if self._pending_tree_scope == scope:
+                    self._pending_tree_scope = None
             raise
         except Exception as exc:
             if self._items_request_is_current(generation, query_key):
@@ -10061,7 +10159,12 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
                 self._push_items_pager_state()
                 notify = getattr(self.app_instance, "notify", None)
                 if callable(notify):
-                    notify("Failed to load watchlist items.", severity="error")
+                    if clear_reader_on_commit and scope is not None:
+                        self._notify_pending_scope_failure(scope)
+                    else:
+                        notify("Failed to load watchlist items.", severity="error")
+                if self._pending_tree_scope == scope:
+                    self._pending_tree_scope = None
             return False
         finally:
             if not completion.done():

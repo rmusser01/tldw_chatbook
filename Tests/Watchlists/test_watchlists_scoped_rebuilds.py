@@ -24,6 +24,7 @@ from contextlib import asynccontextmanager
 from collections import Counter
 from datetime import datetime, timedelta, timezone
 import threading
+from unittest.mock import AsyncMock
 
 import pytest
 from textual.containers import VerticalScroll
@@ -2139,7 +2140,7 @@ async def test_items_anchor_is_abandoned_once_when_query_context_changes(
 
         screen._items_search_query = "definitely-not-a-story"
         screen._reset_items_paging_for_context(loading=True)
-        await screen._load_items(target_page_index=0)
+        await screen._replace_items_snapshot(reason="search")
 
         scheduled: list[float] = []
         original_set_timer = screen.set_timer
@@ -2154,6 +2155,48 @@ async def test_items_anchor_is_abandoned_once_when_query_context_changes(
 
         assert screen._items_view_anchor_id is None
         assert 0.01 not in scheduled
+
+
+async def test_management_scope_invalidates_reader_return_to_read_failure_is_honest():
+    """A failed return never relabels rows parked under the prior scope."""
+    app = _build_test_app()
+    watchlist_id = _seed(app, items=2)
+    async with _open(app, watchlist_id) as (screen, pilot, host):
+        await _settle(pilot, host)
+        assert screen._loaded_items
+        open_item = screen._loaded_items[0]
+        screen._selected_content_item = open_item
+        content = screen.query_one("#watchlists-content-pane", ContentPane)
+        content.item = open_item
+
+        screen.active_section = "sources"
+        await _settle(pilot, host)
+        committed = TreeScope(kind="unassigned")
+        screen._request_tree_scope(committed)
+
+        assert screen.tree_scope == committed
+        assert screen._items_snapshot is None
+        assert screen._loaded_items == []
+        assert screen._selected_content_item is None
+
+        screen._controller.list_reader_items_page = AsyncMock(
+            side_effect=RuntimeError("offline")
+        )
+        screen.active_section = "items"
+        await _settle(pilot, host)
+
+        pane = screen.query_one("#watchlists-items-pane", ArticleListPane)
+        assert screen.tree_scope == committed
+        assert screen._items_snapshot is None
+        assert screen._loaded_items == []
+        assert screen._items_snapshot_count == 0
+        assert screen._items_pending_arrivals == 0
+        assert screen._selected_content_item is None
+        assert pane.items == []
+        assert pane.new_items_note == ""
+        assert pane.page_loading is False
+        assert pane.query_one("#items-refresh-button", Button).disabled is False
+        assert screen.query_one("#watchlists-content-pane", ContentPane).item is None
 
 
 async def test_layout_persist_scheduler_and_thread_handoff_failures_are_retryable(
