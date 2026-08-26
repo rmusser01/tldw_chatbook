@@ -261,6 +261,7 @@ async def test_library_rail_applies_reversible_ordinary_width_contracts() -> Non
         assert abs(rail.region.width - 30) <= 1
 
         rail.apply_ordinary_width_contract(rail_only)
+        assert rail.display is True
         assert str(rail.styles.width) == "1fr"
         assert rail.styles.min_width.value == 0
         assert rail.styles.max_width is None
@@ -271,6 +272,15 @@ async def test_library_rail_applies_reversible_ordinary_width_contracts() -> Non
         assert not rail.styles._inline_styles.has_rule("min_width")
         assert not rail.styles._inline_styles.has_rule("max_width")
 
+        rail.apply_ordinary_width_contract(default)
+        assert rail.display is True
+        assert str(rail.styles.width) == "3fr"
+        assert rail.styles.min_width.value == 24
+        assert rail.styles.max_width.value == 34
+
+        rail.styles.width = 42
+        rail.styles.min_width = 42
+        rail.styles.max_width = 42
         rail.apply_ordinary_width_contract(default)
         assert str(rail.styles.width) == "3fr"
         assert rail.styles.min_width.value == 24
