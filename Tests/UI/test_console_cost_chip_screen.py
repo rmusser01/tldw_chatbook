@@ -19,7 +19,6 @@ from __future__ import annotations
 import asyncio
 import time
 from dataclasses import replace
-from types import SimpleNamespace
 from unittest.mock import Mock
 
 import pytest
@@ -47,6 +46,7 @@ from tldw_chatbook.UI.Screens import chat_screen as chat_screen_module
 from tldw_chatbook.UI.Screens.chat_screen import ChatScreen
 from tldw_chatbook.Widgets.Console import ConsoleComposerBar
 from tldw_chatbook.Widgets.Console.console_status_chips import ConsoleCostChip
+from tldw_chatbook.config import save_settings_to_cli_config
 from Tests.console_provider_doubles import provider_resolution
 
 _ASYNC_SETTLE_TIMEOUT = 10.0
@@ -78,9 +78,13 @@ def _configure_anthropic_ready_console(app, model: str = "claude-sonnet-4-6") ->
     gate the send behind the first-run setup modal).
     """
     app.app_config["chat_defaults"] = {"provider": "anthropic", "model": model}
-    app.app_config["api_settings"] = {
-        "anthropic": {"api_key": "test-anthropic-key"}
-    }
+    app.app_config["api_settings"] = {"anthropic": {"api_key": "test-anthropic-key"}}
+    assert save_settings_to_cli_config(
+        {
+            "chat_defaults": {"provider": "anthropic", "model": model},
+            "api_settings.anthropic": {"api_key": "test-anthropic-key"},
+        }
+    )
     app.chat_api_provider_value = "anthropic"
     app.chat_api_model_value = model
 
@@ -99,13 +103,15 @@ class _AnthropicCostGateway:
 
     async def resolve_for_send(self, selection):
         return provider_resolution(
-                   provider="anthropic",
-                   base_url=selection.base_url or "",
-                   model=selection.explicit_model or selection.configured_model or "claude-sonnet-4-6",
-                   ready=True,
-                   visible_copy="",
-                   prompt_caching=True,
-               )
+            provider="anthropic",
+            base_url=selection.base_url or "",
+            model=selection.explicit_model
+            or selection.configured_model
+            or "claude-sonnet-4-6",
+            ready=True,
+            visible_copy="",
+            prompt_caching=True,
+        )
 
     async def stream_chat(self, resolution, messages, **kwargs):
         self.sent_messages.append(list(messages))
@@ -126,13 +132,15 @@ class _AnthropicWaitingGateway:
 
     async def resolve_for_send(self, selection):
         return provider_resolution(
-                   provider="anthropic",
-                   base_url=selection.base_url or "",
-                   model=selection.explicit_model or selection.configured_model or "claude-sonnet-4-6",
-                   ready=True,
-                   visible_copy="",
-                   prompt_caching=True,
-               )
+            provider="anthropic",
+            base_url=selection.base_url or "",
+            model=selection.explicit_model
+            or selection.configured_model
+            or "claude-sonnet-4-6",
+            ready=True,
+            visible_copy="",
+            prompt_caching=True,
+        )
 
     async def stream_chat(self, resolution, messages, **kwargs):
         yield "partial"
@@ -422,9 +430,7 @@ async def test_reverting_system_prompt_edit_with_ttl_remaining_returns_to_warm()
 
         # The deadline itself is untouched by the edit/revert round trip --
         # not just "still warm" but the SAME deadline the original send set.
-        warm_until_after, had_activity_after = controller.cache_ttl_snapshot(
-            session_id
-        )
+        warm_until_after, had_activity_after = controller.cache_ttl_snapshot(session_id)
         assert had_activity_after is True
         assert warm_until_after == warm_until_before
 
