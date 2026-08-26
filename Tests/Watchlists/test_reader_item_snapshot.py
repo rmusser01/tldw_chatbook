@@ -47,6 +47,7 @@ def test_start_captures_first_page_and_keeps_empty_page():
     assert snapshot.seen_ids == frozenset()
     assert snapshot.cursor is None
     assert not snapshot.has_more
+    assert snapshot.pending_arrivals == 0
 
 
 def test_start_requires_first_page_count_and_seeds_seen_ids():
@@ -67,8 +68,15 @@ def test_continuation_stages_copy_and_deduplicates_items():
     assert appended
     assert original.page_count == 1
     assert candidate.pages == (({"item_id": 2}, {"item_id": 1}), ({"id": "0"},))
-    assert candidate.seen_ids == frozenset({0, 1, 2})
+    assert candidate.seen_ids == frozenset({"0", 1, 2})
     assert not candidate.has_more
+
+
+def test_identity_falls_back_from_empty_item_id_and_preserves_string_ids():
+    query = ReaderItemQuery.freeze(("local", "all", "all", ""), {})
+    snapshot = ReaderItemSnapshot.start(query, page([{"item_id": "", "id": "external-a"}, {"id": "external-b"}]))
+    assert snapshot.seen_ids == frozenset({"external-a", "external-b"})
+    assert snapshot.pages[0] == ({"item_id": "", "id": "external-a"}, {"id": "external-b"})
 
 
 def test_duplicate_only_continuation_advances_traversal_without_blank_page():
@@ -97,6 +105,10 @@ def test_page_accessors_are_bounds_checked_and_has_next_uses_cache_or_traversal(
     snapshot = ReaderItemSnapshot.start(query, page([{"id": 1}], cursor=WatchlistItemCursor(None, 1), has_more=True))
     with pytest.raises(IndexError):
         snapshot.page(1)
+    with pytest.raises(IndexError):
+        snapshot.page(-1)
+    with pytest.raises(IndexError):
+        snapshot.page(snapshot.page_count)
     with pytest.raises(IndexError):
         snapshot.has_next(-1)
     assert snapshot.page(0) == ({"id": 1},)
