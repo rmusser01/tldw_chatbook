@@ -23,9 +23,16 @@ _FALLBACK_CONSOLE = Console(width=80)
 def divide_source_line(line: str, width: int) -> list[int]:
     """Return the offsets at which ``line`` wraps at ``width``.
 
-    Uses Rich's ``divide_line`` when available -- it is private, so the
-    fallback re-derives the same breaks through the public ``Text.wrap``
-    and ``Tests/Utils/test_text_wrap_index.py`` pins that the two agree.
+    Uses Rich's ``divide_line`` when available. Falls back to the public
+    ``Text.wrap`` API if the private API is unavailable.
+
+    Args:
+        line: The source text to divide.
+        width: The maximum width in cells before wrapping occurs.
+
+    Returns:
+        A list of character offsets where ``line`` wraps. Empty if the line
+        fits entirely within ``width`` or if ``width`` is invalid.
     """
     if width <= 0 or not line:
         return []
@@ -41,13 +48,24 @@ def divide_source_line(line: str, width: int) -> list[int]:
 
 
 class WrapIndex:
-    """Maps virtual rows to (source line, wrapped segment) at one width."""
+    """Maps virtual rows to (source line, wrapped segment) at one width.
+
+    Precomputes text wrapping boundaries for efficient virtualization.
+    """
 
     __slots__ = ("_lines", "_width", "_starts", "virtual_height", "_segment_cache")
 
     _SEGMENT_CACHE_LIMIT = 512
 
     def __init__(self, lines: Sequence[str], width: int, starts: list[int], height: int):
+        """Initialize a wrap index (use :meth:`build` instead).
+
+        Args:
+            lines: Sequence of source lines to index.
+            width: The wrapping width in cells.
+            starts: Precomputed row start positions for each line.
+            height: Total virtual height (sum of wrapped rows).
+        """
         self._lines = lines
         self._width = width
         self._starts = starts
@@ -56,6 +74,15 @@ class WrapIndex:
 
     @classmethod
     def build(cls, lines: Sequence[str], width: int) -> "WrapIndex":
+        """Build a wrap index for the given lines at a fixed width.
+
+        Args:
+            lines: Sequence of source lines to index.
+            width: The wrapping width in cells.
+
+        Returns:
+            A WrapIndex instance mapping virtual rows to line/segment positions.
+        """
         starts: list[int] = []
         running = 0
         for line in lines:
@@ -64,18 +91,45 @@ class WrapIndex:
         return cls(lines, width, starts, max(running, 1))
 
     def row_to_line(self, row: int) -> tuple[int, int]:
+        """Map a virtual row to its source line and wrapped segment index.
+
+        Args:
+            row: The virtual row number (0-based, spans wrapped segments).
+
+        Returns:
+            A tuple (line_index, segment_index) identifying which source line
+            and which wrapped segment of that line contains the virtual row.
+        """
         line_index = bisect_right(self._starts, row) - 1
         if line_index < 0:
             return (0, 0)
         return (line_index, row - self._starts[line_index])
 
     def line_start_row(self, line_index: int) -> int:
+        """Return the virtual row where the given source line begins.
+
+        Args:
+            line_index: The index of a source line (0-based).
+
+        Returns:
+            The virtual row number where that source line's first segment starts.
+        """
         if not self._starts:
             return 0
         clamped = max(0, min(line_index, len(self._starts) - 1))
         return self._starts[clamped]
 
     def segments(self, line_index: int) -> list[str]:
+        """Return the wrapped segments of a source line.
+
+        Segments are cached up to a bounded size.
+
+        Args:
+            line_index: The index of a source line (0-based).
+
+        Returns:
+            A list of strings, one per wrapped segment of the source line.
+        """
         cached = self._segment_cache.get(line_index)
         if cached is not None:
             return cached

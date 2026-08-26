@@ -72,3 +72,29 @@ def test_exact_index_beats_character_division_on_ragged_text():
     approx = sum(max(1, -(-cell_len(line) // 100)) for line in lines)
     assert index.virtual_height == exact
     assert approx != exact, "fixture no longer exercises the approximation's error"
+
+
+def test_divide_source_line_fallback_matches_private_api(monkeypatch):
+    """Monkeypatch away rich._wrap.divide_line to test the fallback path.
+
+    The fallback uses the public Text.wrap API to achieve the same row counts
+    as the private divide_line function. This test forces the fallback by
+    setting the module's _rich_divide_line to None.
+    """
+    import tldw_chatbook.Utils.text_wrap_index as wrap_module
+
+    # Force the fallback by disabling the private API
+    monkeypatch.setattr(wrap_module, "_rich_divide_line", None)
+
+    # Re-run the agreement test with the fallback
+    console = Console(width=40)
+    lines = [
+        "short",
+        "the quick brown fox jumps over the lazy dog and keeps on running forever",
+        "supercalifragilisticexpialidocious " * 3,
+        "",
+    ]
+    for line in lines:
+        ours = len(divide_source_line(line, 40)) + 1
+        theirs = max(1, len(Text(line).wrap(console, 40)))
+        assert ours == theirs, f"fallback row count disagreed for {line!r}"
