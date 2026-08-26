@@ -2680,43 +2680,9 @@ class ConsoleChatController:
                 True,
                 "stale_policy_revision",
             )
-        inherited = resolve_capture_policy(
-            enabled=before.enabled,
-            conversation=detail,
-            global_default=before.global_detail,
-            allow_next_send=False,
-        ).detail
-        session_only = before.conversation_id is None
-        write_status = None
-        if not session_only and self._capture_policy_repository is not None:
-            write_status = await self._run_durable_db_call(
-                self._capture_policy_repository.replace,
-                before.conversation_id,
-                detail,
-            )
-            if write_status.status is CapturePolicyWriteStatus.MISSING_CONVERSATION:
-                return CapturePolicyMutationResult(
-                    CapturePolicyMutationStatus.TARGET_MISSING,
-                    before,
-                    False,
-                    "conversation_missing",
-                )
-            session_only = write_status.status is CapturePolicyWriteStatus.UNAVAILABLE
-        elif not session_only:
-            session_only = True
-        if session_only and inherited is CaptureDetail.FULL:
-            return CapturePolicyMutationResult(
-                CapturePolicyMutationStatus.FAILED,
-                before,
-                True,
-                "save_failed",
-            )
         try:
-            self.store.replace_session_capture_override(
-                session_id,
-                detail,
-                expected_policy_revision=expected_policy_revision,
-                save_pending=session_only and before.conversation_id is not None,
+            reservation = self.store.reserve_capture_policy_mutation(
+                expected_policy_revision=expected_policy_revision
             )
         except CapturePolicyStaleError:
             return CapturePolicyMutationResult(
@@ -2725,14 +2691,69 @@ class ConsoleChatController:
                 True,
                 "stale_policy_revision",
             )
-        return CapturePolicyMutationResult(
+        inherited = resolve_capture_policy(
+            enabled=before.enabled,
+            conversation=detail,
+            global_default=before.global_detail,
+            allow_next_send=False,
+        ).detail
+        has_durable_identity = before.conversation_id is not None
+        session_only = False
+        write_status = None
+        cancelled = False
+        if has_durable_identity and self._capture_policy_repository is not None:
+            durable_task = asyncio.create_task(self._run_durable_db_call(
+                self._capture_policy_repository.replace, before.conversation_id, detail
+            ))
+            try:
+                try:
+                    write_status = await asyncio.shield(durable_task)
+                except asyncio.CancelledError:
+                    cancelled = True
+                    write_status = await durable_task
+            except BaseException:
+                self.store.abandon_capture_policy_mutation(reservation)
+                raise
+            if write_status.status is CapturePolicyWriteStatus.MISSING_CONVERSATION:
+                self.store.abandon_capture_policy_mutation(reservation)
+                if cancelled:
+                    raise asyncio.CancelledError
+                return CapturePolicyMutationResult(
+                    CapturePolicyMutationStatus.TARGET_MISSING,
+                    self.capture_policy_snapshot(session_id),
+                    False,
+                    "conversation_missing",
+                )
+            session_only = write_status.status is CapturePolicyWriteStatus.UNAVAILABLE
+        elif has_durable_identity:
+            session_only = True
+        if session_only and inherited is CaptureDetail.FULL:
+            self.store.abandon_capture_policy_mutation(reservation)
+            if cancelled:
+                raise asyncio.CancelledError
+            return CapturePolicyMutationResult(
+                CapturePolicyMutationStatus.FAILED,
+                self.capture_policy_snapshot(session_id),
+                True,
+                "save_failed",
+            )
+        self.store.finish_capture_policy_mutation(
+            reservation,
+            session_id=session_id,
+            detail=detail,
+            save_pending=session_only and has_durable_identity,
+        )
+        result = CapturePolicyMutationResult(
             CapturePolicyMutationStatus.SAFE_SESSION_ONLY
-            if session_only and before.conversation_id is not None
+            if session_only and has_durable_identity
             else CapturePolicyMutationStatus.APPLIED,
             self.capture_policy_snapshot(session_id),
-            session_only and before.conversation_id is not None,
-            "save_failed" if session_only and before.conversation_id is not None else None,
+            session_only and has_durable_identity,
+            "save_failed" if session_only and has_durable_identity else None,
         )
+        if cancelled:
+            raise asyncio.CancelledError
+        return result
 
     def apply_global_capture_settings(
         self,
@@ -2753,12 +2774,28 @@ class ConsoleChatController:
                 True,
                 "stale_policy_revision",
             )
-        config_result = apply_console_capture_settings(
-            enabled=enabled,
-            detail=detail,
-            expected_generation=expected_config_generation,
-        )
+        try:
+            reservation = self.store.reserve_capture_policy_mutation(
+                expected_policy_revision=expected_policy_revision
+            )
+        except CapturePolicyStaleError:
+            return CapturePolicyMutationResult(
+                CapturePolicyMutationStatus.STALE,
+                self.capture_policy_snapshot(session_id),
+                True,
+                "stale_policy_revision",
+            )
+        try:
+            config_result = apply_console_capture_settings(
+                enabled=enabled,
+                detail=detail,
+                expected_generation=expected_config_generation,
+            )
+        except BaseException:
+            self.store.abandon_capture_policy_mutation(reservation)
+            raise
         if config_result.conflict:
+            self.store.abandon_capture_policy_mutation(reservation)
             return CapturePolicyMutationResult(
                 CapturePolicyMutationStatus.STALE,
                 before,
@@ -2768,6 +2805,7 @@ class ConsoleChatController:
             )
         active = not enabled or detail is CaptureDetail.SAFE or config_result.file_replaced
         if not active:
+            self.store.abandon_capture_policy_mutation(reservation)
             return CapturePolicyMutationResult(
                 CapturePolicyMutationStatus.FAILED,
                 before,
@@ -2775,8 +2813,8 @@ class ConsoleChatController:
                 "save_failed",
                 config_result,
             )
-        self.store.advance_capture_policy_revision(
-            expected_policy_revision=expected_policy_revision,
+        self.store.finish_capture_policy_mutation(
+            reservation,
             disarm_next=not enabled,
         )
         return CapturePolicyMutationResult(
@@ -14863,7 +14901,10 @@ class ConsoleChatController:
             if captures:
                 self.store.attach_message_exchanges(assistant_message_id, captures)
         except Exception as exc:
-            logger.bind(message_id=assistant_message_id, error=repr(exc)).warning(
+            logger.bind(
+                message_id=assistant_message_id,
+                error_type=type(exc).__name__,
+            ).warning(
                 "exchange_attach_failed"
             )
         payloads = self._usage_payloads(stream_signals)

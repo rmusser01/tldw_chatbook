@@ -34,12 +34,19 @@ in both directions by the two ``test_kill_switch_string_*`` tests below.
 """
 from __future__ import annotations
 
+import asyncio
+import threading
 from types import SimpleNamespace
 
+import pytest
 from loguru import logger as loguru_logger
 
 from tldw_chatbook.Chat import console_chat_controller as controller_module
 from tldw_chatbook.Chat.console_chat_controller import ConsoleChatController
+from tldw_chatbook.Chat.console_capture_policy_repository import (
+    CapturePolicyWriteResult,
+    CapturePolicyWriteStatus,
+)
 from tldw_chatbook.Chat.console_chat_models import (
     ConsoleMessageRole,
     ConsoleSubmissionOrigin,
@@ -193,42 +200,128 @@ def test_global_off_disarms_all_next_slots_but_keeps_conversation_detail(monkeyp
     )
     revision = controller.store.capture_policy_state(first.id).policy_revision
     controller.store.set_session_next_capture_detail(
-        first.id,
-        CaptureDetail.FULL,
-        expected_policy_revision=revision,
+        first.id, CaptureDetail.FULL, expected_policy_revision=revision,
     )
     revision = controller.store.capture_policy_state(first.id).policy_revision
     controller.store.set_session_next_capture_detail(
-        second.id,
-        CaptureDetail.SAFE,
-        expected_policy_revision=revision,
+        second.id, CaptureDetail.SAFE, expected_policy_revision=revision,
     )
     revision = controller.store.capture_policy_state(first.id).policy_revision
     monkeypatch.setattr(
-        controller_module,
-        "runtime_capture_policy",
+        controller_module, "runtime_capture_policy",
         lambda: SimpleNamespace(enabled=True, detail=CaptureDetail.SAFE, generation=3),
     )
+    sibling_statuses = []
+
+    def apply_while_sibling_attempts_mutation(**_kwargs):
+        current = controller.capture_policy_snapshot(first.id)
+        sibling_statuses.append(controller.set_next_capture_detail(
+            first.id, CaptureDetail.SAFE,
+            expected_policy_revision=current.policy_revision,
+        ).status)
+        return ConfigMutationResult(True, True, None)
+
     monkeypatch.setattr(
-        controller_module,
-        "apply_console_capture_settings",
-        lambda **_kwargs: ConfigMutationResult(True, True, None),
+        controller_module, "apply_console_capture_settings",
+        apply_while_sibling_attempts_mutation,
     )
-
     result = controller.apply_global_capture_settings(
-        enabled=False,
-        detail=CaptureDetail.SAFE,
-        expected_config_generation=3,
-        expected_policy_revision=revision,
+        enabled=False, detail=CaptureDetail.SAFE,
+        expected_config_generation=3, expected_policy_revision=revision,
     )
-
     assert result.status is controller_module.CapturePolicyMutationStatus.APPLIED
     assert controller.store.capture_policy_state(first.id).next_detail is None
     assert controller.store.capture_policy_state(second.id).next_detail is None
-    assert (
-        controller.store.capture_policy_state(first.id).conversation_detail
-        is CaptureDetail.FULL
+    assert sibling_statuses == [controller_module.CapturePolicyMutationStatus.STALE]
+    assert controller.store.capture_policy_state(
+        first.id
+    ).conversation_detail is CaptureDetail.FULL
+
+
+@pytest.mark.asyncio
+async def test_ephemeral_full_override_stages_for_later_promotion(monkeypatch):
+    controller = _new_controller()
+    session = controller.store.create_session(ephemeral=True)
+    monkeypatch.setattr(
+        controller_module, "runtime_capture_policy",
+        lambda: SimpleNamespace(enabled=True, detail=CaptureDetail.SAFE, generation=1),
     )
+    before = controller.capture_policy_snapshot(session.id)
+
+    result = await controller.replace_conversation_capture_detail(
+        session.id, CaptureDetail.FULL,
+        expected_policy_revision=before.policy_revision,
+    )
+
+    assert result.status is controller_module.CapturePolicyMutationStatus.APPLIED
+    assert result.snapshot.conversation_detail is CaptureDetail.FULL
+    assert result.snapshot.save_pending is False
+
+
+@pytest.mark.asyncio
+async def test_stale_conversation_policy_never_reaches_repository():
+    controller = _new_controller()
+    session = controller.store.ensure_session()
+    session.persisted_conversation_id = "conversation-1"
+    calls = []
+
+    class Repository:
+        def replace(self, *args):
+            calls.append(args)
+            return CapturePolicyWriteResult(CapturePolicyWriteStatus.STORED, None)
+
+    controller._capture_policy_repository = Repository()
+    result = await controller.replace_conversation_capture_detail(
+        session.id, CaptureDetail.FULL, expected_policy_revision=99,
+    )
+
+    assert result.status is controller_module.CapturePolicyMutationStatus.STALE
+    assert calls == []
+
+
+@pytest.mark.asyncio
+async def test_conversation_policy_reservation_blocks_race_and_reconciles_cancel(
+    monkeypatch,
+):
+    controller = _new_controller()
+    session = controller.store.ensure_session()
+    session.persisted_conversation_id = "conversation-1"
+    started = threading.Event()
+    release = threading.Event()
+    durable = {}
+
+    class Repository:
+        def replace(self, conversation_id, detail):
+            started.set()
+            release.wait(5)
+            durable[conversation_id] = detail
+            return CapturePolicyWriteResult(CapturePolicyWriteStatus.STORED, None)
+
+    controller._capture_policy_repository = Repository()
+    monkeypatch.setattr(
+        controller_module, "runtime_capture_policy",
+        lambda: SimpleNamespace(enabled=True, detail=CaptureDetail.SAFE, generation=1),
+    )
+    before = controller.capture_policy_snapshot(session.id)
+    mutation = asyncio.create_task(controller.replace_conversation_capture_detail(
+        session.id, CaptureDetail.FULL,
+        expected_policy_revision=before.policy_revision,
+    ))
+    assert await asyncio.to_thread(started.wait, 2)
+    during = controller.capture_policy_snapshot(session.id)
+    sibling = controller.set_next_capture_detail(
+        session.id, CaptureDetail.SAFE,
+        expected_policy_revision=during.policy_revision,
+    )
+    assert sibling.status is controller_module.CapturePolicyMutationStatus.STALE
+    mutation.cancel()
+    release.set()
+    with pytest.raises(asyncio.CancelledError):
+        await mutation
+    assert durable["conversation-1"] is CaptureDetail.FULL
+    assert controller.capture_policy_snapshot(
+        session.id
+    ).conversation_detail is CaptureDetail.FULL
 
 
 def test_kill_switch_disables_capture(monkeypatch):
@@ -405,7 +498,7 @@ def test_attach_never_fails_the_send(monkeypatch):
     controller, store, message_id = _controller_with_placeholder()
 
     def _raise(mid, captures):
-        raise RuntimeError("simulated store failure")
+        raise RuntimeError("SENSITIVE CANARY")
 
     monkeypatch.setattr(store, "attach_message_exchanges", _raise)
 
@@ -416,7 +509,7 @@ def test_attach_never_fails_the_send(monkeypatch):
     sink_id = loguru_logger.add(
         diagnostics.append,
         level="WARNING",
-        format="{extra[message_id]} {extra[error]} {message}",
+        format="{extra[message_id]} {extra[error_type]} {message}",
     )
     try:
         # Must not raise.
@@ -427,3 +520,5 @@ def test_attach_never_fails_the_send(monkeypatch):
         loguru_logger.remove(sink_id)
 
     assert any("exchange_attach_failed" in d for d in diagnostics), diagnostics
+    assert any("RuntimeError" in d for d in diagnostics), diagnostics
+    assert all("SENSITIVE CANARY" not in d for d in diagnostics), diagnostics

@@ -193,8 +193,6 @@ def _maybe_stub_string(value: str, mime_hint: str | None = None) -> str:
     # but not the other (canonical len=4088 vs. wrapped len=4141 straddling
     # a 4096 gate), stubbing one variant of the same bytes and not the
     # other. Gate on the same canonical length the hash/size actually use.
-    if len("".join(value.split())) < _STUB_MIN_CHARS:
-        return value
     match = _DATA_URI_RE.match(value)
     if match:
         # Qodo PR #1883 finding: hash/size the whitespace-stripped payload,
@@ -204,6 +202,8 @@ def _maybe_stub_string(value: str, mime_hint: str | None = None) -> str:
         # breaks for any line-wrapped data URI.
         canonical_data = "".join(match.group("data").split())
         return _stub_for(canonical_data, match.group("mime"))
+    if len("".join(value.split())) < _STUB_MIN_CHARS and mime_hint is None:
+        return value
     if _BASE64_RE.match(value):
         # Review finding M12: `_BASE64_RE` permits embedded whitespace
         # (line-wrapped base64), but `b64decode(..., validate=True)`
@@ -239,7 +239,12 @@ def stub_binary_strings(obj: Any) -> Any:
         out = {}
         for key, value in obj.items():
             if key in {"data", "b64_json"} and isinstance(value, str):
-                out[key] = _maybe_stub_string(value, mime_hint if isinstance(mime_hint, str) else None)
+                out[key] = _maybe_stub_string(
+                    value,
+                    mime_hint
+                    if isinstance(mime_hint, str)
+                    else "application/octet-stream",
+                )
             else:
                 out[key] = stub_binary_strings(value)
         return out
@@ -329,10 +334,15 @@ def _sanitize_semantic_json_string(value: str) -> str:
     if not isinstance(parsed, (Mapping, list)):
         return value
     return json.dumps(
-        stub_binary_strings(_remove_nested_credentials(parsed)),
+        sanitize_capture_value(parsed),
         ensure_ascii=False,
         separators=(",", ":"),
     )
+
+
+def sanitize_capture_value(value: Any) -> Any:
+    """Remove structured credentials and stub binary from an arbitrary value."""
+    return stub_binary_strings(_remove_nested_credentials(_jsonable(value)))
 
 
 def _retain_with_budget(
@@ -374,7 +384,7 @@ def build_request_capture(
                     value = canonical_provider_endpoint_identity(value)
                 except ValueError:
                     value = "[invalid endpoint]"
-            value = stub_binary_strings(_remove_nested_credentials(_jsonable(value)))
+            value = sanitize_capture_value(value)
             request[key] = _retain_with_budget(
                 value, active_budget, key, truncation_inventory
             )
@@ -396,10 +406,10 @@ def build_response_capture(
     inventory: list[str] = []
     response = {
         "content": _retain_with_budget(
-            stub_binary_strings(content), active_budget, "content", inventory
+            sanitize_capture_value(content), active_budget, "content", inventory
         ),
         "tool_calls": _retain_with_budget(
-            stub_binary_strings(_remove_nested_credentials(_jsonable(tool_calls))),
+            sanitize_capture_value(tool_calls),
             active_budget,
             "tool_calls",
             inventory,

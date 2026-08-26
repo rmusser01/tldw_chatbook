@@ -6305,6 +6305,31 @@ class TestSignalsExchangeCapture:
         assert capture.capture_detail is CaptureDetail.FULL
         assert capture.response["content"] == "world"
 
+    def test_in_flight_projection_is_idempotent_and_accumulation_is_bounded(self):
+        aggregate = ConsoleProviderStreamSignals(exchange_capture_enabled=True)
+        call = aggregate.new_usage_call()
+        budget = CaptureBudget(limit_bytes=180)
+        call.begin_exchange(
+            provider="anthropic", model="m", endpoint=None,
+            request={}, omitted_keys=(), capture_budget=budget,
+        )
+        for _ in range(20):
+            call.record_exchange_content("x" * 40)
+            call.record_exchange_tool_calls([
+                {"id": "t", "function": {"name": "n", "arguments": "y" * 40}}
+            ])
+
+        first = aggregate.exchange_captures()
+        used = budget.used_bytes
+        second = aggregate.exchange_captures()
+
+        assert first == second
+        assert budget.used_bytes == used
+        flight = aggregate._active_exchanges[call._token]
+        assert len("".join(flight["content"]).encode()) <= budget.limit_bytes
+        assert len(str(flight["tool_calls"]).encode()) <= budget.limit_bytes
+        assert first[0].response["truncation_inventory"]
+
     def test_in_flight_tail_reports_stopped(self):
         aggregate = ConsoleProviderStreamSignals(exchange_capture_enabled=True)
         call = aggregate.new_usage_call()
@@ -6478,7 +6503,10 @@ class TestGatewayExchangeCapture:
         detail,
         expected,
     ):
+        calls = []
+
         def fake_chat_api_call(**kwargs):
+            calls.append(kwargs)
             return {"choices": [{"message": {"content": "pong"}}]}
 
         signals = ConsoleProviderStreamSignals(
@@ -6506,6 +6534,8 @@ class TestGatewayExchangeCapture:
             assert system_content.startswith(expected)
         else:
             assert system_content == expected
+            assert captured.request["messages_payload"] == calls[0]["messages_payload"]
+            assert captured.request["system_message"] == calls[0]["system_message"]
         assert captured.capture_detail is detail
 
     @pytest.mark.asyncio
@@ -6882,6 +6912,37 @@ class TestLlamaCppExchangeCapture:
         assert captured.capture_detail is detail
 
     @pytest.mark.asyncio
+    @pytest.mark.parametrize("detail", [CaptureDetail.SAFE, CaptureDetail.FULL])
+    async def test_llamacpp_wire_capture_sanitizes_credentials_and_short_binary(
+        self, monkeypatch, detail
+    ):
+        async def fake_stream(self, **kwargs):
+            yield "ok"
+
+        monkeypatch.setattr(ConsoleProviderGateway, "stream_llamacpp_chat", fake_stream)
+        signals = ConsoleProviderStreamSignals(
+            exchange_capture_enabled=True, capture_detail=detail
+        )
+        messages = [{
+            "role": "user",
+            "content": [{
+                "api_key": "secret", "access_token": "token",
+                "client_secret": "hidden", "data": "QUJD",
+                "image_url": "data:image/png;base64,QUJD",
+            }],
+        }]
+        _ = [item async for item in ConsoleProviderGateway().stream_chat(
+            self._resolution(streaming=True), messages, signals=signals
+        )]
+
+        serialized = json.dumps(signals.exchange_captures()[0].request)
+        assert "secret" not in serialized
+        assert "token" not in serialized
+        assert "hidden" not in serialized
+        assert "QUJD" not in serialized
+        assert "sha256:" in serialized
+
+    @pytest.mark.asyncio
     async def test_llamacpp_non_streaming_capture_is_wire_literal_and_keyless(
         self, monkeypatch
     ):
@@ -6969,7 +7030,11 @@ class TestLlamaCppExchangeCapture:
         out = [
             c
             async for c in gateway.stream_chat(
-                resolution, [{"role": "user", "content": "q"}], signals=aggregate
+                resolution,
+                [{"role": "user", "content": {
+                    "text": "q", "api_key": "retry-secret", "data": "QUJD"
+                }}],
+                signals=aggregate,
             )
         ]
         assert out == ["recovered text"]
@@ -6983,12 +7048,14 @@ class TestLlamaCppExchangeCapture:
         assert len(retry) == 1
         retry_capture = retry[0]
         assert retry_capture.request["wire_payload"]["stream"] is False
-        assert (
-            retry_capture.request["wire_payload"]["messages"][-1]["content"] == "q"
-        )
+        retry_content = retry_capture.request["wire_payload"]["messages"][-1]["content"]
+        assert retry_content["text"] == "q"
+        assert "api_key" not in retry_content
+        assert "sha256:" in retry_content["data"]
         assert retry_capture.response["content"] == "recovered text"
         # Same keyless guarantee the sibling captures hold.
         assert "local-secret" not in _json.dumps(retry_capture.request)
+        assert "retry-secret" not in _json.dumps(retry_capture.request)
 
     @pytest.mark.asyncio
     async def test_llamacpp_stream_to_complete_fallback_emits_retry_signal(

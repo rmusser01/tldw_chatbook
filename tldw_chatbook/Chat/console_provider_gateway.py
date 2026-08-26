@@ -36,8 +36,7 @@ from tldw_chatbook.Chat.console_exchange_capture import (
     CaptureDetail,
     ExchangeCapture,
     build_request_capture,
-    build_response_capture,
-    stub_binary_strings,
+    sanitize_capture_value,
 )
 from tldw_chatbook.Chat.console_project_instructions import (
     EPHEMERAL_ORIGIN_KEY,
@@ -295,7 +294,12 @@ class ConsoleProviderStreamSignals:
             with self._exchange_lock:
                 flight = self._active_exchanges.get(token)
                 if flight is not None:
-                    flight[key].extend(items)
+                    retained = flight[key]
+                    for item in sanitize_capture_value(items):
+                        if flight["capture_budget"].retain(item):
+                            retained.append(item)
+                        elif key not in flight["response_truncation_inventory"]:
+                            flight["response_truncation_inventory"].append(key)
         except Exception as exc:
             logger.warning(f"exchange_capture_mutate_failed: {type(exc).__name__}")
 
@@ -470,6 +474,7 @@ class ConsoleProviderCallSignals:
             "provider": provider, "model": model, "endpoint": endpoint,
             "request": request, "omitted_keys": omitted_keys,
             "content": [], "tool_calls": [], "synthetic_fallback": False,
+            "response_truncation_inventory": [],
             "capture_detail": self.capture_detail,
             "capture_budget": capture_budget or CaptureBudget(),
             "created_at": datetime.now(timezone.utc).isoformat(),
@@ -556,12 +561,14 @@ def _flight_capture(run_tag: str, seq: int, flight: dict[str, Any],
         run_tag=run_tag, seq=seq, created_at=flight["created_at"],
         provider=flight["provider"], model=flight["model"],
         endpoint=flight["endpoint"], request=flight["request"],
-        response=build_response_capture(
-            content="".join(flight["content"]),
-            tool_calls=list(flight["tool_calls"]),
-            synthetic_fallback=bool(flight.get("synthetic_fallback", False)),
-            budget=flight["capture_budget"],
-        ),
+        response={
+            "content": "".join(flight["content"]),
+            "tool_calls": deepcopy(flight["tool_calls"]),
+            "synthetic_fallback": bool(flight.get("synthetic_fallback", False)),
+            "truncation_inventory": tuple(
+                flight.get("response_truncation_inventory", ())
+            ),
+        },
         status=status, usage_json=usage_json,
         omitted_keys=flight["omitted_keys"],
         capture_detail=flight["capture_detail"],
@@ -2586,10 +2593,10 @@ class ConsoleProviderGateway:
                 ) -> Any:
                     captured = deepcopy(raw_wire)
                     if detail is not CaptureDetail.SAFE:
-                        return stub_binary_strings(captured)
+                        return sanitize_capture_value(captured)
                     captured_messages = captured.get("messages")
                     if not isinstance(captured_messages, list):
-                        return stub_binary_strings(captured)
+                        return sanitize_capture_value(captured)
                     semantic_messages = [
                         thaw_json(item)
                         for item in prepared.semantic.flattened_messages()
@@ -2624,7 +2631,7 @@ class ConsoleProviderGateway:
                                     "[project instruction body omitted by "
                                     f"capture policy -- {len(content)} chars]"
                                 )
-                    return stub_binary_strings(captured)
+                    return sanitize_capture_value(captured)
 
                 # This branch builds its own HTTP body -- the one place
                 # capture IS the literal wire payload (spec Non-goals).
@@ -2868,7 +2875,10 @@ class ConsoleProviderGateway:
                             == "project_instructions"
                             for row in semantic_messages
                         )
-                        if has_project_instructions:
+                        if (
+                            has_project_instructions
+                            and signals.capture_detail is CaptureDetail.SAFE
+                        ):
                             capture_kwargs["messages_payload"] = semantic_messages
                         if (
                             has_project_instructions

@@ -17,6 +17,7 @@ from tldw_chatbook.Chat.console_exchange_capture import (
     capture_from_blob,
     capture_to_blob,
     resolve_capture_policy,
+    sanitize_capture_value,
     stub_binary_strings,
 )
 from tldw_chatbook.Chat.console_project_instructions import EPHEMERAL_ORIGIN_KEY
@@ -226,9 +227,44 @@ def test_anthropic_source_b64_is_stubbed():
     assert "QUJEQUJE" not in text and "image/jpeg" in text
 
 
-def test_short_strings_untouched():
+def test_short_data_uri_is_stubbed():
     row = {"role": "user", "content": "data:image/png;base64,QUJD"}
-    assert stub_binary_strings(row) == row
+    assert stub_binary_strings(row)["content"].startswith("[image/png,")
+
+
+def test_short_explicit_base64_is_stubbed():
+    row = {"source": {"type": "base64", "data": "QUJD"}}
+    assert stub_binary_strings(row)["source"]["data"].startswith(
+        "[application/octet-stream,"
+    )
+
+
+def test_public_capture_value_sanitizer_removes_nested_credentials_and_binary():
+    value = {
+        "messages": [
+            {
+                "role": "tool",
+                "content": {
+                    "api_key": "wire-api-key",
+                    "nested": {"access_token": "wire-token"},
+                    "result": json.dumps(
+                        {
+                            "client_secret": "wire-client-secret",
+                            "image": "data:image/png;base64,QUJD",
+                        }
+                    ),
+                },
+            }
+        ]
+    }
+
+    sanitized = sanitize_capture_value(value)
+    rendered = json.dumps(sanitized)
+
+    assert "wire-api-key" not in rendered
+    assert "wire-token" not in rendered
+    assert "wire-client-secret" not in rendered
+    assert "data:image/png;base64,QUJD" not in rendered
 
 
 def test_blob_round_trip():

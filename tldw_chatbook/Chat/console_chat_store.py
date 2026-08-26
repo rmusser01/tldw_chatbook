@@ -984,6 +984,7 @@ class ConsoleChatStore:
         self._sessions: dict[str, ConsoleChatSession] = {}
         self._capture_policy_revision = 0
         self._capture_policy_lock = threading.RLock()
+        self._capture_policy_mutation: object | None = None
         capture_policy_db = getattr(persistence, "db", None)
         self.capture_policy_repository = (
             ConsoleCapturePolicyRepository(capture_policy_db)
@@ -4450,7 +4451,10 @@ class ConsoleChatStore:
             raise TypeError("detail must be CaptureDetail or None")
         with self._capture_policy_lock:
             session = self._session_or_raise(session_id)
-            if self._capture_policy_revision != expected_policy_revision:
+            if (
+                self._capture_policy_mutation is not None
+                or self._capture_policy_revision != expected_policy_revision
+            ):
                 raise CapturePolicyStaleError
             session.next_capture_detail = detail
             session.next_capture_detail_revision += 1
@@ -4470,6 +4474,8 @@ class ConsoleChatStore:
         """Clear only the exact next-send slot captured by admission."""
         with self._capture_policy_lock:
             session = self._session_or_raise(session_id)
+            if self._capture_policy_mutation is not None:
+                return False
             if session.next_capture_detail_revision != expected_next_revision:
                 return False
             session.next_capture_detail = None
@@ -4490,7 +4496,10 @@ class ConsoleChatStore:
             raise TypeError("detail must be CaptureDetail or None")
         with self._capture_policy_lock:
             session = self._session_or_raise(session_id)
-            if self._capture_policy_revision != expected_policy_revision:
+            if (
+                self._capture_policy_mutation is not None
+                or self._capture_policy_revision != expected_policy_revision
+            ):
                 raise CapturePolicyStaleError
             session.capture_detail_override = detail
             session.capture_policy_save_pending = bool(save_pending)
@@ -4500,6 +4509,8 @@ class ConsoleChatStore:
     def disarm_all_next_capture_details(self) -> int:
         """Disarm every live one-shot after the global kill switch turns off."""
         with self._capture_policy_lock:
+            if self._capture_policy_mutation is not None:
+                raise CapturePolicyStaleError
             changed = False
             for session in self._sessions.values():
                 if session.next_capture_detail is None:
@@ -4519,7 +4530,10 @@ class ConsoleChatStore:
     ) -> int:
         """Advance the shared fence for a non-session policy mutation."""
         with self._capture_policy_lock:
-            if self._capture_policy_revision != expected_policy_revision:
+            if (
+                self._capture_policy_mutation is not None
+                or self._capture_policy_revision != expected_policy_revision
+            ):
                 raise CapturePolicyStaleError
             if disarm_next:
                 for session in self._sessions.values():
@@ -4528,6 +4542,54 @@ class ConsoleChatStore:
                     session.next_capture_detail = None
                     session.next_capture_detail_revision += 1
             self._capture_policy_revision += 1
+            return self._capture_policy_revision
+
+    def reserve_capture_policy_mutation(
+        self, *, expected_policy_revision: int
+    ) -> object:
+        """Reserve the shared policy owner before an external durable write."""
+        with self._capture_policy_lock:
+            if (
+                self._capture_policy_mutation is not None
+                or self._capture_policy_revision != expected_policy_revision
+            ):
+                raise CapturePolicyStaleError
+            token = object()
+            self._capture_policy_mutation = token
+            self._capture_policy_revision += 1
+            return token
+
+    def finish_capture_policy_mutation(
+        self,
+        token: object,
+        *,
+        session_id: str | None = None,
+        detail: CaptureDetail | None = None,
+        save_pending: bool = False,
+        disarm_next: bool = False,
+    ) -> int:
+        """Publish a reserved durable mutation and release its owner."""
+        with self._capture_policy_lock:
+            if self._capture_policy_mutation is not token:
+                raise CapturePolicyStaleError
+            if session_id is not None:
+                session = self._session_or_raise(session_id)
+                session.capture_detail_override = detail
+                session.capture_policy_save_pending = bool(save_pending)
+            if disarm_next:
+                for session in self._sessions.values():
+                    if session.next_capture_detail is not None:
+                        session.next_capture_detail = None
+                        session.next_capture_detail_revision += 1
+            self._capture_policy_mutation = None
+            return self._capture_policy_revision
+
+    def abandon_capture_policy_mutation(self, token: object) -> int:
+        """Release a failed reserved mutation without publishing policy state."""
+        with self._capture_policy_lock:
+            if self._capture_policy_mutation is not token:
+                raise CapturePolicyStaleError
+            self._capture_policy_mutation = None
             return self._capture_policy_revision
 
     def set_session_one_shot_prefill(
