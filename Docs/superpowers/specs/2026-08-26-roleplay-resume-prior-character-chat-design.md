@@ -2,8 +2,9 @@
 
 - **Date:** 2026-08-26
 - **Status:** Proposed
-- **Revision:** 3 — incorporates two adversarial reviews and the final UX choices
+- **Revision:** 4 — resolves the ID-only navigation copy contract during planning
 - **Scope:** Local Roleplay conversation preview and native Console resume
+- **Main task:** [TASK-22507](../../../backlog/tasks/task-22507%20-%20Resume-prior-character-chats-from-Roleplay.md)
 - **Related follow-up:** [TASK-22453](../../../backlog/tasks/task-22453%20-%20Make-older-local-character-conversations-discoverable-in-Roleplay.md)
 
 ## Problem
@@ -144,10 +145,11 @@ A stale source selection stays in Roleplay and reports:
 > This conversation is no longer available. Refresh conversations and try again.
 
 A missing or unreadable destination keeps the prior Console session active and
-reports:
+reports. The copy does not quote the title because the navigation contract
+deliberately carries only the conversation ID:
 
-> Couldn't resume “{title}”: it was deleted or couldn't be read. Your previous
-> Console chat is still active.
+> Couldn't resume this saved conversation: it was deleted or couldn't be read.
+> Your previous Console chat is still active.
 
 Use the existing notification system with a deliberately durable/long presentation
 where supported; do not add a new recovery component solely for this feature.
@@ -203,8 +205,11 @@ uses rather than adding a new result abstraction:
 
 - True: an existing session was activated or hydration committed successfully.
 - False: the durable conversation is missing/terminally unavailable.
-- None: a transient service/load/cancellation outcome was already reported or
-  released.
+- None: a transient service/load outcome was already reported or released.
+
+Cancellation is not folded into the tri-state result. ``asyncio.CancelledError``
+propagates after the resume attempt restores the prior active session and removes
+only the partial runtime session created by that attempt.
 
 Matching is deterministic:
 
@@ -331,7 +336,7 @@ requests a full sweep.
 - Earlier pending consumers reach their existing outcome first; Resume is the final
   active target and receives final focus.
 - The canonical opener returns True, False, or None consistently to direct
-  notification, focus, and rollback.
+  notification, focus, and rollback; cancellation rolls back and propagates.
 - Active matching session wins over other duplicates and preserves its live draft.
 - A closed conversation restores its branched tree, active leaf, persisted state, and
   roleplay provenance without a provider call.
