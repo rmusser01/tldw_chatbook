@@ -8806,6 +8806,8 @@ guards that assert the transaction statements SQLite actually ran
 (`set_trace_callback`), pinned red-first against both failure modes (loud
 "cannot start a transaction within a transaction" and ChaChaNotes' silent
 borrow, which surfaces only as an EMPTY trace).
+---
+
 ## A cap silently turns a proportional control back into the flat constant it replaced — and formula tests stay green through it (TASK-22214, 2026-08-25)
 
 TASK-21113 replaced a flat inter-route sleep in the screen pre-importer with a
@@ -8843,5 +8845,3 @@ Importing `Chunking.Chunk_Lib` into a screen module left the census unmoved
 the real-growth mutant (a genuinely new 40k-LOC module on that route) was
 caught and named the route. Before recording a survivor as a gap, check that
 the mutation actually changes the quantity under test.
----
-
