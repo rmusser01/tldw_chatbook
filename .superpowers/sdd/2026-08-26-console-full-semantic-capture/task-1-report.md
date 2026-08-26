@@ -200,3 +200,16 @@ exit code 0
 The four suite warnings are incumbent dependency/SyntaxWarning noise; pytest
 also emitted sandbox-only temporary-directory cleanup warnings after the
 successful exit. No DB or migration test failed.
+
+## Final-review fix round 2
+
+Independent re-review found the sanitized DB error still explicitly chained
+the raw SQLite exception. RED: the real-seam test failed once because
+`CharactersRAGDBError.__cause__` retained the semantic/path/binary canaries.
+Implementation `873972639f` constructs the sanitized error during handling and
+raises it only after leaving the active source exception, with cause/context
+suppressed. GREEN: focused seam `1 passed`; message-exchange file `12 passed`;
+corrected-area cumulative `423 passed, 2 sandbox loopback skips`; full DB area
+`1831 passed, 1 Windows-only skip`; Ruff/py_compile/diff-check clean. Task 1
+remains **In Progress** and affected AC #2 stays unchecked for independent
+re-review.

@@ -8,6 +8,8 @@ acceptance criteria open for independent re-review.
 
 Implementation commit: `df67e53bb1` (`fix(console): close semantic capture review gaps`).
 
+Fix round 2 implementation: `873972639f` (`fix(db): suppress raw exchange error chain`).
+
 ## Decision record
 
 ADR required: no
@@ -82,15 +84,24 @@ outage, but semantic bodies cannot escalate to Full.
   generations/concurrency, DB semantic/path/binary canaries, fresh purge
   state/revision/blocker/80x24 behavior, Global Inherit, and compact Inspector
   truthfulness.
+- Fix round 2 extended the real lowest-DB-seam canary and produced **1 failed**:
+  the sanitized outer `CharactersRAGDBError.__cause__` was the raw
+  `OperationalError`, so recursive exception inspection and
+  `traceback.format_exception(...)` exposed semantic, path, and binary
+  canaries.
 
 ## GREEN evidence
 
 - Changed focused repository/store/controller/gateway/export/config/DB/UI:
-  **422 passed, 2 skipped** in 38.73s.
+  **423 passed, 2 skipped** in 36.65s after fix round 2.
 - Prior cancellation/race compatibility focus: **8 passed**.
 - Exact prior 16-file privacy/UI matrix: **886 passed, 2 skipped** in 381.03s.
 - Complete changed DB area (`Tests/ChaChaNotesDB Tests/DB -q`):
-  **1831 passed, 1 skipped** in 202.17s.
+  **1831 passed, 1 skipped** in 192.28s after fix round 2.
+- Fix-round-2 lowest-seam focus: **1 passed**; complete message-exchange DB
+  file: **12 passed**. The outer error now has neither cause nor context, the
+  recursive exception graph and rendered traceback are content-free, and the
+  stable log category/message-id/error-type contract is unchanged.
 - Prior Task 2 policy/controller/provider gate: **570 passed, 2 skipped** in
   30.99s.
 - Real 80x24 policy/Inspector gate: **114 passed** in 41.73s.
@@ -112,6 +123,6 @@ gate.
 ## Residual risk
 
 No known Critical or Important implementation defect remains in the corrected
-surfaces. Independent re-review is still required before the reopened child
-criteria can be checked or their statuses returned to Done. The one-time
-Impeccable detector was not rerun, as directed.
+surfaces after fix round 2. Independent re-review is still required before the
+reopened child criteria can be checked or their statuses returned to Done. The
+one-time Impeccable detector was not rerun, as directed.
