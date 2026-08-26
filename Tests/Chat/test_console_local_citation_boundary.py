@@ -1215,7 +1215,9 @@ async def test_direct_marker_answer_persists_sealed_mapped_occurrences(
     assert assistant.persisted_message_id == assistant.id
     assert len(assistant_calls) == 1
     assert assistant_calls[0]["message_id"] == assistant.id
-    write = assistant_calls[0]["citation_write"]
+    # The ROW proves the body was committed; the sealed aggregate itself only
+    # exists at the `create_message` seam, so each is read where it lives.
+    write = _citation_calls(persistence)[0]["citation_write"]
     assert isinstance(write, SealedCitationWrite)
     assert builder.is_sealed is True
     assert write.answer_attempt_payloads[0].answer_body == body
