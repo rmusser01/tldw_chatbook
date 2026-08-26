@@ -34,6 +34,7 @@ plan that no user's database produces.
 from __future__ import annotations
 
 import sqlite3
+from contextlib import closing
 
 import pytest
 
@@ -553,23 +554,25 @@ def test_bare_keyword_match_equals_the_lower_spelling_for_every_bindable_value(
     ``k.strip().lower()`` first. `typed` here is exactly what that
     expression yields.
     """
-    conn = sqlite3.connect(":memory:")
-    conn.execute(
-        "CREATE TABLE Keywords (id INTEGER PRIMARY KEY AUTOINCREMENT, "
-        "keyword TEXT NOT NULL UNIQUE COLLATE NOCASE, deleted BOOLEAN NOT NULL "
-        "DEFAULT 0)"
-    )
-    conn.execute("INSERT INTO Keywords (keyword) VALUES (?)", (stored,))
-    conn.commit()
-    assert typed == typed.strip().lower(), "the fixture must bind what the caller binds"
-    lowered = conn.execute(
-        "SELECT id FROM Keywords WHERE deleted = 0 AND LOWER(keyword) IN (?)", (typed,)
-    ).fetchall()
-    bare = conn.execute(
-        "SELECT id FROM Keywords WHERE deleted = 0 AND keyword IN (?)", (typed,)
-    ).fetchall()
-    assert [tuple(r) for r in bare] == [tuple(r) for r in lowered]
-    conn.close()
+    with closing(sqlite3.connect(":memory:")) as conn:
+        conn.execute(
+            "CREATE TABLE Keywords (id INTEGER PRIMARY KEY AUTOINCREMENT, "
+            "keyword TEXT NOT NULL UNIQUE COLLATE NOCASE, deleted BOOLEAN NOT NULL "
+            "DEFAULT 0)"
+        )
+        conn.execute("INSERT INTO Keywords (keyword) VALUES (?)", (stored,))
+        conn.commit()
+        assert typed == typed.strip().lower(), (
+            "the fixture must bind what the caller binds"
+        )
+        lowered = conn.execute(
+            "SELECT id FROM Keywords WHERE deleted = 0 AND LOWER(keyword) IN (?)",
+            (typed,),
+        ).fetchall()
+        bare = conn.execute(
+            "SELECT id FROM Keywords WHERE deleted = 0 AND keyword IN (?)", (typed,)
+        ).fetchall()
+        assert [tuple(r) for r in bare] == [tuple(r) for r in lowered]
 
 
 def test_must_have_keywords_returns_the_same_media_as_before(fresh_db):
