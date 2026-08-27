@@ -10,8 +10,11 @@ from typing import Literal
 from tldw_chatbook.Chat.console_chat_models import (
     ConsoleMessageRole,
     ConsoleMessageStatus,
+    GenerationVariantMeta,
+    MessageAttachment,
     derive_console_session_title,
 )
+from tldw_chatbook.Chat.attachment_core import MAX_IMAGE_BYTES
 from tldw_chatbook.Chat.console_context_policy import (
     CompactionFailureBehavior,
     ConsoleContextPolicyOverrides,
@@ -36,6 +39,9 @@ from tldw_chatbook.Chat.rag_scope import RagScope, ScopeItem
 
 CONSOLE_FORK_TITLE_MAX_LENGTH = 60
 CONSOLE_FORK_FINGERPRINT_JSON_MAX_BYTES = 64 * 1024
+CONSOLE_FORK_VIDEO_TOMBSTONE_CONTENT = (
+    "[video unavailable] The generated video expired; regenerate to recreate it."
+)
 _CONSOLE_FORK_IDENTITY_TEXT_MAX_BYTES = 256
 _CONSOLE_FORK_FINGERPRINT_DOMAIN = b"tldw_chatbook.console.chat-fork.v1\0"
 
@@ -122,6 +128,27 @@ class ConsoleForkProjectedGeneration:
 
 
 @dataclass(frozen=True, slots=True)
+class ConsoleForkProjectedVideoTombstone:
+    """Bounded regeneration facts for an intentionally unavailable fork video."""
+
+    owner_native_message_id: str
+    owner_persisted_message_id: str | None
+    source_fingerprint: str
+    prompt: str
+    negative_prompt: str
+    backend: str
+    model: str | None
+    seed: int | None
+    duration_seconds: float | None
+    fps: float | None
+    width: int | None
+    height: int | None
+    ratio: str | None
+    source_image_message_id: str | None
+    container: str
+
+
+@dataclass(frozen=True, slots=True)
 class ConsoleForkProjectedMessage:
     """One independently owned USER/ASSISTANT message in a fork snapshot."""
 
@@ -139,6 +166,7 @@ class ConsoleForkProjectedMessage:
     content: str
     attachments: tuple[ConsoleForkProjectedAttachment, ...] = ()
     generation_metadata: tuple[ConsoleForkProjectedGeneration, ...] = ()
+    video_tombstone: ConsoleForkProjectedVideoTombstone | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -527,6 +555,74 @@ def fingerprint_console_fork_image_selection(
             "attachment_meta_fingerprint": (
                 image_selection.attachment_meta_fingerprint
             ),
+        },
+    )
+
+
+def fingerprint_console_fork_selected_image(
+    attachment: MessageAttachment | ConsoleForkProjectedAttachment,
+    metadata: GenerationVariantMeta | ConsoleForkProjectedGeneration,
+) -> str:
+    """Fingerprint one selected image and its matching canonical provenance.
+
+    Ownership and position are deliberately excluded: the surrounding fence
+    carries the source position, while fork projection rebases the selected
+    attachment under a fresh owner at position zero.
+    """
+
+    if type(attachment) not in {MessageAttachment, ConsoleForkProjectedAttachment}:
+        raise TypeError("Fork selected image attachment is invalid.")
+    if (
+        type(attachment.data) is not bytes
+        or not attachment.data
+        or len(attachment.data) > MAX_IMAGE_BYTES
+        or type(attachment.mime_type) is not str
+        or not attachment.mime_type.startswith("image/")
+        or type(attachment.display_name) is not str
+    ):
+        raise ValueError("Fork selected image attachment is unavailable.")
+    if type(metadata) not in {GenerationVariantMeta, ConsoleForkProjectedGeneration}:
+        raise TypeError("Fork selected image generation metadata is invalid.")
+    if (
+        type(metadata.prompt) is not str
+        or type(metadata.negative_prompt) is not str
+        or type(metadata.backend) is not str
+        or not metadata.backend
+        or type(metadata.model) not in {str, type(None)}
+        or type(metadata.seed) not in {int, type(None)}
+        or type(metadata.style) not in {str, type(None)}
+    ):
+        raise ValueError("Fork selected image generation metadata is unavailable.")
+    if type(metadata) is GenerationVariantMeta:
+        if type(metadata.params) is not dict:
+            raise ValueError("Fork selected image generation metadata is unavailable.")
+        params = metadata.params
+    else:
+        if type(metadata.params_json) is not str:
+            raise ValueError("Fork selected image generation metadata is unavailable.")
+        try:
+            params = json.loads(metadata.params_json)
+        except (TypeError, ValueError):
+            raise ValueError(
+                "Fork selected image generation metadata is unavailable."
+            ) from None
+        if type(params) is not dict:
+            raise ValueError("Fork selected image generation metadata is unavailable.")
+    return _fingerprint_console_fork_payload(
+        "selected-image",
+        {
+            "data_sha256": hashlib.sha256(attachment.data).hexdigest(),
+            "mime_type": attachment.mime_type,
+            "display_name": attachment.display_name,
+            "generation": {
+                "prompt": metadata.prompt,
+                "negative_prompt": metadata.negative_prompt,
+                "backend": metadata.backend,
+                "model": metadata.model,
+                "seed": metadata.seed,
+                "style": metadata.style,
+                "params": params,
+            },
         },
     )
 

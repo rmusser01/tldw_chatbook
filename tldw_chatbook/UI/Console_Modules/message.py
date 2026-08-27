@@ -103,7 +103,7 @@ call-site edit / stays, with reasons) is in the task-1 extraction report.
 
 from __future__ import annotations
 
-from collections.abc import Callable
+from collections.abc import Callable, Sequence
 from dataclasses import replace
 from pathlib import Path
 from typing import Any, Dict, Iterable, Optional, TYPE_CHECKING
@@ -227,6 +227,9 @@ class ConsoleMessageController:
         keep_console_generation_variant: Callable[[Any], None],
         handle_console_toggle_image_view: Callable[[str], None],
         invalidate_console_persisted_rows_cache: Callable[[], None],
+        invalidate_console_fork_image_selections: (
+            Callable[[Sequence[str]], None] | None
+        ) = None,
         play_console_video: Callable[[str], Any] | None = None,
         save_console_video_copy: Callable[[str], Any] | None = None,
         regenerate_console_video_message: Callable[[str], Any] | None = None,
@@ -370,6 +373,9 @@ class ConsoleMessageController:
         self._invalidate_console_persisted_rows_cache_fn = (
             invalidate_console_persisted_rows_cache
         )
+        self._invalidate_console_fork_image_selections_fn = (
+            invalidate_console_fork_image_selections or (lambda _message_ids: None)
+        )
         self._play_console_video_fn = play_console_video
         self._save_console_video_copy_fn = save_console_video_copy
         self._regenerate_console_video_message_fn = regenerate_console_video_message
@@ -489,6 +495,10 @@ class ConsoleMessageController:
     @property
     def _invalidate_console_persisted_rows_cache(self) -> Any:
         return self._invalidate_console_persisted_rows_cache_fn
+
+    @property
+    def _invalidate_console_fork_image_selections(self) -> Any:
+        return self._invalidate_console_fork_image_selections_fn
 
     @property
     def _play_console_video(self) -> Any:
@@ -1182,10 +1192,7 @@ class ConsoleMessageController:
         for other_id, state in tuple(self._console_speech_states.items()):
             if other_id == message_id:
                 continue
-            if (
-                other_id != prior_message_id
-                or state in {"stopped", "failed"}
-            ):
+            if other_id != prior_message_id or state in {"stopped", "failed"}:
                 self._console_speech_states.pop(other_id, None)
         self._console_speech_request_generation += 1
         self._console_speech_states[message_id] = "generating"
@@ -1244,8 +1251,7 @@ class ConsoleMessageController:
             try:
                 return bool(
                     self._ensure_console_chat_store() is store
-                    and self._console_speech_lifetime_generation
-                    == lifetime_generation
+                    and self._console_speech_lifetime_generation == lifetime_generation
                     and store.active_session_id == session_id
                     and store.active_session_epoch() == session_epoch
                 )
@@ -1651,7 +1657,9 @@ class ConsoleMessageController:
             # descendant-to-session identity is still available.
             controller.clear_original_attempts_for_session(session_id)
             self._console_original_attempt_previews.clear()
+            subtree_ids = store.subtree_message_ids(message_id)
             store.delete_message(message_id)
+            self._invalidate_console_fork_image_selections(subtree_ids)
             # TASK-251: a deleted message can change what the browser row
             # shows for this conversation (title/updated_at) -- invalidate
             # so the next sync reflects it immediately.

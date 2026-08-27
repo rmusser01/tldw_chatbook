@@ -1252,6 +1252,11 @@ def build_console_controllers(
         invalidate_console_persisted_rows_cache=(
             lambda: screen._workspace._invalidate_console_persisted_rows_cache()
         ),
+        invalidate_console_fork_image_selections=(
+            lambda message_ids: screen._image.invalidate_console_fork_image_selections(
+                message_ids
+            )
+        ),
         play_console_video=(
             lambda message_id: screen._video._play_console_video(message_id)
         ),

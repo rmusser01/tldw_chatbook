@@ -4,13 +4,17 @@ from __future__ import annotations
 
 import asyncio
 from collections import OrderedDict
-from collections.abc import Callable, Mapping
+from collections.abc import Callable, Mapping, Sequence
 import threading
 from typing import Any
 
 from loguru import logger
 
 from ...Chat.console_chat_models import ConsoleChatMessage, ConsoleMessageRole
+from ...Chat.console_chat_fork import (
+    ConsoleForkImageSelectionFence,
+    fingerprint_console_fork_selected_image,
+)
 from ...Chat.console_chat_store import ConsoleChatSession, ConsoleChatStore
 from ...Chat.console_command_grammar import CommandParse
 from ...Chat.console_generate_image import (
@@ -102,6 +106,7 @@ class ConsoleImageController:
         self._imagegen_inflight_message_ids: set[str] = set()
         self._console_h3_ui_generations: dict[str, str] = {}
         self._remote_image_fetch_attempts: OrderedDict[str, None] = OrderedDict()
+        self._fork_image_browse_revisions: dict[str, int] = {}
 
     def _ensure_console_image_view(self) -> tuple[Any, Any]:
         return self._ensure_console_image_view_fn()
@@ -115,6 +120,70 @@ class ConsoleImageController:
 
     def _console_generation_browse(self) -> dict[str, int]:
         return self._console_generation_browse_fn()
+
+    def _bump_fork_image_browse_revision(self, message_id: str) -> None:
+        self._fork_image_browse_revisions[message_id] = (
+            self._fork_image_browse_revisions.get(message_id, 0) + 1
+        )
+
+    def capture_console_fork_image_selections(
+        self,
+        messages: Sequence[ConsoleChatMessage],
+    ) -> tuple[ConsoleForkImageSelectionFence, ...]:
+        """Capture selected generated-image facts for one fork prefix."""
+
+        browse = self._console_generation_browse()
+        selections: list[ConsoleForkImageSelectionFence] = []
+        for message in messages:
+            metadata = message.generation_metadata
+            if not metadata:
+                continue
+            if len(metadata) != len(message.attachments):
+                raise ValueError("Fork generated image metadata is unavailable.")
+            position = browse.get(message.id, 0)
+            if type(position) is not int or not 0 <= position < len(metadata):
+                raise ValueError("Fork generated image selection is unavailable.")
+            selections.append(
+                ConsoleForkImageSelectionFence(
+                    native_message_id=message.id,
+                    selected_position=position,
+                    browse_revision=self._fork_image_browse_revisions.get(
+                        message.id, 0
+                    ),
+                    attachment_meta_fingerprint=(
+                        fingerprint_console_fork_selected_image(
+                            message.attachments[position],
+                            metadata[position],
+                        )
+                    ),
+                )
+            )
+        return tuple(selections)
+
+    def validate_console_fork_image_selections(
+        self,
+        messages: Sequence[ConsoleChatMessage],
+        expected: Sequence[ConsoleForkImageSelectionFence],
+    ) -> bool:
+        """Return whether current generated-image choices exactly match a capture."""
+
+        try:
+            return self.capture_console_fork_image_selections(messages) == tuple(
+                expected
+            )
+        except (AttributeError, IndexError, TypeError, ValueError):
+            return False
+
+    def invalidate_console_fork_image_selections(
+        self,
+        message_ids: Sequence[str],
+    ) -> None:
+        """Invalidate and clean browse state for removed messages or subtrees."""
+
+        browse = self._console_generation_browse()
+        for message_id in dict.fromkeys(message_ids):
+            browse.pop(message_id, None)
+            self._bump_fork_image_browse_revision(message_id)
 
     async def _sync_native_console_chat_ui(self) -> None:
         await self._sync_native_console_chat_ui_fn()
@@ -425,6 +494,7 @@ class ConsoleImageController:
                 persist=True,
             )
             self._console_generation_browse()[message_id] = position
+            self._bump_fork_image_browse_revision(message_id)
             await self._sync_native_console_chat_ui()
         finally:
             inflight.discard(message_id)
@@ -448,6 +518,7 @@ class ConsoleImageController:
             return
         if 0 <= target < variant_count:
             browse[message.id] = target
+            self._bump_fork_image_browse_revision(message.id)
 
     def _keep_console_generation_variant(self, message: ConsoleChatMessage) -> None:
         """Promote the browsed variant to canonical and evict stale renders."""
@@ -464,6 +535,7 @@ class ConsoleImageController:
             session_id, message.id, position=browsed_index, persist=True
         )
         browse[message.id] = 0
+        self._bump_fork_image_browse_revision(message.id)
         _state, cache = self._ensure_console_image_view()
         stale_keys = [f"{message.id}:{index}" for index in range(variant_count)]
         cache.evict_session(stale_keys)

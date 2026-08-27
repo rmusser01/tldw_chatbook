@@ -96,6 +96,13 @@ async def test_console_message_action_delete_removes_persisted_row():
         message = store.append_message(
             session.id, role=ConsoleMessageRole.ASSISTANT, content="answer"
         )
+        child = store.append_message(
+            session.id, role=ConsoleMessageRole.USER, content="follow-up"
+        )
+        invalidate_media = Mock(
+            wraps=console._image.invalidate_console_fork_image_selections
+        )
+        console._image.invalidate_console_fork_image_selections = invalidate_media
         await console._sync_native_console_chat_ui()
         # `_sync_console_pending_delete_confirmation` resets the armed id the
         # moment it disagrees with the transcript's own selection -- an
@@ -105,9 +112,7 @@ async def test_console_message_action_delete_removes_persisted_row():
         await console._sync_native_console_chat_ui()
 
         event = SimpleNamespace(
-            button=SimpleNamespace(
-                id=f"console-message-action-delete-{message.id}"
-            ),
+            button=SimpleNamespace(id=f"console-message-action-delete-{message.id}"),
             stop=Mock(),
         )
         # First press only arms the confirmation -- nothing removed yet.
@@ -120,6 +125,8 @@ async def test_console_message_action_delete_removes_persisted_row():
         assert handled_again is True
 
     assert message not in store.messages_for_session(session.id)
+    assert child not in store.messages_for_session(session.id)
+    invalidate_media.assert_called_once_with((message.id, child.id))
 
 
 @pytest.mark.asyncio
