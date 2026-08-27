@@ -127,7 +127,9 @@ class ConsoleRagSettingsModal(
 
     #console-rag-settings {
         width: 64;
-        height: auto;
+        max-width: 96%;
+        height: 20;
+        max-height: 96%;
         border: tall gray;
         background: black;
         padding: 1 2;
@@ -280,7 +282,7 @@ class ConsoleRagSettingsModal(
                         ),
                         id=f"{CONSOLE_RAG_SOURCE_TOGGLE_ID_PREFIX}{source_type}",
                         classes=CONSOLE_RAG_SOURCE_TOGGLE_CLASS,
-                        tooltip=f"Include {label} in Library retrieval.",
+                        tooltip=f"This search only: include {label}.",
                     )
             with Horizontal(classes="console-rag-settings-actions"):
                 yield Button(

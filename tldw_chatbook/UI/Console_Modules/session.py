@@ -2148,9 +2148,23 @@ class ConsoleSessionController:
         )
         if not isinstance(console_config, Mapping):
             console_config = {}
+        chat_defaults = (
+            app_config.get("chat_defaults", {})
+            if isinstance(app_config, Mapping)
+            else {}
+        )
+        if not isinstance(chat_defaults, Mapping):
+            chat_defaults = {}
         self._ensure_console_chat_store().set_library_policy_defaults(
             ConsoleLibraryPolicyDefaults(
-                auto_retrieve=ConsoleAutoRetrieve.NEVER,
+                auto_retrieve=(
+                    ConsoleAutoRetrieve.AUTOMATIC
+                    if coerce_bool_setting(
+                        chat_defaults.get("rag_auto_retrieve_on_send", False),
+                        False,
+                    )
+                    else ConsoleAutoRetrieve.NEVER
+                ),
                 assistant_access=(
                     ConsoleAssistantLibraryAccess.ALLOWED
                     if coerce_bool_setting(

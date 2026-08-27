@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import pytest
 from textual.app import App
-from textual.widgets import Static
+from textual.widgets import Button, Static
 
 from tldw_chatbook.Chat.citation_evidence_models import (
     EvidenceBundle,
@@ -21,15 +21,7 @@ from tldw_chatbook.Widgets.Console.console_staged_context import (
 
 
 def _five_reference_launch() -> ConsoleLiveWorkLaunch:
-    """A real 5-reference bundle, staged the way Library RAG actually stages one.
-
-    Each reference explodes into 3-4 provenance rows (Evidence source /
-    Evidence authority / Evidence status / optional Snippet) inside
-    ``ConsoleStagedContextState.from_live_work``, so 5 references yield
-    17-22 display rows -- the exact gap that let the tray render
-    "Sources 18" (D1a): the OLD code rendered ``len(rows)`` instead of the
-    true staged-source count.
-    """
+    """A real five-reference bundle staged the way Library RAG stages one."""
     bundle = EvidenceBundle(
         bundle_id="bundle-5",
         query="What changed?",
@@ -142,17 +134,10 @@ async def test_staged_context_row_renders_name_and_normalized_status() -> None:
 
 @pytest.mark.asyncio
 async def test_staged_context_tray_counts_sources_not_display_rows() -> None:
-    """D1a: a 5-reference bundle must render '5', not the exploded row count.
-
-    Built via the REAL ``from_live_work`` (not a hand-built 1-row state --
-    that shape is exactly what let "Sources 18" ship, since a 1-reference
-    launch's row count and source count coincide).
-    """
+    """Five references produce five compact, activatable primary rows."""
     launch = _five_reference_launch()
     state = ConsoleStagedContextState.from_live_work(launch)
-    # Sanity: this bundle really does explode past the source count --
-    # otherwise this test could not distinguish the fix from the bug.
-    assert len(state.rows) > 5
+    assert len(state.source_rows) == 5
     assert state.source_count == 5
 
     class TestApp(App):
@@ -160,10 +145,29 @@ async def test_staged_context_tray_counts_sources_not_display_rows() -> None:
             yield ConsoleStagedContextTray(state)
 
     app = TestApp()
-    async with app.run_test():
+    async with app.run_test() as pilot:
         tray = app.query_one(ConsoleStagedContextTray)
         count = tray.query_one("#console-staged-context-count", Static)
         assert str(count.renderable) == "5"
+        primary_rows = list(tray.query(".console-staged-source-primary"))
+        assert len(primary_rows) == 5
+        first = tray.query_one("#console-staged-source-primary-0", Button)
+        assert "Ready · Source 1 · media" == first.label.plain
+        detail = tray.query_one("#console-staged-source-detail-0")
+        assert detail.display is False
+
+        await pilot.click("#console-staged-source-primary-0")
+
+        assert detail.display is True
+        detail_text = " ".join(
+            str(item.renderable) for item in detail.query(Static)
+        )
+        assert "Body 1" in detail_text
+        assert "Authority: local" in detail_text
+        assert "Freshness: Current" in detail_text
+        assert "Open in Library" in str(
+            detail.query_one("#console-staged-source-action-0", Button).label
+        )
 
 
 @pytest.mark.asyncio

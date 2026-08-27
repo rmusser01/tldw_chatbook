@@ -173,33 +173,31 @@ class ConsoleScopeChip(ConsoleChip):
         self.post_message(self.OpenRequested())
 
 
-class ConsoleRagChip(ConsoleChip):
-    """Library-search readiness chip that opens the Library search settings modal.
-
-    Same activation contract as the sibling action chips: Enter/Space while
-    focused, or a click. "Library search: off" is not a latent toggle the
-    chip could flip in place -- it reads "on" once retrieved Library
-    evidence is staged for the next send -- so activation opens the modal
-    where the user sets the retrieval query and runs it.
-    """
+class ConsoleLibraryChip(ConsoleChip):
+    """Two-axis Library policy chip that opens conversation access controls."""
 
     BINDINGS = [
         Binding(
-            "enter", "open_rag_settings", "Open Library search settings", show=False
+            "enter", "open_library_access", "Open Library access", show=False
         ),
         Binding(
-            "space", "open_rag_settings", "Open Library search settings", show=False
+            "space", "open_library_access", "Open Library access", show=False
         ),
     ]
 
     class OpenRequested(Message):
         """Posted when the RAG chip is activated from keyboard or mouse."""
 
-    def action_open_rag_settings(self) -> None:
+    def action_open_library_access(self) -> None:
         self.post_message(self.OpenRequested())
 
     def _on_click(self, event: events.Click) -> None:
         self.post_message(self.OpenRequested())
+
+
+# Compatibility import for extensions that referenced the old class name.
+# The rendered widget/id and its action now expose Library policy semantics.
+ConsoleRagChip = ConsoleLibraryChip
 
 
 class ConsoleSourcesChip(ConsoleChip):
@@ -467,6 +465,14 @@ class ConsoleStatusChips(Horizontal):
                 # their learned relative order behind it. Hidden unless a run is
                 # active (see ``sync_run_chip``).
                 yield self._run_chip()
+                # The two-axis Library policy is the primary permission
+                # readout. Keep it ahead of provider/model metadata so both
+                # axes remain painted before horizontal overflow begins.
+                yield self._chip(
+                    self.state.rag_label,
+                    id="console-library-chip",
+                    chip_class=ConsoleLibraryChip,
+                )
                 yield self._chip(
                     self.state.provider_label,
                     id="console-provider-chip",
@@ -486,11 +492,6 @@ class ConsoleStatusChips(Horizontal):
                     self.state.assistant_label,
                     id="console-assistant-chip",
                     chip_class=ConsoleAssistantChip,
-                )
-                yield self._chip(
-                    self.state.rag_label,
-                    id="console-rag-chip",
-                    chip_class=ConsoleRagChip,
                 )
                 yield self._chip(
                     self.state.sources_label,
@@ -859,7 +860,7 @@ class ConsoleStatusChips(Horizontal):
             "#console-model-chip": state.model_label,
             "#console-system-prompt-chip": state.system_prompt_label,
             "#console-assistant-chip": state.assistant_label,
-            "#console-rag-chip": state.rag_label,
+            "#console-library-chip": state.rag_label,
             "#console-sources-chip": state.sources_label,
             "#console-tools-chip": state.tools_label,
             "#console-approvals-chip": state.approvals_label,

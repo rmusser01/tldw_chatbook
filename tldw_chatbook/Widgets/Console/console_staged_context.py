@@ -5,10 +5,14 @@ from __future__ import annotations
 from collections.abc import Callable
 from typing import Any
 
+from rich.text import Text
+from textual import on
 from textual.app import ComposeResult
 from textual.containers import Horizontal, Vertical
 from textual.css.query import NoMatches, QueryError
-from textual.widgets import Static
+from textual.message import Message
+from textual.widget import Widget
+from textual.widgets import Button, Static
 
 from tldw_chatbook.Chat.console_display_state import ConsoleStagedContextState
 from tldw_chatbook.Widgets.recompose_capture_guard import RecomposeCaptureGuard
@@ -22,6 +26,15 @@ _STATUS_CLASS_MAP = {
     "running": {"retrieving", "running", "stale"},
     "blocked": {"blocked", "missing", "unavailable"},
 }
+
+
+class ConsoleStagedSourceOpenRequested(Message):
+    """Request navigation to one staged source's canonical Library row."""
+
+    def __init__(self, *, source_type: str, source_id: str) -> None:
+        super().__init__()
+        self.source_type = source_type
+        self.source_id = source_id
 
 
 def _normalize_source_status(status: str) -> str:
@@ -65,10 +78,10 @@ class ConsoleStagedContextTray(RecomposeCaptureGuard, Vertical):
         self.state = state
         self._on_reconcile = on_reconcile
 
-    def _body_widgets(self) -> list[Static | Vertical]:
+    def _body_widgets(self) -> list[Widget]:
         """Build the body while keeping the stable header outside its viewport."""
 
-        body: list[Static | Vertical] = []
+        body: list[Widget] = []
         if self.state.summary:
             body.append(
                 Static(
@@ -79,7 +92,67 @@ class ConsoleStagedContextTray(RecomposeCaptureGuard, Vertical):
                 )
             )
 
-        if self.state.rows:
+        if self.state.source_rows:
+            for index, row in enumerate(self.state.source_rows):
+                primary = Button(
+                    Text(
+                        f"{row.status.title()} · {row.title} · {row.source_type}"
+                    ),
+                    id=f"console-staged-source-primary-{index}",
+                    classes=(
+                        "console-staged-source-primary "
+                        f"console-staged-source-primary-{row.status}"
+                    ),
+                )
+                primary.source_row_index = index
+                detail_children: list[Widget] = [
+                    Static(
+                        row.snippet or "No snippet available.",
+                        classes="console-staged-source-snippet",
+                        markup=False,
+                    ),
+                    Static(
+                        f"Authority: {row.authority}",
+                        classes="console-staged-source-authority",
+                        markup=False,
+                    ),
+                    Static(
+                        f"Freshness: {row.freshness}",
+                        classes="console-staged-source-freshness",
+                        markup=False,
+                    ),
+                ]
+                if row.action_label == "Open in Library":
+                    action = Button(
+                        row.action_label,
+                        id=f"console-staged-source-action-{index}",
+                        classes="console-staged-source-action",
+                    )
+                    action.source_row_index = index
+                    detail_children.append(action)
+                else:
+                    detail_children.append(
+                        Static(
+                            f"Action: {row.action_label}",
+                            classes="console-staged-source-action-copy",
+                            markup=False,
+                        )
+                    )
+                detail = Vertical(
+                    *detail_children,
+                    id=f"console-staged-source-detail-{index}",
+                    classes="console-staged-source-detail",
+                )
+                detail.display = False
+                body.append(
+                    Vertical(
+                        primary,
+                        detail,
+                        id=f"console-staged-context-row-{index}",
+                        classes="console-staged-source-row",
+                    )
+                )
+        elif self.state.rows:
             for index, row in enumerate(self.state.rows):
                 status_class = _normalize_source_status(row.status)
                 body.append(
@@ -122,7 +195,7 @@ class ConsoleStagedContextTray(RecomposeCaptureGuard, Vertical):
     def compose(self) -> ComposeResult:
         with Horizontal(classes="console-staged-context-header"):
             yield Static(
-                "Sources",
+                "Sources — next send",
                 id="console-staged-context-title",
                 classes="console-rail-section-title",
             )
@@ -133,6 +206,36 @@ class ConsoleStagedContextTray(RecomposeCaptureGuard, Vertical):
             )
 
         yield ConsoleBoundedSection(*self._body_widgets(), section_id="sources")
+
+    @on(Button.Pressed, ".console-staged-source-primary")
+    def _toggle_source_detail(self, event: Button.Pressed) -> None:
+        """Reveal one source's secondary details only after activation."""
+        event.stop()
+        index = getattr(event.button, "source_row_index", None)
+        if type(index) is not int:
+            return
+        try:
+            detail = self.query_one(f"#console-staged-source-detail-{index}")
+        except QueryError:
+            return
+        detail.display = not detail.display
+
+    @on(Button.Pressed, ".console-staged-source-action")
+    def _open_staged_source(self, event: Button.Pressed) -> None:
+        """Post a typed navigation request for one supported source."""
+        event.stop()
+        index = getattr(event.button, "source_row_index", None)
+        if type(index) is not int or not 0 <= index < len(self.state.source_rows):
+            return
+        row = self.state.source_rows[index]
+        if row.source_type not in {"media", "notes", "conversations"}:
+            return
+        self.post_message(
+            ConsoleStagedSourceOpenRequested(
+                source_type=row.source_type,
+                source_id=row.source_id,
+            )
+        )
 
     def sync_state(self, state: ConsoleStagedContextState) -> None:
         """Refresh the mounted tray from a new staged-context snapshot.

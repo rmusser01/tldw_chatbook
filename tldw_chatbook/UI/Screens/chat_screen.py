@@ -14,7 +14,6 @@ import threading
 import time
 from types import SimpleNamespace
 from typing import Any, Dict, Literal, Optional, TYPE_CHECKING
-from urllib.parse import urlparse
 
 import toml
 from loguru import logger
@@ -388,6 +387,7 @@ from ...Widgets.Console import (
     ConsoleSettingsSummary,
     ConsoleSetupModal,
     ConsoleStagedContextTray,
+    ConsoleStagedSourceOpenRequested,
     ConsoleStagedEvidenceStrip,
     ConsoleTranscript,
     ConsoleWorkspaceContextTray,
@@ -453,16 +453,16 @@ from ...Widgets.Console.console_citation_sources_modal import (
 )
 from ...Widgets.Console.console_generation_card import generation_card_signature
 from ...Widgets.Console.console_video_card import video_card_signature
-from ...Widgets.Console.console_rag_settings_modal import (
+from ...Widgets.Console.console_library_search_modal import (
     CONSOLE_RAG_DEFAULT_SOURCE_TYPES,
-    ConsoleRagSettingsModal,
+    ConsoleLibrarySearchModal,
     normalize_console_rag_source_types,
 )
 from ...Widgets.Console.console_status_chips import (
     ConsoleModelChip,
     ConsoleAssistantChip,
     ConsoleCostChip,
-    ConsoleRagChip,
+    ConsoleLibraryChip,
     ConsoleRunChip,
     ConsoleScopeChip,
     ConsoleSourcesChip,
@@ -1292,52 +1292,6 @@ def _console_library_rag_profile_top_k() -> int:
         inside a send.
     """
     return library_rag_profile_top_k()
-
-
-def _console_draft_looks_like_rag_query(draft: Any) -> bool:
-    """Return whether a composer draft is safe to prefill as a RAG query.
-
-    RAG-43: live UAT saw a fixture file path prefill verbatim into the
-    Library RAG query -- the modal-open prefill and the visible Run
-    Library RAG action's queryless fallback both used to hand the raw
-    composer draft straight to ``_sanitize_console_library_rag_query``.
-    This is the one guard both sites call before doing that.
-
-    Detection reuses the Console's own path-paste shape detector,
-    ``extract_dropped_path`` (``Chat/console_paste_attach.py``, which
-    already recognizes bare absolute paths, quoted paths, backslash-
-    escaped paths, and ``file://`` URIs -- Unix and Windows/UNC alike),
-    plus the ``urlparse(...).scheme in ("http", "https")`` URL check
-    already used for Library ingest sources (``library_screen.py``). No
-    new regex family.
-
-    Ruling on drafts that merely *mention* a path or URL alongside other
-    text (e.g. "check out https://example.com/notes for context"): those
-    still prefill. Only a draft that IS a path/URL in its entirety is
-    guarded -- a question is exactly the text the user is about to send,
-    same as any other question draft, and the whitespace surrounding an
-    embedded path/URL already keeps it out of both entirety checks below.
-
-    Args:
-        draft: Raw composer draft text (unsanitized).
-
-    Returns:
-        True when the draft is reasonable to sanitize and use as a
-        Library RAG query; False when it should be dropped (left
-        queryless) instead of silently prefilled.
-    """
-    stripped = str(draft or "").strip()
-    if not stripped:
-        return False
-    if len(stripped) > CONSOLE_LIBRARY_RAG_DRAFT_PREFILL_MAX_LENGTH:
-        return False
-    if extract_dropped_path(stripped) is not None:
-        return False
-    if not any(character.isspace() for character in stripped):
-        parsed = urlparse(stripped)
-        if parsed.scheme in ("http", "https") and parsed.netloc:
-            return False
-    return True
 
 
 def _console_screen_is_torn_down(screen: Any) -> bool:
@@ -6568,7 +6522,6 @@ class ChatScreen(BaseAppScreen):
         """Build Console-owned control/readiness labels."""
         provider, model, settings = self._active_console_provider_model_display()
         active_session = self._session._active_native_console_session()
-        source = pending_launch.source if pending_launch else None
         return ConsoleControlState.from_values(
             provider=provider,
             model=model,
@@ -6583,7 +6536,11 @@ class ChatScreen(BaseAppScreen):
             assistant_kind=getattr(active_session, "assistant_kind", None),
             assistant_name=getattr(active_session, "assistant_name", None),
             assistant_id=getattr(active_session, "assistant_id", None),
-            rag_enabled=_source_mentions_rag(source),
+            library_policy=(
+                active_session.library_policy_holder.snapshot
+                if active_session is not None
+                else None
+            ),
             # RAG UX v2 PR-4: was hardcoded to 1 while the staged bundle
             # routinely carries several references -- a four-result Library
             # RAG run advertised "Sources: 1 staged".
@@ -7065,11 +7022,13 @@ class ChatScreen(BaseAppScreen):
         event.stop()
         self.action_open_console_system_prompt_editor()
 
-    @on(ConsoleRagChip.OpenRequested)
-    def _console_rag_chip_activated(self, event: ConsoleRagChip.OpenRequested) -> None:
-        """Open Library search settings from the Library-search chip."""
+    @on(ConsoleLibraryChip.OpenRequested)
+    def _console_library_chip_activated(
+        self, event: ConsoleLibraryChip.OpenRequested
+    ) -> None:
+        """Open the active conversation's two-axis Library policy editor."""
         event.stop()
-        self._open_console_rag_settings()
+        self._library_policy.open_access()
 
     @on(ConsoleSourcesChip.OpenRequested)
     def _console_sources_chip_activated(
@@ -7289,34 +7248,25 @@ class ChatScreen(BaseAppScreen):
 
         return rows, totals, turns, exchanges_loader
 
-    def _open_console_rag_settings(self) -> None:
-        """Open the Library search settings modal, prefilled with the best query.
-
-        The prefill prefers the query already set through any Library-search
-        surface; with none set, it falls back to the composer draft -- the
-        text the user is about to send is usually exactly what the search
-        should look for, and it was the missing link when "Search Library"
-        demanded a query while the composer visibly held one.
-        """
-        prefill = self._console_library_rag_query
-        if not prefill:
-            composer = self._console_composer_or_none()
-            if composer is not None:
-                draft_text = composer.draft_text()
-                if _console_draft_looks_like_rag_query(draft_text):
-                    prefill = _sanitize_console_library_rag_query(draft_text)
-        pending = self._pending_console_launch_context
+    def _open_console_library_search(self) -> None:
+        """Open one-shot Library search with the exact current composer draft."""
+        composer = self._console_composer_or_none()
+        prefill = (
+            composer.draft_text()
+            if composer is not None
+            else self._console_library_rag_query
+        )
         self.app.push_screen(
-            ConsoleRagSettingsModal(
+            ConsoleLibrarySearchModal(
                 query=prefill,
                 source_types=_console_library_rag_source_scope(self),
-                # Matches the chip exactly: the chip's "Library search: on"
-                # derives from this same pending-launch source test.
-                rag_active=_source_mentions_rag(pending.source if pending else None),
-                staged_title=(pending.title if pending else ""),
             ),
-            callback=self._retrieval._apply_console_rag_settings_choice,
+            callback=self._retrieval._apply_console_library_search_choice,
         )
+
+    def _open_console_rag_settings(self) -> None:
+        """Compatibility entry point for the renamed manual-search surface."""
+        self._open_console_library_search()
 
     def _set_console_library_rag_query(self, query: str) -> None:
         """Store the Library RAG query and mirror it into mounted surfaces.
@@ -10183,16 +10133,12 @@ class ChatScreen(BaseAppScreen):
         if not query:
             composer = self._console_composer_or_none()
             draft_text = composer.draft_text() if composer is not None else ""
-            draft_query = (
-                _sanitize_console_library_rag_query(draft_text)
-                if _console_draft_looks_like_rag_query(draft_text)
-                else ""
-            )
+            draft_query = _sanitize_console_library_rag_query(draft_text)
             if draft_query:
                 self._set_console_library_rag_query(draft_query)
                 query = draft_query
         if not query:
-            self._open_console_rag_settings()
+            self._open_console_library_search()
             return
         request = LibraryRagSearchRequest(
             query=query,
@@ -11853,6 +11799,21 @@ class ChatScreen(BaseAppScreen):
             )
 
         self.app.push_screen(modal, callback=_open_source_in_library)
+
+    @on(ConsoleStagedSourceOpenRequested)
+    def handle_console_staged_source_open(
+        self, event: ConsoleStagedSourceOpenRequested
+    ) -> None:
+        """Navigate from a staged-source detail action into Library."""
+        self.app.post_message(
+            NavigateToScreen(
+                "library",
+                {
+                    LIBRARY_NAV_CONTEXT_OPEN_SOURCE_TYPE: event.source_type,
+                    LIBRARY_NAV_CONTEXT_OPEN_SOURCE_ID: event.source_id,
+                },
+            )
+        )
 
     def _console_citation_message_body(self, message: Any) -> str:
         """Delegate to `ConsoleMessageController` (wave-3 task 1) -- kept

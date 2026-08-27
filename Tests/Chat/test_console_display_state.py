@@ -5,7 +5,6 @@ import pytest
 from tldw_chatbook.Chat.console_display_state import (
     CONSOLE_INSPECTOR_NO_APPROVAL_REASON,
     CONSOLE_INSPECTOR_NO_CHATBOOK_ARTIFACT_REASON,
-    CONSOLE_INSPECTOR_NO_TOOL_CALLS_REASON,
     CONSOLE_INSPECTOR_REVIEW_APPROVAL_ID,
     CONSOLE_INSPECTOR_REVIEW_TOOL_CALL_ID,
     CONSOLE_INSPECTOR_SAVE_CHATBOOK_ID,
@@ -13,7 +12,13 @@ from tldw_chatbook.Chat.console_display_state import (
     CONSOLE_SYSTEM_PROMPT_LABEL_UNSET,
     ConsoleControlState,
     ConsoleInspectorState,
+    ConsoleLibraryPolicyDisplayState,
     ConsoleStagedContextState,
+)
+from tldw_chatbook.Chat.console_library_policy import (
+    ConsoleAssistantLibraryAccess,
+    ConsoleAutoRetrieve,
+    ConsoleLibraryPolicySnapshot,
 )
 from tldw_chatbook.Chat.console_live_work import ConsoleLiveWorkLaunch
 
@@ -22,7 +27,12 @@ def test_console_control_state_exposes_provider_model_and_context_labels():
     state = ConsoleControlState.from_values(
         provider="OpenAI",
         model="gpt-5.5",
-        rag_enabled=True,
+        library_policy=ConsoleLibraryPolicySnapshot(
+            auto_retrieve=ConsoleAutoRetrieve.AUTOMATIC,
+            assistant_access=ConsoleAssistantLibraryAccess.BLOCKED,
+            policy_revision=2,
+            source="durable",
+        ),
         staged_source_count=3,
         tool_count=4,
         approval_count=1,
@@ -31,10 +41,73 @@ def test_console_control_state_exposes_provider_model_and_context_labels():
     assert state.provider_label == "Provider: OpenAI"
     assert state.model_label == "Model: gpt-5.5"
     assert state.assistant_label == "Assistant: General"
-    assert state.rag_label == "Library search: on"
+    assert state.rag_label == "Library · Auto on · Agent blocked"
     assert state.sources_label == "Sources: 3"
     assert state.tools_label == "Tools: 4 ready"
     assert state.approvals_label == "Approvals: 1 pending"
+
+
+@pytest.mark.parametrize(
+    ("automatic", "assistant", "expected"),
+    (
+        (
+            ConsoleAutoRetrieve.NEVER,
+            ConsoleAssistantLibraryAccess.BLOCKED,
+            "Library · Auto off · Agent blocked",
+        ),
+        (
+            ConsoleAutoRetrieve.AUTOMATIC,
+            ConsoleAssistantLibraryAccess.BLOCKED,
+            "Library · Auto on · Agent blocked",
+        ),
+        (
+            ConsoleAutoRetrieve.NEVER,
+            ConsoleAssistantLibraryAccess.ALLOWED,
+            "Library · Auto off · Agent allowed",
+        ),
+        (
+            ConsoleAutoRetrieve.AUTOMATIC,
+            ConsoleAssistantLibraryAccess.ALLOWED,
+            "Library · Auto on · Agent allowed",
+        ),
+    ),
+)
+def test_library_policy_display_state_pins_the_four_fixed_order_combinations(
+    automatic: ConsoleAutoRetrieve,
+    assistant: ConsoleAssistantLibraryAccess,
+    expected: str,
+) -> None:
+    state = ConsoleLibraryPolicyDisplayState.from_snapshot(
+        ConsoleLibraryPolicySnapshot(
+            auto_retrieve=automatic,
+            assistant_access=assistant,
+            policy_revision=1,
+            source="durable",
+        )
+    )
+
+    assert state.chip_label == expected
+    assert state.auto_retrieve_label in {"Never", "Automatic"}
+    assert state.assistant_access_label in {"Blocked", "Allowed"}
+    assert "Sources" not in state.chip_label
+    assert "ready" not in state.chip_label.lower()
+
+
+def test_library_policy_display_state_fails_closed_when_authority_is_unavailable() -> None:
+    state = ConsoleLibraryPolicyDisplayState.from_snapshot(
+        ConsoleLibraryPolicySnapshot(
+            auto_retrieve=ConsoleAutoRetrieve.NEVER,
+            assistant_access=ConsoleAssistantLibraryAccess.BLOCKED,
+            policy_revision=None,
+            source="unavailable",
+            error_code="policy_read_error",
+        )
+    )
+
+    assert state.chip_label == "Library · Policy unavailable · Agent blocked"
+    assert state.source_status == "Unavailable — using Never and Blocked"
+    assert state.editing_enabled is False
+    assert state.save_enabled is False
 
 
 def test_console_control_state_preserves_falsy_labels_and_generic_assistant_fallback():

@@ -6122,7 +6122,7 @@ class ConsoleTranscript(VerticalScroll):
                         kind="citations",
                         signature=("citations", message.id, citation_count),
                         message=message,
-                        renderable=f"Sources ({citation_count})",
+                        renderable=f"Cited sources ({citation_count})",
                     )
                 )
             annotation_notes = self._annotation_previews.get(message.id)

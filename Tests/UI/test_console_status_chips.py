@@ -4,9 +4,11 @@ import pytest
 from textual.app import App, ComposeResult
 from textual.widgets import Tooltip
 
+from Tests.UI.consolidated_css import ConsolidatedCSSApp
 from tldw_chatbook.Chat.console_display_state import ConsoleControlState
 from tldw_chatbook.Widgets.Console.console_status_chips import (
     ConsoleApprovalsChip,
+    ConsoleLibraryChip,
     ConsoleStatusChips,
 )
 
@@ -16,7 +18,7 @@ def _state(**overrides) -> ConsoleControlState:
         provider_label="Provider: Anthropic",
         model_label="Model: claude-3-haiku",
         assistant_label="Assistant: General",
-        rag_label="RAG: off",
+        rag_label="Library · Auto off · Agent blocked",
         sources_label="Sources: 0 staged",
         tools_label="Tools: 0 ready",
         approvals_label="Approvals: 0 pending",
@@ -39,6 +41,15 @@ class _ChipsApp(App):
         yield ConsoleStatusChips(self._state, id="console-status-chips")
 
 
+class _ProductionChipsApp(ConsolidatedCSSApp):
+    def __init__(self, state: ConsoleControlState) -> None:
+        super().__init__()
+        self._state = state
+
+    def compose(self) -> ComposeResult:
+        yield ConsoleStatusChips(self._state, id="console-status-chips")
+
+
 @pytest.mark.asyncio
 async def test_status_chips_render_one_assistant_identity_label():
     app = _ChipsApp(_state())
@@ -48,7 +59,7 @@ async def test_status_chips_render_one_assistant_identity_label():
             ("#console-provider-chip", "Provider:"),
             ("#console-model-chip", "Model:"),
             ("#console-assistant-chip", "Assistant: General"),
-            ("#console-rag-chip", "RAG:"),
+            ("#console-library-chip", "Library · Auto off · Agent blocked"),
             ("#console-sources-chip", "Sources:"),
             ("#console-tools-chip", "Tools:"),
             ("#console-approvals-chip", "Approvals:"),
@@ -57,6 +68,51 @@ async def test_status_chips_render_one_assistant_identity_label():
             assert expected in str(chip.render())
         assert not app.query("#console-character-chip")
         assert not app.query("#console-persona-chip")
+        assert len(app.query(ConsoleLibraryChip)) == 1
+        assert not app.query("#console-rag-chip")
+
+
+@pytest.mark.asyncio
+async def test_library_chip_keyboard_and_click_post_the_same_open_request() -> None:
+    app = _ChipsApp(_state())
+    async with app.run_test(size=(160, 6)) as pilot:
+        await pilot.pause()
+        chip = app.query_one("#console-library-chip", ConsoleLibraryChip)
+        posted: list[object] = []
+        original = chip.post_message
+        chip.post_message = lambda message: posted.append(message)  # type: ignore[assignment]
+        try:
+            chip.action_open_library_access()
+            chip._on_click(object())  # type: ignore[arg-type]
+        finally:
+            chip.post_message = original
+
+        assert len(posted) == 2
+        assert all(isinstance(item, ConsoleLibraryChip.OpenRequested) for item in posted)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "label",
+    (
+        "Library · Auto off · Agent blocked",
+        "Library · Policy unavailable · Agent blocked",
+    ),
+)
+async def test_library_policy_is_first_stable_chip_and_fully_painted_at_120_columns(
+    label: str,
+) -> None:
+    app = _ProductionChipsApp(_state(rag_label=label))
+    async with app.run_test(size=(120, 6)) as pilot:
+        await pilot.pause()
+        scroll = app.query_one("#console-status-chip-scroll")
+        library = app.query_one("#console-library-chip")
+        provider = app.query_one("#console-provider-chip")
+
+        assert library.region.x < provider.region.x
+        assert library.region.right <= scroll.region.right
+        assert library.region.width >= len(label) + 4
+        assert str(library.render()) == label
 
 
 @pytest.mark.asyncio

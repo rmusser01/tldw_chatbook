@@ -41,9 +41,9 @@ from ...Library.library_rag_service import (
 )
 from ...Library.library_rag_state import library_rag_source_scope_summary
 from ...Utils.input_validation import sanitize_string, validate_text_input
-from ...Widgets.Console.console_rag_settings_modal import (
+from ...Widgets.Console.console_library_search_modal import (
     CONSOLE_RAG_SOURCE_SUMMARY_PREFIX,
-    ConsoleRagSettingsResult,
+    ConsoleLibrarySearchResult,
 )
 from ..Views.RAGSearch.search_handoff import (
     build_library_rag_console_live_work_payload,
@@ -382,16 +382,22 @@ class ConsoleRetrievalController:
             session.rag_scope_holder.set(scope)
         await self._refresh_console_effective_scope_and_sync(session)
 
-    def _apply_console_rag_settings_choice(
-        self, result: ConsoleRagSettingsResult | None
+    def _apply_console_library_search_choice(
+        self, result: ConsoleLibrarySearchResult | None
     ) -> None:
-        """Store modal query/source values and optionally run retrieval."""
+        """Store one-shot search values and optionally run retrieval."""
         if result is None:
             return
         self._set_library_rag_source_scope(result.source_types)
         self._set_library_rag_query(sanitize_console_library_rag_query(result.query))
         if result.run:
             self._run_library_rag_action()
+
+    def _apply_console_rag_settings_choice(
+        self, result: ConsoleLibrarySearchResult | None
+    ) -> None:
+        """Compatibility entry point for callers using the former name."""
+        self._apply_console_library_search_choice(result)
 
     def _console_rag_source_status(
         self,
