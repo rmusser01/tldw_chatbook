@@ -50,6 +50,8 @@ _HANDOFF_TRANSCRIPT_CHAR_LIMIT = 6000
 #: Visible rows per saved-conversation page; one extra row is the sentinel.
 _CONVERSATIONS_PAGE_SIZE = 20
 _CONVERSATIONS_FETCH_LIMIT = _CONVERSATIONS_PAGE_SIZE + 1
+#: Duplicate-only seek continuations allowed before yielding to another user action.
+_CONVERSATIONS_MAX_AUTO_HOPS = 4
 
 
 class PersonasConversationsController:
@@ -406,17 +408,19 @@ class PersonasConversationsController:
                 raw_cursor == boundary
                 for boundary in self._conversation_attempt_boundaries
             )
-            if advances:
+            auto_hops = len(self._conversation_attempt_boundaries) - 1
+            if advances and auto_hops < _CONVERSATIONS_MAX_AUTO_HOPS:
                 self._next_conversation_cursor = raw_cursor
                 self._conversation_attempt_boundaries.append(raw_cursor)
                 self._schedule_conversation_page(initial=initial, attempt=attempt)
                 return
-            logger.warning(
-                f"Conversation page for character {character_id} contained "
-                "no new rows and no advancing durable boundary; treating it as "
-                "exhausted."
-            )
-            has_more = False
+            if not advances:
+                logger.warning(
+                    f"Conversation page for character {character_id} contained "
+                    "no new rows and no advancing durable boundary; treating it as "
+                    "exhausted."
+                )
+                has_more = False
 
         rows = tuple((conversation_id, title) for conversation_id, title, _ in accepted)
         if initial:

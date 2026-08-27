@@ -4389,6 +4389,123 @@ class TestConversationsPanel:
                 screen.query_one(".personas-conversations-tail")
             ) == "Load 20 older conversations"
 
+    async def test_duplicate_shadow_auto_traversal_yields_at_hop_budget(
+        self, mock_app_instance, stub_characters, stub_conversations
+    ):
+        first_page = [_conversation_record(index) for index in range(1, 22)]
+        retained_cursor_time = datetime.fromisoformat(first_page[19]["last_modified"])
+        expected_auto_hops = (
+            conversations_controller_module._CONVERSATIONS_MAX_AUTO_HOPS
+        )
+        duplicate_reads = 0
+        generated_boundaries: list[tuple[str, str]] = []
+        unbounded_read_started = asyncio.Event()
+        abort_unbounded_read = threading.Event()
+        app = PersonasTestApp(mock_app_instance)
+
+        def duplicate_page(read_number: int) -> list[dict[str, Any]]:
+            page = []
+            for index in range(1, 21):
+                duplicate = _conversation_record(index)
+                duplicate["last_modified"] = (
+                    retained_cursor_time
+                    - timedelta(hours=read_number, seconds=index)
+                ).isoformat()
+                page.append(duplicate)
+            page.append(_conversation_record(1))
+            generated_boundaries.append(
+                (page[19]["last_modified"], page[19]["id"])
+            )
+            return page
+
+        def moving_duplicates(character_id, limit=50, offset=0, **cursor):
+            nonlocal duplicate_reads
+            duplicate_reads += 1
+            page = duplicate_page(duplicate_reads)
+            if duplicate_reads > expected_auto_hops + 1:
+                app.call_from_thread(unbounded_read_started.set)
+                abort_unbounded_read.wait()
+                raise RuntimeError("test stopped unbounded duplicate traversal")
+            return page
+
+        stub_conversations.replace_pages(first_page, moving_duplicates)
+
+        try:
+            async with app.run_test(size=(160, 50)) as pilot:
+                screen = await _mounted(pilot)
+                await pilot.app.workers.wait_for_complete()
+                conversation_list = screen.query_one(
+                    "#personas-conversations-list", ListView
+                )
+                conversation_list.focus()
+                conversation_list.index = len(conversation_list.children) - 1
+                await pilot.press("enter")
+
+                workers_done = asyncio.create_task(
+                    pilot.app.workers.wait_for_complete()
+                )
+                unbounded = asyncio.create_task(unbounded_read_started.wait())
+                done, pending = await asyncio.wait(
+                    {workers_done, unbounded},
+                    return_when=asyncio.FIRST_COMPLETED,
+                )
+                try:
+                    assert workers_done in done, (
+                        "duplicate-only traversal scheduled beyond its hop budget"
+                    )
+                finally:
+                    abort_unbounded_read.set()
+                    for task in pending:
+                        task.cancel()
+                    await asyncio.gather(*pending, return_exceptions=True)
+                await pilot.app.workers.wait_for_complete()
+                await pilot.pause()
+
+                latest_safe_boundary = generated_boundaries[-1]
+                assert duplicate_reads == expected_auto_hops + 1
+                assert screen.conversations._next_conversation_cursor == (
+                    latest_safe_boundary
+                )
+                assert screen.conversations._conversation_list_attempt is None
+                assert screen.conversations._conversation_list_phase == "ready"
+                assert _row_text(
+                    screen.query_one(".personas-conversations-tail")
+                ) == "Load 20 older conversations"
+                assert len(list(screen.query(".personas-conversation-row"))) == 20
+
+                next_duplicate_page = duplicate_page(duplicate_reads + 1)
+                next_boundary = generated_boundaries[-1]
+                progress_row = _conversation_record(21)
+                progress_row["last_modified"] = (
+                    datetime.fromisoformat(next_boundary[0])
+                    - timedelta(seconds=1)
+                ).isoformat()
+                stub_conversations.replace_pages(
+                    next_duplicate_page, [progress_row]
+                )
+                calls_before_new_attempt = len(stub_conversations.calls)
+
+                conversation_list.index = len(conversation_list.children) - 1
+                await pilot.press("enter")
+                await pilot.app.workers.wait_for_complete()
+                await pilot.pause()
+
+                assert len(stub_conversations.calls) == calls_before_new_attempt + 2
+                assert stub_conversations.calls[-2][3] == {
+                    "before_last_modified": latest_safe_boundary[0],
+                    "before_id": latest_safe_boundary[1],
+                }
+                assert stub_conversations.calls[-1][3] == {
+                    "before_last_modified": next_boundary[0],
+                    "before_id": next_boundary[1],
+                }
+                assert list(screen.query("#personas-conversation-row-conv-21"))
+                assert _row_text(
+                    screen.query_one(".personas-conversations-tail")
+                ) == "All conversations shown."
+        finally:
+            abort_unbounded_read.set()
+
     async def test_mixed_page_commits_raw_boundary_after_last_accepted_row(
         self, mock_app_instance, stub_characters, stub_conversations
     ):
