@@ -942,7 +942,7 @@ ConsoleRunLogModal {
 }
 
 /* Narrow-width compact workbench (task-1342), following the personas
-   precedent (personas-workbench-compact): at <=90 cols the 3:6:2 split
+   precedent (personas-workbench-compact): at <=100 cols the 3:6:2 split
    leaves slivers, so the category pane becomes a fixed-width sidebar, the
    inspector pane and its divider drop out, and the detail pane takes the
    rest. The search help/status rows hide so category rows stay visible at
@@ -4755,6 +4755,15 @@ ConsoleBoundedSection {
 .console-activity-status-unavailable {
     background: $ds-status-warning 12%;
     color: $ds-text-primary;
+}
+
+/* The proprietary-thinking state is the only status longer than the
+   standard nine-cell column. Preserve its literal non-color cue instead of
+   clipping the header to a warning tint and midpoint. */
+.console-activity-status-unavailable {
+    width: 13;
+    min-width: 13;
+    max-width: 13;
 }
 
 /* These height-one headers opt out of the global outline because it would

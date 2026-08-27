@@ -517,7 +517,7 @@ MAX_CATEGORY_SEARCH_QUERY_CHARS = 80
 # At or below this terminal width the Settings workbench switches to its
 # compact layout (fixed-width category sidebar, inspector pane hidden),
 # following the personas-workbench-compact precedent (task-1342).
-SETTINGS_COMPACT_WORKBENCH_MAX_WIDTH = 90
+SETTINGS_COMPACT_WORKBENCH_MAX_WIDTH = 100
 LIBRARY_READER_DESTINATIONS = (
     ("media", "Media"),
     ("conversations", "Conversations"),

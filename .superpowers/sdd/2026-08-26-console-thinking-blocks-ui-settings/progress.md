@@ -149,3 +149,26 @@ complete bridge/activity files finished 403/403. All 157 UI cases in that prescr
 run were green. Scoped Ruff lint and `git diff --check` passed. ADR-090 governs; no new
 ADR is required. Report: `task-4-report.md`. Parent retains visual/detector, Backlog,
 and export-task ownership.
+
+Task 4 independent re-review: READY at `edda223384`. The reviewer reran 137 activity
+presentation cases and 13 exact live/resume handoff cases, confirming round-exact
+suppression, unrelated-round Planning preservation, final-round silence, and unchanged
+sanitizer behavior. Task 4 is complete with no review-fix round.
+
+Parent visual verification: the required 60x18, 80x24, 100x30, and 140x42 matrix found
+two clipped literals: the proprietary `unavailable` status at every width and the
+default-on visibility label at 100 columns. TDD fixes widened only the semantic
+unavailable status and extended the incumbent Settings compact breakpoint through 100
+columns. The two new painted-frame contracts passed 2/2. One confirmation matrix at
+`/tmp/console-thinking-visual-2026-08-27-confirmation` passed all 20 compositor
+assertions and was visually inspected: live wrapping, historical lazy collapse,
+proprietary placeholder/status, visibility toggle, and Required policy copy remained
+readable at the supported widths.
+
+Parent targeted verification: the combined Console/UI regression slice completed with
+748/749 passing; its sole failure was a stale exhaustive Console ownership tuple that
+already omitted `console.rail_layout_scope` and now also omitted both thinking keys.
+After correcting that test contract, the failed case passed 1/1. CSS source/bundle
+reproduction, scoped Ruff lint, and `git diff --check` pass. The one required Impeccable
+detector run reported only two advisory literal colors on unrelated pre-existing TCSS
+lines (`#6f7782` and `rgb(245,245,245)`); no task-owned detector finding remains.

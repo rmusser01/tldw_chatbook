@@ -1,8 +1,10 @@
 from __future__ import annotations
 
 from copy import deepcopy
+from html import unescape
 from pathlib import Path
 import asyncio
+import re
 import threading
 from unittest.mock import patch
 
@@ -51,6 +53,12 @@ def _static_text(widget: Static) -> str:
     return getattr(renderable, "plain", str(renderable))
 
 
+def _painted_text(svg: str) -> str:
+    """Return only glyphs painted into an exported Textual frame."""
+    joined = "".join(re.findall(r"<text[^>]*>([^<]*)</text>", svg))
+    return unescape(joined).replace("\xa0", " ")
+
+
 def _capture_provider_atomic_writes(monkeypatch):
     calls: list[tuple[dict[str, object], dict[str, tuple[str, ...]]]] = []
 
@@ -64,6 +72,24 @@ def _capture_provider_atomic_writes(monkeypatch):
         writer,
     )
     return calls
+
+
+@pytest.mark.asyncio
+async def test_thinking_visibility_label_is_fully_painted_at_100_columns() -> None:
+    """The responsive Settings workbench must preserve the toggle's state copy."""
+    app = _build_test_app()
+    app.app_config = {"console": {"show_model_thinking": True}}
+    host = StyledSettingsDestinationHarness(app, "settings")
+
+    async with host.run_test(size=(100, 30)) as pilot:
+        await pilot.app.workers.wait_for_complete()
+        screen = _active_destination_screen(host)
+        screen._select_category(SettingsCategoryId.CONSOLE_BEHAVIOR.value)
+        await pilot.pause()
+
+        painted = _painted_text(host.export_screenshot(simplify=True))
+        assert screen._workbench_compact is True
+        assert "Show model thinking (On)" in painted
 
 
 @pytest.mark.parametrize(

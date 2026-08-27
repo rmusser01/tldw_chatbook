@@ -8,6 +8,7 @@ from types import SimpleNamespace
 import pytest
 from textual.app import App, ComposeResult
 
+from Tests.UI.consolidated_css import BUNDLED_STYLESHEET
 from tldw_chatbook.Chat.console_chat_models import (
     PROPRIETARY_THINKING_NOTICE,
     ConsoleActivityPresentation,
@@ -37,6 +38,12 @@ class ThinkingTranscriptHarness(App[None]):
 
     def copy_to_clipboard(self, text: str) -> None:
         self.copied.append(text)
+
+
+class StyledThinkingTranscriptHarness(ThinkingTranscriptHarness):
+    """Thinking harness using the same bundled stylesheet as production."""
+
+    CSS_PATH = str(BUNDLED_STYLESHEET)
 
 
 def _displayable(
@@ -266,6 +273,23 @@ async def test_live_proprietary_notice_expands_then_collapses_at_real_boundary(
         assert not disclosure.expanded
         assert disclosure.status == "unavailable"
         assert not disclosure.detail_stack.children
+
+
+@pytest.mark.asyncio
+async def test_proprietary_status_is_fully_painted_at_narrow_width() -> None:
+    """The literal unavailable state must not be clipped to a color-only cue."""
+    app = StyledThinkingTranscriptHarness()
+    live = _assistant(blocks=(_proprietary(),))
+
+    async with app.run_test(size=(60, 18)) as pilot:
+        transcript = app.query_one(ConsoleTranscript)
+        transcript.set_messages([live], session_id="session-a")
+        await transcript.refresh_messages()
+        await pilot.pause(0.2)
+        disclosure = _disclosure(transcript, live)
+
+        assert disclosure.header.status_widget.region.width >= len("· unavailable")
+        assert disclosure.header.region.height == 1
 
 
 @pytest.mark.asyncio

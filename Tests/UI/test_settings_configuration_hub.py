@@ -970,6 +970,8 @@ def test_settings_ownership_records_cover_categories_and_runtime_boundaries():
         "console.stack_collapsed_rail_labels",
         "console.exchange_capture",
         "console.exchange_capture_detail",
+        "console.show_model_thinking",
+        "console.thinking_history_policy_default",
         "console.collapse_large_pastes",
         "console.paste_collapse_threshold",
         "console.max_parallel_runs",
