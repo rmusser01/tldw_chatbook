@@ -46,3 +46,14 @@ tests passed. A whole-file store probe was 283 passed with 13 failures on unchan
 fake-persistence/provider-history seams already present at the round-3 base. Ruff/diff
 checks passed; `test_console_chat_store.py` retains its base whole-file formatter
 failure without unrelated churn. Final independent re-review remains pending.
+
+Task 1 review fix round 4: reproduced the remaining real lifecycle at RED: an ordinary
+Assistant persisted before gaining thinking hashes its native owner before restart,
+while private generation hydration restores it under the database-allocated durable
+owner. Projection now uses `persisted_message_id or id`, the smallest shared fix. New
+unpersisted thinking remains stable because first persistence pins native and durable
+IDs equal; existing legacy cross-owner, second-generation, temporary-session, ordinary,
+capture, presentation, grouping, and variant lifecycle controls remain GREEN in one
+fresh 195-test run. Ruff lint passed on all scoped Python files, Ruff format check passed
+on production/presentation, and `git diff --check` passed. Included in the round-4 fix
+commit.

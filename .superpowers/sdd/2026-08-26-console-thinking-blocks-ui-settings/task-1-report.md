@@ -23,6 +23,12 @@ pin that native ID during first persistence, and the private thinking hydration 
 restores it before store indexing. Ordinary messages retain database-allocated durable
 IDs and their existing process-local hydration behavior.
 
+Review fix round 4 closed the remaining late-thinking lifecycle. An ordinary Assistant
+can receive its database-allocated durable ID before a later regeneration attaches
+thinking; projection now uses that durable owner ID as soon as it exists and otherwise
+falls back to the native ID. First-persisted thinking owners remain stable because their
+native and durable IDs are already pinned equal.
+
 ## TDD evidence
 
 RED:
@@ -176,6 +182,30 @@ Ruff format passed on three, while `test_console_chat_store.py` reproduces non-g
 unchanged at base `59dd95d961`. Its unrelated whole-file formatting churn was removed
 from the final diff. `git diff --check` passed.
 
+Review fix round 4 RED (against `5772b2f75e`) created and persisted an ordinary
+Assistant first, then regenerated it with thinking and restored it through the real
+conversation tree plus private generation hydration:
+
+```text
+PYTHONPATH=. ../../.venv/bin/python -m pytest \
+  Tests/Chat/test_console_chat_store.py::test_thinking_activity_identity_survives_late_thinking_on_durable_owner -q
+
+1 failed: the pre-restart native-owner hash differed from the restored durable-owner hash
+```
+
+The one-line durable-owner fallback made that contract GREEN. A fresh joined run covered
+the identity controls, full presentation/capture/grouping files, and nearby variant
+lifecycle contracts:
+
+```text
+195 passed
+```
+
+Fresh round-4 static evidence: Ruff lint passed on the three scoped Python files; Ruff
+format check passed on the production and presentation modules; `git diff --check`
+passed. The large store file retains the already-recorded base formatter status, and no
+unrelated whole-file formatting was introduced.
+
 The test runner also emitted the repository's existing dependency-version warning and
 temporary-directory cleanup warnings after successful completion; neither changed the
 test result.
@@ -187,16 +217,18 @@ test result.
   digest, round, and sequence. IDs remain ASCII, under the existing 128-character
   schema bound, provider-text-free, and are persisted by the incumbent V1 envelope;
   existing durable block IDs are read unchanged and require no migration.
-- UUID5 activity IDs hash a JSON tuple of the native Assistant owner ID and stored
-  block ID. Tuple serialization prevents component-boundary aliases and keeps both
-  raw values out of Textual identity strings. The capture namespace makes new
-  generations unique; the stable owner namespace prevents valid existing/imported V1
-  envelopes with duplicate block IDs from colliding across Assistants.
+- UUID5 activity IDs hash a JSON tuple of the Assistant's durable ID when available
+  (otherwise its native ID) and stored block ID. Tuple serialization prevents
+  component-boundary aliases and keeps both raw values out of Textual identity strings.
+  The capture namespace makes new generations unique; the stable owner namespace
+  prevents valid existing/imported V1 envelopes with duplicate block IDs from colliding
+  across Assistants.
 - Thinking-owning Assistant messages use the existing stable-message-ID persistence
-  seam. The private thinking hydration pass restores that same native ID before store
-  indexing. This is the production fact that remains stable across live capture,
-  variant switching, first persistence, and durable hydration. Ordinary messages do
-  not opt into this behavior.
+  seam, so the native fallback remains equal to the eventual durable ID. An ordinary
+  already-durable Assistant uses its durable owner ID before late thinking is attached;
+  private thinking hydration restores that same durable owner before indexing. These
+  two incumbent persistence facts cover both possible ordering paths without another
+  identity field or migration.
 - `live_block_id` is an explicit process-local input. Durable terminal status alone
   never implies a live disclosure.
 - Proprietary evidence always projects `Thinking` plus `unavailable`; the body remains

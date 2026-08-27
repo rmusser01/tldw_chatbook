@@ -62,7 +62,9 @@ def project_thinking_activities(
         refs.append(
             ConsoleThinkingActivityRef(
                 activity_id=thinking_activity_id(
-                    assistant_message_id=assistant.id,
+                    assistant_message_id=(
+                        assistant.persisted_message_id or assistant.id
+                    ),
                     block_id=block.block_id,
                 ),
                 assistant_message_id=assistant.id,

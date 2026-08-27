@@ -4452,6 +4452,65 @@ def test_thinking_identity_persistence_respects_temporary_and_durable_sessions(
         db.close_connection()
 
 
+def test_thinking_activity_identity_survives_late_thinking_on_durable_owner(
+    tmp_path,
+) -> None:
+    db = CharactersRAGDB(tmp_path / "late-thinking-identity.db", "late-thinking")
+    try:
+        store = ConsoleChatStore(persistence=ChatPersistenceService(db))
+        session = store.create_session(title="Late thinking")
+        assistant = store.append_message(
+            session.id,
+            role=ConsoleMessageRole.ASSISTANT,
+            content="ordinary answer",
+        )
+        persisted = store.persist_message_if_needed(assistant.id)
+        assert persisted.persisted_message_id is not None
+        assert persisted.persisted_message_id != assistant.id
+
+        store.begin_variant_stream(assistant.id)
+        capture = ThinkingCapture(assistant_owner_id=assistant.id)
+        observed = capture.observe(
+            ProviderThinkingDelta(
+                text="late reasoning",
+                provider="llama_cpp",
+                model="reasoner",
+                protocol="chat_completions",
+                source_format="start_anchored_think",
+            )
+        )
+        assert observed.envelope is not None
+        store.replace_message_thinking(assistant.id, observed.envelope)
+        store.append_stream_chunk(assistant.id, "regenerated answer")
+        settled = capture.settle("complete")
+        assert settled.envelope is not None
+        store.replace_message_thinking(assistant.id, settled.envelope)
+        finalized = store.finalize_variant_stream(assistant.id)
+        before_restart = project_thinking_activities(assistant=finalized)[0]
+
+        assert session.persisted_conversation_id is not None
+        tree = ChatConversationService(db).get_conversation_tree(
+            session.persisted_conversation_id,
+            root_limit=100,
+            depth_cap=100,
+        )
+        nodes = console_messages_from_conversation_tree(tree, db=db)
+        restored_store = ConsoleChatStore(persistence=ChatPersistenceService(db))
+        restored_store.restore_persisted_session(
+            title="Late thinking restored",
+            workspace_id=None,
+            persisted_conversation_id=session.persisted_conversation_id,
+            all_nodes=nodes,
+            active_leaf_persisted_id=persisted.persisted_message_id,
+        )
+        restored = restored_store.get_message(persisted.persisted_message_id)
+        after_restart = project_thinking_activities(assistant=restored)[0]
+
+        assert before_restart.activity_id == after_restart.activity_id
+    finally:
+        db.close_connection()
+
+
 def test_ordinary_message_persistence_keeps_database_allocated_identity(
     tmp_path,
 ) -> None:
