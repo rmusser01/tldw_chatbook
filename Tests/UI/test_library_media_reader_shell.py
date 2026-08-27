@@ -1315,6 +1315,8 @@ async def test_settings_refresh_reconciles_panes_without_media_reads(
             ("library.reader", "library_open", False),
             ("library.media_reader", "items_open", False),
             ("library.conversations_reader", "items_open", True),
+            ("library.notes_reader", "items_open", True),
+            ("library.notes_reader", "files_tree_open", True),
         }
 
         app.app_config["library"]["media_reader"]["items_open"] = True
