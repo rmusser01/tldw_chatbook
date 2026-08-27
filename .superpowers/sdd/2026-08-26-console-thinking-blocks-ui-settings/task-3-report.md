@@ -88,6 +88,11 @@ before replacement rolls back to the last confirmed baseline.
 The affected Settings filter completed **17 passed, 368 deselected** in 10.36s.
 Scoped Ruff lint and diff-check passed on the two changed implementation/test files.
 
+Independent re-review returned READY at `664f0fc542`: 21 focused controls passed,
+including partial cache-publication failure, stale corrective draining, no-op and
+pre-replace/conflict outcomes, continuation-derived Required state, and universal
+new-session defaults. Ruff and `git diff --check` passed.
+
 ## Architecture and deviation
 
 ADR-090 is the governing accepted decision; Task 3 introduces no additional

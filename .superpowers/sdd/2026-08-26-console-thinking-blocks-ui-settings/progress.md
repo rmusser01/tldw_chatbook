@@ -131,3 +131,9 @@ while conflict/before-replace failure rolls back. RED was 4 failed/1 passed (the
 was accidental object truthiness); GREEN was 5 passed. The affected thinking Settings
 filter was 17 passed/368 deselected in 10.36s; scoped Ruff and diff-check passed.
 Existing ADR-090 governs; no new ADR is required. Round complete.
+
+Task 3 independent re-review: READY at `664f0fc542`. The reviewer reran 21
+settings-policy/persistence controls and confirmed the structured mutation outcomes,
+one-writer coalescing, continuation-derived Required state, and universal store-level
+new-session default together. Ruff and `git diff --check` passed. Task 3 is complete
+after two bounded review-fix rounds.
