@@ -105,7 +105,6 @@ from ..Console_Modules.prompt_queue import (
 from ..Console_Modules.realtime import CONSOLE_REALTIME_CHIP_MESSAGES
 from ..Console_Modules.dispatch_recovery import ConsoleDispatchRecoveryRegion
 from ..Console_Modules.capture_policy_bindings import (
-    build_capture_policy_bindings,
     build_inspector_capture_policy_wiring,
 )
 from ..Console_Modules.left_rail import ConsoleLeftRail
@@ -154,8 +153,6 @@ from ...Chat.console_cost_tracker import (
     token_estimate_signature,
 )
 from ...Chat.console_exchange_capture import ExchangeCapture, capture_from_storage
-from ...Chat.provider_usage import ProviderUsage
-from ...Chat.trajectory import TrajectorySnapshot, derive_trajectory
 from ...LLM_Calls.pricing_catalog import get_pricing_catalog
 from ...Event_Handlers.Chat_Events.chat_events_console_dictionaries import (
     console_attachable_dictionaries,
@@ -427,9 +424,6 @@ from ...Widgets.Console.console_inspector_section import (
     ConsoleInspectorSectionState,
 )
 from ...Widgets.Console.console_command_popup import ConsoleCommandPopup
-from ...Widgets.Console.console_feedback_comment_modal import (
-    ConsoleFeedbackCommentModal,
-)
 from ...Widgets.Console.console_review_notes_modal import ConsoleReviewNotesModal
 from ...Widgets.Console.console_transcript import (
     ConsoleReviewNotesRequested,
@@ -443,6 +437,7 @@ from ...Widgets.Console.console_selection_menu import (
     ConsoleSideChatRequested,
     selection_menus_on_screen,
 )
+
 from ...Widgets.Console.console_side_chat_modal import ConsoleSideChatModal
 from ...Widgets.Console import console_project_instructions as project_instruction_ui
 from ...Widgets.Console.console_conversation_inspector import (
@@ -529,6 +524,9 @@ from ...Workspaces.display_state import (
 from ...Widgets.compact_model_bar import CompactModelBar
 from ...Widgets.Persona_Widgets.dictionary_picker import DictionaryPicker
 
+FeedbackRequested = ConsoleSelectionFeedbackRequested
+NoteRequested = ConsoleSelectionNoteRequested
+
 if TYPE_CHECKING:
     from tldw_chatbook.app import TldwCli
 
@@ -580,16 +578,6 @@ _CONSOLE_RAIL_PREFERENCE_WRITE_LOCK = threading.Lock()
 CONSOLE_ACTIVE_RUN_STATUSES: tuple[ConsoleRunStatus, ...] = tuple(
     sorted(FEEDBACK_ACTIVE_RUN_STATUSES, key=lambda status: status.value)
 )
-# Console selection phase 3 (task 5): the bracketed header each feedback
-# action stamps on the composed next-user message (plan task 5 template:
-# header line, ``> ``-quoted selection, optional comment). Unknown action
-# strings fall back to the Comment header (mirrors the comment modal's
-# own ``_DEFAULT_HEADER`` fallback).
-CONSOLE_FEEDBACK_MESSAGE_HEADERS = {
-    ConsoleSelectionFeedbackRequested.ACTION_REQUEST_CHANGES: "[Request changes]",
-    ConsoleSelectionFeedbackRequested.ACTION_LGM: "[LGTM]",
-    ConsoleSelectionFeedbackRequested.ACTION_COMMENT: "[Comment]",
-}
 # Plan-B Task 7 Finding A: the conversation-browser `[N Sub-Agents]` badge
 # count previously re-queried the DB once per visible row on every 0.2s
 # poll tick. The batched replacement is still cheap to cache; this TTL is
@@ -1015,231 +1003,6 @@ CONSOLE_WORKBENCH_SHORTCUTS_SETUP_BLOCKED = tuple(
     ("Enter", "continue setup") if pair == ("Enter", "send / queue") else pair
     for pair in CONSOLE_WORKBENCH_SHORTCUTS
 )
-
-
-def _build_trajectory_snapshot(
-    store: Any,
-    conversation_id: str,
-    *,
-    agent_runs_db: Any | None = None,
-) -> "TrajectorySnapshot":
-    """Assemble the ``derive_trajectory`` inputs for one persisted conversation.
-
-    task-5 (console trajectory view). Best-effort at every seam: any source
-    that is unavailable contributes an empty iterable rather than failing
-    the launch -- the ledger degrades to fewer records, never to no screen.
-    Variant contents are process-local (see
-    ``ConsoleChatStore.variant_sets_for_conversation``): cold conversations
-    render without superseded variants by design.
-
-    Args:
-        store: Console store whose persistence owner supplies message/context facts.
-        conversation_id: Durable Console conversation identifier.
-        agent_runs_db: Optional public AgentRunsDB read seam captured by the caller.
-
-    Returns:
-        A completed pure-projection snapshot; the screen performs no DB reads.
-    """
-    messages: list[Any] = []
-    traj_rows: list[Any] = []
-    variant_sets: list[Any] = []
-    compaction_records: list[Any] = []
-    agent_runs: list[Any] = []
-    agent_steps: list[Any] = []
-    retrieval_runs: list[Any] = []
-    diagnostic_events: list[Any] = []
-    active_leaf: str | None = None
-
-    def capture_failed(
-        source: str, error: Exception, *, message_id: str | None = None
-    ) -> None:
-        logger.opt(exception=error).error(
-            "Trace source read failed: source={} conversation_id={}",
-            source,
-            conversation_id,
-        )
-        diagnostic_events.append(
-            {
-                "event_id": (
-                    f"capture-failed:{source}:{conversation_id}"
-                    f"{f':{message_id}' if message_id else ''}"
-                ),
-                "conversation_id": conversation_id,
-                "message_id": message_id,
-                "event_kind": "capture_failed",
-                "status": "capture_failed",
-                "summary": f"{source} capture failed",
-                "field_states": {
-                    "source": "capture_failed",
-                    **({"message_id": "observed"} if message_id else {}),
-                },
-                "sensitivity": "diagnostic",
-            }
-        )
-
-    persistence = getattr(store, "persistence", None)
-    db = getattr(persistence, "db", None)
-    if db is not None:
-        try:
-            messages = list(
-                db.get_messages_for_conversation(
-                    conversation_id,
-                    limit=1_000_000,
-                    # Text-only projection: skip the image BLOB I/O (task-260).
-                    include_image_data=False,
-                )
-            )
-        except Exception as error:  # noqa: BLE001 - launch must degrade, not fail
-            capture_failed("messages", error)
-            messages = []
-        try:
-            traj_rows = list(db.get_trajectory_rows(conversation_id))
-        except Exception as error:  # noqa: BLE001
-            capture_failed("trajectory", error)
-            traj_rows = []
-        try:
-            active_leaf = db.get_conversation_active_leaf(conversation_id)
-        except Exception as error:  # noqa: BLE001
-            capture_failed("active_leaf", error)
-            active_leaf = None
-    usage_by_id: dict[str, ProviderUsage] = {}
-    for message in messages:
-        if not isinstance(message, Mapping):
-            continue
-        usage = ProviderUsage.from_json(message.get("usage_json"))
-        if usage is not None:
-            usage_by_id[str(message.get("id"))] = usage
-    try:
-        variant_sets = list(store.variant_sets_for_conversation(conversation_id))
-    except Exception as error:  # noqa: BLE001
-        capture_failed("variants", error)
-        variant_sets = []
-    context_repository = getattr(persistence, "context_repository", None)
-    if context_repository is not None:
-        try:
-            # The projection itself filters purpose == "conversation_compaction".
-            offset = 0
-            while True:
-                page = list(
-                    context_repository.list_auxiliary_attempts(
-                        conversation_id, limit=500, offset=offset
-                    )
-                )
-                compaction_records.extend(
-                    {**record, "trace_lifecycle": True}
-                    if isinstance(record, Mapping)
-                    else record
-                    for record in page
-                )
-                if len(page) < 500:
-                    break
-                offset += len(page)
-        except Exception as error:  # noqa: BLE001
-            capture_failed("context", error)
-    turn_by_message: dict[str, str] = {}
-    for trajectory_row in traj_rows:
-        if isinstance(trajectory_row, Mapping):
-            row_message_id = trajectory_row.get("message_id")
-            row_turn_id = trajectory_row.get("turn_id")
-        else:
-            row_message_id = getattr(trajectory_row, "message_id", None)
-            row_turn_id = getattr(trajectory_row, "turn_id", None)
-        if row_message_id and row_turn_id:
-            turn_by_message[str(row_message_id)] = str(row_turn_id)
-    if agent_runs_db is not None:
-        try:
-            raw_runs = agent_runs_db.list_runs(conversation_id)
-            for raw_run in raw_runs:
-                try:
-                    run = dict(raw_run) if isinstance(raw_run, Mapping) else {}
-                    run_id = str(run.get("id") or "")
-                    if not run_id:
-                        continue
-                    assistant_message_id = str(run.get("assistant_message_id") or "")
-                    if assistant_message_id in turn_by_message:
-                        run["turn_id"] = turn_by_message[assistant_message_id]
-                    steps = list(run.get("steps", ()) or ())
-                    converted_steps = [
-                        {
-                            **step,
-                            "run_id": run_id,
-                            "conversation_id": conversation_id,
-                            "turn_id": run.get("turn_id"),
-                        }
-                        for step in steps
-                        if isinstance(step, Mapping)
-                    ]
-                    agent_runs.append(run)
-                    agent_steps.extend(converted_steps)
-                except Exception as error:  # noqa: BLE001
-                    capture_failed("agent", error)
-        except Exception as error:  # noqa: BLE001
-            capture_failed("agent", error)
-    citation_repository = getattr(persistence, "citation_repository", None)
-    if citation_repository is not None:
-        assistant_ids = [
-            str(message.get("id") or "")
-            for message in messages
-            if isinstance(message, Mapping)
-            and str(message.get("sender") or "").lower() == "assistant"
-            and message.get("id")
-        ]
-        try:
-            candidates = citation_repository.active_owner_candidate_message_ids(
-                assistant_ids
-            )
-        except Exception as error:  # noqa: BLE001
-            capture_failed("retrieval_candidates", error)
-            candidates = set()
-        for message in messages:
-            if not isinstance(message, Mapping):
-                continue
-            message_id = str(message.get("id") or "")
-            if (
-                not message_id
-                or str(message.get("sender") or "").lower() != "assistant"
-                or message_id not in candidates
-            ):
-                continue
-            try:
-                result = citation_repository.get_active_trace_for_current_message(
-                    message_id,
-                    str(message.get("content") or ""),
-                )
-                if (
-                    result.state is not ActiveCitationTraceState.ACTIVE
-                    or result.summary is None
-                    or not citation_repository.verify_active_trace_result(result)
-                ):
-                    continue
-                for run in result.summary.trace.evidence_runs:
-                    row = run.model_dump(mode="python")
-                    retrieval_runs.append(
-                        {
-                            **row,
-                            "conversation_id": conversation_id,
-                            "message_id": message_id,
-                            "turn_id": turn_by_message.get(message_id),
-                            "field_states": {"payload": "omitted"},
-                            "sensitivity": "retrieval_metadata",
-                            "trace_lifecycle": True,
-                        }
-                    )
-            except Exception as error:  # noqa: BLE001
-                capture_failed("retrieval", error, message_id=message_id)
-                continue
-    return derive_trajectory(
-        messages,
-        usage_by_id,
-        traj_rows,
-        variant_sets,
-        compaction_records,
-        active_leaf_message_id=active_leaf,
-        agent_runs=agent_runs,
-        agent_steps=agent_steps,
-        retrieval_runs=retrieval_runs,
-        diagnostic_events=diagnostic_events,
-    )
 
 
 #: TASK-362: the full Console keyboard vocabulary for the F1 help panel, grouped
@@ -1798,6 +1561,15 @@ class ChatScreen(BaseAppScreen):
     )
     _console_realtime = _ControllerState("_realtime", "session")
     _console_realtime_close_worker = _ControllerState("_realtime", "close_worker")
+    _console_annotation_loaded_conversation = _ControllerState(
+        "_review_selection", "annotation_loaded_conversation"
+    )
+    _console_annotation_previews = _ControllerState(
+        "_review_selection", "annotation_previews"
+    )
+    _console_selection_feedback_inflight = _ControllerState(
+        "_review_selection", "selection_feedback_inflight"
+    )
     _console_persisted_rows_cache = _ControllerState(
         "_workspace", "_console_persisted_rows_cache"
     )
@@ -3327,77 +3099,8 @@ class ChatScreen(BaseAppScreen):
         )
 
     def action_open_trajectory_view(self) -> None:
-        """Open Trace for the active Console conversation (``y``).
-
-        task-5: the snapshot is built off the UI thread (DB reads); the
-        screen is pushed with live tail-follow callables wired to the
-        store's payload-revision bus.
-
-        TASK-22213: `TrajectoryScreen` is imported here, not at module
-        scope, so the ~4,400-LOC trajectory family stays off the Chat
-        first-paint import leg. The first `y` press pays the one-time
-        import (tens of ms); every later press hits `sys.modules`.
-        """
-        from .trajectory_screen import TrajectoryScreen
-
-        store = self._console_chat_store or self._ensure_console_chat_store()
-        session = getattr(store, "_sessions", {}).get(
-            getattr(store, "active_session_id", None)
-        )
-        conversation_id = getattr(session, "persisted_conversation_id", None)
-        if not conversation_id:
-            self.notify("The active conversation has no persisted trace yet.")
-            return
-        conv_id = str(conversation_id)
-        target_session_id = str(session.id)
-        runtime = self._console_runtime()
-        capture_policy_bindings = None
-        if hasattr(runtime, "chat_controller"):
-            capture_policy_bindings = build_capture_policy_bindings(
-                self._ensure_console_chat_controller(),
-                target_session_id,
-                conv_id,
-            )
-        screen_title = str(getattr(session, "title", "") or "Console")
-        agent_controller = getattr(self, "_agent", None)
-        bridge = (
-            self._ensure_console_agent_bridge()
-            if agent_controller is not None
-            else None
-        )
-        agent_runs_db = getattr(bridge, "runs_db", None)
-
-        def build() -> TrajectorySnapshot:
-            return _build_trajectory_snapshot(
-                store,
-                conv_id,
-                agent_runs_db=agent_runs_db,
-            )
-
-        # task-16847: `Screen` defines NEITHER `call_from_thread` NOR
-        # `push_screen` (both are App-only in Textual 8) -- the original
-        # bare `self.` spelling of each raised AttributeError inside the
-        # thread worker, so pressing `y` never presented anything.
-        def present(snapshot: TrajectorySnapshot) -> None:
-            self.app.push_screen(
-                TrajectoryScreen(
-                    snapshot,
-                    screen_title=screen_title,
-                    conversation_id=conv_id,
-                    revision_provider=lambda: store.get_payload_revision(conv_id),
-                    snapshot_builder=build,
-                    capture_policy_bindings=capture_policy_bindings,
-                )
-            )
-
-        def build_worker() -> None:
-            snapshot = build()
-            self.app.call_from_thread(present, snapshot)
-
-        self.notify("Building trace…")
-        self.run_worker(
-            build_worker, thread=True, exclusive=True, group="trajectory-launch"
-        )
+        """Open Trace for the active Console conversation (``y``)."""
+        self._review_selection.open_trajectory_view()
 
     async def action_open_console_model_popover(self) -> None:
         """Open the Alt+M quick provider/model/temperature/streaming popover."""
@@ -3932,18 +3635,6 @@ class ChatScreen(BaseAppScreen):
         self._console_sync_in_progress = False
         self._console_sync_requested = False
         self._console_citation_counts: dict[str, int] = {}
-        # task-17169 slice 2: review-note previews keyed by NATIVE message id
-        # (the transcript marker's input), plus the conversation the map was
-        # last loaded for -- reloads happen only on conversation change; live
-        # Comment writes update the map in place.
-        self._console_annotation_previews: dict[str, tuple[str, ...]] = {}
-        self._console_annotation_loaded_conversation: str | None = None
-        # Qodo (PR #1723): mutual exclusion for the selection-feedback flow.
-        # The worker is deliberately NOT exclusive (a superseding exclusive
-        # cancel would strand a mounted comment modal -- see the flow's
-        # docstring), so exclusion is this guard instead: re-triggers while
-        # a flow is in flight are ignored, never queued and never cancelled.
-        self._console_selection_feedback_inflight = False
         # Same precedent, same reason (task-18515 review-note management
         # task 3 fix round): a rapid double marker-click / double-`n` before
         # the first worker's off-thread DB read resolves must not stack two
@@ -12086,70 +11777,6 @@ class ChatScreen(BaseAppScreen):
             repository,
         )
 
-    def _sync_console_annotation_discovery(self, store: Any) -> None:
-        """Load persisted review annotations when the active conversation changes.
-
-        task-17169 slice 2 (the restore half of the inline marker): the map is
-        keyed by NATIVE message id, so a reload maps each stored row's
-        persisted message id back through the store's messages. Annotations
-        are local-only and written solely through this screen, so a reload is
-        needed only when the conversation changes -- live writes keep the map
-        current in between. The DB read runs off-thread (repo lesson: never
-        sqlite on the UI loop's sync tick) with exit_on_error=False.
-        """
-        session = getattr(store, "_sessions", {}).get(
-            getattr(store, "active_session_id", None)
-        )
-        conversation_id = getattr(session, "persisted_conversation_id", None)
-        if not conversation_id:
-            if self._console_annotation_loaded_conversation is not None:
-                self._console_annotation_loaded_conversation = None
-                self._console_annotation_previews = {}
-            return
-        conversation_id = str(conversation_id)
-        if conversation_id == self._console_annotation_loaded_conversation:
-            return
-        self._console_annotation_loaded_conversation = conversation_id
-        self._console_annotation_previews = {}
-        database = getattr(getattr(store, "persistence", None), "db", None)
-        if database is None:
-            return
-        self.run_worker(
-            self._load_console_annotation_previews(database, store, conversation_id),
-            exclusive=True,
-            group="console-annotation-previews",
-            exit_on_error=False,
-        )
-
-    async def _load_console_annotation_previews(
-        self, database: Any, store: Any, conversation_id: str
-    ) -> None:
-        """Worker body: read annotation rows and re-key them to native ids."""
-        try:
-            rows = await asyncio.to_thread(
-                database.get_transcript_annotations, conversation_id
-            )
-        except Exception:
-            logger.warning(
-                f"Console annotations: load failed for {conversation_id!r}",
-                exc_info=True,
-            )
-            return
-        if self._console_annotation_loaded_conversation != conversation_id:
-            return  # conversation switched while the read was in flight
-        native_by_persisted = {
-            message.persisted_message_id: message.id
-            for message in self._native_console_messages()
-            if message.persisted_message_id is not None
-        }
-        previews: dict[str, tuple[str, ...]] = {}
-        for row in rows:
-            native_id = native_by_persisted.get(row.get("message_id"))
-            if native_id is None:
-                continue
-            previews[native_id] = previews.get(native_id, ()) + (row["comment"],)
-        self._console_annotation_previews = previews
-
     def _sync_console_citation_count_discovery(self, messages: list[Any]) -> None:
         """Dispatch one count lookup worker when eligible inputs change."""
         signature = self._console_citation_signature(messages)
@@ -12398,7 +12025,7 @@ class ChatScreen(BaseAppScreen):
             # factory current every tick -- late-bound so a session switch
             # or a bridge becoming available never needs a fresh instance.
             transcript.set_change_review_provider_factory(
-                self._console_change_review_provider
+                self._review_selection._console_change_review_provider
             )
             self._sync_console_citation_count_discovery(messages)
             message_ids = {message.id for message in messages}
@@ -12447,7 +12074,7 @@ class ChatScreen(BaseAppScreen):
             # only -- the banner shows above the boundary message when it is on
             # the rendered path, and disappears (inert) otherwise.
             store = self._ensure_console_chat_store()
-            self._sync_console_annotation_discovery(store)
+            self._review_selection._sync_console_annotation_discovery(store)
             transcript.set_annotation_previews(self._console_annotation_previews)
             summary_boundary_id: str | None = None
             if store.active_session_id is not None:
@@ -14486,70 +14113,6 @@ class ChatScreen(BaseAppScreen):
             return None
         return str(run_id) if run_id else None
 
-    def _console_change_review_provider(self):
-        """The v-opener's provider recipe, shared with the turn file card.
-
-        Returns None whenever any collaborator is missing -- the card
-        degrades to the marker header; only the v opener toasts.
-        """
-        bridge = self._ensure_console_agent_bridge()
-        conversation_id = None
-        controller = self._console_chat_controller
-        if controller is not None:
-            try:
-                # The SAME id the run store keys by (persisted id when set,
-                # session id otherwise) -- change_snapshots joins agent_runs
-                # on it, so any other spelling shows an empty history.
-                active = controller.store.active_session_id
-                if active:
-                    conversation_id = controller._agent_conversation_id(active)
-            except Exception:  # noqa: BLE001 -- opener must degrade, not raise
-                conversation_id = None
-        provider = (
-            bridge.change_review_provider(conversation_id)
-            if bridge is not None and conversation_id
-            else None
-        )
-        if provider is None:
-            return None
-        # TASK-1974: reverts refuse while a run is active -- the engine's
-        # probe reads THIS controller's live run state each time.
-        if controller is not None:
-            # CONSOLE_ACTIVE_RUN_STATUSES is this module's own constant.
-            provider.run_active = lambda: (
-                controller.run_state.status in CONSOLE_ACTIVE_RUN_STATUSES
-            )
-            provider.run_active_for_root = controller.run_active_for_workspace
-        return provider
-
-    def _console_change_review_workspace_roots(self) -> "tuple[str, ...] | None":
-        """The live workspace roots to hand the Review screen (TASK-16801 arc B).
-
-        Without these, `current` mode never appears for a fresh conversation
-        that has no recorded turns yet -- the screen's own candidate set is
-        otherwise just the distinct roots across snapshot rows, which is
-        empty until an agent run has actually written something. This reads
-        the SAME field `console_chat_controller.py` turns into `change_roots`
-        for the tracker (`resolve_turn_execution_context(...).workspace_roots`),
-        so `current` mode detects against exactly the root the next turn
-        would track.
-
-        Same degrade posture as `_console_change_review_provider` just
-        above: any missing collaborator or raised exception yields ``None``
-        rather than breaking the opener -- `ChangeReviewScreen` already
-        treats ``None`` as "no live roots" (its pre-existing default).
-        """
-        controller = self._console_chat_controller
-        if controller is None:
-            return None
-        try:
-            active = controller.store.active_session_id
-            if not active:
-                return None
-            return controller.resolve_turn_execution_context(active).workspace_roots
-        except Exception:  # noqa: BLE001 -- opener must degrade, not raise
-            return None
-
     def _open_change_review(
         self,
         run_id: str | None = None,
@@ -14575,7 +14138,7 @@ class ChatScreen(BaseAppScreen):
                 two windows of the SAME run covering the same path (spec
                 §2). ``None`` when the caller has no snapshot row to pin to.
         """
-        provider = self._console_change_review_provider()
+        provider = self._review_selection._console_change_review_provider()
         if provider is None:
             self.app_instance.notify(
                 "Change review needs git and a saved conversation.",
@@ -14590,7 +14153,9 @@ class ChatScreen(BaseAppScreen):
         # roots -- see `_console_change_review_workspace_roots`'s docstring
         # for why this matters (it is what makes `current` mode reachable
         # from a fresh conversation with no recorded turns).
-        workspace_roots = self._console_change_review_workspace_roots()
+        workspace_roots = (
+            self._review_selection._console_change_review_workspace_roots()
+        )
 
         # initial_run_id/initial_path/initial_snapshot_id all ride the
         # constructor: a post-push select_turn/select_file call raced the
@@ -14639,7 +14204,7 @@ class ChatScreen(BaseAppScreen):
                 "Another Undo All is already in progress.", severity="warning"
             )
             return
-        provider = self._console_change_review_provider()
+        provider = self._review_selection._console_change_review_provider()
         if provider is None:
             card.finish_undo_all(success=False)
             self.app_instance.notify(
@@ -15998,239 +15563,16 @@ class ChatScreen(BaseAppScreen):
         )
 
     @on(ConsoleSelectionNoteRequested)
-    def on_console_selection_note_requested(
-        self, event: ConsoleSelectionNoteRequested
-    ) -> None:
-        """Save a transcript selection as a note (task-18156 Task 6).
-
-        Title = the quote's first line capped at 48 characters; content =
-        the quote plus a provenance line naming the session and date. The
-        write goes through the store's persistence DB (the same seam the
-        annotation write uses) off-thread -- never sqlite on the UI loop --
-        and every failure is a toast, never an exception: losing a note
-        must not disturb the selection flow that produced it.
-
-        Args:
-            event: The note request carrying the capped selection quote.
-        """
+    def on_console_selection_note_requested(self, event: NoteRequested) -> None:
         event.stop()
-        quote = event.quote.strip()
-        if not quote:
-            return
-        self.run_worker(
-            self._create_console_selection_note(event.quote),
-            group="console-selection-note",
-            exit_on_error=False,
-        )
-
-    async def _create_console_selection_note(self, quote: str) -> None:
-        """Worker body: derive title/content and write the note."""
-        from tldw_chatbook.Utils.input_validation import validate_text_input
-        from tldw_chatbook.Widgets.Console.console_selection import (
-            SELECTION_QUOTE_CAP,
-        )
-
-        # Boundary check through the shared module (PR #1813 review). The
-        # quote is already cap_quote-bounded at the transcript; this is the
-        # belt-and-suspenders size gate for any future caller. allow_html
-        # because transcript selections legitimately contain code --
-        # "<script" included -- and notes render as plain text.
-        if not validate_text_input(
-            quote, max_length=SELECTION_QUOTE_CAP + 64, allow_html=True
-        ):
-            self.notify("Selection is too large to save as a note.", severity="warning")
-            return
-        first_line = quote.strip().splitlines()[0]
-        title = first_line if len(first_line) <= 48 else first_line[:47] + "\u2026"
-        try:
-            controller = self._ensure_console_chat_controller()
-            store = controller.store
-            database = (
-                getattr(store.persistence, "db", None) if store.persistence else None
-            )
-            if database is None:
-                self.notify(
-                    "Notes are unavailable (no notes database).",
-                    severity="warning",
-                )
-                return
-            session = getattr(store, "_sessions", {}).get(store.active_session_id)
-            session_title = str(getattr(session, "title", "") or "Console")
-            from datetime import datetime as _dt
-
-            stamp = _dt.now().strftime("%Y-%m-%d")
-            content = f"{quote}\n\n\u2014 Console selection, {session_title}, {stamp}"
-            await asyncio.to_thread(database.add_note, title, content)
-        except Exception:
-            # Never log the title: it is arbitrary selected transcript text
-            # and can be a secret (PR #1813 review).
-            logger.warning(
-                f"Console selection note: write failed (title length {len(title)})",
-                exc_info=True,
-            )
-            self.notify("Could not create the note.", severity="warning")
-            return
-        # Selection text is untrusted markup: Textual's toast silently EATS
-        # bracketed spans ("[INFO] server up" loses its tag; "[x for x in y]"
-        # erases the whole title) -- and this toast is the only confirmation
-        # the user gets.
-        self.notify(f"Note created: {escape_markup(title)}")
+        self._review_selection.request_selection_note(event.quote)
 
     @on(ConsoleSelectionFeedbackRequested)
-    def on_console_selection_feedback_requested(
-        self, event: ConsoleSelectionFeedbackRequested
-    ) -> None:
-        """Compose structured review feedback and route it via the prompt queue.
-
-        Console selection phase 3 (task 5): the transcript's floating menu
-        posted this after its "Request changes" / "LGTM" / "Comment"
-        action on a selection in agent output. The flow collects an
-        optional comment, composes the plan-task-5 template -- action
-        header line, ``> ``-quoted selection (blank lines a bare ``>``,
-        mirroring ``insert_quote``), optional comment appended verbatim --
-        and dispatches through ``_prompt_queue``, the ONLY send seam: it
-        queues behind an active run, sends immediately otherwise, and
-        owns every refusal toast. The composer draft is never touched
-        (the user may be mid-typed), and ``submit_draft`` is never called
-        (it refuses during runs).
-
-        Synchronous handler dispatching a worker because
-        ``push_screen_wait`` raises ``NoActiveWorker`` outside one (see
-        ``EvalsScreen._on_delete_bench_pressed``'s identical note); the
-        action/quote are captured here, before the worker's first line
-        runs. The modal returns the stripped comment — ``""`` for a
-        comment-less submit (feedback still flows, no comment block) —
-        or ``None`` for Cancel/Escape/backdrop, which abandons the whole
-        feedback (plan task 5: modal escape dispatches nothing).
-        ``event.stop()`` because nothing above this screen subscribes --
-        the transcript already consumed the originating menu action.
-        """
+    def on_console_selection_feedback_requested(self, event: FeedbackRequested) -> None:
         event.stop()
-        if not event.quote.strip():
-            # Same blank-selection window as the quote/side-chat guards:
-            # the row range was cleared while the menu was open.
-            return
-        if self._console_selection_feedback_inflight:
-            # Rapid double-trigger (double-Enter before the menu unmounts):
-            # one flow, one modal, one dispatch, one durable record. Phase 4
-            # raised the stakes from a duplicate chat message to duplicate
-            # sidecar/annotation rows, so the documented phase-3 limitation
-            # is now closed rather than accepted.
-            return
-        self._console_selection_feedback_inflight = True
-        action, quote = event.action, event.quote
-        self.run_worker(
-            self._console_selection_feedback_flow(
-                action, quote, event.anchor_message_id
-            ),
-            group="console-selection-feedback",
+        self._review_selection.request_selection_feedback(
+            event.action, event.quote, event.anchor_message_id
         )
-
-    def _record_console_feedback_event(
-        self, action: str, quote: str, comment: str, anchor_message_id: str | None
-    ) -> None:
-        """Write the durable audit record for one dispatched feedback event.
-
-        task-17169 (phase 4): the feedback itself is ephemeral -- composed
-        into the next user message and gone. This lands it in the ADR-066
-        trajectory sidecar as an ``user_feedback`` event keyed to the
-        quoted row, so a run's review history survives a restart.
-
-        Called only for feedback that is actually dispatched (a cancelled
-        modal abandons the whole thing, so there is nothing to audit), and
-        only when the originating row supplied an anchor -- without one
-        there is no message to key the row to. It NEVER raises: the store
-        seam already swallows its own failures, and this guard covers the
-        lookup path too, because losing an audit record must not cost the
-        user the feedback they actually wrote.
-        """
-        if not anchor_message_id:
-            return
-        try:
-            controller = self._ensure_console_chat_controller()
-            session_id = controller.store.active_session_id
-            if not session_id:
-                return
-            controller.store.record_feedback_event(
-                session_id,
-                anchor_message_id=anchor_message_id,
-                action=action,
-                quote=quote,
-                comment=comment or None,
-            )
-            # Slice 2 of the both-homes decision (task-17169): a Comment with
-            # an actual note ALSO persists as a row-anchored annotation for
-            # the inline marker. Only Comment -- the spec's "Comment ...
-            # additionally persists an annotation" -- and only with text (an
-            # empty submit has nothing to mark the row with). Inside the same
-            # never-raises guard: neither durable write may cost the dispatch.
-            if action == ConsoleSelectionFeedbackRequested.ACTION_COMMENT and comment:
-                annotation_id = controller.store.record_feedback_annotation(
-                    session_id,
-                    anchor_message_id=anchor_message_id,
-                    quote=quote,
-                    comment=comment,
-                )
-                if annotation_id:
-                    # The inline marker updates immediately; the next sync
-                    # tick pushes the map to the mounted transcript.
-                    existing = self._console_annotation_previews.get(
-                        anchor_message_id, ()
-                    )
-                    self._console_annotation_previews[anchor_message_id] = existing + (
-                        comment,
-                    )
-        except Exception:
-            logger.warning(
-                "Console selection feedback: audit record failed for anchor "
-                f"{anchor_message_id!r}; the feedback itself was dispatched.",
-                exc_info=True,
-            )
-
-    async def _console_selection_feedback_flow(
-        self, action: str, quote: str, anchor_message_id: str | None = None
-    ) -> None:
-        """Comment modal, then compose and dispatch the feedback message.
-
-        Runs as a worker (see the handler above). NOT ``exclusive=True``:
-        this coroutine awaits ``push_screen_wait``, whose internal
-        ``asyncio.shield`` protects the wait -- not the already-mounted
-        modal -- from cancellation, so a superseding exclusive cancel
-        would strand a live modal with no owner for its result (the
-        ``EvalsScreen._on_delete_bench_pressed`` rationale).
-        """
-        try:
-            comment = await self.app.push_screen_wait(
-                ConsoleFeedbackCommentModal(action=action, quote=quote)
-            )
-            if comment is None:
-                return
-            lines = [CONSOLE_FEEDBACK_MESSAGE_HEADERS.get(action, "[Comment]")]
-            lines.extend(
-                f"> {line}" if line.strip() else ">" for line in quote.splitlines()
-            )
-            if comment:
-                lines.append(comment)
-            # Audit BEFORE the dispatch: the queue may block behind an active
-            # run, and the record is about what the user said, not about when
-            # the send drained.
-            # OFF-THREAD for the same reason the notes flow's writes are:
-            # `run_worker(coroutine)` runs on the event loop, so these two
-            # SQLite writes were blocking the UI, and a contended writer
-            # waits out the connection's 15s busy timeout.
-            await asyncio.to_thread(
-                self._record_console_feedback_event,
-                action,
-                quote,
-                comment,
-                anchor_message_id,
-            )
-            await self._prompt_queue.dispatch("\n".join(lines))
-        finally:
-            # Every exit path -- submit, cancel, or an error above -- releases
-            # the in-flight guard; a latched flag would silently kill the
-            # feature after its first use.
-            self._console_selection_feedback_inflight = False
 
     @on(ConsoleReviewNotesRequested)
     def on_console_review_notes_requested(
@@ -16471,8 +15813,10 @@ class ChatScreen(BaseAppScreen):
                 # id and paint its previews onto the new transcript for a
                 # frame. The discovery tick reloads the live conversation.
                 if _conversation_still_current():
-                    self._console_annotation_loaded_conversation = conversation_id
-                    await self._load_console_annotation_previews(
+                    self._review_selection.annotation_loaded_conversation = (
+                        conversation_id
+                    )
+                    await self._review_selection._load_console_annotation_previews(
                         database, store, conversation_id
                     )
                     await self._sync_native_console_transcript()

@@ -52,6 +52,11 @@ from tldw_chatbook.UI.Console_Modules.prompt_queue import (
 )
 from tldw_chatbook.UI.Console_Modules.prompts import ConsolePromptsController
 from tldw_chatbook.UI.Console_Modules.realtime import ConsoleRealtimeController
+from tldw_chatbook.UI.Console_Modules.review_selection import (
+    ConsoleReviewSelectionController,
+)
+from tldw_chatbook.UI.Console_Modules import wiring as wiring_module
+from tldw_chatbook.Chat.console_chat_models import FEEDBACK_ACTIVE_RUN_STATUSES
 from tldw_chatbook.UI.Console_Modules.retrieval import ConsoleRetrievalController
 from tldw_chatbook.UI.Console_Modules.send_price import ConsoleSendPriceController
 from tldw_chatbook.UI.Console_Modules.session import ConsoleSessionController
@@ -88,6 +93,7 @@ _ALL_CONTROLLER_SLOTS: list[tuple[str, type]] = [
     ("_prompts", ConsolePromptsController),
     ("_agent", ConsoleAgentController),
     ("_prompt_queue", ConsolePromptQueueUIController),
+    ("_review_selection", ConsoleReviewSelectionController),
     ("_send_price", ConsoleSendPriceController),
 ]
 
@@ -119,7 +125,7 @@ def test_all_six_controllers_are_constructed_with_the_right_classes():
         )
 
 
-def test_all_sixteen_controllers_are_constructed_with_the_right_classes() -> None:
+def test_all_seventeen_controllers_are_constructed_with_the_right_classes() -> None:
     screen = _unmounted_console()
     names = [attr for attr, _ in _ALL_CONTROLLER_SLOTS]
     observed = [key for key in vars(screen) if key in set(names)]
@@ -131,6 +137,75 @@ def test_all_sixteen_controllers_are_constructed_with_the_right_classes() -> Non
             f"{attr} is {type(controller).__name__}, expected {cls.__name__}"
         )
     assert observed == names, f"controller build order changed: {observed}"
+
+
+def test_review_selection_controller_is_late_bound_without_sibling_objects(
+    monkeypatch,
+) -> None:
+    screen = _unmounted_console()
+    controller = screen._review_selection
+
+    assert controller.annotation_loaded_conversation is None
+    assert controller.annotation_previews == {}
+    assert controller.selection_feedback_inflight is False
+
+    store = object()
+    conversation_id = "conversation"
+    provider = object()
+    roots = object()
+    runs_db = object()
+    bindings = object()
+    native_messages = object()
+    screen._ensure_console_chat_store = lambda: store
+    active_status = next(iter(FEEDBACK_ACTIVE_RUN_STATUSES))
+    chat_controller = SimpleNamespace(
+        store=SimpleNamespace(active_session_id="session"),
+        run_state=SimpleNamespace(status=active_status),
+        _agent_conversation_id=lambda session_id: (conversation_id, session_id),
+        run_active_for_workspace=lambda root: ("active", root),
+        resolve_turn_execution_context=lambda session_id: SimpleNamespace(
+            workspace_roots=(roots, session_id)
+        ),
+    )
+    screen._console_chat_controller = chat_controller
+    screen._ensure_console_chat_controller = lambda: chat_controller
+    screen._ensure_console_agent_bridge = lambda: SimpleNamespace(
+        runs_db=runs_db,
+        change_review_provider=lambda value: (provider, value),
+    )
+    screen._console_runtime = lambda: SimpleNamespace(chat_controller=chat_controller)
+    monkeypatch.setattr(
+        wiring_module,
+        "build_capture_policy_bindings",
+        lambda controller, session_id, conv_id: (
+            bindings,
+            controller,
+            session_id,
+            conv_id,
+        ),
+    )
+    screen._native_console_messages = lambda: native_messages
+
+    assert controller._store_accessor() is store
+    assert controller._agent_conversation_id_accessor() == (
+        conversation_id,
+        "session",
+    )
+    assert controller._change_review_provider_accessor("conversation") == (
+        provider,
+        "conversation",
+    )
+    assert controller._run_active_accessor() is True
+    assert controller._run_active_for_root("root") == ("active", "root")
+    assert controller._workspace_roots_accessor() == (roots, "session")
+    assert controller._agent_runs_db_accessor() is runs_db
+    assert controller._capture_policy_bindings_accessor("session", "conversation") == (
+        bindings,
+        chat_controller,
+        "session",
+        "conversation",
+    )
+    assert controller._native_messages_accessor() is native_messages
 
 
 def test_send_price_controller_is_constructed_with_late_bound_screen_edges() -> None:

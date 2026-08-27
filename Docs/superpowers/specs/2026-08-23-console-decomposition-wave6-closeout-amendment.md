@@ -53,6 +53,23 @@ Each extraction starts from the latest `dev` only after its predecessor merges. 
 later rebase that invalidates either exact family or the conservative projection stops
 that child for amendment; it never rewrites the evidence or raises a budget.
 
+### TASK-3070.13 current-base amendment (2026-08-27)
+
+TASK-3070.12 and an independent per-turn changed-files simplification merged before
+TASK-3070.13 began. On the resulting `dev` base `ee8dc24115`, ten methods from the
+historical 26-method review/selection inventory no longer exist. Reintroducing those
+deleted paths would be a regression, while pretending the frozen inventory still
+matched the implementation would violate the stop-and-amend rule above.
+
+The approved task-specific design at
+`2026-08-27-task-3070-13-console-review-selection-controller-design.md` therefore
+supersedes only TASK-3070.13's current implementation boundary. The immutable
+amendment evidence remains historical source-of-truth. The surviving family is 16
+methods and 840 physical lines: seven moves, three framework delegates, and six
+screen stays. With 426 stay lines and a maximum 15 delegate lines, TASK-3070.13 must
+remove at least 399 lines and seven direct methods. This revised extraction still
+reduces both current screen counts and never raises either Wave 6 ratchet.
+
 ## Ownership Boundary
 
 Both new owners follow `DESIGN.md` section 7:

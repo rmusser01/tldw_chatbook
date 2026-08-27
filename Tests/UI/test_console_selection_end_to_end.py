@@ -765,7 +765,8 @@ async def test_run_gating_parametrized(run_status: str, expect_armed: bool):
             is not expect_armed
         )
         assert (
-            menu.query_one("#console-selection-lgm", Button).disabled is not expect_armed
+            menu.query_one("#console-selection-lgm", Button).disabled
+            is not expect_armed
         )
         assert not menu.query_one("#console-selection-comment", Button).disabled
         if expect_armed:
@@ -1091,8 +1092,15 @@ async def test_drag_release_click_never_wipes_selection_for_menu_actions():
 
     def raw(event_cls, x, y, button=0):
         return event_cls(
-            widget=None, x=x, y=y, delta_x=0, delta_y=0, button=button,
-            shift=False, meta=False, ctrl=False,
+            widget=None,
+            x=x,
+            y=y,
+            delta_x=0,
+            delta_y=0,
+            button=button,
+            shift=False,
+            meta=False,
+            ctrl=False,
         )
 
     async def drag_menu_and_click_ask(pilot) -> bool:
@@ -1122,7 +1130,9 @@ async def test_drag_release_click_never_wipes_selection_for_menu_actions():
         pilot.app.post_message(raw(MouseUp, cx, cy, button=1))
         await pilot.pause()
         await pilot.pause()
-        modals = [s for s in pilot.app.screen_stack if isinstance(s, ConsoleSideChatModal)]
+        modals = [
+            s for s in pilot.app.screen_stack if isinstance(s, ConsoleSideChatModal)
+        ]
         return bool(modals) and bool(sel_at_click)
 
     async with make_console_pilot(size=(80, 32)) as pilot:
@@ -1133,13 +1143,15 @@ async def test_drag_release_click_never_wipes_selection_for_menu_actions():
             ConsoleMessageRole,
         )
 
-        transcript.set_messages([
-            ConsoleChatMessage(
-                role=ConsoleMessageRole.ASSISTANT,
-                content="first selection text",
-                id="mm0",
-            )
-        ])
+        transcript.set_messages(
+            [
+                ConsoleChatMessage(
+                    role=ConsoleMessageRole.ASSISTANT,
+                    content="first selection text",
+                    id="mm0",
+                )
+            ]
+        )
         await transcript.refresh_messages()
         await pilot.pause(0.4)
 
@@ -1148,13 +1160,15 @@ async def test_drag_release_click_never_wipes_selection_for_menu_actions():
         await pilot.press("escape")
         await pilot.pause(0.3)
 
-        transcript.set_messages([
-            ConsoleChatMessage(
-                role=ConsoleMessageRole.ASSISTANT,
-                content="second selection text",
-                id="mm0",
-            )
-        ])
+        transcript.set_messages(
+            [
+                ConsoleChatMessage(
+                    role=ConsoleMessageRole.ASSISTANT,
+                    content="second selection text",
+                    id="mm0",
+                )
+            ]
+        )
         await transcript.refresh_messages()
         await pilot.pause(0.4)
         row = screen.query_one("#console-message-mm0")
