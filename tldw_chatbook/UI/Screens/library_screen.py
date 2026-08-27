@@ -544,7 +544,10 @@ from ...Widgets.Library.library_note_folder_dialog import (
 )
 from ...Widgets.Library.library_canvas_sync import PostRecomposeCallback
 from ...Widgets.Library.library_emergency_return import LibraryEmergencyReturn
-from ...Widgets.Library.library_notes_canvas import LibraryNotePresentationState
+from ...Widgets.Library.library_notes_canvas import (
+    LibraryNotePresentationState,
+    resolve_database_note_status_channels,
+)
 from ...Widgets.Library.library_note_import_canvas import LibraryNoteImportCanvas
 from ...Widgets.Library.library_notes_add_from_files_canvas import (
     LibraryNotesAddFromFilesCanvas,
@@ -4703,6 +4706,13 @@ class LibraryScreen(BaseAppScreen):
         status_line = self._library_note_status_line()
         metadata_line = " · ".join(part for part in (base_meta, word_copy) if part)
         operation = self._library_notes_operation_for_active_region()
+        status_channels = resolve_database_note_status_channels(
+            conflict=snapshot.in_conflict,
+            read_only=self._library_notes_select_mode,
+            save_failed=self._library_note_autosave_state in {"error", "validation"},
+            saving=snapshot.saving or self._library_note_autosave_state == "saving",
+            dirty=snapshot.dirty,
+        )
         return LibraryNotePresentationState(
             snapshot=snapshot,
             metadata_line=metadata_line,
@@ -4724,6 +4734,7 @@ class LibraryScreen(BaseAppScreen):
             bulk_included=self._library_notes_row_selection.is_selected(
                 snapshot.note_id
             ),
+            status_channels=status_channels,
         )
 
     def _library_notes_active_region(
@@ -21021,9 +21032,19 @@ class LibraryScreen(BaseAppScreen):
             return None
         return snapshot.title, snapshot.body, snapshot.keywords_text
 
+    @on(Button.Pressed, "#library-note-edit")
+    def handle_library_note_edit_mode(self, event: Button.Pressed) -> None:
+        """Show the retained editable Database Note surface."""
+        event.stop()
+        if self._library_notes_view != "editor":
+            return
+        self._library_note_preview = False
+        self._library_note_context = False
+        self._apply_library_note_presentation_state()
+
     @on(Button.Pressed, "#library-note-preview")
     def handle_library_note_preview_toggle(self, event: Button.Pressed) -> None:
-        """Toggle the note editor between edit and read-only Markdown preview.
+        """Show the retained read-only Markdown preview.
 
         The coordinator already owns every raw field, so recomposition can
         switch presentation without taking a second mutable draft snapshot.
@@ -21040,7 +21061,8 @@ class LibraryScreen(BaseAppScreen):
             return
         if self._library_note_session.snapshot is None:
             return
-        self._library_note_preview = not self._library_note_preview
+        self._library_note_context = False
+        self._library_note_preview = True
         self._apply_library_note_presentation_state()
 
     @on(Button.Pressed, "#library-note-context")
@@ -21063,6 +21085,7 @@ class LibraryScreen(BaseAppScreen):
         ):
             return
         self._library_note_context = True
+        self._library_note_preview = False
         self._apply_library_note_presentation_state()
         try:
             context = self.query_one("#library-note-context-region")
