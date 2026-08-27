@@ -1999,7 +1999,11 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
         """Update pending authority and repaint only if its zero pin moves."""
         prior_pin = self._unread_pin_source_id()
         self._pending_tree_scope = scope
-        if self._unread_pin_source_id() != prior_pin and self._dom_is_live:
+        if (
+            scope is None
+            and self._unread_pin_source_id() != prior_pin
+            and self._dom_is_live
+        ):
             self._request_surface_refresh(self._SURFACE_RAIL)
 
     def _reconciled_tree_scope(
@@ -3913,6 +3917,7 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
         self._clear_pane_selections()
         self.selected_scope = scope
         self.tree_scope = scope
+        self._sync_tree_navigation_authority()
         if self._unread_pin_source_id() != prior_unread_pin and self._dom_is_live:
             self._request_surface_refresh(self._SURFACE_RAIL)
 

@@ -10,7 +10,7 @@ from unittest.mock import AsyncMock, Mock
 from rich.text import Text
 from textual.app import App, ComposeResult
 from textual.geometry import Size
-from textual.widgets import Button, Input, Static, TextArea
+from textual.widgets import Button, Input, ListView, Static, TextArea
 
 from Tests.UI.app_factory import _build_test_app
 from Tests.UI.consolidated_css import BUNDLED_STYLESHEET, ConsolidatedCSSApp
@@ -1782,6 +1782,7 @@ async def test_last_unread_item_keeps_contextual_feed_and_reader_pinned():
         row_id = pane.items[0]["id"]
 
         pane.select_item_by_id(str(row_id))
+        pane.query_one("#items-table", ListView).focus()
         assert await _wait_until(
             pilot,
             lambda: bool(db.get_new_items(status="reviewed", limit=10)),

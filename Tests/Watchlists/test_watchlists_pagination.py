@@ -1116,7 +1116,6 @@ async def test_atomic_scope_keeps_committed_reader_until_first_page_mounts(
         screen._items_status_filter = "all"
         pane.status_filter = "all"
         pane.selected_item = open_item
-        tree = screen.query_one("#wl-tree", WatchlistTree)
         inspector = screen.query_one("#watchlists-entity-inspector", InspectorPane)
         entered = asyncio.Event()
         release = asyncio.Event()
@@ -1130,10 +1129,21 @@ async def test_atomic_scope_keeps_committed_reader_until_first_page_mounts(
 
         controller.list_reader_items_page.reset_mock()
         controller.list_reader_items_page.side_effect = replacement
-        candidate = TreeScope(
-            kind="source", source_id=9, parent_context="unread"
+        candidate_source_id = screen._watchlist_bundle_service()._db.add_subscription(
+            name="Candidate feed",
+            type="rss",
+            source="https://atomic-candidate.example/feed",
         )
-        screen._tree_all_source_rows = [{"id": 9, "name": "Candidate feed"}]
+        await screen._load_tree_data().wait()
+        candidate = TreeScope(
+            kind="source",
+            source_id=candidate_source_id,
+            parent_context="unread",
+        )
+        screen._tree_all_source_rows = [
+            {"id": candidate_source_id, "name": "Candidate feed"}
+        ]
+        tree = screen.query_one("#wl-tree", WatchlistTree)
         screen.post_message(TreeScopeChanged(candidate))
         await _wait_until(pilot, entered.is_set)
 
@@ -1155,7 +1165,9 @@ async def test_atomic_scope_keeps_committed_reader_until_first_page_mounts(
                     ),
                     inspector_scope=inspector.scope,
                     inspector_labels=list(inspector.breadcrumb_labels),
-                    tree_scope=tree.active_scope,
+                    tree_scope=screen.query_one(
+                        "#wl-tree", WatchlistTree
+                    ).active_scope,
                     rows=[row["item_id"] for row in pane.items],
                     snapshot_count=screen._items_snapshot_count,
                     page_number=pane.page_number,
@@ -1181,7 +1193,7 @@ async def test_atomic_scope_keeps_committed_reader_until_first_page_mounts(
         assert committed_paint["has_next"] is True
         assert committed_paint["page_loading"] is False
         assert committed_paint["reader"] is None
-        assert tree.active_scope == candidate
+        assert screen.query_one("#wl-tree", WatchlistTree).active_scope == candidate
         assert [row["item_id"] for row in screen._loaded_items] == [9]
         assert screen._items_snapshot_count == 23
         assert screen._selected_content_item is None
@@ -1227,7 +1239,6 @@ async def test_pending_scope_failure_retains_committed_scope_and_names_both():
         prior_snapshot = screen._items_snapshot
         prior_rows = screen._loaded_items
         prior_count = screen._items_snapshot_count
-        tree = screen.query_one("#wl-tree", WatchlistTree)
         pane = screen.query_one("#watchlists-items-pane", ArticleListPane)
         inspector = screen.query_one("#watchlists-entity-inspector", InspectorPane)
         content = screen.query_one("#watchlists-content-pane", ContentPane)
@@ -1238,7 +1249,6 @@ async def test_pending_scope_failure_retains_committed_scope_and_names_both():
         content.item = open_item
         content.position = "1 of 17"
         await pilot.pause()
-        prior_heading = _static_text(screen.query_one("#wc-watchlists-summary"))
         prior_inspector_scope = inspector.scope
         prior_inspector_labels = list(inspector.breadcrumb_labels)
         prior_page_number = pane.page_number
@@ -1246,14 +1256,33 @@ async def test_pending_scope_failure_retains_committed_scope_and_names_both():
         prior_content_position = content.position
         screen._items_status_filter = "all"
         pane.status_filter = "all"
-        screen._tree_all_source_rows = [{"id": 9, "name": "Candidate [A]"}]
+        candidate_source_id = screen._watchlist_bundle_service()._db.add_subscription(
+            name="Candidate [A]",
+            type="rss",
+            source="https://failed-candidate.example/feed",
+        )
+        await screen._load_tree_data().wait()
+        screen._tree_all_source_rows = [
+            {"id": candidate_source_id, "name": "Candidate [A]"}
+        ]
+        tree = screen.query_one("#wl-tree", WatchlistTree)
+        await _wait_until(
+            pilot,
+            lambda: "1 source"
+            in _static_text(screen.query_one("#wc-watchlists-summary")),
+        )
+        prior_heading = _static_text(screen.query_one("#wc-watchlists-summary"))
         screen.app_instance.notify = Mock()
         controller.list_reader_items_page.reset_mock()
         controller.list_reader_items_page.side_effect = RuntimeError("offline")
 
         screen.post_message(
             TreeScopeChanged(
-                TreeScope(kind="source", source_id=9, parent_context="unread")
+                TreeScope(
+                    kind="source",
+                    source_id=candidate_source_id,
+                    parent_context="unread",
+                )
             )
         )
         await _wait_until(
