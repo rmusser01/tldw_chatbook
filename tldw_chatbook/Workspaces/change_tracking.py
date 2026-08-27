@@ -445,8 +445,10 @@ class ShadowRepo:
             ancestor = ancestor.parent
         return None
 
-    def _drop_new_index_paths_over_cap(self) -> tuple[str, ...]:
-        """Remove and disclose new stage-0 blobs over the size cap."""
+    def _validate_new_index_paths(
+        self,
+    ) -> tuple[tuple[str, ...], tuple[str, ...]]:
+        """Remove and disclose unsafe or oversized new stage-0 entries."""
         from tldw_chatbook.Workspaces.change_bounds import (
             DEFAULT_MAX_FILE_BYTES,
             change_review_setting,
@@ -470,7 +472,7 @@ class ShadowRepo:
                 continue
             new_entries.append((rel, object_id))
         if not new_entries:
-            return ()
+            return (), ()
 
         object_ids = tuple(dict.fromkeys(object_id for _, object_id in new_entries))
         proc = self._run(
@@ -490,41 +492,35 @@ class ShadowRepo:
             if object_type == "blob":
                 sizes[object_id] = int(size_text)
 
-        removed = tuple(
+        candidates = tuple(rel for rel, _object_id in new_entries)
+        safe = set(self._exact_force_paths(candidates))
+        unsafe = tuple(rel for rel in candidates if rel not in safe)
+        oversized = tuple(
             rel
             for rel, object_id in new_entries
-            if sizes.get(object_id, 0) > cap
+            if rel in safe and sizes.get(object_id, 0) > cap
         )
+        removed_set = set((*unsafe, *oversized))
+        removed = tuple(rel for rel in candidates if rel in removed_set)
         if removed:
             self._run("update-index", "--force-remove", "--", *removed)
-        included = {rel for rel, _object_id in new_entries}.difference(removed)
+        nested = tuple(
+            dict.fromkeys(
+                owner
+                for rel in unsafe
+                if (owner := self._nested_owner(self.root / rel)) is not None
+            )
+        )
+        self.last_nested_repos = tuple(
+            dict.fromkeys((*self.last_nested_repos, *nested))
+        )
+        included = safe.difference(oversized)
         self.last_oversize_excluded = tuple(
             rel
-            for rel in dict.fromkeys((*self.last_oversize_excluded, *removed))
+            for rel in dict.fromkeys((*self.last_oversize_excluded, *oversized))
             if rel not in included
         )
-        return removed
-
-    def _drop_new_force_paths_no_longer_safe(
-        self, staged_paths: Sequence[str], safe_paths: Sequence[str]
-    ) -> tuple[str, ...]:
-        """Remove newly indexed paths absent from the final safe set."""
-        safe = set(safe_paths)
-        tip = self.tip()
-        removed: list[str] = []
-        for rel in staged_paths:
-            if rel in safe:
-                continue
-            literal = f":(literal){rel}"
-            if tip and self._z_tokens(
-                "ls-tree", "-z", "--name-only", tip, "--", literal
-            ):
-                continue
-            if not self._z_tokens("ls-files", "--stage", "-z", "--", literal):
-                continue
-            self._run("update-index", "--force-remove", "--", rel)
-            removed.append(rel)
-        return tuple(removed)
+        return unsafe, oversized
 
     def snapshot(self, message: str, *, force_paths: Sequence[str] = ()) -> str:
         """Stage everything and commit if anything changed; return the tip.
@@ -622,24 +618,9 @@ class ShadowRepo:
                 )
             if force_paths:
                 final_paths = self._exact_force_paths(force_paths)
-                self._drop_new_force_paths_no_longer_safe(
-                    exact_paths, final_paths
-                )
                 if final_paths:
                     self._run("update-index", "--add", "--", *final_paths)
-                    post_stage_paths = self._exact_force_paths(final_paths)
-                    late_unsafe = self._drop_new_force_paths_no_longer_safe(
-                        final_paths, post_stage_paths
-                    )
-                    late_nested = tuple(
-                        owner
-                        for rel in late_unsafe
-                        if (owner := self._nested_owner(self.root / rel)) is not None
-                    )
-                    self.last_nested_repos = tuple(
-                        dict.fromkeys((*self.last_nested_repos, *late_nested))
-                    )
-            self._drop_new_index_paths_over_cap()
+            self._validate_new_index_paths()
             had_tip = self.tip() is not None
             if had_tip:
                 staged = self._run("diff", "--cached", "--quiet", check=False)
@@ -780,13 +761,12 @@ class ShadowRepo:
             exact_paths = self._exact_force_paths(paths)
             if exact_paths:
                 self._run("update-index", "--add", "--", *exact_paths)
-                final_paths = self._exact_force_paths(exact_paths)
-                unsafe = self._drop_new_force_paths_no_longer_safe(
-                    exact_paths, final_paths
+                unsafe, oversized = self._validate_new_index_paths()
+                attempt_unsafe = tuple(
+                    rel for rel in unsafe if rel in exact_paths
                 )
-                oversized = self._drop_new_index_paths_over_cap()
-                if unsafe:
-                    paths_text = ", ".join(unsafe)
+                if attempt_unsafe:
+                    paths_text = ", ".join(attempt_unsafe)
                     raise ChangeTrackingError(
                         (
                             "forced path is no longer safe at staging boundary: "
@@ -794,7 +774,7 @@ class ShadowRepo:
                         )[:400]
                     )
                 attempt_oversized = tuple(
-                    rel for rel in oversized if rel in final_paths
+                    rel for rel in oversized if rel in exact_paths
                 )
                 if attempt_oversized:
                     paths_text = ", ".join(attempt_oversized)

@@ -631,6 +631,49 @@ def test_supplied_sha_primed_file_growing_before_successor_e_is_disclosed(
     assert str(repo._run("ls-files", "--", target.name).stdout).strip() == ""
 
 
+def test_supplied_sha_primed_path_becoming_nested_before_successor_e_is_disclosed(
+    tracker, root
+):
+    child = root / "late-child"
+    child.mkdir()
+    target = child / "ignored-write.txt"
+    target_rel = target.relative_to(root).as_posix()
+    (root / ".gitignore").write_text(f"/{target_rel}\n")
+
+    parent = tracker.begin_turn([root])
+    parent.await_baseline()
+    assert tracker.end_turn(parent) == []
+    continuation = tracker.continuation(parent)
+    assert continuation is not None
+
+    successor = tracker.begin_turn([root])
+    successor.await_baseline()
+    key = str(root.resolve())
+    supplied = successor.baselines[key]
+    target.write_text("must stay child-owned\n")
+
+    assert tracker.end_turn(
+        continuation,
+        touched_paths=[str(target)],
+        end_shas=successor.baselines,
+    ) == []
+    assert continuation.end_shas[key] == supplied
+    repo = tracker.service.repo_for_root(root)
+    assert str(repo._run("ls-files", "--", target_rel).stdout).strip() == target_rel
+
+    (child / ".git").mkdir()
+    records = tracker.end_turn(successor)
+
+    assert len(records) == 1
+    record = records[0]
+    assert record.baseline_sha == supplied
+    assert record.end_sha == supplied
+    assert record.files_changed == 0
+    assert record.nested_repos == (child.name,)
+    assert repo.file_bytes(record.end_sha, target_rel) is None
+    assert str(repo._run("ls-files", "--", target_rel).stdout).strip() == ""
+
+
 def test_supplied_sha_priming_treats_pathspec_magic_as_a_literal_filename(
     tracker, root
 ):
