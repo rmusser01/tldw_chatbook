@@ -44,6 +44,7 @@ from tldw_chatbook.Widgets.Console.console_retrieval_scope_row import (
     LABEL_ID,
     NARROW_BTN_ID,
     ROW_ID,
+    console_retrieval_scope_label,
 )
 from tldw_chatbook.Widgets.Console.console_scope_picker_modal import (
     ConsoleScopePickerModal,
@@ -51,6 +52,21 @@ from tldw_chatbook.Widgets.Console.console_scope_picker_modal import (
 from tldw_chatbook.Workspaces.registry_service import WorkspaceNotFound
 
 SCOPE_CHIP_ID = "console-scope-chip"
+
+
+@pytest.mark.parametrize(
+    ("state", "expected"),
+    (
+        (ConsoleRetrievalScopeState.unscoped(), "Scope: everything"),
+        (ConsoleRetrievalScopeState(is_scoped=True, item_count=3), "Scope: 3 items"),
+        (ConsoleRetrievalScopeState.empty(), "Scope: no sources"),
+    ),
+)
+def test_retrieval_scope_label_is_shared_with_manual_search(
+    state: ConsoleRetrievalScopeState,
+    expected: str,
+) -> None:
+    assert console_retrieval_scope_label(state) == expected
 
 
 class _AlwaysExistsMediaDB:
@@ -124,7 +140,11 @@ class _SpyNotesScopeService:
 
 async def _open_inspector_and_get_row(console, pilot):
     await _open_console_inspector(console, pilot)
-    return console.query_one(f"#{ROW_ID}")
+    row = console.query_one(f"#{ROW_ID}")
+    body = console.query_one("#console-inspector-rail-body")
+    body.scroll_to_widget(row, animate=False, immediate=True)
+    await pilot.pause()
+    return row
 
 
 @pytest.mark.asyncio

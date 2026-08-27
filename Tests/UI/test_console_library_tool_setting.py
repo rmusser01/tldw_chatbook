@@ -146,7 +146,7 @@ def test_factory_wires_the_policy_enforcer_into_the_chunk_tool_service(monkeypat
     app, screen = _build_screen()
     app.local_media_reading_service = SimpleNamespace(marker="media")
 
-    provider = screen._console_library_provider_factory()
+    provider = screen._console_library_provider_factory(_turn_context(direct=True))
 
     assert isinstance(provider, LibraryToolProvider)
     chunk_service = provider._service._media_chunk
@@ -176,7 +176,7 @@ def test_factory_chunk_read_tools_degrade_when_one_media_handle_is_missing(
     )
     app.local_media_reading_service = None
 
-    provider = screen._console_library_provider_factory()
+    provider = screen._console_library_provider_factory(_turn_context(direct=True))
 
     assert isinstance(provider, LibraryToolProvider)
     assert provider._service._media_chunk is not None
@@ -256,7 +256,7 @@ def test_factory_present_backend_serves_its_tool(monkeypatch):
 
 
 @pytest.mark.asyncio
-async def test_settings_library_rag_renders_console_retrieval_toggle(
+async def test_settings_library_rag_renders_separate_provider_mode_selector(
     monkeypatch, tmp_path
 ):
     from textual.widgets import Button
@@ -288,20 +288,26 @@ async def test_settings_library_rag_renders_console_retrieval_toggle(
         assert checkbox.value is True
         # `_visible_text` collects Static/Button only -- the toggle's label is
         # asserted on the Checkbox itself.
-        assert str(checkbox.label) == "Use direct Library tools"
+        assert str(checkbox.label) == (
+            "Use direct Library tools instead of Library RAG"
+        )
 
-        # The approved spec-section-8 copy is visible below the toggle, not
-        # hidden in a tooltip.
-        assert "Console agent retrieval" in text
+        # Provider mode is visibly subordinate to Allowed access and cannot
+        # be mistaken for either per-conversation policy axis.
+        assert "Automatic retrieval" in text
+        assert "Assistant Library access" in text
+        assert screen.query_one(
+            "#settings-library-rag-console-defaults-card"
+        ).border_title == "New Console conversations"
+        assert screen.query_one(
+            "#settings-library-rag-provider-mode-card"
+        ).border_title == "Allowed Library access"
+        assert "does not grant access" in text
         assert (
-            "Console agents may automatically list, count, read, and lexically "
-            "search" in text
+            "When assistant Library access is Allowed, agents can list, count, "
+            "read" in text
         )
-        assert (
-            "Direct list, count, view, and lexical search tools are unavailable"
-            in text
-        )
-        assert "Library RAG as the default retrieval method" in text
+        assert "Neither mode grants access or changes Automatic retrieval" in text
         assert "Notes, Media, and Conversations" in text
         assert "requires an available, populated index" in text
         assert "leaves your device" in text

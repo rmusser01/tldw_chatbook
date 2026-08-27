@@ -92,6 +92,10 @@ class SettingsLibraryRagDefaults:
     # never serialized into per-conversation session settings; the adapter
     # overlays the live value on load (see load_direct_library_tools).
     direct_library_tools: bool = True
+    # ADR-079: independent safe defaults captured only by subsequently
+    # created Console conversations.
+    rag_auto_retrieve_on_send: bool = False
+    assistant_library_access_default: bool = False
 
 
 #: Bool string forms recognised by config coercion; anything outside this set
@@ -140,15 +144,73 @@ def load_direct_library_tools(app_config: Mapping[str, Any] | None = None) -> bo
     return True
 
 
-#: Approved visible copy for the Console agent retrieval subsection (spec
-#: section 8). Rendered below the toggle as plain text -- never a tooltip.
+def _load_strict_bool(
+    section: str,
+    key: str,
+    default: bool,
+    app_config: Mapping[str, Any] | None,
+) -> bool:
+    if app_config is None:
+        from tldw_chatbook.config import get_cli_setting
+
+        raw = get_cli_setting(section, key, default)
+    else:
+        section_values = app_config.get(section)
+        raw = (
+            section_values.get(key, default)
+            if isinstance(section_values, Mapping)
+            else default
+        )
+    if isinstance(raw, bool):
+        return raw
+    if isinstance(raw, str) and raw.strip().lower() in _RECOGNIZED_BOOL_STRINGS:
+        from tldw_chatbook.config import coerce_bool_setting
+
+        return coerce_bool_setting(raw.strip().lower(), default)
+    return default
+
+
+def load_rag_auto_retrieve_on_send(
+    app_config: Mapping[str, Any] | None = None,
+) -> bool:
+    """Read the future-conversation automatic-retrieval default.
+
+    Args:
+        app_config: Optional already-loaded application configuration.
+
+    Returns:
+        The strict boolean value, falling back to the shipped ``False``.
+    """
+    return _load_strict_bool(
+        "chat_defaults", "rag_auto_retrieve_on_send", False, app_config
+    )
+
+
+def load_assistant_library_access_default(
+    app_config: Mapping[str, Any] | None = None,
+) -> bool:
+    """Read the future-conversation assistant Library-access default.
+
+    Args:
+        app_config: Optional already-loaded application configuration.
+
+    Returns:
+        The strict boolean value, falling back to the shipped ``False``.
+    """
+    return _load_strict_bool(
+        "console", "assistant_library_access_default", False, app_config
+    )
+
+
+#: Visible copy for the provider-mode selector. Rendered below the control as
+#: plain text so Direct/RAG cannot be mistaken for either policy axis.
 CONSOLE_DIRECT_LIBRARY_TOOLS_COPY = (
-    "On: Console agents may automatically list, count, read, and lexically "
-    "search your local Library.\n"
-    "Off: Direct list, count, view, and lexical search tools are unavailable. "
-    "Console agents use Library RAG as the default retrieval method. RAG "
-    "currently covers Notes, Media, and Conversations and requires an "
-    "available, populated index.\n"
+    "Direct: When assistant Library access is Allowed, agents can list, count, "
+    "read, and lexically search your local Library with direct tools.\n"
+    "RAG: When assistant Library access is Allowed, agents can search Notes, "
+    "Media, and Conversations through Library RAG; this requires an available, "
+    "populated index.\n"
+    "Neither mode grants access or changes Automatic retrieval.\n"
     "Privacy: Retrieved titles, metadata, content, and RAG excerpts are "
     "included in model requests. If you use a cloud model, this Library data "
     "leaves your device and is handled by that provider. Use a local model if "
@@ -181,9 +243,22 @@ def build_library_rag_save_sections(
     console = app_config.get("console")
     merged_console = dict(deepcopy(console)) if isinstance(console, Mapping) else {}
     merged_console["direct_library_tools"] = bool(values.direct_library_tools)
+    merged_console["assistant_library_access_default"] = bool(
+        values.assistant_library_access_default
+    )
+    chat_defaults = app_config.get("chat_defaults")
+    merged_chat_defaults = (
+        dict(deepcopy(chat_defaults))
+        if isinstance(chat_defaults, Mapping)
+        else {}
+    )
+    merged_chat_defaults["rag_auto_retrieve_on_send"] = bool(
+        values.rag_auto_retrieve_on_send
+    )
     rag_section = app_config.get("AppRAGSearchConfig")
     return {
         "console": merged_console,
+        "chat_defaults": merged_chat_defaults,
         "AppRAGSearchConfig": (
             dict(deepcopy(rag_section)) if isinstance(rag_section, Mapping) else {}
         ),

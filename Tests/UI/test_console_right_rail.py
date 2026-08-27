@@ -124,7 +124,7 @@ async def _wait_for_right_rail_condition(
 _EXPECTED_BOUNDARY_ANCHORS = (
     ("console-project-instruction-status", "Project Instructions"),
     ("console-send-authority-summary", "Next send authority"),
-    ("console-staged-context-tray", "Sources"),
+    ("console-staged-context-tray", "Sources — next send"),
     ("console-retrieval-scope-row", "Scope"),
     ("console-inspector-run-heading", "Run"),
     ("console-inspector-source-readiness-heading", "Source Readiness"),
@@ -243,7 +243,7 @@ def test_inspector_boundary_inventory_has_approved_order_and_specialized_owners(
     ) == (
         "Project Instructions",
         "Next send authority",
-        "Sources",
+        "Sources — next send",
         "Scope",
         "Run",
         "Source Readiness",
@@ -264,7 +264,7 @@ def test_inspector_boundary_inventory_has_approved_order_and_specialized_owners(
     } | {live_id: "Live Work" for live_id in _LIVE_WORK_IDS} == {
         "console-project-instruction-status": "Project Instructions",
         "console-send-authority-summary": "Next send authority",
-        "console-staged-context-tray": "Sources",
+        "console-staged-context-tray": "Sources — next send",
         "console-retrieval-scope-row": "Scope",
         "console-settings-summary": "Session Settings",
         "console-pending-launch-card": "Live Work",

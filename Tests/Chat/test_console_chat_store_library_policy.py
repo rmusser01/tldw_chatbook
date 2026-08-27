@@ -244,7 +244,7 @@ def test_every_store_creation_reads_current_defaults_without_mutating_existing()
     assert second.library_policy_holder.snapshot.auto_retrieve is ConsoleAutoRetrieve.NEVER
 
 
-def test_real_runtime_store_uses_durable_policy_not_the_legacy_chat_toggle():
+def test_real_runtime_store_captures_current_future_session_defaults():
     app = SimpleNamespace(
         app_config={
             "chat_defaults": {"rag_auto_retrieve_on_send": True},
@@ -257,7 +257,10 @@ def test_real_runtime_store_uses_durable_policy_not_the_legacy_chat_toggle():
     app.app_config["console"]["assistant_library_access_default"] = False
     second = store.create_session()
 
-    assert first.library_policy_holder.snapshot.auto_retrieve is ConsoleAutoRetrieve.NEVER
+    assert (
+        first.library_policy_holder.snapshot.auto_retrieve
+        is ConsoleAutoRetrieve.AUTOMATIC
+    )
     assert first.library_policy_holder.snapshot.assistant_access is ConsoleAssistantLibraryAccess.ALLOWED
     assert second.library_policy_holder.snapshot.auto_retrieve is ConsoleAutoRetrieve.NEVER
     assert second.library_policy_holder.snapshot.assistant_access is ConsoleAssistantLibraryAccess.BLOCKED

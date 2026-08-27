@@ -3951,6 +3951,7 @@ write_to_config = [] # exact [providers] keys whose new models append to this fi
     # ... etc ...
 
 [chat_defaults]
+rag_auto_retrieve_on_send = false  # New Console chats do not search Library automatically
 # Default settings specifically for the 'Chat' tab
 user_display_name = "User"
 provider = "OpenAI"

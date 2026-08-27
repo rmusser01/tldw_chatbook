@@ -13,7 +13,9 @@ from tldw_chatbook.RAG_Search.simplified.config import RAGConfig
 from tldw_chatbook.UI.Screens.settings_library_rag_defaults import (
     SettingsLibraryRagDefaults,
     build_library_rag_save_sections,
+    load_assistant_library_access_default,
     load_direct_library_tools,
+    load_rag_auto_retrieve_on_send,
     validate_library_rag_defaults,
 )
 
@@ -175,6 +177,24 @@ def test_direct_library_tools_field_defaults_true():
     assert SettingsLibraryRagDefaults().direct_library_tools is True
 
 
+def test_new_console_conversation_policy_defaults_are_safe() -> None:
+    defaults = SettingsLibraryRagDefaults()
+
+    assert defaults.rag_auto_retrieve_on_send is False
+    assert defaults.assistant_library_access_default is False
+
+
+@pytest.mark.parametrize("value", [True, False])
+def test_new_console_policy_default_loaders_read_their_distinct_sections(value):
+    config = {
+        "chat_defaults": {"rag_auto_retrieve_on_send": value},
+        "console": {"assistant_library_access_default": value},
+    }
+
+    assert load_rag_auto_retrieve_on_send(config) is value
+    assert load_assistant_library_access_default(config) is value
+
+
 @pytest.mark.parametrize(
     "app_config",
     [
@@ -234,11 +254,17 @@ def test_build_library_rag_save_sections_deep_merges_without_dropping_keys():
         "AppRAGSearchConfig": {"rag": {"top_k": 5}},
         "general": {"default_tab": "chat"},
     }
-    values = SettingsLibraryRagDefaults(direct_library_tools=False)
+    values = SettingsLibraryRagDefaults(
+        direct_library_tools=False,
+        rag_auto_retrieve_on_send=True,
+        assistant_library_access_default=True,
+    )
 
     sections = build_library_rag_save_sections(app_config, values)
 
     assert sections["console"]["direct_library_tools"] is False
+    assert sections["console"]["assistant_library_access_default"] is True
+    assert sections["chat_defaults"]["rag_auto_retrieve_on_send"] is True
     # Unrelated Console keys survive the merge.
     assert sections["console"]["max_parallel_runs"] == 3
     assert sections["console"]["rail_state"] == {"open": True}
@@ -259,7 +285,11 @@ def test_build_library_rag_save_sections_handles_missing_sections():
     sections = build_library_rag_save_sections({}, values)
 
     assert sections == {
-        "console": {"direct_library_tools": True},
+        "console": {
+            "direct_library_tools": True,
+            "assistant_library_access_default": False,
+        },
+        "chat_defaults": {"rag_auto_retrieve_on_send": False},
         "AppRAGSearchConfig": {},
     }
 

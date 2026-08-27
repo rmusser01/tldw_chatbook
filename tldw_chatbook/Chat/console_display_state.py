@@ -6,13 +6,18 @@ import re
 from dataclasses import dataclass
 from html import escape as html_escape
 from pathlib import PurePath
-from typing import Any, Mapping, Optional, Sequence
+from typing import Any, Literal, Mapping, Optional, Sequence
 
 from rich.cells import cell_len
 
 from tldw_chatbook.Chat.citation_evidence_models import EvidenceBundle
 from tldw_chatbook.Chat.console_ephemeral import blocked_reason
 from tldw_chatbook.Chat.console_live_work import ConsoleLiveWorkLaunch
+from tldw_chatbook.Chat.console_library_policy import (
+    ConsoleAssistantLibraryAccess,
+    ConsoleAutoRetrieve,
+    ConsoleLibraryPolicySnapshot,
+)
 from tldw_chatbook.Chat.console_project_instructions import (
     ProjectInstructionControlState,
 )
@@ -570,6 +575,77 @@ CONSOLE_SYSTEM_PROMPT_LABEL_UNSET = "System Prompt: off"
 CONSOLE_SYSTEM_PROMPT_LABEL_SET = "System Prompt: set"
 
 
+@dataclass(frozen=True, slots=True)
+class ConsoleLibraryPolicyDisplayState:
+    """Truthful presentation of one conversation's two Library authorities."""
+
+    chip_label: str
+    source_status: str
+    auto_retrieve_label: Literal["Never", "Automatic"]
+    assistant_access_label: Literal["Blocked", "Allowed"]
+    provider_intent_label: str
+    resolved_destination_label: str
+    feedback: Literal[
+        "idle", "saving", "saved", "conflict", "unavailable", "error"
+    ]
+    feedback_copy: str
+    save_enabled: bool
+    editing_enabled: bool
+
+    @classmethod
+    def from_snapshot(
+        cls,
+        snapshot: ConsoleLibraryPolicySnapshot,
+        *,
+        provider_intent_label: str = "Library tool mode: Direct",
+        resolved_destination_label: str = "Resolved destination: not used yet",
+        feedback: Literal[
+            "idle", "saving", "saved", "conflict", "unavailable", "error"
+        ] = "idle",
+        feedback_copy: str = "",
+        dirty: bool = False,
+    ) -> "ConsoleLibraryPolicyDisplayState":
+        """Project a safe policy snapshot without mixing in staged evidence."""
+        automatic = snapshot.auto_retrieve is ConsoleAutoRetrieve.AUTOMATIC
+        allowed = (
+            snapshot.assistant_access is ConsoleAssistantLibraryAccess.ALLOWED
+        )
+        unavailable = snapshot.source == "unavailable"
+        auto_label: Literal["Never", "Automatic"] = (
+            "Automatic" if automatic else "Never"
+        )
+        access_label: Literal["Blocked", "Allowed"] = (
+            "Allowed" if allowed else "Blocked"
+        )
+        if unavailable:
+            chip_label = "Library: blocked · policy unavailable"
+            source_status = "Unavailable — using Never and Blocked"
+        else:
+            chip_label = (
+                f"Library · Auto {'on' if automatic else 'off'} · "
+                f"Agent {'allowed' if allowed else 'blocked'}"
+            )
+            source_status = {
+                "durable": "Saved on this device · not synced",
+                "missing": "No saved policy · safe defaults active",
+                "temporary": "Temporary chat · not saved",
+                "new_session": "New chat defaults · not saved yet",
+            }.get(snapshot.source, "Local policy · not synced")
+        editing_enabled = not unavailable and feedback != "saving"
+        return cls(
+            chip_label=chip_label,
+            source_status=source_status,
+            auto_retrieve_label=auto_label,
+            assistant_access_label=access_label,
+            provider_intent_label=str(provider_intent_label),
+            resolved_destination_label=str(resolved_destination_label),
+            feedback=feedback,
+            feedback_copy=str(feedback_copy),
+            save_enabled=editing_enabled and dirty,
+            editing_enabled=editing_enabled,
+        )
+
+
 @dataclass(frozen=True)
 class ConsoleControlState:
     """Header/control labels for the Console-native workbench chrome."""
@@ -596,7 +672,7 @@ class ConsoleControlState:
         assistant_kind: Any = None,
         assistant_name: Any = None,
         assistant_id: Any = None,
-        rag_enabled: bool = False,
+        library_policy: ConsoleLibraryPolicySnapshot | None = None,
         staged_source_count: int = 0,
         tool_count: int = 0,
         mcp_tool_count: int | None = None,
@@ -613,7 +689,8 @@ class ConsoleControlState:
             assistant_kind: Optional presentation-only assistant kind.
             assistant_name: Optional presentation-only assistant display name.
             assistant_id: Optional presentation-only assistant identifier.
-            rag_enabled: Whether RAG is on for this send.
+            library_policy: Effective two-axis Library authority. When omitted,
+                the shipped safe defaults (Never and Blocked) are shown.
             staged_source_count: Number of staged context sources.
             tool_count: Built-in tools that can run.
             mcp_tool_count: MCP catalog size that can run, or ``None`` when no MCP
@@ -658,11 +735,21 @@ class ConsoleControlState:
         # dash and the chip HIDES at zero, so the lazy-loading detail
         # ("not loaded") no longer renders at all.
         tools_label = f"Tools: {_tools_ready_text(effective_tool_count)}"
+        if library_policy is None:
+            library_policy = ConsoleLibraryPolicySnapshot(
+                auto_retrieve=ConsoleAutoRetrieve.NEVER,
+                assistant_access=ConsoleAssistantLibraryAccess.BLOCKED,
+                policy_revision=None,
+                source="new_session",
+            )
+        library_display = ConsoleLibraryPolicyDisplayState.from_snapshot(
+            library_policy
+        )
         return cls(
             provider_label=f"Provider: {_clean(provider, 'not selected')}",
             model_label=f"Model: {_clean(model, 'not selected')}",
             assistant_label=assistant_label,
-            rag_label=f"Library search: {'on' if rag_enabled else 'off'}",
+            rag_label=library_display.chip_label,
             sources_label=f"Sources: {staged_source_count}",
             tools_label=tools_label,
             approvals_label=f"Approvals: {approval_count} pending",
@@ -677,12 +764,27 @@ class ConsoleControlState:
         )
 
 
+@dataclass(frozen=True, slots=True)
+class ConsoleSourcePrimaryRow:
+    """One compact staged-source row with activation-only details."""
+
+    source_id: str
+    status: Literal["ready", "warning", "blocked"]
+    title: str
+    source_type: str
+    snippet: str
+    authority: str
+    freshness: str
+    action_label: str
+
+
 @dataclass(frozen=True)
 class ConsoleStagedContextState:
     """Display state for the Console staged-context tray."""
 
     heading: str
     summary: str
+    source_rows: tuple[ConsoleSourcePrimaryRow, ...] = ()
     rows: tuple[ConsoleDisplayRow, ...] = ()
     recovery: str = ""
     is_empty: bool = False
@@ -705,14 +807,57 @@ class ConsoleStagedContextState:
 
     def __post_init__(self) -> None:
         if self.source_count is None:
-            object.__setattr__(self, "source_count", len(self.rows))
+            object.__setattr__(
+                self,
+                "source_count",
+                len(self.source_rows) if self.source_rows else len(self.rows),
+            )
 
     @classmethod
     def from_live_work(
         cls,
         launch: ConsoleLiveWorkLaunch,
     ) -> "ConsoleStagedContextState":
+        from tldw_chatbook.Library.library_rag_state import (
+            canonical_library_open_source_type,
+        )
+
         rows = []
+        bundle = evidence_bundle_from_launch(launch)
+        source_rows = tuple(
+            ConsoleSourcePrimaryRow(
+                source_id=_safe_display_text(reference.source_id, "unknown"),
+                status=(
+                    "ready"
+                    if reference.status == "available"
+                    else (
+                        "blocked"
+                        if reference.status in {"blocked", "missing"}
+                        else "warning"
+                    )
+                ),
+                title=_safe_display_text(reference.title, "Untitled source"),
+                source_type=(
+                    canonical_library_open_source_type(reference.source_type)
+                    or _safe_display_text(reference.source_type, "unknown")
+                ),
+                snippet=_safe_display_text(reference.snippet),
+                authority=_safe_display_text(reference.authority_label, "unknown"),
+                freshness={
+                    "available": "Current",
+                    "blocked": "Blocked",
+                    "missing": "Missing",
+                    "stale": "Stale",
+                    "unknown": "Unknown",
+                }.get(reference.status, "Unknown"),
+                action_label=(
+                    "Open in Library"
+                    if canonical_library_open_source_type(reference.source_type)
+                    else "Review details"
+                ),
+            )
+            for reference in (bundle.references if bundle is not None else ())
+        )
         evidence_state = build_console_evidence_display_state(launch)
         if evidence_state is not None:
             rows.append(
@@ -730,7 +875,6 @@ class ConsoleStagedContextState:
                     status=evidence_state.status,
                 )
             )
-            rows.extend(evidence_state.reference_rows)
         rows.extend(
             ConsoleDisplayRow(label=key, value=value)
             for key, value in launch.payload_display_items()
@@ -750,6 +894,7 @@ class ConsoleStagedContextState:
         return cls(
             heading="Staged Context",
             summary=f"{summary_title} ({summary_source}, {summary_status})",
+            source_rows=source_rows,
             rows=tuple(rows),
             recovery=launch.recovery,
             source_count=console_staged_source_count(launch),

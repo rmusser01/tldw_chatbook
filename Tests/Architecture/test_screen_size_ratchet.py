@@ -63,7 +63,7 @@ _REPO_ROOT = Path(__file__).resolve().parents[2]
 #: pre-rebase measurement and both landed red, because dev moved underneath
 #: it -- a budget derived from a stale base fails the moment it merges.
 _BUDGETS: dict[str, tuple[str, int, int]] = {
-    "tldw_chatbook/UI/Screens/chat_screen.py": ("ChatScreen", 17727, 593),
+    "tldw_chatbook/UI/Screens/chat_screen.py": ("ChatScreen", 17026, 566),
 }
 
 # Task 22507.4 started from this reviewed measurement. The repository-wide
