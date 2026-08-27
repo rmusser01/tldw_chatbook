@@ -136,3 +136,41 @@ changes.
 The review fixes do not change the ADR decision: they harden ADR-090's deletion,
 ownership, replay-policy, and fail-before-mutation requirements without creating a new
 exchange model or broadening human-readable surfaces.
+
+## Spec-review fix round 2
+
+Selected-conversation export now requires resolution of any claimed durable owner.
+
+### RED
+
+- Focused selected-exchange run: **2 failed, 24 passed**. A non-null conversation ID
+  without `db_instance`, and a supplied DB whose lookup returned no conversation, both
+  completed export with policy Auto.
+- The ownerless control (`conversation_id=None`) stayed green, confirming the intended
+  legacy boundary before production changed.
+
+### Fix
+
+- `generate_chat_history_content` interprets `conversation_id is not None` as a durable
+  ownership claim. It requires a DB instance and a resolved conversation record before
+  deriving title or policy. Missing DB, lookup exception, and missing record all fail
+  with `Conversation metadata is unavailable for export.` and do not expose lookup
+  details.
+- `conversation_id=None` remains the explicit ownerless/legacy path and exports Auto.
+- Two existing privacy fixtures were brought onto the contract: the durable-owner
+  projection supplies a DB stub, while a malformed-history logging test uses the
+  ownerless path because it does not exercise conversation persistence.
+
+### GREEN and static evidence
+
+- Focused exchange suite: **26 passed, 1 unrelated dependency warning in 4.15s**.
+- First expanded compatibility run: **222 passed, 2 failed**; both failures were the
+  stale owner fixtures described above.
+- Final Task 1 plus nearest policy suites: **224 passed, 1 unrelated dependency warning
+  in 30.37s**.
+- Scoped Ruff: **All checks passed**.
+- Changed production module compiled with `py_compile`.
+- `git diff --check`: **passed**.
+
+Round 2 remains a direct hardening of ADR-090's importable ownership and replay-policy
+contract; no new ADR or exchange shape is required.

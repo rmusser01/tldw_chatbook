@@ -54,6 +54,14 @@ def _checkpoint() -> dict:
 
 
 def test_conversation_json_uses_explicit_private_projection() -> None:
+    class ConversationDB:
+        @staticmethod
+        def get_conversation_by_id(_conversation_id: str) -> dict[str, object]:
+            return {
+                "title": "Private continuation",
+                "thinking_history_policy": "auto",
+            }
+
     checkpoint = _checkpoint()
     history = [
         {
@@ -74,7 +82,12 @@ def test_conversation_json_uses_explicit_private_projection() -> None:
         }
     ]
 
-    payload_json, _ = generate_chat_history_content(history, "conversation-1", None)
+    payload_json, _ = generate_chat_history_content(
+        history,
+        "conversation-1",
+        None,
+        db_instance=ConversationDB(),  # type: ignore[arg-type]
+    )
 
     payload = json.loads(payload_json)
     assert payload["format"] == "tldw_chat_history"
@@ -342,9 +355,7 @@ def test_malformed_json_export_input_does_not_log_private_payload(caplog) -> Non
     }
 
     with caplog.at_level(logging.WARNING):
-        payload_json, _ = generate_chat_history_content(
-            [malformed], "conversation-1", None
-        )
+        payload_json, _ = generate_chat_history_content([malformed], None, None)
 
     assert json.loads(payload_json)["history"] == []
     log_text = caplog.text

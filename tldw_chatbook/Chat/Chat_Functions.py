@@ -2661,17 +2661,23 @@ def generate_chat_history_content(
     # downgrade when the owning lookup fails.
     conversation = None
     conversation_name = None
-    if conversation_id and db_instance is not None:
+    if conversation_id is not None:
+        if db_instance is None:
+            raise ValueError(
+                "Conversation metadata is unavailable for export."
+            )
         try:
             conversation = db_instance.get_conversation_by_id(conversation_id)
         except Exception:
             raise ValueError(
                 "Conversation metadata is unavailable for export."
             ) from None
+        if not conversation:
+            raise ValueError(
+                "Conversation metadata is unavailable for export."
+            )
         if conversation and conversation.get("title"):
             conversation_name = conversation["title"]
-    elif conversation_id:
-        conversation_name = get_conversation_name(conversation_id, db_instance)
 
     if not conversation_name:  # Fallback logic
         media_name_extracted = extract_media_name(

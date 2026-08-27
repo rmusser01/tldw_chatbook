@@ -81,6 +81,44 @@ def test_selected_json_export_fails_closed_when_conversation_lookup_fails() -> N
     assert "PRIVATE-POLICY-LOOKUP-CANARY" not in str(caught.value)
 
 
+def test_selected_json_export_fails_closed_when_conversation_owner_is_missing() -> None:
+    class MissingConversationDB:
+        @staticmethod
+        def get_conversation_by_id(_conversation_id: str) -> None:
+            return None
+
+    with pytest.raises(
+        ValueError, match="Conversation metadata is unavailable for export"
+    ):
+        generate_chat_history_content(
+            [{"role": "assistant", "content": "Visible answer"}],
+            "missing-conversation",
+            None,
+            db_instance=MissingConversationDB(),  # type: ignore[arg-type]
+        )
+
+
+def test_selected_json_export_requires_db_for_non_null_conversation_owner() -> None:
+    with pytest.raises(
+        ValueError, match="Conversation metadata is unavailable for export"
+    ):
+        generate_chat_history_content(
+            [{"role": "assistant", "content": "Visible answer"}],
+            "conversation-1",
+            None,
+        )
+
+
+def test_selected_json_export_without_owner_id_keeps_legacy_auto_policy() -> None:
+    content, _ = generate_chat_history_content(
+        [{"role": "assistant", "content": "Visible answer"}],
+        None,
+        None,
+    )
+
+    assert json.loads(content)["thinking_history_policy"] == "auto"
+
+
 @pytest.mark.parametrize("policy", ["include", "exclude"])
 def test_selected_json_export_preserves_db_owned_explicit_policy(policy: str) -> None:
     class ConversationDB:

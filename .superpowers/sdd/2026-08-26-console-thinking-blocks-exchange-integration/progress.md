@@ -50,3 +50,15 @@ Auto. Focused review tests passed 43/43; the Task 1 suites plus nearest canonica
 Console policy lifecycle tests passed 221/221. Scoped Ruff, production `py_compile`,
 and `git diff --check` passed; the existing RequestsDependencyWarning remains the only
 warning.
+
+Task 1 spec-review fix round 2 (2026-08-26): selected JSON now treats every non-null
+`conversation_id` as a claimed durable owner. RED showed 2 failures: a missing DB
+instance and a DB lookup returning no record both silently exported Auto. The export
+now requires the DB instance and resolved conversation or raises the same content-free
+metadata-unavailable error; only `conversation_id=None` retains the legacy ownerless
+Auto path. Focused exchange tests passed 26/26. The first expanded run correctly
+identified two existing privacy-test fixtures that claimed an owner without supplying
+its DB (222 passed, 2 failed); those fixtures now either provide the owner or use the
+ownerless contract. The final Task 1 plus policy suites passed 224/224 with only the
+existing RequestsDependencyWarning. Scoped Ruff, production `py_compile`, and
+`git diff --check` passed.
