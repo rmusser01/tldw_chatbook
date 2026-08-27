@@ -9728,6 +9728,16 @@ UPDATE db_schema_version
         if cursor_supplied and offset != 0:
             raise InputError("A seek cursor cannot be combined with a nonzero offset.")
 
+        cursor_last_modified = before_last_modified
+        if isinstance(cursor_last_modified, datetime):
+            if cursor_last_modified.tzinfo is None:
+                cursor_last_modified = cursor_last_modified.replace(tzinfo=timezone.utc)
+            cursor_last_modified = (
+                cursor_last_modified.astimezone(timezone.utc)
+                .isoformat(timespec="milliseconds")
+                .replace("+00:00", "Z")
+            )
+
         start_time = time.time()
         if cursor_supplied:
             query = (
@@ -9738,8 +9748,8 @@ UPDATE db_schema_version
             )
             params = (
                 character_id,
-                before_last_modified,
-                before_last_modified,
+                cursor_last_modified,
+                cursor_last_modified,
                 before_id,
                 limit,
             )

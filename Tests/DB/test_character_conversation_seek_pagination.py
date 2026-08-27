@@ -43,12 +43,12 @@ def _ids(rows) -> list[str]:
 
 def test_seek_pages_order_ties_and_filter_nonmatching_rows(db):
     visible = [
-        ("newest", "2026-08-27T05:00:00Z"),
-        ("tie-z", "2026-08-27T04:00:00Z"),
-        ("tie-a", "2026-08-27T04:00:00Z"),
-        ("older-3", "2026-08-27T03:00:00Z"),
-        ("older-2", "2026-08-27T02:00:00Z"),
-        ("older-1", "2026-08-27T01:00:00Z"),
+        ("newest", "2026-08-27T05:00:00.000Z"),
+        ("tie-z", "2026-08-27T04:00:00.000Z"),
+        ("tie-a", "2026-08-27T04:00:00.000Z"),
+        ("older-3", "2026-08-27T03:00:00.000Z"),
+        ("older-2", "2026-08-27T02:00:00.000Z"),
+        ("older-1", "2026-08-27T01:00:00.000Z"),
     ]
     for conversation_id, last_modified in visible:
         _seed_conversation(db, conversation_id, last_modified)
@@ -57,33 +57,33 @@ def test_seek_pages_order_ties_and_filter_nonmatching_rows(db):
     _seed_conversation(
         db,
         "other-character",
-        "2026-08-27T09:00:00Z",
+        "2026-08-27T03:30:00.000Z",
         character_id=other_character_id,
     )
     _seed_conversation(
         db,
         "workspace",
-        "2026-08-27T08:00:00Z",
+        "2026-08-27T02:30:00.000Z",
         scope_type="workspace",
     )
     _seed_conversation(
         db,
         "deleted",
-        "2026-08-27T07:00:00Z",
+        "2026-08-27T01:30:00.000Z",
         deleted=True,
     )
 
-    first_page = db.get_conversations_for_character(1, limit=3)
-    assert _ids(first_page) == ["newest", "tie-z", "tie-a"]
+    first_page = db.get_conversations_for_character(1, limit=2)
+    assert _ids(first_page) == ["newest", "tie-z"]
 
     cursor = first_page[-1]
     second_page = db.get_conversations_for_character(
         1,
-        limit=3,
+        limit=4,
         before_last_modified=cursor["last_modified"],
         before_id=cursor["id"],
     )
-    assert _ids(second_page) == ["older-3", "older-2", "older-1"]
+    assert _ids(second_page) == ["tie-a", "older-3", "older-2", "older-1"]
     assert set(_ids(first_page)).isdisjoint(_ids(second_page))
 
 
