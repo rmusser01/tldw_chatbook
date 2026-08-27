@@ -8,6 +8,7 @@ side effect the feature exists to catch.
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import json
 import sqlite3
 import threading
@@ -17,6 +18,8 @@ from pathlib import Path
 import pytest
 
 from Tests.Agents.test_agent_service import SUBAGENT_PROMPT_PREFIX
+from Tests.Chat.test_console_agent_bridge import _FakeBuiltinGateForRegistry
+from tldw_chatbook.Agents.agent_models import STEP_TOOL_RESULT, TOOL_OUTCOME_SUCCESS
 from tldw_chatbook.Agents.agent_runtime import FENCE_OPEN
 from tldw_chatbook.Chat.console_agent_bridge import ConsoleAgentBridge
 from tldw_chatbook.Chat.console_chat_models import ConsoleMessageRole
@@ -998,6 +1001,19 @@ def _spawn_fence(task: str) -> str:
     )
 
 
+def _write_fence(path: Path, content: str) -> str:
+    return (
+        f"{FENCE_OPEN}\n"
+        + json.dumps(
+            {
+                "name": "write_file",
+                "arguments": {"file_path": str(path), "content": content},
+            }
+        )
+        + "\n```"
+    )
+
+
 def _join_fleet_threads(timeout: float = 5.0) -> None:
     """Block until every live fleet child thread has fully finished.
 
@@ -1017,6 +1033,82 @@ def _next_turn(store, session):
     return store.append_message(
         session.id, role=ConsoleMessageRole.ASSISTANT, content=""
     ).id
+
+
+def test_post_turn_real_write_file_surfaces_a_new_ignored_path(
+    tmp_path, root, tracker, monkeypatch
+):
+    import tldw_chatbook.config as config_module
+
+    monkeypatch.setattr(
+        config_module,
+        "get_cli_setting",
+        lambda section, key=None, default=None: (
+            True if section == "tools" and key == "write_file_enabled" else default
+        ),
+    )
+
+    target = root / "ignored-agent-output.txt"
+    sentinel = "written by the surviving child\n"
+    (root / ".gitignore").write_text(f"{target.name}\n")
+    assert not target.exists()
+
+    gate = threading.Event()
+    gateway = _FleetSurvivorGateway(
+        parent_scripts=[[_spawn_fence("write ignored output")], ["parent done"]],
+        gate=gate,
+        child_scripts=[[_write_fence(target, sentinel)], ["child done"]],
+    )
+    bridge, db, store, session, aid = _bridge_with(tmp_path, gateway, tracker)
+    try:
+        run_id, outcome = _run(
+            bridge,
+            session,
+            aid,
+            root,
+            builtin_gate=_FakeBuiltinGateForRegistry(refuse=False),
+            scratch_root=root,
+            scratch_lease=lambda: contextlib.nullcontext(root),
+        )
+        assert outcome.status == "done"
+        assert gateway.child_started.wait(5), "the child never started"
+        assert not target.exists(), "the child wrote before its parent returned"
+    finally:
+        gate.set()
+    _join_fleet_threads()
+
+    child_runs = [
+        row for row in db.list_runs("conv-1") if row["agent_kind"] == "subagent"
+    ]
+    assert len(child_runs) == 1, child_runs
+    assert child_runs[0]["status"] == "done"
+    successful_writes = [
+        step
+        for step in child_runs[0]["steps"]
+        if step["kind"] == STEP_TOOL_RESULT
+        and step.get("tool_name") == "write_file"
+        and step.get("tool_outcome") == TOOL_OUTCOME_SUCCESS
+    ]
+    assert len(successful_writes) == 1, child_runs[0]["steps"]
+    assert target.read_text() == sentinel
+
+    repo = tracker.service.repo_for_root(root)
+    rows = db.change_snapshots_for_run(run_id)
+    rows_listing_target = [
+        row
+        for row in rows
+        if row["kind"] == "subagent_post_turn"
+        and target.name
+        in [
+            changed.path
+            for changed in repo.changed_files(row["baseline_sha"], row["end_sha"])
+        ]
+    ]
+    assert len(rows_listing_target) == 1, rows
+    assert (
+        repo.file_bytes(rows_listing_target[0]["end_sha"], target.name)
+        == sentinel.encode()
+    )
 
 
 def test_a_survivors_write_after_its_turn_lands_in_a_change_record(
