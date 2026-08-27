@@ -507,7 +507,8 @@ class ConsoleChatPersistence(Protocol):
         self,
         message_id: str,
         revision: int,
-        body: str,
+        source_body: str,
+        target_body: str,
     ) -> str:
         """Confirm one durable source message's citation ownership state."""
 
@@ -662,6 +663,11 @@ class ConsoleChatPersistence(Protocol):
             The exact positive integer row version, or ``None`` when the row
             cannot provide a trustworthy version fence.
         """
+
+    def get_console_fork_source_message(
+        self, message_id: str
+    ) -> tuple[int, str] | None:
+        """Return one exact persisted source revision/body pair for a fork fence."""
 
     def get_conversation_version(self, conversation_id: str) -> int | None:
         """Return the current positive durable conversation row version."""
@@ -4882,19 +4888,25 @@ class ConsoleChatStore:
             raise ValueError("Console fork video marker is unavailable.")
         return fingerprint
 
-    def _fork_persisted_message_version(
+    def _fork_persisted_message_state(
         self,
         persisted_message_id: str | None,
-    ) -> int | None:
+    ) -> tuple[int, str] | None:
         if persisted_message_id is None:
             return None
-        reader = getattr(self.persistence, "get_message_version", None)
+        reader = getattr(self.persistence, "get_console_fork_source_message", None)
         if not callable(reader):
-            raise ValueError("Saved message version is unavailable.")
-        version = reader(persisted_message_id)
-        if type(version) is not int or version < 1:
-            raise ValueError("Saved message version is unavailable.")
-        return version
+            raise ValueError("Saved message state is unavailable.")
+        state = reader(persisted_message_id)
+        if (
+            type(state) is not tuple
+            or len(state) != 2
+            or type(state[0]) is not int
+            or state[0] < 1
+            or type(state[1]) is not str
+        ):
+            raise ValueError("Saved message state is unavailable.")
+        return state
 
     def _fork_conversation_version(
         self,
@@ -4934,6 +4946,11 @@ class ConsoleChatStore:
         siblings = tuple(
             self._children_by_parent.get(session_id, {}).get(parent_id, ())
         )
+        persisted_state = (
+            self._fork_persisted_message_state(message.persisted_message_id)
+            if durable
+            else None
+        )
         return ConsoleForkLineageFence(
             native_message_id=message.id,
             persisted_message_id=message.persisted_message_id,
@@ -4944,11 +4961,8 @@ class ConsoleChatStore:
             visible_content=content,
             visible_variant_id=variant_id,
             sibling_identity=siblings,
-            persisted_revision=(
-                self._fork_persisted_message_version(message.persisted_message_id)
-                if durable
-                else None
-            ),
+            persisted_revision=(persisted_state[0] if persisted_state else None),
+            persisted_content=(persisted_state[1] if persisted_state else None),
             attachment_fingerprint=self._fork_media_fingerprint(message),
         )
 
@@ -5031,6 +5045,14 @@ class ConsoleChatStore:
         ):
             raise ValueError("Console fork image selection is unavailable.")
         configuration = self._fork_configuration_snapshot(session)
+        active_leaf = self._active_leaf_by_session.get(session.id)
+        active_leaf_persisted_id = (
+            self._nodes_by_session[session.id][active_leaf].persisted_message_id
+            if active_leaf is not None
+            else None
+        )
+        if durable and not active_leaf_persisted_id:
+            raise ValueError("Saved active leaf is unavailable.")
         return ConsoleForkFence(
             source_session_id=session.id,
             source_conversation_id=session.persisted_conversation_id,
@@ -5038,6 +5060,9 @@ class ConsoleChatStore:
                 self._fork_conversation_version(session.persisted_conversation_id)
                 if durable
                 else None
+            ),
+            source_active_leaf_persisted_message_id=(
+                active_leaf_persisted_id if durable else None
             ),
             source_durability=durability,
             source_title=session.title,
@@ -5095,6 +5120,16 @@ class ConsoleChatStore:
             ):
                 return False
             durable = durability == "durable"
+            active_leaf = self._active_leaf_by_session.get(session.id)
+            active_leaf_persisted_id = (
+                self._nodes_by_session[session.id][active_leaf].persisted_message_id
+                if active_leaf is not None
+                else None
+            )
+            if (
+                active_leaf_persisted_id if durable else None
+            ) != fence.source_active_leaf_persisted_message_id:
+                return False
             if (
                 self._fork_conversation_version(session.persisted_conversation_id)
                 if durable
@@ -5258,6 +5293,7 @@ class ConsoleChatStore:
                     source_native_message_id=entry.native_message_id,
                     source_persisted_message_id=entry.persisted_message_id,
                     source_persisted_revision=entry.persisted_revision,
+                    source_persisted_content=entry.persisted_content,
                     native_message_id=target_native,
                     persisted_message_id=target_persisted,
                     native_parent_id=previous_native,
@@ -5298,6 +5334,9 @@ class ConsoleChatStore:
             source_session_id=fence.source_session_id,
             source_conversation_id=fence.source_conversation_id,
             source_conversation_version=fence.source_conversation_version,
+            source_active_leaf_persisted_message_id=(
+                fence.source_active_leaf_persisted_message_id
+            ),
             source_boundary_persisted_message_id=(
                 fence.lineage[-1].persisted_message_id
             ),
@@ -5392,10 +5431,20 @@ class ConsoleChatStore:
         for message in messages:
             source_id = message.source_persisted_message_id
             source_revision = message.source_persisted_revision
-            if source_id is None or type(source_revision) is not int:
+            source_body = message.source_persisted_content
+            if (
+                source_id is None
+                or type(source_revision) is not int
+                or type(source_body) is not str
+            ):
                 raise ValueError("Console fork citation authority is unavailable.")
             try:
-                state = reader(source_id, source_revision, message.content)
+                state = reader(
+                    source_id,
+                    source_revision,
+                    source_body,
+                    message.content,
+                )
             except CitationPersistenceUnavailable as exc:
                 raise ValueError(
                     "Console fork citation authority is unavailable."

@@ -49,11 +49,71 @@ CONSOLE_FORK_FINGERPRINT_JSON_MAX_BYTES = 64 * 1024
 CONSOLE_FORK_VIDEO_TOMBSTONE_CONTENT = (
     "[video unavailable] The generated video expired; regenerate to recreate it."
 )
+CONSOLE_FORK_MESSAGE_METADATA_KEY = "console_fork"
 _CONSOLE_FORK_IDENTITY_TEXT_MAX_BYTES = 256
 _CONSOLE_FORK_FINGERPRINT_DOMAIN = b"tldw_chatbook.console.chat-fork.v1\0"
 
 ConsoleForkDurability = Literal["temporary", "durable", "unsaved_persistable"]
 ConsoleForkCitationState = Literal["active_required", "unavailable", "none"]
+
+
+def encode_console_fork_message_metadata(
+    status: ConsoleMessageStatus,
+    attachment_display_name: str,
+) -> str | None:
+    """Encode the fork-only durable facts that have no schema column."""
+
+    if status not in {"complete", "stopped", "failed"}:
+        raise ValueError("Fork message status is not durable.")
+    if not isinstance(attachment_display_name, str):
+        raise TypeError("Fork attachment display name must be text.")
+    if status == "complete" and not attachment_display_name:
+        return None
+    return json.dumps(
+        {
+            CONSOLE_FORK_MESSAGE_METADATA_KEY: {
+                "version": 1,
+                "status": status,
+                "attachment_display_name": attachment_display_name,
+            }
+        },
+        sort_keys=True,
+    )
+
+
+def parse_console_fork_message_metadata(
+    raw: str | None,
+) -> tuple[ConsoleMessageStatus, str] | None:
+    """Decode strict fork-only local metadata, degrading foreign rows."""
+
+    if not raw:
+        return None
+    try:
+        decoded = json.loads(raw)
+    except (TypeError, json.JSONDecodeError):
+        return None
+    if not isinstance(decoded, dict) or set(decoded) != {
+        CONSOLE_FORK_MESSAGE_METADATA_KEY
+    }:
+        return None
+    payload = decoded[CONSOLE_FORK_MESSAGE_METADATA_KEY]
+    if not isinstance(payload, dict) or set(payload) != {
+        "version",
+        "status",
+        "attachment_display_name",
+    }:
+        return None
+    status = payload.get("status")
+    label = payload.get("attachment_display_name")
+    if (
+        type(payload.get("version")) is not int
+        or payload["version"] != 1
+        or type(status) is not str
+        or status not in {"complete", "stopped", "failed"}
+        or type(label) is not str
+    ):
+        return None
+    return status, label
 
 
 @dataclass(frozen=True, slots=True)
@@ -78,6 +138,7 @@ class ConsoleForkLineageFence:
     visible_variant_id: str | None
     sibling_identity: tuple[str, ...]
     persisted_revision: int | None
+    persisted_content: str | None
     attachment_fingerprint: str
 
 
@@ -98,6 +159,7 @@ class ConsoleForkFence:
     source_session_id: str
     source_conversation_id: str | None
     source_conversation_version: int | str | None
+    source_active_leaf_persisted_message_id: str | None
     source_durability: ConsoleForkDurability
     source_title: str
     source_configuration_fingerprint: str
@@ -162,6 +224,7 @@ class ConsoleForkProjectedMessage:
     source_native_message_id: str
     source_persisted_message_id: str | None
     source_persisted_revision: int | None
+    source_persisted_content: str | None
     native_message_id: str
     persisted_message_id: str | None
     native_parent_id: str | None
@@ -217,6 +280,7 @@ class ConsoleChatForkSnapshot:
     source_session_id: str
     source_conversation_id: str | None
     source_conversation_version: int | str | None
+    source_active_leaf_persisted_message_id: str | None
     source_boundary_persisted_message_id: str | None
     durable: bool
     messages: tuple[ConsoleForkProjectedMessage, ...]

@@ -1634,6 +1634,12 @@ class CitationTraceRepository:
             )
         ):
             raise CitationPersistenceUnavailable("fork_source_owner_unavailable")
+        if not self._trace_payloads_available(
+            identity.profile_id,
+            source["trace_id"],
+            cursor=cursor,
+        ):
+            raise CitationPersistenceUnavailable("fork_source_payload_unavailable")
         self.link_cache_message_owner(
             cursor,
             local_trace_namespace(identity, trace_id=source["trace_id"]),
@@ -1647,7 +1653,8 @@ class CitationTraceRepository:
         *,
         message_id: str,
         message_revision: int,
-        message_body: str,
+        source_message_body: str,
+        target_message_body: str,
     ) -> str:
         """Confirm the authoritative citation state captured by a fork fence."""
 
@@ -1656,7 +1663,8 @@ class CitationTraceRepository:
             or not message_id
             or type(message_revision) is not int
             or message_revision < 1
-            or type(message_body) is not str
+            or type(source_message_body) is not str
+            or type(target_message_body) is not str
         ):
             raise CitationPersistenceUnavailable("fork_source_owner_unverifiable")
         connection = self.db.get_connection()
@@ -1672,7 +1680,7 @@ class CitationTraceRepository:
             message is None
             or message["deleted"]
             or message["version"] != message_revision
-            or message["content"] != message_body
+            or message["content"] != source_message_body
         ):
             raise CitationPersistenceUnavailable("fork_source_owner_unverifiable")
         owners = connection.execute(
@@ -1717,7 +1725,7 @@ class CitationTraceRepository:
         owner = active[0]
         expected_fingerprint = codec.fingerprint(
             CitationFingerprintDomain.MESSAGE_BODY,
-            message_body,
+            source_message_body,
         )
         if type(owner["body_fingerprint"]) is not str or not hmac.compare_digest(
             owner["body_fingerprint"],
@@ -1762,7 +1770,7 @@ class CitationTraceRepository:
         ):
             return "unavailable"
         if (
-            trace["answer_body"] != message_body
+            trace["answer_body"] != source_message_body
             or type(trace["body_integrity_hmac"]) is not str
             or not hmac.compare_digest(
                 trace["body_integrity_hmac"],
@@ -1783,6 +1791,8 @@ class CitationTraceRepository:
             trace_id=owner["trace_id"],
         ):
             raise CitationPersistenceUnavailable("fork_source_owner_unverifiable")
+        if target_message_body != source_message_body:
+            return "unavailable"
         return "active_required"
 
     def get_active_trace_for_current_message(
@@ -3560,13 +3570,14 @@ class CitationTraceRepository:
         self,
         profile_id: str,
         trace_id: str,
+        *,
+        cursor: sqlite3.Cursor | None = None,
     ) -> bool:
         """Recheck current governed access before issuing or verifying trust."""
 
-        row = (
-            self.db.get_connection()
-            .execute(
-                """
+        reader = cursor if cursor is not None else self.db.get_connection()
+        row = reader.execute(
+            """
                 SELECT 1
                 FROM rag_citation_traces AS trace
                 JOIN rag_answer_attempt_payloads AS selected
@@ -3629,13 +3640,14 @@ class CitationTraceRepository:
                   AND NOT EXISTS (
                       SELECT 1
                       FROM rag_trace_evidence_refs AS reference
-                      JOIN rag_evidence_snapshots AS snapshot
+                      LEFT JOIN rag_evidence_snapshots AS snapshot
                         ON snapshot.profile_id = reference.profile_id
                        AND snapshot.payload_id = reference.snapshot_payload_id
                       WHERE reference.profile_id = trace.profile_id
                         AND reference.trace_id = trace.trace_id
                         AND (
-                            snapshot.redaction_state != 'available'
+                            snapshot.payload_id IS NULL
+                            OR snapshot.redaction_state != 'available'
                             OR snapshot.purged_at IS NOT NULL
                             OR (
                                 snapshot.storage_mode = 'embedded'
@@ -3653,10 +3665,8 @@ class CitationTraceRepository:
                         )
                   )
                 """,
-                (profile_id, trace_id),
-            )
-            .fetchone()
-        )
+            (profile_id, trace_id),
+        ).fetchone()
         return row is not None
 
     def _active_presentation_warning(

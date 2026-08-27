@@ -10,7 +10,20 @@ import json
 import pytest
 from PIL import Image as PILImage
 
+from Tests.Chat.test_citation_trace_repository import (
+    TEST_FINGERPRINT_CODEC,
+    _identity,
+    _sealed_write,
+)
+from tldw_chatbook.Chat.chat_conversation_service import ChatConversationService
 from tldw_chatbook.Chat.chat_persistence_service import ChatPersistenceService
+from tldw_chatbook.Chat.citation_provenance_runtime import (
+    CitationProvenanceRuntimePolicy,
+)
+from tldw_chatbook.Chat.citation_trace_repository import (
+    CitationPersistenceUnavailable,
+    CitationTraceRepository,
+)
 from tldw_chatbook.Chat.console_chat_fork import (
     ConsoleChatForkSnapshot,
     ConsoleForkCitationLink,
@@ -21,6 +34,9 @@ from tldw_chatbook.Chat.console_chat_fork import (
     ConsoleForkProjectedVideoTombstone,
 )
 from tldw_chatbook.Chat.console_chat_models import ConsoleMessageRole
+from tldw_chatbook.Chat.console_conversation_hydration import (
+    console_messages_from_conversation_tree,
+)
 from tldw_chatbook.Chat.console_context_policy import (
     ConsoleContextPolicyOverrides,
     ContextCompactionMode,
@@ -85,7 +101,11 @@ def _configuration() -> ConsoleForkConfigurationSnapshot:
     )
 
 
-def _seed_source(db: CharactersRAGDB) -> tuple[int, tuple[dict, dict]]:
+def _seed_source(
+    db: CharactersRAGDB,
+    *,
+    assistant_content: str = "Answer",
+) -> tuple[int, tuple[dict, dict]]:
     db.add_conversation({"id": "source", "root_id": "root", "title": "Source"})
     db.add_message(
         {
@@ -102,10 +122,11 @@ def _seed_source(db: CharactersRAGDB) -> tuple[int, tuple[dict, dict]]:
             "conversation_id": "source",
             "parent_message_id": "source-user",
             "sender": "assistant",
-            "content": "Answer",
+            "content": assistant_content,
             "client_id": db.client_id,
         }
     )
+    db.set_conversation_active_leaf("source", "source-assistant")
     conversation = db.get_conversation_by_id("source")
     messages = (
         db.get_message_by_id("source-user"),
@@ -118,9 +139,13 @@ def _snapshot(
     db: CharactersRAGDB,
     *,
     source_kind: str = "durable",
+    assistant_content: str = "Answer",
 ) -> ConsoleChatForkSnapshot:
     if source_kind == "durable":
-        source_version, source_rows = _seed_source(db)
+        source_version, source_rows = _seed_source(
+            db,
+            assistant_content=assistant_content,
+        )
         source_conversation_id = "source"
         source_boundary_id = "source-assistant"
     else:
@@ -143,6 +168,7 @@ def _snapshot(
             source_native_message_id="native-source-user",
             source_persisted_message_id=source_ids[0],
             source_persisted_revision=source_rows[0]["version"],
+            source_persisted_content=("Question" if source_kind == "durable" else None),
             native_message_id="native-fork-user",
             persisted_message_id=persisted_ids[0],
             native_parent_id=None,
@@ -157,6 +183,9 @@ def _snapshot(
             source_native_message_id="native-source-assistant",
             source_persisted_message_id=source_ids[1],
             source_persisted_revision=source_rows[1]["version"],
+            source_persisted_content=(
+                assistant_content if source_kind == "durable" else None
+            ),
             native_message_id="native-fork-assistant",
             persisted_message_id=persisted_ids[1],
             native_parent_id="native-fork-user",
@@ -165,7 +194,7 @@ def _snapshot(
             visible_variant_id=None,
             role=ConsoleMessageRole.ASSISTANT,
             status="complete",
-            content="Answer",
+            content=assistant_content,
         ),
     )
     citation_links = tuple(
@@ -184,6 +213,9 @@ def _snapshot(
         source_session_id="source-session",
         source_conversation_id=source_conversation_id,
         source_conversation_version=source_version,
+        source_active_leaf_persisted_message_id=(
+            "source-assistant" if source_kind == "durable" else None
+        ),
         source_boundary_persisted_message_id=source_boundary_id,
         durable=durable,
         messages=messages,
@@ -285,6 +317,56 @@ def _counts(db: CharactersRAGDB) -> tuple[int, ...]:
             "rag_message_trace_owners",
         )
     )
+
+
+def _source_state(db: CharactersRAGDB) -> tuple[object, ...]:
+    conversation = db.get_conversation_by_id("source")
+    messages = tuple(
+        tuple(
+            db.get_message_by_id(message_id)[key]
+            for key in ("id", "content", "version")
+        )
+        for message_id in ("source-user", "source-assistant")
+    )
+    return (
+        conversation["version"],
+        conversation["active_leaf_message_id"],
+        messages,
+    )
+
+
+def _active_citation_snapshot(
+    db: CharactersRAGDB,
+) -> tuple[ConsoleChatForkSnapshot, CitationTraceRepository]:
+    snapshot = _snapshot(db, assistant_content="Answer [S1].")
+    repository = CitationTraceRepository(
+        db,
+        policy=CitationProvenanceRuntimePolicy(canonical_writes_enabled=True),
+        identity_context=_identity(db),
+        fingerprint_codec=TEST_FINGERPRINT_CODEC,
+    )
+    prepared = repository.prepare_write(_sealed_write())
+    assistant = snapshot.messages[-1]
+    with db.transaction() as cursor:
+        repository.write_prepared(
+            cursor,
+            prepared,
+            message_id=assistant.source_persisted_message_id or "",
+            message_revision=assistant.source_persisted_revision or 0,
+            message_body=assistant.source_persisted_content or "",
+        )
+    links = tuple(
+        replace(
+            link,
+            state=(
+                "active_required"
+                if link.source_persisted_message_id == "source-assistant"
+                else "none"
+            ),
+        )
+        for link in snapshot.citation_links
+    )
+    return replace(snapshot, citation_links=links), repository
 
 
 def test_snapshot_carries_the_frozen_source_conversation_version() -> None:
@@ -468,7 +550,8 @@ def test_resolver_rejects_each_conflicting_fork_identity_field(
 
 
 @pytest.mark.parametrize(
-    "mutation", ("message-version", "message-body", "conversation")
+    "mutation",
+    ("message-version", "message-body", "conversation", "active-leaf"),
 )
 def test_cursor_scoped_source_recheck_rejects_post_fence_races(
     tmp_path,
@@ -477,7 +560,11 @@ def test_cursor_scoped_source_recheck_rejects_post_fence_races(
     db = CharactersRAGDB(tmp_path / f"race-{mutation}.db", client_id="fork-test")
     service = ChatPersistenceService(db)
     snapshot = _snapshot(db)
-    if mutation == "conversation":
+    if mutation == "active-leaf":
+        before = db.get_conversation_by_id("source")["version"]
+        db.set_conversation_active_leaf("source", "source-user")
+        assert db.get_conversation_by_id("source")["version"] == before
+    elif mutation == "conversation":
         source = db.get_conversation_by_id("source")
         db.update_conversation(
             "source", {"title": "Changed"}, expected_version=source["version"]
@@ -493,6 +580,102 @@ def test_cursor_scoped_source_recheck_rejects_post_fence_races(
 
     with pytest.raises(RuntimeError, match="source changed"):
         _commit(service, snapshot)
+
+    assert db.get_conversation_by_id("fork") is None
+
+
+@pytest.mark.parametrize("projection", ("visible-variant", "video-tombstone"))
+def test_cursor_scoped_source_recheck_uses_exact_persisted_body_for_projections(
+    tmp_path,
+    projection,
+) -> None:
+    db = CharactersRAGDB(tmp_path / f"race-{projection}.db", client_id="fork-test")
+    service = ChatPersistenceService(db)
+    snapshot = _snapshot(db)
+    first, second = snapshot.messages
+    if projection == "visible-variant":
+        second = replace(
+            second,
+            visible_variant_id="variant-2",
+            content="A visible session-only answer",
+        )
+    else:
+        second = replace(
+            second,
+            content=(
+                "[video unavailable] The generated video expired; "
+                "regenerate to recreate it."
+            ),
+            video_tombstone=ConsoleForkProjectedVideoTombstone(
+                owner_native_message_id=second.native_message_id,
+                owner_persisted_message_id=second.persisted_message_id,
+                source_fingerprint="a" * 64,
+                prompt="animate",
+                negative_prompt="",
+                backend="minimax",
+                model="video-test",
+                seed=7,
+                duration_seconds=3.0,
+                fps=24.0,
+                width=640,
+                height=360,
+                ratio="16:9",
+                source_image_message_id=None,
+                container="mp4",
+            ),
+        )
+    snapshot = replace(snapshot, messages=(first, second))
+    before_version = db.get_message_by_id("source-assistant")["version"]
+    with db.transaction() as cursor:
+        cursor.execute(
+            "UPDATE messages SET content = ? WHERE id = ?",
+            ("Tampered without version", "source-assistant"),
+        )
+    assert db.get_message_by_id("source-assistant")["version"] == before_version
+
+    with pytest.raises(RuntimeError, match="source changed"):
+        _commit(service, snapshot)
+
+    assert db.get_conversation_by_id("fork") is None
+
+
+@pytest.mark.parametrize(
+    ("field", "forged"),
+    (
+        ("conversation_title", "Forged title"),
+        ("scope_type", "workspace"),
+        ("workspace_id", "workspace-elsewhere"),
+        ("system_prompt", "Forged system prompt"),
+        ("runtime_backend", "remote"),
+        ("assistant_kind", "character"),
+        ("assistant_id", "forged-assistant"),
+        ("assistant_authority_id", "forged-authority"),
+        ("persona_memory_mode", "forged-memory"),
+        ("character_id", "forged-character"),
+        ("character_name", "Forged Character"),
+        ("speech_preferences", ConsoleSpeechPreferences(auto_speak=False)),
+    ),
+)
+def test_caller_cannot_override_snapshot_bound_configuration(
+    tmp_path,
+    field,
+    forged,
+) -> None:
+    db = CharactersRAGDB(tmp_path / f"forged-{field}.db", client_id="fork-test")
+    service = ChatPersistenceService(db)
+    snapshot = _snapshot(db)
+    kwargs = _conversation_kwargs(snapshot)
+    kwargs[field] = forged
+
+    with pytest.raises(ValueError, match="configuration"):
+        service.fork_console_conversation_bundle(
+            snapshot=snapshot,
+            conversation_kwargs=kwargs,
+            policy_candidate=snapshot.configuration.library_policy,
+            project_context_json=encode_project_context_json(
+                snapshot.configuration.project_instruction_state
+            ),
+        )
 
     assert db.get_conversation_by_id("fork") is None
 
@@ -526,6 +709,7 @@ def test_each_atomic_write_failure_rolls_back_the_complete_target(
         else _snapshot(db)
     )
     before = _counts(db)
+    source_before = _source_state(db)
     failure = RuntimeError(f"injected {failure_point}")
     if failure_point == "message":
         original_create = service.create_message
@@ -534,9 +718,10 @@ def test_each_atomic_write_failure_rolls_back_the_complete_target(
         def fail_middle_message(*args, **kwargs):
             nonlocal calls
             calls += 1
+            result = original_create(*args, **kwargs)
             if calls == 2:
                 raise failure
-            return original_create(*args, **kwargs)
+            return result
 
         monkeypatch.setattr(service, "create_message", fail_middle_message)
     else:
@@ -551,18 +736,123 @@ def test_each_atomic_write_failure_rolls_back_the_complete_target(
             "leaf": (db, "set_conversation_active_leaf"),
         }
         owner, name = targets[failure_point]
-        monkeypatch.setattr(
-            owner,
-            name,
-            lambda *_args, **_kwargs: (_ for _ in ()).throw(failure),
-        )
+        original_write = getattr(owner, name)
+
+        def fail_after_write(*args, **kwargs):
+            original_write(*args, **kwargs)
+            raise failure
+
+        monkeypatch.setattr(owner, name, fail_after_write)
 
     with pytest.raises(RuntimeError, match=f"injected {failure_point}"):
         _commit(service, snapshot)
 
     assert _counts(db) == before
+    assert _source_state(db) == source_before
     assert db.get_conversation_by_id("fork") is None
-    assert db.get_conversation_active_leaf("source") is None
+    assert db.get_conversation_active_leaf("source") == "source-assistant"
+
+
+@pytest.mark.parametrize(
+    "revocation",
+    ("evidence-run", "snapshot", "answer", "tombstone"),
+)
+def test_citation_payload_revocation_rolls_back_the_integrated_fork_bundle(
+    tmp_path,
+    revocation,
+) -> None:
+    db = CharactersRAGDB(
+        tmp_path / f"citation-race-{revocation}.db",
+        client_id="fork-test",
+    )
+    snapshot, repository = _active_citation_snapshot(db)
+    service = ChatPersistenceService(db, citation_repository=repository)
+    with db.transaction() as cursor:
+        if revocation == "evidence-run":
+            cursor.execute(
+                """
+                UPDATE rag_evidence_runs
+                SET redaction_state = 'purged', run_payload_json = NULL,
+                    purged_at = '2026-08-27T00:00:00+00:00'
+                WHERE trace_id = 'trace-1'
+                """
+            )
+        elif revocation == "snapshot":
+            cursor.execute(
+                """
+                UPDATE rag_evidence_snapshots
+                SET redaction_state = 'redacted'
+                WHERE payload_id = 'snapshot-1'
+                """
+            )
+        elif revocation == "answer":
+            cursor.execute(
+                """
+                UPDATE rag_answer_attempt_payloads
+                SET redaction_state = 'purged', answer_body = NULL,
+                    body_integrity_hmac = NULL,
+                    purged_at = '2026-08-27T00:00:00+00:00'
+                WHERE trace_id = 'trace-1'
+                """
+            )
+        else:
+            cursor.execute(
+                """
+                INSERT INTO rag_payload_tombstones VALUES (
+                    ?, 'local_payload_v1', 'snapshot-1', 'snapshot-1',
+                    'revoked', 'fork-race-policy',
+                    '2026-08-27T00:00:00+00:00',
+                    '2027-08-27T00:00:00+00:00'
+                )
+                """,
+                (_identity(db).profile_id,),
+            )
+    before = _counts(db)
+    source_before = _source_state(db)
+
+    with pytest.raises(CitationPersistenceUnavailable):
+        _commit(service, snapshot)
+
+    assert _counts(db) == before
+    assert _source_state(db) == source_before
+    assert db.get_conversation_by_id("fork") is None
+    owners = (
+        db.get_connection()
+        .execute("SELECT message_id FROM rag_message_trace_owners ORDER BY message_id")
+        .fetchall()
+    )
+    assert [row["message_id"] for row in owners] == ["source-assistant"]
+
+
+def test_failure_after_real_citation_owner_link_rolls_back_the_bundle(
+    tmp_path,
+    monkeypatch,
+) -> None:
+    db = CharactersRAGDB(tmp_path / "citation-after-link.db", client_id="fork-test")
+    snapshot, repository = _active_citation_snapshot(db)
+    service = ChatPersistenceService(db, citation_repository=repository)
+    before = _counts(db)
+    source_before = _source_state(db)
+    original_link = repository.link_fork_message_owner
+
+    def fail_after_owner_link(*args, **kwargs):
+        original_link(*args, **kwargs)
+        raise RuntimeError("injected after citation owner link")
+
+    monkeypatch.setattr(repository, "link_fork_message_owner", fail_after_owner_link)
+
+    with pytest.raises(RuntimeError, match="after citation owner link"):
+        _commit(service, snapshot)
+
+    assert _counts(db) == before
+    assert _source_state(db) == source_before
+    assert db.get_conversation_by_id("fork") is None
+    owners = (
+        db.get_connection()
+        .execute("SELECT message_id FROM rag_message_trace_owners ORDER BY message_id")
+        .fetchall()
+    )
+    assert [row["message_id"] for row in owners] == ["source-assistant"]
 
 
 @pytest.mark.parametrize(
@@ -722,6 +1012,41 @@ def test_generated_image_sidecars_round_trip_in_the_atomic_bundle(tmp_path) -> N
     assert extras[0]["data"] == snapshot.messages[0].attachments[1].data
     generation = db.get_generation_metadata_for_messages(("fork-user",))["fork-user"]
     assert [item["prompt"] for item in generation] == ["generated 0", "generated 1"]
+
+
+@pytest.mark.parametrize("status", ("stopped", "failed"))
+def test_durable_reload_preserves_terminal_status_and_position_zero_label(
+    tmp_path,
+    status,
+) -> None:
+    db = CharactersRAGDB(tmp_path / f"reload-{status}.db", client_id="fork-test")
+    service = ChatPersistenceService(db)
+    snapshot = _snapshot(db)
+    first, second = snapshot.messages
+    attachment = ConsoleForkProjectedAttachment(
+        owner_native_message_id=second.native_message_id,
+        owner_persisted_message_id=second.persisted_message_id,
+        position=0,
+        data=_png_bytes((0, 255, 0)),
+        mime_type="image/png",
+        display_name="kept-position-zero.png",
+    )
+    snapshot = replace(
+        snapshot,
+        messages=(
+            first,
+            replace(second, status=status, attachments=(attachment,)),
+        ),
+    )
+
+    _commit(service, snapshot)
+    tree = ChatConversationService(db).get_conversation_tree("fork")
+    hydrated = console_messages_from_conversation_tree(tree, db=db)
+    restored = hydrated[-1]
+
+    assert restored.status == status
+    assert restored.attachments[0].display_name == "kept-position-zero.png"
+    assert restored.attachment_label == "kept-position-zero.png"
 
 
 def test_video_tombstone_persists_only_regeneration_metadata(tmp_path) -> None:

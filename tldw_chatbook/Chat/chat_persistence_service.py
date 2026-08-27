@@ -16,9 +16,11 @@ from tldw_chatbook.Chat.console_context_policy import ConsoleContextPolicyOverri
 from tldw_chatbook.Chat.console_chat_fork import (
     CONSOLE_FORK_VIDEO_TOMBSTONE_CONTENT,
     ConsoleChatForkSnapshot,
+    encode_console_fork_message_metadata,
     fingerprint_console_fork_selected_image,
     validate_console_fork_image_payload,
 )
+from tldw_chatbook.Chat.console_chat_models import CONSOLE_GLOBAL_WORKSPACE_ID
 from tldw_chatbook.Chat.console_context_repository import (
     ConsoleContextRepository,
     ContextPolicyReadResult,
@@ -170,11 +172,28 @@ class ChatPersistenceService:
             return None
         return version
 
+    def get_console_fork_source_message(
+        self, message_id: str
+    ) -> tuple[int, str] | None:
+        """Return one exact persisted source revision/body pair for fork fencing."""
+
+        if type(message_id) is not str or not message_id:
+            return None
+        message = self.db.get_message_by_id(message_id)
+        if message is None or message.get("deleted"):
+            return None
+        version = message.get("version")
+        body = message.get("content")
+        if type(version) is not int or version < 1 or type(body) is not str:
+            return None
+        return version, body
+
     def get_console_fork_citation_state(
         self,
         message_id: str,
         revision: int,
-        body: str,
+        source_body: str,
+        target_body: str,
     ) -> str:
         """Return one authoritative citation state for immutable fork staging."""
 
@@ -183,7 +202,8 @@ class ChatPersistenceService:
             return repository.classify_fork_message_owner(
                 message_id=message_id,
                 message_revision=revision,
-                message_body=body,
+                source_message_body=source_body,
+                target_message_body=target_body,
             )
         connection = self.db.get_connection()
         message = connection.execute(
@@ -198,7 +218,7 @@ class ChatPersistenceService:
             message is None
             or message["deleted"]
             or message["version"] != revision
-            or message["content"] != body
+            or message["content"] != source_body
         ):
             raise CitationPersistenceUnavailable("fork_source_owner_unverifiable")
         ambiguous = connection.execute(
@@ -751,6 +771,11 @@ class ChatPersistenceService:
                         source_image_message_id=video.source_image_message_id,
                         container=video.container,
                     ).to_json()
+                else:
+                    metadata_json = encode_console_fork_message_metadata(
+                        message.status,
+                        attachments[0]["display_name"] if attachments else "",
+                    )
                 persisted_id = self.create_message(
                     conversation_id=target_id,
                     sender=message.role.value,
@@ -896,7 +921,10 @@ class ChatPersistenceService:
         if source_id is None:
             return snapshot.fork_conversation_id or "", None, None
         source = cursor.execute(
-            "SELECT root_id, version, deleted FROM conversations WHERE id = ?",
+            """
+            SELECT root_id, version, deleted, active_leaf_message_id
+            FROM conversations WHERE id = ?
+            """,
             (source_id,),
         ).fetchone()
         if (
@@ -904,6 +932,8 @@ class ChatPersistenceService:
             or source["deleted"]
             or type(snapshot.source_conversation_version) is not int
             or source["version"] != snapshot.source_conversation_version
+            or source["active_leaf_message_id"]
+            != snapshot.source_active_leaf_persisted_message_id
         ):
             raise RuntimeError("Console fork source changed.")
         previous_source_id = None
@@ -921,11 +951,7 @@ class ChatPersistenceService:
                 or row["parent_message_id"] != previous_source_id
                 or row["version"] != message.source_persisted_revision
                 or row["deleted"]
-                or (
-                    message.visible_variant_id is None
-                    and message.video_tombstone is None
-                    and row["content"] != message.content
-                )
+                or row["content"] != message.source_persisted_content
             ):
                 raise RuntimeError("Console fork source changed.")
             previous_source_id = message.source_persisted_message_id
@@ -956,7 +982,7 @@ class ChatPersistenceService:
                 cursor,
                 source_message_id=link.source_persisted_message_id,
                 source_message_revision=link.source_revision,
-                source_message_body=target.content,
+                source_message_body=target.source_persisted_content or "",
                 target_message_id=target.persisted_message_id or "",
                 target_message_revision=1,
                 target_message_body=target.content,
@@ -969,11 +995,24 @@ class ChatPersistenceService:
         conversation_kwargs: Mapping[str, object],
     ) -> dict[str, object]:
         configuration = snapshot.configuration
-        prepared = dict(conversation_kwargs)
-        prepared["conversation_title"] = snapshot.title
-        prepared["system_prompt"] = configuration.settings.system_prompt
-        prepared["speech_preferences"] = configuration.speech_preferences
-        metadata = _initial_metadata_object(prepared.pop("metadata", {}) or {})
+        global_scope = configuration.workspace_id == CONSOLE_GLOBAL_WORKSPACE_ID
+        prepared: dict[str, object] = {
+            "conversation_title": snapshot.title,
+            "scope_type": "global" if global_scope else "workspace",
+            "workspace_id": None if global_scope else configuration.workspace_id,
+            "system_prompt": configuration.settings.system_prompt,
+            "runtime_backend": configuration.runtime_backend,
+            "assistant_kind": configuration.assistant_kind,
+            "assistant_id": configuration.assistant_id,
+            "assistant_authority_id": configuration.assistant_authority_id,
+            "persona_memory_mode": configuration.persona_memory_mode,
+            "character_id": configuration.character_id,
+            "character_name": configuration.character_name,
+            "speech_preferences": configuration.speech_preferences,
+        }
+        if dict(conversation_kwargs) != prepared:
+            raise ValueError("Console fork configuration changed.")
+        metadata: dict[str, object] = {}
         metadata["console_session_settings"] = {
             "version": 1,
             **asdict(configuration.settings),
@@ -1029,15 +1068,49 @@ class ChatPersistenceService:
         if not snapshot.durable and (
             snapshot.source_conversation_id is not None
             or snapshot.source_conversation_version is not None
+            or snapshot.source_active_leaf_persisted_message_id is not None
             or snapshot.source_boundary_persisted_message_id is not None
             or snapshot.citation_links
             or any(
                 message.source_persisted_message_id is not None
                 or message.source_persisted_revision is not None
+                or message.source_persisted_content is not None
                 for message in snapshot.messages
             )
         ):
             raise ValueError("Temporary fork citation identity is invalid.")
+        source_carriers = tuple(
+            (
+                message.source_persisted_message_id,
+                message.source_persisted_revision,
+                message.source_persisted_content,
+            )
+            for message in snapshot.messages
+        )
+        if snapshot.source_conversation_id is not None:
+            if (
+                type(snapshot.source_conversation_version) is not int
+                or not snapshot.source_active_leaf_persisted_message_id
+                or not snapshot.source_boundary_persisted_message_id
+                or any(
+                    type(source_id) is not str
+                    or not source_id
+                    or type(revision) is not int
+                    or type(content) is not str
+                    for source_id, revision, content in source_carriers
+                )
+            ):
+                raise ValueError("Console fork durable source fence is invalid.")
+        elif snapshot.durable and (
+            snapshot.source_conversation_version is not None
+            or snapshot.source_active_leaf_persisted_message_id is not None
+            or snapshot.source_boundary_persisted_message_id is not None
+            or any(carrier != (None, None, None) for carrier in source_carriers)
+            or snapshot.citation_links
+        ):
+            raise ValueError(
+                "Unsaved fork source cannot carry durable source identity."
+            )
         expected_citations = {
             (
                 message.source_persisted_message_id,
@@ -1063,6 +1136,8 @@ class ChatPersistenceService:
         prior_persisted = None
         image_ids: set[str] = set()
         for message in snapshot.messages:
+            if message.status not in {"complete", "stopped", "failed"}:
+                raise ValueError("Console fork message status is invalid.")
             if (
                 message.native_parent_id != prior_native
                 or message.persisted_parent_id != prior_persisted
@@ -1072,6 +1147,7 @@ class ChatPersistenceService:
                 if (
                     message.attachments
                     or message.generation_metadata
+                    or message.status != "complete"
                     or message.content != CONSOLE_FORK_VIDEO_TOMBSTONE_CONTENT
                     or message.video_tombstone.owner_native_message_id
                     != message.native_message_id

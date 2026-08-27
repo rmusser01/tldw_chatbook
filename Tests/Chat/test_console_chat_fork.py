@@ -65,6 +65,7 @@ class _ForkVersionPersistence:
     def __init__(self) -> None:
         self.conversation_version = 7
         self.message_versions: dict[str, int] = {}
+        self.message_bodies: dict[str, str] = {}
         self.citation_states: dict[str, str] = {}
 
     def get_conversation_version(self, _conversation_id: str) -> int:
@@ -73,17 +74,28 @@ class _ForkVersionPersistence:
     def get_message_version(self, message_id: str) -> int | None:
         return self.message_versions.get(message_id)
 
+    def get_console_fork_source_message(
+        self, message_id: str
+    ) -> tuple[int, str] | None:
+        version = self.message_versions.get(message_id)
+        body = self.message_bodies.get(message_id)
+        return (version, body) if version is not None and body is not None else None
+
     def get_console_fork_citation_state(
         self,
         message_id: str,
         revision: int,
-        body: str,
+        source_body: str,
+        target_body: str,
     ) -> str:
         assert revision == self.message_versions[message_id]
-        assert body
+        assert source_body == self.message_bodies[message_id]
+        assert target_body
         state = self.citation_states.get(message_id, "none")
         if state == "ambiguous":
             raise CitationPersistenceUnavailable("fork_owner_ambiguous")
+        if state == "active_required" and source_body != target_body:
+            return "unavailable"
         return state
 
 
@@ -215,6 +227,7 @@ def _fork_store(
             message = store._nodes_by_session[session.id][message_id]
             message.persisted_message_id = f"persisted-{index}"
             persistence.message_versions[message.persisted_message_id] = index
+            persistence.message_bodies[message.persisted_message_id] = message.content
         for message_id in store._nodes_by_session[session.id]:
             parent_id = store._native_parent_by_message[message_id]
             store._nodes_by_session[session.id][message_id].parent_message_id = (
@@ -552,6 +565,7 @@ def _registration_snapshot(
             source_native_message_id="source-native-1",
             source_persisted_message_id=None,
             source_persisted_revision=None,
+            source_persisted_content=None,
             native_message_id=ids["native"],
             persisted_message_id=ids["persisted"],
             native_parent_id=None,
@@ -566,6 +580,7 @@ def _registration_snapshot(
             source_native_message_id="source-native-2",
             source_persisted_message_id=None,
             source_persisted_revision=None,
+            source_persisted_content=None,
             native_message_id="fork-native-2",
             persisted_message_id="fork-persisted-2",
             native_parent_id=ids["native"],
@@ -584,6 +599,7 @@ def _registration_snapshot(
         source_session_id="source-session",
         source_conversation_id=None,
         source_conversation_version=None,
+        source_active_leaf_persisted_message_id=None,
         source_boundary_persisted_message_id=None,
         durable=True,
         messages=messages,
@@ -705,6 +721,7 @@ def test_fork_records_are_frozen_slotted_contracts() -> None:
                 "visible_variant_id",
                 "sibling_identity",
                 "persisted_revision",
+                "persisted_content",
                 "attachment_fingerprint",
             ),
         ),
@@ -723,6 +740,7 @@ def test_fork_records_are_frozen_slotted_contracts() -> None:
                 "source_session_id",
                 "source_conversation_id",
                 "source_conversation_version",
+                "source_active_leaf_persisted_message_id",
                 "source_durability",
                 "source_title",
                 "source_configuration_fingerprint",
@@ -737,6 +755,7 @@ def test_fork_records_are_frozen_slotted_contracts() -> None:
                 "source_native_message_id",
                 "source_persisted_message_id",
                 "source_persisted_revision",
+                "source_persisted_content",
                 "native_message_id",
                 "persisted_message_id",
                 "native_parent_id",
@@ -831,6 +850,7 @@ def test_fork_records_are_frozen_slotted_contracts() -> None:
                 "source_session_id",
                 "source_conversation_id",
                 "source_conversation_version",
+                "source_active_leaf_persisted_message_id",
                 "source_boundary_persisted_message_id",
                 "durable",
                 "messages",
@@ -1777,6 +1797,71 @@ def test_stage_fork_snapshot_freezes_each_durable_citation_state(
             state="active_required",
         ),
     )
+
+
+def test_stage_fork_marks_active_provenance_unavailable_for_visible_variant() -> None:
+    store, persistence, session, _, _, _, selected, _ = _fork_store(durable=True)
+    source = store._nodes_by_session[session.id][selected.id]
+    source_id = source.persisted_message_id
+    assert source_id is not None
+    persistence.message_bodies[source_id] = "Canonical governed source [S1]."
+    persistence.citation_states[source_id] = "active_required"
+
+    snapshot = store.stage_fork_snapshot(
+        store.issue_fork_fence(selected.id),
+        title="Independent fork",
+        fork_session_id="fork-session",
+        fork_conversation_id="fork-conversation",
+    )
+    projected = snapshot.messages[-1]
+
+    assert projected.source_persisted_content == "Canonical governed source [S1]."
+    assert projected.content != projected.source_persisted_content
+    assert snapshot.citation_links[-1].state == "unavailable"
+
+
+def test_stage_fork_marks_active_video_provenance_unavailable_for_tombstone() -> None:
+    persistence = _ForkVersionPersistence()
+    store = ConsoleChatStore(persistence=persistence)
+    session = _new_fork_session(store, title="Video source")
+    session.persisted_conversation_id = "conversation-1"
+    user = store.append_message(
+        session.id,
+        role=ConsoleMessageRole.USER,
+        content="Animate this",
+    )
+    video = store.append_video_message(
+        session.id,
+        video_metadata=VideoGenerationMetadata(
+            name="source-video-key",
+            prompt="animate",
+            backend="minimax",
+        ),
+    )
+    for revision, message in enumerate((user, video), start=1):
+        live = store._nodes_by_session[session.id][message.id]
+        live.persisted_message_id = f"persisted-{revision}"
+        live.parent_message_id = None if revision == 1 else "persisted-1"
+        persistence.message_versions[live.persisted_message_id] = revision
+        persistence.message_bodies[live.persisted_message_id] = live.content
+    video_source_id = store._nodes_by_session[session.id][video.id].persisted_message_id
+    assert video_source_id is not None
+    persistence.citation_states[video_source_id] = "active_required"
+
+    snapshot = store.stage_fork_snapshot(
+        store.issue_fork_fence(video.id),
+        title="Independent fork",
+        fork_session_id="fork-session",
+        fork_conversation_id="fork-conversation",
+    )
+    projected = snapshot.messages[-1]
+
+    assert projected.source_persisted_content == video_content_marker(
+        "source-video-key"
+    )
+    assert projected.content != projected.source_persisted_content
+    assert projected.video_tombstone is not None
+    assert snapshot.citation_links[-1].state == "unavailable"
 
 
 def test_stage_fork_snapshot_rejects_ambiguous_citation_authority() -> None:
