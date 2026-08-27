@@ -237,3 +237,19 @@ and resumed Retry/Bypass ownership. Three representative frames were visually
 inspected; committed evidence normalizes only exporter trailing whitespace before
 hashing. Four earlier failures were harness-only contract drift and required no
 product change. Final feature-wide review and Backlog closeout remain root-owned.
+
+Final feature review and completion (2026-08-27): review found one important privacy
+failure in the start-anchored splitter: more than 20 leading whitespace characters
+before `<think>` or `<analysis>` caused a fail-open answer projection. Strict TDD
+pinned both tags at 21 and 30,000 spaces; `a2e1f547ff` replaced the bounded probe with
+constant-state prefix recognition that drops only leading probe whitespace and keeps
+later tags literal once visible content starts. Independent re-review covered 21,
+30,000, 300,000, chunk-partitioned, and one-million-space inputs and reported no
+remaining Critical, Important, or Minor findings. The final 16-suite matrix passed
+1,286 tests with 2 environment-permission skips and 2 existing warnings; CSS and all
+four generated sheets reproduced; diagnostic inventory remained
+537/1,243/7,341/8; scoped Ruff/format, `py_compile`, feature-range diff checks, and the
+post-fix isolated live harness all passed. The first matrix attempt used a nonexistent
+pytest temp root and failed only in setup; the unchanged rerun passed after creating
+that root. Wider Ruff findings reproduce at the pre-feature base and remain repository
+baseline. No full suite was run under the repository's targeted-verification policy.

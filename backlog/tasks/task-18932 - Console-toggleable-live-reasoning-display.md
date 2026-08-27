@@ -1,10 +1,10 @@
 ---
 id: TASK-18932
 title: 'Console: toggleable live reasoning display'
-status: In Progress
+status: Done
 assignee: []
 created_date: '2026-08-19 09:55'
-updated_date: '2026-08-26 00:00'
+updated_date: '2026-08-27 09:40'
 labels:
   - console
   - ux
@@ -23,18 +23,18 @@ Surface actual model-provided reasoning in the Console as durable, dim, collapsi
 
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
-- [ ] #1 `Show model thinking` is a device-local persisted canonical Console setting that defaults On, applies immediately without restart, stays out of conversation sync/export, and changes presentation only.
-- [ ] #2 Actual displayable reasoning streams inside its owning Assistant turn, starts expanded live, auto-collapses once when answer/tool activity begins (or at terminal fallback), restores collapsed, and honors manual disclosure choices.
-- [ ] #3 A current-turn proprietary-evidence event renders `Thinking · unavailable` with exactly `Proprietary thinking obfuscated - not available`, follows the same live/collapse/manual lifecycle, and exposes or retains no raw private content there.
-- [ ] #4 Provider/model capability, settings, timing, or absence of visible answer content never fabricates a Thinking block; a turn with no actual displayable or proprietary evidence shows none.
-- [ ] #5 Displayable/proprietary blocks persist in a bounded versioned envelope separate from answer content and ADR-063 continuation, remain paired with the selected generation through regeneration/edit/delete/recovery/sync, and never transfer between variants or branches.
-- [ ] #6 Every conversation offers Auto/Include/Exclude optional thinking history plus effective read-only Required when continuation mandates replay; the user can save a default for new conversations.
-- [ ] #7 Replay is adapter-resolved for the frozen target and exact compatible encoding, uses one owner-atomic serializer/budget projection, never sends proprietary markers, never duplicates reasoning/continuation, and fails before provider contact when an eligible Include block is incompatible.
-- [ ] #8 Importable round-trip conversation formats and capable persistence/sync backends preserve thinking and replay policy with sensitivity warnings; unsupported persistent backends fail before send instead of silently losing data.
-- [ ] #9 Human-readable exports, FTS/search, titles, summaries, diagnostics, logs, errors, usage, and speech exclude model thinking by default, with decoded negative tests across every default durable owner.
-- [ ] #10 Existing safe intermediate model-step summaries are presented as Planning when no actual Thinking block owns that round, preventing duplicate or misleading chain-of-thought claims.
-- [ ] #11 Focused provider, stream-boundary, migration, persistence, history, import/export, privacy, and painted Textual tests cover positive, negative, stopped, failed, restored, variant, edit, and no-evidence paths.
-- [ ] #12 The user guide documents visibility, proprietary evidence, replay policy, persistence/backend requirements, export behavior, and provider honesty boundaries.
+- [x] #1 `Show model thinking` is a device-local persisted canonical Console setting that defaults On, applies immediately without restart, stays out of conversation sync/export, and changes presentation only.
+- [x] #2 Actual displayable reasoning streams inside its owning Assistant turn, starts expanded live, auto-collapses once when answer/tool activity begins (or at terminal fallback), restores collapsed, and honors manual disclosure choices.
+- [x] #3 A current-turn proprietary-evidence event renders `Thinking · unavailable` with exactly `Proprietary thinking obfuscated - not available`, follows the same live/collapse/manual lifecycle, and exposes or retains no raw private content there.
+- [x] #4 Provider/model capability, settings, timing, or absence of visible answer content never fabricates a Thinking block; a turn with no actual displayable or proprietary evidence shows none.
+- [x] #5 Displayable/proprietary blocks persist in a bounded versioned envelope separate from answer content and ADR-063 continuation, remain paired with the selected generation through regeneration/edit/delete/recovery/sync, and never transfer between variants or branches.
+- [x] #6 Every conversation offers Auto/Include/Exclude optional thinking history plus effective read-only Required when continuation mandates replay; the user can save a default for new conversations.
+- [x] #7 Replay is adapter-resolved for the frozen target and exact compatible encoding, uses one owner-atomic serializer/budget projection, never sends proprietary markers, never duplicates reasoning/continuation, and fails before provider contact when an eligible Include block is incompatible.
+- [x] #8 Importable round-trip conversation formats and capable persistence/sync backends preserve thinking and replay policy with sensitivity warnings; unsupported persistent backends fail before send instead of silently losing data.
+- [x] #9 Human-readable exports, FTS/search, titles, summaries, diagnostics, logs, errors, usage, and speech exclude model thinking by default, with decoded negative tests across every default durable owner.
+- [x] #10 Existing safe intermediate model-step summaries are presented as Planning when no actual Thinking block owns that round, preventing duplicate or misleading chain-of-thought claims.
+- [x] #11 Focused provider, stream-boundary, migration, persistence, history, import/export, privacy, and painted Textual tests cover positive, negative, stopped, failed, restored, variant, edit, and no-evidence paths.
+- [x] #12 The user guide documents visibility, proprietary evidence, replay policy, persistence/backend requirements, export behavior, and provider honesty boundaries.
 <!-- AC:END -->
 
 ## Implementation Plan
@@ -50,6 +50,19 @@ Reason: the approved feature changes message/variant storage, schema and migrati
 4. Implement and verify the child tasks without widening TASK-18932 beyond its approved acceptance criteria.
 5. Complete joined privacy, migration, backend-compatibility, and live Console verification before closing the feature parent.
 <!-- SECTION:PLAN:END -->
+
+## Implementation Notes
+
+<!-- SECTION:NOTES:BEGIN -->
+- Completed the four dependency-ordered children for bounded generation-owned storage/sync, typed provider capture and replay, collapsible Textual UI/settings, and exchange/privacy/joined integration. Schema v50 migration and ADR-090 preserve answer, thinking, usage, and separate ADR-063 continuation as one selected-generation owner.
+- Console disclosures are created only from actual adapter events. Displayable thinking is expanded live and auto-collapses once at the first answer/tool boundary (terminal fallback); manual interaction wins. Proprietary evidence is structurally text-free and renders exactly `Proprietary thinking obfuscated - not available`. Capability alone creates no row.
+- `Show model thinking` defaults On and remains device-local presentation state. Conversation Auto/Include/Exclude and effective Required remain independent, model-specific, persistence-aware replay controls; reasoning and plain models may share one local backend.
+- Importable JSON and Chatbook V2 preserve supported thinking/policy with sensitivity warnings. Ordinary exports and answer-oriented search, summary, title, usage, speech, copy, diagnostics, errors, and logs omit thinking and the application notice.
+- Serial implementer/spec/code-quality reviews were completed for every child. Final feature review found and red-first fixed one leading-whitespace splitter fail-open that could expose tagged local reasoning; independent re-review returned Ready to merge with no remaining Critical, Important, or Minor issues.
+- Fresh completion evidence: 1,286 passed / 2 expected sandbox skips / 2 known warnings across the exact 16-suite affected matrix; CSS and four generated bundles reproduce; diagnostic inventory is 537 / 1,243 / 7,341 / 8; scoped final Ruff/format, `py_compile`, feature-range diff check, and the post-fix isolated live harness pass. The full repository suite was intentionally not run.
+- Live evidence: `Docs/superpowers/qa/2026-08-27-console-thinking-blocks-live-verification/`. User documentation covers actual-turn honesty, exact unavailable copy, collapse/manual behavior, replay/persistence compatibility, sensitive importable exchange, ordinary export omission, and Planning semantics.
+- ADR check: `backlog/decisions/090-console-thinking-block-ownership-and-replay.md` is the accepted governing ADR; no additional ADR was required during implementation.
+<!-- SECTION:NOTES:END -->
 
 ## Child Tasks and Plans
 

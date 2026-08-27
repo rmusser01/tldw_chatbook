@@ -196,10 +196,35 @@ field, a required constructor argument, and below-viewport capture—and were co
 without weakening assertions or changing product code. A blocked tiktoken cache
 download fell back locally and was outside the deterministic provider fixture.
 
-## Residual gates
+## Final feature review and completion verification
 
-No derived-check or live-verification residual remains. Backlog closeout and the final
-feature-wide review remain root-owned. This report does not mark a Backlog task Done.
+The feature-wide reviewer found one important privacy defect after the live gate:
+`StartAnchoredThinkSplitter` failed open when a start-anchored `<think>` or
+`<analysis>` opener followed more than 20 whitespace characters. That could project
+private thinking as visible answer text. Strict TDD reproduced the defect with both
+tags at 21 and 30,000 leading spaces. Commit `a2e1f547ff` removed the bounded
+fail-open probe, drops only leading whitespace while probing, and retains only a
+possible opener prefix. Ordinary visible content still makes later tags literal.
+Independent re-review exercised both tags at 21, 30,000, and 300,000 spaces, chunk
+partitions, and a one-million-space bound; it reported no remaining Critical,
+Important, or Minor findings and declared the feature ready to merge.
+
+The final targeted matrix passed with 1,286 tests, 2 environment-permission skips,
+and 2 pre-existing dependency/deprecation warnings across all 16 affected suites.
+CSS plus all four generated sheets reproduced, the diagnostic inventory remained
+537 owners / 1,243 TASK-492 / 7,341 TASK-494 / 8 sinks, the splitter files passed
+scoped Ruff, format, and `py_compile`, and the complete feature range passed
+`git diff --check`. The isolated live harness was rerun after the fix and passed
+without changing its tracked profile or evidence.
+
+An earlier matrix invocation named a nonexistent pytest temporary root and therefore
+failed uniformly during setup before test bodies; creating the root and rerunning the
+unchanged command produced the passing evidence above. A wider Ruff probe also found
+one F401 and whole-file formatting differences that reproduce verbatim at the
+pre-feature base, so they are recorded as repository baseline rather than attributed
+to this feature. Per repository policy, no full-suite run was performed.
+
+No residual implementation, review, derived-check, or live-verification gate remains.
 
 ## Independent review outcome
 

@@ -9096,3 +9096,26 @@ writes happen on a worker thread**, and this repo has no shared-cache workaround
 available until `CharactersRAGDB` opts into `uri=True`. A temp-directory file
 plus explicit cleanup is the only option — measured at 0 directories leaked when
 an autouse fixture closes the connection and removes the directory.
+
+---
+
+## A bounded private-prefix probe must not buy its memory bound by failing open
+
+**TASK-18932, 2026-08-27.** The local `<think>` splitter buffered leading
+whitespace while deciding whether a response began with a reasoning block. To
+bound that buffer, it switched permanently to visible-answer mode after 20
+characters. The parser tests explicitly blessed that transition as a memory
+guard. Final feature review then tried 21 spaces followed by
+`<think>secret</think>answer`: the reasoning channel was empty and the entire
+tagged value entered visible assistant content, which would also feed ordinary
+history and human-readable exports. Every feature matrix had passed because
+none crossed the parser's old whitespace cap before an opener.
+
+**What to do.** For a stream prefix that may contain private data, a resource
+limit must fail closed or keep a bounded decision state; it must never turn an
+undecided prefix into public content merely because filler crossed a cap. Here,
+dropping leading response whitespace while retaining only the possible opener
+prefix removed the unbounded state without weakening start anchoring. Boundary
+tests must sit immediately below and above the former cap, include a much larger
+input, and partition the opener across chunks. A test that proves memory stays
+small is incomplete until it also proves the private/public channel assignment.
