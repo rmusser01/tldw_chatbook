@@ -8,6 +8,7 @@ from textual import on
 from textual.app import ComposeResult
 from textual.binding import Binding
 from textual.containers import Horizontal
+from textual.events import DescendantFocus
 from textual.message import Message
 from textual.widget import Widget
 from textual.widgets import Button
@@ -116,6 +117,10 @@ class LibraryAdaptiveReaderShell(Horizontal):
             extra_classes=grip_classes,
             id=f"{id_prefix}-items-grip",
         )
+        self._last_focused_descendant: dict[PaneName, Widget | None] = {
+            "library": None,
+            "items": None,
+        }
         self.effective_layout = layout
 
     def compose(self) -> ComposeResult:
@@ -135,26 +140,69 @@ class LibraryAdaptiveReaderShell(Horizontal):
         """Request layout resolution after the shell allocation changes."""
         self.post_message(AdaptiveReaderShellResized())
 
-    def sync_layout(self, layout: AdaptiveReaderEffectiveLayout) -> None:
+    def on_descendant_focus(self, event: DescendantFocus) -> None:
+        """Remember optional-pane focus before a grip activation moves it."""
+        target = event.widget
+        for pane_name, pane in (
+            ("library", self.library),
+            ("items", self.items),
+        ):
+            if self._is_valid_focus_target(pane, target):
+                self._last_focused_descendant[pane_name] = target
+                return
+
+    @staticmethod
+    def _is_valid_focus_target(pane: Widget, target: Widget | None) -> bool:
+        """Return whether ``target`` is a displayed focusable pane descendant."""
+        if (
+            target is None
+            or not target.is_mounted
+            or pane not in target.ancestors
+            or not target.focusable
+        ):
+            return False
+        for node in target.ancestors_with_self:
+            if isinstance(node, Widget) and not node.display:
+                return False
+            if node is pane:
+                return True
+        return False
+
+    def sync_layout(
+        self,
+        layout: AdaptiveReaderEffectiveLayout,
+        *,
+        manual_reopen: PaneName | None = None,
+    ) -> None:
         """Patch pane display and exact cell widths in place."""
         self.effective_layout = layout
         focused = self.app.focused if self.is_mounted else None
-        restore_focus: Widget | None = None
-        for pane, grip, open, width in (
+        evacuation_target: Widget | None = None
+        manual_reopen_pane: Widget | None = None
+        for pane_name, pane, grip, open, width in (
             (
+                "library",
                 self.library,
                 self.library_grip,
                 layout.library_open,
                 layout.library_width,
             ),
-            (self.items, self.items_grip, layout.items_open, layout.items_width),
+            (
+                "items",
+                self.items,
+                self.items_grip,
+                layout.items_open,
+                layout.items_width,
+            ),
         ):
             if (
                 not open
                 and focused is not None
                 and (focused is pane or pane in focused.ancestors)
             ):
-                restore_focus = grip
+                if focused is not pane and self._is_valid_focus_target(pane, focused):
+                    self._last_focused_descendant[pane_name] = focused
+                evacuation_target = grip
             pane.display = open
             pane.disabled = not open
             pane.styles.width = width
@@ -162,9 +210,24 @@ class LibraryAdaptiveReaderShell(Horizontal):
             pane.styles.max_width = width
             pane.styles.height = "100%"
             grip.sync_open(open)
+            if open and manual_reopen == pane_name:
+                manual_reopen_pane = pane
         self.work.display = True
         self.work.styles.width = "1fr"
         self.work.styles.min_width = 0
         self.work.styles.height = "100%"
-        if restore_focus is not None:
-            restore_focus.focus(scroll_visible=False)
+        if evacuation_target is not None:
+            evacuation_target.focus(scroll_visible=False)
+        elif manual_reopen_pane is not None:
+            target = self._last_focused_descendant[manual_reopen]
+            if not self._is_valid_focus_target(manual_reopen_pane, target):
+                target = next(
+                    (
+                        candidate
+                        for candidate in manual_reopen_pane.walk_children(Widget)
+                        if self._is_valid_focus_target(manual_reopen_pane, candidate)
+                    ),
+                    None,
+                )
+            if target is not None:
+                target.focus(scroll_visible=False)

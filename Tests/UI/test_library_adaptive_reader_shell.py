@@ -66,15 +66,23 @@ class _ProbeApp(ConsolidatedCSSApp):
 
     def compose(self):
         if self.focusable_content:
-            library = Vertical(Button("Library action", id="probe-library-action"))
-            items = Vertical(Button("Items action", id="probe-items-action"))
+            library = Vertical(
+                Button("Library primary", id="probe-library-primary"),
+                Button("Library secondary", id="probe-library-secondary"),
+            )
+            items = Vertical(
+                Button("Items primary", id="probe-items-primary"),
+                Button("Items secondary", id="probe-items-secondary"),
+            )
+            work = Button("Work action", id="probe-work-action")
         else:
             library = Static("Library")
             items = Static("Items")
+            work = Static("Work", disabled=self.work_disabled)
         shell = LibraryAdaptiveReaderShell(
             library=library,
             items=items,
-            work=Static("Work", disabled=self.work_disabled),
+            work=work,
             layout=self.layout,
             id_prefix="probe",
             library_label="Library",
@@ -214,7 +222,7 @@ async def test_hiding_focused_pane_moves_focus_to_truthful_restore_grip():
     async with app.run_test(size=(160, 30)) as pilot:
         await pilot.pause()
         shell = app.query_one("#probe-shell", LibraryAdaptiveReaderShell)
-        library_action = shell.query_one("#probe-library-action", Button)
+        library_action = shell.query_one("#probe-library-primary", Button)
         library_action.focus()
         assert library_action.has_focus
 
@@ -229,6 +237,149 @@ async def test_hiding_focused_pane_moves_focus_to_truthful_restore_grip():
         assert shell.library_grip.display
         assert shell.library_grip.name == "Expand Library pane"
         assert str(shell.library_grip.tooltip) == "Expand Library pane"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("pane_name", ["library", "items"])
+async def test_collapsing_focused_optional_pane_remembers_descendant_and_grip(
+    pane_name,
+):
+    app = _ProbeApp(focusable_content=True)
+
+    async with app.run_test(size=(160, 30)) as pilot:
+        await pilot.pause()
+        shell = app.query_one("#probe-shell", LibraryAdaptiveReaderShell)
+        remembered = shell.query_one(f"#probe-{pane_name}-secondary", Button)
+        grip = getattr(shell, f"{pane_name}_grip")
+        remembered.focus()
+        await pilot.pause()
+        assert remembered.has_focus
+
+        shell.sync_layout(
+            _layout(
+                library_open=pane_name != "library",
+                items_open=pane_name != "items",
+            )
+        )
+        await pilot.pause()
+
+        assert shell._last_focused_descendant[pane_name] is remembered
+        assert grip.has_focus
+        assert grip.region.width == PANE_GRIP_WIDTH
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("pane_name", ["library", "items"])
+async def test_manual_reopen_restores_exact_remembered_descendant_and_geometry(
+    pane_name,
+):
+    app = _ProbeApp(focusable_content=True)
+
+    async with app.run_test(size=(160, 30)) as pilot:
+        await pilot.pause()
+        shell = app.query_one("#probe-shell", LibraryAdaptiveReaderShell)
+        remembered = shell.query_one(f"#probe-{pane_name}-secondary", Button)
+        children = tuple(shell.children)
+        remembered.focus()
+        await pilot.pause()
+
+        shell.sync_layout(
+            _layout(
+                library_open=pane_name != "library",
+                items_open=pane_name != "items",
+            )
+        )
+        await pilot.pause()
+        shell.sync_layout(_layout(), manual_reopen=pane_name)
+        await pilot.pause()
+
+        assert remembered.has_focus
+        assert tuple(shell.children) == children
+        assert [shell.library_grip.region.width, shell.items_grip.region.width] == [
+            PANE_GRIP_WIDTH,
+            PANE_GRIP_WIDTH,
+        ]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("pane_name", ["library", "items"])
+async def test_grip_manual_reopen_restores_last_focused_pane_control(pane_name):
+    app = _ProbeApp(focusable_content=True)
+
+    async with app.run_test(size=(160, 30)) as pilot:
+        await pilot.pause()
+        shell = app.query_one("#probe-shell", LibraryAdaptiveReaderShell)
+        remembered = shell.query_one(f"#probe-{pane_name}-secondary", Button)
+        grip = getattr(shell, f"{pane_name}_grip")
+        remembered.focus()
+        await pilot.pause()
+        grip.focus()
+        await pilot.pause()
+        assert grip.has_focus
+
+        shell.sync_layout(
+            _layout(
+                library_open=pane_name != "library",
+                items_open=pane_name != "items",
+            )
+        )
+        await pilot.pause()
+        shell.sync_layout(_layout(), manual_reopen=pane_name)
+        await pilot.pause()
+
+        assert shell._last_focused_descendant[pane_name] is remembered
+        assert remembered.has_focus
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("invalid_state", ["removed", "disabled"])
+async def test_manual_reopen_falls_back_when_remembered_control_is_invalid(
+    invalid_state,
+):
+    app = _ProbeApp(focusable_content=True)
+
+    async with app.run_test(size=(160, 30)) as pilot:
+        await pilot.pause()
+        shell = app.query_one("#probe-shell", LibraryAdaptiveReaderShell)
+        primary = shell.query_one("#probe-library-primary", Button)
+        remembered = shell.query_one("#probe-library-secondary", Button)
+        remembered.focus()
+        await pilot.pause()
+
+        shell.sync_layout(_layout(library_open=False))
+        await pilot.pause()
+        if invalid_state == "removed":
+            await remembered.remove()
+        else:
+            remembered.disabled = True
+
+        shell.sync_layout(_layout(), manual_reopen="library")
+        await pilot.pause()
+
+        assert primary.has_focus
+
+
+@pytest.mark.asyncio
+async def test_responsive_reopen_never_steals_focus_from_work():
+    app = _ProbeApp(focusable_content=True)
+
+    async with app.run_test(size=(160, 30)) as pilot:
+        await pilot.pause()
+        shell = app.query_one("#probe-shell", LibraryAdaptiveReaderShell)
+        remembered = shell.query_one("#probe-library-secondary", Button)
+        work_action = shell.query_one("#probe-work-action", Button)
+        remembered.focus()
+        await pilot.pause()
+
+        shell.sync_layout(_layout(library_open=False))
+        await pilot.pause()
+        work_action.focus()
+        await pilot.pause()
+        shell.sync_layout(_layout())
+        await pilot.pause()
+
+        assert work_action.has_focus
+        assert not remembered.has_focus
 
 
 @pytest.mark.asyncio
@@ -285,9 +436,7 @@ def test_shared_shell_structure_is_owned_by_shared_tcss_selectors():
     source = CSS_SOURCE.read_text(encoding="utf-8")
 
     assert ".library-adaptive-reader-shell {" in source
-    assert (
-        ".library-adaptive-reader-shell > .library-adaptive-reader-work {" in source
-    )
+    assert ".library-adaptive-reader-shell > .library-adaptive-reader-work {" in source
     assert (
         ".library-adaptive-reader-shell > .library-adaptive-reader-pane-grip {"
         in source
@@ -305,6 +454,4 @@ def test_shared_tcss_is_structural_while_media_keeps_its_visual_contract():
     assert "color:" not in shared_grip
     assert "text-style:" not in shared_grip
     assert "#library-media-reader-shell > .library-media-pane-grip {" in source
-    assert (
-        "#library-media-reader-shell > .library-media-pane-grip:focus {" in source
-    )
+    assert "#library-media-reader-shell > .library-media-pane-grip:focus {" in source
