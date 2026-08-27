@@ -10,8 +10,10 @@
 
 **Design:** `Docs/superpowers/specs/2026-08-27-console-context-cost-evidence-parity-design.md`
 
-**ADR required:** no  
-**ADR path:** N/A  
+**ADR required:** no
+
+**ADR path:** N/A
+
 **Reason:** Routine parity bug fix reusing existing normalization, authority, and formatting boundaries.
 
 ---
@@ -57,24 +59,77 @@ def test_prompted_evidence_keeps_empty_local_content_as_header_only() -> None:
     assert console_prompted_source_count(launch) == 1
 ```
 
-- [ ] **Step 3: Write a failing adapter-contract test**
+- [ ] **Step 3: Add a green send-adapter characterization test**
 
-Import the proposed `normalize_console_evidence_references()` helper and verify that a valid chunked reference, an invalid source-kind reference, and a second valid reference produce two normalized candidates with ranks `(1, 2)`, preserve `source_id`, select the non-empty `chunk_id` as result lineage, and map `score=None` to `0.0`.
+Through the existing public `capture_console_staged_evidence_for_chat()` seam, build a launch containing a valid chunked `m1` reference with `score=None`, an invalid source-kind reference, and a valid `m2` reference. Use `_CaptureApp(repository=repository, media_ids=("m1", "m2"))` and assert the recorded retrieval payload contains exactly two candidates with ranks `(1, 2)`, source IDs `(m1, m2)`, first-candidate `chunk_id == "chunk-1"`, and first-candidate `score == 0.0`. This is a pre-refactor characterization test and must pass before extraction; it does not import a helper that does not exist yet.
 
-- [ ] **Step 4: Run the RED tests**
+- [ ] **Step 4: Add the authority-shrink regression in the RED phase**
+
+In `Tests/RAG/test_local_citation_capture.py`, import the existing public estimate functions and add:
+
+```python
+@pytest.mark.asyncio
+async def test_console_estimate_stays_pre_authority_while_send_rechecks() -> None:
+    launch = ConsoleLiveWorkLaunch.from_values(
+        source="Library Search/RAG",
+        title="staged evidence",
+        payload={
+            "evidence_bundle": EvidenceBundle(
+                bundle_id="bundle-authority-shrink",
+                references=(
+                    EvidenceReference(
+                        evidence_id="S1",
+                        source_id="m1",
+                        source_type="media",
+                        title="Source 1",
+                        snippet="Body 1",
+                        authority_label="local",
+                    ),
+                    EvidenceReference(
+                        evidence_id="S2",
+                        source_id="m2",
+                        source_type="media",
+                        title="Source 2",
+                        snippet="Body 2",
+                        authority_label="local",
+                    ),
+                ),
+            ).to_payload(),
+        },
+    )
+    assert console_prompted_source_count(launch) == 2
+    assert console_prompted_evidence_text(launch) == (
+        "[S1] MEDIA — Source 1\nBody 1\n---\n"
+        "[S2] MEDIA — Source 2\nBody 2"
+    )
+
+    captured = await cre.capture_console_staged_evidence_for_chat(
+        _CaptureApp(media_ids=("m2",)),
+        launch,
+        user_message="question",
+    )
+    assert captured.context == "[S1] MEDIA — Source 2\nBody 2"
+    assert captured.citation_repair_contract is not None
+    assert captured.citation_repair_contract.allowed_ordinals == (1,)
+```
+
+The estimate assertions fail on the current raw-snippet implementation while the send assertions characterize the existing authority boundary.
+
+- [ ] **Step 5: Run the characterization and RED tests**
 
 Run:
 
 ```bash
 ../../.venv/bin/pytest -q \
+  Tests/RAG/test_local_citation_capture.py::test_console_send_adapter_preserves_chunk_lineage_score_and_rank
+../../.venv/bin/pytest -q \
   Tests/UI/test_console_staged_evidence_strip.py \
   -k "prompted_evidence or prompted_source_count"
 ../../.venv/bin/pytest -q \
-  Tests/RAG/test_local_citation_capture.py \
-  -k "console_evidence_reference_adapter"
+  Tests/RAG/test_local_citation_capture.py::test_console_estimate_stays_pre_authority_while_send_rechecks
 ```
 
-Expected: failures show raw snippet joining, a count of 65, empty-content omission, and the missing adapter helper.
+Expected: the characterization test passes; the estimator tests fail on raw snippet joining, a count of 65, empty-content omission, and missing canonical framing before production changes.
 
 ---
 
@@ -87,7 +142,7 @@ Expected: failures show raw snippet joining, a count of 65, empty-content omissi
 
 - [ ] **Step 1: Add the minimal pure Console-reference adapter**
 
-Implement the existing send mapping once:
+Import `EvidenceReference` from `tldw_chatbook.Chat.citation_evidence_models`, then implement the existing send mapping once:
 
 ```python
 def normalize_console_evidence_references(
@@ -157,8 +212,12 @@ After the existing authority check, call `format_console_evidence_context(author
 Run:
 
 ```bash
-../../.venv/bin/pytest -q Tests/RAG/test_local_citation_capture.py \
-  -k "console_evidence_reference_adapter or console_staged_local_evidence"
+../../.venv/bin/pytest -q \
+  Tests/RAG/test_local_citation_capture.py::test_console_send_adapter_preserves_chunk_lineage_score_and_rank \
+  Tests/RAG/test_local_citation_capture.py::test_console_staged_local_evidence_records_exact_prompt_capture \
+  Tests/RAG/test_local_citation_capture.py::test_console_prompt_evidence_set_id_uses_record_method_return \
+  Tests/RAG/test_local_citation_capture.py::test_console_canonical_capture_failure_keeps_exact_repair_contract \
+  Tests/RAG/test_local_citation_capture.py::test_console_builder_unavailable_returns_exact_repair_contract
 ```
 
 Expected: PASS.
@@ -182,6 +241,8 @@ git commit -m "refactor(console): share staged evidence formatting"
 - Modify: `Tests/UI/test_console_staged_evidence_strip.py`
 
 - [ ] **Step 1: Add one private formatted-context seam**
+
+Import `LocalEvidenceContext`, `format_console_evidence_context`, and `normalize_console_evidence_references` from `tldw_chatbook.RAG_Search.local_citation_capture`, then add:
 
 ```python
 def _console_prompted_evidence_context(
@@ -210,6 +271,8 @@ Run:
 ```bash
 ../../.venv/bin/pytest -q Tests/UI/test_console_staged_evidence_strip.py \
   -k "prompted_evidence or prompted_source_count or staged_source_count"
+../../.venv/bin/pytest -q \
+  Tests/UI/test_console_staged_evidence_strip.py::test_context_estimate_counts_staged_evidence_before_send
 ../../.venv/bin/pytest -q Tests/Chat/test_console_session_settings.py \
   -k "context_estimate"
 ```
@@ -227,21 +290,14 @@ git commit -m "fix(console): align evidence cost estimate with prompt"
 
 ---
 
-### Task 4: Pin authority shrinkage and verify the finished task
+### Task 4: Verify and close the finished task
 
 **Files:**
-- Modify: `Tests/RAG/test_local_citation_capture.py`
 - Modify: `backlog/tasks/task-2525 - Console-context-cost-estimate-has-three-small-modelling-gaps.md`
 
-- [ ] **Step 1: Add a focused authority-shrink regression**
-
-Build a two-reference Console launch whose estimate includes both canonical prompt blocks, then send through an app authority double that exposes only the second backing row. Assert that estimate-time code performs no authority I/O, the send context contains only the surviving source re-numbered as `[S1]`, and the repair contract contains one ordinal.
-
-- [ ] **Step 2: Run one-time dependency and static checks**
+- [ ] **Step 1: Run isolated static checks**
 
 ```bash
-../../.venv/bin/python -c \
-  "import tldw_chatbook.Chat.console_display_state; import tldw_chatbook.RAG_Search.local_citation_capture"
 ../../.venv/bin/ruff check \
   tldw_chatbook/RAG_Search/local_citation_capture.py \
   tldw_chatbook/Event_Handlers/Chat_Events/chat_rag_events.py \
@@ -249,33 +305,46 @@ Build a two-reference Console launch whose estimate includes both canonical prom
   tldw_chatbook/UI/Screens/chat_screen.py \
   Tests/RAG/test_local_citation_capture.py \
   Tests/UI/test_console_staged_evidence_strip.py
-git diff --check origin/dev...HEAD
+git diff --check
 ```
 
-Expected: all commands exit 0. Do not add a permanent subprocess import test.
+Expected: both commands exit 0. The focused pytest runs import both affected modules under the repository's isolated test profile, so no live-profile import probe or permanent subprocess test is added.
 
-- [ ] **Step 3: Run focused behavior verification**
+- [ ] **Step 2: Run focused behavior verification**
 
 ```bash
-../../.venv/bin/pytest -q Tests/RAG/test_local_citation_capture.py \
-  -k "console_staged or console_evidence or authority"
+../../.venv/bin/pytest -q \
+  Tests/RAG/test_local_citation_capture.py::test_console_send_adapter_preserves_chunk_lineage_score_and_rank \
+  Tests/RAG/test_local_citation_capture.py::test_console_estimate_stays_pre_authority_while_send_rechecks \
+  Tests/RAG/test_local_citation_capture.py::test_console_staged_local_evidence_records_exact_prompt_capture \
+  Tests/RAG/test_local_citation_capture.py::test_console_prompt_evidence_set_id_uses_record_method_return \
+  Tests/RAG/test_local_citation_capture.py::test_console_canonical_capture_failure_keeps_exact_repair_contract \
+  Tests/RAG/test_local_citation_capture.py::test_console_builder_unavailable_returns_exact_repair_contract
 ../../.venv/bin/pytest -q Tests/UI/test_console_staged_evidence_strip.py \
   -k "prompted_evidence or prompted_source_count or staged_source_count"
+../../.venv/bin/pytest -q \
+  Tests/UI/test_console_staged_evidence_strip.py::test_context_estimate_counts_staged_evidence_before_send
 ../../.venv/bin/pytest -q Tests/Chat/test_console_session_settings.py \
   -k "context_estimate"
 ```
 
 Expected: PASS. The unrelated full-file mounted-send baseline remains tracked separately: its second durable turn is refused before capture because the thread-local `:memory:` fixture opens without schema. Do not mask that failure or alter production behavior in this task.
 
-- [ ] **Step 4: Complete backlog and implementation notes**
+- [ ] **Step 3: Complete backlog and implementation notes**
 
 Use the Backlog CLI to check every acceptance criterion, add concise Implementation Notes with the ADR decision and verification evidence, and set TASK-2525 to Done only after every task Definition-of-Done requirement is satisfied.
 
-- [ ] **Step 5: Commit task closeout**
+- [ ] **Step 4: Commit task closeout**
 
 ```bash
-git add backlog/tasks/task-2525\ -\ Console-context-cost-estimate-has-three-small-modelling-gaps.md \
-  Tests/RAG/test_local_citation_capture.py
+git add backlog/tasks/task-2525\ -\ Console-context-cost-estimate-has-three-small-modelling-gaps.md
 git commit -m "test(console): verify evidence estimate parity"
 ```
 
+- [ ] **Step 5: Verify the committed branch range**
+
+```bash
+git diff --check origin/dev...HEAD
+```
+
+Expected: exit 0 after every task change is committed.

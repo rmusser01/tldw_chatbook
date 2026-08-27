@@ -58,7 +58,7 @@ Use red/green focused tests to prove:
 - An invalid reference between two valid chunked references is omitted while the valid results retain successful-normalization order, sequential ranks, chunk lineage, and score fallback semantics.
 - A 65-reference bundle reports and formats 64 sources, omitting the final source; the estimator's formatted context matches the shared formatter exactly.
 - A two-source Console case estimates both sources without authority I/O, while a send-time authority rejection removes one and re-formats the survivor.
-- A one-time fresh-interpreter import command verifies the dependency direction; no permanent subprocess regression test is added unless a real import cycle is observed.
+- The focused pytest processes exercise the dependency direction inside their isolated test profiles; no live-profile import command or permanent subprocess regression test is added unless a real import cycle is observed.
 - Updated docstrings and call-site comments consistently distinguish the formatted pre-authority estimate from authoritative send results.
 - Existing Console estimate tests continue to pass.
 - Existing local citation formatting and send-boundary tests remain green.
@@ -67,6 +67,8 @@ Run only the targeted suites required by the repository guidance; a full sweep r
 
 ## ADR Check
 
-ADR required: no  
-ADR path: N/A  
+ADR required: no
+
+ADR path: N/A
+
 Reason: This is a routine parity bug fix that reuses existing normalization, authority, and prompt-formatting boundaries without changing architecture or policy.
