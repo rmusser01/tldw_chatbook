@@ -193,7 +193,7 @@ git commit -m "test: lock model thinking to permitted surfaces"
 ### Task 3: Prove backend refusal, lifecycle integration, and user documentation
 
 **Files:**
-- Create: `Tests/Integration/test_console_thinking_end_to_end.py`
+- Create: `Tests/integration/test_console_thinking_end_to_end.py`
 - Modify: `Tests/Chat/test_console_thinking_persistence.py`
 - Modify: `Tests/Chat/test_console_thinking_history.py`
 - Modify: `Tests/Sync_Interop/test_console_thinking_sync.py`
@@ -221,7 +221,7 @@ git commit -m "test: lock model thinking to permitted surfaces"
 
 - [ ] **Step 2: Run the joined test and confirm any missing integration seams.**
 
-Run: `PYTHONPATH=. .venv/bin/python -m pytest Tests/Integration/test_console_thinking_end_to_end.py -q`
+Run: `PYTHONPATH=. .venv/bin/python -m pytest Tests/integration/test_console_thinking_end_to_end.py -q`
 
 Expected: FAIL until every child joins cleanly.
 
@@ -262,7 +262,7 @@ PYTHONPATH=. .venv/bin/python -m pytest \
   Tests/Chat/test_thinking_conversation_exchange.py \
   Tests/Chatbooks/test_chatbook_thinking_round_trip.py \
   Tests/Chat/test_thinking_privacy_surfaces.py \
-  Tests/Integration/test_console_thinking_end_to_end.py -q
+  Tests/integration/test_console_thinking_end_to_end.py -q
 ```
 
 Expected: PASS.
@@ -271,9 +271,9 @@ Expected: PASS.
 
 ```bash
 .venv/bin/python tldw_chatbook/css/check_bundle_sync.py
-.venv/bin/python Scripts/check_persistent_diagnostic_inventory.py
-.venv/bin/python -m ruff format --check tldw_chatbook/Chat/thinking_blocks.py tldw_chatbook/Chat/Chat_Functions.py tldw_chatbook/Character_Chat/Character_Chat_Lib.py tldw_chatbook/Chatbooks/chatbook_creator.py tldw_chatbook/Chatbooks/chatbook_importer.py tldw_chatbook/Chat/trajectory_export.py tldw_chatbook/Chat/trajectory_import.py Tests/Chat/test_thinking_conversation_exchange.py Tests/Chat/test_thinking_privacy_surfaces.py Tests/Chatbooks/test_chatbook_thinking_round_trip.py Tests/Integration/test_console_thinking_end_to_end.py
-.venv/bin/python -m ruff check tldw_chatbook/Chat/thinking_blocks.py tldw_chatbook/Chat/Chat_Functions.py tldw_chatbook/Character_Chat/Character_Chat_Lib.py tldw_chatbook/Chatbooks/chatbook_creator.py tldw_chatbook/Chatbooks/chatbook_importer.py tldw_chatbook/Chat/trajectory_export.py tldw_chatbook/Chat/trajectory_import.py Tests/Chat/test_thinking_conversation_exchange.py Tests/Chat/test_thinking_privacy_surfaces.py Tests/Chatbooks/test_chatbook_thinking_round_trip.py Tests/Integration/test_console_thinking_end_to_end.py
+.venv/bin/python scripts/check_persistent_diagnostic_inventory.py
+.venv/bin/python -m ruff format --check tldw_chatbook/Chat/thinking_blocks.py tldw_chatbook/Chat/Chat_Functions.py tldw_chatbook/Character_Chat/Character_Chat_Lib.py tldw_chatbook/Chatbooks/chatbook_creator.py tldw_chatbook/Chatbooks/chatbook_importer.py tldw_chatbook/Chat/trajectory_export.py tldw_chatbook/Chat/trajectory_import.py Tests/Chat/test_thinking_conversation_exchange.py Tests/Chat/test_thinking_privacy_surfaces.py Tests/Chatbooks/test_chatbook_thinking_round_trip.py Tests/integration/test_console_thinking_end_to_end.py
+.venv/bin/python -m ruff check tldw_chatbook/Chat/thinking_blocks.py tldw_chatbook/Chat/Chat_Functions.py tldw_chatbook/Character_Chat/Character_Chat_Lib.py tldw_chatbook/Chatbooks/chatbook_creator.py tldw_chatbook/Chatbooks/chatbook_importer.py tldw_chatbook/Chat/trajectory_export.py tldw_chatbook/Chat/trajectory_import.py Tests/Chat/test_thinking_conversation_exchange.py Tests/Chat/test_thinking_privacy_surfaces.py Tests/Chatbooks/test_chatbook_thinking_round_trip.py Tests/integration/test_console_thinking_end_to_end.py
 git diff --check
 ```
 
@@ -292,7 +292,7 @@ If the persistent diagnostic inventory changes because a new content-free error 
 - [ ] **Step 9: Commit integration/docs and close child/parent only with evidence.**
 
 ```bash
-git add Tests/Integration/test_console_thinking_end_to_end.py Tests/Chat/test_console_thinking_persistence.py Tests/Chat/test_console_thinking_history.py Tests/Sync_Interop/test_console_thinking_sync.py Tests/UI/test_console_thinking_disclosures.py Docs/User_Guide/console/chat-basics.md Docs/User_Guide/console/context-and-rag.md Docs/User_Guide/console/agent-runs-and-tools.md Docs/User_Guide/settings.md tldw_chatbook/Chatbooks/CHATBOOKS_GUIDE.md
+git add Tests/integration/test_console_thinking_end_to_end.py Tests/Chat/test_console_thinking_persistence.py Tests/Chat/test_console_thinking_history.py Tests/Sync_Interop/test_console_thinking_sync.py Tests/UI/test_console_thinking_disclosures.py Docs/User_Guide/console/chat-basics.md Docs/User_Guide/console/context-and-rag.md Docs/User_Guide/console/agent-runs-and-tools.md Docs/User_Guide/settings.md tldw_chatbook/Chatbooks/CHATBOOKS_GUIDE.md
 git commit -m "docs: complete Console thinking integration"
 ```
 

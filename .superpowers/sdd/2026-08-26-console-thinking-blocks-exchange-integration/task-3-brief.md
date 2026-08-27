@@ -13,7 +13,7 @@ Document the behavior without promising hidden chain-of-thought.
 ## Scope and known seams
 
 - Prefer one joined integration test in
-  `Tests/Integration/test_console_thinking_end_to_end.py`, composed from the real
+  `Tests/integration/test_console_thinking_end_to_end.py`, composed from the real
   controller/capture/persistence/history/sync/exchange/UI projection seams already
   implemented by TASK-18932.1–.3 and Tasks 1–2 here.
 - The repository has no production remote-server persistence adapter for this
@@ -102,7 +102,7 @@ PYTHONPATH=. ../../.venv/bin/python -m pytest -q \
   Tests/Chat/test_thinking_conversation_exchange.py \
   Tests/Chatbooks/test_chatbook_thinking_round_trip.py \
   Tests/Chat/test_thinking_privacy_surfaces.py \
-  Tests/Integration/test_console_thinking_end_to_end.py
+  Tests/integration/test_console_thinking_end_to_end.py
 ```
 
 Also run the CSS bundle-sync check, persistent diagnostic inventory check if the

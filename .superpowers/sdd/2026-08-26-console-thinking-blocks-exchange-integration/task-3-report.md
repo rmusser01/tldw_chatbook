@@ -123,9 +123,8 @@ retain auditable final output and avoid unrelated stale pytest-temp cleanup warn
 
 ## Persistent diagnostic inventory review
 
-The plan's `Scripts/check_persistent_diagnostic_inventory.py` casing is stale. Git
-tracks `scripts/check_persistent_diagnostic_inventory.py`; the lowercase script was
-run. It exits 1 on pre-existing aggregate drift:
+Git tracks `scripts/check_persistent_diagnostic_inventory.py`; the plan/brief were
+corrected to that authoritative lowercase path. The first check reported:
 
 - `task_492_calls: 1241 -> 1243`
 - `task_494_calls: 7340 -> 7341`
@@ -136,19 +135,20 @@ run. It exits 1 on pre-existing aggregate drift:
   and 22 equivalent formatter rewrites since inventory pin
   `995036264207f4249fce880c6d288c7a369beb0e`.
 
-The tool supports only whole-inventory `--write`, not selective update. The inventory
-file itself is unchanged from the pin through HEAD, and
-`git diff HEAD -G 'logger\.|logging\.'` over both Task 3 production files is empty.
-Task 3 therefore adds no persistent diagnostic statement or sink. Regenerating would
-bundle unrelated baseline/Task 1 drift, so the inventory was intentionally left
-unchanged for root adjudication.
+Root then used the tool's documented `--statements ... --since` workflow to review
+every changed statement. The Character Chat warning resolves to the fixed,
+content-free unknown-policy warning; the two Console store calls are fixed operation
+copy. The gateway and DB rows preserve their prior messages/arguments and only changed
+formatting. Task 3 itself adds no logger or sink, and sink topology remains unchanged.
+Because all aggregate rows were reviewed, root ran the documented whole-inventory
+`--write`. The final guard passes with **537 owners, 1,243 TASK-492 calls, 7,341
+TASK-494 calls, and 8 sink files**.
 
-## Path discrepancies
+## Path corrections
 
-The brief/plan names `Tests/Integration/`, but the authoritative tracked tree uses
-`Tests/integration/`. Creating the case-colliding directory would be unsafe on the
-current filesystem, so the joined test uses the tracked lowercase path. The diagnostic
-script has the analogous stale `Scripts/` versus tracked `scripts/` casing noted above.
+The authoritative tracked tree uses `Tests/integration/` and `scripts/`. The stale
+case variants in the plan/brief were corrected rather than creating case-colliding
+entries that would be unsafe on the current filesystem.
 
 ## ADR-090 self-review
 
@@ -174,7 +174,6 @@ and generation-ownership contracts; they introduce no new boundary or future cho
 
 ## Residual and root-owned gates
 
-The persistent diagnostic inventory remains a reviewed baseline failure as described
-above. Root owns adjudicating that shared artifact, independent specification/code-
+No derived-check residual remains. Root still owns independent specification/code-
 quality reviews, isolated live Console verification, and Backlog closeout. This task
 does not claim the root-owned live gate and does not mark any Backlog task Done.

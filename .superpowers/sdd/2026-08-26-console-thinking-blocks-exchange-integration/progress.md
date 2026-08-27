@@ -169,10 +169,11 @@ environment warnings in 132.46s. CSS bundle sync, scoped Ruff format/check, rele
 `py_compile`, and `git diff --check` passed. All five required user guides were
 updated without promising hidden chain-of-thought. See `task-3-report.md`.
 
-Task 3 diagnostic residual: the plan's `Scripts/` and `Tests/Integration/` casing is
-stale; Git tracks lowercase `scripts/` and `Tests/integration/`. The actual lowercase
-diagnostic inventory guard reports aggregate drift already present from Task 1 and
-formatter rewrites since pin `995036264207f4249fce880c6d288c7a369beb0e`. Its
-statement review found no Task 3 logger/sink change, and the tool has no selective
-write mode, so the shared inventory was not regenerated. Root retains adjudication,
-independent reviews, isolated live verification, and Backlog closeout.
+Task 3 diagnostic closeout: the plan/brief paths were corrected to Git's authoritative
+lowercase `scripts/` and `Tests/integration/`. Root reviewed every inventory delta
+since pin `995036264207f4249fce880c6d288c7a369beb0e`: three feature-added diagnostics
+are fixed/content-free, and the gateway/DB digest changes are formatting-only with no
+call-count or sink-topology change. The repository's documented whole-inventory write
+was therefore appropriate. The regenerated guard passes with 537 owners, 1,243
+TASK-492 calls, 7,341 TASK-494 calls, and 8 sink files. Independent reviews, isolated
+live verification, and Backlog closeout remain root-owned.
