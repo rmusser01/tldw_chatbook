@@ -1373,11 +1373,14 @@ failed, empty, or generating attempts remain operational context.
 | Parameter | Contract |
 | --- | --- |
 | `briefing_id` | Required exact `local:briefing:<positive integer>`; maximum 36 characters. |
+| `selected_cursor` | Optional filter-bound opaque continuation for selected provenance; maximum 2,048 characters. |
+| `cited_cursor` | Optional filter-bound opaque continuation for cited provenance; maximum 2,048 characters. |
 
 This Console-only read reserves a fixed Markdown budget, remains below 30 KiB,
 labels generated prose and snapshots untrusted, and reports Unicode-safe
 truncation, ordered selected/cited immutable provenance, legacy best-effort
-snapshots, and missing references.
+snapshots, and missing references. Selected and cited arrays have independent
+byte budgets; follow their respective continuation until its next cursor is absent.
 
 #### `watchlists_get_operations_status`
 

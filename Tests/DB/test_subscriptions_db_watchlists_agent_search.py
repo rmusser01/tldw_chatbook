@@ -131,6 +131,8 @@ def test_agent_source_and_collection_pages_use_stable_filterable_keysets(
     second = db.list_sources_for_agent(
         watchlist_id=selected,
         limit=1,
+        after_name_casefold=first["items"][0]["name_casefold"],
+        after_name=first["items"][0]["name"],
         after_id=first["items"][0]["id"],
     )
     collections = db.list_collections_for_agent(name_query="select", limit=10)
@@ -145,6 +147,66 @@ def test_agent_source_and_collection_pages_use_stable_filterable_keysets(
     assert collections["items"][0]["source_count"] == 2
     assert collections["items"][0]["briefing_selection_mode"] == "auto_featured"
     assert collections["items"][0]["briefing_cadence_seconds"] is None
+
+
+def test_agent_source_cursor_survives_deleted_anchor_without_skipping(
+    db: SubscriptionsDB,
+) -> None:
+    first_id = _source(db, "Alpha")
+    second_id = _source(db, "Bravo")
+    third_id = _source(db, "Charlie")
+
+    first = db.list_sources_for_agent(limit=1)
+    with db.transaction() as conn:
+        conn.execute("DELETE FROM subscriptions WHERE id = ?", (first_id,))
+    continued = db.list_sources_for_agent(
+        limit=10,
+        after_name_casefold=first["items"][0]["name_casefold"],
+        after_name=first["items"][0]["name"],
+        after_id=first["items"][0]["id"],
+    )
+
+    assert [row["id"] for row in continued["items"]] == [second_id, third_id]
+
+
+def test_agent_collection_cursor_survives_renamed_anchor_without_duplication(
+    db: SubscriptionsDB,
+) -> None:
+    first_id = _collection(db, "Alpha")
+    second_id = _collection(db, "Bravo")
+    third_id = _collection(db, "Charlie")
+
+    first = db.list_collections_for_agent(limit=1)
+    with db.transaction() as conn:
+        conn.execute("UPDATE watchlists SET name = 'Zulu' WHERE id = ?", (first_id,))
+    continued = db.list_collections_for_agent(
+        limit=10,
+        after_name_casefold=first["items"][0]["name_casefold"],
+        after_name=first["items"][0]["name"],
+        after_id=first["items"][0]["id"],
+    )
+
+    assert [row["id"] for row in continued["items"]] == [second_id, third_id]
+
+
+def test_collection_latest_timestamps_follow_datetime_then_id_order(
+    db: SubscriptionsDB,
+) -> None:
+    collection_id = _collection(db, "Mixed timestamps")
+    _briefing(db, collection_id, "complete", "2026-08-13T10:00:00Z")
+    expected_attempt = _briefing(
+        db, collection_id, "failed", "2026-08-13 11:00:00"
+    )
+    expected_success = _briefing(
+        db, collection_id, "complete", "2026-08-13 10:30:00"
+    )
+
+    row = db.list_collections_for_agent(limit=1)["items"][0]
+
+    assert row["last_briefing_id"] == expected_attempt
+    assert row["last_briefing_attempt_at"] == "2026-08-13 11:00:00"
+    assert row["last_briefing_success_at"] == "2026-08-13 10:30:00"
+    assert expected_success != expected_attempt
 
 
 def test_agent_briefing_pages_latest_readable_and_operation_receipts(

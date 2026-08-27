@@ -1574,6 +1574,15 @@ def test_list_sources_and_collections_are_bounded_redacted_and_filter_bound(
         {"collection": f"local:watchlist:{collection_id}", "limit": 1}
     )
     first = _payload(first_raw)
+    cursor_position = _decode_cursor(first["next_cursor"])["position"]
+    assert cursor_position == {
+        "name_casefold": "alpha",
+        "name": "Alpha",
+        "id": int(first["sources"][0]["id"].rsplit(":", 1)[1]),
+    }
+    collections = _payload(service.list_collections({"name": "threat", "limit": 1}))
+    with db.transaction() as conn:
+        conn.execute("DELETE FROM subscriptions WHERE id = ?", (cursor_position["id"],))
     second = _payload(
         service.list_sources(
             {
@@ -1586,7 +1595,6 @@ def test_list_sources_and_collections_are_bounded_redacted_and_filter_bound(
     mismatched = _payload(
         service.list_sources({"name": "alpha", "cursor": first["next_cursor"]})
     )
-    collections = _payload(service.list_collections({"name": "threat", "limit": 1}))
 
     assert first["status"] == second["status"] == "ok"
     assert first["ordering"] == "casefolded_name_asc_name_asc_id_asc"
@@ -1707,6 +1715,35 @@ def test_collection_scheduler_state_requires_both_gate_and_live_loop(
     assert running["next_eligible_at"] == "2026-08-13T11:00:00Z"
 
 
+def test_collection_next_eligibility_uses_datetime_ordered_latest_attempt(
+    db: SubscriptionsDB,
+) -> None:
+    collection_id = _collection(db, "Mixed schedule timestamps")
+    with db.transaction() as conn:
+        conn.execute(
+            "UPDATE watchlists SET briefing_cadence_seconds = 3600 WHERE id = ?",
+            (collection_id,),
+        )
+    _briefing(db, collection_id, "complete", "2026-08-13T10:00:00Z")
+    _briefing(db, collection_id, "failed", "2026-08-13 11:00:00")
+
+    collection = _payload(
+        _service(
+            db,
+            operational_state_loader=lambda: {
+                "watchlist_checks_enabled": True,
+                "briefing_schedules_enabled": True,
+                "scheduler_running": True,
+                "queue_reload_state": "idle",
+            },
+        ).list_collections({})
+    )["collections"][0]
+
+    assert collection["last_briefing_attempt_at"] == "2026-08-13 11:00:00"
+    assert collection["effective_scheduler_state"] == "last_attempt_failed"
+    assert collection["next_eligible_at"] == "2026-08-13T12:00:00Z"
+
+
 def test_get_briefing_reserves_body_budget_and_shapes_immutable_provenance(
     db: SubscriptionsDB,
 ) -> None:
@@ -1785,6 +1822,117 @@ def test_get_briefing_reserves_body_budget_and_shapes_immutable_provenance(
     assert "token=x" not in raw
 
 
+def test_get_briefing_provenance_pages_are_independent_followable_and_bound(
+    db: SubscriptionsDB,
+) -> None:
+    source_id = _source(db, "Paged provenance")
+    collection_id = _collection(db, "Paged briefing")
+    briefing_id = _briefing(
+        db,
+        collection_id,
+        "complete",
+        "2026-08-20 10:00:00",
+        body="Readable 🧪 briefing.\n" * 10_000,
+    )
+    other_briefing_id = _briefing(
+        db, collection_id, "complete", "2026-08-21 10:00:00", body="# Other"
+    )
+    with db.transaction() as conn:
+        conn.executemany(
+            """
+            INSERT INTO briefing_items (
+                briefing_id, item_id, selection_position, citation_position,
+                featured, cited, item_title, source_id, source_name,
+                source_type, provenance_version
+            ) VALUES (?, ?, ?, ?, 0, 1, ?, ?, ?, 'rss', 2)
+            """,
+            [
+                (
+                    briefing_id,
+                    10_000 + index,
+                    index,
+                    index,
+                    f"Evidence {index:02d} " + "界" * 1_000,
+                    source_id,
+                    "Paged provenance",
+                )
+                for index in range(60)
+            ],
+        )
+    service = _service(db)
+    briefing_receipt = f"local:briefing:{briefing_id}"
+
+    first_raw = service.get_briefing({"briefing_id": briefing_receipt})
+    first = _payload(first_raw)["briefing"]
+
+    assert len(first_raw.encode("utf-8")) < 30 * 1024
+    assert first["content"]["content_truncated"] is True
+    assert len(first["content"]["body_markdown"].encode("utf-8")) >= 4_096
+    assert 0 < len(first["selected_items"]) < 50
+    assert 0 < len(first["cited_items"]) < 50
+    assert first["selected_items_truncated"] is True
+    assert first["cited_items_truncated"] is True
+    assert first["selected_items_next_cursor"]
+    assert first["cited_items_next_cursor"]
+
+    selected_ids: list[str] = []
+    selected_cursor = None
+    while True:
+        arguments = {"briefing_id": briefing_receipt}
+        if selected_cursor is not None:
+            arguments["selected_cursor"] = selected_cursor
+        page = _payload(service.get_briefing(arguments))["briefing"]
+        selected_ids.extend(item["id"] for item in page["selected_items"])
+        selected_cursor = page["selected_items_next_cursor"]
+        if selected_cursor is None:
+            break
+
+    cited_ids: list[str] = []
+    cited_cursor = None
+    while True:
+        arguments = {"briefing_id": briefing_receipt}
+        if cited_cursor is not None:
+            arguments["cited_cursor"] = cited_cursor
+        page = _payload(service.get_briefing(arguments))["briefing"]
+        cited_ids.extend(item["id"] for item in page["cited_items"])
+        cited_cursor = page["cited_items_next_cursor"]
+        if cited_cursor is None:
+            break
+
+    expected = [f"local:watchlist_item:{10_000 + index}" for index in range(60)]
+    assert selected_ids == expected
+    assert cited_ids == expected
+    wrong_stream = _payload(
+        service.get_briefing(
+            {
+                "briefing_id": briefing_receipt,
+                "cited_cursor": first["selected_items_next_cursor"],
+            }
+        )
+    )
+    wrong_briefing = _payload(
+        service.get_briefing(
+            {
+                "briefing_id": f"local:briefing:{other_briefing_id}",
+                "selected_cursor": first["selected_items_next_cursor"],
+            }
+        )
+    )
+    oversized_position = _decode_cursor(first["selected_items_next_cursor"])
+    oversized_position["position"]["position"] = 2**63
+    invalid_position = _payload(
+        service.get_briefing(
+            {
+                "briefing_id": briefing_receipt,
+                "selected_cursor": _encode_cursor(oversized_position),
+            }
+        )
+    )
+    assert wrong_stream["status"] == "invalid_argument"
+    assert wrong_briefing["status"] == "invalid_argument"
+    assert invalid_position["status"] == "invalid_argument"
+
+
 def test_operation_status_accepts_only_exact_receipts_and_scrubs_errors(
     db: SubscriptionsDB,
 ) -> None:
@@ -1839,6 +1987,7 @@ def test_operation_status_accepts_only_exact_receipts_and_scrubs_errors(
     assert run["operation"]["destination"] == "runs"
     assert "secret" not in run_raw and "/private" not in run_raw
     assert briefing["operation"]["state"] == "running"
+    assert briefing["operation"]["cancel_capable"] is False
     assert briefing["operation"]["destination"] == "artifacts"
     assert invalid["status"] == "invalid_argument"
 

@@ -10,6 +10,7 @@ import json
 import logging
 import math
 import re
+import zlib
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from datetime import UTC, date, datetime, time, timedelta
@@ -66,6 +67,7 @@ _MAX_URL_BYTES = 1_024
 _MAX_SNIPPET_BYTES = 4_096
 _MAX_CHANGE_SUMMARY_BYTES = 8_192
 _BRIEFING_BODY_BUDGET = 12 * 1024
+_PROVENANCE_ARRAY_BUDGET = 6 * 1024
 _PROVENANCE_LIMIT = 50
 _PUBLIC_EXECUTION_ERROR = "Watchlists tool execution error"
 _CURSOR_VERSION = 1
@@ -408,6 +410,8 @@ class WatchlistsToolService:
             is_paused=True if state == "paused" else (False if state == "active" else None),
             watchlist_id=collection_id,
             limit=limit,
+            after_name_casefold=position.get("name_casefold"),
+            after_name=position.get("name"),
             after_id=position.get("id"),
         )
         rows = page["items"]
@@ -429,7 +433,11 @@ class WatchlistsToolService:
             storage_has_more=bool(page["has_more"]),
             cursor_for=lambda row: self._encode_page_cursor(
                 "sources",
-                {"id": int(row["id"])},
+                {
+                    "name_casefold": row["name_casefold"],
+                    "name": row["name"],
+                    "id": int(row["id"]),
+                },
                 fingerprint,
             ),
         )
@@ -470,6 +478,8 @@ class WatchlistsToolService:
         page = database.list_collections_for_agent(
             name_query=name,
             limit=limit,
+            after_name_casefold=position.get("name_casefold"),
+            after_name=position.get("name"),
             after_id=position.get("id"),
         )
         rows = page["items"]
@@ -489,7 +499,11 @@ class WatchlistsToolService:
             storage_has_more=bool(page["has_more"]),
             cursor_for=lambda row: self._encode_page_cursor(
                 "collections",
-                {"id": int(row["id"])},
+                {
+                    "name_casefold": row["name_casefold"],
+                    "name": row["name"],
+                    "id": int(row["id"]),
+                },
                 fingerprint,
             ),
         )
@@ -599,12 +613,42 @@ class WatchlistsToolService:
             self._raise_unexpected(exc)
 
     def _get_briefing(self, arguments: object) -> str:
-        briefing_id = self._validate_canonical_id(
+        values = self._exact_arguments(
             arguments,
+            frozenset({"briefing_id", "selected_cursor", "cited_cursor"}),
+        )
+        briefing_id = self._validate_canonical_id(
+            {"briefing_id": values.get("briefing_id")},
             field="briefing_id",
             pattern=_CANONICAL_BRIEFING_RE,
             label="briefing",
         )
+        selected_cursor = self._validate_page_cursor(
+            values.get("selected_cursor"),
+            supplied="selected_cursor" in values,
+            kind="briefing_selected",
+        )
+        cited_cursor = self._validate_page_cursor(
+            values.get("cited_cursor"),
+            supplied="cited_cursor" in values,
+            kind="briefing_cited",
+        )
+        selected_fingerprint = self._metadata_fingerprint(
+            {
+                "briefing_id": briefing_id,
+                "stream": "selected",
+                "ordering": "position_nulls_last_position_asc_item_id_asc",
+            }
+        )
+        cited_fingerprint = self._metadata_fingerprint(
+            {
+                "briefing_id": briefing_id,
+                "stream": "cited",
+                "ordering": "position_nulls_last_position_asc_item_id_asc",
+            }
+        )
+        self._require_matching_page_cursor(selected_cursor, selected_fingerprint)
+        self._require_matching_page_cursor(cited_cursor, cited_fingerprint)
         if self._runtime_source() == "server":
             return self._outcome(
                 "unsupported", _SERVER_UNSUPPORTED_MESSAGE, retryable=False
@@ -618,7 +662,10 @@ class WatchlistsToolService:
                 "not_found", "briefing was not found", retryable=False
             )
         provenance = database.get_briefing_provenance_for_agent(
-            briefing_id, limit=_PROVENANCE_LIMIT
+            briefing_id,
+            limit=_PROVENANCE_LIMIT,
+            selected_after=self._provenance_after(selected_cursor),
+            cited_after=self._provenance_after(cited_cursor),
         )
         selected = [self._shape_provenance(item) for item in provenance["selected"]]
         cited = [self._shape_provenance(item) for item in provenance["cited"]]
@@ -637,13 +684,29 @@ class WatchlistsToolService:
         }
         briefing["selected_items"] = []
         briefing["cited_items"] = []
-        briefing["selected_items_truncated"] = bool(
-            provenance["selected_has_more"]
-        )
-        briefing["cited_items_truncated"] = bool(provenance["cited_has_more"])
+        briefing["selected_items_truncated"] = False
+        briefing["cited_items_truncated"] = False
+        briefing["selected_items_next_cursor"] = None
+        briefing["cited_items_next_cursor"] = None
         payload = {"status": "ok", "briefing": briefing}
-        self._pack_provenance(payload, briefing["selected_items"], selected, "selected_items_truncated")
-        self._pack_provenance(payload, briefing["cited_items"], cited, "cited_items_truncated")
+        selected_count = self._pack_provenance(briefing["selected_items"], selected)
+        cited_count = self._pack_provenance(briefing["cited_items"], cited)
+        self._finish_provenance_page(
+            briefing,
+            rows=provenance["selected"],
+            accepted_count=selected_count,
+            storage_has_more=bool(provenance["selected_has_more"]),
+            stream="selected",
+            fingerprint=selected_fingerprint,
+        )
+        self._finish_provenance_page(
+            briefing,
+            rows=provenance["cited"],
+            accepted_count=cited_count,
+            storage_has_more=bool(provenance["cited_has_more"]),
+            stream="cited",
+            fingerprint=cited_fingerprint,
+        )
         return self._finalize(payload)
 
     def get_operations_status(self, arguments: object) -> str:
@@ -934,7 +997,11 @@ class WatchlistsToolService:
                 "filter_fingerprint": filter_fingerprint,
             }
         ).encode("utf-8")
-        return base64.urlsafe_b64encode(raw).decode("ascii").rstrip("=")
+        encoded = base64.urlsafe_b64encode(raw).decode("ascii").rstrip("=")
+        if len(encoded) <= 2_048:
+            return encoded
+        compressed = base64.urlsafe_b64encode(zlib.compress(raw)).decode("ascii")
+        return "z." + compressed.rstrip("=")
 
     @staticmethod
     def _validate_page_cursor(
@@ -945,10 +1012,17 @@ class WatchlistsToolService:
         if type(value) is not str or not value or len(value) > 2_048:
             raise _InvalidArgument("cursor is invalid")
         try:
-            padding = b"=" * (-len(value) % 4)
+            compressed = value.startswith("z.")
+            encoded = value[2:] if compressed else value
+            padding = b"=" * (-len(encoded) % 4)
             raw = base64.b64decode(
-                value.encode() + padding, altchars=b"-_", validate=True
+                encoded.encode() + padding, altchars=b"-_", validate=True
             )
+            if compressed:
+                decompressor = zlib.decompressobj()
+                raw = decompressor.decompress(raw, 32_769)
+                if len(raw) > 32_768 or not decompressor.eof:
+                    raise ValueError
             payload = json.loads(
                 raw.decode("utf-8"),
                 object_pairs_hook=WatchlistsToolService._unique_json_object,
@@ -969,17 +1043,43 @@ class WatchlistsToolService:
             raise _InvalidArgument("cursor is invalid")
         position = payload["position"]
         if kind in {"sources", "collections"}:
-            expected = {"id"}
+            expected = {"name_casefold", "name", "id"}
+        elif kind in {"briefing_selected", "briefing_cited"}:
+            expected = {"position_is_null", "position", "item_id"}
         elif kind == "operations":
             expected = {"created_at", "kind", "id"}
         else:
             expected = {"created_at", "id"}
-        if set(position) != expected or type(position["id"]) is not int:
+        if set(position) != expected:
             raise _InvalidArgument("cursor is invalid")
-        if not 1 <= position["id"] <= _MAX_SQLITE_ROW_ID:
+        if kind in {"briefing_selected", "briefing_cited"}:
+            null_state = position["position_is_null"]
+            item_position = position["position"]
+            item_id = position["item_id"]
+            if (
+                type(null_state) is not bool
+                or null_state is not (item_position is None)
+                or (
+                    item_position is not None
+                    and (
+                        type(item_position) is not int
+                        or not -_MAX_SQLITE_ROW_ID <= item_position <= _MAX_SQLITE_ROW_ID
+                    )
+                )
+                or type(item_id) is not int
+                or not 1 <= item_id <= _MAX_SQLITE_ROW_ID
+            ):
+                raise _InvalidArgument("cursor is invalid")
+            return _PageCursor(
+                kind=kind,
+                position=position,
+                filter_fingerprint=payload["filter_fingerprint"],
+            )
+        if type(position["id"]) is not int or not 1 <= position["id"] <= _MAX_SQLITE_ROW_ID:
             raise _InvalidArgument("cursor is invalid")
         for key, item in position.items():
-            if key != "id" and (type(item) is not str or len(item) > 512):
+            maximum = 16_384 if key in {"name", "name_casefold"} else 512
+            if key != "id" and (type(item) is not str or len(item) > maximum):
                 raise _InvalidArgument("cursor is invalid")
         return _PageCursor(
             kind=kind,
@@ -1656,24 +1756,68 @@ class WatchlistsToolService:
             "result_available": bool(row["body_available"]),
             "error_category": "briefing_failed" if status == "failed" else None,
             "retry_capable": status == "failed",
-            "cancel_capable": status == "generating",
+            "cancel_capable": False,
             "destination": "artifacts",
         }
 
     @staticmethod
     def _pack_provenance(
-        payload: dict[str, Any],
         destination: list[dict[str, Any]],
         candidates: list[dict[str, Any]],
-        truncated_field: str,
-    ) -> None:
-        briefing = payload["briefing"]
+    ) -> int:
         for candidate in candidates:
             destination.append(candidate)
-            if WatchlistsToolService._json_size(payload) >= _MAX_RESULT_BYTES:
+            if WatchlistsToolService._json_size(destination) >= _PROVENANCE_ARRAY_BUDGET:
                 destination.pop()
-                briefing[truncated_field] = True
                 break
+        if candidates and not destination:
+            raise RuntimeError("bounded Watchlists provenance row did not fit")
+        return len(destination)
+
+    @staticmethod
+    def _provenance_after(
+        cursor: _PageCursor | None,
+    ) -> tuple[int, int, int] | None:
+        if cursor is None:
+            return None
+        position = cursor.position
+        return (
+            int(position["position_is_null"]),
+            int(position["position"] or 0),
+            int(position["item_id"]),
+        )
+
+    @staticmethod
+    def _finish_provenance_page(
+        briefing: dict[str, Any],
+        *,
+        rows: list[Mapping[str, Any]],
+        accepted_count: int,
+        storage_has_more: bool,
+        stream: str,
+        fingerprint: str,
+    ) -> None:
+        has_more = storage_has_more or accepted_count < len(rows)
+        briefing[f"{stream}_items_truncated"] = has_more
+        if not has_more:
+            briefing[f"{stream}_items_next_cursor"] = None
+            return
+        row = rows[accepted_count - 1]
+        position_field = (
+            "selection_position" if stream == "selected" else "citation_position"
+        )
+        item_position = row[position_field]
+        briefing[f"{stream}_items_next_cursor"] = (
+            WatchlistsToolService._encode_page_cursor(
+                f"briefing_{stream}",
+                {
+                    "position_is_null": item_position is None,
+                    "position": item_position,
+                    "item_id": int(row["item_id"]),
+                },
+                fingerprint,
+            )
+        )
 
     @staticmethod
     def _finalize_metadata_page(

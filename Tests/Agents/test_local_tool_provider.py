@@ -608,6 +608,13 @@ def test_watchlists_catalog_has_exact_read_only_schemas_and_trust_warnings(tmp_p
         )
         assert name in externally_exposed
     assert "watchlists_get_briefing" not in externally_exposed
+    briefing = provider.load_schema("local:watchlists_get_briefing")
+    assert set(briefing.parameters["properties"]) == {
+        "briefing_id",
+        "selected_cursor",
+        "cited_cursor",
+    }
+    assert briefing.parameters["required"] == ["briefing_id"]
 
     search = provider.load_schema("local:watchlists_search_items")
     assert search.parameters == {

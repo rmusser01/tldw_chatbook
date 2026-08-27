@@ -449,8 +449,10 @@ class SubscriptionsDB(BaseDB):
                 "source",
                 "is_active",
                 "is_paused",
+                "check_frequency",
                 "last_checked",
                 "last_successful_check",
+                "consecutive_failures",
                 "created_at",
                 "updated_at",
             }
@@ -476,7 +478,18 @@ class SubscriptionsDB(BaseDB):
                 "effective_date",
             }
         ),
-        "watchlists": frozenset({"id", "name"}),
+        "watchlists": frozenset(
+            {
+                "id",
+                "name",
+                "is_active",
+                "briefing_selection_mode",
+                "default_briefing_preset_id",
+                "briefing_cadence_seconds",
+                "created_at",
+                "updated_at",
+            }
+        ),
         "watchlist_sources": frozenset({"watchlist_id", "subscription_id"}),
         "local_watchlist_runs": frozenset(
             {
@@ -3671,10 +3684,17 @@ class SubscriptionsDB(BaseDB):
         is_paused: Optional[bool] = None,
         watchlist_id: Optional[int] = None,
         limit: int = 10,
+        after_name_casefold: Optional[str] = None,
+        after_name: Optional[str] = None,
         after_id: Optional[int] = None,
     ) -> Dict[str, Any]:
         """Return one stable, allowlisted source-metadata page."""
         self._validate_agent_page(limit)
+        cursor_values = (after_name_casefold, after_name, after_id)
+        if any(value is not None for value in cursor_values) and any(
+            value is None for value in cursor_values
+        ):
+            raise ValueError("source cursor fields must be supplied together")
         predicates: List[str] = ["typeof(s.name) = 'text'"]
         params: List[Any] = []
         if name_query is not None:
@@ -3699,17 +3719,21 @@ class SubscriptionsDB(BaseDB):
             params.append(watchlist_id)
         if after_id is not None:
             predicates.append(
-                "EXISTS (SELECT 1 FROM subscriptions anchor WHERE anchor.id = ?) "
-                "AND (unicode_casefold(s.name) > (SELECT unicode_casefold(name) "
-                "FROM subscriptions WHERE id = ?) "
-                "OR (unicode_casefold(s.name) = (SELECT unicode_casefold(name) "
-                "FROM subscriptions WHERE id = ?) AND s.name > "
-                "(SELECT name FROM subscriptions WHERE id = ?)) "
-                "OR (unicode_casefold(s.name) = (SELECT unicode_casefold(name) "
-                "FROM subscriptions WHERE id = ?) AND s.name = "
-                "(SELECT name FROM subscriptions WHERE id = ?) AND s.id > ?))"
+                "s.id != ? AND (unicode_casefold(s.name) > ? "
+                "OR (unicode_casefold(s.name) = ? AND s.name > ?) "
+                "OR (unicode_casefold(s.name) = ? AND s.name = ? AND s.id > ?))"
             )
-            params.extend((after_id,) * 7)
+            params.extend(
+                (
+                    after_id,
+                    after_name_casefold,
+                    after_name_casefold,
+                    after_name,
+                    after_name_casefold,
+                    after_name,
+                    after_id,
+                )
+            )
         where = f"WHERE {' AND '.join(predicates)}" if predicates else ""
         with self.transaction() as conn:
             rows = conn.execute(
@@ -3735,10 +3759,17 @@ class SubscriptionsDB(BaseDB):
         *,
         name_query: Optional[str] = None,
         limit: int = 10,
+        after_name_casefold: Optional[str] = None,
+        after_name: Optional[str] = None,
         after_id: Optional[int] = None,
     ) -> Dict[str, Any]:
         """Return one stable, allowlisted collection-metadata page."""
         self._validate_agent_page(limit)
+        cursor_values = (after_name_casefold, after_name, after_id)
+        if any(value is not None for value in cursor_values) and any(
+            value is None for value in cursor_values
+        ):
+            raise ValueError("collection cursor fields must be supplied together")
         predicates: List[str] = ["typeof(w.name) = 'text'"]
         params: List[Any] = []
         if name_query is not None:
@@ -3748,17 +3779,21 @@ class SubscriptionsDB(BaseDB):
             params.append(name_query)
         if after_id is not None:
             predicates.append(
-                "EXISTS (SELECT 1 FROM watchlists anchor WHERE anchor.id = ?) "
-                "AND (unicode_casefold(w.name) > (SELECT unicode_casefold(name) "
-                "FROM watchlists WHERE id = ?) "
-                "OR (unicode_casefold(w.name) = (SELECT unicode_casefold(name) "
-                "FROM watchlists WHERE id = ?) AND w.name > "
-                "(SELECT name FROM watchlists WHERE id = ?)) "
-                "OR (unicode_casefold(w.name) = (SELECT unicode_casefold(name) "
-                "FROM watchlists WHERE id = ?) AND w.name = "
-                "(SELECT name FROM watchlists WHERE id = ?) AND w.id > ?))"
+                "w.id != ? AND (unicode_casefold(w.name) > ? "
+                "OR (unicode_casefold(w.name) = ? AND w.name > ?) "
+                "OR (unicode_casefold(w.name) = ? AND w.name = ? AND w.id > ?))"
             )
-            params.extend((after_id,) * 7)
+            params.extend(
+                (
+                    after_id,
+                    after_name_casefold,
+                    after_name_casefold,
+                    after_name,
+                    after_name_casefold,
+                    after_name,
+                    after_id,
+                )
+            )
         where = f"WHERE {' AND '.join(predicates)}" if predicates else ""
         with self.transaction() as conn:
             rows = conn.execute(
@@ -3767,10 +3802,13 @@ class SubscriptionsDB(BaseDB):
                        w.default_briefing_preset_id, p.name AS default_preset_name,
                        w.briefing_cadence_seconds, w.created_at, w.updated_at,
                        COUNT(ws.subscription_id) AS source_count,
-                       (SELECT MAX(b.created_at) FROM briefings b
-                        WHERE b.watchlist_id = w.id) AS last_briefing_attempt_at,
-                       (SELECT MAX(b.created_at) FROM briefings b
-                        WHERE b.watchlist_id = w.id AND b.status = 'complete')
+                       (SELECT b.created_at FROM briefings b
+                        WHERE b.watchlist_id = w.id
+                        ORDER BY datetime(b.created_at) DESC, b.id DESC LIMIT 1)
+                           AS last_briefing_attempt_at,
+                       (SELECT b.created_at FROM briefings b
+                        WHERE b.watchlist_id = w.id AND b.status = 'complete'
+                        ORDER BY datetime(b.created_at) DESC, b.id DESC LIMIT 1)
                            AS last_briefing_success_at,
                        (SELECT b.status FROM briefings b
                         WHERE b.watchlist_id = w.id
@@ -3925,7 +3963,12 @@ class SubscriptionsDB(BaseDB):
         }
 
     def get_briefing_provenance_for_agent(
-        self, briefing_id: int, *, limit: int = 50
+        self,
+        briefing_id: int,
+        *,
+        limit: int = 50,
+        selected_after: Optional[tuple[int, int, int]] = None,
+        cited_after: Optional[tuple[int, int, int]] = None,
     ) -> Dict[str, Any]:
         """Return bounded immutable selected and cited provenance snapshots."""
         self._validate_agent_page(limit)
@@ -3935,25 +3978,46 @@ class SubscriptionsDB(BaseDB):
             "item_created_at, item_effective_date, source_id, source_name, "
             "source_type, source_url, provenance_version"
         )
+        def page(
+            conn: sqlite3.Connection,
+            *,
+            position_column: str,
+            cited_only: bool,
+            after: Optional[tuple[int, int, int]],
+        ) -> List[sqlite3.Row]:
+            predicates = ["briefing_id = ?"]
+            params: List[Any] = [briefing_id]
+            if cited_only:
+                predicates.append("cited = 1")
+            if after is not None:
+                predicates.append(
+                    f"(({position_column} IS NULL), "
+                    f"COALESCE({position_column}, 0), item_id) > (?, ?, ?)"
+                )
+                params.extend(after)
+            return conn.execute(
+                f"""
+                SELECT {columns} FROM briefing_items
+                WHERE {' AND '.join(predicates)}
+                ORDER BY {position_column} IS NULL, {position_column}, item_id
+                LIMIT ?
+                """,
+                (*params, limit + 1),
+            ).fetchall()
+
         with self.transaction() as conn:
-            selected = conn.execute(
-                f"""
-                SELECT {columns} FROM briefing_items
-                WHERE briefing_id = ?
-                ORDER BY selection_position IS NULL, selection_position, item_id
-                LIMIT ?
-                """,
-                (briefing_id, limit + 1),
-            ).fetchall()
-            cited = conn.execute(
-                f"""
-                SELECT {columns} FROM briefing_items
-                WHERE briefing_id = ? AND cited = 1
-                ORDER BY citation_position IS NULL, citation_position, item_id
-                LIMIT ?
-                """,
-                (briefing_id, limit + 1),
-            ).fetchall()
+            selected = page(
+                conn,
+                position_column="selection_position",
+                cited_only=False,
+                after=selected_after,
+            )
+            cited = page(
+                conn,
+                position_column="citation_position",
+                cited_only=True,
+                after=cited_after,
+            )
         return {
             "selected": [dict(row) for row in selected[:limit]],
             "selected_has_more": len(selected) > limit,

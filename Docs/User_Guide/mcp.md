@@ -61,7 +61,7 @@ honors its kill switch. An external `ask` state is refused because an
 external client cannot show Chatbook's approval card.
 
 > [!WARNING]
-> An external MCP client runs with the user's OS access. It can read private local Library data and private Watchlists feed and article evidence through exposed tools, resources, and prompts. The external MCP client may send that content off-device to a cloud model. Enable only what you mean to disclose, and trust both the client and the model provider.
+> An external MCP client runs with the user's OS access. It can read private local Library data and private Watchlists source, collection, briefing-receipt, and operation metadata through exposed tools, resources, and prompts. It does not expose Watchlists article snippets or bodies, or briefing Markdown/provenance. The external MCP client may send the exposed content off-device to a cloud model. Enable only what you mean to disclose, and trust both the client and the model provider.
 
 ## Configuring workspace, web, and Watchlists tools (Tools mode)
 
@@ -270,10 +270,13 @@ newest complete receipt and newer non-readable attempts remain context.
 | Parameter | Contract |
 | --- | --- |
 | `briefing_id` | Required exact `local:briefing:<positive integer>`; maximum 36 characters. |
+| `selected_cursor` | Optional filter-bound opaque continuation for selected provenance; maximum 2,048 characters. |
+| `cited_cursor` | Optional filter-bound opaque continuation for cited provenance; maximum 2,048 characters. |
 
 This Console-only result stays below 30 KiB, reserves readable Markdown, and
 labels truncation plus ordered immutable provenance, legacy snapshots, and
-missing references.
+missing references. Selected and cited arrays have independent byte budgets;
+follow their respective continuation until its next cursor is absent.
 
 #### `watchlists_get_operations_status`
 

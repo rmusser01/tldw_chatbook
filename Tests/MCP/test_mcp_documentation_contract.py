@@ -354,7 +354,9 @@ def test_watchlists_tools_document_every_public_parameter_and_bound() -> None:
             "cursor",
         ], path
         assert _tool_parameter_names(text, "watchlists_get_briefing") == [
-            "briefing_id"
+            "briefing_id",
+            "selected_cursor",
+            "cited_cursor",
         ], path
         assert _tool_parameter_names(text, "watchlists_get_operations_status") == [
             "source",
@@ -549,7 +551,8 @@ def test_user_guide_warning_names_private_watchlists_egress_and_trust_boundary()
     warning = _admonition_block(
         USER_GUIDE_DOCUMENT.read_text(encoding="utf-8"), "WARNING"
     )
-    assert "private Watchlists feed and article evidence" in warning
+    assert "private Watchlists source, collection, briefing-receipt, and operation metadata" in warning
+    assert "does not expose Watchlists article snippets or bodies, or briefing Markdown/provenance" in warning
     assert "external MCP client may send" in warning
     assert "off-device to a cloud model" in warning
     assert "trust both the client and the model provider" in warning

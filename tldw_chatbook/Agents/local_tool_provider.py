@@ -1921,7 +1921,9 @@ def _default_specs(
                         "type": "string",
                         "pattern": r"^local:briefing:[1-9][0-9]*$",
                         "maxLength": 36,
-                    }
+                    },
+                    "selected_cursor": cursor_schema,
+                    "cited_cursor": cursor_schema,
                 },
                 "required": ["briefing_id"],
                 "additionalProperties": False,
