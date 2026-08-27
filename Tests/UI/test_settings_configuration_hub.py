@@ -3621,9 +3621,21 @@ async def test_field_search_folder_files_tree_width_guides_to_custom_widths_when
         assert screen._active_settings_field_id == (
             "settings-appearance-library-media-custom-widths"
         )
-        assert "Enable shared Library reader widths to edit Folder Files tree width." in (
-            _visible_text(screen)
+        truthful_copy = (
+            "Controls whether shared Library reader widths can be edited, "
+            "including Folder Files tree width."
         )
+        assert truthful_copy in _visible_text(screen)
+
+        await pilot.press("enter")
+        await pilot.pause()
+
+        assert (
+            screen._appearance_setting_values()["library_reader_custom_widths_enabled"]
+            is True
+        )
+        assert truthful_copy in _visible_text(screen)
+        assert "Enable shared Library reader widths" not in _visible_text(screen)
 
 
 @pytest.mark.asyncio

@@ -11969,7 +11969,8 @@ class SettingsScreen(BaseAppScreen):
                 ("Focused setting", "Shared Library reader widths"),
                 (
                     "Purpose",
-                    "Enable shared Library reader widths to edit Folder Files tree width.",
+                    "Controls whether shared Library reader widths can be edited, "
+                    "including Folder Files tree width.",
                 ),
                 ("Saved as", "library.reader.custom_widths_enabled"),
                 ("Validation", "toggle enabled or disabled"),
