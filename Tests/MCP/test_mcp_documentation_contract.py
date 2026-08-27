@@ -333,6 +333,38 @@ def test_watchlists_tools_document_every_public_parameter_and_bound() -> None:
             "cursor",
         ], path
         assert _tool_parameter_names(text, "watchlists_get_item") == ["item_id"], path
+        assert _tool_parameter_names(text, "watchlists_list_sources") == [
+            "name",
+            "type",
+            "state",
+            "collection",
+            "limit",
+            "cursor",
+        ], path
+        assert _tool_parameter_names(text, "watchlists_list_collections") == [
+            "name",
+            "limit",
+            "cursor",
+        ], path
+        assert _tool_parameter_names(text, "watchlists_list_briefings") == [
+            "collection",
+            "statuses",
+            "since",
+            "limit",
+            "cursor",
+        ], path
+        assert _tool_parameter_names(text, "watchlists_get_briefing") == [
+            "briefing_id"
+        ], path
+        assert _tool_parameter_names(text, "watchlists_get_operations_status") == [
+            "source",
+            "collection",
+            "limit",
+            "cursor",
+        ], path
+        assert _tool_parameter_names(text, "watchlists_get_operation_status") == [
+            "operation_id"
+        ], path
         for contract in (
             "512 characters and 32 whitespace-delimited terms",
             "collection names are limited to 256 characters",
@@ -390,9 +422,32 @@ def test_watchlists_tools_document_privacy_and_external_mcp_permission() -> None
             "`[mcp] expose_local_tools`",
             "per-tool permission must be Allow",
             "Ask is refused",
-            "send the approved evidence to its client or model",
+            "send approved metadata and receipts to its client or model",
+            "article and briefing content remains Console-only",
         ):
             assert contract in normalized, (path, contract)
+
+
+def test_watchlists_documents_pin_external_receipts_and_console_content() -> None:
+    for path in WATCHLISTS_TOOL_DOCUMENTS:
+        normalized = " ".join(path.read_text(encoding="utf-8").split())
+        for name in (
+            "watchlists_list_sources",
+            "watchlists_list_collections",
+            "watchlists_list_briefings",
+            "watchlists_get_operations_status",
+            "watchlists_get_operation_status",
+        ):
+            assert name in normalized, (path, name)
+        for name in (
+            "watchlists_search_items",
+            "watchlists_get_item",
+            "watchlists_get_briefing",
+        ):
+            assert name in normalized, (path, name)
+        assert "never article snippets, article bodies, briefing Markdown" in normalized or (
+            "Console-only" in normalized and "never registers or resolves" in normalized
+        ), path
 
 
 def test_expanded_local_tool_group_copy_names_watchlists_everywhere() -> None:

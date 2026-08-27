@@ -9,7 +9,6 @@ approvals, persistence).
 
 from concurrent.futures import ThreadPoolExecutor
 import json
-import sqlite3
 import threading
 import time
 
@@ -22,6 +21,7 @@ from tldw_chatbook.Agents.local_tool_provider import (
     LOCAL_DENY_REFUSAL,
     LOCAL_GATE_ERROR_REFUSAL,
     LOCAL_KILL_SWITCH_REFUSAL,
+    LocalToolProvider,
 )
 from tldw_chatbook.DB.Subscriptions_DB import (
     SubscriptionsDB,
@@ -37,6 +37,7 @@ from tldw_chatbook.MCP.local_server_tools import (
 from tldw_chatbook.MCP.permission_store import MCPPermissionStore, definition_hash
 from tldw_chatbook.MCP.server import TldwMCPServer, _describe_local_tools
 from tldw_chatbook.runtime_policy.types import RuntimeSourceState
+from Tests.DB.test_subscriptions_db_briefing_provenance_migration import _build_v1
 
 
 BUILTIN_TOOL_NAMES = [descriptor["name"] for descriptor in _describe_local_tools()]
@@ -257,12 +258,14 @@ def test_watchlists_registration_is_storage_lazy_and_server_mode_never_resolves_
     _pin_runtime_source(monkeypatch, "server")
     provider = build_server_local_provider(workspace, store)
     provider.list_catalog()
-    provider.load_schema("local:watchlists_search_items")
-    provider.load_schema("local:watchlists_get_item")
+    provider.load_schema("local:watchlists_list_sources")
+    assert "watchlists_get_briefing" not in {
+        entry.name for entry in provider.list_catalog()
+    }
     assert path_calls == 0
-    _grant(store, provider, "watchlists_search_items")
+    _grant(store, provider, "watchlists_list_sources")
 
-    result = provider.invoke("local:watchlists_search_items", {})
+    result = provider.invoke("local:watchlists_list_sources", {})
 
     assert result.ok
     assert json.loads(result.content) == {
@@ -303,10 +306,10 @@ def test_watchlists_first_local_call_opens_one_read_only_database(
     provider = build_server_local_provider(workspace, store)
     assert path_calls == 0
     assert constructions == []
-    _grant(store, provider, "watchlists_search_items")
+    _grant(store, provider, "watchlists_list_sources")
 
-    first = provider.invoke("local:watchlists_search_items", {})
-    second = provider.invoke("local:watchlists_search_items", {})
+    first = provider.invoke("local:watchlists_list_sources", {})
+    second = provider.invoke("local:watchlists_list_sources", {})
 
     assert json.loads(first.content)["status"] == "ok"
     assert json.loads(second.content)["status"] == "ok"
@@ -378,8 +381,8 @@ def test_watchlists_lazy_resolver_blocks_replacement_until_failed_close_succeeds
         def close(self):
             raise AssertionError("successful candidate remains process-owned")
 
-        def search_items_for_agent(self, **_kwargs):
-            return {"items": [], "has_more": False, "snapshot_max_item_id": 0}
+        def list_sources_for_agent(self, **_kwargs):
+            return {"items": [], "has_more": False}
 
         def get_source_collection_memberships(self, _source_ids):
             return {}
@@ -401,15 +404,15 @@ def test_watchlists_lazy_resolver_blocks_replacement_until_failed_close_succeeds
     monkeypatch.setattr(local_server_tools, "SubscriptionsDB", construct_database)
     _pin_runtime_source(monkeypatch, "local")
     provider = build_server_local_provider(workspace, store)
-    _grant(store, provider, "watchlists_search_items")
+    _grant(store, provider, "watchlists_list_sources")
     records: list[str] = []
     sink_id = logger.add(lambda message: records.append(str(message)))
 
     try:
-        first = provider.invoke("local:watchlists_search_items", {})
-        second = provider.invoke("local:watchlists_search_items", {})
+        first = provider.invoke("local:watchlists_list_sources", {})
+        second = provider.invoke("local:watchlists_list_sources", {})
         assert constructions == [failed]
-        third = provider.invoke("local:watchlists_search_items", {})
+        third = provider.invoke("local:watchlists_list_sources", {})
     finally:
         logger.remove(sink_id)
 
@@ -473,8 +476,7 @@ def test_watchlists_unready_database_is_bounded_and_keeps_other_tools(
 ):
     database_path = tmp_path / "subscriptions.db"
     if storage_state == "pre_migration":
-        with sqlite3.connect(database_path) as connection:
-            connection.execute("CREATE TABLE legacy_only (id INTEGER PRIMARY KEY)")
+        _build_v1(database_path)
         before = database_path.read_bytes()
     else:
         before = None
@@ -486,9 +488,9 @@ def test_watchlists_unready_database_is_bounded_and_keeps_other_tools(
     )
     _pin_runtime_source(monkeypatch, "local")
     provider = build_server_local_provider(workspace, store)
-    _grant(store, provider, "watchlists_search_items")
+    _grant(store, provider, "watchlists_list_sources")
 
-    result = provider.invoke("local:watchlists_search_items", {})
+    result = provider.invoke("local:watchlists_list_sources", {})
 
     payload = json.loads(result.content)
     assert payload["status"] == "feature_unavailable"
@@ -512,7 +514,7 @@ def test_watchlists_external_ask_refuses_before_storage_resolution(
     )
     provider = build_server_local_provider(workspace, store)
 
-    result = provider.invoke("local:watchlists_search_items", {})
+    result = provider.invoke("local:watchlists_list_sources", {})
 
     assert result == ToolResult.blocked(EXTERNAL_NO_CALLBACK_REFUSAL)
 
@@ -541,14 +543,40 @@ def test_granted_tool_registration_handler_executes(monkeypatch, workspace, stor
     assert executor.calls == [("fs_read", {"path": "hello.txt"}, "read")]
 
 
-def test_console_only_watchlists_tool_is_never_externally_registered(
+def test_console_only_watchlists_tools_are_never_externally_registered(
     workspace, store
 ):
-    """A persistent Allow cannot widen a Console-only descriptor's exposure."""
+    """Persistent Allows cannot widen Console-only descriptor exposure."""
+    console_provider = LocalToolProvider(workspace_root=workspace)
+    for name in (
+        "watchlists_search_items",
+        "watchlists_get_item",
+        "watchlists_get_briefing",
+    ):
+        _grant(store, console_provider, name)
     provider = build_server_local_provider(workspace, store)
-    _grant(store, provider, "watchlists_search_items")
 
-    assert "watchlists_search_items" not in _registrations(provider)
+    registrations = _registrations(provider)
+    assert {
+        "watchlists_search_items",
+        "watchlists_get_item",
+        "watchlists_get_briefing",
+    }.isdisjoint(registrations)
+    assert all(
+        not provider.invoke(f"local:{name}", {}).ok
+        for name in (
+            "watchlists_search_items",
+            "watchlists_get_item",
+            "watchlists_get_briefing",
+        )
+    )
+    assert {
+        "watchlists_list_sources",
+        "watchlists_list_collections",
+        "watchlists_list_briefings",
+        "watchlists_get_operations_status",
+        "watchlists_get_operation_status",
+    } <= set(registrations)
 
 
 def test_ask_state_handler_returns_tool_result(workspace, store):
@@ -627,6 +655,14 @@ async def test_flag_on_registers_local_tool_names(monkeypatch, tmp_path):
     assert "web_fetch" in names
     assert "watchlists_search_items" not in names
     assert "watchlists_get_item" not in names
+    assert "watchlists_get_briefing" not in names
+    assert {
+        "watchlists_list_sources",
+        "watchlists_list_collections",
+        "watchlists_list_briefings",
+        "watchlists_get_operations_status",
+        "watchlists_get_operation_status",
+    } <= names
     assert "todo_write" not in names
     assert TASK_TOOL_NAMES.isdisjoint(names)
 

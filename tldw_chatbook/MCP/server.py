@@ -10,8 +10,8 @@ through the Model Context Protocol.
 
 When `[mcp] expose_local_tools = true` is set in config.toml, the server also
 exposes workspace, web, and Watchlists agent tools (`fs_*`, `fs_patch`,
-`git_*`, `web_fetch`, `web_search`, `web_crawl`, `web_deep_search`,
-`watchlists_search_items`, and `watchlists_get_item`) to external MCP clients
+`git_*`, `web_fetch`, `web_search`, `web_crawl`, `web_deep_search`, and the
+five descriptor-approved Watchlists metadata/receipt reads) to external MCP clients
 -- `web_deep_search` is opt-in (see below). Invocation is routed through
 `Agents/local_tool_provider.LocalToolProvider`'s permission gate
 (`MCP/local_server_tools.py`) — never by wrapping the tool cores directly.

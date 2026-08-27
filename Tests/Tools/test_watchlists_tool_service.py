@@ -16,6 +16,7 @@ import pytest
 
 from tldw_chatbook.DB.Subscriptions_DB import SubscriptionsDB, SubscriptionsDBReadError
 from tldw_chatbook.Tools.watchlists_tool_service import WatchlistsToolService
+from Tests.DB.test_subscriptions_db_briefing_provenance_migration import _build_v1
 
 
 @pytest.fixture
@@ -71,6 +72,27 @@ def _add_to_collection(db: SubscriptionsDB, collection_id: int, source_id: int) 
         )
 
 
+def _briefing(
+    db: SubscriptionsDB,
+    collection_id: int,
+    status: str,
+    created_at: str,
+    *,
+    body: str | None = None,
+) -> int:
+    with db.transaction() as conn:
+        cursor = conn.execute(
+            """
+            INSERT INTO briefings (
+                watchlist_id, status, body_markdown, selection_mode, model_used,
+                item_count, featured_count, overflow_count, created_at, updated_at
+            ) VALUES (?, ?, ?, 'auto_featured', 'provider/model', 2, 1, 0, ?, ?)
+            """,
+            (collection_id, status, body, created_at, created_at),
+        )
+        return int(cursor.lastrowid)
+
+
 def _item(
     db: SubscriptionsDB,
     source_id: int,
@@ -122,12 +144,14 @@ def _service(
     db_or_resolver: SubscriptionsDB | Any,
     *,
     runtime_source_loader=lambda: "local",
+    operational_state_loader=None,
 ) -> WatchlistsToolService:
     resolver = db_or_resolver if callable(db_or_resolver) else lambda: db_or_resolver
     return WatchlistsToolService(
         db_resolver=resolver,
         runtime_source_loader=runtime_source_loader,
         clock=lambda: datetime(2026, 8, 14, 21, 30, tzinfo=UTC),
+        operational_state_loader=operational_state_loader,
     )
 
 
@@ -1533,13 +1557,300 @@ def test_no_match_is_successful_empty_data(db: SubscriptionsDB) -> None:
     assert result["next_cursor"] is None
 
 
+def test_list_sources_and_collections_are_bounded_redacted_and_filter_bound(
+    db: SubscriptionsDB,
+) -> None:
+    collection_id = _collection(db, "Threats")
+    for name in ("Alpha", "alpha", "Beta"):
+        source_id = _source(
+            db,
+            name,
+            url=f"https://user:pass@sources.test/{name}?token=secret#fragment",
+        )
+        _add_to_collection(db, collection_id, source_id)
+    service = _service(db)
+
+    first_raw = service.list_sources(
+        {"collection": f"local:watchlist:{collection_id}", "limit": 1}
+    )
+    first = _payload(first_raw)
+    second = _payload(
+        service.list_sources(
+            {
+                "collection": f"local:watchlist:{collection_id}",
+                "limit": 1,
+                "cursor": first["next_cursor"],
+            }
+        )
+    )
+    mismatched = _payload(
+        service.list_sources({"name": "alpha", "cursor": first["next_cursor"]})
+    )
+    collections = _payload(service.list_collections({"name": "threat", "limit": 1}))
+
+    assert first["status"] == second["status"] == "ok"
+    assert first["ordering"] == "casefolded_name_asc_name_asc_id_asc"
+    assert first["sources"][0]["id"].startswith("local:subscription:")
+    assert first["sources"][0]["url"] == "https://sources.test/Alpha"
+    assert "secret" not in first_raw
+    assert mismatched["status"] == "invalid_argument"
+    assert collections["collections"][0]["id"] == (
+        f"local:watchlist:{collection_id}"
+    )
+    assert collections["collections"][0]["source_count"] == 3
+    assert len(first_raw.encode("utf-8")) < 30 * 1024
+
+
+def test_source_metadata_page_packs_complete_rows_with_compact_continuation(
+    db: SubscriptionsDB,
+) -> None:
+    collections = [
+        _collection(db, f"Collection {index} " + "集" * 4_000)
+        for index in range(20)
+    ]
+    source_ids = []
+    for index in range(6):
+        source_id = _source(
+            db,
+            f"Source {index} " + "源" * 4_000,
+            url=f"https://sources.test/{index}/" + "segment/" * 500,
+        )
+        source_ids.append(source_id)
+        for collection_id in collections:
+            _add_to_collection(db, collection_id, source_id)
+
+    raw = _service(db).list_sources({"limit": 6})
+    result = _payload(raw)
+    continuation = _payload(
+        _service(db).list_sources({"limit": 6, "cursor": result["next_cursor"]})
+    )
+
+    assert len(raw.encode("utf-8")) < 30 * 1024
+    assert 0 < result["returned_count"] < 6
+    assert result["has_more"] is True
+    assert len(result["next_cursor"]) < 2_048
+    traversed = {
+        int(item["id"].rsplit(":", 1)[1])
+        for item in result["sources"] + continuation["sources"]
+    }
+    assert traversed <= set(source_ids)
+    assert len(traversed) == len(result["sources"] + continuation["sources"])
+
+
+def test_briefing_receipts_exclude_body_and_latest_keeps_newer_context(
+    db: SubscriptionsDB,
+) -> None:
+    collection_id = _collection(db, "Threats")
+    completed = _briefing(
+        db,
+        collection_id,
+        "complete",
+        "2026-08-20 10:00:00",
+        body="# Readable private briefing",
+    )
+    failed = _briefing(db, collection_id, "failed", "2026-08-21 10:00:00")
+
+    result = _payload(
+        _service(db).list_briefings(
+            {"collection": f"local:watchlist:{collection_id}", "limit": 10}
+        )
+    )
+
+    assert [row["id"] for row in result["briefings"]] == [
+        f"local:briefing:{failed}",
+        f"local:briefing:{completed}",
+    ]
+    assert all("body" not in row for row in result["briefings"])
+    assert result["latest_readable"]["id"] == f"local:briefing:{completed}"
+    assert [row["id"] for row in result["newer_operational_context"]] == [
+        f"local:briefing:{failed}"
+    ]
+
+
+def test_collection_scheduler_state_requires_both_gate_and_live_loop(
+    db: SubscriptionsDB,
+) -> None:
+    collection_id = _collection(db, "Scheduled")
+    with db.transaction() as conn:
+        conn.execute(
+            "UPDATE watchlists SET briefing_cadence_seconds = 3600 WHERE id = ?",
+            (collection_id,),
+        )
+    _briefing(db, collection_id, "complete", "2026-08-13 10:00:00", body="# Old")
+
+    stopped = _payload(
+        _service(
+            db,
+            operational_state_loader=lambda: {
+                "watchlist_checks_enabled": True,
+                "briefing_schedules_enabled": True,
+                "scheduler_running": False,
+                "queue_reload_state": "idle",
+            },
+        ).list_collections({})
+    )["collections"][0]
+    running = _payload(
+        _service(
+            db,
+            operational_state_loader=lambda: {
+                "watchlist_checks_enabled": True,
+                "briefing_schedules_enabled": True,
+                "scheduler_running": True,
+                "queue_reload_state": "acknowledged",
+            },
+        ).list_collections({})
+    )["collections"][0]
+
+    assert stopped["effective_scheduler_state"] == "scheduler_not_running"
+    assert stopped["next_eligible_at"] is None
+    assert running["effective_scheduler_state"] == "due_or_queued"
+    assert running["next_eligible_at"] == "2026-08-13T11:00:00Z"
+
+
+def test_get_briefing_reserves_body_budget_and_shapes_immutable_provenance(
+    db: SubscriptionsDB,
+) -> None:
+    source_id = _source(db, "Snapshot source")
+    collection_id = _collection(db, "Snapshot collection")
+    body = "Readable 🧪 briefing paragraph.\n" * 10_000
+    briefing_id = _briefing(
+        db, collection_id, "complete", "2026-08-20 10:00:00", body=body
+    )
+    with db.transaction() as conn:
+        conn.executemany(
+            """
+            INSERT INTO briefing_items (
+                briefing_id, item_id, selection_position, citation_position,
+                featured, cited, item_title, item_url, item_effective_date,
+                source_id, source_name, source_type, source_url, provenance_version
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            [
+                (
+                    briefing_id,
+                    10,
+                    0,
+                    0,
+                    1,
+                    1,
+                    "Selected evidence",
+                    "https://user:pass@items.test/story?token=x#frag",
+                    "2026-08-19 00:00:00",
+                    source_id,
+                    "Snapshot source",
+                    "rss",
+                    "https://user:pass@sources.test/feed?token=x#frag",
+                    2,
+                ),
+                (
+                    briefing_id,
+                    11,
+                    None,
+                    None,
+                    0,
+                    0,
+                    None,
+                    None,
+                    None,
+                    None,
+                    None,
+                    None,
+                    None,
+                    1,
+                ),
+            ],
+        )
+
+    raw = _service(db).get_briefing(
+        {"briefing_id": f"local:briefing:{briefing_id}"}
+    )
+    result = _payload(raw)
+    content = result["briefing"]["content"]
+
+    assert len(raw.encode("utf-8")) < 30 * 1024
+    assert content["content_is_generated"] is True
+    assert content["content_is_untrusted"] is True
+    assert content["content_truncated"] is True
+    assert content["body_markdown"].startswith("Readable 🧪 briefing")
+    assert len(content["body_markdown"].encode("utf-8")) >= 4_096
+    assert result["briefing"]["selected_items"][0]["id"] == (
+        "local:watchlist_item:10"
+    )
+    assert result["briefing"]["selected_items"][0]["url"] == (
+        "https://items.test/story"
+    )
+    legacy = result["briefing"]["selected_items"][1]
+    assert legacy["provenance_quality"] == "legacy_best_effort"
+    assert legacy["missing_reference"] is True
+    assert "token=x" not in raw
+
+
+def test_operation_status_accepts_only_exact_receipts_and_scrubs_errors(
+    db: SubscriptionsDB,
+) -> None:
+    source_id = _source(db, "Operations")
+    collection_id = _collection(db, "Threats")
+    with db.transaction() as conn:
+        run_id = int(
+            conn.execute(
+                """
+                INSERT INTO local_watchlist_runs (
+                    source_id, status, error_msg, created_at, updated_at
+                ) VALUES (?, 'failed', '/private/db token=secret', ?, ?)
+                """,
+                (source_id, "2026-08-20 10:00:00", "2026-08-20 10:00:00"),
+            ).lastrowid
+        )
+    briefing_id = _briefing(db, collection_id, "generating", "2026-08-21 10:00:00")
+    service = _service(db)
+
+    overview = _payload(service.get_operations_status({"limit": 1}))
+    continuation = _payload(
+        service.get_operations_status(
+            {"limit": 1, "cursor": overview["next_cursor"]}
+        )
+    )
+    mismatched = _payload(
+        service.get_operations_status(
+            {"source": source_id, "cursor": overview["next_cursor"]}
+        )
+    )
+    run_raw = service.get_operation_status(
+        {"operation_id": f"local:watchlist_run:{run_id}"}
+    )
+    run = _payload(run_raw)
+    briefing = _payload(
+        service.get_operation_status(
+            {"operation_id": f"local:briefing:{briefing_id}"}
+        )
+    )
+    invalid = _payload(service.get_operation_status({"operation_id": str(run_id)}))
+
+    assert overview["status"] == "ok"
+    assert overview["has_more"] is True
+    assert continuation["has_more"] is False
+    assert {row["id"] for row in overview["operations"] + continuation["operations"]} == {
+        f"local:watchlist_run:{run_id}",
+        f"local:briefing:{briefing_id}",
+    }
+    assert mismatched["status"] == "invalid_argument"
+    assert run["operation"]["state"] == "needs_attention"
+    assert run["operation"]["retry_capable"] is True
+    assert run["operation"]["destination"] == "runs"
+    assert "secret" not in run_raw and "/private" not in run_raw
+    assert briefing["operation"]["state"] == "running"
+    assert briefing["operation"]["destination"] == "artifacts"
+    assert invalid["status"] == "invalid_argument"
+
+
 def test_missing_and_transient_database_dependencies_are_structured_and_scrubbed(
     tmp_path: Path,
 ) -> None:
     missing = _payload(_service(lambda: None).search_items({}))
 
     legacy_path = tmp_path / "legacy.db"
-    sqlite3.connect(legacy_path).close()
+    _build_v1(legacy_path)
+    legacy_before = legacy_path.read_bytes()
     legacy = SubscriptionsDB(legacy_path, read_only=True)
     try:
         pre_migration = _payload(_service(lambda: legacy).search_items({}))
@@ -1561,6 +1872,7 @@ def test_missing_and_transient_database_dependencies_are_structured_and_scrubbed
     }
     assert missing == expected_permanent
     assert pre_migration == expected_permanent
+    assert legacy_path.read_bytes() == legacy_before
     assert transient == {
         "status": "feature_unavailable",
         "retryable": True,

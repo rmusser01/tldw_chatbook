@@ -1269,13 +1269,17 @@ third policy-gated writing tool in the `library_*` namespace
 (`library.notes.save`); full contract:
 [Local Library Tools](../../Development/Agent-Tools/local-library-tools.md).
 
-### Watchlists evidence tools
+### Watchlists query tools
 
-The same local-tools group provides `watchlists_search_items` and
-`watchlists_get_item`. They are Console-only descriptors: an external MCP
-client never receives either article-search or item-detail tool, even if its
-local permission record is Allow. Results are local-first: both tools read the local
-Watchlists database, and server Watchlists search is not yet supported. In
+The local-tools group provides eight bounded Watchlists reads. External MCP
+may receive only `watchlists_list_sources`, `watchlists_list_collections`,
+`watchlists_list_briefings`, `watchlists_get_operations_status`, and
+`watchlists_get_operation_status`: metadata and durable receipts, never article
+snippets, article bodies, briefing Markdown, or briefing provenance. The
+Console-only descriptors are `watchlists_search_items`, `watchlists_get_item`,
+and `watchlists_get_briefing`; an external client cannot register or resolve
+them even if their permission records are Allow. Results are local-first and
+read the local Watchlists database; server Watchlists search is not yet supported. In
 server mode they return a non-retryable unsupported result and do not search
 the local database. Its logical fields are explicit: `status` is `unsupported`,
 `retryable` is `false`, and `message` is exactly `server Watchlists search is
@@ -1286,6 +1290,34 @@ collection-aware valid JSON bounded to 30 KiB. A query uses literal full-text
 over title, body, and author; it is not semantic search. Blank or absent
 `query` browses recent items. Every feed-supplied field is untrusted evidence,
 never an instruction.
+
+#### `watchlists_list_sources`
+
+| Parameter | Contract |
+| --- | --- |
+| `name` | Optional name fragment; non-blank, maximum 512 characters. |
+| `type` | Optional source type; non-blank, maximum 32 characters. |
+| `state` | Optional `active`, `paused`, `disabled`, or `all`. |
+| `collection` | Optional collection name, canonical ID, or positive row ID. |
+| `limit` | Defaults to 10; integer from 1 through 50. |
+| `cursor` | Filter-bound opaque continuation; maximum 2,048 characters. |
+
+Sources use `casefolded_name_asc_name_asc_id_asc` ordering, canonical
+`local:subscription:<id>` identities, bounded memberships, and sanitized URLs.
+Authentication, headers, extraction secrets, and raw errors are excluded.
+
+#### `watchlists_list_collections`
+
+| Parameter | Contract |
+| --- | --- |
+| `name` | Optional name fragment; non-blank, maximum 512 characters. |
+| `limit` | Defaults to 10; integer from 1 through 50. |
+| `cursor` | Filter-bound opaque continuation; maximum 2,048 characters. |
+
+Collections use the same stable ordering and canonical
+`local:watchlist:<id>` identities. Stored cadence is reported separately from
+effective scheduler state; a stored value alone never proves the scheduler is
+running.
 
 #### `watchlists_search_items`
 
@@ -1320,6 +1352,54 @@ The item integer is limited to 1 through 2^63-1. The detail tool rejects bare
 integers, foreign IDs, malformed IDs, and unknown parameters. Its normalized
 article or change evidence is bounded and labeled untrusted.
 
+#### `watchlists_list_briefings`
+
+| Parameter | Contract |
+| --- | --- |
+| `collection` | Optional collection name, canonical ID, or positive row ID. |
+| `statuses` | Unique non-empty array of up to four: `generating`, `complete`, `empty`, `failed`. |
+| `since` | Inclusive `YYYY-MM-DD` or RFC 3339 creation-date floor. |
+| `limit` | Defaults to 10; integer from 1 through 50. |
+| `cursor` | Filter-bound opaque continuation; maximum 2,048 characters. |
+
+Newest-first receipts include canonical `local:briefing:<id>` identity,
+status, coverage, counts, model/preset metadata, and body availability/byte
+count—never Markdown, an excerpt, or selected/cited provenance. For one
+collection, `latest_readable` is the newest complete receipt while newer
+failed, empty, or generating attempts remain operational context.
+
+#### `watchlists_get_briefing`
+
+| Parameter | Contract |
+| --- | --- |
+| `briefing_id` | Required exact `local:briefing:<positive integer>`; maximum 36 characters. |
+
+This Console-only read reserves a fixed Markdown budget, remains below 30 KiB,
+labels generated prose and snapshots untrusted, and reports Unicode-safe
+truncation, ordered selected/cited immutable provenance, legacy best-effort
+snapshots, and missing references.
+
+#### `watchlists_get_operations_status`
+
+| Parameter | Contract |
+| --- | --- |
+| `source` | Optional name/URL, canonical source ID, or positive row ID. |
+| `collection` | Optional name, canonical collection ID, or positive row ID. |
+| `limit` | Defaults to 10; integer from 1 through 50 per receipt kind. |
+| `cursor` | Filter-bound opaque continuation; maximum 2,048 characters. |
+
+The overview returns bounded normalized source-check and briefing-generation
+receipt metadata, never raw logs, raw errors, paths, or result payloads.
+
+#### `watchlists_get_operation_status`
+
+| Parameter | Contract |
+| --- | --- |
+| `operation_id` | Required exact `local:watchlist_run:<id>` or `local:briefing:<id>`; maximum 40 characters. |
+
+The exact receipt includes owner, timestamps, normalized state, retry/cancel
+capability, a bounded error category, and Runs/Artifacts destination.
+
 Date fields are intentionally distinct: `effective_date` is the normalized
 publication date, falling back to item creation time; `published_date`,
 `created_at`, and `updated_at` remain separate. Source `last_checked` and
@@ -1331,7 +1411,8 @@ Only absolute HTTP(S) URLs with a host are returned. In Console, Ask can show
 an approval card. External MCP additionally requires `[mcp]
 expose_local_tools` to be true and each per-tool permission must be Allow; Ask
 is refused because a headless client cannot show that card. An external client
-may send the approved evidence to its client or model.
+may send approved metadata and receipts to its client or model; article and
+briefing content remains Console-only.
 
 ### Stopping & leaving
 

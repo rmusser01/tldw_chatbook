@@ -384,8 +384,14 @@ def test_catalog_lists_default_specs_with_local_ids(tmp_path):
         "local:web_fetch",
         "local:web_search",
         "local:web_crawl",
+        "local:watchlists_list_sources",
+        "local:watchlists_list_collections",
         "local:watchlists_search_items",
         "local:watchlists_get_item",
+        "local:watchlists_list_briefings",
+        "local:watchlists_get_briefing",
+        "local:watchlists_get_operations_status",
+        "local:watchlists_get_operation_status",
     ]
     assert entries[0].name == "fs_list" and entries[0].source == "local"
     schema = p.load_schema("local:fs_list")
@@ -423,7 +429,11 @@ def test_catalog_exposure_and_effects_are_explicit_and_queryable(tmp_path):
     assert {
         spec.name
         for spec in provider.specs_for_exposure(LocalToolExposure.CONSOLE_ONLY)
-    } == {"watchlists_search_items", "watchlists_get_item"}
+    } == {
+        "watchlists_search_items",
+        "watchlists_get_item",
+        "watchlists_get_briefing",
+    }
     assert provider.approval_effects_for("fs_read") == (
         LocalApprovalEffect.PRIVATE_READ,
     )
@@ -495,8 +505,14 @@ def test_hub_tools_lists_every_spec_under_the_local_server_key(tmp_path):
         "web_fetch",
         "web_search",
         "web_crawl",
+        "watchlists_list_sources",
+        "watchlists_list_collections",
         "watchlists_search_items",
         "watchlists_get_item",
+        "watchlists_list_briefings",
+        "watchlists_get_briefing",
+        "watchlists_get_operations_status",
+        "watchlists_get_operation_status",
     ]
     for hub in hubs:
         assert hub.server_key == "local:__local__"
@@ -528,6 +544,30 @@ class RecordingWatchlistsService:
         self.calls.append(("get_item", dict(arguments)))
         return self.result
 
+    def list_sources(self, arguments: object) -> str:
+        self.calls.append(("list_sources", dict(arguments)))
+        return self.result
+
+    def list_collections(self, arguments: object) -> str:
+        self.calls.append(("list_collections", dict(arguments)))
+        return self.result
+
+    def list_briefings(self, arguments: object) -> str:
+        self.calls.append(("list_briefings", dict(arguments)))
+        return self.result
+
+    def get_briefing(self, arguments: object) -> str:
+        self.calls.append(("get_briefing", dict(arguments)))
+        return self.result
+
+    def get_operations_status(self, arguments: object) -> str:
+        self.calls.append(("get_operations_status", dict(arguments)))
+        return self.result
+
+    def get_operation_status(self, arguments: object) -> str:
+        self.calls.append(("get_operation_status", dict(arguments)))
+        return self.result
+
 
 def test_watchlists_catalog_has_exact_read_only_schemas_and_trust_warnings(tmp_path):
     provider = make_provider(root=tmp_path)
@@ -537,9 +577,37 @@ def test_watchlists_catalog_has_exact_read_only_schemas_and_trust_warnings(tmp_p
         if entry.id.startswith("local:watchlists_")
     }
     assert set(watchlists_entries) == {
+        "local:watchlists_list_sources",
+        "local:watchlists_list_collections",
         "local:watchlists_search_items",
         "local:watchlists_get_item",
+        "local:watchlists_list_briefings",
+        "local:watchlists_get_briefing",
+        "local:watchlists_get_operations_status",
+        "local:watchlists_get_operation_status",
     }
+
+    shared_names = {
+        "watchlists_list_sources",
+        "watchlists_list_collections",
+        "watchlists_list_briefings",
+        "watchlists_get_operations_status",
+        "watchlists_get_operation_status",
+    }
+    externally_exposed = {
+        spec.name
+        for spec in provider.specs_for_exposure(
+            LocalToolExposure.CONSOLE_AND_EXTERNAL_MCP
+        )
+    }
+    for name in shared_names:
+        schema = provider.load_schema(name)
+        assert schema.parameters["additionalProperties"] is False
+        assert provider.approval_effects_for(name) == (
+            LocalApprovalEffect.PRIVATE_READ,
+        )
+        assert name in externally_exposed
+    assert "watchlists_get_briefing" not in externally_exposed
 
     search = provider.load_schema("local:watchlists_search_items")
     assert search.parameters == {
@@ -2757,8 +2825,14 @@ def test_web_deep_search_pinned_catalog_list_unchanged_by_default(tmp_path):
         "web_fetch",
         "web_search",
         "web_crawl",
+        "watchlists_list_sources",
+        "watchlists_list_collections",
         "watchlists_search_items",
         "watchlists_get_item",
+        "watchlists_list_briefings",
+        "watchlists_get_briefing",
+        "watchlists_get_operations_status",
+        "watchlists_get_operation_status",
     ]
 
 

@@ -1075,17 +1075,17 @@ async def test_real_watchlists_provider_preserves_structured_domain_outcomes(
     _pin_runtime_source(monkeypatch, lambda: source["value"])
     store = MCPPermissionStore(tmp_path / "mcp_permissions.json")
     provider = build_server_local_provider(workspace, store)
-    _grant_local_tool(store, provider, "watchlists_search_items")
-    _grant_local_tool(store, provider, "watchlists_get_item")
+    _grant_local_tool(store, provider, "watchlists_list_sources")
+    _grant_local_tool(store, provider, "watchlists_get_operation_status")
     runtime = _runtime_with_builtins()
     runtime.register_local_tools(_local_agent_tool_registrations(provider))
     runtime.finalize()
 
     calls = [
-        ("watchlists_search_items", {"limit": True}, "invalid_argument"),
+        ("watchlists_list_sources", {"limit": True}, "invalid_argument"),
         (
-            "watchlists_get_item",
-            {"item_id": "local:watchlist_item:999"},
+            "watchlists_get_operation_status",
+            {"operation_id": "local:briefing:999"},
             "not_found",
         ),
     ]
@@ -1097,15 +1097,15 @@ async def test_real_watchlists_provider_preserves_structured_domain_outcomes(
 
     source["value"] = "server"
     arguments = {}
-    expected = provider.invoke("local:watchlists_search_items", arguments)
-    actual = await runtime.call_tool("watchlists_search_items", arguments, _context())
+    expected = provider.invoke("local:watchlists_list_sources", arguments)
+    actual = await runtime.call_tool("watchlists_list_sources", arguments, _context())
     assert actual == expected.content
     assert json.loads(actual)["status"] == "unsupported"
 
     source["value"] = "local"
     missing_store = MCPPermissionStore(tmp_path / "missing-permissions.json")
     missing_provider = build_server_local_provider(workspace, missing_store)
-    _grant_local_tool(missing_store, missing_provider, "watchlists_search_items")
+    _grant_local_tool(missing_store, missing_provider, "watchlists_list_sources")
     monkeypatch.setattr(
         local_server_tools,
         "get_subscriptions_db_path",
@@ -1116,8 +1116,8 @@ async def test_real_watchlists_provider_preserves_structured_domain_outcomes(
         _local_agent_tool_registrations(missing_provider)
     )
     missing_runtime.finalize()
-    expected = missing_provider.invoke("local:watchlists_search_items", {})
-    actual = await missing_runtime.call_tool("watchlists_search_items", {}, _context())
+    expected = missing_provider.invoke("local:watchlists_list_sources", {})
+    actual = await missing_runtime.call_tool("watchlists_list_sources", {}, _context())
     assert actual == expected.content
     assert json.loads(actual)["status"] == "feature_unavailable"
 
@@ -1143,14 +1143,14 @@ async def test_real_watchlists_gateway_permission_failures_precede_storage(
     runtime.finalize()
 
     with pytest.raises(GatewayToolExecutionError) as ask_error:
-        await runtime.call_tool("watchlists_search_items", {}, _context())
+        await runtime.call_tool("watchlists_list_sources", {}, _context())
     assert ask_error.value.reason_code == "operator_approval_required"
     assert path_calls == 0
 
-    hub = provider.hub_tool_for("watchlists_search_items")
+    hub = provider.hub_tool_for("watchlists_list_sources")
     store.set_tool_state(hub.server_key, hub.name, "deny")
     with pytest.raises(GatewayToolExecutionError) as deny_error:
-        await runtime.call_tool("watchlists_search_items", {}, _context())
+        await runtime.call_tool("watchlists_list_sources", {}, _context())
     assert deny_error.value.reason_code == "tool_permission_denied"
     assert path_calls == 0
 
@@ -1173,7 +1173,7 @@ async def test_real_watchlists_provider_scrubs_unexpected_failures(
     monkeypatch.setattr(local_server_tools, "SubscriptionsDB", fail_database)
     store = MCPPermissionStore(tmp_path / "mcp_permissions.json")
     provider = build_server_local_provider(workspace, store)
-    _grant_local_tool(store, provider, "watchlists_search_items")
+    _grant_local_tool(store, provider, "watchlists_list_sources")
     runtime = _runtime_with_builtins()
     runtime.register_local_tools(_local_agent_tool_registrations(provider))
     runtime.finalize()
@@ -1182,7 +1182,7 @@ async def test_real_watchlists_provider_scrubs_unexpected_failures(
 
     try:
         with pytest.raises(GatewayToolExecutionError) as exc_info:
-            await runtime.call_tool("watchlists_search_items", {}, _context())
+            await runtime.call_tool("watchlists_list_sources", {}, _context())
     finally:
         logger.remove(sink_id)
 
@@ -1223,8 +1223,8 @@ async def test_real_watchlists_database_resolution_runs_off_event_loop(
                 entered.set()
                 assert release.wait(timeout=2)
 
-        def search_items_for_agent(self, **_kwargs):
-            return {"items": [], "has_more": False, "snapshot_max_item_id": 0}
+        def list_sources_for_agent(self, **_kwargs):
+            return {"items": [], "has_more": False}
 
         def get_source_collection_memberships(self, _source_ids):
             return {}
@@ -1244,7 +1244,7 @@ async def test_real_watchlists_database_resolution_runs_off_event_loop(
     )
     store = MCPPermissionStore(tmp_path / "mcp_permissions.json")
     provider = build_server_local_provider(workspace, store)
-    _grant_local_tool(store, provider, "watchlists_search_items")
+    _grant_local_tool(store, provider, "watchlists_list_sources")
     runtime = _runtime_with_builtins()
     runtime.register_local_tools(_local_agent_tool_registrations(provider))
     runtime.finalize()
@@ -1258,7 +1258,7 @@ async def test_real_watchlists_database_resolution_runs_off_event_loop(
 
     heartbeat_task = asyncio.create_task(beat())
     call_task = asyncio.create_task(
-        runtime.call_tool("watchlists_search_items", {}, _context())
+        runtime.call_tool("watchlists_list_sources", {}, _context())
     )
     try:
         assert await asyncio.to_thread(entered.wait, 1)

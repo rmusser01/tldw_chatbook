@@ -45,6 +45,7 @@ from tldw_chatbook.Agents.agent_models import ToolResult
 from tldw_chatbook.Agents.local_tool_provider import (
     LocalToolExposure,
     LocalToolProvider,
+    _default_specs,
 )
 from tldw_chatbook.config import get_subscriptions_db_path
 from tldw_chatbook.DB.Subscriptions_DB import (
@@ -167,13 +168,20 @@ def build_server_local_provider(
         # violated the runtime-policy ownership boundary.
         runtime_source_loader=load_default_runtime_source_state,
     )
+    external_specs = [
+        spec
+        for spec in _default_specs(
+            Path(workspace_root).resolve(), watchlists_service=watchlists_service
+        )
+        if spec.exposure is LocalToolExposure.CONSOLE_AND_EXTERNAL_MCP
+    ]
     return LocalToolProvider(
         workspace_root=Path(workspace_root).resolve(),
+        specs=external_specs,
         resolve_state=_resolve_state,
         kill_switch=_kill_switch,
         approval_callback=None,
         no_callback_refusal=EXTERNAL_NO_CALLBACK_REFUSAL,
-        watchlists_service=watchlists_service,
     )
 
 
