@@ -31,6 +31,10 @@ Task 1 code-quality review: APPROVED at `406c78bec`. The reviewer found no corre
 privacy, preflight-ordering, compatibility, maintainability, test-quality, or
 over-engineering issue. The same 102 focused tests, scoped Ruff, and diff check passed.
 
+Task 2: lock human-readable transcript/text/document and diagnostic trajectory output
+to visible answers, then prove derivative privacy through real FTS/search, title,
+summary, usage, speech, answer-copy, logging, and durable-owner controls.
+
 Task 1 RED (2026-08-26): `Tests/Chat/test_thinking_conversation_exchange.py`
 failed 11/11 and `Tests/Chatbooks/test_chatbook_thinking_round_trip.py` failed
 10/10 before production changes. Failures showed absent policy/thinking projections,
