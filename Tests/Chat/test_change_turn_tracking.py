@@ -3600,6 +3600,265 @@ def test_successor_b_waits_for_an_already_started_fresh_close(
     assert old_rows[0]["end_sha"] == successor.baselines[str(root.resolve())]
 
 
+@pytest.mark.parametrize("close_failure", ["exception", "tracking_error"])
+def test_successor_b_rejects_a_completed_but_failed_fresh_close(
+    tmp_path, root, tracker, monkeypatch, close_failure
+):
+    gateway = _SideEffectGateway([["successor still replies"]])
+    bridge, db, store, session, aid = _bridge_with(tmp_path, gateway, tracker)
+    old_run_id = db.create_run(conversation_id="conv-1", agent_kind="primary")
+    old_turn = tracker.begin_turn([root])
+    old_turn.await_baseline()
+    tracker.end_turn(old_turn)
+    follow_on = tracker.continuation(old_turn)
+    assert follow_on is not None
+
+    close_done = _WaitRecordingEvent()
+    window = _PostTurnChangeWindow(
+        run_id=old_run_id,
+        session_id=session.id,
+        handle=follow_on,
+        close_done=close_done,
+    )
+    bridge._post_turn_change_windows["conv-1"] = window
+    real_begin = tracker.begin_turn
+    real_end = tracker.end_turn
+    close_owned = threading.Event()
+    release_close = threading.Event()
+    successor_b_called = threading.Event()
+    successor_handles: list[object] = []
+
+    def fail_fresh_close(handle, *args, **kwargs):
+        if handle is not window.handle:
+            return real_end(handle, *args, **kwargs)
+        close_owned.set()
+        assert release_close.wait(5), "failed close was never released"
+        if close_failure == "exception":
+            raise RuntimeError("injected fresh-close failure")
+        return [
+            TurnChangeRecord(
+                root=str(root.resolve()),
+                tracking_error="injected fresh-close tracking failure",
+            )
+        ]
+
+    def record_successor_b(roots, touched_paths=()):
+        successor_b_called.set()
+        handle = real_begin(roots, touched_paths=touched_paths)
+        successor_handles.append(handle)
+        return handle
+
+    monkeypatch.setattr(tracker, "end_turn", fail_fresh_close)
+    monkeypatch.setattr(tracker, "begin_turn", record_successor_b)
+    owner_results: list[bool] = []
+    results: list[object] = []
+    failures: list[BaseException] = []
+
+    def close_old_window() -> None:
+        try:
+            owner_results.append(
+                bridge._close_post_turn_change_window("conv-1")
+            )
+        except BaseException as exc:  # noqa: BLE001 -- asserted below
+            failures.append(exc)
+
+    def run_successor() -> None:
+        try:
+            results.append(_run(bridge, session, aid, root))
+        except BaseException as exc:  # noqa: BLE001 -- asserted below
+            failures.append(exc)
+
+    closer = threading.Thread(target=close_old_window, name="failed-fresh-owner")
+    successor = threading.Thread(target=run_successor, name="failed-fresh-b")
+    closer.start()
+    try:
+        assert close_owned.wait(5), "fresh close never reached its failure seam"
+        successor.start()
+        assert close_done.wait_started.wait(5), (
+            "successor B never waited on the closing window"
+        )
+        assert not successor_b_called.is_set(), (
+            "successor B started before close completion"
+        )
+    finally:
+        release_close.set()
+        closer.join(10)
+        successor.join(10)
+
+    assert not closer.is_alive()
+    assert not successor.is_alive()
+    for handle in successor_handles:
+        handle.await_baseline()
+    assert failures == []
+    assert owner_results == [False]
+    assert results[0][1].status == "done"
+    assert close_done.is_set()
+    assert not successor_b_called.is_set()
+    assert successor_handles == []
+    assert getattr(window, "close_succeeded", None) is False
+
+
+def test_successor_b_freezes_paths_atomically_with_older_publication(
+    tmp_path, root, tracker, monkeypatch
+):
+    target = root / "published-at-b-boundary.txt"
+    (root / ".gitignore").write_text(f"{target.name}\n")
+    gateway = _BlockingParentGateway()
+    bridge, db, store, session, aid = _bridge_with(tmp_path, gateway, tracker)
+    old_run_id = db.create_run(conversation_id="conv-1", agent_kind="primary")
+    old_turn = tracker.begin_turn([root])
+    old_turn.await_baseline()
+    tracker.end_turn(old_turn)
+    follow_on = tracker.continuation(old_turn)
+    assert follow_on is not None
+    state = _ChildChangeState(owner_key="older-owner")
+    window = _PostTurnChangeWindow(
+        run_id=old_run_id,
+        session_id=session.id,
+        handle=follow_on,
+        child_states=(state,),
+    )
+    bridge._post_turn_change_windows["conv-1"] = window
+    bridge._child_change_states["conv-1"] = {state.owner_key: state}
+
+    class OwnerRecordingLock:
+        def __init__(self) -> None:
+            self._lock = threading.Lock()
+            self._meta_lock = threading.Lock()
+            self._owner: str | None = None
+            self.publisher_attempted = threading.Event()
+
+        def acquire(self, blocking=True, timeout=-1):
+            if threading.current_thread().name == "older-path-publisher":
+                self.publisher_attempted.set()
+            if timeout == -1:
+                acquired = self._lock.acquire(blocking)
+            else:
+                acquired = self._lock.acquire(blocking, timeout)
+            if acquired:
+                with self._meta_lock:
+                    self._owner = threading.current_thread().name
+            return acquired
+
+        def release(self) -> None:
+            with self._meta_lock:
+                self._owner = None
+            self._lock.release()
+
+        def __enter__(self):
+            self.acquire()
+            return self
+
+        def __exit__(self, exc_type, exc, tb) -> None:
+            self.release()
+
+        @property
+        def owner(self) -> str | None:
+            with self._meta_lock:
+                return self._owner
+
+    boundary_lock = OwnerRecordingLock()
+    bridge._change_window_lock = boundary_lock
+    real_begin = tracker.begin_turn
+    begin_entered = threading.Event()
+    release_begin = threading.Event()
+    publication_done = threading.Event()
+    order_lock = threading.Lock()
+    order: list[str] = []
+    captured: dict[str, object] = {}
+
+    def wedge_successor_b(roots, touched_paths=()):
+        captured["paths"] = tuple(touched_paths)
+        begin_entered.set()
+        assert release_begin.wait(5), "successor B was never released"
+        handle = real_begin(roots, touched_paths=touched_paths)
+        captured["handle"] = handle
+        with order_lock:
+            order.append("begin")
+        return handle
+
+    def publish_older_path() -> None:
+        with bridge._change_window_lock:
+            with order_lock:
+                order.append("publish")
+            target.write_text("older write at successor boundary\n")
+            state.touched_paths.add(str(target))
+        publication_done.set()
+
+    monkeypatch.setattr(tracker, "begin_turn", wedge_successor_b)
+    results: list[object] = []
+    failures: list[BaseException] = []
+
+    def run_successor() -> None:
+        try:
+            results.append(_run(bridge, session, aid, root))
+        except BaseException as exc:  # noqa: BLE001 -- asserted below
+            failures.append(exc)
+
+    successor = threading.Thread(target=run_successor, name="successor-freeze")
+    publisher = threading.Thread(
+        target=publish_older_path,
+        name="older-path-publisher",
+    )
+    successor.start()
+    assert begin_entered.wait(5), "successor never reached B"
+    publisher.start()
+    try:
+        assert boundary_lock.publisher_attempted.wait(5), (
+            "older publisher never attempted the boundary lock"
+        )
+        owner_during_begin = boundary_lock.owner
+        publication_completed_before_kick = publication_done.is_set()
+        if owner_during_begin != "successor-freeze":
+            assert publication_done.wait(5), (
+                "pre-B publisher did not complete across the open gap"
+            )
+            publication_completed_before_kick = True
+    finally:
+        release_begin.set()
+        assert publication_done.wait(5), "older publication never completed"
+        assert gateway.entered.wait(5), "successor never entered its provider"
+        gateway.release.set()
+        publisher.join(10)
+        successor.join(10)
+
+    assert not publisher.is_alive()
+    assert not successor.is_alive()
+    assert failures == []
+    run_id, outcome = results[0]
+    assert outcome.status == "done"
+    assert owner_during_begin == "successor-freeze"
+    assert not publication_completed_before_kick
+    assert order == ["begin", "publish"]
+    assert str(target) not in captured["paths"]
+    successor_handle = captured["handle"]
+    successor_handle.await_baseline()
+    repo = tracker.service.repo_for_root(root)
+    baseline = successor_handle.baselines[str(root.resolve())]
+    assert repo.file_bytes(baseline, target.name) is None
+    old_rows = db.change_snapshots_for_run(old_run_id)
+    assert not any(
+        target.name
+        in [
+            item.path
+            for item in repo.changed_files(row["baseline_sha"], row["end_sha"])
+        ]
+        for row in old_rows
+        if row["baseline_sha"] and row["end_sha"]
+    )
+    successor_rows = db.change_snapshots_for_run(run_id)
+    assert sum(
+        target.name
+        in [
+            item.path
+            for item in repo.changed_files(row["baseline_sha"], row["end_sha"])
+        ]
+        for row in successor_rows
+        if row["baseline_sha"] and row["end_sha"]
+    ) == 1
+    assert window.close_done.is_set()
+
+
 def test_successor_e_waits_for_close_time_index_priming(
     tmp_path, root, tracker, monkeypatch
 ):
@@ -4143,13 +4402,21 @@ def test_claim_and_close_failures_release_waiters_without_breaking_runs(
             errors.append(exc)
 
     def close_claimed_window() -> None:
+        claim_close_started.set()
         try:
-            bridge._close_post_turn_change_window("conv-1")
+            claim_close_results.append(
+                bridge._close_post_turn_change_window("conv-1")
+            )
         except BaseException as exc:  # noqa: BLE001 -- asserted on test thread
             errors.append(exc)
+        finally:
+            claim_close_finished.set()
 
     successor_thread = threading.Thread(target=run_successor, name="failed-claim")
     claim_closer = threading.Thread(target=close_claimed_window, name="claim-waiter")
+    claim_close_started = threading.Event()
+    claim_close_finished = threading.Event()
+    claim_close_results: list[bool] = []
     successor_thread.start()
     try:
         assert begin_entered.wait(5), "successor never reached injected failure"
@@ -4158,8 +4425,9 @@ def test_claim_and_close_failures_release_waiters_without_breaking_runs(
         claim_ready = _WaitRecordingEvent()
         claim.ready = claim_ready
         claim_closer.start()
-        assert claim_ready.wait_started.wait(5), (
-            "window closer never waited for claim attachment"
+        assert claim_close_started.wait(5), "window closer never started"
+        assert not claim_close_finished.is_set(), (
+            "window closer crossed the atomic claim attachment"
         )
     finally:
         release_begin_failure.set()
@@ -4170,6 +4438,7 @@ def test_claim_and_close_failures_release_waiters_without_breaking_runs(
     assert not claim_closer.is_alive()
     assert errors == []
     assert results[0][1].status == "done"
+    assert claim_close_results == [False]
     assert claim.failed
     assert claim_ready.is_set()
     assert claim_close_done.is_set()

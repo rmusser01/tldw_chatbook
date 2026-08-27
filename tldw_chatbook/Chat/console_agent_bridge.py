@@ -1712,6 +1712,7 @@ class _PostTurnChangeWindow:
         child_states: Mutable WRITE-path states retained by this window.
         successor_claim: Pre-B handoff to the next turn, when one starts.
         closing: Whether one caller already owns close I/O.
+        close_succeeded: Published close outcome; ``None`` until completion.
         close_done: Releases later close callers after the owner finishes.
     """
 
@@ -1721,6 +1722,7 @@ class _PostTurnChangeWindow:
     child_states: tuple[_ChildChangeState, ...] = ()
     successor_claim: _SuccessorBoundaryClaim | None = None
     closing: bool = False
+    close_succeeded: bool | None = None
     close_done: threading.Event = field(default_factory=threading.Event)
 
 
@@ -4596,71 +4598,91 @@ class ConsoleAgentBridge:
         # implying sole authorship.
         concurrent_subagent = self._live_child_count(conversation_id) > 0
         if self._change_tracker is not None and change_roots:
-            close_done = None
-            begin_paths: list[str] = []
-            with self._change_window_lock:
-                inherited_states = {
-                    state.owner_key: state
-                    for state in self._child_change_states.get(
-                        conversation_id, {}
-                    ).values()
-                }
-                prior_window = self._post_turn_change_windows.get(conversation_id)
-                if prior_window is not None:
-                    if prior_window.closing:
+            boundary_failed = False
+            while True:
+                close_window = None
+                close_done = None
+                claim_to_release = None
+                begin_failed = False
+                with self._change_window_lock:
+                    prior_window = self._post_turn_change_windows.get(
+                        conversation_id
+                    )
+                    if prior_window is not None and prior_window.closing:
+                        close_window = prior_window
                         close_done = prior_window.close_done
                     else:
-                        successor_claim = _SuccessorBoundaryClaim()
-                        prior_window.successor_claim = successor_claim
-                        inherited_states.update(
+                        inherited_states = {
+                            state.owner_key: state
+                            for state in self._child_change_states.get(
+                                conversation_id, {}
+                            ).values()
+                        }
+                        successor_claim = None
+                        if prior_window is not None:
+                            successor_claim = _SuccessorBoundaryClaim()
+                            prior_window.successor_claim = successor_claim
+                            inherited_states.update(
+                                {
+                                    state.owner_key: state
+                                    for state in prior_window.child_states
+                                }
+                            )
+                        inherited_child_states_at_b = tuple(
+                            inherited_states.values()
+                        )
+                        begin_paths = sorted(
                             {
-                                state.owner_key: state
-                                for state in prior_window.child_states
+                                path
+                                for state in inherited_child_states_at_b
+                                for path in state.touched_paths
                             }
                         )
-                inherited_child_states_at_b = tuple(inherited_states.values())
-                begin_paths = sorted(
-                    {
-                        path
-                        for state in inherited_child_states_at_b
-                        for path in state.touched_paths
-                    }
-                )
-
-            boundary_failed = False
-            if close_done is not None:
-                try:
-                    boundary_failed = not close_done.wait(
-                        _CHANGE_BOUNDARY_WAIT_SECONDS
-                    )
-                except Exception:  # noqa: BLE001 -- tracking is best effort
-                    boundary_failed = True
-                if boundary_failed:
-                    logger.warning(
-                        "change_review: prior survivor close did not finish; "
-                        "successor turn untracked"
-                    )
-
-            if not boundary_failed:
-                try:
-                    change_handle = self._change_tracker.begin_turn(
-                        change_roots,
-                        touched_paths=begin_paths,
-                    )
-                except Exception:  # noqa: BLE001 -- tracking must never block a run
-                    logger.opt(exception=True).warning(
-                        "change_review: begin_turn failed; turn untracked"
-                    )
-                finally:
-                    if successor_claim is not None:
-                        with self._change_window_lock:
+                        try:
+                            change_handle = self._change_tracker.begin_turn(
+                                change_roots,
+                                touched_paths=begin_paths,
+                            )
+                        except Exception:  # noqa: BLE001 -- tracking is best effort
+                            change_handle = None
+                            begin_failed = True
+                        if successor_claim is not None:
                             if successor_claim.failed:
                                 change_handle = None
                                 successor_claim.handle = None
                             else:
                                 successor_claim.handle = change_handle
                                 successor_claim.failed = change_handle is None
-                        successor_claim.ready.set()
+                            claim_to_release = successor_claim
+
+                if close_done is None:
+                    if claim_to_release is not None:
+                        claim_to_release.ready.set()
+                    if begin_failed:
+                        logger.warning(
+                            "change_review: begin_turn failed; turn untracked"
+                        )
+                    break
+                try:
+                    close_completed = close_done.wait(
+                        _CHANGE_BOUNDARY_WAIT_SECONDS
+                    )
+                except Exception:  # noqa: BLE001 -- tracking is best effort
+                    close_completed = False
+                if close_completed:
+                    with self._change_window_lock:
+                        close_completed = close_window.close_succeeded is True
+                if not close_completed:
+                    boundary_failed = True
+                    break
+
+            if boundary_failed:
+                change_handle = None
+                successor_claim = None
+                logger.warning(
+                    "change_review: prior survivor close did not finish "
+                    "successfully; successor turn untracked"
+                )
         if change_handle is not None:
             _inner_review = review_tool_calls
             _handle = change_handle
@@ -5588,10 +5610,14 @@ class ConsoleAgentBridge:
                     "change_review: post-turn close wait timed out; "
                     "continuing without tracking this boundary"
                 )
-            return completed
+                return False
+            with self._change_window_lock:
+                return window.close_succeeded is True
 
+        close_succeeded = False
         try:
             if self._change_tracker is None:
+                close_succeeded = True
                 return True
             end_shas = None
             if successor_claim is not None:
@@ -5649,6 +5675,7 @@ class ConsoleAgentBridge:
                 end_shas=end_shas,
             )
             if not records:
+                close_succeeded = True
                 return True
             tracking_failed = any(
                 bool(getattr(record, "tracking_error", ""))
@@ -5670,6 +5697,8 @@ class ConsoleAgentBridge:
             )
             if tracking_failed:
                 return False
+            close_succeeded = True
+            return True
         except Exception:  # noqa: BLE001 -- never break a child's teardown
             if successor_claim is not None:
                 with self._change_window_lock:
@@ -5683,8 +5712,8 @@ class ConsoleAgentBridge:
             with self._change_window_lock:
                 if self._post_turn_change_windows.get(conversation_id) is window:
                     self._post_turn_change_windows.pop(conversation_id, None)
+                window.close_succeeded = close_succeeded
             window.close_done.set()
-        return True
 
     def _record_change_snapshots(
         self, *, run_id: str, records: list, kind: str
