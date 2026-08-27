@@ -2,11 +2,12 @@
 
 from __future__ import annotations
 
+import asyncio
 from collections.abc import Awaitable
 
 import pytest
 from textual.app import App
-from textual.widgets import Button, RadioButton, Static
+from textual.widgets import Button, RadioButton, RadioSet, Static
 
 from tldw_chatbook.Chat.console_display_state import (
     ConsoleLibraryPolicyDisplayState,
@@ -91,6 +92,7 @@ async def test_access_modal_separates_the_two_text_valued_axes_and_disclosures()
         assert "Library tool mode: RAG" in text
         assert "Resolved destination: public network" in text
         assert modal.query_one("#library-access-save", Button).disabled is True
+        assert modal.focused is modal.query_one("#library-auto-policy", RadioSet)
 
 
 async def _async_snapshot(
@@ -186,3 +188,105 @@ async def test_unavailable_policy_is_fail_closed_and_not_editable() -> None:
         assert "Unavailable" in str(
             modal.query_one("#library-access-status", Static).renderable
         )
+
+
+@pytest.mark.asyncio
+async def test_save_failure_preserves_choices_and_focuses_retryable_feedback() -> None:
+    snapshot = _snapshot()
+
+    async def fail_save(
+        _candidate: ConsoleLibraryPolicyCandidate,
+    ) -> ConsoleLibraryPolicySaveOutcome:
+        raise RuntimeError("write failed")
+
+    modal = ConsoleLibraryAccessModal(
+        snapshot=snapshot,
+        state=_state(snapshot),
+        save_policy=fail_save,
+        reload_policy=lambda: _async_snapshot(snapshot),
+    )
+    app = _ModalApp(modal)
+
+    async with app.run_test(size=(100, 35)) as pilot:
+        await pilot.pause()
+        await pilot.click("#library-agent-allowed")
+        await pilot.click("#library-access-save")
+        await pilot.pause()
+
+        feedback = modal.query_one("#library-access-feedback", Static)
+        assert modal.query_one("#library-agent-allowed", RadioButton).value is True
+        assert modal.query_one("#library-access-save", Button).disabled is False
+        assert feedback.can_focus is True
+        assert modal.focused is feedback
+        assert "unsaved choices are still here" in str(feedback.renderable)
+
+
+@pytest.mark.asyncio
+async def test_compare_retry_is_single_flight_while_reload_is_pending() -> None:
+    snapshot = _snapshot()
+    entered = asyncio.Event()
+    release = asyncio.Event()
+    reload_calls = 0
+
+    async def delayed_reload() -> ConsoleLibraryPolicySnapshot:
+        nonlocal reload_calls
+        reload_calls += 1
+        entered.set()
+        await release.wait()
+        return snapshot
+
+    modal = ConsoleLibraryAccessModal(
+        snapshot=snapshot,
+        state=_state(snapshot),
+        save_policy=_saved,
+        reload_policy=delayed_reload,
+    )
+    app = _ModalApp(modal)
+
+    async with app.run_test(size=(100, 35)) as pilot:
+        await pilot.pause()
+        await pilot.click("#library-agent-allowed")
+        first = asyncio.create_task(modal._reload(preserve_candidate=True))
+        await entered.wait()
+
+        await modal._reload(preserve_candidate=True)
+        assert reload_calls == 1
+
+        release.set()
+        await first
+        assert reload_calls == 1
+
+
+@pytest.mark.parametrize("dismissal", ("escape", "backdrop"))
+@pytest.mark.asyncio
+async def test_clean_dismissal_restores_the_library_access_opener(
+    dismissal: str,
+) -> None:
+    snapshot = _snapshot()
+    modal = ConsoleLibraryAccessModal(
+        snapshot=snapshot,
+        state=_state(snapshot),
+        save_policy=_saved,
+        reload_policy=lambda: _async_snapshot(snapshot),
+    )
+
+    class OpenerApp(App[None]):
+        def compose(self):
+            yield Button("Library", id="library-access-opener")
+
+        def on_mount(self) -> None:
+            self.query_one("#library-access-opener", Button).focus()
+            self.push_screen(modal)
+
+    app = OpenerApp()
+    async with app.run_test(size=(100, 35)) as pilot:
+        await pilot.pause()
+        if dismissal == "escape":
+            await pilot.press("escape")
+        else:
+            await pilot.click(offset=(0, 0))
+        await pilot.pause()
+        await pilot.pause()
+
+        assert app.screen is not modal
+        assert app.screen.focused is app.query_one("#library-access-opener", Button)

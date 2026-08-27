@@ -481,6 +481,7 @@ def _real_retrieval_controller_for_launch(state: dict[str, object]):
         set_library_rag_source_scope=lambda _value: None,
         set_library_rag_query=lambda _value: None,
         run_library_rag_action=lambda: None,
+        push_screen=lambda *_args, **_kwargs: None,
         library_rag_source_scope=lambda: (),
         library_rag_top_k=lambda: 10,
         pending_launch=lambda: state.get("launch"),

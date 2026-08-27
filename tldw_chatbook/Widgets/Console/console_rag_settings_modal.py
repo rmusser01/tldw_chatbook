@@ -15,7 +15,7 @@ from typing import Any, Sequence
 
 from textual import on
 from textual.app import ComposeResult
-from textual.containers import Horizontal, Vertical
+from textual.containers import Grid, Horizontal, Vertical, VerticalScroll
 from textual.screen import ModalScreen
 from textual.widgets import Button, Input, Static
 
@@ -139,6 +139,12 @@ class ConsoleRagSettingsModal(
         margin: 0 0 1 0;
     }
 
+    #console-rag-settings-body {
+        height: 1fr;
+        min-height: 0;
+        scrollbar-gutter: stable;
+    }
+
     #console-rag-settings-query {
         margin: 0 0 1 0;
     }
@@ -148,8 +154,17 @@ class ConsoleRagSettingsModal(
         margin: 0 0 1 0;
     }
 
-    .console-rag-settings-sources {
+    .console-rag-settings-item-scope {
+        color: $text-muted;
         height: auto;
+        margin: 0 0 1 0;
+    }
+
+    .console-rag-settings-sources {
+        grid-size: 2 2;
+        grid-columns: 1fr 1fr;
+        grid-rows: 1 1;
+        height: 2;
         margin: 0 0 1 0;
     }
 
@@ -175,11 +190,20 @@ class ConsoleRagSettingsModal(
     }
 
     .console-rag-settings-actions {
-        height: 3;
+        height: 1;
+        min-height: 1;
+        max-height: 1;
     }
 
-    .console-rag-settings-actions Button {
-        margin: 0 2 0 0;
+    #console-rag-settings .console-rag-settings-actions Button {
+        width: auto;
+        min-width: 0;
+        height: 1;
+        min-height: 1;
+        max-height: 1;
+        border: none;
+        padding: 0;
+        margin: 0 1 0 0;
     }
 
     .console-rag-settings-hint {
@@ -196,6 +220,7 @@ class ConsoleRagSettingsModal(
         *,
         query: str = "",
         source_types: Sequence[str] = CONSOLE_RAG_DEFAULT_SOURCE_TYPES,
+        item_scope_summary: str = "",
         rag_active: bool = False,
         staged_title: str = "",
         **kwargs: Any,
@@ -208,6 +233,8 @@ class ConsoleRagSettingsModal(
                 which KINDS of sources retrieval reads. Rendered as one
                 toggle per Library source and returned (possibly edited) in
                 the result.
+            item_scope_summary: Current retrieval item-scope label, when the
+                caller owns an item scope distinct from source kinds.
             rag_active: Whether RAG currently reads "on" (staged evidence).
             staged_title: Title of the staged evidence when ``rag_active``,
                 for honest status copy.
@@ -216,6 +243,7 @@ class ConsoleRagSettingsModal(
         super().__init__(**kwargs)
         self._query = query
         self._source_types = normalize_console_rag_source_types(source_types)
+        self._item_scope_summary = str(item_scope_summary or "")
         self._rag_active = rag_active
         self._staged_title = staged_title
 
@@ -257,33 +285,47 @@ class ConsoleRagSettingsModal(
         """
         with Vertical(id="console-rag-settings"):
             yield Static("Library search", classes="console-modal-header")
-            yield Static(
-                self._status_copy(),
-                classes="console-rag-settings-status",
-                markup=False,
-            )
-            yield Input(
-                value=self._query,
-                placeholder="What should the Library search look for?",
-                id="console-rag-settings-query",
-            )
-            yield Static(
-                self._scope_summary(),
-                id="console-rag-settings-scope",
-                classes="console-rag-settings-scope",
-                markup=False,
-            )
-            with Horizontal(classes="console-rag-settings-sources"):
-                for source_type in LIBRARY_RAG_SCOPE_TOGGLE_SOURCE_TYPES:
-                    label = _SOURCE_TYPE_LABELS.get(source_type, source_type)
-                    yield Button(
-                        console_rag_source_toggle_label(
-                            source_type, source_type in self._source_types
-                        ),
-                        id=f"{CONSOLE_RAG_SOURCE_TOGGLE_ID_PREFIX}{source_type}",
-                        classes=CONSOLE_RAG_SOURCE_TOGGLE_CLASS,
-                        tooltip=f"This search only: include {label}.",
+            with VerticalScroll(id="console-rag-settings-body"):
+                yield Static(
+                    self._status_copy(),
+                    classes="console-rag-settings-status",
+                    markup=False,
+                )
+                yield Input(
+                    value=self._query,
+                    placeholder="What should the Library search look for?",
+                    id="console-rag-settings-query",
+                )
+                if self._item_scope_summary:
+                    yield Static(
+                        self._item_scope_summary,
+                        id="console-library-search-item-scope",
+                        classes="console-rag-settings-item-scope",
+                        markup=False,
                     )
+                yield Static(
+                    self._scope_summary(),
+                    id="console-rag-settings-scope",
+                    classes="console-rag-settings-scope",
+                    markup=False,
+                )
+                with Grid(classes="console-rag-settings-sources"):
+                    for source_type in LIBRARY_RAG_SCOPE_TOGGLE_SOURCE_TYPES:
+                        label = _SOURCE_TYPE_LABELS.get(source_type, source_type)
+                        yield Button(
+                            console_rag_source_toggle_label(
+                                source_type, source_type in self._source_types
+                            ),
+                            id=f"{CONSOLE_RAG_SOURCE_TOGGLE_ID_PREFIX}{source_type}",
+                            classes=CONSOLE_RAG_SOURCE_TOGGLE_CLASS,
+                            tooltip=f"This search only: include {label}.",
+                        )
+                yield Static(
+                    "Enter runs the search. Esc or a click outside closes "
+                    "without changes.",
+                    classes="console-rag-settings-hint",
+                    markup=False,
+                )
             with Horizontal(classes="console-rag-settings-actions"):
                 yield Button(
                     "Search Library",
@@ -292,12 +334,6 @@ class ConsoleRagSettingsModal(
                     disabled=not self._can_run(self._query),
                 )
                 yield Button("Cancel", id="console-rag-settings-cancel")
-            yield Static(
-                "Enter runs the search. Esc or a click outside closes "
-                "without changes.",
-                classes="console-rag-settings-hint",
-                markup=False,
-            )
 
     def _current_query(self) -> str:
         return self.query_one("#console-rag-settings-query", Input).value

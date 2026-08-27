@@ -113,6 +113,19 @@ class ConsoleLibraryAccessModal(
         self._suppress_changes = False
         self._dirty = False
 
+    def on_mount(self) -> None:
+        """Capture opener focus, then focus the first usable policy choice."""
+        super().on_mount()
+        self.call_after_refresh(self._focus_initial_control)
+
+    def _focus_initial_control(self) -> None:
+        feedback = self.query_one("#library-access-feedback", Static)
+        if feedback.can_focus:
+            feedback.focus()
+            return
+        if self._state.editing_enabled:
+            self.query_one("#library-auto-policy", RadioSet).focus()
+
     def compose(self) -> ComposeResult:
         with Vertical(id="console-library-access"):
             yield Static("Library access", classes="console-modal-header")
@@ -200,11 +213,17 @@ class ConsoleLibraryAccessModal(
                     id="library-access-destination",
                     markup=False,
                 )
-                yield Static(
+                feedback = Static(
                     self._state.feedback_copy,
                     id="library-access-feedback",
                     markup=False,
                 )
+                feedback.can_focus = self._state.feedback in {
+                    "conflict",
+                    "unavailable",
+                    "error",
+                }
+                yield feedback
             with Horizontal(classes="console-library-access-actions"):
                 yield Button(
                     "Save",
@@ -270,10 +289,15 @@ class ConsoleLibraryAccessModal(
         copy: str,
         *,
         conflict: bool = False,
+        focus: bool = False,
     ) -> None:
-        self.query_one("#library-access-feedback", Static).update(copy)
+        feedback = self.query_one("#library-access-feedback", Static)
+        feedback.update(copy)
+        feedback.can_focus = focus
         self.query_one("#library-access-reload", Button).display = conflict
         self.query_one("#library-access-compare-retry", Button).display = conflict
+        if focus:
+            feedback.focus()
 
     def _set_snapshot_controls(
         self,
@@ -308,7 +332,12 @@ class ConsoleLibraryAccessModal(
         try:
             outcome = await self._save_policy(self._candidate())
         except Exception:
-            self._set_feedback("Save failed. Your unsaved choices are still here.")
+            self._operation_pending = False
+            self._set_feedback(
+                "Save failed. Your unsaved choices are still here.",
+                focus=True,
+            )
+            self._refresh_dirty_state()
             return
         finally:
             self._operation_pending = False
@@ -318,9 +347,9 @@ class ConsoleLibraryAccessModal(
             self._dirty = False
             self._set_feedback(outcome.copy)
         elif outcome.status == "conflict":
-            self._set_feedback(outcome.copy, conflict=True)
+            self._set_feedback(outcome.copy, conflict=True, focus=True)
         else:
-            self._set_feedback(outcome.copy)
+            self._set_feedback(outcome.copy, focus=True)
         self._refresh_dirty_state()
 
     async def _reload(self, *, preserve_candidate: bool) -> None:
@@ -332,7 +361,11 @@ class ConsoleLibraryAccessModal(
         try:
             snapshot = await self._reload_policy()
         except Exception:
-            self._set_feedback("Reload failed. Your unsaved choices are still here.")
+            self._set_feedback(
+                "Reload failed. Your unsaved choices are still here.",
+                conflict=True,
+                focus=True,
+            )
             return
         finally:
             self._operation_pending = False
@@ -361,7 +394,8 @@ class ConsoleLibraryAccessModal(
         del source
         if self._dirty:
             self._set_feedback(
-                "Unsaved changes. Save them or choose Discard changes."
+                "Unsaved changes. Save them or choose Discard changes.",
+                focus=True,
             )
             self.query_one("#library-access-discard", Button).display = True
             return

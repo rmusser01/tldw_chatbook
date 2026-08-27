@@ -401,6 +401,11 @@ def build_console_controllers(
         run_library_rag_action=(
             lambda: screen._run_console_library_rag_from_visible_action()
         ),
+        composer_draft=lambda: _displayed_console_composer_draft(screen),
+        library_rag_query=lambda: screen._console_library_rag_query,
+        push_screen=lambda modal, callback: screen.app.push_screen(
+            modal, callback=callback
+        ),
         library_rag_source_scope=rag_source_types_accessor,
         library_rag_top_k=rag_top_k_accessor,
         pending_launch=lambda: screen._pending_console_launch_context,

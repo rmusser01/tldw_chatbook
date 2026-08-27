@@ -44,11 +44,13 @@ class ConsoleLibrarySearchModal(ConsoleRagSettingsModal):
         *,
         query: str = "",
         source_types: Sequence[str] = CONSOLE_RAG_DEFAULT_SOURCE_TYPES,
+        item_scope_summary: str = "Scope: everything",
         **kwargs: Any,
     ) -> None:
         super().__init__(
             query=query,
             source_types=source_types,
+            item_scope_summary=item_scope_summary,
             rag_active=False,
             staged_title="",
             **kwargs,

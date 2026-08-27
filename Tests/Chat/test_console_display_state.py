@@ -104,7 +104,7 @@ def test_library_policy_display_state_fails_closed_when_authority_is_unavailable
         )
     )
 
-    assert state.chip_label == "Library · Policy unavailable · Agent blocked"
+    assert state.chip_label == "Library: blocked · policy unavailable"
     assert state.source_status == "Unavailable — using Never and Blocked"
     assert state.editing_enabled is False
     assert state.save_enabled is False

@@ -96,7 +96,7 @@ async def test_library_chip_keyboard_and_click_post_the_same_open_request() -> N
     "label",
     (
         "Library · Auto off · Agent blocked",
-        "Library · Policy unavailable · Agent blocked",
+        "Library: blocked · policy unavailable",
     ),
 )
 async def test_library_policy_is_first_stable_chip_and_fully_painted_at_120_columns(

@@ -207,7 +207,15 @@ _OPEN_SOURCE_TYPE_MAP = {
     # its docstring), distinct from the "prompts" scope-toggle/source key
     # used for search selection and the rail row.
     "prompt": "prompt",
+    "prompts": "prompt",
 }
+
+
+def canonical_library_open_source_type(value: Any) -> str:
+    """Return the canonical Library navigation target for a source type."""
+    return _OPEN_SOURCE_TYPE_MAP.get(str(value or "").strip().lower(), "")
+
+
 # Raw provenance `source_type`/`item_type`/`type` identifiers -> the
 # scope-toggle vocabulary `LibraryRagScopeState.selected_source_types`
 # speaks ("notes"/"media"/"conversations"/"prompts"). D4/task-5: a scope
@@ -1639,17 +1647,11 @@ class LibraryRagResultRow:
     @property
     def open_source_type(self) -> str:
         """Library canvas target this result can open, or empty string."""
-        raw = (
-            str(
-                self.provenance.get("source_type")
-                or self.provenance.get("item_type")
-                or self.provenance.get("type")
-                or ""
-            )
-            .strip()
-            .lower()
+        return canonical_library_open_source_type(
+            self.provenance.get("source_type")
+            or self.provenance.get("item_type")
+            or self.provenance.get("type")
         )
-        return _OPEN_SOURCE_TYPE_MAP.get(raw, "")
 
     @property
     def scope_source_type(self) -> str:

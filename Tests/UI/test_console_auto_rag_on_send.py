@@ -31,6 +31,7 @@ def _controller(*, launch=None):
         set_library_rag_source_scope=lambda _value: None,
         set_library_rag_query=lambda _value: None,
         run_library_rag_action=lambda: None,
+        push_screen=lambda *_args, **_kwargs: None,
         library_rag_source_scope=lambda: ("media",),
         library_rag_top_k=lambda: 99,
         pending_launch=lambda: state.launch,

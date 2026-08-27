@@ -43,7 +43,11 @@ from ...Library.library_rag_state import library_rag_source_scope_summary
 from ...Utils.input_validation import sanitize_string, validate_text_input
 from ...Widgets.Console.console_library_search_modal import (
     CONSOLE_RAG_SOURCE_SUMMARY_PREFIX,
+    ConsoleLibrarySearchModal,
     ConsoleLibrarySearchResult,
+)
+from ...Widgets.Console.console_retrieval_scope_row import (
+    console_retrieval_scope_label,
 )
 from ..Views.RAGSearch.search_handoff import (
     build_library_rag_console_live_work_payload,
@@ -129,6 +133,7 @@ class ConsoleRetrievalController:
         set_library_rag_source_scope: Callable[[Any], None],
         set_library_rag_query: Callable[[str], None],
         run_library_rag_action: Callable[[], None],
+        push_screen: Callable[..., Any],
         library_rag_source_scope: Callable[[], tuple[str, ...]],
         library_rag_top_k: Callable[[], int],
         pending_launch: Callable[[], ConsoleLiveWorkLaunch | None],
@@ -138,6 +143,8 @@ class ConsoleRetrievalController:
         sync_pending_launch_surfaces: Callable[[], bool],
         refresh_screen: Callable[[], None],
         has_staged_evidence: Callable[[], bool],
+        composer_draft: Callable[[], str | None] | None = None,
+        library_rag_query: Callable[[], str] | None = None,
     ) -> None:
         """Bind explicit late-bound screen edges and initialize owned state."""
         self.app_instance = app_instance
@@ -154,6 +161,9 @@ class ConsoleRetrievalController:
         self._set_library_rag_source_scope = set_library_rag_source_scope
         self._set_library_rag_query = set_library_rag_query
         self._run_library_rag_action = run_library_rag_action
+        self._composer_draft = composer_draft or (lambda: None)
+        self._library_rag_query = library_rag_query or (lambda: "")
+        self._push_screen = push_screen
         self._library_rag_source_scope = library_rag_source_scope
         self._library_rag_top_k = library_rag_top_k
         self._pending_launch = pending_launch
@@ -392,6 +402,20 @@ class ConsoleRetrievalController:
         self._set_library_rag_query(sanitize_console_library_rag_query(result.query))
         if result.run:
             self._run_library_rag_action()
+
+    def open_library_search(self) -> None:
+        """Open one-shot Library search from the current Console state."""
+        prefill = self._composer_draft()
+        self._push_screen(
+            ConsoleLibrarySearchModal(
+                query=prefill if prefill is not None else self._library_rag_query(),
+                source_types=self._library_rag_source_scope(),
+                item_scope_summary=console_retrieval_scope_label(
+                    self._build_console_retrieval_scope_state()
+                ),
+            ),
+            callback=self._apply_console_library_search_choice,
+        )
 
     def _apply_console_rag_settings_choice(
         self, result: ConsoleLibrarySearchResult | None

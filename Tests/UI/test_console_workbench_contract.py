@@ -389,7 +389,7 @@ async def test_console_control_bar_renders_visible_state_chips():
             "#console-provider-chip",
             "#console-model-chip",
             "#console-assistant-chip",
-            "#console-rag-chip",
+            "#console-library-chip",
             "#console-sources-chip",
             "#console-approvals-chip",
         )
@@ -413,7 +413,7 @@ async def test_console_control_bar_renders_visible_state_chips():
         ]
         assert not console.query("#console-character-chip")
         assert not console.query("#console-persona-chip")
-        assert any("Library search:" in text for text in visible_chip_text)
+        assert any("Library · Auto " in text for text in visible_chip_text)
         assert any("Sources:" in text for text in visible_chip_text)
         assert any("Approvals:" in text for text in visible_chip_text)
 
@@ -453,7 +453,7 @@ async def test_console_control_chips_are_focusable_and_reveal_full_label_on_focu
             "#console-provider-chip",
             "#console-model-chip",
             "#console-assistant-chip",
-            "#console-rag-chip",
+            "#console-library-chip",
             "#console-sources-chip",
             "#console-tools-chip",
             "#console-approvals-chip",

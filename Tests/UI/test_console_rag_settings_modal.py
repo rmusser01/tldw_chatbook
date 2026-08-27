@@ -19,6 +19,7 @@ from tldw_chatbook.Library.library_rag_state import (
     LIBRARY_RAG_SCOPE_TOGGLE_SOURCE_TYPES,
     LIBRARY_RAG_SOURCE_TYPES,
 )
+from tldw_chatbook.Chat.console_display_state import ConsoleRetrievalScopeState
 from tldw_chatbook.UI.Console_Modules.retrieval import ConsoleRetrievalController
 from tldw_chatbook.Widgets.Console.console_library_search_modal import (
     CONSOLE_RAG_DEFAULT_SOURCE_TYPES,
@@ -41,6 +42,19 @@ def _retrieval_for(screen) -> ConsoleRetrievalController:
     owner._set_library_rag_source_scope = screen._set_console_library_rag_source_scope
     owner._set_library_rag_query = screen._set_console_library_rag_query
     owner._run_library_rag_action = screen._run_console_library_rag_from_visible_action
+    owner.app_instance = getattr(screen, "app_instance", None)
+    owner._push_screen = (
+        owner.app_instance.push_screen if owner.app_instance is not None else Mock()
+    )
+    owner._composer_draft = lambda: (
+        composer.draft_text()
+        if (composer := screen._console_composer_or_none()) is not None
+        else None
+    )
+    owner._library_rag_query = lambda: screen._console_library_rag_query
+    owner._build_console_retrieval_scope_state = (
+        ConsoleRetrievalScopeState.unscoped
+    )
     return owner
 
 
@@ -687,8 +701,9 @@ def test_modal_open_prefills_a_normal_question_draft():
     composer = Mock()
     composer.draft_text.return_value = "  what   changed in auth  "
     screen._console_composer_or_none.return_value = composer
+    screen._retrieval = _retrieval_for(screen)
 
     ChatScreen._open_console_library_search(screen)
 
-    modal = screen.app.push_screen.call_args.args[0]
+    modal = screen.app_instance.push_screen.call_args.args[0]
     assert modal._query == "  what   changed in auth  "

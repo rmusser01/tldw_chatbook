@@ -618,7 +618,7 @@ class ConsoleLibraryPolicyDisplayState:
             "Allowed" if allowed else "Blocked"
         )
         if unavailable:
-            chip_label = "Library · Policy unavailable · Agent blocked"
+            chip_label = "Library: blocked · policy unavailable"
             source_status = "Unavailable — using Never and Blocked"
         else:
             chip_label = (
@@ -818,6 +818,10 @@ class ConsoleStagedContextState:
         cls,
         launch: ConsoleLiveWorkLaunch,
     ) -> "ConsoleStagedContextState":
+        from tldw_chatbook.Library.library_rag_state import (
+            canonical_library_open_source_type,
+        )
+
         rows = []
         bundle = evidence_bundle_from_launch(launch)
         source_rows = tuple(
@@ -833,7 +837,10 @@ class ConsoleStagedContextState:
                     )
                 ),
                 title=_safe_display_text(reference.title, "Untitled source"),
-                source_type=_safe_display_text(reference.source_type, "unknown"),
+                source_type=(
+                    canonical_library_open_source_type(reference.source_type)
+                    or _safe_display_text(reference.source_type, "unknown")
+                ),
                 snippet=_safe_display_text(reference.snippet),
                 authority=_safe_display_text(reference.authority_label, "unknown"),
                 freshness={
@@ -845,7 +852,7 @@ class ConsoleStagedContextState:
                 }.get(reference.status, "Unknown"),
                 action_label=(
                     "Open in Library"
-                    if reference.source_type in {"media", "notes", "conversations"}
+                    if canonical_library_open_source_type(reference.source_type)
                     else "Review details"
                 ),
             )

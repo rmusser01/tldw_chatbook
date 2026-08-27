@@ -188,12 +188,17 @@ class ConsoleStagedContextTray(RecomposeCaptureGuard, Vertical):
                     self.state.recovery,
                     id="console-staged-context-recovery",
                     classes="console-staged-context-recovery",
+                    markup=False,
                 )
             )
         return body
 
     def compose(self) -> ComposeResult:
-        with Horizontal(classes="console-staged-context-header"):
+        header = Horizontal(classes="console-staged-context-header")
+        header.styles.height = 1
+        header.styles.min_height = 1
+        header.styles.max_height = 1
+        with header:
             yield Static(
                 "Sources — next send",
                 id="console-staged-context-title",
@@ -228,11 +233,16 @@ class ConsoleStagedContextTray(RecomposeCaptureGuard, Vertical):
         if type(index) is not int or not 0 <= index < len(self.state.source_rows):
             return
         row = self.state.source_rows[index]
-        if row.source_type not in {"media", "notes", "conversations"}:
+        from tldw_chatbook.Library.library_rag_state import (
+            canonical_library_open_source_type,
+        )
+
+        source_type = canonical_library_open_source_type(row.source_type)
+        if not source_type:
             return
         self.post_message(
             ConsoleStagedSourceOpenRequested(
-                source_type=row.source_type,
+                source_type=source_type,
                 source_id=row.source_id,
             )
         )

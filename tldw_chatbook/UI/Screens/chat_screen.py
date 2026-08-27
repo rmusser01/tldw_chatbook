@@ -387,7 +387,6 @@ from ...Widgets.Console import (
     ConsoleSettingsSummary,
     ConsoleSetupModal,
     ConsoleStagedContextTray,
-    ConsoleStagedSourceOpenRequested,
     ConsoleStagedEvidenceStrip,
     ConsoleTranscript,
     ConsoleWorkspaceContextTray,
@@ -455,7 +454,6 @@ from ...Widgets.Console.console_generation_card import generation_card_signature
 from ...Widgets.Console.console_video_card import video_card_signature
 from ...Widgets.Console.console_library_search_modal import (
     CONSOLE_RAG_DEFAULT_SOURCE_TYPES,
-    ConsoleLibrarySearchModal,
     normalize_console_rag_source_types,
 )
 from ...Widgets.Console.console_status_chips import (
@@ -2753,7 +2751,7 @@ class ChatScreen(BaseAppScreen):
                 right_open=preference_changes.get("right_open"),
             )
         elif action_id == "run-library-rag":
-            self._run_console_library_rag_from_visible_action()
+            self._open_console_library_search()
         elif action_id == "send":
             await self._send_console_message_from_visible_action()
         elif action_id == "stop":
@@ -7249,35 +7247,11 @@ class ChatScreen(BaseAppScreen):
         return rows, totals, turns, exchanges_loader
 
     def _open_console_library_search(self) -> None:
-        """Open one-shot Library search with the exact current composer draft."""
-        composer = self._console_composer_or_none()
-        prefill = (
-            composer.draft_text()
-            if composer is not None
-            else self._console_library_rag_query
-        )
-        self.app.push_screen(
-            ConsoleLibrarySearchModal(
-                query=prefill,
-                source_types=_console_library_rag_source_scope(self),
-            ),
-            callback=self._retrieval._apply_console_library_search_choice,
-        )
-
-    def _open_console_rag_settings(self) -> None:
-        """Compatibility entry point for the renamed manual-search surface."""
-        self._open_console_library_search()
+        """Open one-shot Library search from the retrieval controller."""
+        self._retrieval.open_library_search()
 
     def _set_console_library_rag_query(self, query: str) -> None:
-        """Store the Library RAG query and mirror it into mounted surfaces.
-
-        Every query write goes through here so the Inspector's
-        readiness-card input, its Run button gating, and the RAG settings
-        modal's next prefill cannot disagree about what will be retrieved.
-
-        Args:
-            query: Already-sanitized retrieval query ("" clears it).
-        """
+        """Store the Library query and mirror it into mounted surfaces."""
         self._console_library_rag_query = query
         try:
             rail_input = self.query_one("#console-library-rag-query-input", Input)
@@ -10105,30 +10079,12 @@ class ChatScreen(BaseAppScreen):
 
     @on(Button.Pressed, "#console-run-library-rag")
     def handle_console_run_library_rag(self, event: Button.Pressed) -> None:
-        """Request Library retrieval from the Console source-readiness seam."""
+        """Open the one-shot Library search surface from the Inspector."""
         event.stop()
-        self._run_console_library_rag_from_visible_action()
+        self._open_console_library_search()
 
     def _run_console_library_rag_from_visible_action(self) -> None:
-        """Request Library retrieval from the visible Console action surface.
-
-        With no dedicated query set, falls back to the composer draft (user
-        decision 2026-08-02): the text about to be sent is what retrieval
-        should look for, and the dedicated query input may not even be on
-        screen while this always-visible action is. The fallback is STORED
-        through ``_set_console_library_rag_query`` so the rail input and
-        the RAG settings modal agree with what actually ran. An explicit
-        query always wins.
-
-        RAG-41/42: with no query anywhere -- no dedicated query AND an empty
-        composer draft -- this used to toast "Type a Library RAG query
-        before running retrieval," pointing at an input that may not even
-        be visible. It now opens the RAG settings modal instead (the same
-        surface the RAG chip opens), which is where a query can actually be
-        typed. The modal's own Run callback re-enters this method with the
-        query it collected, so this is a one-shot redirect, not a loop; a
-        Cancel just closes it with nothing stored and nothing run.
-        """
+        """Run the one-shot Library search accepted by the modal."""
         query = _sanitize_console_library_rag_query(self._console_library_rag_query)
         if not query:
             composer = self._console_composer_or_none()
@@ -11799,21 +11755,6 @@ class ChatScreen(BaseAppScreen):
             )
 
         self.app.push_screen(modal, callback=_open_source_in_library)
-
-    @on(ConsoleStagedSourceOpenRequested)
-    def handle_console_staged_source_open(
-        self, event: ConsoleStagedSourceOpenRequested
-    ) -> None:
-        """Navigate from a staged-source detail action into Library."""
-        self.app.post_message(
-            NavigateToScreen(
-                "library",
-                {
-                    LIBRARY_NAV_CONTEXT_OPEN_SOURCE_TYPE: event.source_type,
-                    LIBRARY_NAV_CONTEXT_OPEN_SOURCE_ID: event.source_id,
-                },
-            )
-        )
 
     def _console_citation_message_body(self, message: Any) -> str:
         """Delegate to `ConsoleMessageController` (wave-3 task 1) -- kept
