@@ -860,6 +860,7 @@ async def test_fork_validation_freezes_the_accepted_title_until_retry():
     host = ConsoleHarness(app)
     validation_started = asyncio.Event()
     release_validation = asyncio.Event()
+    validation_generations: list[int] = []
 
     async with host.run_test(size=(100, 30)) as pilot:
         console = host.screen_stack[-1]
@@ -876,7 +877,8 @@ async def test_fork_validation_freezes_the_accepted_title_until_retry():
             content="fork boundary",
         )
 
-        async def barrier(_generation: int) -> None:
+        async def barrier(generation: int) -> None:
+            validation_generations.append(generation)
             validation_started.set()
             await release_validation.wait()
 
@@ -895,9 +897,18 @@ async def test_fork_validation_freezes_the_accepted_title_until_retry():
         await asyncio.wait_for(validation_started.wait(), timeout=2)
 
         assert modal.state == "validating"
-        assert title.disabled
+        assert not title.disabled
+        assert title.has_focus
         await pilot.press("x", "y", "z")
+        await pilot.press("enter", "enter")
+        await pilot.pause()
+
         assert title.value == accepted_title
+        assert title.has_focus
+        assert modal.state == "validating"
+        assert len(validation_generations) == 1
+        assert not modal.query_one("#console-fork-chat-exclusions").display
+        register.assert_not_called()
 
         release_validation.set()
         for _ in range(200):

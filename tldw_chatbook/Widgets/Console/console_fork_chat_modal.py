@@ -58,9 +58,10 @@ class _ConsoleForkStatus(Static):
 
 
 class _ConsoleForkTitleInput(Input):
-    """Ignore keys queued before this modal was visible."""
+    """Guard queued opening keys and freeze accepted titles without losing focus."""
 
     opened_at: float | None = None
+    locked: bool = False
 
     async def _on_key(self, event: events.Key) -> None:
         if self.opened_at is not None and event.time < self.opened_at:
@@ -68,6 +69,12 @@ class _ConsoleForkTitleInput(Input):
             event.prevent_default()
             return
         await super()._on_key(event)
+
+    def replace(self, text: str, start: int, end: int) -> None:
+        """Keep the accepted title immutable without surrendering focus."""
+
+        if not self.locked:
+            super().replace(text, start, end)
 
 
 class ConsoleForkChatModal(SafeModalDismissMixin, ModalScreen[None]):
@@ -398,7 +405,9 @@ class ConsoleForkChatModal(SafeModalDismissMixin, ModalScreen[None]):
     def show_validating(self) -> None:
         self.state = "validating"
         self._set_status("Checking fork…")
-        self.query_one("#console-fork-chat-title", Input).disabled = True
+        title = self.query_one("#console-fork-chat-title", _ConsoleForkTitleInput)
+        title.locked = True
+        title.focus()
         self.query_one("#console-fork-chat-confirm", Button).disabled = True
 
     def show_committing(self) -> None:
@@ -414,10 +423,11 @@ class ConsoleForkChatModal(SafeModalDismissMixin, ModalScreen[None]):
     def show_precommit_error(self, error: str, *, retryable: bool = True) -> None:
         self.state = "precommit_error"
         self._set_status(error)
-        title = self.query_one("#console-fork-chat-title", Input)
+        title = self.query_one("#console-fork-chat-title", _ConsoleForkTitleInput)
         confirm = self.query_one("#console-fork-chat-confirm", Button)
         close = self.query_one("#console-fork-chat-cancel", Button)
         self.query_one("#console-fork-chat-disclosure", Button).disabled = False
+        title.locked = not retryable
         title.disabled = not retryable
         close.disabled = False
         close.label = "Cancel" if retryable else "Close"
