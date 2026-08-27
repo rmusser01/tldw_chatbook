@@ -1222,6 +1222,34 @@ def test_failed_contextual_scope_names_attempted_occurrence_and_retained_scope()
     )
 
 
+def test_unread_context_forces_effective_filter_without_overwriting_manual_choice():
+    screen = WatchlistsCollectionsScreen(Mock())
+    screen.__dict__["_reactive_runtime_backend"] = "local"
+    screen._items_status_filter = "all"
+    unread_source = TreeScope(
+        kind="source", source_id=9, parent_context="unread"
+    )
+
+    assert screen._effective_items_status_filter(unread_source) == "unread"
+    assert screen._items_status_filter == "all"
+    query = screen._reader_item_query(scope=unread_source)
+    assert query.as_kwargs()["status"] == "new"
+    assert "statuses" not in query.as_kwargs()
+    assert query.context_key[-2] == "unread"
+
+
+def test_server_management_disables_only_individual_feed_navigation():
+    screen = WatchlistsCollectionsScreen(Mock())
+    screen.__dict__["_reactive_runtime_backend"] = "server"
+    screen.__dict__["_reactive_active_section"] = "sources"
+
+    assert screen._tree_selection_disabled_reason() == (
+        "Individual feed selection is available in Read or the Local backend."
+    )
+    screen.__dict__["_reactive_runtime_backend"] = "local"
+    assert screen._tree_selection_disabled_reason() is None
+
+
 # --- task-2513 Task 7: the tree scope drives the items list -----------------
 #
 # Before this task `_load_items` fetched the newest 100 items of ANY source

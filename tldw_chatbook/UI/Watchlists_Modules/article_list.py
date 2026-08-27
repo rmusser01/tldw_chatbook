@@ -294,6 +294,7 @@ class ArticleListPane(RecomposeCaptureGuard, Vertical):
     items = reactive[list[dict[str, Any]]](list)
     selected_item = reactive[dict[str, Any] | None](None)
     status_filter = reactive("all")
+    status_filter_disabled_reason: reactive[str | None] = reactive(None)
     search_query = reactive("")
     runtime_backend = reactive("local")
     #: The pill's text ("" hides it). Screen-pushed after a refresh-all --
@@ -407,6 +408,8 @@ class ArticleListPane(RecomposeCaptureGuard, Vertical):
                     id="items-status-select",
                     allow_blank=False,
                     compact=True,
+                    disabled=self.status_filter_disabled_reason is not None,
+                    tooltip=self.status_filter_disabled_reason,
                 )
         # TASK-3791 plan task 5: the "N new items" pill. A Static, not a
         # Button: the toolbar's controls are VERBS and this is a notice you
@@ -692,8 +695,23 @@ class ArticleListPane(RecomposeCaptureGuard, Vertical):
             self.focus_first_row_without_selecting()
 
     def watch_status_filter(self, status_filter: str) -> None:
+        try:
+            select = self.query_one("#items-status-select", Select)
+            if select.value != status_filter:
+                select.value = status_filter
+        except NoMatches:
+            pass
         self._apply_row_visibility()
         self._post_filter_changed()
+
+    def watch_status_filter_disabled_reason(self, reason: str | None) -> None:
+        """Lock the status control while a contextual scope owns it."""
+        try:
+            select = self.query_one("#items-status-select", Select)
+        except NoMatches:
+            return
+        select.disabled = reason is not None
+        select.tooltip = reason
 
     def watch_search_query(self, search_query: str) -> None:
         self._apply_row_visibility()

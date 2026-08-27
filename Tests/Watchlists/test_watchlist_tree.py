@@ -65,6 +65,7 @@ class _TreeApp(App):
         unassigned_source_rows=None,
         expanded_root_kinds=(),
         unread_pin_source_id=None,
+        selection_disabled_reason=None,
     ):
         super().__init__()
         self._data = data
@@ -77,6 +78,7 @@ class _TreeApp(App):
         self._unassigned_source_rows = unassigned_source_rows or []
         self._expanded_root_kinds = expanded_root_kinds
         self._unread_pin_source_id = unread_pin_source_id
+        self._selection_disabled_reason = selection_disabled_reason
         self.scopes: list[TreeScope] = []
         self.write_requests: list[Message] = []
 
@@ -93,6 +95,7 @@ class _TreeApp(App):
             unassigned_source_rows=self._unassigned_source_rows,
             expanded_root_kinds=self._expanded_root_kinds,
             unread_pin_source_id=self._unread_pin_source_id,
+            selection_disabled_reason=self._selection_disabled_reason,
             id="wl-tree",
         )
 
@@ -598,6 +601,28 @@ async def test_active_scope_none_marks_nothing_active():
             for button in app.query(Button)
             if button.id and button.id.startswith("wl-tree-node-")
         )
+
+
+@pytest.mark.asyncio
+async def test_source_selection_can_be_disabled_without_disabling_expansion():
+    reason = "Individual feed selection is available in Read or the Local backend."
+    app = _TreeApp(
+        _tree_data(),
+        all_source_rows=[{"id": 10, "name": "ArXiv: AI", "type": "rss"}],
+        expanded_root_kinds=("all",),
+        selection_disabled_reason=reason,
+    )
+    async with app.run_test() as pilot:
+        source = app.query_one("#wl-tree-node-source-all-10", Button)
+        expander = app.query_one("#wl-tree-expand-root-all", Button)
+
+        assert source.disabled is True
+        assert source.tooltip == reason
+        assert expander.disabled is False
+        await pilot.click("#wl-tree-expand-root-all")
+        await pilot.pause()
+        assert "all" not in app.query_one(WatchlistTree).expanded_root_kinds
+        assert app.scopes == []
 
 
 @pytest.mark.asyncio

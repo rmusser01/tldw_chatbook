@@ -172,6 +172,9 @@ class WatchlistTree(Vertical):
     # screen derives it from `runtime_backend` and service availability),
     # and `recompose=True` because it changes which buttons are disabled.
     write_disabled_reason: reactive[str | None] = reactive(None, recompose=True)
+    selection_disabled_reason: reactive[str | None] = reactive(
+        None, recompose=True
+    )
 
     def __init__(
         self,
@@ -187,6 +190,7 @@ class WatchlistTree(Vertical):
         unassigned_source_rows: Sequence[Mapping[str, Any]] = (),
         expanded_root_kinds: Sequence[AggregateRootKind] = (),
         unread_pin_source_id: int | None = None,
+        selection_disabled_reason: str | None = None,
         **kwargs: Any,
     ) -> None:
         super().__init__(**kwargs)
@@ -221,6 +225,10 @@ class WatchlistTree(Vertical):
         self.set_reactive(WatchlistTree.active_tag, active_tag)
         self.set_reactive(WatchlistTree.active_scope, active_scope)
         self.set_reactive(WatchlistTree.write_disabled_reason, write_disabled_reason)
+        self.set_reactive(
+            WatchlistTree.selection_disabled_reason,
+            selection_disabled_reason,
+        )
 
     # --- rendering ---
 
@@ -543,9 +551,13 @@ class WatchlistTree(Vertical):
             f"    {source_name}{badge}",
             id=f"wl-tree-node-source-{occurrence}",
             compact=True,
+            disabled=self.selection_disabled_reason is not None,
             tooltip=(
-                f"Show items from {source_name}. "
-                f"{self._unread_phrase(source_unread)}."
+                self.selection_disabled_reason
+                or (
+                    f"Show items from {source_name}. "
+                    f"{self._unread_phrase(source_unread)}."
+                )
             ),
         )
         source.add_class("watchlist-tree-source")
@@ -795,6 +807,8 @@ class WatchlistTree(Vertical):
         elif button_id.startswith("wl-tree-node-watchlist-"):
             scope = TreeScope(kind="watchlist", watchlist_id=int(button_id.rsplit("-", 1)[1]))
         elif button_id.startswith("wl-tree-node-source-"):
+            if self.selection_disabled_reason is not None:
+                return
             remainder = button_id[len("wl-tree-node-source-"):]
             parent_part, _, source_part = remainder.partition("-")
             if parent_part in {"all", "unassigned", "unread"}:

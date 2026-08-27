@@ -1113,6 +1113,8 @@ async def test_atomic_scope_keeps_committed_reader_until_first_page_mounts(
         content.item = open_item
         content.position = "1 of 1"
         pane = screen.query_one("#watchlists-items-pane", ArticleListPane)
+        screen._items_status_filter = "all"
+        pane.status_filter = "all"
         pane.selected_item = open_item
         tree = screen.query_one("#wl-tree", WatchlistTree)
         inspector = screen.query_one("#watchlists-entity-inspector", InspectorPane)
@@ -1186,6 +1188,23 @@ async def test_atomic_scope_keeps_committed_reader_until_first_page_mounts(
         assert content.item is None
         assert content.position == ""
         assert pane.selected_item is None
+        assert screen._items_status_filter == "all"
+        assert pane.status_filter == "unread"
+        assert pane.status_filter_disabled_reason == (
+            "All Unread always shows unread items."
+        )
+
+        controller.list_reader_items_page.side_effect = None
+        controller.list_reader_items_page.return_value = _page(
+            [11], high_water=11, snapshot_count=1
+        )
+        restored_scope = TreeScope(kind="all")
+        screen.post_message(TreeScopeChanged(restored_scope))
+        await _wait_until(pilot, lambda: screen.tree_scope == restored_scope)
+
+        assert screen._items_status_filter == "all"
+        assert pane.status_filter == "all"
+        assert pane.status_filter_disabled_reason is None
 
 
 @pytest.mark.asyncio
@@ -1225,6 +1244,8 @@ async def test_pending_scope_failure_retains_committed_scope_and_names_both():
         prior_page_number = pane.page_number
         prior_has_next = pane.has_next
         prior_content_position = content.position
+        screen._items_status_filter = "all"
+        pane.status_filter = "all"
         screen._tree_all_source_rows = [{"id": 9, "name": "Candidate [A]"}]
         screen.app_instance.notify = Mock()
         controller.list_reader_items_page.reset_mock()
@@ -1243,6 +1264,9 @@ async def test_pending_scope_failure_retains_committed_scope_and_names_both():
         assert screen.tree_scope == prior_scope
         assert screen.selected_scope == prior_selected_scope
         assert tree.active_scope == prior_scope
+        assert screen._items_status_filter == "all"
+        assert pane.status_filter == "all"
+        assert pane.status_filter_disabled_reason is None
         assert _static_text(screen.query_one("#wc-watchlists-summary")) == prior_heading
         assert inspector.scope == prior_inspector_scope
         assert list(inspector.breadcrumb_labels) == prior_inspector_labels
@@ -1344,10 +1368,15 @@ async def test_management_scope_invalidates_reader_without_hidden_item_io():
 
         screen.__dict__["_reactive_active_section"] = "sources"
         controller.list_reader_items_page.reset_mock()
-        candidate = TreeScope(kind="watchlist", watchlist_id=7)
+        candidate = TreeScope(
+            kind="source",
+            source_id=9,
+            parent_context="unassigned",
+        )
         screen._request_tree_scope(candidate)
 
         assert controller.list_reader_items_page.await_count == 0
+        assert screen.tree_scope == candidate
         assert screen._items_snapshot is None
         assert screen._loaded_items == []
         assert screen._selected_content_item is None

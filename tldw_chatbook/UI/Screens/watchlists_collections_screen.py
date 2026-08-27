@@ -308,6 +308,10 @@ _NON_READ_STATE_STATUSES: frozenset[str] = frozenset({"ingested", "ignored", "er
 #: are a Runs-tab concern, so neither belongs in the article list.
 _READER_ALL_STATUSES: tuple[str, ...] = ("new", "reviewed", "ingested")
 _ITEMS_PAGE_SIZE = 50
+_UNREAD_CONTEXT_FILTER_REASON = "All Unread always shows unread items."
+_INDIVIDUAL_FEED_SELECTION_DISABLED = (
+    "Individual feed selection is available in Read or the Local backend."
+)
 
 
 def _normalize_items_status_filter(value: Any) -> str:
@@ -1963,6 +1967,7 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
             active_tag=None if recovering else self._tree_active_tag,
             active_scope=self.tree_scope,
             write_disabled_reason=self._tree_write_disabled_reason(),
+            selection_disabled_reason=self._tree_selection_disabled_reason(),
             source_counts={} if recovering else self._tree_source_counts,
             all_source_rows=[] if recovering else self._tree_all_source_rows,
             unassigned_source_rows=(
@@ -2007,6 +2012,12 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
             return WC_SERVER_WRITE_RECOVERY.disabled_tooltip
         if self._watchlist_bundle_service() is None:
             return WC_SERVICE_UNAVAILABLE_COPY
+        return None
+
+    def _tree_selection_disabled_reason(self) -> str | None:
+        """Why contextual feed children cannot commit on this surface."""
+        if self.runtime_backend == "server" and self.active_section != "items":
+            return _INDIVIDUAL_FEED_SELECTION_DISABLED
         return None
 
     def _load_source_rows_for_tree(self, watchlist_id: int) -> list[dict[str, Any]]:
@@ -2501,8 +2512,9 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
             # goes through `_normalize_items_status_filter` (TASK-3072): the
             # mirror can still hold a pre-reader per-status value, which the
             # two-option Select would reject.
-            items_pane.status_filter = _normalize_items_status_filter(
-                self._items_status_filter
+            items_pane.status_filter = self._effective_items_status_filter()
+            items_pane.status_filter_disabled_reason = (
+                self._items_filter_disabled_reason()
             )
             items_pane.search_query = self._items_search_query
             items_pane.selected_item = self._selected_content_item
@@ -4534,10 +4546,8 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
         # are in view" cannot disagree. An in-place push on the pane's own
         # reactive, not a region rebuild -- see `_push_scoped_sources_to_pane`.
         self._push_scoped_sources_to_pane()
-        try:
-            self.query_one("#wl-tree", WatchlistTree).active_scope = self.tree_scope
-        except NoMatches:
-            pass
+        self._sync_tree_navigation_authority()
+        self._sync_items_filter_authority()
         if self.active_section == "artifacts":
             # Artifacts is the one section whose entire subject is the tree
             # scope: a briefing belongs to exactly one watchlist. Moving the
@@ -4549,6 +4559,25 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
             self.run_worker(
                 self._load_briefings(), exclusive=True, group="wl-briefings-load"
             )
+
+    def _sync_tree_navigation_authority(self) -> None:
+        """Push contextual selection availability into the mounted rail."""
+        try:
+            tree = self.query_one("#wl-tree", WatchlistTree)
+        except NoMatches:
+            return
+        reason = self._tree_selection_disabled_reason()
+        tree.selection_disabled_reason = reason
+        tree.active_scope = None if reason is not None else self.tree_scope
+
+    def _sync_items_filter_authority(self) -> None:
+        """Show the committed effective filter while preserving preference."""
+        try:
+            pane = self.query_one("#watchlists-items-pane", ArticleListPane)
+        except NoMatches:
+            return
+        pane.status_filter = self._effective_items_status_filter()
+        pane.status_filter_disabled_reason = self._items_filter_disabled_reason()
 
     def _refresh_centre_header_for_scope(self) -> None:
         """Queue a centre-header rebuild so the scoped summary follows the
@@ -5082,6 +5111,7 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
             self._pending_navigation_run_id = None
             self._pending_navigation_run_backend = None
         if self.is_mounted:
+            self._sync_tree_navigation_authority()
             if self.active_section == "items" and self.runtime_backend != "local":
                 self._enter_server_read_recovery()
             token = self._next_layout_request_token()
@@ -5241,6 +5271,7 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
             )
         except NoMatches:
             pass
+        self._sync_tree_navigation_authority()
         # Review wave, I1: and into the Inspector, which carries the same
         # verb. Pushed from here rather than left to the next rebuild for
         # exactly the reason the tree push above documents -- nothing
@@ -9987,6 +10018,33 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
             return {"status": "new"}
         return {"statuses": list(_READER_ALL_STATUSES)}
 
+    @staticmethod
+    def _scope_forces_unread(scope: TreeScope) -> bool:
+        """Whether a committed or candidate scope owns the Unread filter."""
+        return scope.kind == "unread" or (
+            scope.kind == "source" and scope.parent_context == "unread"
+        )
+
+    def _effective_items_status_filter(
+        self, scope: TreeScope | None = None
+    ) -> str:
+        """Return visible/query filter without mutating the manual choice."""
+        candidate = self.tree_scope if scope is None else scope
+        if self._scope_forces_unread(candidate):
+            return "unread"
+        return _normalize_items_status_filter(self._items_status_filter)
+
+    def _items_filter_disabled_reason(
+        self, scope: TreeScope | None = None
+    ) -> str | None:
+        """Explain the temporary filter override for contextual Unread."""
+        candidate = self.tree_scope if scope is None else scope
+        return (
+            _UNREAD_CONTEXT_FILTER_REASON
+            if self._scope_forces_unread(candidate)
+            else None
+        )
+
     def _items_page_key(
         self,
         *,
@@ -10153,7 +10211,9 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
         """Freeze one candidate Reader query from explicit screen intent."""
         candidate_scope = self.tree_scope if scope is None else scope
         candidate_status = (
-            self._items_status_filter if status is None else status
+            self._effective_items_status_filter(candidate_scope)
+            if status is None
+            else status
         )
         candidate_search = self._items_search_query if search is None else search
         kwargs = {
@@ -11161,11 +11221,13 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
             self._push_items_pager_state()
             return
         incoming = _normalize_items_status_filter(event.status_filter)
-        status_changed = incoming != _normalize_items_status_filter(
+        forced = self._scope_forces_unread(self.tree_scope)
+        status_changed = not forced and incoming != _normalize_items_status_filter(
             self._items_status_filter
         )
         query_changed = event.search_query != self._items_search_query
-        self._items_status_filter = incoming
+        if not forced:
+            self._items_status_filter = incoming
         self._items_search_query = event.search_query
         if status_changed:
             self._supersede_items_query_intent()
