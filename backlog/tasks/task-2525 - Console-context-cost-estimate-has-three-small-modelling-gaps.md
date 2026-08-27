@@ -4,7 +4,7 @@ title: Console context/cost estimate has three small modelling gaps
 status: Done
 assignee: []
 created_date: '2026-08-06 02:21'
-updated_date: '2026-08-27 15:01'
+updated_date: '2026-08-27 15:17'
 labels:
   - console
   - rag
@@ -82,4 +82,6 @@ Verification: Ruff passed on all changed Python files; git diff --check passed; 
 Tradeoff: estimates intentionally avoid authority I/O and remain formatted pre-authority previews; the send path rechecks authority and fails closed. ADR required: no. ADR path: N/A. Reason: routine parity fix reusing existing boundaries. No new generalizable lesson was produced.
 
 Final review corrected `build_console_context_estimate()` documentation to describe `staged_text` as canonical formatted pre-authority evidence that authoritative send capture may shrink; runtime behavior was unchanged.
+
+PR review follow-up named and documented the per-candidate Console framing allowance, and replaced the authority-shrink test's database double with a real in-memory SQLite `Media` table. The focused authority/send tests passed (2), the prompted/staged estimator selection passed (7), Ruff passed, and `git diff --check` passed; runtime behavior remained unchanged.
 <!-- SECTION:NOTES:END -->

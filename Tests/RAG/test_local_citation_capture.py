@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 import math
 import re
+import sqlite3
 import sys
 from dataclasses import FrozenInstanceError
 from types import SimpleNamespace
@@ -953,6 +954,30 @@ class _ExistingMediaDB:
         )
 
 
+class _InMemoryMediaDB:
+    """Minimal real SQLite authority store for prompt-boundary tests."""
+
+    is_memory_db = True
+
+    def __init__(self, *existing_ids: str) -> None:
+        self.connection = sqlite3.connect(":memory:")
+        self.connection.execute(
+            "CREATE TABLE Media (id TEXT PRIMARY KEY, deleted INTEGER NOT NULL)"
+        )
+        self.connection.executemany(
+            "INSERT INTO Media (id, deleted) VALUES (?, 0)",
+            ((source_id,) for source_id in existing_ids),
+        )
+        self.query_count = 0
+
+    def execute_query(self, query, params):
+        self.query_count += 1
+        return self.connection.execute(query, params)
+
+    def close(self) -> None:
+        self.connection.close()
+
+
 class _CaptureRepository:
     def __init__(self):
         self.builders = []
@@ -1373,9 +1398,7 @@ async def test_console_send_adapter_preserves_chunk_lineage_score_and_rank():
 
 
 @pytest.mark.asyncio
-async def test_console_estimate_stays_pre_authority_while_send_rechecks(
-    monkeypatch,
-) -> None:
+async def test_console_estimate_stays_pre_authority_while_send_rechecks() -> None:
     launch = ConsoleLiveWorkLaunch.from_values(
         source="Library Search/RAG",
         title="staged evidence",
@@ -1404,32 +1427,28 @@ async def test_console_estimate_stays_pre_authority_while_send_rechecks(
             ).to_payload(),
         },
     )
-    app = _CaptureApp(media_ids=("m2",))
-    authority_queries = 0
-    execute_query = app.media_db.execute_query
+    app = _CaptureApp(media_ids=())
+    media_db = _InMemoryMediaDB("m2")
+    app.media_db = media_db
+    try:
+        assert console_prompted_source_count(launch) == 2
+        assert console_prompted_evidence_text(launch) == (
+            "[S1] MEDIA — Source 1\nBody 1\n---\n"
+            "[S2] MEDIA — Source 2\nBody 2"
+        )
+        assert media_db.query_count == 0
 
-    def _counting_execute_query(query, params):
-        nonlocal authority_queries
-        authority_queries += 1
-        return execute_query(query, params)
-
-    monkeypatch.setattr(app.media_db, "execute_query", _counting_execute_query)
-    assert console_prompted_source_count(launch) == 2
-    assert console_prompted_evidence_text(launch) == (
-        "[S1] MEDIA — Source 1\nBody 1\n---\n"
-        "[S2] MEDIA — Source 2\nBody 2"
-    )
-    assert authority_queries == 0
-
-    captured = await cre.capture_console_staged_evidence_for_chat(
-        app,
-        launch,
-        user_message="question",
-    )
-    assert authority_queries >= 1
-    assert captured.context == "[S1] MEDIA — Source 2\nBody 2"
-    assert captured.citation_repair_contract is not None
-    assert captured.citation_repair_contract.allowed_ordinals == (1,)
+        captured = await cre.capture_console_staged_evidence_for_chat(
+            app,
+            launch,
+            user_message="question",
+        )
+        assert media_db.query_count >= 1
+        assert captured.context == "[S1] MEDIA — Source 2\nBody 2"
+        assert captured.citation_repair_contract is not None
+        assert captured.citation_repair_contract.allowed_ordinals == (1,)
+    finally:
+        media_db.close()
 
 
 @pytest.mark.asyncio

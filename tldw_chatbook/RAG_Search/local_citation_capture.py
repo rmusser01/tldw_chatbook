@@ -47,6 +47,8 @@ _OFFSET_ALIASES = {
 }
 _TITLE_UTF8_BYTES_MAX = 4 * 1024
 _SEPARATOR = "\n---\n"
+# Slack for the marker, source label, punctuation, newline, and separator.
+_CONSOLE_FRAMING_ALLOWANCE_PER_CANDIDATE = 32
 _SOURCE_LABELS = {
     CanonicalSourceKind.MEDIA_DB: "MEDIA",
     CanonicalSourceKind.NOTES: "NOTES",
@@ -531,7 +533,9 @@ def format_console_evidence_context(
     return format_local_evidence_context(
         normalized_results,
         max_length=sum(
-            len(candidate.title) + len(candidate.content) + 32
+            len(candidate.title)
+            + len(candidate.content)
+            + _CONSOLE_FRAMING_ALLOWANCE_PER_CANDIDATE
             for candidate in normalized_results
         ),
     )
