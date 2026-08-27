@@ -40,7 +40,10 @@ from tldw_chatbook.Workspaces.change_tracking import (
     ChangeTrackingError,
     ShadowRepoService,
 )
-from tldw_chatbook.Workspaces.change_turn_tracker import ChangeTurnTracker
+from tldw_chatbook.Workspaces.change_turn_tracker import (
+    ChangeTurnTracker,
+    TurnChangeRecord,
+)
 
 # Harness apps load the consolidated widget CSS the real app loads
 # (TASK-15450); without it the widgets under test mount unstyled.
@@ -3832,6 +3835,265 @@ def test_successor_e_waiter_timeout_disables_turn_tracking(
     assert outcome.status == "done"
     assert not db.change_snapshots_for_run(run_id)
     assert close_done.is_set()
+
+
+@pytest.mark.parametrize(
+    "boundary_failure",
+    ["missing", "error", "tracking_error", "exception"],
+)
+def test_untrusted_claimed_successor_boundary_fails_closed(
+    tmp_path, root, tracker, monkeypatch, boundary_failure
+):
+    second_root = tmp_path / "second-root"
+    second_root.mkdir()
+    (second_root / "seed.txt").write_text("seed\n")
+    gateway = _BlockingParentGateway()
+    bridge, db, store, session, aid = _bridge_with(tmp_path, gateway, tracker)
+    old_run_id = db.create_run(conversation_id="conv-1", agent_kind="primary")
+    old_turn = tracker.begin_turn([root, second_root])
+    old_turn.await_baseline()
+    tracker.end_turn(old_turn)
+    follow_on = tracker.continuation(old_turn)
+    assert follow_on is not None
+
+    window = _PostTurnChangeWindow(
+        run_id=old_run_id,
+        session_id=session.id,
+        handle=follow_on,
+    )
+    bridge._post_turn_change_windows["conv-1"] = window
+    baselines = dict(follow_on.baselines)
+    errors: dict[str, str] = {}
+    second_key = str(second_root.resolve())
+    if boundary_failure == "missing":
+        baselines.pop(second_key)
+    elif boundary_failure == "error":
+        errors[second_key] = "injected claimed baseline failure"
+    baseline_awaited = threading.Event()
+    claimed_handle = SimpleNamespace(
+        roots=list(follow_on.roots),
+        baselines=baselines,
+        errors=errors,
+        await_baseline=baseline_awaited.set,
+    )
+    monkeypatch.setattr(tracker, "begin_turn", lambda *args, **kwargs: claimed_handle)
+    real_end = tracker.end_turn
+    old_end_calls: list[dict[str, str] | None] = []
+    successor_e_called = threading.Event()
+
+    def record_boundary_end(handle, *args, **kwargs):
+        if handle is window.handle:
+            old_end_calls.append(kwargs.get("end_shas"))
+            if boundary_failure == "tracking_error":
+                return [
+                    TurnChangeRecord(
+                        root=str(root.resolve()),
+                        tracking_error="injected close-time priming failure",
+                    )
+                ]
+            if boundary_failure == "exception":
+                raise RuntimeError("injected close-time exception")
+            return []
+        if handle is claimed_handle:
+            successor_e_called.set()
+            return []
+        return real_end(handle, *args, **kwargs)
+
+    monkeypatch.setattr(tracker, "end_turn", record_boundary_end)
+    results: list[object] = []
+    failures: list[BaseException] = []
+    close_results: list[bool] = []
+
+    def run_successor() -> None:
+        try:
+            results.append(
+                _run(
+                    bridge,
+                    session,
+                    aid,
+                    root,
+                    change_roots=[root, second_root],
+                )
+            )
+        except BaseException as exc:  # noqa: BLE001 -- asserted below
+            failures.append(exc)
+
+    successor = threading.Thread(target=run_successor, name="invalid-claim-run")
+    successor.start()
+    try:
+        assert gateway.entered.wait(5), "successor never entered its provider"
+        with bridge._change_window_lock:
+            claim = window.successor_claim
+        assert claim is not None
+        assert claim.ready.is_set()
+        closer = threading.Thread(
+            target=lambda: close_results.append(
+                bridge._close_post_turn_change_window("conv-1")
+            ),
+            name="invalid-claim-closer",
+        )
+        closer.start()
+        closer.join(5)
+        assert not closer.is_alive(), "invalid claim close did not finish"
+    finally:
+        gateway.release.set()
+        successor.join(10)
+
+    assert not successor.is_alive()
+    assert failures == []
+    assert results[0][1].status == "done"
+    assert close_results == [False]
+    assert baseline_awaited.is_set()
+    if boundary_failure in {"missing", "error"}:
+        assert old_end_calls == []
+    else:
+        assert old_end_calls == [baselines]
+    assert not successor_e_called.is_set()
+    with bridge._change_window_lock:
+        assert claim.failed
+    assert claim.ready.is_set()
+    assert window.close_done.is_set()
+
+
+def test_claim_timeout_failure_cannot_be_cleared_by_late_attachment(
+    tmp_path, root, tracker, monkeypatch
+):
+    gateway = _BlockingParentGateway()
+    bridge, db, store, session, aid = _bridge_with(tmp_path, gateway, tracker)
+    old_run_id = db.create_run(conversation_id="conv-1", agent_kind="primary")
+    old_turn = tracker.begin_turn([root])
+    old_turn.await_baseline()
+    tracker.end_turn(old_turn)
+    follow_on = tracker.continuation(old_turn)
+    assert follow_on is not None
+    window = _PostTurnChangeWindow(
+        run_id=old_run_id,
+        session_id=session.id,
+        handle=follow_on,
+    )
+    bridge._post_turn_change_windows["conv-1"] = window
+
+    class ForcedTimeoutEvent(threading.Event):
+        def __init__(self) -> None:
+            super().__init__()
+            self.wait_started = threading.Event()
+            self.release_timeout = threading.Event()
+
+        def wait(self, timeout=None):
+            self.wait_started.set()
+            assert self.release_timeout.wait(5), "forced timeout was not released"
+            return False
+
+    class InstrumentedClaim:
+        def __init__(self) -> None:
+            self.ready = ForcedTimeoutEvent()
+            self.handle = None
+            self._failed = False
+            self.attachment_read = threading.Event()
+            self.failure_written = threading.Event()
+            self._instrumented = False
+
+        @property
+        def failed(self):
+            observed = self._failed
+            if (
+                threading.current_thread().name == "late-claim-attachment"
+                and not self._instrumented
+            ):
+                self._instrumented = True
+                lock_was_free = bridge._change_window_lock.acquire(blocking=False)
+                if lock_was_free:
+                    bridge._change_window_lock.release()
+                self.attachment_read.set()
+                if lock_was_free:
+                    assert self.failure_written.wait(5), (
+                        "closer never published its failure"
+                    )
+            return observed
+
+        @failed.setter
+        def failed(self, value):
+            self._failed = value
+            if value:
+                self.failure_written.set()
+
+    monkeypatch.setattr(
+        console_agent_bridge_module,
+        "_SuccessorBoundaryClaim",
+        InstrumentedClaim,
+    )
+    real_begin = tracker.begin_turn
+    real_end = tracker.end_turn
+    begin_returned = threading.Event()
+    release_begin = threading.Event()
+    successor_handle: dict[str, object] = {}
+    successor_e_called = threading.Event()
+
+    def block_after_begin(roots, touched_paths=()):
+        handle = real_begin(roots, touched_paths=touched_paths)
+        successor_handle["value"] = handle
+        begin_returned.set()
+        assert release_begin.wait(5), "successor begin was never released"
+        return handle
+
+    def record_successor_e(handle, *args, **kwargs):
+        if handle is successor_handle.get("value"):
+            successor_e_called.set()
+        return real_end(handle, *args, **kwargs)
+
+    monkeypatch.setattr(tracker, "begin_turn", block_after_begin)
+    monkeypatch.setattr(tracker, "end_turn", record_successor_e)
+    results: list[object] = []
+    failures: list[BaseException] = []
+    close_results: list[bool] = []
+
+    def run_successor() -> None:
+        try:
+            results.append(_run(bridge, session, aid, root))
+        except BaseException as exc:  # noqa: BLE001 -- asserted below
+            failures.append(exc)
+
+    successor = threading.Thread(
+        target=run_successor,
+        name="late-claim-attachment",
+    )
+    successor.start()
+    assert begin_returned.wait(5), "successor begin did not return"
+    with bridge._change_window_lock:
+        claim = window.successor_claim
+    assert isinstance(claim, InstrumentedClaim)
+    closer = threading.Thread(
+        target=lambda: close_results.append(
+            bridge._close_post_turn_change_window("conv-1")
+        ),
+        name="claim-timeout-closer",
+    )
+    closer.start()
+    try:
+        assert claim.ready.wait_started.wait(5), "closer never waited on claim"
+        release_begin.set()
+        assert claim.attachment_read.wait(5), "attachment never read claim state"
+        claim.ready.release_timeout.set()
+        closer.join(5)
+        assert not closer.is_alive(), "claim timeout closer did not finish"
+    finally:
+        release_begin.set()
+        gateway.release.set()
+        successor.join(10)
+        closer.join(10)
+
+    assert not successor.is_alive()
+    assert not closer.is_alive()
+    successor_handle["value"].await_baseline()
+    assert failures == []
+    assert results[0][1].status == "done"
+    assert close_results == [False]
+    with bridge._change_window_lock:
+        assert claim.failed
+    assert claim.failure_written.is_set()
+    assert claim.ready.is_set()
+    assert window.close_done.is_set()
+    assert not successor_e_called.is_set()
 
 
 def test_claim_and_close_failures_release_waiters_without_breaking_runs(

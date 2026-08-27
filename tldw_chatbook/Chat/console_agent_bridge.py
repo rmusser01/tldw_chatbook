@@ -4653,13 +4653,13 @@ class ConsoleAgentBridge:
                     )
                 finally:
                     if successor_claim is not None:
-                        claim_already_failed = successor_claim.failed
-                        if claim_already_failed:
-                            change_handle = None
-                        successor_claim.handle = change_handle
-                        successor_claim.failed = (
-                            claim_already_failed or change_handle is None
-                        )
+                        with self._change_window_lock:
+                            if successor_claim.failed:
+                                change_handle = None
+                                successor_claim.handle = None
+                            else:
+                                successor_claim.handle = change_handle
+                                successor_claim.failed = change_handle is None
                         successor_claim.ready.set()
         if change_handle is not None:
             _inner_review = review_tool_calls
@@ -4965,7 +4965,14 @@ class ConsoleAgentBridge:
                 # window before this turn's E. A timed-out close waiter
                 # cannot prove that close-time priming finished, so this
                 # turn must fail closed instead of overtaking it.
-                if not self._close_post_turn_change_window(conversation_id):
+                boundary_safe = self._close_post_turn_change_window(
+                    conversation_id
+                )
+                with self._change_window_lock:
+                    claim_failed = (
+                        successor_claim is not None and successor_claim.failed
+                    )
+                if not boundary_safe or claim_failed:
                     change_handle = None
             if change_handle is not None:
                 try:
@@ -5551,8 +5558,8 @@ class ConsoleAgentBridge:
             conversation_id: The conversation whose window to close.
 
         Returns:
-            ``False`` only when a competing close did not finish within
-            the boundary wait; otherwise ``True``.
+            Whether the close completed with a trustworthy successor
+            boundary. Failures remain non-raising but return ``False``.
         """
         with self._change_window_lock:
             window = self._post_turn_change_windows.get(conversation_id)
@@ -5561,7 +5568,7 @@ class ConsoleAgentBridge:
             if window.closing:
                 close_done = window.close_done
                 owner = False
-                successor_claim = None
+                successor_claim = window.successor_claim
             else:
                 window.closing = True
                 close_done = window.close_done
@@ -5574,6 +5581,9 @@ class ConsoleAgentBridge:
             except Exception:  # noqa: BLE001 -- tracking is best effort
                 completed = False
             if not completed:
+                if successor_claim is not None:
+                    with self._change_window_lock:
+                        successor_claim.failed = True
                 logger.warning(
                     "change_review: post-turn close wait timed out; "
                     "continuing without tracking this boundary"
@@ -5592,20 +5602,38 @@ class ConsoleAgentBridge:
                 except Exception:  # noqa: BLE001 -- tracking is best effort
                     claim_ready = False
                 if not claim_ready:
-                    successor_claim.failed = True
+                    with self._change_window_lock:
+                        successor_claim.failed = True
                     logger.warning(
                         "change_review: successor claim did not attach; "
                         "boundary changes are untracked"
                     )
-                    return True
-                if (
-                    not successor_claim.failed
-                    and successor_claim.handle is not None
+                    return False
+                with self._change_window_lock:
+                    claim_failed = successor_claim.failed
+                    claim_handle = successor_claim.handle
+                if claim_failed or claim_handle is None:
+                    return False
+                # The same bounded wait `end_turn` does anyway; here it
+                # makes the exact B sha available to an earlier closer.
+                claim_handle.await_baseline()
+                claimed_baselines = dict(claim_handle.baselines)
+                claimed_roots = tuple(claim_handle.roots)
+                if claim_handle.errors or any(
+                    not claimed_baselines.get(str(root))
+                    for root in claimed_roots
                 ):
-                    # The same bounded wait `end_turn` does anyway; here it
-                    # makes the exact B sha available to an earlier closer.
-                    successor_claim.handle.await_baseline()
-                    end_shas = dict(successor_claim.handle.baselines)
+                    with self._change_window_lock:
+                        successor_claim.failed = True
+                    logger.warning(
+                        "change_review: successor baseline was incomplete; "
+                        "boundary changes are untracked"
+                    )
+                    return False
+                end_shas = {
+                    str(root): claimed_baselines[str(root)]
+                    for root in claimed_roots
+                }
 
             with self._change_window_lock:
                 touched_paths = sorted(
@@ -5622,6 +5650,13 @@ class ConsoleAgentBridge:
             )
             if not records:
                 return True
+            tracking_failed = any(
+                bool(getattr(record, "tracking_error", ""))
+                for record in records
+            )
+            if tracking_failed and successor_claim is not None:
+                with self._change_window_lock:
+                    successor_claim.failed = True
             self._record_change_snapshots(
                 run_id=window.run_id,
                 records=records,
@@ -5633,11 +5668,17 @@ class ConsoleAgentBridge:
                 records,
                 kind=CHANGE_KIND_SUBAGENT_POST_TURN,
             )
+            if tracking_failed:
+                return False
         except Exception:  # noqa: BLE001 -- never break a child's teardown
+            if successor_claim is not None:
+                with self._change_window_lock:
+                    successor_claim.failed = True
             logger.warning(
                 "change_review: post-turn window failed; a survivor's "
                 "changes are untracked"
             )
+            return False
         finally:
             with self._change_window_lock:
                 if self._post_turn_change_windows.get(conversation_id) is window:
