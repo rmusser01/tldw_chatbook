@@ -373,20 +373,6 @@ class _ReadyCitationPersistence:
             for row in cursor.fetchall()
         ]
 
-    def cited_message_rows(self) -> list[dict[str, Any]]:
-        """Committed rows that carry a sealed citation trace.
-
-        This is the row-level equivalent of the old
-        ``[c for c in create_calls if c["citation_write"] is not None]``.
-        """
-
-        cited = {
-            trace["message_id"]
-            for trace in self.citation_trace_rows()
-            if trace["message_id"] is not None
-        }
-        return [row for row in self.message_rows() if row["message_id"] in cited]
-
 
 class _CancelRowFailingPersistence(_ReadyCitationPersistence):
     def __init__(self) -> None:
@@ -788,22 +774,6 @@ def _citation_calls(
         for call in persistence.create_calls
         if call.get("citation_write") is not None
     ]
-
-
-def _last_assistant(store: ConsoleChatStore):
-    """The MOST RECENT assistant message (TASK-22301).
-
-    `_assistant` returns the first, which is right when a turn owns exactly one
-    assistant message. A durable turn plus an agent bridge that APPENDS its
-    replacement leaves two, and the first is the empty placeholder -- so tests
-    about the replacement must name the last explicitly.
-    """
-
-    return _first((
-        message
-        for message in reversed(store.messages_for_session(store.active_session_id))
-        if message.role is ConsoleMessageRole.ASSISTANT
-    ), what="most recent ASSISTANT message")
 
 
 def _assert_row_carries_no_sealed_trace(
