@@ -203,6 +203,42 @@ def test_raw_cli_physical_prefix_at_offsets_zero_and_one_creates_trusted_stash()
 
 
 @pytest.mark.unit
+@pytest.mark.parametrize("modifier", ["alt", "ctrl", "super", "meta", "cmd"])
+def test_raw_cli_modified_exclamation_never_advances_prefix_provenance(
+    modifier: str,
+) -> None:
+    composer = ConsoleComposerBar()
+
+    handled = composer.handle_console_key(Key(f"{modifier}+exclamation_mark", "!"))
+
+    assert handled is False
+    assert composer.draft_text() == ""
+    assert composer._raw_cli_prefix_stage_one is False
+    assert composer._raw_cli_prefix_typed is False
+
+
+@pytest.mark.unit
+@pytest.mark.parametrize("modifier", ["alt", "ctrl", "super", "meta", "cmd"])
+def test_raw_cli_modified_space_interrupts_prefix_provenance(
+    modifier: str,
+) -> None:
+    composer = ConsoleComposerBar()
+    assert composer.handle_console_key(Key("exclamation_mark", "!")) is True
+    assert composer._raw_cli_prefix_stage_one is True
+
+    handled = composer.handle_console_key(Key(f"{modifier}+space", " "))
+
+    assert handled is False
+    assert composer.draft_text() == "!"
+    assert composer._raw_cli_prefix_stage_one is False
+    assert composer.handle_console_key(Key("space", " ")) is True
+    stash = composer.stash_draft_for_send()
+    assert stash is not None
+    assert stash.raw_cli_prefix_typed is False
+    assert composer_module.classify_console_raw_draft(stash).kind == "chat"
+
+
+@pytest.mark.unit
 @pytest.mark.parametrize("source", ["paste", "programmatic"])
 def test_raw_cli_pasted_or_programmatic_prefix_never_creates_trust(source: str) -> None:
     composer = ConsoleComposerBar()
@@ -442,6 +478,102 @@ async def test_raw_cli_trusted_state_is_text_labeled_danger_without_geometry_shi
         assert composer.region.width == original_region.width
         assert composer.region.height == original_region.height
         assert host.focused is original_focus
+
+
+@pytest.mark.asyncio
+async def test_raw_cli_partial_prefix_is_invalidated_by_focus_detour() -> None:
+    host = _RawCliComposerHarness()
+
+    async with host.run_test(size=(120, 20)) as pilot:
+        composer = host.query_one("#console-native-composer", ConsoleComposerBar)
+        composer.focus()
+        await pilot.pause()
+        assert composer.handle_console_key(Key("exclamation_mark", "!")) is True
+        assert composer._raw_cli_prefix_stage_one is True
+
+        send = composer.query_one("#console-send-message", Button)
+        send.focus()
+        await pilot.pause()
+        assert host.focused is send
+        composer.focus()
+        await pilot.pause()
+        assert host.focused is composer
+
+        assert composer.handle_console_key(Key("space", " ")) is True
+        stash = composer.stash_draft_for_send()
+        assert stash is not None
+        assert stash.text == "! "
+        assert stash.raw_cli_prefix_typed is False
+        assert composer_module.classify_console_raw_draft(stash).kind == "chat"
+
+
+@pytest.mark.asyncio
+async def test_raw_cli_completed_prefix_survives_focus_detour() -> None:
+    host = _RawCliComposerHarness()
+
+    async with host.run_test(size=(120, 20)) as pilot:
+        composer = host.query_one("#console-native-composer", ConsoleComposerBar)
+        composer.focus()
+        await pilot.pause()
+        _type_raw_cli_prefix(composer)
+
+        send = composer.query_one("#console-send-message", Button)
+        send.focus()
+        await pilot.pause()
+        assert host.focused is send
+        composer.focus()
+        await pilot.pause()
+        assert host.focused is composer
+
+        stash = composer.stash_draft_for_send()
+        assert stash is not None
+        assert stash.raw_cli_prefix_typed is True
+        assert composer_module.classify_console_raw_draft(stash).kind == "raw"
+
+
+@pytest.mark.asyncio
+async def test_raw_cli_collapsed_state_retains_danger_label_and_one_row_geometry() -> (
+    None
+):
+    host = _RawCliComposerHarness()
+
+    async with host.run_test(size=(120, 20)) as pilot:
+        composer = host.query_one("#console-native-composer", ConsoleComposerBar)
+        composer.focus()
+        await pilot.pause()
+        _type_raw_cli_prefix(composer)
+        composer.set_collapsed(True)
+        await pilot.pause()
+
+        collapsed = composer.query_one("#console-composer-collapsed")
+        status = composer.query_one("#console-composer-collapsed-status", Static)
+        expand = composer.query_one("#console-composer-expand", Button)
+        expand.focus()
+        await pilot.pause()
+        retained_focus = host.focused
+        active_widths = (composer.region.width, collapsed.region.width)
+
+        assert str(status.renderable) == "RAW CLI · HOST ACCESS"
+        assert collapsed.has_class("console-raw-cli-danger")
+        assert status.has_class("console-raw-cli-danger")
+        assert status.has_class("console-voice-status-error")
+        assert composer.region.height == 1
+        assert collapsed.region.height == 1
+        assert status.region.height == 1
+        assert host.focused is expand
+
+        composer.load_draft("ordinary")
+        await pilot.pause()
+
+        assert str(status.renderable) == "Composer hidden · Draft retained"
+        assert not collapsed.has_class("console-raw-cli-danger")
+        assert not status.has_class("console-raw-cli-danger")
+        assert not status.has_class("console-voice-status-error")
+        assert composer.region.height == 1
+        assert collapsed.region.height == 1
+        assert status.region.height == 1
+        assert (composer.region.width, collapsed.region.width) == active_widths
+        assert host.focused is retained_focus
 
 
 def _recipe_record() -> dict[str, object]:

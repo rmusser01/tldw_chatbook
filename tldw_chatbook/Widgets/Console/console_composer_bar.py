@@ -96,16 +96,16 @@ _DRAFT_WORD_SPLIT_RE = re.compile(r"([\t\n\x0b\x0c\r ]+)")
 #: into the draft and `ChatScreen`'s own ``Binding("alt+m", ...)`` never
 #: ran (TASK-1800).
 #:
-#: ``ctrl+``/``super+``/``meta+`` are listed for completeness, not because
+#: ``ctrl+``/``super+``/``meta+``/``cmd+`` are listed for completeness, not because
 #: they leak today: their characters are C0 control bytes, which are not
 #: printable, so they never reached that branch. ``alt`` is the one that
-#: does. Listing all four keeps the rule "a modified key is not text" true
+#: does. Listing all five keeps the rule "a modified key is not text" true
 #: by construction rather than by accident of the control-byte encoding.
 #:
 #: TASK-3749 moved this here from `chat_screen` along with the
 #: printable-key branch it guards: "is this keystroke text?" is a question
 #: about the composer's input, and it now has no other caller.
-_CHORD_MODIFIER_PREFIXES = ("alt+", "ctrl+", "super+", "meta+")
+_CHORD_MODIFIER_PREFIXES = ("alt+", "ctrl+", "super+", "meta+", "cmd+")
 
 
 def _is_modified_chord(key: str) -> bool:
@@ -755,6 +755,7 @@ class ConsoleComposerBar(Horizontal):
         if self._raw_cli_prefix_typed and not active:
             self._raw_cli_prefix_typed = False
         self.set_class(active, "console-raw-cli-danger")
+        self._sync_collapsed_presentation()
         try:
             status = self.query_one("#console-raw-cli-status", Static)
         except NoMatches:
@@ -2857,6 +2858,8 @@ class ConsoleComposerBar(Horizontal):
 
     def _collapsed_status_text(self) -> str:
         """Build presence-only status copy without exposing retained content."""
+        if self._raw_cli_prefix_typed and self.draft_text().startswith("! "):
+            return "RAW CLI · HOST ACCESS"
         parts = ["Composer hidden"]
         if self._run_active:
             parts.append("Generating")
@@ -2890,6 +2893,12 @@ class ConsoleComposerBar(Horizontal):
         expanded.styles.display = "none" if self._collapsed else "block"
         collapsed.styles.display = "block" if self._collapsed else "none"
         status.update(self._collapsed_status_text())
+        raw_cli_active = self._raw_cli_prefix_typed and self.draft_text().startswith(
+            "! "
+        )
+        collapsed.set_class(raw_cli_active, "console-raw-cli-danger")
+        status.set_class(raw_cli_active, "console-raw-cli-danger")
+        status.set_class(raw_cli_active, "console-voice-status-error")
         stop.styles.display = "block" if self._run_active else "none"
         self.set_class(self._collapsed, "console-composer-collapsed")
 
@@ -3406,6 +3415,7 @@ class ConsoleComposerBar(Horizontal):
         self._refresh_visible_draft()
 
     def on_blur(self) -> None:
+        self._raw_cli_prefix_stage_one = False
         self._sync_interaction_classes()
         self._sync_cursor_blink_state()
         self._refresh_visible_draft()
