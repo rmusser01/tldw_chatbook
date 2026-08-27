@@ -5612,14 +5612,27 @@ class LibraryScreen(BaseAppScreen):
             return
         rail_handles = self.query("#library-rail-handle")
         rail_handle = rail_handles.first(Widget) if rail_handles else None
+        adaptive_reader = bool(
+            self.query(
+                "#library-media-reader-shell, "
+                "#library-conversations-reader-shell, "
+                "#library-notes-reader-shell"
+            )
+        )
         # Only the grid and canvas host participate in compact CSS selectors;
         # tagging the rail and inner Notes canvas forced two needless global
         # stylesheet matches on every breakpoint crossing. Apply these before
         # the emergency stage can return so a just-recomposed ordinary route
-        # cannot retain wide padding/borders at the narrow stage.
+        # cannot retain wide padding/borders at the narrow stage. Adaptive
+        # readers share only the shell box-model contract; their internal pane
+        # geometry must not inherit the legacy Notes/Media compact selectors.
+        legacy_compact = self._library_notes_compact and not adaptive_reader
         for widget in (shell, canvas):
-            if widget.has_class("library-notes-compact") != self._library_notes_compact:
-                widget.set_class(self._library_notes_compact, "library-notes-compact")
+            if widget.has_class("library-notes-compact") != legacy_compact:
+                widget.set_class(legacy_compact, "library-notes-compact")
+        adaptive_compact = self._library_notes_compact and adaptive_reader
+        if shell.has_class("library-adaptive-compact") != adaptive_compact:
+            shell.set_class(adaptive_compact, "library-adaptive-compact")
         if self._apply_library_emergency_geometry(
             shell=shell,
             rail=rail,
@@ -5627,7 +5640,6 @@ class LibraryScreen(BaseAppScreen):
             rail_handle=rail_handle,
         ):
             return
-        adaptive_notes = bool(self.query("#library-notes-reader-shell"))
         try:
             notes_canvas = canvas.query_one("#library-notes-canvas", LibraryNotesCanvas)
         except (NoMatches, QueryError):
@@ -5652,11 +5664,11 @@ class LibraryScreen(BaseAppScreen):
                 and media_canvas.compact != self._library_notes_compact
             ):
                 media_canvas.apply_compact_presentation(self._library_notes_compact)
-        if adaptive_notes:
+        if adaptive_reader:
             # The adaptive shell owns pane visibility. The legacy compact
-            # stage toggles below predate the permanent Notes work pane and
-            # would hide its retained Items sibling or move focus to an
-            # unrelated legacy handle.
+            # stage toggles below predate the permanent reader work panes and
+            # would hide retained siblings or move focus to an unrelated
+            # legacy handle.
             self._sync_library_ordinary_rail_width_contract()
             return
         compact_single_stage = (
@@ -6258,6 +6270,18 @@ class LibraryScreen(BaseAppScreen):
             self._focus_library_media_grip_if_current(
                 generation,
                 *hidden_focus_target,
+            )
+        elif (
+            layout.items_open
+            and self._library_pending_list_entry_focus
+            and self._library_pending_list_entry_media_return is not None
+        ):
+            # A retained Media return may restore before this post-compose
+            # geometry pass. Reapply its semantic row and exact scroll only
+            # after Items has its final width, otherwise Textual's ensuing
+            # layout correction can replace the stored offset.
+            self._focus_library_list_entry_if_current(
+                self._library_list_entry_focus_generation
             )
 
     def _mirror_library_media_reader_preference(
@@ -6932,14 +6956,18 @@ class LibraryScreen(BaseAppScreen):
 
     def on_mouse_scroll_down(self, event: events.MouseScrollDown) -> None:
         """Let wheel scrolling supersede resize and list-return memory."""
-        self._advance_library_ordinary_emergency_user_interaction(event.widget)
+        self._advance_library_ordinary_emergency_user_interaction(
+            getattr(event, "widget", None)
+        )
         self._mark_library_notes_user_interaction()
         if self._library_pending_list_entry_focus:
             self._disarm_library_list_entry_focus()
 
     def on_mouse_scroll_up(self, event: events.MouseScrollUp) -> None:
         """Let wheel scrolling supersede resize and list-return memory."""
-        self._advance_library_ordinary_emergency_user_interaction(event.widget)
+        self._advance_library_ordinary_emergency_user_interaction(
+            getattr(event, "widget", None)
+        )
         self._mark_library_notes_user_interaction()
         if self._library_pending_list_entry_focus:
             self._disarm_library_list_entry_focus()

@@ -119,7 +119,8 @@ def resolve_ordinary_rail_contract(
         return OrdinaryRailStyleContract(False, None, None, None)
     if ordinary_emergency_required(content_width):
         raise ValueError(
-            "alongside presentation requires content_width of at least 64."
+            "alongside presentation requires content_width of at least "
+            f"{LIBRARY_EMERGENCY_WIDTH}."
         )
     if not custom_widths_enabled:
         return OrdinaryRailStyleContract(

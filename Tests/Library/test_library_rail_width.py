@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import pytest
 
+from tldw_chatbook.Utils import library_rail_width as rail_width_policy
 from tldw_chatbook.Utils.library_rail_width import (
     LIBRARY_CANVAS_MIN_WIDTH,
     LIBRARY_CUSTOM_MAX_WIDTH,
@@ -112,6 +113,15 @@ def test_alongside_is_invalid_during_emergency_widths() -> None:
     with pytest.raises(ValueError, match="requires content_width of at least 64"):
         resolve_ordinary_rail_contract(
             63, OrdinaryRailPresentation.ALONGSIDE, False, 31
+        )
+
+
+def test_alongside_error_reports_the_centralized_emergency_width(monkeypatch) -> None:
+    monkeypatch.setattr(rail_width_policy, "LIBRARY_EMERGENCY_WIDTH", 65)
+
+    with pytest.raises(ValueError, match="requires content_width of at least 65"):
+        resolve_ordinary_rail_contract(
+            64, OrdinaryRailPresentation.ALONGSIDE, False, 31
         )
 
 

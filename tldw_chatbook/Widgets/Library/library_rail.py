@@ -19,7 +19,11 @@ from tldw_chatbook.Library.library_rail_state import (
     LibraryLifecycle,
     LibraryRailPreferences,
 )
-from tldw_chatbook.Utils.library_rail_width import OrdinaryRailStyleContract
+from tldw_chatbook.Utils.library_rail_width import (
+    LIBRARY_DEFAULT_MAX_WIDTH,
+    LIBRARY_MIN_WIDTH,
+    OrdinaryRailStyleContract,
+)
 from tldw_chatbook.Library.library_shell_state import (
     LIBRARY_ROW_CREATE_NOTE,
     LIBRARY_ROW_INGEST_MEDIA,
@@ -336,7 +340,12 @@ class LibraryRail(PostRecomposeCallback, RecomposeCaptureGuard, Vertical):
         self.onboarding_all_empty = onboarding_all_empty
         self._last_ordinary_width_contract: OrdinaryRailStyleContract | None = None
         self.apply_ordinary_width_contract(
-            OrdinaryRailStyleContract(True, "3fr", 24, 34)
+            OrdinaryRailStyleContract(
+                True,
+                "3fr",
+                LIBRARY_MIN_WIDTH,
+                LIBRARY_DEFAULT_MAX_WIDTH,
+            )
         )
 
     @staticmethod

@@ -294,11 +294,7 @@ async def test_library_stage_c_search_rag_selected_evidence_updates_inspector_co
         # evidence cards -- there used to be no line naming the result
         # count or the query that produced it.
         assert (
-            str(
-                screen.query_one(
-                    "#library-rag-results-count-line", Static
-                ).renderable
-            )
+            str(screen.query_one("#library-rag-results-count-line", Static).renderable)
             == "1 result for 'What does the research note say?'."
         )
         # B3: the carry-through jargon line is retired outright -- selecting
@@ -341,7 +337,8 @@ async def test_library_source_rail_marks_active_mode_without_mutating_action_lab
 
         collections_row = screen.query_one("#library-row-browse-collections", Button)
         assert collections_row.has_class("library-rail-row-selected")
-        assert str(collections_row.label).startswith("▸ Collections")
+        assert str(collections_row.label).startswith("▸ ")
+        assert collections_row.library_row.title == "Collections"
         # The row's underlying title (used for the tooltip) is unmutated by selection.
         assert collections_row.tooltip == "Collections"
 
@@ -596,9 +593,7 @@ async def test_library_collections_empty_state_keeps_global_browse_rule_and_bloc
         assert not screen.query("#library-collection-form-action-state")
         assert not screen.query("#library-collection-form-action-boundary")
 
-        form_guidance = screen.query_one(
-            "#library-collection-form-guidance", Static
-        )
+        form_guidance = screen.query_one("#library-collection-form-guidance", Static)
         assert str(form_guidance.renderable) == "Enter a Collection name."
         assert (
             form_guidance.region.y

@@ -167,6 +167,7 @@ from tldw_chatbook.Widgets.Library.library_emergency_return import (
     LibraryEmergencyReturn,
 )
 from tldw_chatbook.Widgets.Library.library_notes_canvas import LibraryNotesCanvas
+from tldw_chatbook.Widgets.Library import library_rail as library_rail_module
 from tldw_chatbook.Widgets.Library.library_rail import (
     LIBRARY_RAIL_ROW_PREFIX,
     LibraryRail,
@@ -249,6 +250,17 @@ class _LibraryRailStyleContractHarness(ConsolidatedCSSApp):
                 id="library-rail",
             )
             yield Static("Canvas", id="rail-style-contract-canvas")
+
+
+def test_library_rail_initial_contract_uses_centralized_bounds(monkeypatch) -> None:
+    monkeypatch.setattr(library_rail_module, "LIBRARY_MIN_WIDTH", 25)
+    monkeypatch.setattr(library_rail_module, "LIBRARY_DEFAULT_MAX_WIDTH", 35)
+
+    rail = LibraryRail(_RAIL_STYLE_TEST_SHELL, _RAIL_STYLE_TEST_PREFERENCES)
+
+    assert rail._last_ordinary_width_contract == OrdinaryRailStyleContract(
+        True, "3fr", 25, 35
+    )
 
 
 @pytest.mark.asyncio
@@ -6688,21 +6700,13 @@ async def test_rail_counts_never_clip_and_titles_shrink_first_at_100x30():
             for banned in ("Conversa...", "Flash...", "Collect..."):
                 assert banned not in first_line, (row.id, first_line)
 
-        # ...and the count survives on the longest-titled row. task-3315
-        # re-pin (pre-arc dev churn: task-2858's rail width fixes,
-        # a3591b503, merged 2026-08-07 in PR #1420 -- reproduced failing at
-        # dev base ebeae1440 with the ingest arc absent): the rail is now
-        # wide enough at 100x30 that the FULL "Conversations (2)" fits, so
-        # the short_title ("Chats") fallback this test used to pin never
-        # engages at this size. The durable invariants stay pinned: the
-        # count is intact, nothing ellipsizes, and the fit loop above
-        # still forbids any clipped row.
+        # ...and the count survives on the longest-titled row. The bounded
+        # fractional rail deliberately uses the semantic short title at this
+        # terminal width rather than widening the entire sidebar.
         conv = screen.query_one("#library-row-browse-conversations", Button)
         conv_line = conv.label.plain.split("\n")[0]
         assert conv_line.endswith("(2)"), f"count clipped: {conv_line!r}"
-        assert "Conversations" in conv_line, (
-            f"full title now fits at 100x30; got: {conv_line!r}"
-        )
+        assert "Chats" in conv_line, f"semantic short title missing: {conv_line!r}"
         assert "..." not in conv_line and "…" not in conv_line, (
             f"title fits outright -- no ellipsis allowed: {conv_line!r}"
         )
@@ -17265,7 +17269,18 @@ async def test_library_shell_prompts_rail_row_shows_exact_count():
         # TASK-19602: with the pager always composed (3aef9bcd1 pagination)
         # the service-failure copy renders in the pager status line -- the
         # legacy pager-None "#library-prompts-error" node no longer mounts.
-        error = await _wait_for_selector(screen, pilot, "#library-prompts-page-status")
+        await _wait_for_selector(screen, pilot, "#library-prompts-page-status")
+        await _wait_for_condition(
+            pilot,
+            lambda: (
+                "unavailable"
+                in str(
+                    screen.query_one("#library-prompts-page-status", Static).renderable
+                )
+            ),
+            message="Prompts service failure did not replace the loading status.",
+        )
+        error = screen.query_one("#library-prompts-page-status", Static)
 
         assert screen._library_selected_row_id == LIBRARY_ROW_BROWSE_PROMPTS
         assert screen.query_one("#library-prompts-canvas")
