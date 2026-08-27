@@ -30,13 +30,16 @@ from textual.widgets import Button, Select, Static, TextArea
 
 import tldw_chatbook
 from tldw_chatbook.Agents.mcp_tool_provider import MCPPendingCall
+from tldw_chatbook.Agents.local_tool_provider import LocalToolProvider
 from tldw_chatbook.Agents.run_context import use_run_id
 from tldw_chatbook.Chat.console_chat_controller import ConsoleChatController
 from tldw_chatbook.Chat.console_chat_models import ConsoleRunMarker
 from tldw_chatbook.Chat.console_chat_store import ConsoleChatStore
+from tldw_chatbook.MCP.permission_store import EffectiveToolState
 from tldw_chatbook.UI.Screens.chat_screen import ChatScreen
 from tldw_chatbook.UI.Screens.chat_screen_state import TaskResumeState
 from tldw_chatbook.Widgets.Chat_Widgets.chat_approval_card import ChatApprovalCard
+from tldw_chatbook.Widgets.Chat_Widgets.chat_task_cards import ChatTaskCards
 
 from Tests.UI.app_factory import _build_test_app
 
@@ -951,6 +954,70 @@ async def _show_production_approval_batch(
                 return card
         await pilot.pause(0.05)
     raise AssertionError("Production approval batch did not finish rendering")
+
+
+class _ControllerCardsHarness(ConsolidatedCSSApp):
+    """Production task-card hierarchy with the real consolidated stylesheet."""
+
+    def compose(self) -> ComposeResult:
+        yield ChatTaskCards(id="console-task-surface")
+
+
+@pytest.mark.asyncio
+async def test_descriptor_effects_reach_the_mounted_production_approval_card(tmp_path):
+    """A controller-marshaled local descriptor reaches the real card unchanged."""
+    app = _ControllerCardsHarness()
+    async with app.run_test(size=(200, 40)) as pilot:
+        cards = app.query_one(ChatTaskCards)
+        gate = LocalToolProvider(
+            workspace_root=tmp_path,
+            resolve_state=lambda _hub: EffectiveToolState(
+                state="ask", origin="global_default"
+            ),
+        ).pending_gate_for("fs_list", {"effects": ["network"], "path": "."})
+        assert gate is not None
+        call = MCPPendingCall(
+            llm_name=gate.llm_name,
+            server_key=gate.server_key,
+            tool_name=gate.tool_name,
+            server_label=gate.server_label,
+            arguments=gate.arguments,
+            reason=gate.reason,
+            effects=gate.effects,
+        )
+        controller, store = _build_controller()
+        session = store.ensure_session()
+        controller.app = app
+        controller.set_pending_approval = lambda payload: (
+            cards.sync_state(TaskResumeState(pending_approval=payload))
+            if payload is not None
+            else None
+        )
+        controller.park_pending_approval = lambda _session_id: None
+
+        pending = asyncio.create_task(
+            asyncio.to_thread(
+                controller.request_mcp_approvals, [call], session_id=session.id
+            )
+        )
+        deadline = time.monotonic() + 5.0
+        while time.monotonic() < deadline:
+            card = cards.query_one(ChatApprovalCard)
+            effects = card.query(".approval-row-effects")
+            if card.display and len(effects) == 1:
+                break
+            await pilot.pause(0.05)
+        else:
+            controller.begin_shutdown()
+            await pending
+            raise AssertionError("Production approval card did not render effects")
+
+        assert _text(effects.first()) == "Effects: may read private local data"
+        assert "network" not in _text(effects.first())
+        controller.resolve_pending_approval(
+            {call.llm_name: "deny"}, round_id=card._batch_round_id
+        )
+        assert await pending == {call.llm_name: "deny"}
 
 
 @pytest.mark.asyncio
