@@ -1,11 +1,11 @@
 ---
 id: TASK-22861
 title: Expose bounded Watchlists receipts and briefing query tools
-status: In Progress
+status: Done
 assignee:
   - '@codex'
 created_date: '2026-08-27 04:14'
-updated_date: '2026-08-27 14:44'
+updated_date: '2026-08-27 19:26'
 labels:
   - watchlists
   - console
@@ -31,13 +31,13 @@ Let Console agents inspect sources, collections, durable operation receipts, and
 
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
-- [ ] #1 Shared tools list bounded source, collection, briefing-receipt, and operational metadata using canonical IDs, stable order, filter-bound cursors, redacted URLs, and the established 30 KiB result ceiling.
-- [ ] #2 `watchlists_get_operation_status` accepts only exact `local:watchlist_run:<id>` or `local:briefing:<id>` receipts and returns their owning entity, timestamps, normalized state, retry/cancel capability, and inspection destination.
-- [ ] #3 `watchlists_get_briefing` is Console-only and returns bounded Markdown plus ordered selected/cited durable provenance, generated/untrusted labels, truncation metadata, and explicit legacy/missing-reference markers.
-- [ ] #4 External MCP can list bounded metadata/receipts but cannot receive article snippets, article bodies, briefing Markdown, or selected/cited provenance arrays, regardless of stored permission state.
-- [ ] #5 “Read latest briefing” deterministically resolves the newest completed receipt for one collection while reporting newer non-readable attempts as operational context.
-- [ ] #6 Server Watchlists mode and missing/old read-only storage return structured unsupported/feature-unavailable outcomes without initializing or mutating the local database.
-- [ ] #7 Service, provider, external-MCP, read-only-database, redaction, cursor, truncation, and documentation-contract tests cover every new query.
+- [x] #1 Shared tools list bounded source, collection, briefing-receipt, and operational metadata using canonical IDs, stable order, filter-bound cursors, redacted URLs, and the established 30 KiB result ceiling.
+- [x] #2 `watchlists_get_operation_status` accepts only exact `local:watchlist_run:<id>` or `local:briefing:<id>` receipts and returns their owning entity, timestamps, normalized state, retry/cancel capability, and inspection destination.
+- [x] #3 `watchlists_get_briefing` is Console-only and returns bounded Markdown plus ordered selected/cited durable provenance, generated/untrusted labels, truncation metadata, and explicit legacy/missing-reference markers.
+- [x] #4 External MCP can list bounded metadata/receipts but cannot receive article snippets, article bodies, briefing Markdown, or selected/cited provenance arrays, regardless of stored permission state.
+- [x] #5 “Read latest briefing” deterministically resolves the newest completed receipt for one collection while reporting newer non-readable attempts as operational context.
+- [x] #6 Server Watchlists mode and missing/old read-only storage return structured unsupported/feature-unavailable outcomes without initializing or mutating the local database.
+- [x] #7 Service, provider, external-MCP, read-only-database, redaction, cursor, truncation, and documentation-contract tests cover every new query.
 <!-- AC:END -->
 
 ## Implementation Plan
@@ -56,13 +56,17 @@ Reason: ADR-032 and its approved addendum own the synthetic principal, descripto
 
 ## Implementation Notes
 
+<!-- SECTION:NOTES:BEGIN -->
 Implemented narrow v2-ready database readers and bounded Watchlists query
 methods for source, collection, briefing receipt/content, and operation
-metadata. Metadata lists use stable filter-bound keyset continuations,
-allowlisted projections, sanitized URLs, canonical receipt IDs, and complete-row
-packing below 30 KiB. Full briefing reads reserve Markdown space before packing
-ordered immutable selected/cited snapshots and label generated, untrusted,
-truncated, legacy, and missing-reference data explicitly.
+metadata. Metadata lists use filter-bound keysets over fixed 96-character
+casefold/raw name prefixes plus row ID, so deletion, rename, and hostile-sized
+stored names cannot make a generated continuation unusable. All projections
+are allowlisted, URLs are sanitized, receipt IDs are canonical, mixed timestamp
+forms share `datetime(...), id` ordering, and complete rows remain below 30 KiB.
+Full briefing reads reserve a fixed Markdown budget and expose independent,
+followable selected/cited provenance streams with generated, untrusted,
+truncated, legacy, and missing-reference labels.
 
 The external MCP composition now constructs only descriptors classified for
 external exposure, so persisted Allow cannot resolve Console-only article or
@@ -76,8 +80,10 @@ ADR path: backlog/decisions/032-local-agent-tool-permission-boundary.md
 Reason: This implementation follows ADR-032's approved descriptor exposure and
 external read-only projection; no additional architectural decision was made.
 
-Targeted verification covered service, database, external read-only storage,
-provider/MCP exposure, persisted permissions, redaction, cursor/truncation, and
-Watchlists documentation contracts. The optional `mcp-unified` gateway extra
-was unavailable, so its two integration cases skipped; no live user profile or
-full-repository suite was used.
+Three independent review rounds closed readiness-projection, mutable-anchor
+cursor, provenance-continuation, cancellation-capability, timestamp-ordering,
+external-copy, and hostile-name cursor findings. Fresh controller verification:
+187 DB/service/read-only tests passed; 161 provider/MCP tests passed with two
+optional `mcp-unified` skips; 10 documentation contracts passed; Ruff and diff
+checks were clean. No live user profile or full-repository suite was used.
+<!-- SECTION:NOTES:END -->
