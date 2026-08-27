@@ -1,9 +1,10 @@
 ---
 id: TASK-2525
 title: Console context/cost estimate has three small modelling gaps
-status: To Do
+status: In Progress
 assignee: []
 created_date: '2026-08-06 02:21'
+updated_date: '2026-08-27 14:06'
 labels:
   - console
   - rag
@@ -15,6 +16,7 @@ priority: low
 
 ## Description
 
+<!-- SECTION:DESCRIPTION:BEGIN -->
 PR-T2 Task 6 made staged Library evidence count toward Console's context estimate and cost chip instead of
 reporting zero, by tokenizing `EvidenceReference.snippet` (via the new `console_prompted_evidence_text()`,
 `Chat/console_display_state.py`). Task 6's own review (whole-branch review, dual-blind against the actual send
@@ -38,17 +40,25 @@ modelling gaps between what the estimate counts and what the send actually assem
    `reference.source_owner.strip().lower() == "local"` (`:632` and `:671`) to decide which references are
    prompt-eligible. Identical today, but two copies of "which references reach the model" can silently drift if
    either is edited without the other.
+<!-- SECTION:DESCRIPTION:END -->
 
 ## Acceptance Criteria
-
-- [ ] The context/cost estimate accounts for the per-source header + separator overhead `format_local_evidence_
+<!-- AC:BEGIN -->
+- [ ] #1 The context/cost estimate accounts for the per-source header + separator overhead `format_local_evidence_
       context` adds (either by including a fixed/estimated per-source overhead, or by computing the estimate
       through the same formatting function used at send time), OR the estimate's docstring/UX copy is updated to
       state the known under-count explicitly if not fixed
-- [ ] The estimate does not silently over-count past `EVIDENCE_ENTRIES_PER_PROMPT_MAX` staged sources — either
+- [ ] #2 The estimate does not silently over-count past `EVIDENCE_ENTRIES_PER_PROMPT_MAX` staged sources — either
       it caps its own count at the same limit, or this is explicitly documented as a known, safe-direction
       divergence
-- [ ] `console_prompted_source_count` and `console_prompted_evidence_text`'s shared `source_owner == "local"`
+- [ ] #3 `console_prompted_source_count` and `console_prompted_evidence_text`'s shared `source_owner == "local"`
       eligibility predicate is extracted into one helper both functions call, so the two can no longer drift
-- [ ] Existing tests for both functions (`Tests/UI/test_console_staged_evidence_strip.py`,
+- [ ] #4 Existing tests for both functions (`Tests/UI/test_console_staged_evidence_strip.py`,
       `Tests/Chat/test_console_session_settings.py`) stay green
+<!-- AC:END -->
+
+## Implementation Plan
+
+<!-- SECTION:PLAN:BEGIN -->
+1. Add focused red tests for canonical framing, normalization, empty content, and the 64-entry cap.\n2. Extract shared Console evidence normalization and full-candidate formatting helpers, then route the send adapter through them.\n3. Derive estimate text and count from one formatted pre-authority result and correct semantic documentation.\n4. Add authority-shrink coverage, run focused verification and static checks, then complete task notes and acceptance criteria.\n\nADR required: no\nADR path: N/A\nReason: Routine parity bug fix reusing existing normalization, authority, and formatting boundaries.
+<!-- SECTION:PLAN:END -->
