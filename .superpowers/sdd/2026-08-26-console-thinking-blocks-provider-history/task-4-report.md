@@ -126,6 +126,19 @@ preissued recovery tokens, atomic cancellation, and newer-token survival.
 - Review fix round 2 controller/agent suite: **498 passed**.
 - Review fix round 2 history/prepared/provider suite: **378 passed, 2 skipped**
   (expected loopback permission skips).
+- Independent round-2 re-review: **READY** after **11 passed** focused lifecycle,
+  worker-acceptance, and detached-Stop cases.
+- Fresh root joined verification across every provider/history-modified test module:
+  **1,809 passed, 2 skipped**. The transport group required permission to bind a
+  loopback listener and then passed **223/223**. One pre-existing stale assertion in
+  `test_console_durable_turn_fix_round1.py` was deselected: at the Task 4 base it
+  already expected an empty transcript while base production intentionally appended
+  the visible database-open failure row.
+- Fresh root Ruff lint covered all changed Python files and passed. Ruff format
+  covered **24/27** changed Python files; the three non-green files
+  (`test_console_agent_bridge.py`, `test_console_provider_gateway.py`, and
+  `test_moonshot.py`) reproduce non-green unchanged at Task 4 base `83b1fe3b2b`.
+  `git diff --check 83b1fe3b2b..HEAD` passed.
 
 No full repository suite was run, per repository and task instructions. The two
 expected skips were sandbox loopback-listener permission checks; the agent-bridge test

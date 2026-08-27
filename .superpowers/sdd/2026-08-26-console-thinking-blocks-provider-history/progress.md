@@ -77,3 +77,7 @@ Task 4: review fix round 1 implemented at `eff71a5635`; exact compare-and-retire
 Task 4: review fix round 1 re-review closed the shared-owner projection finding but left 1 Priority-1 lifecycle finding: direct issuance preceded fallible setup outside its retiring `finally`, and agent issuance/worker scheduling lacked continuous explicit ownership before the bridge worker actually started.
 
 Task 4: review fix round 2 implemented at `1ed4531730`; direct fallible post-issuance setup now retires locally, normal agent issuance moves after preparation/refusal, and a lock-protected controller-to-bridge handoff makes cancellation versus worker acceptance atomic. Preissued recovery tokens remain controller-owned until positive bridge acceptance; accepted workers preserve the existing detached Stop/late-evidence retirement owner. Reported 9 focused lifecycle passes, 498 controller/agent passes, 378 history/prepared/provider passes with 2 expected skips, Ruff/diff checks clean. Root re-review pending.
+
+Task 4: review fix round 2 re-review READY. Independent reviewer reproduced 11 focused lifecycle/Stop cases and verified continuous exact-token ownership, atomic controller-to-bridge handoff, newer-token preservation, reclaimed runtime state, shared raw-owner coexistence, and legacy no-token compatibility.
+
+Task 4: complete (commits `3e8fef02a2`..`a95bc875aa`, review clean after 2/5 fix rounds; carried Task 3 breaker ruling resolved by `5f31efc6d6`).
