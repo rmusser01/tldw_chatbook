@@ -6531,6 +6531,10 @@ class SettingsScreen(BaseAppScreen):
             return "library_reader_library_width"
         if message.startswith("Items width"):
             return "library_media_items_width"
+        if message.startswith("Folder Files tree pane"):
+            return "library_notes_files_tree_open"
+        if message.startswith("Folder Files tree width"):
+            return "library_notes_files_tree_width"
         for destination, label in LIBRARY_READER_DESTINATIONS[1:]:
             if message.startswith(f"{label} Items pane"):
                 return f"library_{destination}_items_open"
@@ -6554,6 +6558,8 @@ class SettingsScreen(BaseAppScreen):
             "library_reader_custom_widths_enabled": "#settings-appearance-library-media-custom-widths",
             "library_reader_library_width": "#settings-appearance-library-media-library-width",
             "library_media_items_width": "#settings-appearance-library-media-items-width",
+            "library_notes_files_tree_open": "#settings-appearance-library-notes-files-tree-open",
+            "library_notes_files_tree_width": "#settings-appearance-library-notes-files-tree-width",
         }
         for destination, _label in LIBRARY_READER_DESTINATIONS[1:]:
             selectors[f"library_{destination}_items_open"] = (
@@ -6585,6 +6591,8 @@ class SettingsScreen(BaseAppScreen):
             "library_conversations_items_width",
             "library_notes_items_open",
             "library_notes_items_width",
+            "library_notes_files_tree_open",
+            "library_notes_files_tree_width",
             "library_prompts_items_open",
             "library_prompts_items_width",
             "library_skills_items_open",
@@ -11935,6 +11943,16 @@ class SettingsScreen(BaseAppScreen):
                 ),
             )
         if field_id and field_id.startswith("settings-appearance-library-"):
+            if field_id.startswith("settings-appearance-library-notes-files-tree-"):
+                return (
+                    ("Focused setting", "Folder Files tree pane"),
+                    (
+                        "Purpose",
+                        "Sets the Folder Files tree visibility and width; responsive collapse remains session-only.",
+                    ),
+                    ("Saved as", "library.notes_reader"),
+                    ("Validation", "Folder Files tree width 32–72"),
+                )
             destination = next(
                 (
                     name
@@ -15733,6 +15751,31 @@ class SettingsScreen(BaseAppScreen):
                             restrict=r"^[0-9]*$",
                             disabled=not custom_widths,
                         )
+                    if destination == "notes":
+                        with Horizontal(classes="settings-input-row"):
+                            yield Static(
+                                "Folder Files tree pane",
+                                classes="settings-input-label",
+                            )
+                            yield Button(
+                                self._appearance_media_layout_label(
+                                    "library_notes_files_tree_open"
+                                ),
+                                id="settings-appearance-library-notes-files-tree-open",
+                                classes="settings-library-media-layout-toggle",
+                            )
+                        with Horizontal(classes="settings-input-row"):
+                            yield Static(
+                                "Folder Files tree width",
+                                classes="settings-input-label",
+                            )
+                            yield Input(
+                                value=str(values["library_notes_files_tree_width"]),
+                                id="settings-appearance-library-notes-files-tree-width",
+                                classes="settings-compact-input settings-library-media-layout-width",
+                                restrict=r"^[0-9]*$",
+                                disabled=not custom_widths,
+                            )
                 yield Button(
                     "Reset layout to defaults",
                     id="settings-appearance-library-media-reset",
@@ -18056,6 +18099,8 @@ class SettingsScreen(BaseAppScreen):
                     for destination, _label in LIBRARY_READER_DESTINATIONS
                     for suffix in ("open", "width")
                 ),
+                "settings-appearance-library-notes-files-tree-open",
+                "settings-appearance-library-notes-files-tree-width",
             }
             self._active_settings_field_id = (
                 widget_id if widget_id in appearance_field_ids else None
@@ -18476,6 +18521,7 @@ class SettingsScreen(BaseAppScreen):
         keys = {
             "settings-appearance-library-media-library-open": "library_reader_library_open",
             "settings-appearance-library-media-custom-widths": "library_reader_custom_widths_enabled",
+            "settings-appearance-library-notes-files-tree-open": "library_notes_files_tree_open",
         }
         keys.update(
             {
@@ -18503,6 +18549,7 @@ class SettingsScreen(BaseAppScreen):
             return
         keys = {
             "settings-appearance-library-media-library-width": "library_reader_library_width",
+            "settings-appearance-library-notes-files-tree-width": "library_notes_files_tree_width",
         }
         keys.update(
             {
@@ -18531,6 +18578,8 @@ class SettingsScreen(BaseAppScreen):
             "library_reader_library_open",
             "library_reader_custom_widths_enabled",
             "library_reader_library_width",
+            "library_notes_files_tree_open",
+            "library_notes_files_tree_width",
             *(f"library_{destination}_items_open" for destination, _label in LIBRARY_READER_DESTINATIONS),
             *(f"library_{destination}_items_width" for destination, _label in LIBRARY_READER_DESTINATIONS),
         ):
@@ -23126,6 +23175,10 @@ class SettingsScreen(BaseAppScreen):
                     "#settings-appearance-library-media-custom-widths",
                     "library_reader_custom_widths_enabled",
                 ),
+                (
+                    "#settings-appearance-library-notes-files-tree-open",
+                    "library_notes_files_tree_open",
+                ),
                 *(
                     (
                         f"#settings-appearance-library-{destination}-items-open",
@@ -23145,6 +23198,10 @@ class SettingsScreen(BaseAppScreen):
                 (
                     "#settings-appearance-library-media-library-width",
                     "library_reader_library_width",
+                ),
+                (
+                    "#settings-appearance-library-notes-files-tree-width",
+                    "library_notes_files_tree_width",
                 ),
                 *(
                     (

@@ -1443,7 +1443,12 @@ async def test_settings_appearance_library_reader_controls_round_trip_all_destin
             "items_width": 52,
         },
         "conversations_reader": {"items_open": False, "items_width": 48},
-        "notes_reader": {"items_open": True, "items_width": 56},
+        "notes_reader": {
+            "items_open": True,
+            "items_width": 56,
+            "files_tree_open": False,
+            "files_tree_width": 58,
+        },
         "prompts_reader": {"items_open": False, "items_width": 60},
         "skills_reader": {
             "items_open": True,
@@ -1506,6 +1511,24 @@ async def test_settings_appearance_library_reader_controls_round_trip_all_destin
                 ).value
                 == expected_width
             )
+        labels = {str(widget.renderable) for widget in screen.query(Static)}
+        assert "Folder Files tree pane" in labels
+        assert "Folder Files tree width" in labels
+        assert "Collapsed" in str(
+            screen.query_one(
+                "#settings-appearance-library-notes-files-tree-open", Button
+            ).label
+        )
+        folder_tree_width = screen.query_one(
+            "#settings-appearance-library-notes-files-tree-width", Input
+        )
+        assert folder_tree_width.value == "58"
+        folder_tree_width.value = "73"
+        screen.handle_appearance_library_media_layout_width(
+            Input.Changed(folder_tree_width, folder_tree_width.value)
+        )
+        assert "Folder Files tree width" in _visible_text(screen)
+        assert screen._category_has_unsaved_changes(SettingsCategoryId.APPEARANCE)
 
         screen._active_settings_field_id = (
             "settings-appearance-library-media-library-open"
@@ -1537,6 +1560,18 @@ async def test_settings_appearance_library_reader_controls_round_trip_all_destin
         assert screen.query_one(
             "#settings-appearance-library-media-items-width", Input
         ).disabled
+        assert (
+            screen.query_one(
+                "#settings-appearance-library-notes-files-tree-open", Button
+            ).label
+            == "Open"
+        )
+        assert (
+            screen.query_one(
+                "#settings-appearance-library-notes-files-tree-width", Input
+            ).value
+            == "40"
+        )
 
         await pilot.click("#settings-save-category")
         await _wait_for_settings_text(screen, pilot, "Appearance defaults saved.")
@@ -1554,7 +1589,12 @@ async def test_settings_appearance_library_reader_controls_round_trip_all_destin
             "items_width": 40,
         },
         "conversations_reader": {"items_open": True, "items_width": 40},
-        "notes_reader": {"items_open": True, "items_width": 40},
+        "notes_reader": {
+            "items_open": True,
+            "items_width": 40,
+            "files_tree_open": True,
+            "files_tree_width": 40,
+        },
         "prompts_reader": {"items_open": True, "items_width": 40},
         "skills_reader": {
             "future_skills": "keep",

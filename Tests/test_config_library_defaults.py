@@ -27,7 +27,6 @@ def test_load_settings_exposes_library_defaults(tmp_path, monkeypatch):
     }
     for section in (
         "conversations_reader",
-        "notes_reader",
         "prompts_reader",
         "skills_reader",
     ):
@@ -35,6 +34,12 @@ def test_load_settings_exposes_library_defaults(tmp_path, monkeypatch):
             "items_open": True,
             "items_width": 40,
         }
+    assert settings["library"]["notes_reader"] == {
+        "items_open": True,
+        "items_width": 40,
+        "files_tree_open": True,
+        "files_tree_width": 40,
+    }
 
 
 def test_library_reader_environment_overrides_toml_for_settings(tmp_path, monkeypatch):
@@ -57,6 +62,8 @@ items_width = 42
 [library.notes_reader]
 items_open = true
 items_width = 43
+files_tree_open = true
+files_tree_width = 47
 
 [library.prompts_reader]
 items_open = true
@@ -72,6 +79,8 @@ items_width = 45
     monkeypatch.setenv("TLDW_LIBRARY_READER_LIBRARY_OPEN", "false")
     monkeypatch.setenv("TLDW_LIBRARY_READER_CUSTOM_WIDTHS_ENABLED", "true")
     monkeypatch.setenv("TLDW_LIBRARY_READER_LIBRARY_WIDTH", "36")
+    monkeypatch.setenv("TLDW_LIBRARY_NOTES_READER_FILES_TREE_OPEN", "false")
+    monkeypatch.setenv("TLDW_LIBRARY_NOTES_READER_FILES_TREE_WIDTH", "64")
     for destination, width in (
         ("MEDIA", 52),
         ("CONVERSATIONS", 54),
@@ -104,6 +113,10 @@ items_width = 45
         assert settings["library"][f"{destination}_reader"]["items_width"] == width
         assert getattr(defaults, f"library_{destination}_items_open") is False
         assert getattr(defaults, f"library_{destination}_items_width") == width
+    assert settings["library"]["notes_reader"]["files_tree_open"] is False
+    assert settings["library"]["notes_reader"]["files_tree_width"] == 64
+    assert defaults.library_notes_files_tree_open is False
+    assert defaults.library_notes_files_tree_width == 64
 
 
 def test_load_settings_coerces_library_scan_limit(tmp_path, monkeypatch):
@@ -280,12 +293,45 @@ future_key = "keep"
         "items_open": False,
         "items_width": 48,
     }
-    assert library["notes_reader"] == {"items_open": True, "items_width": 52}
+    assert library["notes_reader"] == {
+        "items_open": True,
+        "items_width": 52,
+        "files_tree_open": True,
+        "files_tree_width": 40,
+    }
     assert library["prompts_reader"] == {"items_open": False, "items_width": 60}
     assert library["skills_reader"] == {
         "items_open": True,
         "items_width": 68,
         "future_key": "keep",
+    }
+
+
+def test_load_settings_normalizes_folder_tree_preferences_independently(
+    tmp_path, monkeypatch
+):
+    config_path = tmp_path / "config.toml"
+    config_path.write_text(
+        """
+[library.notes_reader]
+items_open = false
+items_width = 68
+files_tree_open = "not-a-bool"
+files_tree_width = 500
+""",
+        encoding="utf-8",
+    )
+    monkeypatch.setenv("TLDW_CONFIG_PATH", str(config_path))
+
+    notes_reader = config_module.load_settings(force_reload=True)["library"][
+        "notes_reader"
+    ]
+
+    assert notes_reader == {
+        "items_open": False,
+        "items_width": 68,
+        "files_tree_open": True,
+        "files_tree_width": 40,
     }
 
 

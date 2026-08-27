@@ -43,6 +43,9 @@ from tldw_chatbook.DB.ChaChaNotes_DB import CharactersRAGDB
 from tldw_chatbook.DB.Client_Media_DB_v2 import MediaDatabase
 from tldw_chatbook.DB.Prompts_DB import PromptsDatabase
 from tldw_chatbook.Utils.adaptive_reader_state import (
+    ITEMS_MAX_WIDTH,
+    ITEMS_MIN_WIDTH,
+    ITEMS_TARGET_WIDTH,
     normalize_adaptive_reader_preferences,
 )
 from tldw_chatbook.Utils.console_background_effects import (
@@ -1867,6 +1870,40 @@ def _load_settings_uncached(
             "items_open": destination_preferences.items_open,
             "items_width": destination_preferences.items_width,
         }
+        if section_name == "notes_reader":
+            files_tree_width = os.getenv(
+                "TLDW_LIBRARY_NOTES_READER_FILES_TREE_WIDTH",
+                raw_destination.get("files_tree_width"),
+            )
+            try:
+                parsed_files_tree_width = (
+                    int(files_tree_width.strip())
+                    if isinstance(files_tree_width, str)
+                    else files_tree_width
+                )
+            except ValueError:
+                parsed_files_tree_width = ITEMS_TARGET_WIDTH
+            if (
+                type(parsed_files_tree_width) is not int
+                or not ITEMS_MIN_WIDTH <= parsed_files_tree_width <= ITEMS_MAX_WIDTH
+            ):
+                parsed_files_tree_width = ITEMS_TARGET_WIDTH
+            files_tree_preferences = normalize_adaptive_reader_preferences(
+                {
+                    "custom_widths_enabled": True,
+                    "items_open": os.getenv(
+                        "TLDW_LIBRARY_NOTES_READER_FILES_TREE_OPEN",
+                        raw_destination.get("files_tree_open"),
+                    ),
+                    "items_width": parsed_files_tree_width,
+                }
+            )
+            normalized_destination_readers[section_name].update(
+                {
+                    "files_tree_open": files_tree_preferences.items_open,
+                    "files_tree_width": files_tree_preferences.items_width,
+                }
+            )
     config_dict = {
         # General App
         "APP_MODE_STR": single_user_mode_str,
@@ -3269,9 +3306,12 @@ items_open = true
 items_width = 40
 
 [library.notes_reader]
-# Environment overrides use TLDW_LIBRARY_NOTES_READER_<KEY>.
+# Items environment overrides use TLDW_LIBRARY_NOTES_READER_ITEMS_<KEY>.
+# Folder-tree overrides use TLDW_LIBRARY_NOTES_READER_FILES_TREE_<KEY>.
 items_open = true
 items_width = 40
+files_tree_open = true
+files_tree_width = 40
 
 [library.prompts_reader]
 # Environment overrides use TLDW_LIBRARY_PROMPTS_READER_<KEY>.
