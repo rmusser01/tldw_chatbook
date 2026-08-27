@@ -1302,6 +1302,73 @@ async def test_console_staged_local_evidence_records_exact_prompt_capture():
 
 
 @pytest.mark.asyncio
+async def test_console_send_adapter_preserves_chunk_lineage_score_and_rank():
+    repository = _CaptureRepository()
+    app = _CaptureApp(repository=repository, media_ids=("m1", "m2"))
+    launch = ConsoleLiveWorkLaunch.from_values(
+        source="Library Search/RAG",
+        title="Library Search/RAG retrieval",
+        payload={
+            "evidence_bundle": EvidenceBundle(
+                bundle_id="bundle-lineage",
+                query="question",
+                source="Library Search/RAG",
+                references=(
+                    EvidenceReference(
+                        evidence_id="S1",
+                        source_id="m1",
+                        source_type="media",
+                        title="Source 1",
+                        snippet="Body 1",
+                        authority_label="local",
+                        source_owner="local",
+                        score=None,
+                        metadata={"chunk_id": "chunk-1"},
+                    ),
+                    EvidenceReference(
+                        evidence_id="S2",
+                        source_id="invalid-2",
+                        source_type="unsupported",
+                        title="Invalid source",
+                        snippet="Must be excluded",
+                        authority_label="local",
+                        source_owner="local",
+                    ),
+                    EvidenceReference(
+                        evidence_id="S3",
+                        source_id="m2",
+                        source_type="media",
+                        title="Source 2",
+                        snippet="Body 2",
+                        authority_label="local",
+                        source_owner="local",
+                        score=0.5,
+                    ),
+                ),
+            ).to_payload(),
+        },
+        status="staged",
+    )
+
+    captured = await cre.capture_console_staged_evidence_for_chat(
+        app,
+        launch,
+        user_message="ordinary prompt",
+    )
+
+    assert captured.citation_builder is repository.builders[0]
+    assert captured.prompt_evidence_set_id is not None
+    candidates = captured.citation_builder.evidence_run_payloads[0].candidates
+    assert len(candidates) == 2
+    assert [candidate.rank for candidate in candidates] == [1, 2]
+    assert [
+        candidate.source_identity["source_id"] for candidate in candidates
+    ] == ["m1", "m2"]
+    assert candidates[0].lineage["chunk_id"] == "chunk-1"
+    assert candidates[0].score == 0.0
+
+
+@pytest.mark.asyncio
 async def test_console_prompt_evidence_set_id_uses_record_method_return(monkeypatch):
     authoritative_prompt_set_id = "prompt-set-authoritative-console-return"
     original_record = CitationTraceBuilder.record_prompt_evidence_set
