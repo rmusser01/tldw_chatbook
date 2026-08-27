@@ -542,7 +542,7 @@ Run only the targeted commands listed below. Do not run the full suite unless th
 - Modify: `Tests/UI/test_focus_accessibility.py`
 - Modify: `Tests/UI/test_library_honesty_accessibility.py`
 - Modify: `Tests/UI/test_library_file_notes_workspace.py`
-- Modify: `Tests/UI/test_library_shell.py` only for the stale Notes `Ctrl+S` behavior assertion; preserve unrelated dirty hunks.
+- Modify: `Tests/UI/test_library_shell.py` only to migrate stale Notes-specific `Ctrl+S` behavior/footer assertions to the visible Save and no-shortcut contract; preserve unrelated dirty hunks.
 - Modify: `Tests/UI/test_css_staleness_manifest.py` only if a builder-contract test is required; do not change it merely to bless stale output.
 
 - [ ] **Step 1: Add failing focus-style tests.**

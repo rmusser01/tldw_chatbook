@@ -28981,53 +28981,18 @@ async def test_library_note_footer_covers_navigator_create_sync_and_exit() -> No
         )
 
 
-@pytest.mark.asyncio
-async def test_library_note_ctrl_s_saves_from_editor_preview_and_context() -> None:
-    app = _build_test_app()
-    _seed_conversations(app, _two_conversations(), notes=_two_notes())
-    host = LibraryHarness(app)
-
-    async with host.run_test(size=(60, 20)) as pilot:
-        screen = _active_library_screen(host)
-        await _wait_for_library_shell(screen, pilot)
-        await _open_note_editor(screen, pilot)
-
-        body = screen.query_one("#library-note-body", TextArea)
-        body.text = "saved from editor"
-        await pilot.pause()
-        saves = len(app.notes_scope_service.save_calls)
-        await pilot.press("ctrl+s")
-        await _wait_for_condition(
-            pilot,
-            lambda: len(app.notes_scope_service.save_calls) == saves + 1,
-            message="Ctrl+S did not save from Editor.",
+def test_library_note_ctrl_s_is_unavailable_while_save_remains_explicit() -> None:
+    notes_ctrl_s_bindings = [
+        binding
+        for binding in LibraryScreen.BINDINGS
+        if (
+            binding[:2] if isinstance(binding, tuple) else (binding.key, binding.action)
         )
+        == ("ctrl+s", "library_notes_save")
+    ]
 
-        body.text = "saved from preview"
-        await pilot.pause()
-        screen.query_one("#library-note-preview").press()
-        await _wait_for_display(screen, pilot, "#library-note-preview-region")
-        saves = len(app.notes_scope_service.save_calls)
-        await pilot.press("ctrl+s")
-        await _wait_for_condition(
-            pilot,
-            lambda: len(app.notes_scope_service.save_calls) == saves + 1,
-            message="Ctrl+S did not save from Preview.",
-        )
-
-        screen.query_one("#library-note-context").press()
-        await _wait_for_display(screen, pilot, "#library-note-context-region")
-        screen.query_one(
-            "#library-note-context-keywords", Input
-        ).value = "shortcut, context"
-        await pilot.pause()
-        saves = len(app.notes_scope_service.save_calls)
-        await pilot.press("ctrl+s")
-        await _wait_for_condition(
-            pilot,
-            lambda: len(app.notes_scope_service.save_calls) == saves + 1,
-            message="Ctrl+S did not save from Context.",
-        )
+    assert notes_ctrl_s_bindings == []
+    assert callable(LibraryScreen.action_library_notes_save)
 
 
 @pytest.mark.asyncio

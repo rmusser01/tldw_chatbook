@@ -1986,7 +1986,6 @@ class LibraryScreen(BaseAppScreen):
         ("u", "library_rag_use_in_console", "Use Library context in Console"),
         ("ctrl+n", "library_notes_new", "New note"),
         ("/", "library_notes_focus_filter", "Find notes"),
-        ("ctrl+s", "library_notes_save", "Save note"),
         ("escape", "library_notes_escape", "Back"),
         # task-424: skill-editor accelerators. ``check_action`` gates both
         # to the open skill editor, so the keys pass through untouched
@@ -2318,14 +2317,8 @@ class LibraryScreen(BaseAppScreen):
         ("/", "find"),
         ("esc", "rail"),
     )
-    LIBRARY_NOTES_EDITOR_SHORTCUTS = (
-        ("ctrl+s", "save note"),
-        ("esc", "back to notes"),
-    )
-    LIBRARY_NOTES_EDITOR_SHORTCUTS_COMPACT = (
-        ("ctrl+s", "save"),
-        ("esc", "notes"),
-    )
+    LIBRARY_NOTES_EDITOR_SHORTCUTS = (("esc", "back to notes"),)
+    LIBRARY_NOTES_EDITOR_SHORTCUTS_COMPACT = (("esc", "notes"),)
     LIBRARY_NOTES_PREVIEW_SHORTCUTS = (
         ("pgup/pgdn", "scroll"),
         ("esc", "back to notes"),

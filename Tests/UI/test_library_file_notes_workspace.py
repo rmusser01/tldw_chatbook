@@ -7135,10 +7135,24 @@ async def test_file_notes_focus_is_content_safe_under_production_css(
         workspace.query_one("#file-notes-edit", Button).press()
         await pilot.pause()
         editor = workspace.query_one("#file-notes-editor", TextArea)
+        workspace.query_one("#file-notes-edit", Button).focus()
+        await pilot.pause()
+        resting_background = editor.styles.background
+        resting_region = editor.region
         editor.focus()
         await pilot.pause()
         assert editor.has_focus
-        assert not editor.styles.outline
+        assert editor.styles.background == resting_background
+        assert editor.region == resting_region
+        assert all(
+            edge[0] == "heavy"
+            for edge in (
+                editor.styles.outline_top,
+                editor.styles.outline_right,
+                editor.styles.outline_bottom,
+                editor.styles.outline_left,
+            )
+        )
         assert editor.styles.border.top[0] not in {"", "none"}
 
     replica.close()
