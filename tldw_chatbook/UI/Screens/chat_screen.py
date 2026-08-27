@@ -1798,6 +1798,15 @@ class ChatScreen(BaseAppScreen):
     )
     _console_realtime = _ControllerState("_realtime", "session")
     _console_realtime_close_worker = _ControllerState("_realtime", "close_worker")
+    _console_annotation_loaded_conversation = _ControllerState(
+        "_review_selection", "annotation_loaded_conversation"
+    )
+    _console_annotation_previews = _ControllerState(
+        "_review_selection", "annotation_previews"
+    )
+    _console_selection_feedback_inflight = _ControllerState(
+        "_review_selection", "selection_feedback_inflight"
+    )
     _console_persisted_rows_cache = _ControllerState(
         "_workspace", "_console_persisted_rows_cache"
     )
@@ -3932,18 +3941,6 @@ class ChatScreen(BaseAppScreen):
         self._console_sync_in_progress = False
         self._console_sync_requested = False
         self._console_citation_counts: dict[str, int] = {}
-        # task-17169 slice 2: review-note previews keyed by NATIVE message id
-        # (the transcript marker's input), plus the conversation the map was
-        # last loaded for -- reloads happen only on conversation change; live
-        # Comment writes update the map in place.
-        self._console_annotation_previews: dict[str, tuple[str, ...]] = {}
-        self._console_annotation_loaded_conversation: str | None = None
-        # Qodo (PR #1723): mutual exclusion for the selection-feedback flow.
-        # The worker is deliberately NOT exclusive (a superseding exclusive
-        # cancel would strand a mounted comment modal -- see the flow's
-        # docstring), so exclusion is this guard instead: re-triggers while
-        # a flow is in flight are ignored, never queued and never cancelled.
-        self._console_selection_feedback_inflight = False
         # Same precedent, same reason (task-18515 review-note management
         # task 3 fix round): a rapid double marker-click / double-`n` before
         # the first worker's off-thread DB read resolves must not stack two
