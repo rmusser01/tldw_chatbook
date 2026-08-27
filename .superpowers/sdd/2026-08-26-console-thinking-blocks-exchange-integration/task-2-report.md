@@ -170,3 +170,16 @@ imported-row owners instead of relying only on serialized aggregate searches.
 - `Tests/UI/test_console_thinking_disclosures.py`
 
 Task 3 remains out of scope.
+
+## Independent review outcome
+
+The final specification review APPROVED the corrected real grouping-path evidence at
+`fad81f6d68`. It confirmed that ordinary transcript export retains the visible answer,
+Planning, and tool rows while omitting all three private/application canaries, and
+that the previously approved trajectory, diagnostic, durable-owner, and importable
+exchange contracts remain intact.
+
+The final code-quality review also APPROVED the same revision. It confirmed that the
+unreachable defensive branch and synthetic fixture were removed, the trajectory
+validation remains lean and centralized, explicit Thinking Copy/Inspector and Task 1
+formats are unaffected, and no further simplification is warranted.

@@ -134,3 +134,15 @@ bypasses, so no duplicate lesson was added. Trajectory production behavior remai
 unchanged. Focused real-path verification passed 1/1, the required six-file gate
 passed 101/101, and the Task 1 selected-JSON/Chatbook exchange suites passed 46/46;
 scoped Ruff, format, `py_compile`, and diff checks passed. Task 3 remains pending.
+
+Task 2 final spec review: APPROVED at `fad81f6d68`. The reviewer confirmed the
+real `set_messages()`/grouping path retains the answer, Planning, and tool rows while
+omitting displayable thinking, ADR-063 continuation, and the exact application notice.
+The required Task 2 gate passed 101/101 and the Task 1 exchange regression passed
+46/46; scoped static checks and the clean worktree were confirmed.
+
+Task 2 final code-quality review: APPROVED at `fad81f6d68`. The original P1 is
+resolved: no unreachable transcript guard or synthetic owner remains. The trajectory
+validator stays the only Task 2 production change, and its narrow ADR-067-compatible
+contract remains approved. The reviewer found no remaining correctness, privacy,
+maintainability, test-quality, or YAGNI issue.
