@@ -468,7 +468,7 @@ class ShadowRepo:
             if not separator or len(fields) != 3:
                 raise ChangeTrackingError("git ls-files returned malformed output")
             mode, object_id, stage = fields
-            if stage != "0" or rel in tip_paths:
+            if stage != "0" or (rel in tip_paths and mode != "160000"):
                 continue
             new_entries.append((rel, object_id, mode))
         if not new_entries:

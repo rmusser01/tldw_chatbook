@@ -165,6 +165,69 @@ def test_snapshot_drops_a_gitlink_that_appears_after_scan(
     assert str(repo._run("ls-tree", record.end_sha, "--", child.name).stdout) == ""
 
 
+def test_snapshot_drops_a_gitlink_replacing_a_tip_regular_file_after_scan(
+    tracker, root, monkeypatch
+):
+    import subprocess as _sp
+
+    child = root / "tracked-child"
+    child.write_text("ordinary parent file\n")
+    handle = tracker.begin_turn([root])
+    handle.await_baseline()
+    repo = tracker.service.repo_for_root(root)
+    baseline = handle.baselines[str(root.resolve())]
+    baseline_entry = str(repo._run("ls-tree", baseline, "--", child.name).stdout)
+    assert baseline_entry.split()[0] == "100644"
+
+    prepared = root.parent / "prepared-replacement-child"
+    prepared.mkdir()
+    _sp.run(["git", "init", "--quiet", str(prepared)], check=True)
+    (prepared / "inner.txt").write_text("child content\n")
+    _sp.run(["git", "-C", str(prepared), "add", "inner.txt"], check=True)
+    _sp.run(
+        [
+            "git",
+            "-C",
+            str(prepared),
+            "-c",
+            "user.name=change tracking test",
+            "-c",
+            "user.email=test@example.invalid",
+            "commit",
+            "--quiet",
+            "-m",
+            "child seed",
+        ],
+        check=True,
+    )
+    original_run = type(repo)._run
+    appeared = threading.Event()
+
+    def install_child_before_add(self, *args, **kwargs):
+        if (
+            self.root == root.resolve()
+            and not appeared.is_set()
+            and args[:2] == ("add", "-A")
+        ):
+            child.unlink()
+            prepared.rename(child)
+            appeared.set()
+        return original_run(self, *args, **kwargs)
+
+    monkeypatch.setattr(type(repo), "_run", install_child_before_add)
+    records = tracker.end_turn(handle)
+
+    assert appeared.is_set()
+    assert len(records) == 1
+    record = records[0]
+    assert record.tracking_error == ""
+    assert str(repo._run("ls-tree", record.end_sha, "--", child.name).stdout) == ""
+    changed = repo.changed_files(record.baseline_sha, record.end_sha)
+    assert [(change.path, change.status) for change in changed] == [(child.name, "D")]
+    assert record.nested_repos == (child.name,)
+    assert str(repo._run("ls-files", "--stage", "--", child.name).stdout) == ""
+
+
 def test_force_add_rejects_root_and_directory_paths(tracker, root, monkeypatch):
     monkeypatch.setenv("TLDW_CHANGE_REVIEW_MAX_FILE_BYTES", "100")
     ignored = root / "ignored"
