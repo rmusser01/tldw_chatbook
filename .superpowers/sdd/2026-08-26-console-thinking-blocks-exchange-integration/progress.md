@@ -224,3 +224,16 @@ preparation GREEN was 223/223; controller selection was 5/5; the exact broad mat
 was 1,282 passed/2 skipped/2 warnings. CSS/derived bundles, unchanged diagnostic
 inventory (537/1,243/7,341/8), scoped Ruff/format, `py_compile`, and diff checks pass.
 No new ADR, database change, Backlog status change, or root live-gate claim was made.
+
+Task 3 root live gate (2026-08-27): the self-bootstrapping isolated harness under
+`Docs/superpowers/qa/2026-08-27-console-thinking-blocks-live-verification/` passed
+against production controller/persistence/request/UI seams and left its generated
+profile config byte-identical. Seven painted SVG frames plus `observations.json`
+record expanded-live, answer-boundary collapse, visibility off/on, collapsed restart,
+exact proprietary-unavailable copy, capable-without-evidence honesty, and effective
+Required presentation. Functional checks cover Auto/Include/Exclude/Required replay,
+same-backend reasoning/plain selection, both unsupported persistent evidence kinds,
+and resumed Retry/Bypass ownership. Three representative frames were visually
+inspected; committed evidence normalizes only exporter trailing whitespace before
+hashing. Four earlier failures were harness-only contract drift and required no
+product change. Final feature-wide review and Backlog closeout remain root-owned.

@@ -172,11 +172,34 @@ ADR path: `backlog/decisions/090-console-thinking-block-ownership-and-replay.md`
 Reason: both production corrections enforce ADR-090's already accepted persistence
 and generation-ownership contracts; they introduce no new boundary or future choice.
 
-## Residual and root-owned gates
+## Root-owned isolated live gate
 
-No derived-check residual remains. Root still owns independent specification/code-
-quality reviews, isolated live Console verification, and Backlog closeout. This task
-does not claim the root-owned live gate and does not mark any Backlog task Done.
+Root completed the remaining mounted/live gate with a self-bootstrapping profile under
+`Docs/superpowers/qa/2026-08-27-console-thinking-blocks-live-verification/`.
+The harness drove the production controller, persistence service, request preparation,
+transcript projection, settings modal, and Textual widgets with deterministic
+adapter-edge fixtures. The final isolated run passed and left the profile config hash
+unchanged.
+
+Seven painted SVG frames and a portable JSON ledger prove expanded-live displayable
+thinking, answer-boundary collapse, immediate presentation-off hiding, collapsed/lazy
+restart restore, the exact proprietary-unavailable notice, capable-without-event
+honesty, and the disabled effective Required policy. Functional controls also prove
+Auto/Include/Exclude/Required replay, model-specific same-backend dispatch, both
+displayable and proprietary pre-provider backend refusal, and exact-owner recovery
+through resumed Retry and Bypass. Three representative frames were rasterized and
+visually inspected; the committed frames normalize only exporter trailing whitespace
+before hashing.
+
+Four initial stops were harness-only contract drift—SVG span extraction, a stale state
+field, a required constructor argument, and below-viewport capture—and were corrected
+without weakening assertions or changing product code. A blocked tiktoken cache
+download fell back locally and was outside the deterministic provider fixture.
+
+## Residual gates
+
+No derived-check or live-verification residual remains. Backlog closeout and the final
+feature-wide review remain root-owned. This report does not mark a Backlog task Done.
 
 ## Independent review outcome
 
