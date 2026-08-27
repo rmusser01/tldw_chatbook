@@ -14,6 +14,7 @@ from tldw_chatbook.Chat.console_message_actions import (
     ConsoleMessageActionService,
     action_row_guide,
 )
+from tldw_chatbook.Video_Generation.video_metadata import VideoGenerationMetadata
 
 
 def test_assistant_message_actions_include_required_order():
@@ -1287,6 +1288,86 @@ def test_action_groups_separate_primary_overflow_and_media_actions() -> None:
     )
 
 
+@pytest.mark.parametrize(
+    ("message", "expected_primary"),
+    (
+        (
+            ConsoleChatMessage(
+                role=ConsoleMessageRole.USER,
+                content="question",
+                id="user-complete",
+            ),
+            ("copy", "edit", "fork", "regenerate", "continue", "more"),
+        ),
+        (
+            ConsoleChatMessage(
+                role=ConsoleMessageRole.ASSISTANT,
+                content="partial answer",
+                status="stopped",
+                id="assistant-stopped",
+            ),
+            ("copy", "edit", "fork", "regenerate", "continue", "more"),
+        ),
+    ),
+)
+def test_user_and_stopped_assistant_action_groups_are_exact(
+    message,
+    expected_primary,
+) -> None:
+    groups = ConsoleMessageActionService().action_groups(
+        message,
+        fork_eligibility=ConsoleForkEligibility(True),
+    )
+
+    assert tuple(action.action_id for action in groups.primary) == expected_primary
+    assert tuple(action.action_id for action in groups.overflow) == (
+        "save-as",
+        "feedback-up",
+        "feedback-down",
+        "delete",
+    )
+    assert groups.media == ()
+
+
+def test_video_actions_are_an_exact_separate_media_group() -> None:
+    message = ConsoleChatMessage(
+        role=ConsoleMessageRole.ASSISTANT,
+        content="generated video",
+        video_metadata=VideoGenerationMetadata(
+            name="clip",
+            prompt="waves",
+            backend="local",
+        ),
+        id="assistant-video",
+    )
+
+    groups = ConsoleMessageActionService().action_groups(
+        message,
+        video_file_available=True,
+        fork_eligibility=ConsoleForkEligibility(True),
+    )
+
+    assert tuple(action.action_id for action in groups.primary) == (
+        "copy",
+        "speak",
+        "edit",
+        "fork",
+        "regenerate",
+        "continue",
+        "more",
+    )
+    assert tuple(action.action_id for action in groups.overflow) == (
+        "save-as",
+        "feedback-up",
+        "feedback-down",
+        "delete",
+    )
+    assert tuple(action.action_id for action in groups.media) == (
+        "video-play",
+        "video-save-copy",
+    )
+
+
 def test_action_groups_preserve_the_speak_stop_slot() -> None:
     message = ConsoleChatMessage(
         role=ConsoleMessageRole.ASSISTANT,
@@ -1341,6 +1422,27 @@ def test_tool_and_activity_rows_never_expose_fork_or_more(message) -> None:
     assert "more" not in action_ids
     if message.tool_output_full:
         assert [action.action_id for action in groups.primary] == ["tool-output"]
+
+
+def test_assistant_activity_row_keeps_only_its_specialized_action() -> None:
+    message = ConsoleChatMessage(
+        role=ConsoleMessageRole.ASSISTANT,
+        content="review complete",
+        change_review_run_id="review-1",
+        activity_presentation=ConsoleActivityPresentation(
+            "changes", "Changes", "done"
+        ),
+        id="assistant-activity-row",
+    )
+
+    groups = ConsoleMessageActionService().action_groups(
+        message,
+        fork_eligibility=ConsoleForkEligibility(True),
+    )
+
+    assert tuple(action.action_id for action in groups.primary) == ("review-changes",)
+    assert groups.overflow == ()
+    assert groups.media == ()
 
 
 def test_fork_dispatch_requests_the_exact_message() -> None:
