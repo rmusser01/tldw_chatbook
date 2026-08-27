@@ -854,12 +854,16 @@ def chat_with_openai(
                     )
                     yield f"data: {error_content}\n\n"  # Yield as SSE error
                 finally:
-                    # Ensure DONE is sent for the endpoint wrapper's logic
-                    if not use_responses_api:
-                        yield "data: [DONE]\n\n"
                     if response:
                         response.close()
                     session_context.__exit__(None, None, None)
+                # Keep the endpoint wrapper's normal/error completion
+                # sentinel outside ``finally``. Console Stop closes this
+                # generator with ``GeneratorExit``; yielding while handling
+                # that control signal raises ``generator ignored
+                # GeneratorExit`` and skips transport cleanup.
+                if not use_responses_api:
+                    yield "data: [DONE]\n\n"
 
             return stream_generator()
 

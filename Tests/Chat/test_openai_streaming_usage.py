@@ -37,6 +37,38 @@ def test_streaming_payload_includes_stream_options(mock_post):
 
 
 @patch("requests.Session.post")
+def test_stopping_stream_closes_transport_without_yielding_after_generator_exit(
+    mock_post,
+):
+    """Closing a live OpenAI stream must not yield the synthetic DONE sentinel.
+
+    A generator receives ``GeneratorExit`` at its suspended ``yield`` when the
+    Console Stop path closes it. Yielding again from ``finally`` turns that
+    normal cancellation into ``RuntimeError: generator ignored GeneratorExit``
+    and postpones the response/session cleanup.
+    """
+    response = _streaming_ok_response(
+        [
+            'data: {"choices": [{"delta": {"content": "first"}}]}',
+            'data: {"choices": [{"delta": {"content": "second"}}]}',
+        ]
+    )
+    mock_post.return_value = response
+    generator = chat_api_call(
+        "openai",
+        messages_payload=[{"role": "user", "content": "hi"}],
+        api_key="sk-test",
+        model="gpt-4o",
+        streaming=True,
+    )
+
+    assert "first" in next(generator)
+    generator.close()
+
+    response.close.assert_called_once_with()
+
+
+@patch("requests.Session.post")
 def test_non_streaming_payload_omits_stream_options(mock_post):
     ok = Mock()
     ok.status_code = 200

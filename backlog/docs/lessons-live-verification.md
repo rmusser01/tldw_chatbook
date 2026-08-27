@@ -1370,6 +1370,29 @@ single visual confirmation and report exactly what was and was not observed,
 per the honesty rule already in this file's header — a slow repro can
 consume the very verification budget it was meant to spend on other
 scenarios.
+
+---
+
+## A streaming generator must not yield from `finally` when Stop closes it (TASK-18300, 2026-08-26)
+
+**What happened.** A direct real-OpenAI lifecycle replay finally produced the
+non-empty stopped capture that the earlier tmux session could not time. The
+capture itself was correct, but Python emitted `RuntimeError: generator ignored
+GeneratorExit` after Stop. A focused regression reproduced the same failure
+without the network: `chat_with_openai()` was suspended at a content yield,
+`generator.close()` injected `GeneratorExit`, and the generator's `finally`
+block tried to yield its synthetic SSE `[DONE]` sentinel before closing the
+response/session. Yielding while handling `GeneratorExit` converted normal
+cancellation into a runtime error and postponed cleanup.
+
+**What to do.** Reserve `finally` for cleanup that cannot suspend. If a stream
+needs a terminal sentinel on normal or handled-error exhaustion, emit it after
+the `try`/`except`/`finally` block. Then an early `close()` still runs cleanup
+and skips the sentinel naturally. Pin both halves: a unit regression that
+closes after the first chunk and asserts transport cleanup, plus a real-provider
+Stop replay that confirms the warning is gone and the partial capture remains
+durable.
+
 ## A broad screen needle can certify the wrong subview (TASK-19012, 2026-08-21)
 
 **What happened.** The isolated Notes journey sent the Library's advertised
