@@ -596,6 +596,7 @@ Run only the targeted commands listed below. Do not run the full suite unless th
 - Modify: `Docs/User_Guide/library/file-notes.md`
 - Modify: `backlog/tasks/task-22513 - Polish-Library-Notes-work-first-editors-and-Folder-Files-shell.md`
 - Modify only if an actual generalizable incident occurred: `backlog/docs/lessons-testing-evidence.md` or `backlog/docs/lessons-live-verification.md`
+- Modify for the shared-index incident encountered during Task 7: `backlog/docs/lessons-backlog-hygiene.md`
 
 - [ ] **Step 1: Update both user guides.**
 
