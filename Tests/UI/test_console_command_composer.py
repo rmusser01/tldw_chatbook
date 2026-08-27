@@ -438,18 +438,23 @@ async def test_raw_cli_visible_send_consumes_same_trusted_stash_as_enter() -> No
         composer = console.query_one("#console-native-composer", ConsoleComposerBar)
         _type_raw_cli_prefix(composer)
         composer.insert_pasted_text("pwd")
+        start_user_command = Mock(return_value=True)
+        console._raw_cli.start_user_command = start_user_command
         dispatch = AsyncMock(return_value=True)
         console._dispatch_console_draft_send = dispatch
 
         console.query_one("#console-send-message", Button).press()
         await pilot.pause()
 
-        stash = dispatch.await_args.kwargs["stash"]
+        start_user_command.assert_called_once()
+        stash = start_user_command.call_args.args[0]
+        start_user_command.assert_called_once_with(stash)
         assert stash is not None
         assert stash.raw_cli_prefix_typed is True
         assert composer_module.classify_console_raw_draft(stash) == _raw_draft(
             "raw", "pwd"
         )
+        dispatch.assert_not_awaited()
         assert composer.draft_text() == ""
         assert composer._raw_cli_prefix_typed is False
 
