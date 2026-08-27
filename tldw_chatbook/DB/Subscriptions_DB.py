@@ -70,6 +70,7 @@ CREATE TABLE briefing_items (
     item_url TEXT,
     item_published_date TEXT,
     item_created_at TEXT,
+    item_effective_date TEXT,
     source_id INTEGER,
     source_name TEXT,
     source_type TEXT,
@@ -109,6 +110,7 @@ class BriefingProvenanceRow:
     item_url: str | None
     item_published_date: str | None
     item_created_at: str | None
+    item_effective_date: str | None
     source_id: int | None
     source_name: str | None
     source_type: str | None
@@ -959,6 +961,7 @@ class SubscriptionsDB(BaseDB):
                 "SELECT bi.briefing_id, bi.item_id, bi.featured, "
                 "i.id AS live_item_id, i.title AS item_title, i.url AS item_url, "
                 "i.published_date AS item_published_date, i.created_at AS item_created_at, "
+                "i.effective_date AS item_effective_date, "
                 "s.id AS source_id, s.name AS source_name, s.type AS source_type, "
                 "s.source AS source_url "
                 "FROM briefing_items_v1 bi "
@@ -971,8 +974,9 @@ class SubscriptionsDB(BaseDB):
                     "INSERT INTO briefing_items "
                     "(briefing_id, item_id, live_item_id, featured, cited, "
                     "item_title, item_url, item_published_date, item_created_at, "
+                    "item_effective_date, "
                     "source_id, source_name, source_type, source_url, provenance_version) "
-                    "VALUES (?, ?, ?, ?, 0, ?, ?, ?, ?, ?, ?, ?, ?, 1)",
+                    "VALUES (?, ?, ?, ?, 0, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1)",
                     (
                         row["briefing_id"],
                         row["item_id"],
@@ -982,6 +986,7 @@ class SubscriptionsDB(BaseDB):
                         _sanitize_provenance_url(row["item_url"]),
                         row["item_published_date"],
                         row["item_created_at"],
+                        row["item_effective_date"],
                         row["source_id"],
                         row["source_name"],
                         row["source_type"],
@@ -4344,9 +4349,10 @@ class SubscriptionsDB(BaseDB):
                     "INSERT INTO briefing_items "
                     "(briefing_id, item_id, live_item_id, selection_position, "
                     "citation_position, featured, cited, item_title, item_url, "
-                    "item_published_date, item_created_at, source_id, source_name, "
+                    "item_published_date, item_created_at, item_effective_date, "
+                    "source_id, source_name, "
                     "source_type, source_url, provenance_version) "
-                    "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 2)",
+                    "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 2)",
                     (
                         briefing_id,
                         row.item_id,
@@ -4359,6 +4365,7 @@ class SubscriptionsDB(BaseDB):
                         _sanitize_provenance_url(row.item_url),
                         row.item_published_date,
                         row.item_created_at,
+                        row.item_effective_date,
                         row.source_id,
                         row.source_name,
                         row.source_type,

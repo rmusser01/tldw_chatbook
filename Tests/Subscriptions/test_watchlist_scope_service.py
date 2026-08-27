@@ -1,13 +1,35 @@
+import asyncio
+from types import SimpleNamespace
 from unittest.mock import AsyncMock, Mock
 
 import pytest
 
-from tldw_chatbook.Subscriptions import WatchlistScopeService
+from tldw_chatbook.DB.Subscriptions_DB import SubscriptionsDB
+from tldw_chatbook.Subscriptions import LocalWatchlistsService, WatchlistScopeService
+from tldw_chatbook.Subscriptions import local_watchlists_service
 from tldw_chatbook.Subscriptions.watchlist_item_page import (
     WatchlistItemCursor,
     WatchlistItemPage,
 )
 from tldw_chatbook.runtime_policy.types import PolicyDecision, PolicyDeniedError
+
+
+def _durable_claim_state(
+    db: SubscriptionsDB, run_id: int, source_id: int
+) -> tuple[dict, tuple]:
+    run = dict(
+        db.conn.execute(
+            "SELECT * FROM local_watchlist_runs WHERE id = ?", (run_id,)
+        ).fetchone()
+    )
+    counters = tuple(
+        db.conn.execute(
+            "SELECT error_count, consecutive_failures, last_error, is_paused, "
+            "last_checked, last_successful_check FROM subscriptions WHERE id = ?",
+            (source_id,),
+        ).fetchone()
+    )
+    return run, counters
 
 
 class FakeLocalWatchlists:
@@ -544,6 +566,109 @@ async def test_scope_service_observes_losing_claim_without_executing_it():
     assert receipt == {"run_id": 7, "status": "completed"}
     local.wait_for_terminal_run.assert_awaited_once_with("7")
     local.execute_run.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_scope_loser_timeout_preserves_stranded_winner(monkeypatch, tmp_path):
+    path = tmp_path / "scope-timeout.db"
+    owner_db = SubscriptionsDB(path, "owner")
+    observer_db = SubscriptionsDB(path, "observer")
+    source_id = owner_db.add_subscription(
+        name="Stranded", type="rss", source="https://example.com/feed.xml"
+    )
+    owner = LocalWatchlistsService(db_factory=lambda: owner_db)
+    winner = await owner.launch_run(source_id=source_id)
+    before = _durable_claim_state(owner_db, winner["run_id"], source_id)
+    executor_calls = 0
+
+    async def executor(_subscription):
+        nonlocal executor_calls
+        executor_calls += 1
+        return {"items": []}
+
+    observer = LocalWatchlistsService(
+        db_factory=lambda: observer_db, run_executor=executor
+    )
+    scope = WatchlistScopeService(local_service=observer, server_service=None)
+    clock = 0.0
+    sleeps: list[float] = []
+
+    async def sleep(delay: float) -> None:
+        nonlocal clock
+        sleeps.append(delay)
+        clock = round(clock + delay, 9)
+
+    monkeypatch.setattr(
+        local_watchlists_service, "_RUN_CLAIM_WAIT_TIMEOUT_SECONDS", 0.03
+    )
+    monkeypatch.setattr(
+        local_watchlists_service,
+        "time",
+        SimpleNamespace(monotonic=lambda: clock),
+    )
+    monkeypatch.setattr(
+        local_watchlists_service, "asyncio", SimpleNamespace(sleep=sleep)
+    )
+
+    with pytest.raises(TimeoutError, match="Timed out waiting for watchlist run"):
+        await scope.launch_run(runtime_backend="local", source_id=source_id)
+
+    assert sleeps == pytest.approx([0.01, 0.02])
+    assert executor_calls == 0
+    assert _durable_claim_state(owner_db, winner["run_id"], source_id) == before
+    owner_db.close()
+    observer_db.close()
+
+
+@pytest.mark.asyncio
+async def test_scope_loser_cancellation_preserves_stranded_winner(tmp_path):
+    path = tmp_path / "scope-cancel.db"
+    owner_db = SubscriptionsDB(path, "owner")
+    observer_db = SubscriptionsDB(path, "observer")
+    source_id = owner_db.add_subscription(
+        name="Stranded", type="rss", source="https://example.com/feed.xml"
+    )
+    owner = LocalWatchlistsService(db_factory=lambda: owner_db)
+    winner = await owner.launch_run(source_id=source_id)
+    before = _durable_claim_state(owner_db, winner["run_id"], source_id)
+    executor_calls = 0
+
+    async def executor(_subscription):
+        nonlocal executor_calls
+        executor_calls += 1
+        return {"items": []}
+
+    observer = LocalWatchlistsService(
+        db_factory=lambda: observer_db, run_executor=executor
+    )
+    entered_wait = asyncio.Event()
+    queries = 0
+    original_get_run = observer.get_run
+
+    async def get_run(run_id):
+        nonlocal queries
+        queries += 1
+        receipt = await original_get_run(run_id)
+        if queries == 2:
+            entered_wait.set()
+        return receipt
+
+    observer.get_run = get_run
+    scope = WatchlistScopeService(local_service=observer, server_service=None)
+    waiting = asyncio.create_task(
+        scope.launch_run(runtime_backend="local", source_id=source_id)
+    )
+    await asyncio.wait_for(entered_wait.wait(), timeout=1)
+    waiting.cancel()
+
+    with pytest.raises(asyncio.CancelledError):
+        await waiting
+
+    assert queries == 2
+    assert executor_calls == 0
+    assert _durable_claim_state(owner_db, winner["run_id"], source_id) == before
+    owner_db.close()
+    observer_db.close()
 
 
 @pytest.mark.asyncio

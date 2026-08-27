@@ -258,6 +258,13 @@ async def test_generation_writes_ordered_snapshot_provenance(tmp_path):
     source = _new_source(db, watchlist, "ordered")
     first = _add_article(db, source, "First", age_hours=2)
     second = _add_article(db, source, "Second", queued=True, age_hours=1)
+    published = (
+        (_now() - timedelta(hours=2))
+        .astimezone(timezone(timedelta(hours=2)))
+        .replace(microsecond=0)
+        .isoformat()
+    )
+    created = (_now() - timedelta(hours=1)).replace(microsecond=0).isoformat()
     with db.transaction() as conn:
         conn.execute(
             "UPDATE subscriptions SET name = ?, source = ? WHERE id = ?",
@@ -268,12 +275,19 @@ async def test_generation_writes_ordered_snapshot_provenance(tmp_path):
             ),
         )
         conn.execute(
-            "UPDATE subscription_items SET url = ? WHERE id = ?",
+            "UPDATE subscription_items SET url = ?, published_date = ?, created_at = ? "
+            "WHERE id = ?",
             (
                 "https://item-user:item-pass@example.test/story?token=item#frag",
+                published,
+                created,
                 first,
             ),
         )
+    effective_date = db.conn.execute(
+        "SELECT effective_date FROM subscription_items WHERE id = ?", (first,)
+    ).fetchone()[0]
+    assert effective_date not in {published, created}
     selection = select_briefing_items(db, watchlist, mode="auto_featured")
     reply = f"Second first [item {second}], then [item {first}], repeat [item {second}]."
 
@@ -300,13 +314,18 @@ async def test_generation_writes_ordered_snapshot_provenance(tmp_path):
     first_snapshot = next(item for item in provenance if item["item_id"] == first)
     assert first_snapshot["item_url"] == "https://example.test/story"
     assert first_snapshot["source_url"] == "https://example.test/feed"
+    assert first_snapshot["item_published_date"] == published
+    assert first_snapshot["item_created_at"] == created
+    assert first_snapshot["item_effective_date"] == effective_date
 
     with db.transaction() as conn:
         conn.execute(
             "UPDATE subscriptions SET name = 'Edited source' WHERE id = ?", (source,)
         )
         conn.execute(
-            "UPDATE subscription_items SET title = 'Edited item' WHERE id = ?",
+            "UPDATE subscription_items SET title = 'Edited item', "
+            "published_date = '2001-01-01T00:00:00+00:00', "
+            "created_at = '2002-01-01T00:00:00+00:00' WHERE id = ?",
             (first,),
         )
     unchanged = dict(
@@ -317,6 +336,7 @@ async def test_generation_writes_ordered_snapshot_provenance(tmp_path):
     )
     assert unchanged["item_title"] == first_snapshot["item_title"]
     assert unchanged["source_name"] == "Original source"
+    assert unchanged["item_effective_date"] == effective_date
 
     with db.transaction() as conn:
         conn.execute("DELETE FROM subscriptions WHERE id = ?", (source,))
@@ -332,6 +352,8 @@ async def test_generation_writes_ordered_snapshot_provenance(tmp_path):
         item["item_id"] for item in provenance
     ]
     assert all(item["live_item_id"] is None for item in surviving)
+    surviving_first = next(item for item in surviving if item["item_id"] == first)
+    assert surviving_first["item_effective_date"] == effective_date
 
 
 @pytest.mark.asyncio

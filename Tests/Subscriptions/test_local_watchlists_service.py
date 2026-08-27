@@ -273,48 +273,98 @@ async def test_two_scope_services_execute_one_durable_source_claim(tmp_path):
 
 
 @pytest.mark.asyncio
-async def test_wait_for_terminal_run_has_bounded_backoff(monkeypatch):
-    service = LocalWatchlistsService(db_factory=Mock())
-    service.get_run = AsyncMock(return_value={"run_id": 7, "status": "running"})
-    ticks = iter((0.0, 0.0, 0.01, 0.03))
+async def test_wait_for_terminal_run_has_bounded_backoff(monkeypatch, tmp_path):
+    db = SubscriptionsDB(tmp_path / "bounded-wait.db", "observer")
+    service = LocalWatchlistsService(db_factory=lambda: db)
+    source_id = db.add_subscription(
+        name="Stranded", type="rss", source="https://example.com/feed.xml"
+    )
+    launched = await service.launch_run(source_id=source_id)
+    run_id = launched["run_id"]
+    before_run = dict(
+        db.conn.execute(
+            "SELECT * FROM local_watchlist_runs WHERE id = ?", (run_id,)
+        ).fetchone()
+    )
+    before_source = dict(
+        db.conn.execute("SELECT * FROM subscriptions WHERE id = ?", (source_id,)).fetchone()
+    )
+    original_get_run = service.get_run
+    queries = 0
     sleeps: list[float] = []
+    clock = 0.0
+
+    async def get_run(durable_run_id: int) -> dict[str, object]:
+        nonlocal queries
+        queries += 1
+        return await original_get_run(durable_run_id)
 
     async def sleep(delay: float) -> None:
+        nonlocal clock
         sleeps.append(delay)
+        clock = round(clock + delay, 9)
 
     monkeypatch.setattr(
-        local_watchlists_service, "_RUN_CLAIM_WAIT_TIMEOUT_SECONDS", 0.025
+        local_watchlists_service, "_RUN_CLAIM_WAIT_TIMEOUT_SECONDS", 1.63
     )
     monkeypatch.setattr(
         local_watchlists_service,
         "time",
-        SimpleNamespace(monotonic=lambda: next(ticks)),
+        SimpleNamespace(monotonic=lambda: clock),
     )
     monkeypatch.setattr(
         local_watchlists_service, "asyncio", SimpleNamespace(sleep=sleep)
     )
+    service.get_run = get_run
 
-    with pytest.raises(TimeoutError, match="Timed out waiting for watchlist run 7"):
-        await service.wait_for_terminal_run(7)
+    with pytest.raises(TimeoutError, match=f"Timed out waiting for watchlist run {run_id}"):
+        await service.wait_for_terminal_run(run_id)
 
-    assert service.get_run.await_count == 3
-    assert sleeps == pytest.approx([0.01, 0.015])
+    assert queries == 9
+    assert sleeps == pytest.approx([0.01, 0.02, 0.04, 0.08, 0.16, 0.32, 0.5, 0.5])
+    assert max(sleeps) == 0.5
+    assert clock == pytest.approx(1.63)
+    assert dict(
+        db.conn.execute(
+            "SELECT * FROM local_watchlist_runs WHERE id = ?", (run_id,)
+        ).fetchone()
+    ) == before_run
+    assert dict(
+        db.conn.execute("SELECT * FROM subscriptions WHERE id = ?", (source_id,)).fetchone()
+    ) == before_source
+    db.close()
 
 
 @pytest.mark.asyncio
-async def test_wait_for_terminal_run_is_cancellable() -> None:
-    service = LocalWatchlistsService(db_factory=Mock())
+async def test_wait_for_terminal_run_is_cancellable(tmp_path) -> None:
+    db = SubscriptionsDB(tmp_path / "cancelled-wait.db", "observer")
+    service = LocalWatchlistsService(db_factory=lambda: db)
+    source_id = db.add_subscription(
+        name="Stranded", type="rss", source="https://example.com/feed.xml"
+    )
+    launched = await service.launch_run(source_id=source_id)
+    run_id = launched["run_id"]
+    before_run = dict(
+        db.conn.execute(
+            "SELECT * FROM local_watchlist_runs WHERE id = ?", (run_id,)
+        ).fetchone()
+    )
+    before_source = dict(
+        db.conn.execute("SELECT * FROM subscriptions WHERE id = ?", (source_id,)).fetchone()
+    )
     polled = asyncio.Event()
     queries = 0
+    original_get_run = service.get_run
 
     async def get_run(_run_id: int) -> dict[str, object]:
         nonlocal queries
         queries += 1
+        result = await original_get_run(_run_id)
         polled.set()
-        return {"run_id": 7, "status": "running"}
+        return result
 
     service.get_run = get_run
-    waiting = asyncio.create_task(service.wait_for_terminal_run(7))
+    waiting = asyncio.create_task(service.wait_for_terminal_run(run_id))
     await asyncio.wait_for(polled.wait(), timeout=1)
     waiting.cancel()
 
@@ -322,6 +372,15 @@ async def test_wait_for_terminal_run_is_cancellable() -> None:
         await waiting
 
     assert queries == 1
+    assert dict(
+        db.conn.execute(
+            "SELECT * FROM local_watchlist_runs WHERE id = ?", (run_id,)
+        ).fetchone()
+    ) == before_run
+    assert dict(
+        db.conn.execute("SELECT * FROM subscriptions WHERE id = ?", (source_id,)).fetchone()
+    ) == before_source
+    db.close()
 
 
 @pytest.mark.asyncio

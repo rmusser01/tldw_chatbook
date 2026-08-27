@@ -178,8 +178,8 @@ def _build_v1(path: Path, *, fail_version_write: bool = False) -> None:
             "(id, subscription_id, url, title, published_date, status, "
             "canonical_url, created_at, updated_at) VALUES "
             "(11, 1, 'https://item-user:item-pass@example.test/story?token=item#frag', "
-            "'Original title', '2026-08-02T00:00:00+00:00', 'new', NULL, "
-            "'2026-08-02T01:00:00+00:00', '2026-08-02T01:00:00+00:00')"
+            "'Original title', '2026-08-02T03:30:45+02:00', 'new', NULL, "
+            "'2026-08-02T09:00:00+00:00', '2026-08-02T09:00:00+00:00')"
         )
         conn.execute(
             "INSERT INTO watchlists (id, name, created_at, updated_at) VALUES "
@@ -225,6 +225,7 @@ def test_fresh_database_is_direct_v2_with_one_version_row(tmp_path: Path) -> Non
     db = SubscriptionsDB(tmp_path / "fresh.db")
     assert [tuple(row) for row in db.conn.execute("SELECT version FROM schema_version")] == [(2,)]
     assert "selection_position" in _columns(db.conn, "briefing_items")
+    assert "item_effective_date" in _columns(db.conn, "briefing_items")
     assert {
         "uq_local_watchlist_runs_active_source",
         "uq_briefings_generating_watchlist",
@@ -249,6 +250,9 @@ def test_v1_upgrade_snapshots_legacy_rows_reconciles_duplicates_and_reopens(
     assert row["cited"] == 0
     assert row["item_title"] == "Original title"
     assert row["item_url"] == "https://example.test/story"
+    assert row["item_published_date"] == "2026-08-02T03:30:45+02:00"
+    assert row["item_created_at"] == "2026-08-02T09:00:00+00:00"
+    assert row["item_effective_date"] == "2026-08-02 01:30:45"
     assert row["source_id"] == 1
     assert row["source_name"] == "Old source"
     assert row["source_url"] == "https://example.test/feed"
@@ -277,6 +281,7 @@ def test_v1_upgrade_snapshots_legacy_rows_reconciles_duplicates_and_reopens(
     assert surviving["item_id"] == 11
     assert surviving["item_title"] == "Original title"
     assert surviving["source_name"] == "Old source"
+    assert surviving["item_effective_date"] == "2026-08-02 01:30:45"
     db.close()
 
     reopened = SubscriptionsDB(path)

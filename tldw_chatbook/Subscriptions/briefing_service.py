@@ -707,6 +707,7 @@ def _finish_success(
                 item_url=item.get("url"),
                 item_published_date=item.get("published_date"),
                 item_created_at=item.get("created_at"),
+                item_effective_date=item.get("effective_date"),
                 source_id=source_id,
                 source_name=item.get("source_name"),
                 source_type=item.get("source_type"),
