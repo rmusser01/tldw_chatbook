@@ -203,7 +203,8 @@ for this purpose and retain the complete mounted snapshot.
    - raised exception: a stated error and warning log.
 7. `finally` removes both shared and Re-run-origin state and repaints the
    button, even on unexpected failure or screen/layout changes.
-8. Completion dispatches an authoritative Runs refresh into `wc_runs`; it
+8. Completion uses the same generation-advancing Refresh dispatcher as the
+   toolbar action, which schedules the authoritative reload in `wc_runs`; it
    does not call the loader inline from the mutation worker.
 
 Different targets may execute concurrently. Repeated local work for the same
@@ -279,8 +280,9 @@ Controller/scope forwarding coverage additionally proves that local Re-run
 passes `source_id` and server Re-run passes `job_id`; restoring the previous
 source-only controller signature must make the server test fail.
 
-Final verification is limited to affected Watchlists/UI tests, modified-file
-Ruff, and `git diff --check`, following the user's established constraint.
+Final verification is limited to affected Watchlists/UI plus controller/scope
+service tests, modified-file Ruff, and `git diff --check`, following the
+user's established constraint.
 
 ## ADR check
 
