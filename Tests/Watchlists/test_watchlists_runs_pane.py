@@ -228,7 +228,14 @@ async def test_local_rerun_uses_source_id_and_inert_name():
     app = RunsPaneHarness()
     async with app.run_test(size=(120, 40)) as pilot:
         pane = app.query_one(RunsPane)
-        pane.runs = [{"id": "run-1", "source_id": "source-1", "source_title": "[not markup]"}]
+        pane.runs = [
+            {
+                "id": "run-1",
+                "source_id": "source-1",
+                "source_title": "[not markup]",
+                "watchlist_names": ["Morning read", "Security"],
+            }
+        ]
         pane.select_run_by_id("run-1")
         await pilot.pause()
 
@@ -239,7 +246,7 @@ async def test_local_rerun_uses_source_id_and_inert_name():
             "rerun_run_requested",
             "local",
             "source-1",
-            "[not markup]",
+            "[not markup] · Morning read +1",
         )
 
 
