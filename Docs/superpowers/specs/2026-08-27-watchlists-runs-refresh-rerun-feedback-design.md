@@ -29,8 +29,9 @@ unrelated temporary-directory cleanup warnings.
    it has moved beyond the ordinary 100-row result window.
 3. Make `Re-run source` acknowledge immediately, expose an accurate busy
    button, report an honest terminal or started outcome, and refresh Runs.
-4. Prevent `Check now` and `Re-run source` from launching the same source
-   concurrently.
+4. Prevent duplicate launches of the same backend-specific run target and,
+   for local sources where both entry points share one source identity,
+   prevent `Check now` and `Re-run source` from overlapping.
 5. Preserve the mounted Runs snapshot across transient refresh failures and
    discard responses belonging to an obsolete backend.
 
@@ -67,17 +68,18 @@ the existing Check-now path already supplies the necessary policy.
 `RunsPane` gains:
 
 - a `RefreshRunsRequested` message;
-- enough Re-run request context to identify the raw source, backend, and inert
-  display name;
-- a non-recomposing set of busy Re-run source keys;
+- enough Re-run request context to identify the local source id or server job
+  id, backend, and inert display name;
+- a non-recomposing set of busy Re-run operation keys;
 - in-place button painting.
 
-The Re-run button is enabled only when the selected run carries a valid source
-identifier and that source is not already being checked. A Re-run launched
-from this pane changes the label to `Re-running...` and disables the button
-until its backend call returns. If the same source is being checked from a
-different entry point, the button remains disabled with accurate checking
-copy rather than pretending this pane initiated the operation.
+The Re-run button is enabled only when the selected run carries the required
+local source id or server job id and that target is not already running. A
+Re-run launched from this pane changes the label to `Re-running...` and
+disables the button until its backend call returns. If the same local source
+is being checked from a different entry point, the button remains disabled
+with accurate checking copy rather than pretending this pane initiated the
+operation.
 
 The table must not recompose merely because operation state changes; preserving
 cursor, focus, and selected row is part of the existing Runs-pane contract.
@@ -87,7 +89,8 @@ cursor, focus, and selected row is part of the existing Runs-pane contract.
 The screen remains the sole state and backend owner. It gains narrowly scoped
 helpers for:
 
-- deriving one canonical source-operation key from backend plus source id;
+- deriving one canonical launch-operation key from backend plus the
+  backend-specific target id;
 - registering and cleaning up accepted Check-now/Re-run work;
 - recording which accepted checks originated from Re-run for accurate button
   copy;
@@ -105,39 +108,60 @@ No new service method is required. Both `check_now()` and `launch_run()`
 already converge on `WatchlistScopeService.launch_run()`. The screen uses the
 existing controller operation and existing run-status interpretation.
 
-## Canonical source identity
+The controller's existing `launch_run()` forwarding seam must accept both
+`source_id` and `job_id`, matching the scope service it already delegates to.
+Local launches pass `source_id`; server launches pass `job_id`. This is a
+signature/forwarding correction, not a new backend API.
+
+## Backend-specific launch identity
 
 Normalized source rows expose a namespaced UI id such as
 `local:subscription:5`, while normalized run rows retain raw `source_id=5`.
 Comparing those values directly would allow a Check-now and Re-run of the same
 source to bypass each other.
 
-Every source operation therefore derives one key from:
+Local operations therefore derive one key from:
 
-- the backend captured when the action was accepted; and
-- the raw source identifier.
+- backend `local`; and
+- the raw source identifier, represented with the existing normalized
+  subscription-id builder.
 
 The key must be identical whether it is derived from a selected source row or
-a selected run row. The existing normalizer ID builder should be reused rather
-than introducing a second string format.
+a selected local run row. This makes local Check now and Re-run share the same
+duplicate guard. The existing normalizer ID builder is reused rather than
+introducing a second string format.
+
+The server run contract is different: `WatchlistRunResponse` guarantees
+`job_id` and does not guarantee `source_id`, while
+`ServerWatchlistsService.launch_run()` requires `job_id`. A server Re-run
+therefore carries and launches by `job_id`, and its operation key is the
+namespaced server watchlist-job identity. This prevents duplicate Re-runs of
+the same server job. The current server source contract provides no reliable
+job-to-source identity for cross-entry comparison, so this task does not claim
+that a server Sources-tab Check now can be deduplicated against a Runs-tab
+job launch without a new API lookup. It must not guess that two unrelated raw
+integers are the same identity.
 
 ## Refresh flow
 
 1. `RunsPane` posts `RefreshRunsRequested`.
-2. The screen captures the current backend, selected run id, and the current
-   refresh generation.
+2. The screen increments the Runs refresh generation for every accepted
+   Refresh, then captures the current backend, selected run id, and that new
+   generation token.
 3. An exclusive `wc_runs` worker requests the latest 100 rows into local
    staged values. Nothing is published yet.
 4. If the selected id is present, that fresh row becomes the candidate
    selection.
 5. If the selected id is absent, the worker resolves it directly:
-   - a valid record is pinned into the staged rows so the selected row remains
-     visible;
+   - a valid record is appended after the authoritative newest-100 page so the
+     selected row remains visible without disturbing that page's ordering;
    - an authoritative not-found result produces a `None` candidate;
    - a transient lookup failure aborts the refresh and preserves the mounted
      snapshot.
-6. Before publication, the worker verifies that the backend and refresh
-   generation are still current. Obsolete results are discarded silently.
+6. Before publication, the worker verifies that the backend is unchanged and
+   the captured generation still equals the screen's current generation.
+   Every newer accepted Refresh supersedes the older token immediately;
+   obsolete results are discarded silently.
 7. Rows and selection publish together.
 8. The selected fresh record is loaded through an exclusive
    `wc_run_detail` worker. A cleared selection schedules the same grouped
@@ -148,13 +172,24 @@ shown and rows, selection, detail, and action state remain unchanged. A detail
 query failure does not roll back a successful row refresh; the existing run
 detail failure note and toast explain that narrower failure.
 
+"Authoritative not found" is intentionally narrow:
+
+- local `get_run()` raising `KeyError`; or
+- server `get_run()` raising `APIResponseError` with `status_code == 404`.
+
+All other exceptions, including authentication, connection, timeout, policy,
+validation, and non-404 server response errors, are transient/indeterminate
+for this purpose and retain the complete mounted snapshot.
+
 ## Re-run flow
 
-1. `RunsPane` posts the selected run's raw source id, backend, and source title.
-2. The screen derives the canonical source key and rejects the request when:
-   - the source id is invalid;
+1. `RunsPane` posts the selected run's local `source_id` or server `job_id`,
+   backend, and source/job title.
+2. The screen derives the backend-specific operation key and rejects the
+   request when:
+   - the required target id is invalid;
    - the request backend is no longer the active backend; or
-   - that source key is already in `_checks_in_flight`.
+   - that operation key is already in `_checks_in_flight`.
 3. An accepted request is registered in the shared in-flight set and in the
    Re-run-origin presentation set.
 4. The screen immediately sends `Re-running <name>...` with `markup=False`
@@ -171,10 +206,11 @@ detail failure note and toast explain that narrower failure.
 8. Completion dispatches an authoritative Runs refresh into `wc_runs`; it
    does not call the loader inline from the mutation worker.
 
-Different sources may execute concurrently. Repeated work for the same source
-is refused regardless of whether it originated from Sources, Inspector, or
-Runs. For server responses, busy state ends when the launch request returns;
-the UI does not claim to track remote execution to completion.
+Different targets may execute concurrently. Repeated local work for the same
+source is refused regardless of whether it originated from Sources, Inspector,
+or Runs. Repeated server Re-runs for the same job are refused. For server
+responses, busy state ends when the launch request returns; the UI does not
+claim to track remote execution to completion.
 
 ## Backend and stale-result safety
 
@@ -194,14 +230,14 @@ a later selection or clear now owns.
 
 ## Error and trust handling
 
-- Source titles are user- or remote-derived and always reach notifications
+- Source/job titles are user- or remote-derived and always reach notifications
   with `markup=False`.
 - Unexpected exception text is not exposed where it can contain URLs or local
   paths; existing Watchlists logging and type-only notification rules apply.
 - A backend switch or superseded generation is normal stale work and is
   discarded without an error toast.
-- Missing source identity disables Re-run rather than launching a knowingly
-  invalid request.
+- Missing backend-specific launch identity disables Re-run rather than
+  launching a knowingly invalid request.
 - Refresh never clears a working snapshot merely because a replacement read
   failed.
 
@@ -213,7 +249,7 @@ event-gated fakes rather than timing sleeps.
 Pane coverage proves:
 
 - Refresh posts the new message rather than repainting buttons locally;
-- missing source identity disables Re-run;
+- missing backend-specific launch identity disables Re-run;
 - accepted Re-run state disables and relabels the button without recomposing
   the table;
 - external Check-now activity is disabled with accurate non-origin copy.
@@ -231,12 +267,17 @@ Mounted screen coverage proves:
 Re-run coverage proves:
 
 - immediate acknowledgement and busy state precede backend completion;
-- Check now and Re-run refuse duplicate work for the same canonical source;
+- local Check now and Re-run refuse duplicate work for the same canonical
+  source, while server Re-runs use and deduplicate by the required job id;
 - different sources remain independent;
 - local terminal, server-started, returned-failure, skipped, and raised-failure
   outcomes are honest;
 - cleanup always restores the button;
 - completion dispatches an authoritative Runs refresh.
+
+Controller/scope forwarding coverage additionally proves that local Re-run
+passes `source_id` and server Re-run passes `job_id`; restoring the previous
+source-only controller signature must make the server test fail.
 
 Final verification is limited to affected Watchlists/UI tests, modified-file
 Ruff, and `git diff --check`, following the user's established constraint.

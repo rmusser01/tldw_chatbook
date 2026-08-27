@@ -35,6 +35,6 @@ the batch-2 branch; now more visible since run rows carry real accounting.
 - [ ] Refresh reloads authoritative run rows and the selected run's fresh detail while preserving that selection by identity when it still exists.
 - [ ] Refresh clears an authoritatively deleted selection, retains the complete mounted snapshot on transient failure, and never publishes results after a backend switch.
 - [ ] Re-run source immediately exposes a disabled `Re-running...` state and reports honest local-complete, server-started, skipped, and failure outcomes consistent with TASK-2309.
-- [ ] Check now and Re-run source refuse duplicate work for the same canonical source while leaving different sources independent.
+- [ ] Local Check now and Re-run source share one canonical source guard; server Re-run uses and deduplicates by its required job identity; different targets remain independent.
 - [ ] Discriminating affected Watchlists tests, modified-file Ruff, and `git diff --check` pass.
 <!-- AC:END -->
