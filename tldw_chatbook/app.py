@@ -13502,6 +13502,21 @@ class TldwCli(
         """
         self._handle_first_run_wizard_result(result)
 
+    def refresh_model_catalogs_now(self) -> None:
+        """Run the provider catalog refresh immediately (TASK-21150).
+
+        The public seam behind the wizard Summary's model-list consent, so
+        answering "yes" there refreshes this session exactly as answering
+        "yes" to the Console consent modal does — same worker, same
+        exclusive group, so the two paths can never run concurrently.
+        """
+        self._startup_model_catalog_refresh_scheduled = True
+        self.run_worker(
+            self._refresh_model_catalogs,
+            exclusive=True,
+            group="model-catalog-refresh",
+        )
+
     def action_run_setup_wizard(self) -> None:
         """Open the setup wizard for a re-run (TASK-21145, UAT H-3).
 

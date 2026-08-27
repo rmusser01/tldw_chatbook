@@ -11,7 +11,11 @@ from ..glyph_fallback import ascii_glyph_mode
 class LibraryEmergencyReturn(Button):
     """Presentation-only request control for the narrow canvas stage."""
 
-    DEFAULT_CSS = """
+    #: TASK-22858: BUNDLED_CSS, not DEFAULT_CSS — build_css.py lifts this
+    #: into the widget-defaults tier of the app bundle. A class-level
+    #: DEFAULT_CSS registers another stylesheet source against Textual's
+    #: 64-entry parse cache (see Tests/UI/test_widget_css_consolidation.py).
+    BUNDLED_CSS = """
     LibraryEmergencyReturn {
         width: 100%;
         height: 1;

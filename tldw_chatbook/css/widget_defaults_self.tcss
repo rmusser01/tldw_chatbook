@@ -2053,6 +2053,15 @@
     }
 
 
+/* ===== WIDGET: LibraryEmergencyReturn (Widgets/Library/library_emergency_return.py) ===== */
+
+    LibraryEmergencyReturn {
+        width: 100%;
+        height: 1;
+        border: none;
+    }
+
+
 /* ===== WIDGET: LibraryNoteFolderNameDialog (Widgets/Library/library_note_folder_dialog.py) ===== */
 
     LibraryNoteFolderNameDialog { align: center middle; }

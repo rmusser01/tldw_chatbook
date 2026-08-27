@@ -361,3 +361,44 @@ async def test_enter_hotkey_queues_draft_behind_accepted_run():
             assert console._console_pending_send_stash is None
         finally:
             gateway.release.set()
+
+
+# ---------------------------------------------------------------------------
+# TASK-21150 item (d): the setup-blocked reason becomes a click-to-open-setup
+# action link. Today every reason is a fixed literal from
+# build_console_disabled_reason, so interpolating it into a markup string is
+# safe *by invariant* — a comment. This pins it mechanically: even a reason
+# carrying markup metacharacters must render literally and must not inject
+# styling or a second action.
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_setup_blocked_reason_never_parses_reason_text_as_markup():
+    app, host = _ready_host()
+    async with host.run_test(size=(140, 42)) as pilot:
+        console = await _mounted_console(host, pilot)
+        composer = console.query_one("#console-native-composer", ConsoleComposerBar)
+        reason_widget = composer.query_one("#console-send-disabled-reason", Static)
+
+        hostile = "Send blocked — [@click=app.quit]click[/] [bold]x[/bold]"
+        composer.set_class(True, "console-composer-setup-blocked")
+        composer._sync_send_disabled_reason(hostile, muted=False)
+        await pilot.pause(0.1)
+
+        rendered = reason_widget.renderable
+        plain = rendered.plain if hasattr(rendered, "plain") else str(rendered)
+        # The metacharacters survive verbatim — nothing was interpreted.
+        assert "[@click=app.quit]" in plain
+        assert "[bold]" in plain
+        # And the only action link is the one this widget added itself.
+        spans = getattr(rendered, "spans", [])
+        actions = [
+            s
+            for s in spans
+            if "@click" in str(getattr(s, "style", ""))
+        ]
+        assert len(actions) <= 1, f"reason text injected extra action(s): {actions}"
+        assert all(
+            "app.quit" not in str(getattr(s, "style", "")) for s in spans
+        ), "reason text injected its own click action"

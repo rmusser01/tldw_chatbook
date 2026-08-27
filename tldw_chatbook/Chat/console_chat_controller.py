@@ -4611,7 +4611,7 @@ class ConsoleChatController:
             return self._prepared_action_refusal(preparation)
         selection = preparation.execution_context.configuration.provider_selection
         try:
-            resolution = await self.provider_gateway.resolve_for_send(selection)
+            resolution = await self._resolve_for_send_bounded(selection)
         except BaseException:
             self._pause_prepared_commit(
                 preparation_id, ConsolePreparationPauseKind.DESTINATION_CHANGED
@@ -7005,7 +7005,7 @@ class ConsoleChatController:
             session_id,
             configuration,
         )
-        resolution = await self.provider_gateway.resolve_for_send(
+        resolution = await self._resolve_for_send_bounded(
             configuration.provider_selection
         )
         if not getattr(resolution, "ready", False):
@@ -11945,7 +11945,7 @@ class ConsoleChatController:
             scratch_snapshot,
         )
         try:
-            resolution = await self.provider_gateway.resolve_for_send(
+            resolution = await self._resolve_for_send_bounded(
                 owning_provider_selection
             )
         except Exception:  # noqa: BLE001 - preview failure stays content-free
@@ -13980,7 +13980,7 @@ class ConsoleChatController:
         if owner is None or owner.persisted_conversation_id is None:
             return False, "Send or save this conversation before compacting it."
         try:
-            resolution = await self.provider_gateway.resolve_for_send(
+            resolution = await self._resolve_for_send_bounded(
                 self._provider_selection()
             )
         except Exception:

@@ -12817,3 +12817,104 @@ async def test_setup_checkbox_glyphs_differ_structurally():
         checked = box.BUTTON_INNER
         assert unchecked != checked
         assert checked == "✓"
+
+
+# ---------------------------------------------------------------------------
+# TASK-21150 item (a): saying yes on the Summary must behave like saying yes
+# to the Console modal — which refreshes the catalogs immediately. Recording
+# consent alone left the first session running on stale lists with no modal
+# left to trigger the fetch.
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("allowed", [True, False])
+async def test_summary_consent_allow_kicks_the_catalog_refresh(allowed):
+    from textual.widgets import Checkbox
+
+    wizard = _summary_wizard_mock()
+    refreshed: list[str] = []
+    wizard.request_model_catalog_refresh = lambda: refreshed.append("kick")
+    step = SummaryStep(
+        wizard=wizard,
+        config=WizardStepConfig(id="summary", title="Summary", step_number=9),
+        load_config=lambda: {
+            "api_settings": {"openai": {"api_key": "sk-x"}},
+            "chat_defaults": {"provider": "OpenAI", "model": "gpt-5.6-terra"},
+        },
+        rag_deps_installed=lambda: False,
+    )
+    app = _StepHost(step)
+    async with app.run_test(size=(120, 40)) as pilot:
+        await pilot.pause()
+        step.on_show()
+        await pilot.pause(0.2)
+        step.query_one("#setup-summary-model-catalog-consent", Checkbox).value = allowed
+        ok, error = await step.commit()
+        assert ok, error
+
+    if allowed:
+        assert refreshed == ["kick"], "allow must refresh the catalogs this session"
+    else:
+        assert refreshed == [], "deny must never reach the network"
+
+
+# ---------------------------------------------------------------------------
+# TASK-21150 item (b): expanding "show all" rebuilds the radio list, and the
+# row the user already picked must come back pressed — otherwise the screen
+# says "nothing selected" while the step still holds the selection, and a
+# resumed draft cannot match the row.
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_show_all_rebuilds_keep_the_selected_theme_and_card_pressed():
+    from textual.widgets import Button, RadioButton, RadioSet
+
+    wizard = _make_wizard()
+    app = _HostApp(wizard)
+    async with app.run_test(size=(120, 40)) as pilot:
+        await pilot.pause(0.2)
+        appearance = wizard.query_one(AppearanceStep)
+
+        # Pick a theme and a card from the curated (short) lists.
+        theme_rows = [
+            b
+            for b in appearance.query("#setup-theme-choice RadioButton")
+            if getattr(b, "_theme_name", "")
+        ]
+        assert theme_rows
+        chosen_theme = theme_rows[-1]
+        chosen_theme.value = True
+        await pilot.pause(0.1)
+
+        card_rows = [
+            b
+            for b in appearance.query("#setup-splash-choice RadioButton")
+            if getattr(b, "_card_name", "")
+        ]
+        assert card_rows
+        chosen_card_name = getattr(card_rows[-1], "_card_name")
+        card_rows[-1].value = True
+        await pilot.pause(0.1)
+
+        chosen_theme_name = appearance.selected_theme
+        assert chosen_theme_name and appearance.selected_splash_card == chosen_card_name
+
+        # Expand both full lists.
+        appearance.query_one("#setup-theme-show-all", Button).press()
+        await pilot.pause(0.3)
+        appearance.query_one("#setup-splash-show-all", Button).press()
+        await pilot.pause(0.3)
+
+        # The selection survives in state AND is pressed in the rebuilt lists.
+        assert appearance.selected_theme == chosen_theme_name
+        assert appearance.selected_splash_card == chosen_card_name
+
+        theme_pressed = appearance.query_one("#setup-theme-choice", RadioSet).pressed_button
+        assert theme_pressed is not None, "no theme row pressed after show-all"
+        assert getattr(theme_pressed, "_theme_name", "") == chosen_theme_name
+
+        card_pressed = appearance.query_one("#setup-splash-choice", RadioSet).pressed_button
+        assert card_pressed is not None, "no card row pressed after show-all"
+        assert getattr(card_pressed, "_card_name", "") == chosen_card_name

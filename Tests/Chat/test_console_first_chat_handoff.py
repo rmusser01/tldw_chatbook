@@ -74,3 +74,78 @@ async def test_provider_validation_reaches_terminal_state_in_bounded_time():
     assert "timed out" in resolution.visible_copy
     # The copy carries no raw internal codes.
     assert "_" not in resolution.visible_copy
+
+
+# ---------------------------------------------------------------------------
+# TASK-21150 item (c): every resolve_for_send await must carry the H-3
+# deadline, not just the send path. A hang in continuation replay, dispatch
+# retry, the instruction preview, or compaction wedges its own surface just
+# as badly — the source-level check is the guard that keeps a NEW await from
+# reintroducing the hazard.
+# ---------------------------------------------------------------------------
+
+
+def test_no_unbounded_resolve_for_send_awaits_remain():
+    """Every gateway resolve must go through the bounded seam.
+
+    A source-level assertion (not a behavioral one) because the hazard is
+    "someone adds await self.provider_gateway.resolve_for_send(...) again":
+    only the text can catch that before it ships.
+    """
+    import ast
+    from pathlib import Path
+
+    source = Path("tldw_chatbook/Chat/console_chat_controller.py").read_text()
+    tree = ast.parse(source)
+    offenders: list[int] = []
+    for node in ast.walk(tree):
+        if not isinstance(node, ast.Await):
+            continue
+        call = node.value
+        if not isinstance(call, ast.Call):
+            continue
+        func = call.func
+        if (
+            isinstance(func, ast.Attribute)
+            and func.attr == "resolve_for_send"
+            and isinstance(func.value, ast.Attribute)
+            and func.value.attr == "provider_gateway"
+        ):
+            offenders.append(node.lineno)
+
+    # The single sanctioned call is inside _resolve_for_send_bounded itself,
+    # where asyncio.wait_for supplies the deadline.
+    bounded = next(
+        n
+        for n in ast.walk(tree)
+        if isinstance(n, ast.AsyncFunctionDef)
+        and n.name == "_resolve_for_send_bounded"
+    )
+    allowed = {
+        n.lineno
+        for n in ast.walk(bounded)
+        if isinstance(n, ast.Await)
+    }
+    unbounded = sorted(set(offenders) - allowed)
+    assert not unbounded, (
+        "unbounded provider_gateway.resolve_for_send await(s) at line(s) "
+        f"{unbounded} — route them through self._resolve_for_send_bounded "
+        "so no surface can hang (TASK-21150 item c / UAT H-3)"
+    )
+
+
+@pytest.mark.asyncio
+async def test_compaction_reaches_a_terminal_answer_when_the_gateway_hangs():
+    """Behavioral half of item (c): the source guard proves the seam is
+    used; this proves the seam works on a surface other than send."""
+    controller = ConsoleChatController(
+        store=ConsoleChatStore(), provider_gateway=_HangingGateway()
+    )
+    controller.PROVIDER_VALIDATION_TIMEOUT_SECONDS = 0.05
+    session = controller.store.ensure_session()
+    ok, message = await asyncio.wait_for(
+        controller.compact_context_now(session.id), timeout=5.0
+    )
+    assert ok is False
+    assert message, "a blocked compaction must say something actionable"
+    assert "_" not in message, f"raw internal code leaked: {message!r}"
