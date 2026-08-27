@@ -31,7 +31,7 @@ from tldw_chatbook.Agents.mcp_tool_provider import (
 )
 from tldw_chatbook.Chat.console_agent_bridge import (
     STEP_APPROVAL_TIMEOUT,
-    build_intermediate_thinking_marker,
+    build_intermediate_planning_marker,
     build_step_activity_presentation,
     classify_activity_status,
     safe_intermediate_thinking_summary,
@@ -67,7 +67,7 @@ class _RecordingPersistence:
     "public_callable",
     [
         safe_intermediate_thinking_summary,
-        build_intermediate_thinking_marker,
+        build_intermediate_planning_marker,
         visual_messages,
         ToolResult.blocked,
     ],
@@ -492,28 +492,25 @@ def test_safe_intermediate_thinking_summary_allows_non_call_shaped_tool_prose() 
     assert bridge_module.safe_intermediate_thinking_summary(summary) == summary
 
 
-def test_thinking_marker_without_safe_summary_has_no_expandable_detail() -> None:
-    marker = bridge_module.build_intermediate_thinking_marker(
+def test_unsafe_summary_does_not_create_a_planning_marker() -> None:
+    marker = bridge_module.build_intermediate_planning_marker(
         "<thinking>private chain</thinking>"
     )
 
-    assert marker.role is ConsoleMessageRole.TOOL
-    assert marker.content == ""
-    assert marker.tool_output_full is None
-    assert marker.activity_presentation == ConsoleActivityPresentation(
-        "thinking", "Thinking", "done"
-    )
+    assert marker is None
 
 
-def test_thinking_marker_with_safe_summary_uses_bounded_content_as_its_detail() -> None:
-    marker = bridge_module.build_intermediate_thinking_marker(
+def test_safe_intermediate_summary_is_presented_as_planning() -> None:
+    marker = bridge_module.build_intermediate_planning_marker(
         "I will inspect the relevant files."
     )
 
+    assert marker is not None
+    assert marker.role is ConsoleMessageRole.TOOL
     assert marker.content == "I will inspect the relevant files."
     assert marker.tool_output_full is None
     assert marker.activity_presentation == ConsoleActivityPresentation(
-        "thinking", "Thinking", "done"
+        "planning", "Planning", "done"
     )
 
 

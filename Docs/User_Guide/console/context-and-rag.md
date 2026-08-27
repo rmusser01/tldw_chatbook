@@ -220,6 +220,33 @@ checkbox, **Refresh** (also the `r` key), **Copy JSON**, **Save to File**
 not rendered inline — the viewer shows "Context exceeds 1 MiB. Use Save to
 File to view the full payload."
 
+### Thinking history replay
+
+Open the current conversation's Console settings and find **Thinking history
+replay**. Its saved policy belongs to the conversation and affects future
+provider requests, not whether Thinking rows are visible:
+
+- **Auto** replays only complete displayable blocks that the resolved adapter
+  can serialize safely.
+- **Include** requests the same compatible optional history, but fails before
+  send if a block claimed for that adapter cannot be serialized safely.
+- **Exclude** omits optional displayable thinking from the next request.
+- **Required** is a read-only effective state when exact provider continuation
+  must be replayed. It does not overwrite the saved Auto/Include/Exclude
+  preference and cannot be downgraded for that send.
+
+Use **Save as default for new conversations** to copy the selected optional
+policy into future conversations; it does not rewrite existing ones. Optional
+displayable replay is deliberately model- and format-specific. Local
+llama.cpp and vLLM targets can replay compatible start-anchored blocks exactly
+once, but sharing a backend URL does not make every model a thinking model.
+Console uses the selected model's resolved adapter disposition and never
+translates stored thinking generically for an incompatible provider.
+
+Thinking that is eligible for the next request is budgeted with the visible
+answer as one owner group. The **Show model thinking** presentation setting has
+no effect on this policy or token counting.
+
 ### Project instructions
 
 The Inspector places a one-line **Project** status above **Sources**:

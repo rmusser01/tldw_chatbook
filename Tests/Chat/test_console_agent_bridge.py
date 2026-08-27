@@ -44,11 +44,18 @@ from tldw_chatbook.Chat.console_chat_models import (
     ConsoleActivityPresentation,
     ConsoleChatMessage,
     ConsoleMessageRole,
+    ConsoleRunState,
+    ConsoleRunStatus,
 )
-from tldw_chatbook.Chat.console_chat_store import ConsoleChatStore
+from tldw_chatbook.Chat.console_chat_store import (
+    ConsoleChatStore,
+    ConsoleThinkingCompatibilityError,
+)
 from tldw_chatbook.Chat.console_chat_controller import (
+    ConsoleChatController,
     USER_DENIED_REFUSAL as CONTROLLER_USER_DENIED_REFUSAL,
 )
+from tldw_chatbook.Chat.chat_persistence_service import ChatPersistenceService
 from tldw_chatbook.Chat.console_display_state import format_diff_feedback_disclosure
 from tldw_chatbook.Chat.console_dispatch_checkpoint import (
     ConsoleEgressClass,
@@ -61,18 +68,24 @@ from tldw_chatbook.Chat.provider_continuation import (
     ContinuationRestoreTarget,
     ContinuationRound,
     ProviderContinuationCheckpoint,
+    parse_provider_continuation_json,
 )
 from tldw_chatbook.Chat.trajectory import derive_trajectory
 from tldw_chatbook.Chat.console_provider_gateway import (
     ConsoleProviderGateway,
     ConsoleProviderResolution,
     ConsoleProviderStreamSignals,
+    ProviderProprietaryThinkingEvidence,
+    ProviderThinkingDelta,
     ProviderToolCalls,
 )
+from tldw_chatbook.Chat.console_thinking_capture import ThinkingCapture
 from tldw_chatbook.DB.AgentRuns_DB import AgentRunsDB
+from tldw_chatbook.DB.ChaChaNotes_DB import CharactersRAGDB
 from tldw_chatbook.Agents.agent_models import (
     DIRECT_DISCLOSE_THRESHOLD,
     LOAD_TOOLS_NAME,
+    RUN_CANCELLED,
     RUN_DONE,
     RUN_ERROR,
     SPAWN_TOOL_NAME,
@@ -1450,7 +1463,7 @@ def test_native_tool_call_round_trip_streams_final_answer(tmp_path):
     assert any("get_current_datetime" in marker.content for marker in tool_rows)
 
 
-def test_native_multi_call_round_emits_one_thinking_marker_with_resume_parity(
+def test_native_multi_call_round_without_summary_emits_no_planning(
     tmp_path,
 ) -> None:
     calls = ProviderToolCalls(
@@ -1484,15 +1497,14 @@ def test_native_multi_call_round_emits_one_thinking_marker_with_resume_parity(
 
     assert outcome.status == "done"
     assert [marker.activity_presentation.kind for marker in live] == [
-        "thinking",
         "tool",
         "tool",
     ]
-    assert sum(marker.activity_presentation.kind == "thinking" for marker in live) == 1
+    assert not any(marker.activity_presentation.kind == "planning" for marker in live)
     assert _activity_marker_signature(resumed) == _activity_marker_signature(live)
 
 
-def test_unsafe_model_summary_emits_detail_free_thinking_with_resume_parity(
+def test_unsafe_model_summary_emits_no_planning_with_resume_parity(
     tmp_path,
 ) -> None:
     scripts = [
@@ -1507,14 +1519,9 @@ def test_unsafe_model_summary_emits_detail_free_thinking_with_resume_parity(
     outcome = _run(bridge, store, session, aid)
     live = _tool_messages(store, session.id)
     resumed = _resume_tool_messages(db)
-    thinking = live[0]
 
     assert outcome.status == "done"
-    assert thinking.activity_presentation == ConsoleActivityPresentation(
-        "thinking", "Thinking", "done"
-    )
-    assert thinking.content == ""
-    assert thinking.tool_output_full is None
+    assert all(marker.activity_presentation.kind != "planning" for marker in live)
     assert _activity_marker_signature(resumed) == _activity_marker_signature(live)
     assert "PRIVATE_REASONING_CANARY" not in repr(_activity_marker_signature(live))
     assert "PRIVATE_REASONING_CANARY" not in repr(_activity_marker_signature(resumed))
@@ -2655,16 +2662,15 @@ def test_spawn_renders_marker_and_persists_linked_subagent(tmp_path):
     ]
     assert spawn_markers
     assert [marker.activity_presentation.kind for marker in live_markers] == [
-        "thinking",
         "spawn",
         "tool",
     ]
-    assert sum(
-        marker.activity_presentation.kind == "thinking" for marker in live_markers
-    ) == 1
+    assert not any(
+        marker.activity_presentation.kind == "planning" for marker in live_markers
+    )
     live_signature = _activity_marker_signature(live_markers)
     resumed_signature = _activity_marker_signature(resumed_markers)
-    assert live_signature[:2] == resumed_signature[:2]
+    assert live_signature[:1] == resumed_signature[:1]
     assert [item[1:] for item in live_signature] == [
         item[1:] for item in resumed_signature
     ]
@@ -3186,7 +3192,6 @@ def test_resume_marker_messages_reproduces_live_markers_after_simulated_restart(
     resumed_markers = [m for _anchor, block in blocks for m in block]
     assert [m.content for m in resumed_markers] == live_tool_contents
     assert [m.activity_presentation for m in resumed_markers] == [
-        ConsoleActivityPresentation("thinking", "Thinking", "done"),
         ConsoleActivityPresentation("tool", "calculator", "success"),
     ]
     live_markers = [
@@ -3271,14 +3276,23 @@ def test_structured_tool_failure_status_has_live_resume_parity(
     assert _activity_marker_signature(resumed) == _activity_marker_signature(live)
 
 
-def _thinking_markers_for_attributed_steps(
+def _planning_markers_for_attributed_steps(
     events: list[tuple[AgentStep, str]],
+    *,
+    actual_thinking_round_ordinals: frozenset[int] = frozenset(),
 ) -> list[ConsoleChatMessage]:
-    deriver = bridge_module._PendingPrimaryThinkingDeriver()
+    deriver = bridge_module._PendingPrimaryPlanningDeriver()
     return [
         marker
         for step, agent_kind in events
-        if (marker := deriver.observe(step, agent_kind)) is not None
+        if (
+            marker := deriver.observe(
+                step,
+                agent_kind,
+                actual_thinking_round_ordinals=actual_thinking_round_ordinals,
+            )
+        )
+        is not None
     ]
 
 
@@ -3339,20 +3353,134 @@ def _thinking_markers_for_attributed_steps(
         ),
     ],
 )
-def test_pending_primary_thinking_marker_sequence_rules(
+def test_pending_primary_planning_marker_sequence_rules(
     events: list[tuple[AgentStep, str]], expected_content: list[str]
 ) -> None:
-    markers = _thinking_markers_for_attributed_steps(events)
+    markers = _planning_markers_for_attributed_steps(events)
 
     assert [marker.content for marker in markers] == expected_content
     assert all(
         marker.activity_presentation
-        == ConsoleActivityPresentation("thinking", "Thinking", "done")
+        == ConsoleActivityPresentation("planning", "Planning", "done")
         for marker in markers
     )
 
 
-def test_subagent_steps_do_not_flush_or_clear_pending_primary_thinking() -> None:
+def test_actual_thinking_suppresses_only_its_owned_planning_round() -> None:
+    events = [
+        (AgentStep(0, STEP_MODEL, summary="Actual round."), "primary"),
+        (AgentStep(1, STEP_TOOL_CALL, tool_name="first"), "primary"),
+        (AgentStep(2, STEP_TOOL_RESULT, tool_name="first"), "primary"),
+        (AgentStep(3, STEP_MODEL, summary="Planning-only round."), "primary"),
+        (AgentStep(4, STEP_TOOL_CALL, tool_name="second"), "primary"),
+        (AgentStep(5, STEP_TOOL_RESULT, tool_name="second"), "primary"),
+        (AgentStep(6, STEP_MODEL, summary="Final answer."), "primary"),
+    ]
+
+    markers = _planning_markers_for_attributed_steps(
+        events,
+        actual_thinking_round_ordinals=frozenset({0}),
+    )
+
+    assert [marker.content for marker in markers] == ["Planning-only round."]
+    assert markers[0].activity_round_ordinal == 1
+    assert markers[0].activity_presentation == ConsoleActivityPresentation(
+        "planning", "Planning", "done"
+    )
+
+
+@pytest.mark.parametrize(
+    "evidence",
+    [
+        ProviderThinkingDelta(
+            text="actual reasoning",
+            provider="llama_cpp",
+            model="reasoner",
+            protocol="chat_completions",
+            source_format="start_anchored_think",
+        ),
+        ProviderProprietaryThinkingEvidence(
+            provider="moonshot",
+            model="kimi",
+            protocol="chat_completions",
+            source_format="reasoning_content",
+        ),
+    ],
+    ids=["displayable", "proprietary"],
+)
+def test_live_actual_thinking_suppresses_only_its_model_round(
+    tmp_path,
+    evidence: ProviderThinkingDelta | ProviderProprietaryThinkingEvidence,
+) -> None:
+    bridge, _db, store, session, assistant_id = _bridge(
+        tmp_path,
+        [
+            [
+                evidence,
+                "First round plan.\n",
+                _fence("calculator", {"expression": "1 + 1"}),
+            ],
+            [
+                "Second round plan.\n",
+                _fence("calculator", {"expression": "2 + 2"}),
+            ],
+            ["Done."],
+        ],
+    )
+
+    outcome = _run(bridge, store, session, assistant_id)
+
+    assistant = store.get_message(assistant_id)
+    assert outcome.status == RUN_DONE
+    assert assistant.thinking is not None
+    assert [block.round_ordinal for block in assistant.thinking.blocks] == [0]
+    markers = _tool_messages(store, session.id)
+    assert [marker.activity_presentation.kind for marker in markers] == [
+        "tool",
+        "planning",
+        "tool",
+    ]
+    assert [marker.activity_round_ordinal for marker in markers] == [0, 1, 1]
+
+
+def test_resume_suppresses_planning_from_exact_selected_envelope_rounds(
+    tmp_path,
+) -> None:
+    db = AgentRunsDB(tmp_path / "runs.db", client_id="t")
+    run_id = db.create_run(
+        conversation_id="conv-1",
+        agent_kind="primary",
+        assistant_message_id="assistant-1",
+    )
+    db.append_steps(
+        run_id,
+        [
+            vars(AgentStep(0, STEP_MODEL, summary="Actual first round.")),
+            vars(AgentStep(1, STEP_TOOL_CALL, tool_name="first")),
+            vars(AgentStep(2, STEP_TOOL_RESULT, tool_name="first", result="one")),
+            vars(AgentStep(3, STEP_MODEL, summary="Planning second round.")),
+            vars(AgentStep(4, STEP_TOOL_CALL, tool_name="second")),
+            vars(AgentStep(5, STEP_TOOL_RESULT, tool_name="second", result="two")),
+            vars(AgentStep(6, STEP_MODEL, summary="Final answer.")),
+        ],
+    )
+    db.set_status(run_id, RUN_DONE, result="Final answer.")
+    bridge = ConsoleAgentBridge(agent_runs_db=db, store=None, provider_gateway=None)
+
+    block = bridge.resume_marker_messages(
+        "conv-1",
+        thinking_round_ordinals_by_assistant_message_id={"assistant-1": frozenset({0})},
+    )[0][1]
+
+    assert [marker.activity_presentation.kind for marker in block] == [
+        "tool",
+        "planning",
+        "tool",
+    ]
+    assert [marker.activity_round_ordinal for marker in block] == [0, 1, 1]
+
+
+def test_subagent_steps_do_not_flush_or_clear_pending_primary_planning() -> None:
     events = [
         (AgentStep(0, STEP_MODEL, summary="Primary preamble."), "primary"),
         (AgentStep(0, STEP_MODEL, summary="Child private turn."), "subagent"),
@@ -3361,12 +3489,12 @@ def test_subagent_steps_do_not_flush_or_clear_pending_primary_thinking() -> None
         (AgentStep(1, STEP_TOOL_CALL, tool_name="primary_tool"), "primary"),
     ]
 
-    markers = _thinking_markers_for_attributed_steps(events)
+    markers = _planning_markers_for_attributed_steps(events)
 
     assert [marker.content for marker in markers] == ["Primary preamble."]
 
 
-def test_live_callback_interleaving_preserves_primary_thinking_and_resume_sequence(
+def test_live_callback_interleaving_preserves_primary_planning_and_resume_sequence(
     tmp_path,
     monkeypatch,
 ) -> None:
@@ -3437,7 +3565,7 @@ def test_live_callback_interleaving_preserves_primary_thinking_and_resume_sequen
 
     assert outcome.status == "done"
     assert [marker.activity_presentation.kind for marker in live] == [
-        "thinking",
+        "planning",
         "tool",
     ]
     assert live[0].content == "Primary preamble."
@@ -3445,7 +3573,7 @@ def test_live_callback_interleaving_preserves_primary_thinking_and_resume_sequen
     assert _activity_marker_signature(resumed) == _activity_marker_signature(live)
 
 
-def test_thinking_live_resume_marker_order_content_and_presentation_parity(
+def test_planning_live_resume_marker_order_content_and_presentation_parity(
     tmp_path,
 ) -> None:
     scripts = [
@@ -3473,7 +3601,7 @@ def test_thinking_live_resume_marker_order_content_and_presentation_parity(
 
     assert outcome.status == "done"
     assert [message.activity_presentation.kind for message in live] == [
-        "thinking",
+        "planning",
         "tool",
     ]
     assert live[0].content == "I will calculate this safely."
@@ -5810,7 +5938,7 @@ def test_run_reply_forwards_review_tool_calls_hook_to_agent_service(tmp_path):
         == "blocked"
     )
     assert [marker.activity_presentation.kind for marker in live] == [
-        "thinking",
+        "planning",
         "tool",
     ]
     assert live[0].content == "I will request approval for this calculation."
@@ -6228,6 +6356,447 @@ def test_run_reply_returns_runoutcome_done():
     assert run_id == "run-1"
     assert result.status == RUN_DONE
     assert result.final_text == "done"
+
+
+def test_agent_rounds_keep_thinking_paired_across_native_tool_calls(tmp_path) -> None:
+    gateway = _ChunkGateway(
+        [
+            [
+                ProviderThinkingDelta(
+                    text="choose a tool",
+                    provider="llama_cpp",
+                    model="reasoner",
+                    protocol="chat_completions",
+                    source_format="start_anchored_think",
+                ),
+                _native_calls("calculator", {"expression": "1 + 1"}),
+            ],
+            [
+                ProviderThinkingDelta(
+                    text="use the result",
+                    provider="llama_cpp",
+                    model="reasoner",
+                    protocol="chat_completions",
+                    source_format="start_anchored_think",
+                ),
+                "The answer is 2.",
+            ],
+        ]
+    )
+    bridge, _db, store, session, assistant_id = _bridge_with_gateway(tmp_path, gateway)
+    live_tokens: list[int | None] = []
+    terminal_tokens: list[int | None] = []
+    original_replace = store.replace_message_thinking
+    original_settle = store.settle_message_thinking
+
+    def record_replace(message_id, envelope, *, generation_token=None):
+        live_tokens.append(generation_token)
+        return original_replace(
+            message_id,
+            envelope,
+            generation_token=generation_token,
+        )
+
+    def record_settle(message_id, envelope, *, generation_token=None):
+        terminal_tokens.append(generation_token)
+        return original_settle(
+            message_id,
+            envelope,
+            generation_token=generation_token,
+        )
+
+    store.replace_message_thinking = record_replace
+    store.settle_message_thinking = record_settle
+
+    outcome = _run(
+        bridge,
+        store,
+        session,
+        assistant_id,
+        resolution=_native_resolution(),
+    )
+
+    assistant = store.get_message(assistant_id)
+    assert outcome.status == RUN_DONE
+    assert assistant.content == "The answer is 2."
+    assert assistant.thinking is not None
+    assert [block.round_ordinal for block in assistant.thinking.blocks] == [0, 1]
+    assert [block.text for block in assistant.thinking.blocks] == [
+        "choose a tool",
+        "use the result",
+    ]
+    assert [block.status for block in assistant.thinking.blocks] == [
+        "complete",
+        "complete",
+    ]
+    assert live_tokens and terminal_tokens
+    assert set(live_tokens + terminal_tokens) == {live_tokens[0]}
+    assert type(live_tokens[0]) is int
+
+
+def test_agent_rounds_advance_for_fence_first_tool_calls(tmp_path) -> None:
+    gateway = _ChunkGateway(
+        [
+            [
+                ProviderThinkingDelta(
+                    text="choose a tool",
+                    provider="llama_cpp",
+                    model="reasoner",
+                    protocol="chat_completions",
+                    source_format="start_anchored_think",
+                ),
+                _fence("calculator", {"expression": "1 + 1"}),
+            ],
+            [
+                ProviderThinkingDelta(
+                    text="use the result",
+                    provider="llama_cpp",
+                    model="reasoner",
+                    protocol="chat_completions",
+                    source_format="start_anchored_think",
+                ),
+                "The answer is 2.",
+            ],
+        ]
+    )
+    bridge, _db, store, session, assistant_id = _bridge_with_gateway(tmp_path, gateway)
+
+    outcome = _run(bridge, store, session, assistant_id)
+
+    assistant = store.get_message(assistant_id)
+    assert outcome.status == RUN_DONE
+    assert assistant.thinking is not None
+    assert [block.round_ordinal for block in assistant.thinking.blocks] == [0, 1]
+    assert [block.text for block in assistant.thinking.blocks] == [
+        "choose a tool",
+        "use the result",
+    ]
+
+
+def test_agent_terminal_proprietary_evidence_never_enters_answer_text(tmp_path) -> None:
+    gateway = _ChunkGateway(
+        [
+            [
+                ProviderProprietaryThinkingEvidence(
+                    provider="moonshot",
+                    model="kimi",
+                    protocol="chat_completions",
+                    source_format="reasoning_content",
+                ),
+                "answer",
+            ]
+        ]
+    )
+    bridge, _db, store, session, assistant_id = _bridge_with_gateway(tmp_path, gateway)
+
+    outcome = _run(bridge, store, session, assistant_id)
+
+    assistant = store.get_message(assistant_id)
+    assert outcome.status == RUN_DONE
+    assert assistant.content == "answer"
+    assert assistant.thinking is not None
+    assert assistant.thinking.blocks[0].visibility == "proprietary"
+    assert not hasattr(assistant.thinking.blocks[0], "text")
+
+
+def test_agent_answer_without_evidence_leaves_thinking_null(tmp_path) -> None:
+    bridge, _db, store, session, assistant_id = _bridge(tmp_path, [["answer"]])
+
+    outcome = _run(bridge, store, session, assistant_id)
+
+    assert outcome.status == RUN_DONE
+    assert store.get_message(assistant_id).thinking is None
+
+
+def test_agent_provider_failure_settles_open_thinking_as_failed(tmp_path) -> None:
+    class RaisingGateway(_ChunkGateway):
+        async def stream_chat(self, resolution, messages, tools=None, **kwargs):
+            yield ProviderThinkingDelta(
+                text="unfinished",
+                provider="llama_cpp",
+                model="reasoner",
+                protocol="chat_completions",
+                source_format="start_anchored_think",
+            )
+            raise RuntimeError("provider failed")
+
+    gateway = RaisingGateway([])
+    bridge, _db, store, session, assistant_id = _bridge_with_gateway(tmp_path, gateway)
+
+    outcome = _run(bridge, store, session, assistant_id)
+
+    assistant = store.get_message(assistant_id)
+    assert outcome.status == RUN_ERROR
+    assert assistant.thinking is not None
+    assert assistant.thinking.blocks[0].status == "failed"
+
+
+def test_agent_stop_after_thinking_does_not_pull_the_next_answer_chunk(
+    tmp_path,
+) -> None:
+    bridge, _db, store, session, assistant_id = _bridge(
+        tmp_path,
+        [
+            [
+                ProviderThinkingDelta(
+                    text="unfinished",
+                    provider="llama_cpp",
+                    model="reasoner",
+                    protocol="chat_completions",
+                    source_format="start_anchored_think",
+                ),
+                "must not stream",
+            ]
+        ],
+    )
+    flags = iter([False, True])
+
+    outcome = _run(
+        bridge,
+        store,
+        session,
+        assistant_id,
+        should_cancel=lambda: next(flags, True),
+    )
+
+    assistant = store.get_message(assistant_id)
+    assert outcome.status == RUN_CANCELLED
+    assert assistant.content == ""
+    assert assistant.thinking is not None
+    assert assistant.thinking.blocks[0].status == "stopped"
+
+
+def test_agent_late_thinking_after_controller_stop_is_durably_settled(
+    tmp_path,
+) -> None:
+    """A detached bridge must durably hand late evidence to the stopped owner."""
+
+    class GatedThinkingGateway:
+        def __init__(self) -> None:
+            self.entered = threading.Event()
+            self.release = threading.Event()
+
+        async def stream_chat(self, resolution, messages, **kwargs):
+            self.entered.set()
+            await asyncio.to_thread(self.release.wait)
+            yield ProviderThinkingDelta(
+                text="late but delivered",
+                provider="llama_cpp",
+                model="reasoner",
+                protocol="chat_completions",
+                source_format="start_anchored_think",
+            )
+
+    checkpoint = parse_provider_continuation_json(
+        {
+            "schema_version": 1,
+            "checkpoint_revision": 1,
+            "provider": "deepseek",
+            "protocol": "responses",
+            "model": "deepseek-v4-flash",
+            "api_base_url": "https://api.deepseek.com/v1",
+            "state": "complete",
+            "rounds": [
+                {
+                    "assistant_content": "paired answer",
+                    "reasoning_blocks": ["paired private state"],
+                    "calls": [
+                        {
+                            "call_id": "paired-call",
+                            "name": "lookup",
+                            "arguments": "{}",
+                            "state": "completed",
+                            "result": "done",
+                        }
+                    ],
+                }
+            ],
+        }
+    )
+    chat_db = CharactersRAGDB(tmp_path / "chat.sqlite", "late-thinking")
+    runs_db = AgentRunsDB(tmp_path / "runs.sqlite", client_id="late-thinking")
+    try:
+        store = ConsoleChatStore(persistence=ChatPersistenceService(chat_db))
+        session = store.create_session(title="late thinking")
+        store.append_message(
+            session.id,
+            role=ConsoleMessageRole.USER,
+            content="question",
+            persist=True,
+        )
+        assistant = store.append_message(
+            session.id,
+            role=ConsoleMessageRole.ASSISTANT,
+            content="paired answer",
+            persist=True,
+        )
+        owned = store._message_or_raise(assistant.id)
+        owned.provider_continuation = checkpoint
+        assert store.persist_selected_generation(assistant.id) is True
+        owned.status = "streaming"
+        owned.assistant_generation_state = "streaming"
+
+        gateway = GatedThinkingGateway()
+        bridge = ConsoleAgentBridge(
+            agent_runs_db=runs_db,
+            store=store,
+            provider_gateway=gateway,
+        )
+        controller = ConsoleChatController(
+            store=store,
+            provider_gateway=gateway,
+            agent_bridge=bridge,
+        )
+        cancel_event = threading.Event()
+        controller._active_cancel_events[session.id] = cancel_event
+        controller._active_assistant_message_ids[session.id] = assistant.id
+        controller._set_run_state(
+            ConsoleRunState(ConsoleRunStatus.STREAMING, "Thinking"),
+            session_id=session.id,
+        )
+        result: dict[str, object] = {}
+
+        def run_bridge() -> None:
+            try:
+                result["reply"] = bridge.run_reply(
+                    conversation_id=session.persisted_conversation_id,
+                    session_id=session.id,
+                    resolution=_test_resolution(
+                        model="reasoner",
+                        thinking_stream_disposition="displayable",
+                        thinking_round_trip_version=1,
+                    ),
+                    assistant_message_id=assistant.id,
+                    model="reasoner",
+                    session_system_prompt="",
+                    agent_messages=[{"role": "user", "content": "question"}],
+                    should_cancel=cancel_event.is_set,
+                )
+            except BaseException as exc:  # pragma: no cover - asserted below
+                result["error"] = exc
+
+        worker = threading.Thread(target=run_bridge, daemon=True)
+        worker.start()
+        assert gateway.entered.wait(timeout=3)
+        assert controller.stop_active_run(record_user_stop=False) is True
+        assert session.persisted_conversation_id is not None
+        assert assistant.persisted_message_id is not None
+        stopped_row = chat_db.get_message_by_id(assistant.persisted_message_id)
+        assert stopped_row is not None
+        assert stopped_row["assistant_generation_state"] == "stopped"
+        assert stopped_row["thinking_blocks_json"] is None
+        # Stop commits the visible terminal state while the detached worker
+        # still owns late-evidence settlement authority.
+        assert store._generation_runtime_counts() == (0, 0, 1)
+
+        gateway.release.set()
+        worker.join(timeout=5)
+        assert not worker.is_alive()
+        assert "error" not in result
+        _run_id, outcome = result["reply"]
+        assert outcome.status == RUN_CANCELLED
+        assert store._generation_runtime_counts() == (0, 0, 0)
+
+        settled_row = chat_db.get_message_by_id(assistant.persisted_message_id)
+        assert settled_row is not None
+        settled_version = settled_row["version"]
+        settled = store.get_message(assistant.id)
+        assert settled.thinking is not None
+        store.settle_message_thinking(assistant.id, settled.thinking)
+        assert chat_db.get_message_by_id(assistant.persisted_message_id)["version"] == (
+            settled_version
+        )
+
+        rows = chat_db.get_messages_for_conversation(
+            session.persisted_conversation_id, limit=100
+        )
+        nodes = [
+            ConsoleChatMessage(
+                id=str(row["id"]),
+                role=ConsoleMessageRole(str(row["role"])),
+                content=str(row.get("content") or ""),
+                persisted_message_id=str(row["id"]),
+                parent_message_id=row.get("parent_message_id"),
+            )
+            for row in rows
+        ]
+        reloaded_store = ConsoleChatStore(persistence=ChatPersistenceService(chat_db))
+        reloaded_store.restore_persisted_session(
+            title="late thinking reload",
+            workspace_id=None,
+            persisted_conversation_id=session.persisted_conversation_id,
+            all_nodes=nodes,
+            active_leaf_persisted_id=assistant.persisted_message_id,
+        )
+        reloaded = reloaded_store.get_message(assistant.persisted_message_id)
+        assistants = [
+            message
+            for message in reloaded_store.messages_for_session(
+                reloaded_store.active_session_id
+            )
+            if message.role is ConsoleMessageRole.ASSISTANT
+        ]
+        assert len(assistants) == 1
+        assert reloaded.content == "paired answer"
+        assert reloaded.assistant_generation_state == "stopped"
+        assert reloaded.provider_continuation == checkpoint
+        assert reloaded.thinking is not None
+        assert reloaded.thinking.blocks[0].text == "late but delivered"
+        assert reloaded.thinking.blocks[0].status == "stopped"
+    finally:
+        runs_db.close()
+        chat_db.close_connection()
+
+
+def test_agent_adapter_preflights_backend_before_provider_contact() -> None:
+    class UnsupportedPersistence:
+        pass
+
+    class ProviderSpy:
+        def __init__(self) -> None:
+            self.calls = 0
+
+        async def stream_chat(self, resolution, messages, **kwargs):
+            self.calls += 1
+            yield "answer"
+
+    store = ConsoleChatStore(persistence=UnsupportedPersistence())
+    session = store.create_session(ephemeral=False)
+    assistant = store.append_message(
+        session.id,
+        role=ConsoleMessageRole.ASSISTANT,
+        content="",
+        persist=False,
+    )
+    gateway = ProviderSpy()
+    loop = asyncio.new_event_loop()
+    loop_thread = threading.Thread(target=loop.run_forever, daemon=True)
+    loop_thread.start()
+    adapter = _StreamingModelAdapter(
+        store=store,
+        provider_gateway=gateway,
+        resolution=_test_resolution(
+            thinking_stream_disposition="displayable",
+            thinking_round_trip_version=1,
+        ),
+        assistant_message_id=assistant.id,
+        should_cancel=lambda: False,
+        loop=loop,
+        native_tools=False,
+        thinking_capture=ThinkingCapture(assistant_owner_id=assistant.id),
+    )
+    try:
+        with pytest.raises(
+            ConsoleThinkingCompatibilityError,
+            match="cannot preserve model thinking version 1",
+        ):
+            adapter.chat_call(messages_payload=[{"role": "user", "content": "hi"}])
+    finally:
+        loop.call_soon_threadsafe(loop.stop)
+        loop_thread.join(timeout=2)
+        loop.close()
+
+    assert gateway.calls == 0
 
 
 def test_run_reply_passes_private_continuation_sidecar_to_agent_service():

@@ -2180,6 +2180,9 @@ class ChatScreen(BaseAppScreen):
         session = store.switch_session(session_id)
         origin_system_prompt = settings.system_prompt
         context_estimate = self._active_console_settings_context_estimate()
+        effective_thinking_policy = (
+            await controller.effective_thinking_history_policy_for_session(session_id)
+        )
         modal = ConsoleSettingsModal(
             settings=settings,
             user_display_name_override=session.user_display_name_override,
@@ -2191,7 +2194,8 @@ class ChatScreen(BaseAppScreen):
             ),
             context_estimate=context_estimate,
             context_state=self._active_console_context_control_state(
-                estimate=context_estimate
+                estimate=context_estimate,
+                thinking_history_effective_policy=effective_thinking_policy,
             ),
             can_save=controller.run_state.is_send_allowed,
             focus_model=focus_model,
@@ -2248,6 +2252,20 @@ class ChatScreen(BaseAppScreen):
             else "role_accents"
         )
         return normalize_console_transcript_style(raw_value)
+
+    def _show_model_thinking(self) -> bool:
+        """Return the live device-local thinking presentation preference."""
+
+        app_config = getattr(self.app_instance, "app_config", {}) or {}
+        console = (
+            app_config.get("console", {}) if isinstance(app_config, Mapping) else {}
+        )
+        raw = (
+            console.get("show_model_thinking", True)
+            if isinstance(console, Mapping)
+            else True
+        )
+        return raw if type(raw) is bool else True
 
     def _console_message_presentation(
         self, message: ConsoleChatMessage
@@ -2323,6 +2341,18 @@ class ChatScreen(BaseAppScreen):
                 if not policy_persisted:
                     self.app_instance.notify(
                         "Context policy applied in memory but could not be saved.",
+                        severity="warning",
+                    )
+            if result.thinking_history_policy is not None:
+                _session, thinking_persisted = (
+                    store.set_session_thinking_history_policy(
+                        session_id,
+                        result.thinking_history_policy,
+                    )
+                )
+                if not thinking_persisted:
+                    self.app_instance.notify(
+                        "Thinking history policy applied in memory but could not be saved.",
                         severity="warning",
                     )
             _session, persisted = store.set_session_user_display_name_override(
@@ -2697,6 +2727,7 @@ class ChatScreen(BaseAppScreen):
                     self._console_presentation_context(),
                     force=True,
                 )
+                transcript.set_model_thinking_visible(self._show_model_thinking())
         return True
 
     def _consume_pending_console_identity_refresh(self) -> bool:
@@ -3114,11 +3145,22 @@ class ChatScreen(BaseAppScreen):
             settings.provider,
             current_model=settings.model,
         )
+        store = self._ensure_console_chat_store()
+        session_id = store.active_session_id
+        effective_thinking_policy = (
+            await self._ensure_console_chat_controller().effective_thinking_history_policy_for_session(
+                session_id
+            )
+            if session_id is not None
+            else "auto"
+        )
         self.app.push_screen(
             ConsoleModelPopover(
                 settings=settings,
                 providers_models=providers_models,
-                context_state=self._active_console_context_control_state(),
+                context_state=self._active_console_context_control_state(
+                    thinking_history_effective_policy=effective_thinking_policy,
+                ),
             ),
             callback=self._apply_console_model_popover_result,
         )
@@ -4343,6 +4385,7 @@ class ChatScreen(BaseAppScreen):
         self,
         *,
         estimate: ConsoleSettingsContextEstimate | None = None,
+        thinking_history_effective_policy: str | None = None,
     ) -> ConsoleContextControlState:
         """Build the shared quick/full context snapshot for the active session."""
         settings = self._session._ensure_active_console_session_settings()
@@ -4366,6 +4409,12 @@ class ChatScreen(BaseAppScreen):
             overrides=overrides,
             global_overrides=global_overrides,
             active_memory=memory,
+            thinking_history_policy=(
+                store.session_thinking_history_policy(session_id)
+                if session_id is not None
+                else "auto"
+            ),
+            thinking_history_effective_policy=thinking_history_effective_policy,
         )
 
     def _build_console_settings_summary_state(self) -> ConsoleSettingsSummaryState:
@@ -9258,8 +9307,11 @@ class ChatScreen(BaseAppScreen):
         if message_id is None:
             return ()
         store = self._ensure_console_chat_store()
+        thinking_owner_id = transcript.thinking_owner_message_id(message_id)
         try:
-            owner_session_id = store.session_id_for_message(message_id)
+            owner_session_id = store.session_id_for_message(
+                thinking_owner_id or message_id
+            )
         except KeyError:
             return ()
         if owner_session_id != store.active_session_id:
@@ -9310,7 +9362,11 @@ class ChatScreen(BaseAppScreen):
         excerpt = (
             "Streaming…"
             if message.status == "streaming"
-            else self._message._console_message_excerpt(message, max_length=90)
+            else (
+                transcript.thinking_detail_text(message_id)
+                if thinking_owner_id is not None
+                else self._message._console_message_excerpt(message, max_length=90)
+            )
         )
         if excerpt:
             rows.append(ConsoleDisplayRow("Excerpt", excerpt))
@@ -12170,6 +12226,7 @@ class ChatScreen(BaseAppScreen):
             if self._pending_console_swipe_selection is not None:
                 transcript.pending_selection_id = self._pending_console_swipe_selection
                 self._pending_console_swipe_selection = None
+            transcript.set_model_thinking_visible(self._show_model_thinking())
             transcript.set_messages(
                 messages,
                 session_id=self._ensure_console_chat_store().active_session_id,

@@ -18,6 +18,8 @@ from tldw_chatbook.Chat.console_chat_models import (
     ConsoleMessageRole,
 )
 from tldw_chatbook.Chat.console_chat_store import ConsoleChatStore
+from tldw_chatbook.Chat.console_turn_grouping import project_thinking_activities
+from tldw_chatbook.Chat.thinking_blocks import DisplayableThinkingBlock, ThinkingEnvelope
 from tldw_chatbook.Widgets.Console.console_transcript import (
     DEFAULT_PRUNE_HIGH_WATERMARK,
     DEFAULT_PRUNE_LOW_WATERMARK,
@@ -123,16 +125,37 @@ async def test_assistant_turn_pruning_commits_all_owned_activity_ids_atomically(
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("protection", ["nested-selection", "streaming-owner"])
+@pytest.mark.parametrize(
+    "protection", ["nested-selection", "thinking-selection", "streaming-owner"]
+)
 async def test_assistant_turn_pruning_protects_the_whole_activity_unit(protection: str):
     """Nested selection or streaming ownership blocks every fragment."""
     app = PruneHarness(low=1, high=0)
     async with app.run_test() as pilot:
         transcript = app.query_one(ConsoleTranscript)
         turn = _assistant_activity_turn(streaming=protection == "streaming-owner")
+        if protection == "thinking-selection":
+            turn[0].thinking = ThinkingEnvelope(
+                (
+                    DisplayableThinkingBlock(
+                        block_id="prune-thinking",
+                        round_ordinal=0,
+                        provider="local_llamacpp",
+                        model="model.gguf",
+                        protocol="openai_chat",
+                        source_format="start_anchored_think",
+                        status="complete",
+                        text="thinking protected with its owner",
+                    ),
+                )
+            )
         transcript.set_messages([*turn, *_messages(8)])
         if protection == "nested-selection":
             transcript.selected_message_id = "turn-tool"
+        elif protection == "thinking-selection":
+            transcript.selected_message_id = project_thinking_activities(
+                assistant=turn[0]
+            )[0].activity_id
         await transcript.refresh_messages()
         await pilot.pause()
 

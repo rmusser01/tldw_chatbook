@@ -970,6 +970,8 @@ def test_settings_ownership_records_cover_categories_and_runtime_boundaries():
         "console.stack_collapsed_rail_labels",
         "console.exchange_capture",
         "console.exchange_capture_detail",
+        "console.show_model_thinking",
+        "console.thinking_history_policy_default",
         "console.collapse_large_pastes",
         "console.paste_collapse_threshold",
         "console.max_parallel_runs",
@@ -10282,6 +10284,23 @@ def test_threshold_field_has_focused_guidance():
     rows = screen._console_behavior_field_guidance_rows()
     assert ("Saved as", "console.paste_collapse_threshold") in rows
     assert all("No field-specific guidance" not in value for _, value in rows)
+
+
+def test_model_thinking_visibility_has_search_guidance_and_device_ownership():
+    app = _build_test_app()
+    screen = SettingsScreen(app)
+    screen._active_settings_field_id = "settings-console-show-model-thinking"
+
+    rows = screen._console_behavior_field_guidance_rows()
+    ownership = screen._ownership_record(SettingsCategoryId.CONSOLE_BEHAVIOR)
+
+    assert screen._top_field_match(
+        "model thinking", SettingsCategoryId.CONSOLE_BEHAVIOR
+    ) == ("settings-console-show-model-thinking", "Show model thinking")
+    assert ("Saved as", "console.show_model_thinking") in rows
+    assert any("Presentation only" in value for _, value in rows)
+    assert "console.show_model_thinking" in ownership.owns_config_sections
+    assert "console.thinking_history_policy_default" in ownership.owns_config_sections
 
 
 @pytest.mark.asyncio

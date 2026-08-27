@@ -17,6 +17,7 @@ if TYPE_CHECKING:
     from tldw_chatbook.Chat.message_metadata import MessageMetadata
     from tldw_chatbook.Chat.provider_continuation import ProviderContinuationCheckpoint
     from tldw_chatbook.Chat.provider_usage import ProviderUsage
+    from tldw_chatbook.Chat.thinking_blocks import ThinkingEnvelope
     from tldw_chatbook.Video_Generation.video_metadata import VideoGenerationMetadata
 
 
@@ -119,9 +120,7 @@ class ConsoleLifecycleImpact:
         """Return whether leaving would discard or cancel Console work."""
 
         return bool(
-            self.live_run_count
-            or self.queued_session_count
-            or self.unsent_prompt_count
+            self.live_run_count or self.queued_session_count or self.unsent_prompt_count
         )
 
 
@@ -251,6 +250,7 @@ ConsoleMessageStatus = Literal[
 ConsoleMessageFeedback = Literal["up", "down"]
 ConsoleActivityKind = Literal[
     "thinking",
+    "planning",
     "tool",
     "spawn",
     "tasks",
@@ -259,11 +259,16 @@ ConsoleActivityKind = Literal[
     "warning",
     "activity",
 ]
-ConsoleActivityStatus = Literal["success", "blocked", "failed", "done"]
+ConsoleActivityStatus = Literal[
+    "success", "blocked", "failed", "done", "live", "stopped", "unavailable"
+]
+
+PROPRIETARY_THINKING_NOTICE = "Proprietary thinking obfuscated - not available"
 
 _CONSOLE_ACTIVITY_KINDS = frozenset(
     {
         "thinking",
+        "planning",
         "tool",
         "spawn",
         "tasks",
@@ -273,7 +278,9 @@ _CONSOLE_ACTIVITY_KINDS = frozenset(
         "activity",
     }
 )
-_CONSOLE_ACTIVITY_STATUSES = frozenset({"success", "blocked", "failed", "done"})
+_CONSOLE_ACTIVITY_STATUSES = frozenset(
+    {"success", "blocked", "failed", "done", "live", "stopped", "unavailable"}
+)
 
 
 CONSOLE_DISPATCH_UNRECONSTRUCTABLE_REASON = (
@@ -555,6 +562,17 @@ class ConsoleActivityPresentation:
             )
         if self.status not in _CONSOLE_ACTIVITY_STATUSES:
             raise ValueError("activity status is invalid")
+
+
+@dataclass(frozen=True, slots=True)
+class ConsoleThinkingActivityRef:
+    """Trusted UI identity and owner lookup for one supported thinking block."""
+
+    activity_id: str
+    assistant_message_id: str
+    block_id: str
+    label: str
+    status: ConsoleActivityStatus
 
 
 CONSOLE_GLOBAL_WORKSPACE_ID = "global"
@@ -891,6 +909,10 @@ class ConsoleChatMessage:
     #: Structured activity-header facts. Session-only; never persisted,
     #: restored, sent to a provider, or written to the agent run log.
     activity_presentation: ConsoleActivityPresentation | None = None
+    #: Explicit primary model-round ownership for one TOOL activity marker.
+    #: None means the marker is not owned by a model round (for example a
+    #: trailing change summary), never "infer from its sequence position".
+    activity_round_ordinal: int | None = None
     #: TASK-1860: the FULL, untruncated tool result behind a TOOL marker.
     #: ``content`` is a preview capped by the Console display setting, so
     #: without this the whole result was unreachable from the transcript --
@@ -925,6 +947,13 @@ class ConsoleChatMessage:
     # field is that machine consumers (reseed, exports, summaries) read it
     # instead of string-matching UI copy in ``content``.
     metadata: "MessageMetadata | None" = None
+    # Provider-approved model thinking owned by this exact assistant generation.
+    # Both supported text and unsupported raw JSON are repr-hidden so routine
+    # diagnostics cannot disclose them.
+    thinking: "ThinkingEnvelope | None" = field(default=None, repr=False)
+    opaque_thinking_json: str | None = field(default=None, repr=False)
+    thinking_warning: str | None = None
+    thinking_actions_enabled: bool = True
     # Private provider state owned by this exact assistant generation. It is
     # deliberately excluded from repr/render content while remaining part of
     # ordinary dataclass equality/copy semantics.
@@ -965,6 +994,19 @@ class ConsoleVariant:
     """One regenerated variant for a turn."""
 
     content: str
+    thinking: "ThinkingEnvelope | None" = field(default=None, repr=False)
+    opaque_thinking_json: str | None = field(default=None, repr=False)
+    thinking_warning: str | None = None
+    thinking_actions_enabled: bool = True
+    usage: "ProviderUsage | None" = None
+    metadata: "MessageMetadata | None" = None
+    provider_continuation: "ProviderContinuationCheckpoint | None" = field(
+        default=None, repr=False
+    )
+    provider_continuation_warning: str | None = None
+    provider_continuation_remote: bool = False
+    provider_continuation_actions_enabled: bool = True
+    assistant_generation_state: str | None = None
     id: str = field(default_factory=lambda: str(uuid4()))
 
 
@@ -992,6 +1034,25 @@ class ConsoleVariantSet:
         return cls(
             turn_id=turn_id,
             variants=[ConsoleVariant(content) for content in contents],
+            selected_index=selected_index,
+        )
+
+    @classmethod
+    def from_generations(
+        cls,
+        *,
+        turn_id: str,
+        generations: list[ConsoleVariant],
+        selected_index: int = 0,
+    ) -> "ConsoleVariantSet":
+        """Build a variant set from complete generation-owned values."""
+        if not generations:
+            raise ValueError("ConsoleVariantSet requires at least one variant")
+        if selected_index < 0 or selected_index >= len(generations):
+            raise ValueError("selected_index must reference an existing variant")
+        return cls(
+            turn_id=turn_id,
+            variants=list(generations),
             selected_index=selected_index,
         )
 
@@ -1046,7 +1107,9 @@ class ProjectInstructionActivationEvent:
             for values in fields
             for value in values
         ):
-            raise ValueError("project instruction event values must be single-line text")
+            raise ValueError(
+                "project instruction event values must be single-line text"
+            )
 
 
 @dataclass(frozen=True)

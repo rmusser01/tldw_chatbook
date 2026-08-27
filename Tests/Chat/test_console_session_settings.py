@@ -2158,11 +2158,17 @@ async def test_settings_active_compaction_close_anyway_keeps_provider_work_runni
 
             controller = SimpleNamespace(
                 run_state=SimpleNamespace(is_send_allowed=True),
+                effective_thinking_history_policy_for_session=(
+                    lambda _session_id: _resolved_thinking_policy()
+                ),
                 reset_active_context_memory=lambda _session_id: ("memory-1", 3),
                 undo_context_memory_reset=lambda _memory_id, _revision: True,
                 reset_all_context_memories=lambda _session_id: 1,
                 compact_context_now=compact_fresh,
             )
+
+            async def _resolved_thinking_policy() -> str:
+                return "auto"
             production_opener = SimpleNamespace(
                 app=app,
                 _session=SimpleNamespace(

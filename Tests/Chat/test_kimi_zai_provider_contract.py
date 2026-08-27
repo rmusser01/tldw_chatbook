@@ -733,6 +733,7 @@ def test_streaming_adapter_carries_terminal_candidate_into_model_turn(tmp_path) 
             assistant_message_id=assistant.id,
             should_cancel=lambda: False,
             loop=lifeline.loop,
+            native_tools=True,
         )
         registry = ToolCatalogRegistry()
         registry.register_provider(BuiltinToolProvider())

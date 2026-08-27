@@ -52,13 +52,20 @@ from tldw_chatbook.Chat.console_provider_endpoints import (
 )
 from tldw_chatbook.Chat.console_prepared_request import (
     CONTINUATION_OWNER_KEY,
+    THINKING_OWNER_KEY,
     PreparedConsoleRequest,
     PreparedProviderRequest,
     WireStyle,
+    attach_thinking_history,
     build_console_request,
     prepare_provider_request,
     resolve_request_capacity,
     thaw_json,
+)
+from tldw_chatbook.Chat.console_thinking_history import (
+    ProviderThinkingSidecar,
+    ThinkingReplayTarget,
+    resolve_thinking_history,
 )
 from tldw_chatbook.Chat.console_history_budget import (
     DEFAULT_PER_IMAGE_TOKENS,
@@ -76,15 +83,27 @@ from tldw_chatbook.Chat.console_provider_support import (
     build_local_thinking_payload_fields,
     resolve_console_provider_identity,
 )
-from tldw_chatbook.Chat.llamacpp_think_filter import StartAnchoredThinkFilter
+from tldw_chatbook.Chat.llamacpp_think_filter import StartAnchoredThinkSplitter
+from tldw_chatbook.Chat.thinking_blocks import (
+    MAX_THINKING_PROVENANCE_CHARS,
+    MAX_THINKING_TEXT_BYTES,
+    THINKING_ENVELOPE_VERSION,
+    ThinkingHistoryPolicy,
+)
 from tldw_chatbook.Chat.provider_readiness import get_provider_readiness
 from tldw_chatbook.Chat.provider_readiness import provider_config_key
 from tldw_chatbook.Chat.provider_usage import ProviderUsage
+from tldw_chatbook.Chat.console_session_settings import reasoning_effort_hint_for_model
 from tldw_chatbook.LLM_Calls.qwencloud import (
     normalize_qwencloud_api_mode,
     normalize_qwencloud_base_url,
 )
-from tldw_chatbook.LLM_Calls.hosted_chat import HostedChatTurn
+from tldw_chatbook.LLM_Calls.hosted_chat import (
+    HostedChatTurn,
+    ReasoningDisposition,
+)
+from tldw_chatbook.LLM_Calls.moonshot import MoonshotFinishPolicy
+from tldw_chatbook.LLM_Calls.zai import ZAIFinishPolicy
 from tldw_chatbook.config import ProviderSettingsError, provider_settings_for_key
 from tldw_chatbook.Utils.input_validation import validate_url
 from tldw_chatbook.Utils.sensitive_llm_logging import (
@@ -120,6 +139,152 @@ MAX_AUXILIARY_OUTPUT_TOKENS = 16_384
 PROVIDER_ERROR_MODEL_ID_MAX_CHARS = 256
 """Maximum model-ID context included in user-visible provider error copy."""
 _CONTINUATION_PROTOCOLS = frozenset({"chat_completions", "responses"})
+_DISPLAYABLE_THINKING_EXECUTION_KEYS = frozenset(
+    {"llama_cpp", "local_llamacpp", "vllm", "local_vllm"}
+)
+_HOSTED_THINKING_FINISH_POLICIES = MappingProxyType(
+    {
+        "moonshot": MoonshotFinishPolicy,
+        "zai": ZAIFinishPolicy,
+    }
+)
+
+
+def _thinking_stream_capability(
+    execution_key: str,
+    *,
+    model: str | None = None,
+    reasoning_effort: str | None = None,
+) -> dict[str, ReasoningDisposition | int | None]:
+    key = execution_key.strip().lower()
+    if key in _DISPLAYABLE_THINKING_EXECUTION_KEYS:
+        effort = str(reasoning_effort or "").strip().lower()
+        disposition: ReasoningDisposition = (
+            "displayable"
+            if effort != "none"
+            and (bool(effort) or reasoning_effort_hint_for_model(model) is not None)
+            else "ignored"
+        )
+        return {
+            "thinking_stream_disposition": disposition,
+            "thinking_round_trip_version": (
+                THINKING_ENVELOPE_VERSION if disposition == "displayable" else None
+            ),
+        }
+    policy = _HOSTED_THINKING_FINISH_POLICIES.get(key)
+    disposition: ReasoningDisposition = (
+        policy.reasoning_disposition if policy is not None else "ignored"
+    )
+    return {
+        "thinking_stream_disposition": disposition,
+        "thinking_round_trip_version": (
+            THINKING_ENVELOPE_VERSION if disposition != "ignored" else None
+        ),
+    }
+
+
+class ProviderThinkingCaptureError(RuntimeError):
+    """A provider-local thinking capture failed without exposing its content."""
+
+
+def _is_strict_utf8_text(value: str) -> bool:
+    """Return whether text contains no unencodable surrogate code points."""
+    return all(not 0xD800 <= ord(character) <= 0xDFFF for character in value)
+
+
+def _is_valid_provider_thinking_identity(value: object) -> bool:
+    return (
+        type(value) is str
+        and bool(value.strip())
+        and len(value) <= MAX_THINKING_PROVENANCE_CHARS
+        and _is_strict_utf8_text(value)
+    )
+
+
+def _is_valid_provider_thinking_text(value: object) -> bool:
+    return (
+        type(value) is str
+        and bool(value)
+        and _is_strict_utf8_text(value)
+        and len(value.encode("utf-8")) <= MAX_THINKING_TEXT_BYTES
+    )
+
+
+@dataclass(frozen=True, slots=True, init=False)
+class ProviderThinkingDelta:
+    """One bounded displayable thinking fragment from an approved adapter."""
+
+    text: str = field(repr=False)
+    provider: str
+    model: str
+    protocol: str
+    source_format: str
+
+    def __init__(
+        self,
+        text: str,
+        provider: str,
+        model: str,
+        protocol: str,
+        source_format: str,
+    ) -> None:
+        # Initialize only content-free state before validation so a rejected
+        # identity cannot survive through constructor traceback locals.
+        object.__setattr__(self, "text", "")
+        object.__setattr__(self, "provider", "")
+        object.__setattr__(self, "model", "")
+        object.__setattr__(self, "protocol", "")
+        object.__setattr__(self, "source_format", "")
+        valid = (
+            _is_valid_provider_thinking_text(text)
+            and _is_valid_provider_thinking_identity(provider)
+            and _is_valid_provider_thinking_identity(model)
+            and _is_valid_provider_thinking_identity(protocol)
+            and _is_valid_provider_thinking_identity(source_format)
+        )
+        if not valid:
+            del text, provider, model, protocol, source_format
+            raise ValueError("Invalid provider thinking event.")
+        object.__setattr__(self, "text", text)
+        object.__setattr__(self, "provider", provider)
+        object.__setattr__(self, "model", model)
+        object.__setattr__(self, "protocol", protocol)
+        object.__setattr__(self, "source_format", source_format)
+
+
+@dataclass(frozen=True, slots=True, init=False)
+class ProviderProprietaryThinkingEvidence:
+    """Content-free proof that an approved adapter observed private reasoning."""
+
+    provider: str
+    model: str
+    protocol: str
+    source_format: str
+
+    def __init__(
+        self,
+        provider: str,
+        model: str,
+        protocol: str,
+        source_format: str,
+    ) -> None:
+        object.__setattr__(self, "provider", "")
+        object.__setattr__(self, "model", "")
+        object.__setattr__(self, "protocol", "")
+        object.__setattr__(self, "source_format", "")
+        valid = (
+            _is_valid_provider_thinking_identity(provider)
+            and _is_valid_provider_thinking_identity(model)
+            and _is_valid_provider_thinking_identity(protocol)
+            and _is_valid_provider_thinking_identity(source_format)
+        )
+        if not valid:
+            del provider, model, protocol, source_format
+            raise ValueError("Invalid provider thinking event.")
+        object.__setattr__(self, "provider", provider)
+        object.__setattr__(self, "model", model)
+        object.__setattr__(self, "protocol", protocol)
+        object.__setattr__(self, "source_format", source_format)
 
 
 def _normalize_deepseek_api_mode(provider_settings: Mapping[str, Any]) -> str:
@@ -270,11 +435,15 @@ class ConsoleProviderStreamSignals:
     # and capture unconditionally, for output nobody ever reads).
     exchange_capture_enabled: bool = False
     capture_detail: CaptureDetail = field(default=CaptureDetail.SAFE, repr=False)
-    completed_exchanges: list["ExchangeCapture"] = field(default_factory=list, repr=False)
+    completed_exchanges: list["ExchangeCapture"] = field(
+        default_factory=list, repr=False
+    )
     _active_exchanges: dict[object, dict[str, Any]] = field(
-        default_factory=dict, init=False, repr=False)
+        default_factory=dict, init=False, repr=False
+    )
     _exchange_lock: threading.Lock = field(
-        default_factory=threading.Lock, init=False, repr=False)
+        default_factory=threading.Lock, init=False, repr=False
+    )
 
     def _begin_scoped_exchange(self, token: object, flight: dict[str, Any]) -> None:
         with self._exchange_lock:
@@ -314,10 +483,14 @@ class ConsoleProviderStreamSignals:
                 if flight is not None:
                     flight["synthetic_fallback"] = True
         except Exception as exc:
-            logger.warning(f"exchange_capture_mark_synthetic_failed: {type(exc).__name__}")
+            logger.warning(
+                f"exchange_capture_mark_synthetic_failed: {type(exc).__name__}"
+            )
 
     def _complete_scoped_exchange(
-        self, token: object, status: str,
+        self,
+        token: object,
+        status: str,
         usage_payload: dict[str, Any] | None,
     ) -> None:
         """Never raises (review finding M4) -- same "never break send"
@@ -333,9 +506,15 @@ class ConsoleProviderStreamSignals:
                 flight = self._active_exchanges.pop(token, None)
                 if flight is None:
                     return
-                self.completed_exchanges.append(_flight_capture(
-                    self.run_tag, len(self.completed_exchanges), flight,
-                    status, usage_payload))
+                self.completed_exchanges.append(
+                    _flight_capture(
+                        self.run_tag,
+                        len(self.completed_exchanges),
+                        flight,
+                        status,
+                        usage_payload,
+                    )
+                )
         except Exception as exc:
             logger.warning(f"exchange_capture_complete_failed: {type(exc).__name__}")
 
@@ -346,8 +525,11 @@ class ConsoleProviderStreamSignals:
         with self._exchange_lock:
             captures = list(self.completed_exchanges)
             for flight in self._active_exchanges.values():
-                captures.append(_flight_capture(
-                    self.run_tag, len(captures), flight, "stopped", None))
+                captures.append(
+                    _flight_capture(
+                        self.run_tag, len(captures), flight, "stopped", None
+                    )
+                )
             return captures
 
 
@@ -470,15 +652,23 @@ class ConsoleProviderCallSignals:
                 endpoint = canonical_provider_endpoint_identity(endpoint)
             except ValueError:
                 endpoint = "[invalid endpoint]"
-        self._aggregate._begin_scoped_exchange(self._token, {
-            "provider": provider, "model": model, "endpoint": endpoint,
-            "request": request, "omitted_keys": omitted_keys,
-            "content": [], "tool_calls": [], "synthetic_fallback": False,
-            "response_truncation_inventory": [],
-            "capture_detail": self.capture_detail,
-            "capture_budget": capture_budget or CaptureBudget(),
-            "created_at": datetime.now(timezone.utc).isoformat(),
-        })
+        self._aggregate._begin_scoped_exchange(
+            self._token,
+            {
+                "provider": provider,
+                "model": model,
+                "endpoint": endpoint,
+                "request": request,
+                "omitted_keys": omitted_keys,
+                "content": [],
+                "tool_calls": [],
+                "synthetic_fallback": False,
+                "response_truncation_inventory": [],
+                "capture_detail": self.capture_detail,
+                "capture_budget": capture_budget or CaptureBudget(),
+                "created_at": datetime.now(timezone.utc).isoformat(),
+            },
+        )
 
     def record_exchange_content(self, text: str, *, synthetic: bool = False) -> None:
         """Append one content chunk to this call's in-flight capture.
@@ -503,13 +693,15 @@ class ConsoleProviderCallSignals:
         # `close_exchange`/`_flight_capture`, seconds later on a real turn.
         # `deepcopy` closes that window permanently.
         self._aggregate._mutate_scoped_exchange(
-            self._token, "tool_calls", [deepcopy(dict(c)) for c in calls])
+            self._token, "tool_calls", [deepcopy(dict(c)) for c in calls]
+        )
 
     def close_exchange(self, status: str = "complete") -> None:
         """Publish this call's capture exactly once (token pop = move
         semantics; a second close finds nothing)."""
         self._aggregate._complete_scoped_exchange(
-            self._token, status, self.usage_snapshot())
+            self._token, status, self.usage_snapshot()
+        )
 
 
 _ProviderStreamSignals = ConsoleProviderStreamSignals | ConsoleProviderCallSignals
@@ -542,8 +734,13 @@ def safe_provider_error_copy(provider: str, exc: BaseException) -> str:
     return f"Provider error from {provider or 'unknown'}: {category}.{status_copy}"
 
 
-def _flight_capture(run_tag: str, seq: int, flight: dict[str, Any],
-                    status: str, usage_payload: dict[str, Any] | None) -> ExchangeCapture:
+def _flight_capture(
+    run_tag: str,
+    seq: int,
+    flight: dict[str, Any],
+    status: str,
+    usage_payload: dict[str, Any] | None,
+) -> ExchangeCapture:
     """Build the immutable capture for one call's in-flight record.
 
     Normalizes THIS call's usage payload on its own (never a cross-call
@@ -553,14 +750,19 @@ def _flight_capture(run_tag: str, seq: int, flight: dict[str, Any],
     if usage_payload:
         try:
             usage = ProviderUsage.from_provider_payload(
-                usage_payload, provider=flight["provider"], model=flight["model"])
+                usage_payload, provider=flight["provider"], model=flight["model"]
+            )
             usage_json = usage.to_json() if usage is not None else None
         except Exception:
             usage_json = None
     return ExchangeCapture(
-        run_tag=run_tag, seq=seq, created_at=flight["created_at"],
-        provider=flight["provider"], model=flight["model"],
-        endpoint=flight["endpoint"], request=flight["request"],
+        run_tag=run_tag,
+        seq=seq,
+        created_at=flight["created_at"],
+        provider=flight["provider"],
+        model=flight["model"],
+        endpoint=flight["endpoint"],
+        request=flight["request"],
         response={
             # Sanitize once more after aggregation: individually harmless
             # sub-threshold chunks can form one data URI/base64 body.
@@ -571,7 +773,8 @@ def _flight_capture(run_tag: str, seq: int, flight: dict[str, Any],
                 flight.get("response_truncation_inventory", ())
             ),
         },
-        status=status, usage_json=usage_json,
+        status=status,
+        usage_json=usage_json,
         omitted_keys=flight["omitted_keys"],
         capture_detail=flight["capture_detail"],
     )
@@ -743,6 +946,28 @@ class ConsoleProviderResolution:
     request_retries: int | None = None
     request_retry_delay: float | None = None
     resolved_destination: ConsoleResolvedDestination | None = None
+    thinking_stream_disposition: ReasoningDisposition = "ignored"
+    thinking_round_trip_version: int | None = None
+
+    def __post_init__(self) -> None:
+        valid_disposition = self.thinking_stream_disposition in {
+            "displayable",
+            "proprietary",
+            "ignored",
+        }
+        valid_version = (
+            self.thinking_round_trip_version is None
+            if self.thinking_stream_disposition == "ignored"
+            else type(self.thinking_round_trip_version) is int
+            and self.thinking_round_trip_version == THINKING_ENVELOPE_VERSION
+        )
+        if not valid_disposition or not valid_version:
+            raise ValueError("Invalid provider thinking capability.")
+
+    @property
+    def may_emit_thinking(self) -> bool:
+        """Whether this frozen adapter target can emit typed thinking evidence."""
+        return self.thinking_stream_disposition != "ignored"
 
 
 def _freeze_auxiliary_value(value: Any) -> Any:
@@ -881,6 +1106,10 @@ class _QueueItem:
     ) -> "_QueueItem":
         return cls("tool_calls", payload=ProviderToolCalls(calls, metadata=metadata))
 
+    @classmethod
+    def thinking(cls, event: ProviderStreamItem) -> "_QueueItem":
+        return cls("thinking", payload=event)
+
 
 @dataclass(frozen=True)
 class ProviderTurnMetadata:
@@ -902,6 +1131,102 @@ class ProviderToolCalls:
 
     tool_calls: tuple[dict, ...]
     metadata: ProviderTurnMetadata | None = field(default=None, repr=False)
+
+
+ProviderStreamItem = (
+    str
+    | ProviderToolCalls
+    | ProviderThinkingDelta
+    | ProviderProprietaryThinkingEvidence
+)
+
+
+@dataclass(frozen=True, slots=True)
+class _LocalCompletionResult:
+    items: tuple[ProviderStreamItem, ...] = field(repr=False)
+    capture_failed: bool = False
+
+
+def _unpack_local_completion_result(
+    result: str | _LocalCompletionResult | tuple[ProviderStreamItem, ...],
+) -> tuple[tuple[ProviderStreamItem, ...], bool]:
+    if isinstance(result, _LocalCompletionResult):
+        return result.items, result.capture_failed
+    if isinstance(result, str):
+        return (result,), False
+    return result, False
+
+
+def _local_thinking_delta(
+    text: str,
+    *,
+    provider: str,
+    model: str,
+    protocol: str,
+) -> ProviderThinkingDelta:
+    return ProviderThinkingDelta(
+        text=text,
+        provider=provider,
+        model=model,
+        protocol=protocol,
+        source_format="start_anchored_think",
+    )
+
+
+def _split_local_completion_items(
+    text: str,
+    *,
+    provider: str,
+    model: str,
+    protocol: str,
+) -> _LocalCompletionResult:
+    splitter = StartAnchoredThinkSplitter()
+    update = splitter.feed(text)
+    terminal = splitter.flush()
+    items: list[ProviderStreamItem] = []
+    thinking = update.thinking + terminal.thinking
+    content = update.content + terminal.content
+    if thinking:
+        items.append(
+            _local_thinking_delta(
+                thinking,
+                provider=provider,
+                model=model,
+                protocol=protocol,
+            )
+        )
+    if content:
+        items.append(content)
+    return _LocalCompletionResult(
+        items=tuple(items),
+        capture_failed=terminal.status == "failed",
+    )
+
+
+def _thinking_protocol(resolution: ConsoleProviderResolution) -> str:
+    return resolution.continuation_protocol or resolution.api_mode or "chat_completions"
+
+
+def _proprietary_thinking_event(
+    response: Any,
+    resolution: ConsoleProviderResolution,
+) -> ProviderProprietaryThinkingEvidence | None:
+    if resolution.thinking_stream_disposition != "proprietary":
+        return None
+    try:
+        turn = response.terminal_turn
+    except AttributeError:
+        return None
+    if not isinstance(turn, HostedChatTurn):
+        raise ChatProviderError("Provider terminal metadata is malformed.")
+    if not turn.reasoning_content:
+        return None
+    return ProviderProprietaryThinkingEvidence(
+        provider=resolution.execution_key or resolution.provider,
+        model=cast(str, resolution.model),
+        protocol=_thinking_protocol(resolution),
+        source_format="reasoning_content",
+    )
 
 
 def _provider_turn_metadata(response: Any) -> ProviderTurnMetadata | None:
@@ -1325,12 +1650,8 @@ class ConsoleProviderGateway:
                     # re-treated as "unclaimed" by this branch.
                     current_client = self.http_client
                     self._client_ever_claimed = True
-            others: list[
-                tuple[asyncio.AbstractEventLoop, httpx.AsyncClient]
-            ] = []
-            still_live: list[
-                tuple[asyncio.AbstractEventLoop, httpx.AsyncClient]
-            ] = []
+            others: list[tuple[asyncio.AbstractEventLoop, httpx.AsyncClient]] = []
+            still_live: list[tuple[asyncio.AbstractEventLoop, httpx.AsyncClient]] = []
             for other_loop, other_client in self._loop_clients.items():
                 if other_client is current_client:
                     continue
@@ -1380,6 +1701,9 @@ class ConsoleProviderGateway:
         continuation_target: ContinuationRestoreTarget | None = None,
         continuation_sidecar: tuple[ProviderContinuationSidecar, ...] = (),
         continuation_owner_key: str | None = None,
+        thinking_sidecar: tuple[ProviderThinkingSidecar, ...] = (),
+        thinking_policy: ThinkingHistoryPolicy | None = None,
+        thinking_owner_key: str | None = None,
     ) -> PreparedProviderRequest:
         """Prepare the one immutable payload later consumed by dispatch.
 
@@ -1391,16 +1715,17 @@ class ConsoleProviderGateway:
         if isinstance(messages, PreparedConsoleRequest) and tools is not None:
             raise ValueError("tools are already owned by PreparedConsoleRequest")
         sidecar = tuple(continuation_sidecar)
+        thinking_sidecars = tuple(thinking_sidecar)
         if sidecar and (continuation_target is None or not continuation_owner_key):
             raise ValueError(
                 "continuation target and owner key are required for private history"
             )
+        if thinking_sidecars and not thinking_owner_key:
+            raise ValueError("thinking owner key is required for thinking history")
         if continuation_target is not None and (
             continuation_target.provider,
             continuation_target.model,
-            normalize_generic_endpoint_for_compare(
-                continuation_target.api_base_url
-            ),
+            normalize_generic_endpoint_for_compare(continuation_target.api_base_url),
         ) != (
             provider_config_key(resolution.provider),
             resolution.model or "",
@@ -1433,44 +1758,137 @@ class ConsoleProviderGateway:
             if continuation_target is not None:
                 for group in continuation_groups:
                     validate_continuation_restore(group.checkpoint, continuation_target)
-            semantic = messages
-        elif not sidecar:
+            semantic = (
+                replace(messages, effective_thinking_policy="required")
+                if continuation_groups
+                and messages.effective_thinking_policy != "required"
+                else messages
+            )
+            if thinking_sidecars:
+                assert thinking_owner_key is not None
+                selected_thinking_owner_ids = {
+                    message.get(thinking_owner_key)
+                    for message in semantic.flattened_messages()
+                    if type(message.get(thinking_owner_key)) is str
+                }
+                thinking = resolve_thinking_history(
+                    target=ThinkingReplayTarget(
+                        provider=resolution.execution_key or resolution.provider,
+                        model=resolution.model or "",
+                        protocol=_thinking_protocol(resolution),
+                        disposition=resolution.thinking_stream_disposition,
+                        round_trip_version=resolution.thinking_round_trip_version,
+                    ),
+                    policy=thinking_policy,
+                    sidecars=tuple(
+                        item
+                        for item in thinking_sidecars
+                        if item.owner_message_id in selected_thinking_owner_ids
+                    ),
+                    continuation_required=bool(continuation_groups),
+                )
+                semantic = attach_thinking_history(
+                    semantic,
+                    groups=thinking.groups,
+                    owner_key=thinking_owner_key,
+                    thinking_policy=thinking.saved_policy,
+                    effective_thinking_policy=thinking.effective_policy,
+                )
+        elif not sidecar and not thinking_sidecars:
             if any("provider_continuation" in message for message in messages):
                 raise ValueError(
                     "continuation_target is required for provider continuation history"
                 )
             semantic = build_console_request(messages, tools=tools or ())
         else:
-            assert continuation_target is not None
-            assert continuation_owner_key is not None
-            selected_owner_ids = {
-                message.get(continuation_owner_key)
+            continuation_groups = ()
+            if sidecar:
+                assert continuation_target is not None
+                assert continuation_owner_key is not None
+                selected_owner_ids = {
+                    message.get(continuation_owner_key)
+                    for message in messages
+                    if not is_deleted_history_value(message.get("deleted"))
+                    and type(message.get(continuation_owner_key)) is str
+                }
+                continuation_groups = provider_continuation_owner_groups(
+                    tuple(
+                        item
+                        for item in sidecar
+                        if item.owner_message_id in selected_owner_ids
+                    ),
+                    target=continuation_target,
+                )
+            selected_thinking_owner_ids = {
+                message.get(thinking_owner_key)
                 for message in messages
-                if not is_deleted_history_value(message.get("deleted"))
-                and type(message.get(continuation_owner_key)) is str
+                if thinking_owner_key is not None
+                and not is_deleted_history_value(message.get("deleted"))
+                and type(message.get(thinking_owner_key)) is str
             }
-            selected_sidecar = tuple(
-                item for item in sidecar if item.owner_message_id in selected_owner_ids
+            thinking = resolve_thinking_history(
+                target=ThinkingReplayTarget(
+                    provider=resolution.execution_key or resolution.provider,
+                    model=resolution.model or "",
+                    protocol=_thinking_protocol(resolution),
+                    disposition=resolution.thinking_stream_disposition,
+                    round_trip_version=resolution.thinking_round_trip_version,
+                ),
+                policy=thinking_policy,
+                sidecars=tuple(
+                    item
+                    for item in thinking_sidecars
+                    if item.owner_message_id in selected_thinking_owner_ids
+                ),
+                continuation_required=bool(continuation_groups),
             )
-            continuation_groups = provider_continuation_owner_groups(
-                selected_sidecar, target=continuation_target
-            )
-            owner_ids = {group.owner_message_id for group in continuation_groups}
+            continuation_owner_ids = {
+                group.owner_message_id for group in continuation_groups
+            }
+            thinking_owner_ids = {group.owner_message_id for group in thinking.groups}
             visible_messages: list[dict[str, Any]] = []
             for message in messages:
                 if is_deleted_history_value(message.get("deleted")):
                     continue
                 row = dict(message)
-                owner_id = row.pop(continuation_owner_key, None)
+                if (
+                    continuation_owner_key is not None
+                    and continuation_owner_key == thinking_owner_key
+                ):
+                    shared_owner_id = row.pop(continuation_owner_key, None)
+                    continuation_owner_id = shared_owner_id
+                    thinking_owner_id = shared_owner_id
+                else:
+                    continuation_owner_id = (
+                        row.pop(continuation_owner_key, None)
+                        if continuation_owner_key is not None
+                        else None
+                    )
+                    thinking_owner_id = (
+                        row.pop(thinking_owner_key, None)
+                        if thinking_owner_key is not None
+                        else None
+                    )
                 row.pop("provider_continuation", None)
                 row.pop("deleted", None)
-                if type(owner_id) is str and owner_id in owner_ids:
-                    row[CONTINUATION_OWNER_KEY] = owner_id
+                if (
+                    type(continuation_owner_id) is str
+                    and continuation_owner_id in continuation_owner_ids
+                ):
+                    row[CONTINUATION_OWNER_KEY] = continuation_owner_id
+                if (
+                    type(thinking_owner_id) is str
+                    and thinking_owner_id in thinking_owner_ids
+                ):
+                    row[THINKING_OWNER_KEY] = thinking_owner_id
                 visible_messages.append(row)
             semantic = build_console_request(
                 visible_messages,
                 tools=tools or (),
                 continuation_groups=continuation_groups,
+                thinking_groups=thinking.groups,
+                thinking_policy=thinking.saved_policy,
+                effective_thinking_policy=thinking.effective_policy,
             )
 
         capabilities: Mapping[str, Any] = {}
@@ -1745,7 +2163,7 @@ class ConsoleProviderGateway:
             ready=True,
             readiness_key="llama_cpp",
             execution_key="llama_cpp",
-            **self._resolution_settings(config),
+            **self._resolution_settings(config, model=model),
         )
 
     async def resolve_for_send(
@@ -2082,6 +2500,11 @@ class ConsoleProviderGateway:
             thinking_effort=selection.thinking_effort,
             thinking_budget_tokens=selection.thinking_budget_tokens,
             streaming=selection.streaming,
+            **_thinking_stream_capability(
+                identity.execution_key,
+                model=model,
+                reasoning_effort=selection.reasoning_effort,
+            ),
         )
 
     async def stream_llamacpp_chat(
@@ -2098,9 +2521,12 @@ class ConsoleProviderGateway:
         reasoning_effort: str | None = None,
         thinking_budget_tokens: int | None = None,
         api_key: str | None = None,
+        provider: str = "llama_cpp",
+        protocol: str = "chat_completions",
+        thinking_stream_disposition: ReasoningDisposition = "ignored",
         on_fallback_retry_started: "Callable[[], None] | None" = None,
-        on_fallback_retry: "Callable[[dict[str, Any], str], None] | None" = None,
-    ) -> AsyncIterator[str]:
+        on_fallback_retry: "Callable[[dict[str, Any], str, bool], None] | None" = None,
+    ) -> AsyncIterator[ProviderStreamItem]:
         """Stream OpenAI-compatible chat completion chunks from llama.cpp.
 
         Args:
@@ -2116,6 +2542,8 @@ class ConsoleProviderGateway:
                 ``chat_template_kwargs.reasoning_effort``.
             thinking_budget_tokens: Optional thinking token budget sent as
                 the top-level ``reasoning_budget_tokens`` field.
+            thinking_stream_disposition: Frozen adapter decision controlling
+                whether start-anchored thinking is split into typed events.
 
         Yields:
             Assistant-visible content chunks.
@@ -2136,7 +2564,11 @@ class ConsoleProviderGateway:
             reasoning_effort=reasoning_effort,
             thinking_budget_tokens=thinking_budget_tokens,
         )
-        think_filter = StartAnchoredThinkFilter()
+        think_splitter = (
+            StartAnchoredThinkSplitter()
+            if thinking_stream_disposition == "displayable"
+            else None
+        )
         emitted_content = False
         received_content = False
         stream_error: httpx.HTTPError | None = None
@@ -2152,18 +2584,41 @@ class ConsoleProviderGateway:
                     chunk = self._content_from_sse_line(line)
                     if chunk:
                         received_content = True
-                        visible = think_filter.feed(chunk)
-                        if visible:
+                        split = think_splitter.feed(chunk) if think_splitter else None
+                        if split is None:
                             emitted_content = True
-                            yield visible
+                            yield chunk
+                            continue
+                        if split.thinking:
+                            yield _local_thinking_delta(
+                                split.thinking,
+                                provider=provider,
+                                model=model,
+                                protocol=protocol,
+                            )
+                        if split.content:
+                            emitted_content = True
+                            yield split.content
         except httpx.HTTPError as exc:
             if emitted_content:
                 raise
             stream_error = exc
 
+        if stream_error is None and think_splitter is not None:
+            terminal = think_splitter.flush()
+            if terminal.thinking:
+                yield _local_thinking_delta(
+                    terminal.thinking,
+                    provider=provider,
+                    model=model,
+                    protocol=protocol,
+                )
+            if terminal.content:
+                emitted_content = True
+                yield terminal.content
+            if terminal.status == "failed":
+                raise ProviderThinkingCaptureError("Provider thinking capture failed.")
         if emitted_content:
-            # flush() contractually returns "" (unterminated start-anchored
-            # think tails are dropped), so there is no tail to yield.
             return
         if received_content:
             # Think-only reply: the filter removed every chunk, so a
@@ -2178,7 +2633,7 @@ class ConsoleProviderGateway:
                 on_fallback_retry_started()
             except Exception:
                 logger.warning("model_retry_capture_failed")
-        fallback = await self.complete_llamacpp_chat(
+        fallback_result = await self.complete_llamacpp_chat(
             base_url=normalized_base_url,
             model=model,
             messages=messages,
@@ -2190,7 +2645,15 @@ class ConsoleProviderGateway:
             reasoning_effort=reasoning_effort,
             thinking_budget_tokens=thinking_budget_tokens,
             api_key=api_key,
+            provider=provider,
+            protocol=protocol,
+            thinking_stream_disposition=thinking_stream_disposition,
+            include_thinking_events=True,
         )
+        fallback_items, fallback_capture_failed = _unpack_local_completion_result(
+            fallback_result
+        )
+        fallback = "".join(item for item in fallback_items if isinstance(item, str))
         # task-19324: this retry is a SECOND HTTP request to the server. It
         # is made below the Console capture seam (which wraps stream_chat's
         # one call), so without this hook a turn that really made two calls
@@ -2212,6 +2675,7 @@ class ConsoleProviderGateway:
                         thinking_budget_tokens=thinking_budget_tokens,
                     ),
                     fallback or "",
+                    fallback_capture_failed,
                 )
             except Exception as exc:
                 # Capture must never break a send (task-18300 contract) -- but
@@ -2220,11 +2684,14 @@ class ConsoleProviderGateway:
                 # act on and, unlike a traceback, cannot carry payload from
                 # the frame's locals.
                 logger.warning(
-                    "exchange_capture_fallback_failed: "
-                    f"{type(exc).__name__}"
+                    f"exchange_capture_fallback_failed: {type(exc).__name__}"
                 )
-        if fallback:
-            yield fallback
+        if fallback_items:
+            for item in fallback_items:
+                yield item
+        if fallback_capture_failed:
+            raise ProviderThinkingCaptureError("Provider thinking capture failed.")
+        if fallback_items:
             return
         if stream_error is not None:
             raise stream_error
@@ -2247,7 +2714,11 @@ class ConsoleProviderGateway:
         thinking_budget_tokens: int | None = None,
         strict_response: bool = False,
         api_key: str | None = None,
-    ) -> str:
+        provider: str = "llama_cpp",
+        protocol: str = "chat_completions",
+        thinking_stream_disposition: ReasoningDisposition = "ignored",
+        include_thinking_events: bool = False,
+    ) -> str | _LocalCompletionResult:
         """Request a non-streaming OpenAI-compatible chat completion.
 
         Args:
@@ -2268,6 +2739,8 @@ class ConsoleProviderGateway:
                 the top-level ``reasoning_budget_tokens`` field.
             strict_response: Raise when the provider response has no supported
                 assistant-content shape instead of treating it as empty.
+            thinking_stream_disposition: Frozen adapter decision controlling
+                whether start-anchored thinking is split into typed events.
 
         Returns:
             Assistant-visible completion text.
@@ -2314,8 +2787,21 @@ class ConsoleProviderGateway:
                 "Provider returned an unsupported auxiliary response.",
                 provider="llama_cpp",
             )
-        think_filter = StartAnchoredThinkFilter()
-        return think_filter.feed(content or "") + think_filter.flush()
+        result = (
+            _split_local_completion_items(
+                content or "",
+                provider=provider,
+                model=model,
+                protocol=protocol,
+            )
+            if thinking_stream_disposition == "displayable"
+            else _LocalCompletionResult(items=(content,) if content else ())
+        )
+        if include_thinking_events:
+            return result
+        if result.capture_failed:
+            return ""
+        return "".join(item for item in result.items if isinstance(item, str))
 
     @staticmethod
     async def _post_without_high_level_http_log(
@@ -2385,6 +2871,10 @@ class ConsoleProviderGateway:
                         thinking_budget_tokens=resolution.thinking_budget_tokens,
                         strict_response=True,
                         api_key=resolution.api_key,
+                        thinking_stream_disposition=(
+                            resolution.thinking_stream_disposition
+                        ),
+                        include_thinking_events=True,
                     )
                 else:
                     kwargs = self._auxiliary_chat_api_kwargs(request, resolution)
@@ -2414,17 +2904,47 @@ class ConsoleProviderGateway:
                     model=model,
                 )
 
-        if not isinstance(text, str):
+        if not isinstance(text, (str, _LocalCompletionResult)):
             raise ChatProviderError(
                 "Provider returned an unsupported auxiliary response.",
                 provider=provider,
             )
+        try:
+            text = self._normalize_auxiliary_thinking(text, resolution)
+        except ProviderThinkingCaptureError as exc:
+            raise ChatProviderError(
+                safe_provider_error_copy(provider, exc),
+                provider=provider,
+                status_code=502,
+            ) from None
         return AuxiliaryCompletionResult(
             provider=provider,
             model=model,
             text=text,
             usage=usage,
         )
+
+    @staticmethod
+    def _normalize_auxiliary_thinking(
+        text: str | _LocalCompletionResult,
+        resolution: ConsoleProviderResolution,
+    ) -> str:
+        """Return assistant-visible text under the frozen adapter disposition."""
+
+        if isinstance(text, _LocalCompletionResult):
+            result = text
+        elif resolution.thinking_stream_disposition == "displayable":
+            result = _split_local_completion_items(
+                text,
+                provider=resolution.provider,
+                model=cast(str, resolution.model),
+                protocol=_thinking_protocol(resolution),
+            )
+        else:
+            return text
+        if result.capture_failed:
+            raise ProviderThinkingCaptureError("Provider thinking capture failed.")
+        return "".join(item for item in result.items if isinstance(item, str))
 
     def _complete_sensitive_sync(self, kwargs: Mapping[str, Any]) -> Any:
         """Invoke the final synchronous adapter under the sensitive policy."""
@@ -2517,7 +3037,7 @@ class ConsoleProviderGateway:
         | PreparedProviderRequest,
         tools: list | None = None,
         signals: _ProviderStreamSignals | None = None,
-    ) -> AsyncIterator[str | ProviderToolCalls]:
+    ) -> AsyncIterator[ProviderStreamItem]:
         """Dispatch streaming for a resolved Console provider.
 
         Args:
@@ -2689,7 +3209,7 @@ class ConsoleProviderGateway:
                     # stop), unlike the generic path's own explicit
                     # close_exchange(status="error") before it re-raises.
                     try:
-                        completion = await self.complete_llamacpp_chat(
+                        completion_result = await self.complete_llamacpp_chat(
                             base_url=resolution.base_url,
                             model=resolution.model,
                             messages=wire_messages,
@@ -2701,19 +3221,35 @@ class ConsoleProviderGateway:
                             reasoning_effort=resolution.reasoning_effort,
                             thinking_budget_tokens=resolution.thinking_budget_tokens,
                             api_key=resolution.api_key,
+                            provider=resolution.execution_key or resolution.provider,
+                            protocol=_thinking_protocol(resolution),
+                            thinking_stream_disposition=(
+                                resolution.thinking_stream_disposition
+                            ),
+                            include_thinking_events=True,
                         )
                     except Exception:
                         if call_signals is not None:
                             call_signals.close_exchange(status="error")
                         raise
-                    if call_signals is not None:
-                        call_signals.record_exchange_content(completion)
-                    if completion:
-                        yield completion
+                    completion_items, completion_capture_failed = (
+                        _unpack_local_completion_result(completion_result)
+                    )
+                    for item in completion_items:
+                        if call_signals is not None and isinstance(item, str):
+                            call_signals.record_exchange_content(item)
+                        yield item
+                    if completion_capture_failed:
+                        if call_signals is not None:
+                            call_signals.close_exchange(status="error")
+                        raise ProviderThinkingCaptureError(
+                            "Provider thinking capture failed."
+                        )
                     completed = True
                     return
+
                 def _capture_llamacpp_fallback(
-                    wire_payload: dict[str, Any], text: str
+                    wire_payload: dict[str, Any], text: str, capture_failed: bool
                 ) -> None:
                     """Give the stream->complete retry its own capture (task-19324).
 
@@ -2745,8 +3281,7 @@ class ConsoleProviderGateway:
                         else {"truncated": True}
                     )
                     capture_request["retry_of"] = (
-                        "llama.cpp stream produced no content; "
-                        "retried non-streaming"
+                        "llama.cpp stream produced no content; retried non-streaming"
                     )
                     retry_signals.begin_exchange(
                         provider=str(resolution.provider or ""),
@@ -2758,7 +3293,9 @@ class ConsoleProviderGateway:
                     )
                     if text:
                         retry_signals.record_exchange_content(text)
-                    retry_signals.close_exchange(status="complete")
+                    retry_signals.close_exchange(
+                        status="error" if capture_failed else "complete"
+                    )
                     # Qodo #4: `new_usage_call()` registers this call in the
                     # aggregate's `_active_usage_payloads`; without the
                     # matching close it stays there forever. Harmless while
@@ -2781,6 +3318,11 @@ class ConsoleProviderGateway:
                         reasoning_effort=resolution.reasoning_effort,
                         thinking_budget_tokens=resolution.thinking_budget_tokens,
                         api_key=resolution.api_key,
+                        provider=resolution.execution_key or resolution.provider,
+                        protocol=_thinking_protocol(resolution),
+                        thinking_stream_disposition=(
+                            resolution.thinking_stream_disposition
+                        ),
                         on_fallback_retry_started=(
                             signals.mark_model_retry
                             if isinstance(signals, ConsoleProviderStreamSignals)
@@ -2788,7 +3330,7 @@ class ConsoleProviderGateway:
                         ),
                         on_fallback_retry=_capture_llamacpp_fallback,
                     ):
-                        if call_signals is not None:
+                        if call_signals is not None and isinstance(chunk, str):
                             call_signals.record_exchange_content(chunk)
                         yield chunk
                 except Exception:
@@ -2811,7 +3353,9 @@ class ConsoleProviderGateway:
                 return
         finally:
             if call_signals is not None:
-                call_signals.close_exchange(status="complete" if completed else "stopped")
+                call_signals.close_exchange(
+                    status="complete" if completed else "stopped"
+                )
                 call_signals.close_usage_call()
 
     async def _stream_generic_chat(
@@ -2819,7 +3363,7 @@ class ConsoleProviderGateway:
         resolution: ConsoleProviderResolution,
         request: PreparedProviderRequest,
         signals: _ProviderStreamSignals | None = None,
-    ) -> AsyncIterator[str | ProviderToolCalls]:
+    ) -> AsyncIterator[ProviderStreamItem]:
         """Bridge synchronous chat_api_call responses into async Console chunks."""
         loop = asyncio.get_running_loop()
         queue: asyncio.Queue[_QueueItem] = asyncio.Queue()
@@ -2929,6 +3473,11 @@ class ConsoleProviderGateway:
                 if not retain_response(response) or stop_event.is_set():
                     return
                 emitted_content = False
+                think_splitter = (
+                    StartAnchoredThinkSplitter()
+                    if resolution.thinking_stream_disposition == "displayable"
+                    else None
+                )
                 # tools= runs: fallback UI copy must never leak into agent
                 # history, so it is suppressed at GENERATION (not filtered
                 # by string equality — review minor m4: a real answer that
@@ -2943,9 +3492,24 @@ class ConsoleProviderGateway:
                         text = next(normalized_response)
                     except StopIteration:
                         break
-                    if text:
+                    split = think_splitter.feed(text) if think_splitter else None
+                    thinking = split.thinking if split is not None else ""
+                    visible = split.content if split is not None else text
+                    if thinking:
+                        enqueue(
+                            _QueueItem.thinking(
+                                _local_thinking_delta(
+                                    thinking,
+                                    provider=resolution.execution_key
+                                    or resolution.provider,
+                                    model=cast(str, resolution.model),
+                                    protocol=_thinking_protocol(resolution),
+                                )
+                            )
+                        )
+                    if visible:
                         emitted_content = True
-                    if signals is not None and text:
+                    if signals is not None and visible:
                         # M3: the fallback UI copy this loop can receive
                         # from `normalize_provider_response` (NO_PROVIDER_
                         # CONTENT_COPY / UNSUPPORTED_PROVIDER_RESPONSE_COPY)
@@ -2956,11 +3520,40 @@ class ConsoleProviderGateway:
                         # so the capture records it as such instead of
                         # presenting UI copy as a model answer.
                         signals.record_exchange_content(
-                            text, synthetic=signals.take_synthetic_pending()
+                            visible, synthetic=signals.take_synthetic_pending()
                         )
-                    enqueue(_QueueItem.content(text))
+                    if visible:
+                        enqueue(_QueueItem.content(visible))
                 if stop_event.is_set():
                     return
+                if think_splitter is not None:
+                    terminal = think_splitter.flush()
+                    if terminal.thinking:
+                        enqueue(
+                            _QueueItem.thinking(
+                                _local_thinking_delta(
+                                    terminal.thinking,
+                                    provider=resolution.execution_key
+                                    or resolution.provider,
+                                    model=cast(str, resolution.model),
+                                    protocol=_thinking_protocol(resolution),
+                                )
+                            )
+                        )
+                    if terminal.content:
+                        emitted_content = True
+                        if signals is not None:
+                            signals.record_exchange_content(terminal.content)
+                        enqueue(_QueueItem.content(terminal.content))
+                    if terminal.status == "failed":
+                        raise ProviderThinkingCaptureError(
+                            "Provider thinking capture failed."
+                        )
+                proprietary_evidence = _proprietary_thinking_event(
+                    provider_response, resolution
+                )
+                if proprietary_evidence is not None:
+                    enqueue(_QueueItem.thinking(proprietary_evidence))
                 if accumulator is not None:
                     calls = accumulator.calls()
                     if signals is not None and calls:
@@ -3032,6 +3625,12 @@ class ConsoleProviderGateway:
                     )
                 if item.kind == "tool_calls":
                     yield cast(ProviderToolCalls, item.payload)
+                    continue
+                if item.kind == "thinking":
+                    yield cast(
+                        ProviderThinkingDelta | ProviderProprietaryThinkingEvidence,
+                        item.payload,
+                    )
                     continue
                 if item.text:
                     yield item.text
@@ -3269,7 +3868,11 @@ class ConsoleProviderGateway:
             raise RuntimeError("Provider stream error.")
 
     @staticmethod
-    def _resolution_settings(config: LlamaCppProviderConfig) -> dict[str, Any]:
+    def _resolution_settings(
+        config: LlamaCppProviderConfig,
+        *,
+        model: str | None = None,
+    ) -> dict[str, Any]:
         return {
             "api_key": config.api_key,
             "api_key_source": config.api_key_source,
@@ -3287,6 +3890,11 @@ class ConsoleProviderGateway:
             "thinking_effort": config.thinking_effort,
             "thinking_budget_tokens": config.thinking_budget_tokens,
             "streaming": config.streaming,
+            **_thinking_stream_capability(
+                "llama_cpp",
+                model=model or config.explicit_model or config.configured_model,
+                reasoning_effort=config.reasoning_effort,
+            ),
         }
 
     @staticmethod

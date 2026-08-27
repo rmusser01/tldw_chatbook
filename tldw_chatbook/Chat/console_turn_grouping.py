@@ -2,13 +2,78 @@
 
 from __future__ import annotations
 
+import json
 from dataclasses import dataclass
 from typing import Iterable, Iterator
+from uuid import NAMESPACE_URL, uuid5
 
 from tldw_chatbook.Chat.console_chat_models import (
+    ConsoleActivityStatus,
     ConsoleChatMessage,
     ConsoleMessageRole,
+    ConsoleThinkingActivityRef,
 )
+from tldw_chatbook.Chat.thinking_blocks import (
+    DisplayableThinkingBlock,
+    ProprietaryThinkingBlock,
+    ThinkingEnvelope,
+)
+
+
+_THINKING_STATUS: dict[str, ConsoleActivityStatus] = {
+    "complete": "done",
+    "stopped": "stopped",
+    "failed": "failed",
+}
+
+
+def thinking_activity_id(*, assistant_message_id: str, block_id: str) -> str:
+    """Return a deterministic UI-safe identity for one Assistant block."""
+    identity = json.dumps(
+        (assistant_message_id, block_id), ensure_ascii=False, separators=(",", ":")
+    )
+    return f"thinking-{uuid5(NAMESPACE_URL, identity).hex}"
+
+
+def project_thinking_activities(
+    *,
+    assistant: ConsoleChatMessage,
+    live_block_id: str | None = None,
+) -> tuple[ConsoleThinkingActivityRef, ...]:
+    """Project only supported envelope evidence into trusted activity refs."""
+    if assistant.role is not ConsoleMessageRole.ASSISTANT:
+        raise ValueError("Thinking activities require an ASSISTANT owner")
+    envelope = assistant.thinking
+    if not isinstance(envelope, ThinkingEnvelope):
+        return ()
+
+    refs: list[ConsoleThinkingActivityRef] = []
+    for block in envelope.blocks:
+        if isinstance(block, ProprietaryThinkingBlock):
+            status: ConsoleActivityStatus = "unavailable"
+        elif isinstance(block, DisplayableThinkingBlock):
+            status = (
+                "live"
+                if block.block_id == live_block_id
+                else _THINKING_STATUS[block.status]
+            )
+        else:  # ThinkingEnvelope rejects this, but presentation still fails closed.
+            continue
+        refs.append(
+            ConsoleThinkingActivityRef(
+                activity_id=thinking_activity_id(
+                    assistant_message_id=(
+                        assistant.persisted_message_id or assistant.id
+                    ),
+                    block_id=block.block_id,
+                ),
+                assistant_message_id=assistant.id,
+                block_id=block.block_id,
+                label="Thinking",
+                status=status,
+            )
+        )
+    return tuple(refs)
 
 
 @dataclass(frozen=True, slots=True)
@@ -60,6 +125,54 @@ class ConsoleTranscriptUnit:
     ) -> "ConsoleTranscriptUnit":
         """Create a unit containing one Assistant turn."""
         return cls(assistant_turn=turn)
+
+
+def ordered_assistant_activities(
+    turn: ConsoleAssistantTurn,
+    *,
+    live_block_id: str | None = None,
+) -> tuple[ConsoleChatMessage | ConsoleThinkingActivityRef, ...]:
+    """Merge thinking refs using only explicit model-round ownership.
+
+    A block precedes the first activity owned by its round. Unanchored blocks
+    are kept together before wholly unowned activity rows, or immediately
+    before trailing unowned rows after the last explicitly owned round.
+    """
+    refs = project_thinking_activities(
+        assistant=turn.assistant,
+        live_block_id=live_block_id,
+    )
+    if not refs:
+        return turn.activities
+
+    blocks = turn.assistant.thinking
+    assert isinstance(blocks, ThinkingEnvelope)
+    ordered: list[ConsoleChatMessage | ConsoleThinkingActivityRef] = []
+    emitted_rounds: set[int] = set()
+    remaining_owned = sum(
+        activity.activity_round_ordinal is not None for activity in turn.activities
+    )
+
+    def append_through(round_ordinal: int | None = None) -> None:
+        for block, ref in zip(blocks.blocks, refs):
+            if block.round_ordinal in emitted_rounds or (
+                round_ordinal is not None and block.round_ordinal > round_ordinal
+            ):
+                continue
+            ordered.append(ref)
+            emitted_rounds.add(block.round_ordinal)
+
+    for activity in turn.activities:
+        round_ordinal = activity.activity_round_ordinal
+        if round_ordinal is not None:
+            append_through(round_ordinal)
+            remaining_owned -= 1
+        elif remaining_owned == 0:
+            append_through()
+        ordered.append(activity)
+
+    append_through()
+    return tuple(ordered)
 
 
 def group_console_transcript_messages(

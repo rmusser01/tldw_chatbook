@@ -89,7 +89,15 @@ class ConsoleActivityHeader(Horizontal):
         self.set_class(self.selected, "console-activity-header-selected")
         self.set_class(self.expanded, "console-activity-header-expanded")
         self.set_class(self.expandable, "console-activity-header-expandable")
-        for status in ("success", "blocked", "failed", "done"):
+        for status in (
+            "success",
+            "blocked",
+            "failed",
+            "done",
+            "live",
+            "stopped",
+            "unavailable",
+        ):
             self.status_widget.set_class(
                 self.status == status,
                 f"console-activity-status-{status}",
@@ -148,6 +156,7 @@ class ConsoleActivityDisclosure(Vertical):
         selected: bool = False,
         action_widgets: Iterable[Widget] = (),
         detail_widgets: Iterable[Widget] = (),
+        detail_available: bool | None = None,
     ) -> None:
         self.activity_message_id = activity_message_id
         self.label = label
@@ -157,13 +166,16 @@ class ConsoleActivityDisclosure(Vertical):
         action_children = tuple(action_widgets)
         detail_children = tuple(detail_widgets)
         self._has_actions = bool(action_children)
+        self.detail_available = (
+            bool(detail_children) if detail_available is None else detail_available
+        )
         self._has_detail = bool(detail_children)
         self.header = ConsoleActivityHeader(
             activity_message_id,
             label,
             status,
             expanded=expanded,
-            expandable=self._has_detail,
+            expandable=self.detail_available,
             selected=selected,
         )
         self.action_stack = Vertical(
@@ -191,6 +203,23 @@ class ConsoleActivityDisclosure(Vertical):
         self.action_stack.display = self.selected and self._has_actions
         self.detail_stack.display = self.expanded and self._has_detail
 
+    async def replace_detail_widgets(self, detail_widgets: Iterable[Widget]) -> None:
+        """Replace lazy detail children without replacing the disclosure."""
+        replacements = tuple(detail_widgets)
+        if self.detail_stack.children:
+            await self.detail_stack.remove_children()
+        if replacements:
+            await self.detail_stack.mount(*replacements)
+        self._has_detail = bool(replacements)
+        self.header.sync_header(
+            self.label,
+            self.status,
+            expanded=self.expanded,
+            expandable=self.detail_available,
+            selected=self.selected,
+        )
+        self._sync_visibility()
+
     def sync_state(self, *, expanded: bool, selected: bool) -> None:
         """Apply transcript-owned selection and expansion state in place."""
         self.expanded = expanded
@@ -199,7 +228,7 @@ class ConsoleActivityDisclosure(Vertical):
             self.label,
             self.status,
             expanded=expanded,
-            expandable=self._has_detail,
+            expandable=self.detail_available,
             selected=selected,
         )
         self._sync_visibility()
@@ -221,7 +250,7 @@ class ConsoleActivityDisclosure(Vertical):
             label,
             status,
             expanded=expanded,
-            expandable=self._has_detail,
+            expandable=self.detail_available,
             selected=selected,
         )
         self._sync_visibility()

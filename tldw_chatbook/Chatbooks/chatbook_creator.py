@@ -39,6 +39,13 @@ from ..Chat.provider_continuation import (
     parse_provider_continuation_json,
 )
 from ..Chat.assistant_generation_state import normalize_assistant_generation_state
+from ..Chat.thinking_blocks import (
+    THINKING_EXPORT_WARNING,
+    ThinkingEnvelopeValidationError,
+    ThinkingEnvelopeVersionError,
+    normalize_thinking_history_policy,
+    thinking_envelope_to_exchange,
+)
 from ..DB.ChaChaNotes_DB import CharactersRAGDB
 from ..DB.Client_Media_DB_v2 import MediaDatabase
 from ..DB.Prompts_DB import PromptsDatabase
@@ -602,6 +609,9 @@ class ChatbookCreator:
                     "created_at": created_at,
                     "updated_at": last_modified,
                     "character_id": conv.get("character_id"),
+                    "thinking_history_policy": normalize_thinking_history_policy(
+                        conv.get("thinking_history_policy")
+                    ),
                     "active_leaf_message_id": str(active_leaf)
                     if active_leaf is not None
                     else None,
@@ -614,11 +624,22 @@ class ChatbookCreator:
                 contains_private = any(
                     "_private" in message for message in exported_messages
                 )
+                contains_thinking = any(
+                    bool(message.get("_thinking", {}).get("blocks"))
+                    for message in exported_messages
+                )
                 if contains_private:
                     conv_data["private_data_warning"] = (
                         "This conversation contains private provider continuation data."
                     )
                     citation_metadata["contains_private_provider_continuation"] = True
+                if contains_thinking:
+                    citation_metadata["contains_model_thinking"] = True
+                if contains_private or contains_thinking:
+                    conv_data["sensitive_data_warning"] = THINKING_EXPORT_WARNING
+                    citation_metadata["sensitive_data_warning"] = (
+                        THINKING_EXPORT_WARNING
+                    )
 
                 # Write conversation file
                 conv_file = self._conversation_export_path(
@@ -673,7 +694,7 @@ class ChatbookCreator:
                    image_data, image_mime_type, timestamp, role, deleted,
                    variant_of, variant_number, is_selected_variant,
                    total_variants, provider_continuation_json,
-                   assistant_generation_state
+                   thinking_blocks_json, assistant_generation_state
               FROM messages
              WHERE conversation_id = ?
              ORDER BY timestamp ASC, rowid ASC
@@ -758,6 +779,22 @@ class ChatbookCreator:
                 message_data["_private"] = {
                     "provider_continuation": json.loads(canonical or "null")
                 }
+            thinking_json = msg.get("thinking_blocks_json")
+            if thinking_json is not None:
+                if message_data["role"] != "assistant":
+                    raise _ConversationGraphProjectionError(
+                        "Conversation graph projection unavailable."
+                    )
+                try:
+                    thinking_payload = thinking_envelope_to_exchange(thinking_json)
+                except ThinkingEnvelopeVersionError as error:
+                    raise _ConversationGraphProjectionError(str(error)) from None
+                except ThinkingEnvelopeValidationError:
+                    raise _ConversationGraphProjectionError(
+                        "Conversation graph projection unavailable."
+                    ) from None
+                if thinking_payload is not None:
+                    message_data["_thinking"] = thinking_payload
             raw_state = msg.get("assistant_generation_state")
             if raw_state is not None and message_data["role"] != "assistant":
                 raise _ConversationGraphProjectionError(
@@ -1877,7 +1914,23 @@ class ChatbookCreator:
                 f.write(", ".join(manifest.tags))
                 f.write("\n")
 
-            if any(
+            sensitive_items = [
+                item
+                for item in manifest.content_items
+                if item.metadata.get("sensitive_data_warning")
+            ]
+            if sensitive_items:
+                f.write("\n## Sensitive conversation data\n\n")
+                f.write(f"{THINKING_EXPORT_WARNING}\n")
+                if any(
+                    item.metadata.get("contains_private_provider_continuation")
+                    for item in sensitive_items
+                ):
+                    f.write(
+                        "This chatbook contains private provider continuation data. "
+                        "Share it only with trusted recipients.\n"
+                    )
+            elif any(
                 item.metadata.get("contains_private_provider_continuation")
                 for item in manifest.content_items
             ):

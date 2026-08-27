@@ -103,15 +103,27 @@ class ConsoleEditMessageModal(
     SAFE_MODAL_CONTENT = "#console-edit-message-modal"
     BINDINGS = [("escape", "request_safe_cancel", "Cancel")]
 
-    def __init__(self, *, content: str, can_resend: bool = False) -> None:
+    def __init__(
+        self,
+        *,
+        content: str,
+        can_resend: bool = False,
+        clears_generation_provenance: bool = False,
+    ) -> None:
         super().__init__()
         self._content = content
         self._can_resend = can_resend
+        self._clears_generation_provenance = clears_generation_provenance
 
     def compose(self) -> ComposeResult:
         with Vertical(id="console-edit-message-modal"):
             yield Static("Edit Message", classes="console-modal-header")
-            if self._can_resend:
+            if self._clears_generation_provenance:
+                context_copy = (
+                    "Editing this generated answer. Saving clears model thinking and "
+                    "provider continuation for this answer. Cancel keeps both intact."
+                )
+            elif self._can_resend:
                 context_copy = (
                     "Editing existing transcript message. Save keeps the edit in "
                     "place; Edit & resend forks a new branch and gets a fresh reply."

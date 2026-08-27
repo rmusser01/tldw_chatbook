@@ -194,6 +194,8 @@ from .settings_context_memory import (
     SUMMARY_PROMPT_ID,
     format_ratio_percent,
     load_context_memory_values,
+    load_show_model_thinking,
+    load_thinking_history_policy_default,
     model_context_window_reset_entry,
     model_context_window_save_entry,
     model_context_window_state,
@@ -520,7 +522,7 @@ MAX_CATEGORY_SEARCH_QUERY_CHARS = 80
 # At or below this terminal width the Settings workbench switches to its
 # compact layout (fixed-width category sidebar, inspector pane hidden),
 # following the personas-workbench-compact precedent (task-1342).
-SETTINGS_COMPACT_WORKBENCH_MAX_WIDTH = 90
+SETTINGS_COMPACT_WORKBENCH_MAX_WIDTH = 100
 LIBRARY_READER_DESTINATIONS = (
     ("media", "Media"),
     ("conversations", "Conversations"),
@@ -819,6 +821,8 @@ AGENT_BUDGET_INPUT_CLASS = "settings-agent-budget-input"
 CONSOLE_BEHAVIOR_CONSOLE_KEYS = frozenset(
     {
         "collapse_large_pastes",
+        "show_model_thinking",
+        "thinking_history_policy_default",
         "rail_layout_scope",
         "stack_collapsed_rail_labels",
         "paste_collapse_threshold",
@@ -892,6 +896,8 @@ CONSOLE_BEHAVIOR_CHAT_DEFAULT_KEYS = frozenset(
 )
 CONSOLE_BEHAVIOR_SAVE_ORDER = (
     "collapse_large_pastes",
+    "show_model_thinking",
+    "thinking_history_policy_default",
     "rail_layout_scope",
     "stack_collapsed_rail_labels",
     "paste_collapse_threshold",
@@ -1369,6 +1375,10 @@ def _build_field_search_index() -> None:
     FIELD_SEARCH_INDEX.update(
         {
             SettingsCategoryId.CONSOLE_BEHAVIOR: (
+                (
+                    "settings-console-show-model-thinking",
+                    "Show model thinking",
+                ),
                 (
                     "settings-console-rail-layout-scope",
                     "Rail layout scope",
@@ -2570,6 +2580,12 @@ class SettingsScreen(BaseAppScreen):
         self._syncing_console_tool_result_display_chars = False
         self._syncing_console_sidechat = False
         self._syncing_console_paste_toggle = False
+        self._syncing_console_thinking_visibility = False
+        self._thinking_visibility_write_revision = 0
+        initial_thinking_visibility = self._loaded_show_model_thinking()
+        self._thinking_visibility_desired_value = initial_thinking_visibility
+        self._thinking_visibility_confirmed_value = initial_thinking_visibility
+        self._thinking_visibility_in_flight: tuple[bool, int] | None = None
         self._syncing_console_rail_layout_scope = False
         self._syncing_console_rail_label_style = False
         self._syncing_console_defaults = False
@@ -3928,6 +3944,8 @@ class SettingsScreen(BaseAppScreen):
                     "console.stack_collapsed_rail_labels",
                     "console.exchange_capture",
                     "console.exchange_capture_detail",
+                    "console.show_model_thinking",
+                    "console.thinking_history_policy_default",
                     "console.collapse_large_pastes",
                     "console.paste_collapse_threshold",
                     "console.max_parallel_runs",
@@ -4088,6 +4106,16 @@ class SettingsScreen(BaseAppScreen):
             self._console_settings().get("collapse_large_pastes", True),
             True,
         )
+
+    def _loaded_show_model_thinking(self) -> bool:
+        return load_show_model_thinking(self._console_settings())
+
+    def _loaded_thinking_history_policy_default(self) -> str:
+        return load_thinking_history_policy_default(self._console_settings())
+
+    def _show_model_thinking_label(self) -> str:
+        state = "On" if self._loaded_show_model_thinking() else "Off"
+        return f"Show model thinking ({state})"
 
     def _loaded_stack_collapsed_rail_labels(self) -> bool:
         """Return the saved collapsed-rail presentation preference."""
@@ -4448,6 +4476,10 @@ class SettingsScreen(BaseAppScreen):
     def _console_behavior_loaded_values(self) -> dict[str, object]:
         values = {
             "collapse_large_pastes": self._loaded_collapse_large_pastes_enabled(),
+            "show_model_thinking": self._loaded_show_model_thinking(),
+            "thinking_history_policy_default": (
+                self._loaded_thinking_history_policy_default()
+            ),
             "rail_layout_scope": self._loaded_console_rail_layout_scope(),
             "stack_collapsed_rail_labels": self._loaded_stack_collapsed_rail_labels(),
             "paste_collapse_threshold": self._loaded_paste_collapse_threshold(),
@@ -6838,6 +6870,19 @@ class SettingsScreen(BaseAppScreen):
                 (
                     "Safety",
                     "Off never disables mandatory provider input trimming.",
+                ),
+            )
+        if self._active_settings_field_id == "settings-console-show-model-thinking":
+            return (
+                ("Purpose", "Show or hide captured model-thinking rows."),
+                (
+                    "Consequences",
+                    "Presentation only; capture, saved history, replay, and token accounting continue.",
+                ),
+                ("Saved as", "console.show_model_thinking"),
+                (
+                    "Applies",
+                    "Immediately; the prior value is restored if saving fails.",
                 ),
             )
         if (
@@ -13110,6 +13155,20 @@ class SettingsScreen(BaseAppScreen):
             if compact:
                 yield Static("Console behavior", classes="destination-section")
             yield Static("Start here", classes="destination-section")
+            yield Checkbox(
+                self._show_model_thinking_label(),
+                value=self._loaded_show_model_thinking(),
+                id="settings-console-show-model-thinking",
+                tooltip=(
+                    "Presentation only. Off hides actual model-thinking rows; "
+                    "capture, saved history, replay, and token accounting continue."
+                ),
+            )
+            yield Static(
+                "Applies immediately. Thinking remains part of the conversation even when hidden.",
+                id="settings-console-show-model-thinking-help",
+                classes="settings-detail-row",
+            )
             yield Button(
                 "Conversation context and memory ↓",
                 id="settings-console-context-memory-jump",
@@ -18234,6 +18293,7 @@ class SettingsScreen(BaseAppScreen):
             return
         if active_category is SettingsCategoryId.CONSOLE_BEHAVIOR:
             console_behavior_field_ids = {
+                "settings-console-show-model-thinking",
                 "settings-console-rail-layout-scope",
                 "settings-console-stack-collapsed-rail-labels",
                 "settings-console-paste-collapse-threshold",
@@ -19436,6 +19496,26 @@ class SettingsScreen(BaseAppScreen):
         self._stage_console_large_paste_value(bool(event.value))
         self._update_console_paste_summary()
         self._update_draft_status_widgets(SettingsCategoryId.CONSOLE_BEHAVIOR)
+
+    @on(Checkbox.Changed, "#settings-console-show-model-thinking")
+    def handle_console_show_model_thinking_changed(
+        self, event: Checkbox.Changed
+    ) -> None:
+        """Apply and persist the device-local presentation toggle immediately."""
+
+        event.stop()
+        if self._syncing_console_thinking_visibility:
+            return
+        previous = self._loaded_show_model_thinking()
+        next_value = bool(event.value)
+        if next_value == previous:
+            return
+        self._console_settings()["show_model_thinking"] = next_value
+        event.checkbox.label = self._show_model_thinking_label()
+        self._signal_console_appearance_refresh()
+        self._thinking_visibility_write_revision += 1
+        self._thinking_visibility_desired_value = next_value
+        self._start_thinking_visibility_persist_if_idle()
 
     @on(Checkbox.Changed, "#settings-console-stack-collapsed-rail-labels")
     def handle_console_rail_label_style_changed(self, event: Checkbox.Changed) -> None:
@@ -22716,6 +22796,100 @@ class SettingsScreen(BaseAppScreen):
                             type(exc).__name__,
                         )
 
+    def _apply_thinking_visibility_persist_result(
+        self,
+        mutation: ConfigMutationResult,
+        next_value: bool,
+        revision: int,
+    ) -> None:
+        """Advance one serialized write and reconcile the latest desired value."""
+
+        if self._thinking_visibility_in_flight != (next_value, revision):
+            return
+        self._thinking_visibility_in_flight = None
+        successful_noop = (
+            not mutation.file_replaced
+            and not mutation.conflict
+            and mutation.failure_phase is None
+        )
+        if mutation.file_replaced or successful_noop:
+            self._thinking_visibility_confirmed_value = next_value
+            if mutation.file_replaced and not mutation.caches_reloaded:
+                self._console_behavior_result = (
+                    "Model thinking visibility was saved, but live settings "
+                    "could not be refreshed."
+                )
+                self._set_static_text(
+                    "#settings-console-behavior-result",
+                    self._console_behavior_result,
+                )
+                self.app.notify(self._console_behavior_result, severity="error")
+            else:
+                self._console_behavior_result = "Model thinking visibility saved."
+                self._set_static_text(
+                    "#settings-console-behavior-result", self._console_behavior_result
+                )
+            if self._thinking_visibility_desired_value != next_value:
+                self._start_thinking_visibility_persist_if_idle()
+            return
+        if revision != self._thinking_visibility_write_revision:
+            if (
+                self._thinking_visibility_desired_value
+                != self._thinking_visibility_confirmed_value
+            ):
+                self._start_thinking_visibility_persist_if_idle()
+            return
+        restored = self._thinking_visibility_confirmed_value
+        self._thinking_visibility_desired_value = restored
+        self._console_settings()["show_model_thinking"] = restored
+        try:
+            checkbox = self.query_one("#settings-console-show-model-thinking", Checkbox)
+            self._syncing_console_thinking_visibility = True
+            try:
+                with checkbox.prevent(Checkbox.Changed):
+                    checkbox.value = restored
+                checkbox.label = self._show_model_thinking_label()
+            finally:
+                self._syncing_console_thinking_visibility = False
+        except QueryError:
+            pass
+        self._signal_console_appearance_refresh()
+        self._console_behavior_result = (
+            "Could not save model thinking visibility; the prior setting was restored."
+        )
+        self._set_static_text(
+            "#settings-console-behavior-result", self._console_behavior_result
+        )
+        self.app.notify(self._console_behavior_result, severity="error")
+
+    def _start_thinking_visibility_persist_if_idle(self) -> None:
+        """Dispatch only the newest desired visibility when no write is active."""
+
+        if self._thinking_visibility_in_flight is not None:
+            return
+        next_value = self._thinking_visibility_desired_value
+        if next_value == self._thinking_visibility_confirmed_value:
+            return
+        revision = self._thinking_visibility_write_revision
+        self._thinking_visibility_in_flight = (next_value, revision)
+        self._settings_persist_thinking_visibility(next_value, revision)
+
+    @work(group="settings-console-thinking-visibility", thread=True)
+    def _settings_persist_thinking_visibility(
+        self,
+        next_value: bool,
+        revision: int,
+    ) -> None:
+        mutation = apply_settings_mutation_to_cli_config(
+            {"console": {"show_model_thinking": next_value}}
+        )
+        self.app.call_from_thread(
+            self._apply_thinking_visibility_persist_result,
+            mutation,
+            next_value,
+            revision,
+        )
+
     def _signal_library_reader_layout_refresh(self) -> None:
         """Publish saved reader layout defaults to live Library screens."""
         generation = (
@@ -23160,6 +23334,17 @@ class SettingsScreen(BaseAppScreen):
             "#settings-console-exchange-capture-status",
             self._console_capture_status,
         )
+        try:
+            checkbox = self.query_one("#settings-console-show-model-thinking", Checkbox)
+            self._syncing_console_thinking_visibility = True
+            try:
+                with checkbox.prevent(Checkbox.Changed):
+                    checkbox.value = self._loaded_show_model_thinking()
+                checkbox.label = self._show_model_thinking_label()
+            finally:
+                self._syncing_console_thinking_visibility = False
+        except QueryError:
+            pass
         try:
             self._syncing_console_rail_layout_scope = True
             try:

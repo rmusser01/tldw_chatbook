@@ -76,6 +76,21 @@ just says "No approval is pending.").
 
 ## Features & controls
 
+### Planning is not model thinking
+
+Console may show a **Planning** activity while it prepares a run. That is a
+safe, session-only application preamble: it is not provider reasoning, is not
+saved as model thinking, and is not replayed into later model history. When an
+adapter reports an actual Thinking block for the same model round, the Planning
+preamble is suppressed so the two are not presented as duplicate evidence.
+
+Model **Thinking** rows have a stricter rule: they exist only for actual
+adapter-reported displayable or proprietary evidence. Tool use, a reasoning-
+capable model, or a long pause does not create one. Proprietary evidence never
+contains private text; its expanded notice is
+`Proprietary thinking obfuscated - not available`. This distinction describes
+observable provider events and does not promise hidden chain-of-thought.
+
 ### Approvals — tools ask before they run
 
 Nothing is ever auto-approved, and built-in tools always ask first. When the

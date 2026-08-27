@@ -129,7 +129,7 @@ async def test_category_switch_keeps_compact_pane_classes_at_a_compact_size():
     The compact classes used to be re-applied by `compose_content` on every
     category recompose. The panes are not recomposed by the screen any more,
     so the classes have to SURVIVE a switch instead -- and a pane that lost
-    them would only be wrong below the 90-column breakpoint, where no
+    them would only be wrong below the 100-column breakpoint, where no
     170x48 test looks.
     """
     host = DestinationHarness(_build_test_app(), "settings")

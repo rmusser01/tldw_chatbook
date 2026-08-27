@@ -30,7 +30,10 @@ from tldw_chatbook.Chat.console_chat_models import (
     ConsoleRunStatus,
     ConsoleSubmissionOrigin,
 )
-from tldw_chatbook.Chat.console_chat_store import ConsoleChatStore
+from tldw_chatbook.Chat.console_chat_store import (
+    ConsoleChatStore,
+    ConsoleDispatchSettlementError,
+)
 from tldw_chatbook.Chat.console_library_policy import ConsoleAutoRetrieve
 from tldw_chatbook.Chat.console_prompt_queue import (
     ConsolePromptQueueRegistry,
@@ -188,13 +191,14 @@ def test_cached_commit_and_identity_reject_forged_preparation_reuse(tmp_path) ->
                 attempt_id="forged-attempt",
             )
         )
-    fingerprint = store.durable_acceptance_fingerprint_for(
-        acceptance.preparation_id
-    )
+    fingerprint = store.durable_acceptance_fingerprint_for(acceptance.preparation_id)
     assert fingerprint is not None
-    assert store.durable_turn_commit_for(
-        acceptance.preparation_id, fingerprint=fingerprint
-    ) == committed
+    assert (
+        store.durable_turn_commit_for(
+            acceptance.preparation_id, fingerprint=fingerprint
+        )
+        == committed
+    )
 
 
 def _queue_coordinator():
@@ -374,6 +378,58 @@ async def test_postcommit_failure_retains_content_until_resume_then_cleans(
     assert calls == 2
     assert store.durable_content_retention_count() == 0
     assert controller._durable_postcommit_continuations == {}
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("issue_newer_token", [False, True])
+async def test_postcommit_settlement_rollback_uses_issued_generation_token(
+    tmp_path,
+    monkeypatch: pytest.MonkeyPatch,
+    issue_newer_token: bool,
+) -> None:
+    """Durable resume rollback fences only the provider entry it issued."""
+
+    _db, store, controller, _gateway = _controller(tmp_path)
+    original = store.publish_durable_turn_identity
+    identity_calls = 0
+
+    def fail_identity_once(*args: Any, **kwargs: Any):
+        nonlocal identity_calls
+        identity_calls += 1
+        if identity_calls == 1:
+            raise RuntimeError("injected identity publication")
+        return original(*args, **kwargs)
+
+    monkeypatch.setattr(store, "publish_durable_turn_identity", fail_identity_once)
+    first = await controller.submit_draft(
+        "postcommit generation rollback",
+        session_id="session-1",
+    )
+    assert first.preparation_id is not None
+    issued: dict[str, int | str | None] = {}
+
+    async def fail_after_token(*_args: Any, **kwargs: Any):
+        assistant_id = str(kwargs["assistant_message_id"])
+        issued["assistant_id"] = assistant_id
+        issued["replacement"] = store.begin_generation_attempt(assistant_id)
+        issued["newer"] = (
+            store.begin_generation_attempt(assistant_id) if issue_newer_token else None
+        )
+        raise ConsoleDispatchSettlementError("injected provider settlement")
+
+    monkeypatch.setattr(controller, "_stream_assistant_response", fail_after_token)
+
+    resumed = await controller.resume_durable_postcommit(first.preparation_id)
+
+    assert resumed.accepted is True
+    assert resumed.terminal_status is ConsoleRunStatus.BLOCKED
+    assistant_id = str(issued["assistant_id"])
+    replacement = int(issued["replacement"])
+    newer = issued["newer"]
+    if newer is None:
+        assert not store._generation_attempt_is_current(assistant_id, replacement)
+    else:
+        assert store._generation_attempt_is_current(assistant_id, int(newer))
 
 
 @pytest.mark.asyncio

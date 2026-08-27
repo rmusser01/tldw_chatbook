@@ -92,6 +92,12 @@ _MESSAGE_KEYS = (
     "assistant_generation_state",
 )
 
+#: Reserved conversation-round-trip names that diagnostic V1 must never
+#: accept as additive extensions. ADR-067 keeps other additive fields valid.
+_RESERVED_THINKING_FIELDS = frozenset(
+    {"_thinking", "thinking_blocks", "thinking_blocks_json"}
+)
+
 #: Exported sidecar fields, mirroring ``TrajectoryRowRead``.
 _TRAJECTORY_ROW_KEYS = (
     "message_id",
@@ -1331,6 +1337,17 @@ def _require(
     return value
 
 
+def _reject_reserved_thinking_fields(value: Mapping, location: str) -> None:
+    """Reject fields that would make diagnostic V1 imply thinking restore."""
+    reserved = _RESERVED_THINKING_FIELDS.intersection(value)
+    if reserved:
+        field = sorted(reserved)[0]
+        raise TrajectoryExportError(
+            f"Invalid trajectory export: '{location}.{field}' is a reserved "
+            "thinking field"
+        )
+
+
 def validate_trajectory_export(payload: Any) -> dict:
     """Validate an export payload and return it normalized (import seam).
 
@@ -1356,6 +1373,7 @@ def validate_trajectory_export(payload: Any) -> dict:
             "Invalid trajectory export: top-level document must be a JSON object, "
             f"got {type(payload).__name__}"
         )
+    _reject_reserved_thinking_fields(payload, "top-level")
 
     fmt = payload.get("format")
     if fmt != TRAJECTORY_EXPORT_FORMAT:
@@ -1402,6 +1420,7 @@ def validate_trajectory_export(payload: Any) -> dict:
             raise TrajectoryExportError(
                 f"Invalid trajectory export: 'messages[{index}]' must be an object"
             )
+        _reject_reserved_thinking_fields(message, f"messages[{index}]")
         normalized_message = dict(message)
         normalized_message.setdefault("assistant_generation_state", None)
         for key in _MESSAGE_KEYS:
@@ -1454,6 +1473,16 @@ def validate_trajectory_export(payload: Any) -> dict:
         raise TrajectoryExportError(
             "Invalid trajectory export: 'variants' must be a list"
         )
+    for index, variant_set in enumerate(variants or ()):
+        if not isinstance(variant_set, Mapping):
+            continue
+        _reject_reserved_thinking_fields(variant_set, f"variants[{index}]")
+        for variant_index, variant in enumerate(variant_set.get("variants") or ()):
+            if isinstance(variant, Mapping):
+                _reject_reserved_thinking_fields(
+                    variant,
+                    f"variants[{index}].variants[{variant_index}]",
+                )
 
     normalized = dict(payload)
     normalized["messages"] = normalized_messages

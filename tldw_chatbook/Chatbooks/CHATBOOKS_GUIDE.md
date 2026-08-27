@@ -161,6 +161,28 @@ with different content is never silently overwritten -- it is reported as a
 conflict in the import summary, and re-importing the same chatbook never
 creates duplicates.
 
+### Conversation thinking and replay policy
+
+Chatbook V2 conversation entries preserve supported model-thinking envelopes
+and the conversation's Auto/Include/Exclude thinking-history policy so an
+imported conversation can hydrate the same collapsed Thinking activity and
+future replay preference. Selected-conversation JSON provides the same
+machine-round-trippable fields. These importable formats carry a sensitive-data
+warning whenever displayable thinking or private provider continuation is
+present.
+
+Treat those files as sensitive even when the visible answer looks harmless.
+Ordinary human-readable text and Markdown exports omit model thinking, private
+continuation, and the proprietary UI notice. Chatbook also does not add
+thinking to search, summaries, titles, logs, errors, speech, usage displays, or
+diagnostic formats. The feature records only actual adapter-reported evidence;
+it does not claim to recover hidden chain-of-thought.
+
+Imports reject malformed or unsupported future thinking versions before
+mutating the destination. A successfully imported supported envelope remains
+owned by its assistant generation; editing, replacing, or deleting that
+generation clears its thinking and separately protected continuation together.
+
 ### Manifest Schema
 The manifest.json file contains:
 - Version information

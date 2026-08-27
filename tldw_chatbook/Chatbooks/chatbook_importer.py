@@ -38,6 +38,10 @@ from ..Chat.assistant_generation_state import (
     AssistantGenerationState,
     normalize_assistant_generation_state,
 )
+from ..Chat.thinking_blocks import (
+    preflight_thinking_history_policy,
+    thinking_exchange_to_json,
+)
 from ..model_capabilities import moonshot_model_returns_reasoning_content
 from ..DB.ChaChaNotes_DB import CharactersRAGDB, ConflictError
 from ..DB.Client_Media_DB_v2 import MediaDatabase
@@ -66,6 +70,7 @@ _MAX_V2_TOTAL_ID_CHARS = 1024 * 1024
 _MAX_V2_MESSAGE_CONTENT_CHARS = 1024 * 1024
 _MAX_V2_TOTAL_CONTENT_CHARS = 16 * 1024 * 1024
 _MAX_V2_TOTAL_PRIVATE_BYTES = 16 * 1024 * 1024
+_MAX_V2_TOTAL_THINKING_BYTES = 16 * 1024 * 1024
 _MAX_V2_GRAPH_DEPTH = 2_048
 
 
@@ -814,6 +819,15 @@ class ChatbookImporter:
                     ):
                         raise ValueError("Invalid V2 conversation identity.")
                     graph_messages = self._validate_v2_conversation_graph(conv_data)
+                    thinking_policy, policy_warning = (
+                        preflight_thinking_history_policy(
+                            conv_data.get("thinking_history_policy")
+                        )
+                    )
+                    if policy_warning is not None:
+                        status.add_warning(policy_warning)
+                else:
+                    thinking_policy = "auto"
 
                 # Check for existing conversation with same name
                 conv_name = conv_data["name"]
@@ -859,6 +873,7 @@ class ChatbookImporter:
                     "character_id": character_id,
                     "assistant_authority_id": None,
                     "root_id": f"imported_{conv_data.get('id', 'unknown')}",
+                    "thinking_history_policy": thinking_policy,
                 }
                 # Stage all filesystem work FIRST (attachment byte loads),
                 # so the transaction below holds the write lock only for
@@ -950,6 +965,11 @@ class ChatbookImporter:
                                     msg_dict["provider_continuation_json"] = (
                                         continuation
                                     )
+                                thinking_json = msg.get(
+                                    "_thinking_canonical_json"
+                                )
+                                if thinking_json is not None:
+                                    msg_dict["thinking_blocks_json"] = thinking_json
                                 continuation_checkpoint = (
                                     parse_provider_continuation_json(continuation)
                                     if continuation is not None
@@ -1080,6 +1100,7 @@ class ChatbookImporter:
         total_id_chars = 0
         total_content_chars = 0
         total_private_bytes = 0
+        total_thinking_bytes = 0
         for raw in raw_messages:
             if not isinstance(raw, dict):
                 raise ValueError("Invalid V2 conversation graph.")
@@ -1122,6 +1143,18 @@ class ChatbookImporter:
             ):
                 raise ValueError("Invalid V2 conversation graph.")
             item = dict(raw)
+            if "_thinking" in raw:
+                thinking = raw["_thinking"]
+                if role != "assistant" or raw["deleted"]:
+                    raise ValueError("Invalid V2 conversation graph.")
+                try:
+                    canonical_thinking = thinking_exchange_to_json(thinking)
+                except ValueError:
+                    raise ValueError("Invalid V2 conversation graph.") from None
+                total_thinking_bytes += len(canonical_thinking.encode("utf-8"))
+                if total_thinking_bytes > _MAX_V2_TOTAL_THINKING_BYTES:
+                    raise ValueError("Invalid V2 conversation graph.")
+                item["_thinking_canonical_json"] = canonical_thinking
             private = raw.get("_private")
             checkpoint = None
             if (
