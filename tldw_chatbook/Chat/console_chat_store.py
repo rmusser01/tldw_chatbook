@@ -4823,6 +4823,11 @@ class ConsoleChatStore:
         attachments = message.attachments
         generation_metadata = message.generation_metadata
         if selected_attachment_position is not None:
+            if not (
+                0 <= selected_attachment_position < len(attachments)
+                and selected_attachment_position < len(generation_metadata)
+            ):
+                raise ValueError("Selected generated image is unavailable.")
             attachments = (
                 replace(
                     attachments[selected_attachment_position],

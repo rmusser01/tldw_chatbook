@@ -1185,6 +1185,54 @@ def test_validate_fork_fence_rejects_each_changed_image_selection_field(
     )
 
 
+def test_selected_image_fence_fails_closed_when_attachment_is_removed() -> None:
+    store, _, session, _, _, _, selected, _ = _fork_store()
+    selection = ConsoleForkImageSelectionFence(
+        native_message_id=selected.id,
+        selected_position=0,
+        browse_revision=7,
+        attachment_meta_fingerprint="sha256:selected-image",
+    )
+    fence = store.issue_fork_fence(
+        selected.id,
+        image_selections=(selection,),
+    )
+    store._nodes_by_session[session.id][selected.id].attachments = ()
+
+    assert store.validate_fork_fence(fence, image_selections=(selection,)) is False
+    with pytest.raises(ValueError, match="^Console fork source changed\\.$"):
+        store.stage_fork_snapshot(
+            fence,
+            title="Independent fork",
+            fork_session_id="fork-session",
+            fork_conversation_id="fork-conversation",
+        )
+
+
+def test_selected_image_fence_fails_closed_when_generation_is_removed() -> None:
+    store, _, session, _, _, _, selected, _ = _fork_store()
+    selection = ConsoleForkImageSelectionFence(
+        native_message_id=selected.id,
+        selected_position=0,
+        browse_revision=7,
+        attachment_meta_fingerprint="sha256:selected-image",
+    )
+    fence = store.issue_fork_fence(
+        selected.id,
+        image_selections=(selection,),
+    )
+    store._nodes_by_session[session.id][selected.id].generation_metadata = ()
+
+    assert store.validate_fork_fence(fence, image_selections=(selection,)) is False
+    with pytest.raises(ValueError, match="^Console fork source changed\\.$"):
+        store.stage_fork_snapshot(
+            fence,
+            title="Independent fork",
+            fork_session_id="fork-session",
+            fork_conversation_id="fork-conversation",
+        )
+
+
 def test_fork_fence_rejects_a_boundary_outside_the_active_path() -> None:
     store, _, _, _, first_answer, _, _, _ = _fork_store()
 
