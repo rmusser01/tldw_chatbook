@@ -21,7 +21,7 @@
 - Execute each child as an independent reviewable slice in dependency order. Do not start a child before its dependencies are complete.
 - Before the first implementation edit, use `superpowers:using-git-worktrees`; the current checkout contains unrelated user work in `console_transcript.py` and generated CSS that must not be overwritten.
 - At each child start, set only that Backlog task to `In Progress` and add its linked implementation plan. The documented five-digit Backlog CLI addressing bug permits a careful `apply_patch` edit when the CLI cannot address `TASK-18932.x`.
-- Recheck `CharactersRAGDB._CURRENT_SCHEMA_VERSION` immediately before creating the migration. If it is still 49, use `chachanotes_v49_to_v50_console_thinking.sql`; otherwise use the mechanically next version and update every named migration reference in the foundation plan.
+- Recheck `CharactersRAGDB._CURRENT_SCHEMA_VERSION` immediately before creating the migration. The rebased implementation found schema 51 and therefore uses `chachanotes_v51_to_v52_console_thinking.sql`; future rebases must still use the mechanically next version and update every named migration reference in the foundation plan.
 - Run schema tests only with isolated temporary database/data directories. Never launch the app against the developer's shared profile during a schema-changing worktree.
 - Preserve raw thinking/private values from `repr`, logs, warnings, exceptions, test IDs, snapshots, and approval text. Assertions may compare explicit decoded values only inside privacy-focused tests.
 - Provider capability or a thinking-enabled request is never current-turn evidence. Only `ProviderThinkingDelta` or `ProviderProprietaryThinkingEvidence` creates a block.

@@ -5345,6 +5345,16 @@ fresh/upgraded DBs assert `== CharactersRAGDB._CURRENT_SCHEMA_VERSION`, and a
 equality. If you are bumping the schema, run `Tests/DB/` and `Tests/ChaChaNotesDB/`
 in full — the tests your bump breaks are not in your feature's test files.
 
+**The same trap applies to fixture writes.** TASK-18932's final rebase raised the
+current schema from v51 to v52, then `test_chachanotes_full_capture_migration.py`
+failed before its v50→v51 assertion: it seeded a genuine v50 database through the
+current `add_conversation()` method, which now correctly writes a v52-only column.
+A historical migration fixture must seed rows with SQL limited to columns that
+existed at its pinned starting version. Current production CRUD is valid only after
+the database has migrated to the current schema; using it to populate an older
+fixture makes an unrelated future column addition break the fixture before the
+migration under test can run.
+
 ## Removing a widget's border box activates the global focus outline on it (task-17651, 2026-08-17)
 
 **What happened.** Flattening the Console composer to a one-row dense-form bar

@@ -152,7 +152,7 @@ git commit -m "feat: define bounded Console thinking envelopes"
 ### Task 2: Add the ChaChaNotes fields and genuine migration coverage
 
 **Files:**
-- Create if schema remains 49: `tldw_chatbook/DB/migrations/chachanotes_v49_to_v50_console_thinking.sql`
+- Create: `tldw_chatbook/DB/migrations/chachanotes_v51_to_v52_console_thinking.sql`
 - Modify: `tldw_chatbook/DB/ChaChaNotes_DB.py`
 - Create: `Tests/DB/test_chachanotes_console_thinking_migration.py`
 - Modify: `Tests/ChaChaNotesDB/legacy_conversation_schema.py` only if its historical fixture enumerates current columns instead of loading a genuine earlier schema.
@@ -163,15 +163,15 @@ git commit -m "feat: define bounded Console thinking envelopes"
 
 - [ ] **Step 1: Recheck schema and migration collisions.**
 
-Run: `rg -n "_CURRENT_SCHEMA_VERSION|v49_to_v50|thinking_blocks_json|thinking_history_policy" tldw_chatbook/DB backlog/decisions`
+Run: `rg -n "_CURRENT_SCHEMA_VERSION|v51_to_v52|thinking_blocks_json|thinking_history_policy" tldw_chatbook/DB backlog/decisions`
 
-Expected on the approved baseline: version 49 and no v49-to-v50 implementation. If another task has advanced the version, use the next integer and rename this task's migration/test expectations without changing semantics.
+Expected on the rebased implementation baseline: version 51 and no v51-to-v52 implementation. If another task advances the version, use the next integer and rename this task's migration/test expectations without changing semantics.
 
 - [ ] **Step 2: Write a failing historical migration test.** Start from the real schema immediately before the new migration; insert assistant/user rows and a conversation; migrate; assert both columns are NULL, schema reaches `CharactersRAGDB._CURRENT_SCHEMA_VERSION`, message FTS still excludes a canary placed only in thinking, and message/conversation sync triggers include the new fields.
 
 ```python
 def test_console_thinking_migration_is_additive_without_evidence_backfill(tmp_path):
-    db_path = build_historical_database(tmp_path, through_version=49)
+    db_path = build_historical_database(tmp_path, through_version=51)
     db = CharactersRAGDB(db_path=str(db_path))
     assert db.get_message_by_id("assistant-1")["thinking_blocks_json"] is None
     conversation = db.get_conversation_by_id("conversation-1")
