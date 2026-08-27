@@ -1075,7 +1075,7 @@ def test_post_turn_real_write_file_surfaces_a_new_ignored_path(
         assert not target.exists(), "the child wrote before its parent returned"
     finally:
         gate.set()
-    _join_fleet_threads()
+        _join_fleet_threads()
 
     child_runs = [
         row for row in db.list_runs("conv-1") if row["agent_kind"] == "subagent"
