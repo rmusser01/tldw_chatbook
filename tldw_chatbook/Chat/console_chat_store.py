@@ -2656,6 +2656,8 @@ class ConsoleChatStore:
                 by_persisted_id[persisted_id] = node
             if node is None:
                 continue
+            if thinking.envelope is not None:
+                node.id = persisted_id
             node.parent_message_id = (
                 str(row["parent_message_id"])
                 if row.get("parent_message_id") is not None
@@ -10783,6 +10785,10 @@ class ConsoleChatStore:
             if (
                 message.generation_metadata
                 or message.video_metadata is not None
+                or (
+                    message.role is ConsoleMessageRole.ASSISTANT
+                    and message.thinking is not None
+                )
                 or force_stable_message_id
             )
             else None,

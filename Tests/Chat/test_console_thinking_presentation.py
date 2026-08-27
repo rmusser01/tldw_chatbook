@@ -10,7 +10,10 @@ from tldw_chatbook.Chat.console_chat_models import (
     ConsoleChatMessage,
     ConsoleMessageRole,
 )
-from tldw_chatbook.Chat.console_turn_grouping import project_thinking_activities
+from tldw_chatbook.Chat.console_turn_grouping import (
+    project_thinking_activities,
+    thinking_activity_id,
+)
 from tldw_chatbook.Chat.thinking_blocks import (
     DisplayableThinkingBlock,
     ProprietaryThinkingBlock,
@@ -131,6 +134,34 @@ def test_activity_ids_are_deterministic_trusted_and_hide_hostile_block_ids() -> 
     assert first.activity_id == second.activity_id
     assert re.fullmatch(r"thinking-[0-9a-f]{32}", first.activity_id)
     assert hostile not in first.activity_id
+
+
+def test_duplicate_legacy_block_ids_are_namespaced_by_assistant_owner() -> None:
+    block_id = "legacy-duplicate"
+    first_owner = _assistant("session-a-assistant", _displayable(block_id=block_id))
+    second_owner = _assistant("session-b-assistant", _displayable(block_id=block_id))
+
+    first_id = project_thinking_activities(assistant=first_owner)[0].activity_id
+    second_id = project_thinking_activities(assistant=second_owner)[0].activity_id
+
+    assert first_id != second_id
+    assert re.fullmatch(r"thinking-[0-9a-f]{32}", first_id)
+    assert re.fullmatch(r"thinking-[0-9a-f]{32}", second_id)
+    assert all(
+        raw not in activity_id
+        for raw in (block_id, first_owner.id, second_owner.id)
+        for activity_id in (first_id, second_id)
+    )
+
+
+def test_activity_id_components_cannot_alias_across_hostile_boundaries() -> None:
+    assert thinking_activity_id(
+        assistant_message_id="assistant\0block",
+        block_id="tail",
+    ) != thinking_activity_id(
+        assistant_message_id="assistant",
+        block_id="block\0tail",
+    )
 
 
 @pytest.mark.parametrize(

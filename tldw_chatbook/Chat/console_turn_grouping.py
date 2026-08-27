@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 from dataclasses import dataclass
 from typing import Iterable, Iterator
 from uuid import NAMESPACE_URL, uuid5
@@ -26,9 +27,12 @@ _THINKING_STATUS: dict[str, ConsoleActivityStatus] = {
 }
 
 
-def thinking_activity_id(*, block_id: str) -> str:
-    """Return a deterministic UI-safe identity for one durable block."""
-    return f"thinking-{uuid5(NAMESPACE_URL, block_id).hex}"
+def thinking_activity_id(*, assistant_message_id: str, block_id: str) -> str:
+    """Return a deterministic UI-safe identity for one Assistant block."""
+    identity = json.dumps(
+        (assistant_message_id, block_id), ensure_ascii=False, separators=(",", ":")
+    )
+    return f"thinking-{uuid5(NAMESPACE_URL, identity).hex}"
 
 
 def project_thinking_activities(
@@ -58,6 +62,7 @@ def project_thinking_activities(
         refs.append(
             ConsoleThinkingActivityRef(
                 activity_id=thinking_activity_id(
+                    assistant_message_id=assistant.id,
                     block_id=block.block_id,
                 ),
                 assistant_message_id=assistant.id,

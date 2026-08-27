@@ -30,3 +30,19 @@ durable IDs remain unchanged, and raw imported IDs stay hidden by UUID5. GREEN: 
 identity tests, 208 foundation/capture/presentation/grouping tests, and 6 nearest real
 store/variant lifecycle tests passed. The explicit `activity_round_ordinal` producer
 contract from round 1 remains in force; Task 2 no longer supplies any generation ID.
+
+Task 1 review fix round 2 re-review closed the capture lifecycle but found one Priority-1
+legacy/import collision: V1 guarantees block-ID uniqueness only within one envelope,
+so hashing the block ID alone coupled different Assistant owners carrying the same
+valid existing/imported ID.
+
+Task 1 review fix round 3: RED was 4 failed plus 2 passing ordinary-message controls.
+Activity identity now hashes the stable native Assistant owner plus persisted block ID;
+thinking-owning Assistant rows pin their native ID on first persistence and the private
+thinking hydration pass restores it before indexing. The generic conversation tree
+continues to omit private thinking and ordinary messages retain database-allocated
+identity. GREEN: 5 round-3 contracts and 210 foundation/capture/presentation/grouping
+tests passed. A whole-file store probe was 283 passed with 13 failures on unchanged
+fake-persistence/provider-history seams already present at the round-3 base. Ruff/diff
+checks passed; `test_console_chat_store.py` retains its base whole-file formatter
+failure without unrelated churn. Final independent re-review remains pending.

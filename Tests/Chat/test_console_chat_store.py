@@ -6,6 +6,7 @@ from types import SimpleNamespace
 
 import pytest
 
+from tldw_chatbook.Chat.chat_conversation_service import ChatConversationService
 from tldw_chatbook.Chat.chat_persistence_service import ChatPersistenceService
 from tldw_chatbook.Chat.console_chat_models import (
     ConsoleChatMessage,
@@ -13,6 +14,9 @@ from tldw_chatbook.Chat.console_chat_models import (
     ConsoleWorkspaceContext,
 )
 from tldw_chatbook.Chat.console_chat_store import ConsoleChatSession, ConsoleChatStore
+from tldw_chatbook.Chat.console_conversation_hydration import (
+    console_messages_from_conversation_tree,
+)
 from tldw_chatbook.Chat.console_provider_gateway import ProviderThinkingDelta
 from tldw_chatbook.Chat.console_thinking_capture import ThinkingCapture
 from tldw_chatbook.Chat.console_turn_grouping import project_thinking_activities
@@ -4324,7 +4328,7 @@ def test_thinking_activity_identity_survives_variant_and_durable_lifecycle(
         ].activity_id
 
         persisted = store.persist_message_if_needed(assistant.id)
-        assert persisted.persisted_message_id is not None
+        assert persisted.persisted_message_id == assistant.id
         assert session.persisted_conversation_id is not None
         persisted_activity_id = project_thinking_activities(assistant=persisted)[
             0
@@ -4336,19 +4340,12 @@ def test_thinking_activity_identity_survives_variant_and_durable_lifecycle(
             assistant=switched_back
         )[0].activity_id
 
-        rows = db.get_messages_for_conversation(
-            session.persisted_conversation_id, limit=100
+        tree = ChatConversationService(db).get_conversation_tree(
+            session.persisted_conversation_id,
+            root_limit=100,
+            depth_cap=100,
         )
-        nodes = [
-            ConsoleChatMessage(
-                id=str(row["id"]),
-                role=ConsoleMessageRole(str(row["role"])),
-                content=str(row.get("content") or ""),
-                persisted_message_id=str(row["id"]),
-                parent_message_id=row.get("parent_message_id"),
-            )
-            for row in rows
-        ]
+        nodes = console_messages_from_conversation_tree(tree, db=db)
         restored_store = ConsoleChatStore(persistence=ChatPersistenceService(db))
         restored_session = restored_store.restore_persisted_session(
             title="Thinking identity restored",
@@ -4357,7 +4354,7 @@ def test_thinking_activity_identity_survives_variant_and_durable_lifecycle(
             all_nodes=nodes,
             active_leaf_persisted_id=persisted.persisted_message_id,
         )
-        restored = restored_store.get_message(persisted.persisted_message_id)
+        restored = restored_store.get_message(assistant.id)
         restored_activity_id = project_thinking_activities(assistant=restored)[
             0
         ].activity_id
@@ -4388,6 +4385,91 @@ def test_thinking_activity_identity_survives_variant_and_durable_lifecycle(
             restored_activity_id,
         } == {live_activity_id}
         assert second_activity_id != live_activity_id
+    finally:
+        db.close_connection()
+
+
+def test_thinking_identity_persistence_respects_temporary_and_durable_sessions(
+    tmp_path,
+) -> None:
+    db = CharactersRAGDB(tmp_path / "thinking-owner-ids.db", "thinking-owner-ids")
+    try:
+        store = ConsoleChatStore(persistence=ChatPersistenceService(db))
+        temporary = store.create_session(title="Temporary", ephemeral=True)
+        temporary_assistant = store.append_message(
+            temporary.id,
+            role=ConsoleMessageRole.ASSISTANT,
+            content="temporary answer",
+        )
+        temporary_capture = ThinkingCapture(assistant_owner_id=temporary_assistant.id)
+        temporary_result = temporary_capture.observe(
+            ProviderThinkingDelta(
+                text="temporary reasoning",
+                provider="llama_cpp",
+                model="reasoner",
+                protocol="chat_completions",
+                source_format="start_anchored_think",
+            )
+        )
+        assert temporary_result.envelope is not None
+        store.replace_message_thinking(
+            temporary_assistant.id, temporary_result.envelope
+        )
+        assert (
+            store.persist_message_if_needed(temporary_assistant.id).persisted_message_id
+            is None
+        )
+
+        durable_ids: list[str] = []
+        for title in ("Durable A", "Durable B"):
+            session = store.create_session(title=title)
+            assistant = store.append_message(
+                session.id,
+                role=ConsoleMessageRole.ASSISTANT,
+                content=f"{title} answer",
+            )
+            capture = ThinkingCapture(assistant_owner_id=assistant.id)
+            result = capture.observe(
+                ProviderThinkingDelta(
+                    text=f"{title} reasoning",
+                    provider="llama_cpp",
+                    model="reasoner",
+                    protocol="chat_completions",
+                    source_format="start_anchored_think",
+                )
+            )
+            assert result.envelope is not None
+            store.replace_message_thinking(assistant.id, result.envelope)
+            persisted = store.persist_message_if_needed(assistant.id)
+            assert persisted.persisted_message_id == assistant.id
+            durable_ids.append(assistant.id)
+
+        assert len(set(durable_ids)) == 2
+        assert all(
+            db.get_message_by_id(message_id) is not None for message_id in durable_ids
+        )
+    finally:
+        db.close_connection()
+
+
+def test_ordinary_message_persistence_keeps_database_allocated_identity(
+    tmp_path,
+) -> None:
+    db = CharactersRAGDB(tmp_path / "ordinary-message-id.db", "ordinary-id")
+    try:
+        store = ConsoleChatStore(persistence=ChatPersistenceService(db))
+        session = store.create_session(title="Ordinary")
+        ordinary = store.append_message(
+            session.id,
+            role=ConsoleMessageRole.ASSISTANT,
+            content="ordinary answer",
+        )
+
+        persisted = store.persist_message_if_needed(ordinary.id)
+
+        assert persisted.persisted_message_id is not None
+        assert persisted.persisted_message_id != ordinary.id
+        assert db.get_message_by_id(persisted.persisted_message_id) is not None
     finally:
         db.close_connection()
 
