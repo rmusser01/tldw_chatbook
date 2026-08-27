@@ -23,7 +23,7 @@ Reason: The closeout applies already approved controller boundaries and preserve
 - Modify: `Tests/Architecture/test_console_wave6_closeout_inventory.py`
 - Test: `Tests/Architecture/test_console_wave6_closeout_inventory.py`
 
-1. Add `FINAL_CLOSEOUT_COUNTS = (16_968, 562)` for the measured, final-rebased physical line and direct AST method-definition counts. This deliberately differs from TASK-3070.13's 532 unique method names.
+1. Add `FINAL_CLOSEOUT_COUNTS` for the measured, final-rebased physical line and direct AST method-definition counts. The initial `16_968 / 562` measurement must be refreshed if dev advances before merge; after PR #2125 landed, the final live value became `17_058 / 564`. This deliberately differs from TASK-3070.13's 532 unique method names and preserves the rule that the landed ratchet exactly matches the live base.
 2. Preserve `IMMUTABLE_BUDGETS` as the historical Wave 6 ceiling used by the deficit arithmetic.
 3. Require the live source count, `FINAL_CLOSEOUT_COUNTS`, and the canonical live budget to be exactly equal, while retaining the frozen-revision arithmetic against `IMMUTABLE_BUDGETS`.
 4. Run the exact closeout evidence test and confirm it fails because the live ratchet still contains 17,727/593.

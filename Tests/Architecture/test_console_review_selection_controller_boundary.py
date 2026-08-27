@@ -520,7 +520,7 @@ def test_chat_screen_remains_within_reviewed_projection_without_ratchet_raise() 
     )
     assert assignment.value is not None
     budgets = ast.literal_eval(assignment.value)
-    assert budgets[SCREEN_RELATIVE_PATH] == ("ChatScreen", 16_968, 562)
+    assert budgets[SCREEN_RELATIVE_PATH] == ("ChatScreen", 17_058, 564)
 
 
 @pytest.mark.unit

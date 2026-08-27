@@ -63,10 +63,13 @@ _REPO_ROOT = Path(__file__).resolve().parents[2]
 #: pre-rebase measurement and both landed red, because dev moved underneath
 #: it -- a budget derived from a stale base fails the moment it merges.
 #: Lowered 2026-08-27 by TASK-3070.14 after the amended Wave 6 realtime and
-#: review/selection extractions merged and the final tree measured exactly:
-#: 17,727/593 -> 16,968/562.
+#: review/selection extractions merged and the final tree measured exactly.
+#: The first closeout measurement was 16,968/562; dev then advanced through
+#: PR #2125, whose saved-character-chat resume added 90 lines and 2 direct
+#: definitions before this ratchet landed. The final live measurement is:
+#: 17,727/593 -> 17,058/564.
 _BUDGETS: dict[str, tuple[str, int, int]] = {
-    "tldw_chatbook/UI/Screens/chat_screen.py": ("ChatScreen", 16968, 562),
+    "tldw_chatbook/UI/Screens/chat_screen.py": ("ChatScreen", 17058, 564),
 }
 
 # Task 22507.4 started from this reviewed measurement. The repository-wide
