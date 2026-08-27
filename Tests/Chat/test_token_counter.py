@@ -11,13 +11,24 @@ from tldw_chatbook.Utils.token_counter import (
     get_model_token_limit,
     estimate_remaining_tokens,
     format_token_display,
-    TIKTOKEN_AVAILABLE,
 )
 from tldw_chatbook.Utils.token_counter import estimate_tokens, count_tokens_messages
 #
 ########################################################################################################################
 #
 # Test Functions:
+
+
+@pytest.fixture
+def force_character_estimation(monkeypatch):
+    """Isolate tests that assert the last-resort character estimator."""
+    import tldw_chatbook.Utils.token_counter as tc
+
+    tc.clear_estimate_cache()
+    monkeypatch.setattr(tc, "CUSTOM_TOKENIZERS_AVAILABLE", False)
+    monkeypatch.setattr(tc, "TIKTOKEN_AVAILABLE", False)
+    yield
+    tc.clear_estimate_cache()
 
 
 class TestTokenCounter:
@@ -135,9 +146,8 @@ class TestTokenCounter:
         result = format_token_display(100, 0)
         assert "🟢" in result  # Should handle gracefully
 
-    @pytest.mark.skipif(not TIKTOKEN_AVAILABLE, reason="tiktoken not installed")
     def test_tiktoken_counting(self):
-        """Test accurate token counting with tiktoken if available"""
+        """Test accurate token counting with the required tiktoken dependency."""
         from tldw_chatbook.Utils.token_counter import count_tokens_tiktoken
 
         # Known text with predictable token count
@@ -145,6 +155,7 @@ class TestTokenCounter:
         result = count_tokens_tiktoken(text, "gpt-3.5-turbo")
         assert result == 2
 
+    @pytest.mark.usefixtures("force_character_estimation")
     def test_character_estimation_fallback(self):
         """Test character-based estimation when tiktoken not available"""
         # Test with a provider that uses character estimation
@@ -195,16 +206,8 @@ class TestTokenCounter:
         assert result > 0  # Should handle mixed formats gracefully
 
 
+@pytest.mark.usefixtures("force_character_estimation")
 class TestEstimator:
-    @pytest.fixture(autouse=True)
-    def _force_chars_path(self, monkeypatch):
-        # These tests assert the chars-floor behavior; force that path so they
-        # are deterministic regardless of whether tiktoken / a custom tokenizer
-        # happens to be installed in the running environment.
-        import tldw_chatbook.Utils.token_counter as tc
-        monkeypatch.setattr(tc, "TIKTOKEN_AVAILABLE", False)
-        monkeypatch.setattr(tc, "custom_tokenizers_available", lambda: False)
-
     def test_empty_text_is_zero(self):
         assert estimate_tokens("", "gpt-4o", "openai") == 0
 
