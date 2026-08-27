@@ -154,6 +154,58 @@ def test_force_add_refreshes_ignored_executable_bytes_and_mode(tracker, root):
     assert committed_mode == "100644"
 
 
+def test_snapshot_force_path_drops_new_blob_that_grows_over_cap_before_index(
+    tracker, root, monkeypatch
+):
+    monkeypatch.setenv("TLDW_CHANGE_REVIEW_MAX_FILE_BYTES", "32")
+    target = root / "ignored-race.bin"
+    (root / ".gitignore").write_text(f"{target.name}\n")
+    repo = tracker.service.repo_for_root(root)
+    baseline = repo.snapshot("baseline")
+    target.write_bytes(b"small")
+    (root / "seed.txt").write_text("changed\n")
+    original_run = repo._run
+    grew = False
+
+    def grow_before_index(*args, **kwargs):
+        nonlocal grew
+        if not grew and args and args[0] == "update-index" and "--add" in args:
+            target.write_bytes(b"x" * 33)
+            grew = True
+        return original_run(*args, **kwargs)
+
+    repo._run = grow_before_index  # type: ignore[method-assign]
+    try:
+        end = repo.snapshot("raced snapshot", force_paths=[target.name])
+    finally:
+        repo._run = original_run  # type: ignore[method-assign]
+
+    assert grew
+    assert end != baseline
+    assert repo.file_bytes(end, target.name) is None
+    assert str(repo._run("ls-files", "--", target.name).stdout).strip() == ""
+    assert repo.last_oversize_excluded == (target.name,)
+
+
+def test_snapshot_force_path_keeps_committed_file_that_grows_over_cap(
+    tracker, root, monkeypatch
+):
+    monkeypatch.setenv("TLDW_CHANGE_REVIEW_MAX_FILE_BYTES", "32")
+    target = root / "ignored-tracked.bin"
+    (root / ".gitignore").write_text(f"{target.name}\n")
+    target.write_bytes(b"small")
+    repo = tracker.service.repo_for_root(root)
+    first = repo.snapshot("small tracked file", force_paths=[target.name])
+
+    expected = b"x" * 33
+    target.write_bytes(expected)
+    second = repo.snapshot("tracked file grew", force_paths=[target.name])
+
+    assert second != first
+    assert repo.file_bytes(second, target.name) == expected
+    assert repo.last_oversize_excluded == (target.name,)
+
+
 def test_snapshot_force_path_file_to_directory_swap_never_stages_descendants(
     tracker, root
 ):
@@ -407,6 +459,62 @@ def test_supplied_sha_priming_treats_pathspec_magic_as_a_literal_filename(
     repo = tracker.service.repo_for_root(root)
     assert repo.file_bytes(successor_records[0].end_sha, target.name) == expected
     assert repo.file_bytes(successor_records[0].end_sha, sibling.name) is None
+
+
+def test_supplied_sha_force_add_drops_new_blob_that_grows_before_index(
+    tracker, root, monkeypatch
+):
+    monkeypatch.setenv("TLDW_CHANGE_REVIEW_MAX_FILE_BYTES", "32")
+    target = root / "ignored-race.bin"
+    (root / ".gitignore").write_text(f"{target.name}\n")
+
+    parent = tracker.begin_turn([root])
+    parent.await_baseline()
+    assert tracker.end_turn(parent) == []
+    continuation = tracker.continuation(parent)
+    assert continuation is not None
+
+    successor = tracker.begin_turn([root])
+    successor.await_baseline()
+    key = str(root.resolve())
+    supplied = successor.baselines[key]
+    target.write_bytes(b"small")
+    repo = tracker.service.repo_for_root(root)
+    original_run = type(repo)._run
+    grew = False
+
+    def grow_before_index(self, *args, **kwargs):
+        nonlocal grew
+        if (
+            not grew
+            and self.root == root.resolve()
+            and args
+            and args[0] == "update-index"
+            and "--add" in args
+        ):
+            target.write_bytes(b"x" * 33)
+            grew = True
+        return original_run(self, *args, **kwargs)
+
+    monkeypatch.setattr(type(repo), "_run", grow_before_index)
+    continuation_records = tracker.end_turn(
+        continuation,
+        touched_paths=[str(target)],
+        end_shas=successor.baselines,
+    )
+
+    assert grew
+    assert continuation_records == []
+    assert continuation.end_shas[key] == supplied
+    assert str(repo._run("ls-files", "--", target.name).stdout).strip() == ""
+
+    (root / "seed.txt").write_text("successor change\n")
+    successor_records = tracker.end_turn(successor)
+    assert len(successor_records) == 1
+    record = successor_records[0]
+    assert record.baseline_sha == supplied
+    assert record.untracked_oversize == 1
+    assert repo.file_bytes(record.end_sha, target.name) is None
 
 
 def test_supplied_sha_survives_force_add_priming_failure(

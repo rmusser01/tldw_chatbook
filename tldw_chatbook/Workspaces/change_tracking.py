@@ -432,6 +432,33 @@ class ShadowRepo:
             exact_paths.append(relative.as_posix())
         return exact_paths
 
+    def _drop_new_force_paths_over_cap(self, paths: Sequence[str]) -> None:
+        """Remove newly indexed force paths whose staged blobs exceed the cap."""
+        from tldw_chatbook.Workspaces.change_bounds import (
+            DEFAULT_MAX_FILE_BYTES,
+            change_review_setting,
+        )
+
+        cap = change_review_setting("max_file_bytes", DEFAULT_MAX_FILE_BYTES)
+        tip = self.tip()
+        for rel in paths:
+            literal = f":(literal){rel}"
+            if tip and self._z_tokens(
+                "ls-tree", "-z", "--name-only", tip, "--", literal
+            ):
+                continue
+            staged = self._z_tokens(
+                "ls-files", "--stage", "-z", "--", literal
+            )
+            if not staged:
+                continue
+            fields = staged[0].split(" ", 2)
+            if len(fields) < 2:
+                raise ChangeTrackingError("git ls-files returned malformed output")
+            size = int(str(self._run("cat-file", "-s", fields[1]).stdout))
+            if size > cap:
+                self._run("update-index", "--force-remove", "--", rel)
+
     def snapshot(self, message: str, *, force_paths: Sequence[str] = ()) -> str:
         """Stage everything and commit if anything changed; return the tip.
 
@@ -467,6 +494,7 @@ class ShadowRepo:
             exact_paths = self._exact_force_paths(force_paths)
             if exact_paths:
                 self._run("update-index", "--add", "--", *exact_paths)
+                self._drop_new_force_paths_over_cap(exact_paths)
             scan = scan_root(
                 self.root,
                 max_files=_sys.maxsize,
@@ -521,6 +549,8 @@ class ShadowRepo:
                 f":(literal,exclude){rel}" for rel in nested_unexcludable
             )
             self._run(*add_args)
+            if exact_paths:
+                self._drop_new_force_paths_over_cap(exact_paths)
             for rel in unexcludable:
                 self._run(
                     "rm", "--cached", "--ignore-unmatch", "--quiet", "--", rel,
@@ -666,6 +696,7 @@ class ShadowRepo:
             exact_paths = self._exact_force_paths(paths)
             if exact_paths:
                 self._run("update-index", "--add", "--", *exact_paths)
+                self._drop_new_force_paths_over_cap(exact_paths)
 
     # -- low-level restore (full revert semantics live in TASK-1974) -------
 
