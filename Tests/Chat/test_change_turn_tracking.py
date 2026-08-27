@@ -20,7 +20,11 @@ import pytest
 
 from Tests.Agents.test_agent_service import SUBAGENT_PROMPT_PREFIX
 from Tests.Chat.test_console_agent_bridge import _FakeBuiltinGateForRegistry
-from tldw_chatbook.Agents.agent_models import STEP_TOOL_RESULT, TOOL_OUTCOME_SUCCESS
+from tldw_chatbook.Agents.agent_models import (
+    STEP_TOOL_CALL,
+    STEP_TOOL_RESULT,
+    TOOL_OUTCOME_SUCCESS,
+)
 from tldw_chatbook.Agents.agent_runtime import FENCE_OPEN
 from tldw_chatbook.Chat.console_agent_bridge import (
     ConsoleAgentBridge,
@@ -2499,6 +2503,118 @@ def test_settled_child_before_parent_e_keeps_ignored_write_reviewable(
     )
     assert [item.path for item in changed] == [target.name], changed
     assert repo.file_bytes(turn_rows[0]["end_sha"], target.name) == sentinel.encode()
+
+
+def test_child_write_path_normalization_failure_is_best_effort(
+    tmp_path, root, tracker, monkeypatch
+):
+    import tldw_chatbook.config as config_module
+
+    monkeypatch.setattr(
+        config_module,
+        "get_cli_setting",
+        lambda section, key=None, default=None: (
+            True if section == "tools" and key == "write_file_enabled" else default
+        ),
+    )
+
+    target = root / "bad-normalization.txt"
+    sibling = root / "good-sibling.txt"
+    sentinel = "the child still completed its WRITE\n"
+    child_write_gate = threading.Event()
+    child_settled = threading.Event()
+    normalization_failed = threading.Event()
+
+    def settle_child_before_parent_final() -> None:
+        assert gateway.child_started.wait(5), "child never reached its WRITE gate"
+        child_write_gate.set()
+        _join_fleet_threads()
+        child_settled.set()
+
+    gateway = _FleetSurvivorGateway(
+        parent_scripts=[
+            [_spawn_fence("write despite tracking failure")],
+            ["parent done"],
+        ],
+        gate=child_write_gate,
+        child_scripts=[
+            [_write_fence(Path(target.name), sentinel)],
+            ["child done"],
+        ],
+        parent_side_effect=settle_child_before_parent_final,
+        parent_side_effect_on_call=2,
+    )
+    bridge, db, store, session, aid = _bridge_with(tmp_path, gateway, tracker)
+    child_states: list[_ChildChangeState] = []
+    original_scope = bridge._child_run_scope
+    original_touched_paths = ChangeTurnTracker.tool_touched_paths
+    original_resolve = Path.resolve
+
+    @contextlib.contextmanager
+    def capture_child_state(conversation_id, adapter, child_change_state):
+        child_states.append(child_change_state)
+        with original_scope(conversation_id, adapter, child_change_state):
+            yield
+
+    def touched_paths_with_sibling(steps):
+        steps = tuple(steps)
+        if (
+            len(steps) == 1
+            and steps[0].kind == STEP_TOOL_CALL
+            and steps[0].tool_name == "write_file"
+            and steps[0].args == {
+                "file_path": target.name,
+                "content": sentinel,
+            }
+        ):
+            return [target.name, sibling.name]
+        return original_touched_paths(steps)
+
+    def fail_target_once(path, *args, **kwargs):
+        if path == target and not normalization_failed.is_set():
+            normalization_failed.set()
+            raise OSError("synthetic path normalization failure")
+        return original_resolve(path, *args, **kwargs)
+
+    monkeypatch.setattr(bridge, "_child_run_scope", capture_child_state)
+    monkeypatch.setattr(
+        ChangeTurnTracker,
+        "tool_touched_paths",
+        staticmethod(touched_paths_with_sibling),
+    )
+    monkeypatch.setattr(Path, "resolve", fail_target_once)
+    try:
+        _, outcome = _run(
+            bridge,
+            session,
+            aid,
+            root,
+            builtin_gate=_FakeBuiltinGateForRegistry(refuse=False),
+            scratch_root=root,
+            scratch_lease=lambda: contextlib.nullcontext(root),
+        )
+    finally:
+        child_write_gate.set()
+        _join_fleet_threads()
+
+    assert normalization_failed.is_set(), "the normalization failure did not fire"
+    assert outcome.status == "done"
+    assert child_settled.is_set(), "child did not fully settle before parent E"
+    assert target.read_text() == sentinel
+    child_runs = [
+        row for row in db.list_runs("conv-1") if row["agent_kind"] == "subagent"
+    ]
+    assert len(child_runs) == 1, child_runs
+    assert child_runs[0]["status"] == "done"
+    assert any(
+        step["kind"] == STEP_TOOL_RESULT
+        and step.get("tool_name") == "write_file"
+        and step.get("tool_outcome") == TOOL_OUTCOME_SUCCESS
+        for step in child_runs[0]["steps"]
+    ), child_runs[0]["steps"]
+    assert len(child_states) == 1
+    assert child_states[0].run_ids
+    assert child_states[0].touched_paths == {str(sibling)}
 
 
 def test_a_survivors_write_after_its_turn_lands_in_a_change_record(

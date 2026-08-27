@@ -4365,15 +4365,21 @@ class ConsoleAgentBridge:
                 touched_paths = ChangeTurnTracker.tool_touched_paths((step,))
                 normalized_paths: list[str] = []
                 for raw_path in touched_paths:
-                    path = Path(raw_path)
-                    if path.is_absolute():
-                        normalized_paths.append(str(path))
-                    elif child_path_root is not None:
-                        normalized_paths.append(
-                            str((child_path_root / path).resolve())
+                    try:
+                        path = Path(raw_path)
+                        if path.is_absolute():
+                            normalized_paths.append(str(path))
+                        elif child_path_root is not None:
+                            normalized_paths.append(
+                                str((child_path_root / path).resolve())
+                            )
+                        else:
+                            normalized_paths.append(raw_path)
+                    except (OSError, RuntimeError, ValueError):
+                        logger.warning(
+                            "change_review: could not normalize one attributed "
+                            "child WRITE path"
                         )
-                    else:
-                        normalized_paths.append(raw_path)
                 with self._change_window_lock:
                     child_change_state.run_ids.add(run_id)
                     child_change_state.touched_paths.update(normalized_paths)
