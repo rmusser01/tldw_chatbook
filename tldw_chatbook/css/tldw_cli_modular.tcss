@@ -3254,6 +3254,7 @@ ConsoleRunLogModal {
     border: none;
 }
 
+#library-file-notes-rail,
 #library-rail {
     border: solid $ds-column-line;
     background: $ds-surface-panel;

@@ -7302,8 +7302,11 @@ class LibraryScreen(BaseAppScreen):
                 LibraryLifecycle.STARTER,
             ):
                 return
+            rail = self._active_library_rail()
+            if rail is None:
+                return
             try:
-                self.query_one("#library-search-input", Input).focus()
+                rail.query_one("#library-search-input", Input).focus()
             except (NoMatches, QueryError):
                 return
             event.stop()
@@ -19640,9 +19643,12 @@ class LibraryScreen(BaseAppScreen):
                 library_config["rail_state"] = rail_state
             rail_state["sections"] = serialized
         self._save_library_rail_preferences(serialized)
+        rail = self._active_library_rail()
+        if rail is None:
+            return
         try:
-            body = self.query_one(f"#library-rail-section-body-{section_id}")
-            header = self.query_one(
+            body = rail.query_one(f"#library-rail-section-body-{section_id}")
+            header = rail.query_one(
                 f"#library-rail-section-header-{section_id}",
                 DestinationRailSectionHeader,
             )
@@ -19705,13 +19711,16 @@ class LibraryScreen(BaseAppScreen):
 
     def _focus_library_rail_action(self, selector: str) -> None:
         """Focus a preferred rail action, then compact Import or Explore."""
+        rail = self._active_library_rail()
+        if rail is None:
+            return
         for candidate in (
             selector,
             f"#library-row-{LIBRARY_ROW_INGEST_MEDIA}",
             "#library-rail-explore-all",
         ):
             try:
-                target = self.query_one(candidate, Widget)
+                target = rail.query_one(candidate, Widget)
             except (NoMatches, QueryError):
                 continue
             if target.display and not getattr(target, "disabled", False):
@@ -36085,8 +36094,11 @@ class LibraryScreen(BaseAppScreen):
         remounts a brand-new ``#library-search-input``; without this, focus
         silently falls back to the screen after every search.
         """
+        rail = self._active_library_rail()
+        if rail is None:
+            return
         try:
-            self.query_one("#library-search-input", Input).focus()
+            rail.query_one("#library-search-input", Input).focus()
         except (NoMatches, QueryError):
             pass
 
