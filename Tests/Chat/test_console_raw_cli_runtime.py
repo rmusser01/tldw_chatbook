@@ -152,6 +152,39 @@ class _BlockingTreeAdmissionExecutor:
         return _result(request, state)
 
 
+class _BlockingLaunchCommitExecutor:
+    """Expose the authority-decision to launch-commit race window."""
+
+    def __init__(self) -> None:
+        self.commit_started = threading.Event()
+        self.release_commit = threading.Event()
+        self.committed = False
+
+    def execute(
+        self,
+        request: RawCliRequest,
+        *,
+        cancel_event: threading.Event,
+        on_event: Any,
+        admit_worker: Any,
+    ) -> RawCliResult:
+        del on_event
+        owner = self
+
+        class Tree:
+            def admit(self) -> None:
+                return None
+
+        def commit_launch() -> None:
+            owner.commit_started.set()
+            assert owner.release_commit.wait(2.0), "test did not release launch commit"
+            owner.committed = True
+
+        admit_worker(Tree(), commit_launch)
+        assert cancel_event.wait(2.0), "active invocation was not cancelled"
+        return _result(request, "cancelled")
+
+
 class _ActiveExecutor:
     """Admit each invocation and remain active until cancellation arrives."""
 
@@ -399,6 +432,47 @@ def test_disarm_during_stalled_admission_returns_and_prevents_launch_commit(
     assert disarm_results == [("raw-1",)]
     assert cancellation_signalled is True
     assert executor.committed is False
+    assert results[0].terminal_state == "cancelled"
+
+
+def test_disarm_cannot_finish_between_authority_decision_and_launch_commit(
+    raw_runtime_module: Any,
+    tmp_path: Path,
+) -> None:
+    executor = _BlockingLaunchCommitExecutor()
+    runtime = _required(raw_runtime_module, "RawCliRuntime")(
+        lambda: True,
+        executor=executor,
+    )
+    runtime.arm()
+    results: list[RawCliResult] = []
+    execute_thread = threading.Thread(
+        target=lambda: results.append(
+            runtime.execute(_request(tmp_path), lambda _event: None)
+        )
+    )
+    execute_thread.start()
+    assert executor.commit_started.wait(2.0)
+
+    disarm_results: list[tuple[str, ...]] = []
+    disarm_finished = threading.Event()
+
+    def disarm() -> None:
+        disarm_results.append(runtime.disarm())
+        disarm_finished.set()
+
+    disarm_thread = threading.Thread(target=disarm)
+    disarm_thread.start()
+    disarm_finished_before_commit = disarm_finished.wait(0.2)
+
+    executor.release_commit.set()
+    disarm_thread.join(2.0)
+    execute_thread.join(2.0)
+
+    assert disarm_finished_before_commit is False
+    assert executor.committed is True
+    assert disarm_results == [("raw-1",)]
+    assert disarm_finished.is_set()
     assert results[0].terminal_state == "cancelled"
 
 
