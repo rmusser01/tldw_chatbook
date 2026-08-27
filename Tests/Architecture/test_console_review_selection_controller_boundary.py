@@ -167,7 +167,10 @@ def _optional_source_at_revision(revision: str, relative_path: str) -> str | Non
     try:
         return _source_at_revision(revision, relative_path)
     except subprocess.CalledProcessError as error:
-        if "does not exist" in error.stderr or "exists on disk, but not in" in error.stderr:
+        if (
+            "does not exist" in error.stderr
+            or "exists on disk, but not in" in error.stderr
+        ):
             return None
         raise
 
@@ -453,7 +456,8 @@ def test_build_console_controllers_is_the_single_explicit_constructor() -> None:
     builder = next(
         node
         for node in wiring_tree.body
-        if isinstance(node, ast.FunctionDef) and node.name == "build_console_controllers"
+        if isinstance(node, ast.FunctionDef)
+        and node.name == "build_console_controllers"
     )
     assignments = [
         node
