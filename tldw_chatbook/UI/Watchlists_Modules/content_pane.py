@@ -335,9 +335,7 @@ class ContentPane(RecomposeCaptureGuard, Vertical):
             fixed `#content-footer` action strip.
         """
         if self.item is None:
-            yield Static(
-                "Select a feed item to display it here.", id="content-empty"
-            )
+            yield Static("Select a feed to display it here.", id="content-empty")
             return
         # Task 5: the reader marks an item read on open (see the screen's
         # `_mark_item_read_on_open`); this button is the deliberate way

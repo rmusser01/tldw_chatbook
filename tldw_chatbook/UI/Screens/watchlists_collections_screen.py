@@ -1615,50 +1615,40 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
     def _resolve_breadcrumb_labels(self, scope: TreeScope) -> list[str]:
         """Display names for `scope`'s ancestor chain, for the Inspector.
 
-        Called once from `_apply_tree_scope` -- itself invoked from a real
-        tree click (`_on_tree_scope_changed`) and a breadcrumb promotion
-        (`handle_breadcrumb_scope_selected`), both discrete, user-driven
-        events -- never from a render path, so this is not a query-per-render:
-        the watchlist name costs nothing (`_tree_watchlists` is already
-        loaded by `_load_tree_data`), and a source name costs exactly the one
-        `list_source_rows` JOIN the tree itself already uses to expand a
-        watchlist, only when the scope actually names a source.
+        Both levels resolve from the screen-owned tree snapshot, so the same
+        feed remains visibly distinct under All Sources, Unassigned, All
+        Unread, and a created watchlist without issuing a per-occurrence DB
+        query.
         """
-        if scope.kind not in ("watchlist", "source") or scope.watchlist_id is None:
+        if scope.kind == "watchlist" and scope.watchlist_id is not None:
+            return [self._watchlist_display_name(scope.watchlist_id)]
+        if scope.kind != "source" or scope.source_id is None:
             return []
 
-        labels = [
-            next(
-                (
-                    str(watchlist.get("name"))
-                    for watchlist in self._tree_watchlists
-                    if int(watchlist.get("id", -1)) == int(scope.watchlist_id)
-                ),
-                f"Watchlist {scope.watchlist_id}",
+        parent_labels = {
+            "all": "All Sources",
+            "unassigned": "Unassigned",
+            "unread": "All Unread",
+        }
+        if scope.parent_context == "watchlist" or (
+            scope.parent_context is None and scope.watchlist_id is not None
+        ):
+            parent_label = (
+                self._watchlist_display_name(scope.watchlist_id)
+                if scope.watchlist_id is not None
+                else "Watchlist"
             )
-        ]
-
-        if scope.kind == "source" and scope.source_id is not None:
-            source_label = f"Source {scope.source_id}"
-            service = self._watchlist_bundle_service()
-            if service is not None:
-                try:
-                    rows = service.list_source_rows(scope.watchlist_id)
-                    source_label = next(
-                        (
-                            str(row.get("name"))
-                            for row in rows
-                            if int(row.get("id", -1)) == int(scope.source_id)
-                        ),
-                        source_label,
-                    )
-                except Exception:
-                    logger.opt(exception=True).debug(
-                        "Failed to resolve breadcrumb source name."
-                    )
-            labels.append(source_label)
-
-        return labels
+        else:
+            parent_label = parent_labels.get(scope.parent_context, "All Sources")
+        source_label = next(
+            (
+                str(row.get("name"))
+                for row in self._tree_all_source_rows
+                if int(row.get("id", -1)) == int(scope.source_id)
+            ),
+            f"Source {scope.source_id}",
+        )
+        return [parent_label, source_label]
 
     def _apply_local_wc_snapshot(
         self,
@@ -2179,8 +2169,16 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
                 f"Watchlist {scope.watchlist_id}",
             )
         if scope.kind == "source":
+            labels = self._resolve_breadcrumb_labels(scope)
             if rows:
-                return str(rows[0].get("name"))
+                source_label = str(rows[0].get("name"))
+                return (
+                    f"{labels[0]} / {source_label}"
+                    if labels
+                    else source_label
+                )
+            if len(labels) == 2:
+                return " / ".join(labels)
             if scope.source_id is not None:
                 return f"Source {scope.source_id}"
         return "All sources"
@@ -3833,6 +3831,8 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
             return self._watchlist_display_name(scope.watchlist_id)
         if scope.kind == "source" and scope.source_id is not None:
             labels = self._resolve_breadcrumb_labels(scope)
+            if len(labels) == 2:
+                return f"{labels[1]} under {labels[0]}"
             return labels[-1] if labels else f"Source {scope.source_id}"
         return "All Sources"
 
@@ -9998,6 +9998,7 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
         return (
             self.runtime_backend,
             scope.kind,
+            scope.parent_context,
             scope.watchlist_id,
             scope.source_id,
             _normalize_items_status_filter(status),
@@ -10030,7 +10031,17 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
         if scope.kind == "today":
             return {"since": self._today_floor_iso()}
         if scope.kind == "source" and scope.source_id is not None:
-            return {"source_id": scope.source_id}
+            query: dict[str, Any] = {"source_id": scope.source_id}
+            if scope.parent_context == "unassigned":
+                query["unassigned_only"] = True
+            elif scope.parent_context == "unread":
+                query["status"] = "new"
+            elif (
+                scope.parent_context == "watchlist"
+                and scope.watchlist_id is not None
+            ):
+                query["watchlist_id"] = scope.watchlist_id
+            return query
         if scope.kind == "watchlist" and scope.watchlist_id is not None:
             return {"watchlist_id": scope.watchlist_id}
         if scope.kind == "unassigned":
@@ -10149,7 +10160,7 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
             **self._items_status_kwargs(candidate_status),
             **self._items_scope_query(candidate_scope),
         }
-        if candidate_scope.kind == "unread":
+        if "status" in kwargs:
             kwargs.pop("statuses", None)
         normalized_search = candidate_search.strip()
         if normalized_search:

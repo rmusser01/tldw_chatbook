@@ -1163,6 +1163,65 @@ async def test_the_header_summary_names_the_scope_with_a_live_count():
         assert summary == "Local Watchlists snapshot: Morning AI Brief (2 sources)"
 
 
+@pytest.mark.parametrize(
+    ("scope", "expected"),
+    (
+        (
+            TreeScope(kind="source", source_id=9, parent_context="all"),
+            ["All Sources", "Feed Nine"],
+        ),
+        (
+            TreeScope(kind="source", source_id=9, parent_context="unassigned"),
+            ["Unassigned", "Feed Nine"],
+        ),
+        (
+            TreeScope(kind="source", source_id=9, parent_context="unread"),
+            ["All Unread", "Feed Nine"],
+        ),
+        (
+            TreeScope(
+                kind="source",
+                source_id=9,
+                watchlist_id=7,
+                parent_context="watchlist",
+            ),
+            ["Morning AI Brief", "Feed Nine"],
+        ),
+    ),
+)
+def test_contextual_source_breadcrumbs_use_snapshot_parent_and_feed_labels(
+    scope: TreeScope, expected: list[str]
+) -> None:
+    app = Mock()
+    service = Mock()
+    app.watchlist_bundle_service = service
+    screen = WatchlistsCollectionsScreen(app)
+    screen._tree_watchlists = [{"id": 7, "name": "Morning AI Brief"}]
+    screen._tree_all_source_rows = [{"id": 9, "name": "Feed Nine"}]
+    screen._tree_unassigned_source_rows = [{"id": 9, "name": "Feed Nine"}]
+
+    assert screen._resolve_breadcrumb_labels(scope) == expected
+    service.list_source_rows.assert_not_called()
+
+
+def test_failed_contextual_scope_names_attempted_occurrence_and_retained_scope():
+    app = Mock()
+    app.notify = Mock()
+    screen = WatchlistsCollectionsScreen(app)
+    screen._tree_all_source_rows = [{"id": 9, "name": "Feed Nine"}]
+    screen.__dict__["_reactive_tree_scope"] = TreeScope(kind="all")
+
+    screen._notify_pending_scope_failure(
+        TreeScope(kind="source", source_id=9, parent_context="unread")
+    )
+
+    app.notify.assert_called_once_with(
+        "Couldn't open Feed Nine under All Unread; still showing All Sources.",
+        severity="error",
+        markup=False,
+    )
+
+
 # --- task-2513 Task 7: the tree scope drives the items list -----------------
 #
 # Before this task `_load_items` fetched the newest 100 items of ANY source
