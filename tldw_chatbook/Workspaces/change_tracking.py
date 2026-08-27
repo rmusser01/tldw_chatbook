@@ -403,9 +403,9 @@ class ShadowRepo:
         proc = self._run("cat-file", "-e", f"{sha}^{{commit}}", check=False)
         return proc.returncode == 0
 
-    def _literal_force_pathspecs(self, paths: Sequence[str]) -> list[str]:
-        """Return safe literal pathspecs for existing files inside the root."""
-        literal_paths: list[str] = []
+    def _exact_force_paths(self, paths: Sequence[str]) -> list[str]:
+        """Return safe existing file paths relative to the root."""
+        exact_paths: list[str] = []
         for raw in paths:
             if not raw or raw == ".":
                 continue
@@ -421,8 +421,8 @@ class ShadowRepo:
                 continue
             if resolved.is_dir():
                 continue
-            literal_paths.append(f":(literal){relative.as_posix()}")
-        return literal_paths
+            exact_paths.append(relative.as_posix())
+        return exact_paths
 
     def snapshot(self, message: str, *, force_paths: Sequence[str] = ()) -> str:
         """Stage everything and commit if anything changed; return the tip.
@@ -456,9 +456,9 @@ class ShadowRepo:
 
         with self._locked():
             self.ensure_initialized()
-            literal_paths = self._literal_force_pathspecs(force_paths)
-            if literal_paths:
-                self._run("add", "-f", "--", *literal_paths)
+            exact_paths = self._exact_force_paths(force_paths)
+            if exact_paths:
+                self._run("update-index", "--add", "--", *exact_paths)
             scan = scan_root(
                 self.root,
                 max_files=_sys.maxsize,
@@ -649,15 +649,15 @@ class ShadowRepo:
         than failing the snapshot.
 
         Args:
-            paths: Root-relative paths to stage with ``add -f``.
+            paths: Root-relative paths to stage exactly despite ignore rules.
         """
         if not paths:
             return
         with self._locked():
             self.ensure_initialized()
-            literal_paths = self._literal_force_pathspecs(paths)
-            if literal_paths:
-                self._run("add", "-f", "--", *literal_paths)
+            exact_paths = self._exact_force_paths(paths)
+            if exact_paths:
+                self._run("update-index", "--add", "--", *exact_paths)
 
     # -- low-level restore (full revert semantics live in TASK-1974) -------
 

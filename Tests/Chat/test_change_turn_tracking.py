@@ -26,7 +26,10 @@ from tldw_chatbook.Chat.console_chat_models import ConsoleMessageRole
 from tldw_chatbook.Chat.console_chat_store import ConsoleChatStore
 from tldw_chatbook.Chat.console_provider_gateway import ConsoleProviderResolution
 from tldw_chatbook.DB.AgentRuns_DB import AgentRunsDB
-from tldw_chatbook.Workspaces.change_tracking import ShadowRepoService
+from tldw_chatbook.Workspaces.change_tracking import (
+    ChangeTrackingError,
+    ShadowRepoService,
+)
 from tldw_chatbook.Workspaces.change_turn_tracker import ChangeTurnTracker
 
 # Harness apps load the consolidated widget CSS the real app loads
@@ -106,9 +109,9 @@ def test_force_add_rejects_root_and_directory_paths(tracker, root, monkeypatch):
 
 
 def test_force_add_treats_pathspec_magic_as_a_literal_filename(tracker, root):
-    target = root / ":(glob)**"
+    target = root / "[ab]"
     expected = b"only this ignored file\n"
-    sibling = root / "unrelated-ignored.txt"
+    sibling = root / "a"
     (root / ".gitignore").write_text("*\n!/.gitignore\n!/seed.txt\n")
     target.write_bytes(expected)
     sibling.write_text("must stay ignored\n")
@@ -118,6 +121,75 @@ def test_force_add_treats_pathspec_magic_as_a_literal_filename(tracker, root):
 
     assert repo.file_bytes(sha, target.name) == expected
     assert repo.file_bytes(sha, sibling.name) is None
+
+
+def test_snapshot_force_path_file_to_directory_swap_never_stages_descendants(
+    tracker, root
+):
+    target = root / "race-target"
+    child_rel = "race-target/ignored-child.txt"
+    replacement = root.parent / "snapshot-replacement"
+    replacement.mkdir()
+    (replacement / "ignored-child.txt").write_text("must not be staged\n")
+    (root / ".gitignore").write_text(f"{target.name}\n")
+    repo = tracker.service.repo_for_root(root)
+    baseline = repo.snapshot("baseline")
+    target.write_text("validated file\n")
+    original_run = repo._run
+    swapped = False
+
+    def swap_before_index(*args, **kwargs):
+        nonlocal swapped
+        if not swapped and args and args[0] in {"add", "update-index"}:
+            target.unlink()
+            replacement.replace(target)
+            swapped = True
+        return original_run(*args, **kwargs)
+
+    repo._run = swap_before_index  # type: ignore[method-assign]
+    try:
+        repo.snapshot("raced snapshot", force_paths=[target.name])
+    except ChangeTrackingError:
+        pass
+
+    assert swapped
+    assert str(repo._run("ls-files", "--", child_rel).stdout).strip() == ""
+    tip = repo.tip()
+    assert tip == baseline or repo.file_bytes(tip, child_rel) is None
+
+
+def test_force_add_file_to_directory_swap_never_stages_descendants(
+    tracker, root
+):
+    target = root / "race-target"
+    child_rel = "race-target/ignored-child.txt"
+    replacement = root.parent / "force-add-replacement"
+    replacement.mkdir()
+    (replacement / "ignored-child.txt").write_text("must not be staged\n")
+    (root / ".gitignore").write_text(f"{target.name}\n")
+    repo = tracker.service.repo_for_root(root)
+    baseline = repo.snapshot("baseline")
+    target.write_text("validated file\n")
+    original_run = repo._run
+    swapped = False
+
+    def swap_before_index(*args, **kwargs):
+        nonlocal swapped
+        if not swapped and args and args[0] in {"add", "update-index"}:
+            target.unlink()
+            replacement.replace(target)
+            swapped = True
+        return original_run(*args, **kwargs)
+
+    repo._run = swap_before_index  # type: ignore[method-assign]
+    try:
+        repo.force_add([target.name])
+    except ChangeTrackingError:
+        pass
+
+    assert swapped
+    assert str(repo._run("ls-files", "--", child_rel).stdout).strip() == ""
+    assert repo.tip() == baseline
 
 
 def test_force_add_rejects_escapes_and_symlinked_directories(
@@ -242,12 +314,10 @@ def test_supplied_successor_sha_primes_a_late_ignored_path_for_successor_e(
 def test_supplied_sha_priming_treats_pathspec_magic_as_a_literal_filename(
     tracker, root
 ):
-    target = root / ":(glob)**"
+    target = root / "[ab]"
     expected = b"literal target\n"
-    sibling = root / "unrelated-ignored.txt"
-    (root / ".gitignore").write_text(
-        ":(glob)\\*\\*\nunrelated-ignored.txt\n"
-    )
+    sibling = root / "a"
+    (root / ".gitignore").write_text("*\n!/.gitignore\n!/seed.txt\n")
 
     parent = tracker.begin_turn([root])
     parent.await_baseline()
