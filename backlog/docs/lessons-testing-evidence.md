@@ -9157,3 +9157,37 @@ that arm interleaved with shipped and the floor before building the rewrite.
 And when the prior fix in the same spot "worked" while the cost moved down a
 layer, instrument the layer you claim to fix (`_on_timer_update` time,
 renders-per-update), not the layer you touched.
+## A fidelity test that compares rstripped text is blind to every geometry bug
+
+**TASK-22500, 2026-08-26.** The virtualized reader replaced a `Static` with a
+hand-rolled `render_line`, and the safety net for that swap was a fidelity test
+pinning the new widget's output against the `Static` it replaced. It compared
+`strip.text.rstrip()` per row. It passed throughout — while three rendering
+regressions shipped underneath it, all three found later by review:
+
+- wide glyphs (`日本語`) emitted 43-46 cell rows into a 40 cell screen, because
+  `Strip(segments, len(piece))` passes a CHARACTER count where a CELL count is
+  required, and the short declaration made `adjust_cell_length` PAD rather than
+  truncate;
+- the last row of every long document was unreachable, because the container's
+  `max-height: 18` is an OUTER bound whose two border rows the child cannot
+  have, so the child overflowed by exactly the border while `ScrollView` still
+  computed `max_scroll_y` from the height it thought it had;
+- every full-width wrapped row was cut by 2 columns, because the wrap index was
+  built at the width measured before the VERTICAL scrollbar existed, and no
+  `Resize` fires when a scrollbar shrinks the content region — the widget's own
+  `size` never changes.
+
+`rstrip()` erases trailing-cell differences, and comparing `.text` never looks
+at `cell_length`, at the parent's box, or at whether the document's tail can be
+reached at all. The test could not have failed on any of them.
+
+**What to do.** When a change is about GEOMETRY, assert geometry:
+`strip.cell_length == Segment.get_line_length(strip._segments)` and that it
+equals the widget's width; mount the widget inside the REAL container rule
+(borders and padding included, not a bare harness) and assert the last line is
+reachable after `scroll_end`; assert the indexed width equals the painted width
+once layout settles. Each of these was written after the fact and each reds on
+its bug — verified by reintroducing all three. A test harness that yields the
+widget straight into the App gives it the screen's whole box, which is exactly
+the geometry the bug does not live in.

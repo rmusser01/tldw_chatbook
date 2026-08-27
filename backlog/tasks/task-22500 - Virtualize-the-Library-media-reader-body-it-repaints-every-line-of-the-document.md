@@ -115,4 +115,40 @@ backlog/tasks/task-22660 (new follow-up); Docs/User_Guide/library.md (Verified-a
 stamp). No production code changed by this task -- it is measurement-only, closing out
 tasks 1-8's implementation. Full report:
 .superpowers/sdd/2026-08-26-library-reader-virtualization/task-9-report.md
+
+### Post-review corrections (PR #2129 review round)
+
+A whole-branch review after the rebase found **three rendering regressions that the
+fidelity test structurally could not catch** -- it compared `.rstrip()`ed TEXT only, so
+cell widths, row reachability and truncation were all invisible to it. All three were
+confirmed against the PRODUCTION CSS box, not the harness's own geometry:
+
+- **Wide glyphs emitted rows wider than the widget.** `Strip(rendered, len(piece))` passed
+  a CHARACTER count where a CELL count is required; any 2-cell glyph under-declared the
+  row, so `adjust_cell_length` PADDED instead of truncating (43-46 cells into a 40 cell
+  screen, against Static's exact 40). Fixed by letting `Strip` measure its own segments.
+- **The last row of every long document was unreachable.** `max-height: 18` on the
+  container is an OUTER bound that its two border rows come out of, so the widget claiming
+  all 18 overflowed by exactly the border while `ScrollView` still computed `max_scroll_y`
+  against the height it thought it had. The cap now derives from the parent's real content
+  region (this also removes the 18-duplicated-in-two-places trap).
+- **Every full-width wrapped row lost 2 columns.** The index is built at the width measured
+  before the VERTICAL scrollbar exists; when it appears the render width shrinks and no
+  `Resize` fires, because the widget's own size never changed. Characters were cut, not
+  re-flowed. `render_line` now re-arms the debounced rebuild whenever painted width differs
+  from indexed width; measured converging 56 -> 54 in a probe.
+
+Also corrected: the `Text.wrap` fallback drifted its offsets (Text.wrap returns each divided
+line rstripped), yielding a 9-character segment at width 4 that was then truncated --
+silently dropping text. Its contract is now "never lose a character, never outrun the
+width", which is what it can actually guarantee; exact parity is unreachable through the
+public API because Rich absorbs whitespace after a word break but not after a hard fold.
+Segment starts moved to prefix sums: a select-all copy of a 2.5 MB single-line document went
+**5,713 ms -> 28.9 ms** (now linear in document size). The known intermittent failure in
+`test_library_media_reader_scroller_resolution.py` was a row number captured across a
+re-index; the helper now waits for the index to settle (8/8 serial and 6/6 concurrent green).
+
+Every new guard was mutation-tested by reintroducing the exact bug it targets and confirming
+the red, then Edit-restoring. Affected surface after the fixes: 89 passed, with only the
+pre-existing dev-red recompose ratchet failing (filed separately as TASK-22888, PR #2130).
 <!-- SECTION:NOTES:END -->
