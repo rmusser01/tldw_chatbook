@@ -414,6 +414,7 @@ from ...Widgets.Console.console_control_bar import (
     ConsoleAutoSpeakRetryRequested,
     ConsoleAutoSpeakResumeRequested,
 )
+from ...Widgets.Console.console_composer_bar import classify_console_raw_draft
 from ...Widgets.Console.console_speech_controls import (
     ConsoleAutoSpeakChanged,
     ConsoleHandsFreeToggleRequested,
@@ -12950,12 +12951,21 @@ class ChatScreen(BaseAppScreen):
         # keypress; the mouse path still reads the live draft here.
         stash = self._console_pending_send_stash
         self._console_pending_send_stash = None
+        if stash is not None:
+            raw_draft = classify_console_raw_draft(stash)
+            if raw_draft.kind == "raw":
+                self._raw_cli.start_user_command(stash)
+                return False
+            if raw_draft.kind == "escaped_chat":
+                stash.text = raw_draft.text
         try:
             composer = self.query_one("#console-native-composer", ConsoleComposerBar)
             draft = stash.text if stash is not None else composer.draft_text()
         except QueryError:
             composer = None
             draft = stash.text if stash is not None else ""
+        if stash is None and draft.startswith(r"\! "):
+            draft = draft[1:]
         if not draft.strip() and self._console_pending_image_attachment() is None:
             if composer is not None:
                 composer.restore_stashed_draft(stash)

@@ -46,6 +46,7 @@ do not reintroduce a re-export in `chat_screen.py` to patch through.
 """
 
 from collections.abc import Callable
+from pathlib import Path
 from typing import Any, TYPE_CHECKING
 
 from textual.css.query import QueryError
@@ -81,6 +82,7 @@ from .prompt_queue import (
     commit_queued_draft_transaction,
 )
 from .prompts import ConsolePromptsController
+from .raw_cli import ConsoleRawCliController
 from .reaction_preview import get_console_reaction_preview_coordinator
 from .realtime import ConsoleRealtimeController
 from .review_selection import (
@@ -276,20 +278,71 @@ def _present_console_trajectory(screen: Any, launch: ConsoleTrajectoryLaunch) ->
     )
 
 
+def _raw_cli_active_session_id(screen: Any) -> str:
+    """Return the active Console session, creating the ordinary default if needed."""
+    return str(screen._ensure_console_chat_store().ensure_session().id)
+
+
+def _raw_cli_persisted_leaf_anchor(screen: Any, session_id: str) -> str | None:
+    """Capture the active leaf's durable id without turning it into authority."""
+    store = screen._ensure_console_chat_store()
+    leaf_id = store.active_leaf(session_id)
+    if leaf_id is None:
+        return None
+    return next(
+        (
+            message.persisted_message_id
+            for message in store.messages_for_session(session_id)
+            if message.id == leaf_id
+        ),
+        None,
+    )
+
+
+def _raw_cli_selected_local_root(screen: Any, session_id: str) -> Path | None:
+    """Resolve the session's selected local-folder binding, if still usable."""
+    store = screen._ensure_console_chat_store()
+    session = next(
+        (item for item in store.sessions() if item.id == session_id),
+        None,
+    )
+    selected_id = (
+        session.project_instruction_state.working_folder_binding_id
+        if session is not None
+        else None
+    )
+    registry = getattr(screen.app_instance, "workspace_registry_service", None)
+    if not selected_id or registry is None:
+        return None
+    try:
+        binding = registry.get_runtime_binding(selected_id)
+        if str(getattr(binding, "workspace_id", "")) != str(session.workspace_id):
+            return None
+        kind = getattr(binding, "binding_kind", None)
+        if getattr(kind, "value", kind) != "local-filesystem":
+            return None
+        root = Path(binding.locator)
+        return root if root.is_absolute() and root.exists() and root.is_dir() else None
+    except (AttributeError, KeyError, OSError, RuntimeError, TypeError, ValueError):
+        return None
+
+
 def build_console_controllers(
     screen: "ChatScreen",
     *,
     rag_source_types_accessor: Callable[[], tuple[str, ...]],
     rag_top_k_accessor: Callable[[], int],
 ) -> None:
-    """Construct the Console screen's sixteen controllers and attach them.
+    """Construct the Console screen's controllers and coordinators.
 
     Assigns, in this order, `screen._image`, `screen._video`,
-    `screen._retrieval`, `screen._skill`, `screen._workspace`,
-    `screen._character`, `screen._fleet`, `screen._session`, `screen._dictation`,
-    `screen._hands_free`, `screen._realtime`, `screen._message`, `screen._prompts`,
-    `screen._agent`, `screen._prompt_queue`, and `screen._send_price`. The order is
-    documentation, not a constraint:
+    `screen._retrieval`, `screen._library_policy`, `screen._skill`,
+    `screen._workspace`, `screen._character`, `screen._fleet`,
+    `screen._session`, `screen._dictation`, `screen._hands_free`,
+    `screen._realtime`, `screen._message`, `screen._console_auto_speak`,
+    `screen._prompts`, `screen._agent`, `screen._raw_cli`,
+    `screen._prompt_queue`, `screen._review_selection`, and
+    `screen._send_price`. The order is documentation, not a constraint:
     every cross-controller dependency below is resolved at call time (see the
     module docstring), so no controller reads a sibling that does not exist
     yet.
@@ -297,7 +350,7 @@ def build_console_controllers(
     `ChatScreen.__init__` calls this at exactly the point the first
     construction used to occupy. That position matters: the ~250 attribute
     assignments around it in `__init__` include names these lambdas read, and
-    none of the sixteen constructors reads mutable state off `screen` eagerly
+    none of these constructors reads mutable state off `screen` eagerly
     (each stores its inputs and callables), so the call needs to sit where it
     can see everything the pre-move constructions could.
 
@@ -1474,6 +1527,47 @@ def build_console_controllers(
         # straight to `run_worker` without calling it.
         sync_native_console_chat_ui_accessor=(
             lambda: screen._sync_native_console_chat_ui
+        ),
+    )
+    screen._raw_cli = ConsoleRawCliController(
+        raw_cli_runtime=lambda: screen.app_instance.raw_cli_runtime,
+        active_session_id=lambda: _raw_cli_active_session_id(screen),
+        persisted_leaf_anchor=(
+            lambda session_id: _raw_cli_persisted_leaf_anchor(screen, session_id)
+        ),
+        selected_local_root=(
+            lambda session_id: _raw_cli_selected_local_root(screen, session_id)
+        ),
+        private_scratch_root=(
+            lambda session_id: (
+                screen._console_runtime().scratch_spaces.snapshot(session_id).root
+            )
+        ),
+        restore_stash=lambda stash: screen._restore_console_send_stash(stash),
+        append_local_error=(
+            lambda text: screen.run_worker(
+                screen._append_native_console_system_message(text),
+                exclusive=False,
+                name="_append_console_raw_cli_refusal",
+            )
+        ),
+        append_store_marker=(
+            lambda *args, **kwargs: screen._ensure_console_chat_store().append_message(
+                *args, **kwargs
+            )
+        ),
+        update_store_marker=(
+            lambda *args, **kwargs: getattr(
+                screen._ensure_console_chat_store(), "update_tool_marker"
+            )(*args, **kwargs)
+        ),
+        agent_runs_db=(lambda: getattr(screen.app_instance, "agent_runs_db", None)),
+        run_log_access=(
+            lambda: getattr(screen.app_instance, "raw_cli_run_log_access", None)
+        ),
+        start_worker=lambda work, **kwargs: screen.run_worker(work, **kwargs),
+        marshal_to_ui=(
+            lambda callback, *args: screen.app.call_from_thread(callback, *args)
         ),
     )
     screen._prompt_queue = ConsolePromptQueueUIController(

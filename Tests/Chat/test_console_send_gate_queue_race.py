@@ -24,6 +24,7 @@ from __future__ import annotations
 import asyncio
 import threading
 from pathlib import Path
+import threading
 from types import SimpleNamespace
 from typing import Any
 
@@ -52,6 +53,9 @@ from tldw_chatbook.Chat.console_prompt_queue import (
     QueueMutationStatus,
 )
 from tldw_chatbook.Chat.console_prompt_queue_coordinator import _PromptChain
+from tldw_chatbook.Tools.raw_cli_executor import RawCliResult
+from tldw_chatbook.UI.Console_Modules.raw_cli import ConsoleRawCliController
+from tldw_chatbook.Widgets.Console.console_composer_bar import ConsoleDraftStash
 
 
 class _HoldingGateway:
@@ -91,6 +95,33 @@ class _HoldingGateway:
         yield "done"
         if self.hold:
             await self.release.wait()
+
+
+class _ImmediateRawRuntime:
+    permitted = True
+    armed = True
+
+    def __init__(self) -> None:
+        self.started = threading.Event()
+        self.requests: list[Any] = []
+
+    def execute(self, request: Any, _on_event: Any) -> RawCliResult:
+        self.requests.append(request)
+        self.started.set()
+        return RawCliResult(
+            invocation_id=request.invocation_id,
+            caller=request.caller,
+            resolved_shell="bash",
+            initial_directory=request.initial_directory,
+            elapsed_seconds=0.01,
+            stdout_preview="raw\n",
+            stderr_preview="",
+            record_output="raw\n",
+            exit_code=0,
+            terminal_state="exited",
+            truncated=False,
+            cleanup_proven=True,
+        )
 
 
 def _checkpoint_rows(db) -> int:
@@ -412,3 +443,68 @@ async def test_follow_up_admitted_mid_run_is_refused_when_the_owner_turns_unheal
     assert queue.mode is PromptQueueMode.PAUSED
     assert queue.pause_reason is PromptQueuePauseReason.DISPATCH_REFUSED
     assert _checkpoint_rows(db) == 1
+
+
+@pytest.mark.asyncio
+async def test_raw_cli_worker_runs_while_model_owner_is_active_without_queueing(
+    tmp_path: Path,
+) -> None:
+    """A direct raw command never waits behind the provider prompt chain."""
+
+    db, store, chat_controller, _gateway = _controller(tmp_path)
+    gateway = _HoldingGateway(db)
+    chat_controller.provider_gateway = gateway
+    model_task = asyncio.create_task(
+        chat_controller.run_prompt_chain("first", session_id="session-1")
+    )
+    await asyncio.wait_for(gateway.started.wait(), timeout=5)
+
+    runtime = _ImmediateRawRuntime()
+    worker_threads: list[threading.Thread] = []
+
+    def start_worker(work: Any, **options: Any) -> threading.Thread:
+        assert options["thread"] is True
+        assert options["exclusive"] is False
+        thread = threading.Thread(target=work, name=options["name"])
+        worker_threads.append(thread)
+        thread.start()
+        return thread
+
+    raw_controller = ConsoleRawCliController(
+        raw_cli_runtime=lambda: runtime,
+        active_session_id=lambda: "session-1",
+        persisted_leaf_anchor=lambda _session_id: None,
+        selected_local_root=lambda _session_id: tmp_path,
+        private_scratch_root=lambda _session_id: tmp_path,
+        restore_stash=lambda _stash: None,
+        append_local_error=lambda _text: None,
+        append_store_marker=lambda *args, **kwargs: None,
+        update_store_marker=lambda *args, **kwargs: None,
+        agent_runs_db=lambda: None,
+        run_log_access=lambda: None,
+        start_worker=start_worker,
+        marshal_to_ui=lambda callback, *args: callback(*args),
+    )
+    stash = ConsoleDraftStash(
+        segments=[],
+        text="! printf raw",
+        has_paste=False,
+        raw_cli_prefix_typed=True,
+    )
+
+    assert raw_controller.start_user_command(stash) is True
+    assert await asyncio.to_thread(runtime.started.wait, 5)
+
+    assert gateway.calls == 1
+    assert chat_controller.prompt_queue_registry.snapshot("session-1").total_count == 0
+    assert all(
+        message.usage is None
+        for message in store.messages_for_session("session-1")
+    )
+    assert runtime.requests[0].command == "printf raw"
+
+    gateway.hold = False
+    gateway.release.set()
+    await asyncio.wait_for(model_task, timeout=10)
+    for thread in worker_threads:
+        await asyncio.to_thread(thread.join, 5)
