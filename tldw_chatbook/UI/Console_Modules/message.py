@@ -2330,6 +2330,7 @@ class ConsoleMessageController:
             ("console-message-action-speak-", "speak"),
             ("console-message-action-copy-", "copy"),
             ("console-message-action-edit-", "edit"),
+            ("console-message-action-fork-", "fork"),
         )
         for prefix, action_id in prefixes:
             if button_id.startswith(prefix):

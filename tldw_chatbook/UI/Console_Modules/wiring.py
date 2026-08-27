@@ -994,6 +994,24 @@ def build_console_controllers(
         restore_first_chat_focus=(
             lambda token: _restore_first_chat_focus(screen, token)
         ),
+        capture_fork_image_selections=(
+            lambda messages: screen._image.capture_console_fork_image_selections(
+                messages
+            )
+        ),
+        validate_fork_image_selections=(
+            lambda messages, expected: (
+                screen._image.validate_console_fork_image_selections(
+                    messages,
+                    expected,
+                )
+            )
+        ),
+        workspace_display_name=(
+            lambda workspace_id: screen._workspace._console_workspace_display_name(
+                workspace_id
+            )
+        ),
     )
     #: Dictation's own state and lifecycle moved to
     #: `ConsoleDictationController` (wave-1 console decomposition,
