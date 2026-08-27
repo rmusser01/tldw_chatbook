@@ -7,6 +7,7 @@ from textual.widgets import Button, DataTable, Static
 
 from tldw_chatbook.UI.Watchlists_Modules.runs_pane import (
     CancelRunRequested,
+    RefreshRunsRequested,
     RerunRunRequested,
     RunSelected,
     RunsPane,
@@ -27,8 +28,18 @@ class RunsPaneHarness(App):
     def on_cancel_run_requested(self, message: CancelRunRequested) -> None:
         self.captured_messages.append(("cancel_run_requested", message.run_id))
 
+    def on_refresh_runs_requested(self, message: RefreshRunsRequested) -> None:
+        self.captured_messages.append(("refresh_runs_requested",))
+
     def on_rerun_run_requested(self, message: RerunRunRequested) -> None:
-        self.captured_messages.append(("rerun_run_requested", message.source_id))
+        self.captured_messages.append(
+            (
+                "rerun_run_requested",
+                message.runtime_backend,
+                message.target_id,
+                message.name,
+            )
+        )
 
 
 @pytest.fixture
@@ -189,7 +200,143 @@ async def test_runs_pane_rerun_button_posts_request(sample_runs):
         pane.query_one("#runs-rerun-button", Button).press()
         await pilot.pause()
 
-        assert ("rerun_run_requested", "source-1") in app.captured_messages
+        assert (
+            "rerun_run_requested",
+            "local",
+            "source-1",
+            "AI News RSS",
+        ) in app.captured_messages
+
+
+@pytest.mark.asyncio
+async def test_runs_pane_refresh_button_posts_refresh_request(sample_runs):
+    app = RunsPaneHarness()
+    async with app.run_test(size=(120, 40)) as pilot:
+        pane = app.query_one(RunsPane)
+        pane.runs = sample_runs
+        pane.select_run_by_id("run-1")
+        await pilot.pause()
+
+        pane.query_one("#runs-refresh-button", Button).press()
+        await pilot.pause()
+
+        assert ("refresh_runs_requested",) in app.captured_messages
+
+
+@pytest.mark.asyncio
+async def test_local_rerun_uses_source_id_and_inert_name():
+    app = RunsPaneHarness()
+    async with app.run_test(size=(120, 40)) as pilot:
+        pane = app.query_one(RunsPane)
+        pane.runs = [{"id": "run-1", "source_id": "source-1", "source_title": "[not markup]"}]
+        pane.select_run_by_id("run-1")
+        await pilot.pause()
+
+        pane.query_one("#runs-rerun-button", Button).press()
+        await pilot.pause()
+
+        assert app.captured_messages[-1] == (
+            "rerun_run_requested",
+            "local",
+            "source-1",
+            "[not markup]",
+        )
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("source_title", "expected_name"),
+    [("Server source", "Server source"), (None, "Job job-7")],
+)
+async def test_server_rerun_uses_job_id_and_display_name(source_title, expected_name):
+    app = RunsPaneHarness()
+    async with app.run_test(size=(120, 40)) as pilot:
+        pane = app.query_one(RunsPane)
+        pane.runtime_backend = "server"
+        pane.runs = [{"id": "run-1", "job_id": "job-7", "source_title": source_title}]
+        pane.select_run_by_id("run-1")
+        await pilot.pause()
+
+        pane.query_one("#runs-rerun-button", Button).press()
+        await pilot.pause()
+
+        assert app.captured_messages[-1] == (
+            "rerun_run_requested",
+            "server",
+            "job-7",
+            expected_name,
+        )
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("runtime_backend", "run"),
+    [
+        ("local", {"id": "run-1", "source_title": "Missing source"}),
+        ("server", {"id": "run-1", "source_title": "Missing job"}),
+    ],
+)
+async def test_runs_pane_disables_rerun_without_backend_target(runtime_backend, run):
+    app = RunsPaneHarness()
+    async with app.run_test(size=(120, 40)) as pilot:
+        pane = app.query_one(RunsPane)
+        pane.runtime_backend = runtime_backend
+        pane.runs = [run]
+        pane.select_run_by_id("run-1")
+        await pilot.pause()
+
+        assert pane.query_one("#runs-rerun-button", Button).disabled is True
+
+
+@pytest.mark.asyncio
+async def test_runs_pane_paints_busy_rerun_and_check_now_in_place():
+    app = RunsPaneHarness()
+    async with app.run_test(size=(120, 40)) as pilot:
+        pane = app.query_one(RunsPane)
+        pane.runs = [{"id": "run-1", "source_id": "source-1"}]
+        pane.select_run_by_id("run-1")
+        await pilot.pause()
+        table = pane.query_one("#runs-table", DataTable)
+        button = pane.query_one("#runs-rerun-button", Button)
+        pane.selected_operation_key = "operation-1"
+
+        pane.rerun_operation_keys = {"operation-1"}
+        await pilot.pause()
+        assert button.disabled is True
+        assert str(button.label) == "Re-running..."
+        assert pane.query_one("#runs-table", DataTable) is table
+
+        pane.rerun_operation_keys = set()
+        pane.busy_operation_keys = {"operation-1"}
+        await pilot.pause()
+        assert button.disabled is True
+        assert str(button.label) == "Checking..."
+        assert pane.query_one("#runs-table", DataTable) is table
+
+        pane.busy_operation_keys = set()
+        await pilot.pause()
+        assert button.disabled is False
+        assert str(button.label) == "Re-run source"
+        assert pane.query_one("#runs-table", DataTable) is table
+
+
+@pytest.mark.asyncio
+async def test_runs_pane_busy_state_for_another_target_does_not_disable_selection():
+    app = RunsPaneHarness()
+    async with app.run_test(size=(120, 40)) as pilot:
+        pane = app.query_one(RunsPane)
+        pane.runs = [{"id": "run-1", "source_id": "source-1"}]
+        pane.select_run_by_id("run-1")
+        await pilot.pause()
+
+        pane.selected_operation_key = "operation-1"
+        pane.busy_operation_keys = {"operation-2"}
+        pane.rerun_operation_keys = {"operation-2"}
+        await pilot.pause()
+
+        button = pane.query_one("#runs-rerun-button", Button)
+        assert button.disabled is False
+        assert str(button.label) == "Re-run source"
 
 
 @pytest.mark.asyncio
