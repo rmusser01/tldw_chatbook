@@ -10826,6 +10826,13 @@ class ChatScreen(BaseAppScreen):
                 send_price_tooltip_provider=(
                     lambda draft: self._send_price.tooltip_for_draft(draft)
                 ),
+                # TASK-23018: the cheap half. `sync_action_state` runs on
+                # every printable keystroke and only needs to know WHETHER a
+                # price exists (the Send label's "| $" suffix); the tooltip
+                # itself is derived on hover.
+                send_price_available_provider=(
+                    lambda draft: self._send_price.availability_for_draft(draft)
+                ),
             )
             # TASK-1364: the composer shares the screen's prompt-history
             # store with the controller (which records accepted sends) so

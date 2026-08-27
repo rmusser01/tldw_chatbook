@@ -153,10 +153,17 @@ async def test_composer_price_affordance_tracks_send_queue_attachment_and_width(
         assert calls == []
 
         composer.load_draft("priced draft")
+        # TASK-23018: the affordance (label + width) is decided without ever
+        # deriving the price; the derivation waits for the pointer.
         assert send_button.label.plain == "Send | $"
+        assert calls == []
+        assert send_button.tooltip == ConsoleComposerBar.SEND_READY_TOOLTIP
+
+        await pilot.hover("#console-send-message")
         assert send_button.tooltip == (
             "Next request: up to ~$0.01\nDraft: priced draft"
         )
+        assert calls == ["priced draft"]
         assert send_button.styles.width.value == cell_len("Send | $") + 2
         assert actions.styles.width.value == BASE_ACTIONS_WIDTH + 4
 
@@ -222,7 +229,7 @@ async def test_composer_blocker_tooltip_and_unsuffixed_label_win_over_price(
         return "Next request: up to ~$0.01"
 
     app = _PriceComposerApp(tooltip_provider)
-    async with app.run_test(size=(100, 24)):
+    async with app.run_test(size=(100, 24)) as pilot:
         composer = app.query_one(ConsoleComposerBar)
         send_button = composer.query_one("#console-send-message", Button)
         composer.load_draft("sendable")
@@ -241,6 +248,19 @@ async def test_composer_blocker_tooltip_and_unsuffixed_label_win_over_price(
         assert send_button.disabled is True
         assert send_button.label.plain == "Queue"
         assert send_button.styles.width.value == 7
+        assert send_button.tooltip == expected_tooltip
+        assert calls_before_block == len(calls)
+
+        # TASK-23018: pricing is now hover-triggered, so the blocked copy has
+        # to survive the pointer moving around Send too. Note that hovering
+        # the blocked Send itself is INERT by construction -- Textual does
+        # not deliver `Enter` to a disabled widget (verified: `mouse_over`
+        # becomes the button, no handler runs) -- so the load-bearing
+        # gesture here is the pointer landing on a SIBLING, which does post
+        # a bubbling `Enter` to the composer.
+        await pilot.hover("#console-send-message")
+        assert send_button.tooltip == expected_tooltip
+        await pilot.hover("#console-dictation")
         assert send_button.tooltip == expected_tooltip
         assert calls_before_block == len(calls)
 
@@ -265,7 +285,7 @@ async def test_composer_price_provider_failure_never_blocks_send():
         raise RuntimeError("pricing unavailable")
 
     app = _PriceComposerApp(broken_provider)
-    async with app.run_test(size=(100, 24)):
+    async with app.run_test(size=(100, 24)) as pilot:
         composer = app.query_one(ConsoleComposerBar)
         send_button = composer.query_one("#console-send-message", Button)
 
@@ -273,6 +293,9 @@ async def test_composer_price_provider_failure_never_blocks_send():
 
         assert send_button.disabled is False
         assert send_button.label.plain == "Send | $"
+
+        await pilot.hover("#console-send-message")
+        assert send_button.disabled is False
         assert send_button.tooltip == "Next request: cost unavailable"
 
 
@@ -530,6 +553,10 @@ async def test_mounted_console_refreshes_send_price_without_changing_cost_chip()
         composer.load_draft("hello")
 
         assert send_button.label.plain == "Send | $"
+        # TASK-23018: the price is derived on hover, and every resync below
+        # happens under this parked pointer -- which is exactly the state the
+        # freshness guarantee has to hold in.
+        await pilot.hover("#console-send-message")
         tooltip = str(send_button.tooltip)
         assert "Next request:" in tooltip
         assert "Input:" in tooltip
@@ -642,6 +669,7 @@ async def test_mounted_console_prices_a_sendable_follow_up_as_queue():
         composer.load_draft("queued follow-up")
 
         assert send_button.label.plain == "Queue | $"
+        await pilot.hover("#console-send-message")
         assert "Next request:" in str(send_button.tooltip)
 
         gateway.release.set()
@@ -814,3 +842,308 @@ def test_build_next_send_price_normalizes_provenance_identifiers(
     )
 
     assert result.tooltip.splitlines()[-1] == expected_provenance
+
+
+#
+#######################################################################################################################
+#
+# TASK-23018: the next-send price must not be derived on the keystroke path
+#
+
+
+def _counting_rows(unpacks: list[int]) -> tuple:
+    """Build history rows that count how often they are unpacked.
+
+    ``presentation_for_draft`` unpacks every ``(role, content)`` pair once
+    per set of counter rows it builds, and nothing else in the call iterates
+    an individual row -- so this counter sees exactly the O(session) list
+    comprehension the token cache is supposed to skip on a hit.
+    """
+
+    class _Pair(tuple):
+        def __new__(cls, role: str, content: str):
+            return super().__new__(cls, (role, content))
+
+        def __iter__(self):
+            unpacks[0] += 1
+            return super().__iter__()
+
+    return (_Pair("system", "system"), _Pair("user", "history"))
+
+
+@pytest.mark.parametrize(
+    ("draft", "attachment", "history_raises"),
+    [
+        ("priced draft", False, False),
+        ("   ", False, False),
+        ("   ", True, False),
+        ("<script>alert(1)</script>", False, False),
+        ("hello\x00world", False, False),
+        ("priced draft", False, True),
+        ("   ", True, True),
+    ],
+)
+def test_console_send_price_availability_agrees_with_presentation(
+    draft, attachment, history_raises
+):
+    """The cheap label question answers exactly the expensive one."""
+    controller, store, session, state, _calls = _controller_fixture()
+    if attachment:
+        store.add_pending_attachment(
+            session.id,
+            PendingAttachment(
+                file_path="/tmp/a.png",
+                display_name="a.png",
+                file_type="image",
+                insert_mode="attachment",
+                data=b"image",
+                mime_type="image/png",
+                original_size=5,
+                processed_size=5,
+            ),
+        )
+    if history_raises:
+        state["projection"] = None
+
+        def _raise(_session_id):
+            raise KeyError("no such session")
+
+        controller._provider_history_accessor = _raise
+
+    assert controller.availability_for_draft(draft) == (
+        controller.presentation_for_draft(draft) is not None
+    )
+
+
+def test_console_send_price_availability_never_projects_the_session():
+    """The keystroke-path question must not touch the transcript at all."""
+    controller, store, session, _state, calls = _controller_fixture()
+
+    def _explode(_session_id):
+        raise AssertionError("availability projected the session history")
+
+    controller._provider_history_accessor = _explode
+
+    assert controller.availability_for_draft("priced draft") is True
+    assert controller.availability_for_draft("   ") is False
+    assert controller.availability_for_draft("<script>alert(1)</script>") is True
+    store.add_pending_attachment(
+        session.id,
+        PendingAttachment(
+            file_path="/tmp/a.png",
+            display_name="a.png",
+            file_type="image",
+            insert_mode="attachment",
+            data=b"image",
+            mime_type="image/png",
+            original_size=5,
+            processed_size=5,
+        ),
+    )
+    assert controller.availability_for_draft("   ") is True
+    assert calls == []
+
+
+def test_console_send_price_cache_hit_does_not_rebuild_the_counter_rows():
+    """A memo hit must not pay the O(session) row rebuild it is memoizing."""
+    unpacks = [0]
+    controller, _store, _session, _state, calls = _controller_fixture(
+        rows=_counting_rows(unpacks)
+    )
+
+    controller.presentation_for_draft("draft")
+    after_miss = unpacks[0]
+    controller.presentation_for_draft("draft")
+
+    assert len(calls) == 1, "the second call was not a cache hit"
+    assert after_miss >= 2, "the miss never built the counter rows"
+    assert unpacks[0] == after_miss
+
+
+@pytest.mark.asyncio
+async def test_composer_reprices_send_under_a_parked_pointer():
+    """A draft edit with the pointer resting on Send re-derives the price."""
+    calls = []
+
+    def tooltip_provider(draft):
+        calls.append(draft)
+        return f"Next request: up to ~$0.01\nDraft: {draft}"
+
+    app = _PriceComposerApp(tooltip_provider)
+    async with app.run_test(size=(100, 24)) as pilot:
+        composer = app.query_one(ConsoleComposerBar)
+        send_button = composer.query_one("#console-send-message", Button)
+
+        composer.load_draft("first")
+        await pilot.hover("#console-send-message")
+        assert send_button.tooltip == "Next request: up to ~$0.01\nDraft: first"
+
+        composer.load_draft("second draft")
+
+        assert send_button.tooltip == (
+            "Next request: up to ~$0.01\nDraft: second draft"
+        )
+        assert calls[-1] == "second draft"
+
+
+@pytest.mark.asyncio
+async def test_composer_drops_the_derived_price_when_the_pointer_leaves_send():
+    """No derived price is left sitting on Send once the pointer moves away."""
+    app = _PriceComposerApp(lambda draft: f"Next request: {draft}")
+    async with app.run_test(size=(100, 24)) as pilot:
+        composer = app.query_one(ConsoleComposerBar)
+        send_button = composer.query_one("#console-send-message", Button)
+
+        composer.load_draft("priced")
+        await pilot.hover("#console-send-message")
+        assert send_button.tooltip == "Next request: priced"
+
+        await pilot.hover("#console-dictation")
+
+        assert send_button.tooltip == ConsoleComposerBar.SEND_READY_TOOLTIP
+
+
+@pytest.mark.asyncio
+async def test_composer_drops_the_derived_price_when_the_pointer_leaves_the_composer():
+    """Leaving the composer entirely posts only `Leave` -- it must still clear."""
+    app = _PriceComposerApp(lambda draft: f"Next request: {draft}")
+    async with app.run_test(size=(100, 24)) as pilot:
+        composer = app.query_one(ConsoleComposerBar)
+        send_button = composer.query_one("#console-send-message", Button)
+
+        composer.load_draft("priced")
+        await pilot.hover("#console-send-message")
+        assert send_button.tooltip == "Next request: priced"
+
+        # Empty screen below the composer: no descendant `Enter` bubbles
+        # here, so only the `Leave` handler can take the price back off.
+        await pilot.hover(offset=(0, 23))
+
+        assert send_button.tooltip == ConsoleComposerBar.SEND_READY_TOOLTIP
+
+
+@pytest.mark.asyncio
+async def test_composer_pointer_elsewhere_never_overwrites_the_idle_send_tooltip():
+    """A sibling hover must not turn the empty-draft copy into the ready copy."""
+    app = _PriceComposerApp(lambda draft: f"Next request: {draft}")
+    async with app.run_test(size=(100, 24)) as pilot:
+        composer = app.query_one(ConsoleComposerBar)
+        send_button = composer.query_one("#console-send-message", Button)
+
+        assert send_button.disabled is True
+        assert send_button.tooltip == "Type a message to send."
+
+        await pilot.hover("#console-dictation")
+
+        assert send_button.tooltip == "Type a message to send."
+
+
+@pytest.mark.asyncio
+async def test_composer_hover_price_is_inert_once_send_is_gone():
+    """Teardown safety: a hover event after Send is pruned must not raise."""
+    from textual.events import Enter, Leave
+
+    app = _PriceComposerApp(lambda draft: f"Next request: {draft}")
+    async with app.run_test(size=(100, 24)) as pilot:
+        composer = app.query_one(ConsoleComposerBar)
+        send_button = composer.query_one("#console-send-message", Button)
+        composer.load_draft("priced")
+        await pilot.hover("#console-send-message")
+        assert send_button.tooltip == "Next request: priced"
+
+        await send_button.remove()
+        await pilot.pause()
+
+        composer.on_enter(Enter(composer))
+        composer.on_leave(Leave(composer))
+        composer._sync_current_action_state()
+
+
+@pytest.mark.asyncio
+async def test_mounted_console_quits_cleanly_with_the_pointer_on_send():
+    """Shutdown walk: hover-triggered pricing must not hold up quit.
+
+    This mechanism deliberately uses no timer and no worker precisely
+    because debounced/timed work has broken quit in this repo before; the
+    test pins that quitting mid-hover still returns the exit value.
+    """
+    app = _build_test_app()
+    attach_chachanotes_db(app)
+    _configure_anthropic_ready_console(app)
+    host = ConsoleHarness(app)
+
+    async with host.run_test(size=(200, 48)) as pilot:
+        console = host.screen_stack[-1]
+        await _wait_for_selector(console, pilot, "#console-native-composer")
+        composer = console.query_one("#console-native-composer", ConsoleComposerBar)
+        send_button = console.query_one("#console-send-message", Button)
+        composer.load_draft("about to quit")
+        await pilot.hover("#console-send-message")
+        assert "Next request:" in str(send_button.tooltip)
+
+        host.exit(0)
+        await pilot.pause()
+
+    assert host.return_value == 0
+
+
+@pytest.mark.asyncio
+async def test_mounted_console_never_derives_the_send_price_while_typing():
+    """TASK-23018: printable keys must not re-derive the next request.
+
+    The regression this pins made every keystroke project the whole session's
+    provider history and re-count its tokens -- 5.85 ms per key on a
+    400-message session against a 0.37 ms baseline. The Send label's "| $"
+    suffix must survive, and one hover must still produce a real price.
+    """
+    app = _build_test_app()
+    attach_chachanotes_db(app)
+    _configure_anthropic_ready_console(app)
+    host = ConsoleHarness(app)
+
+    async with host.run_test(size=(200, 48)) as pilot:
+        console = host.screen_stack[-1]
+        await _wait_for_selector(console, pilot, "#console-native-composer")
+        composer = console.query_one("#console-native-composer", ConsoleComposerBar)
+        send_button = console.query_one("#console-send-message", Button)
+        store = console._ensure_console_chat_store()
+        session_id = store.active_session_id
+        for index in range(40):
+            store.append_message(
+                session_id,
+                role=(
+                    ConsoleMessageRole.USER
+                    if index % 2 == 0
+                    else ConsoleMessageRole.ASSISTANT
+                ),
+                content=f"transcript row {index}",
+            )
+
+        controller = console._send_price
+        projections: list[str] = []
+        history = controller._provider_history_accessor
+        controller._provider_history_accessor = lambda session: (
+            projections.append(session) or history(session)
+        )
+
+        composer.focus()
+        await pilot.pause()
+        for key in "abcdefgh":
+            await pilot.press(key)
+        await pilot.pause()
+
+        assert composer.draft_text() == "abcdefgh"
+        assert send_button.label.plain == "Send | $"
+        assert send_button.disabled is False
+        assert projections == [], (
+            "typing re-derived the next send "
+            f"({len(projections)} whole-session projections for 8 keys)"
+        )
+
+        await pilot.hover("#console-send-message")
+
+        assert len(projections) == 1
+        tooltip = str(send_button.tooltip)
+        assert "Next request:" in tooltip
+        assert "Input:" in tooltip
+        assert "anthropic" in tooltip
