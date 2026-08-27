@@ -2760,6 +2760,10 @@
 
 
 
+
+
+
+
     /* F-041: a disabled checkbox must still READ as a checkbox. Textual's
        base *:disabled:can-focus rule dims it to 0.7 and the stock toggle
        glyph box is panel-on-panel (a dark gap in the rail). Keep the label
