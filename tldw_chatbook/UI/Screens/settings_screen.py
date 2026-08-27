@@ -2563,6 +2563,9 @@ class SettingsScreen(BaseAppScreen):
         self._console_capture_status = "Global exchange capture settings are active."
         self._console_capture_applying = False
         self._settings_drafts: dict[SettingsCategoryId, SettingsDraft] = {}
+        self._raw_cli_save_pending = False
+        self._raw_cli_unlock_confirmation_pending = False
+        self._raw_cli_arm_confirmation_pending = False
         self._provider_test_result = self._PROVIDER_TEST_NOT_RUN_COPY
         self._provider_test_evidence_store = ProviderTestEvidenceStore()
         self._provider_draft_generation = 0
@@ -21571,6 +21574,11 @@ class SettingsScreen(BaseAppScreen):
     @on(Button.Pressed, "#settings-raw-cli-arm")
     def handle_raw_cli_arm_pressed(self, event: Button.Pressed) -> None:
         event.stop()
+        if getattr(self, "_raw_cli_arm_confirmation_pending", False):
+            self.app.notify(
+                "Raw CLI Arm confirmation is already open.", severity="warning"
+            )
+            return
         runtime = self._raw_cli_runtime()
         if runtime is None:
             self.app.notify("Raw CLI runtime is unavailable.", severity="error")
@@ -21589,6 +21597,7 @@ class SettingsScreen(BaseAppScreen):
             return
 
         async def _confirmed_arm() -> None:
+            self._raw_cli_arm_confirmation_pending = False
             result = runtime.arm()
             self._refresh_raw_cli_state()
             if getattr(result, "armed", False):
@@ -21599,15 +21608,24 @@ class SettingsScreen(BaseAppScreen):
                     severity="error",
                 )
 
-        self.app.push_screen(
-            ConfirmationDialog(
-                title="Arm raw CLI for this launch",
-                message="\n\n".join(RAW_CLI_DISCLOSURE_LINES),
-                confirm_label="Arm host access",
-                cancel_label="Cancel",
-                confirm_callback=_confirmed_arm,
+        async def _cancelled_arm() -> None:
+            self._raw_cli_arm_confirmation_pending = False
+
+        self._raw_cli_arm_confirmation_pending = True
+        try:
+            self.app.push_screen(
+                ConfirmationDialog(
+                    title="Arm raw CLI for this launch",
+                    message="\n\n".join(RAW_CLI_DISCLOSURE_LINES),
+                    confirm_label="Arm host access",
+                    cancel_label="Cancel",
+                    confirm_callback=_confirmed_arm,
+                    cancel_callback=_cancelled_arm,
+                )
             )
-        )
+        except Exception:
+            self._raw_cli_arm_confirmation_pending = False
+            raise
 
     @on(Button.Pressed, "#settings-open-provider-credentials")
     def handle_open_provider_credentials(self, event: Button.Pressed) -> None:
@@ -21728,13 +21746,22 @@ class SettingsScreen(BaseAppScreen):
         value: bool,
     ) -> None:
         category = SettingsCategoryId.PRIVACY_SECURITY
-        if not saved or loaded_config is None:
+        self._raw_cli_save_pending = False
+        loaded_console = (
+            loaded_config.get("console") if isinstance(loaded_config, Mapping) else None
+        )
+        loaded_value = (
+            loaded_console.get("raw_cli_permitted")
+            if isinstance(loaded_console, Mapping)
+            else None
+        )
+        if not saved or type(loaded_value) is not bool or loaded_value is not value:
             self._update_draft_status_widgets(category)
             self._refresh_raw_cli_state()
             self.app.notify("Failed to save the raw CLI unlock.", severity="error")
             return
-        self.app_instance.app_config = loaded_config
-        saved_value = self._loaded_raw_cli_permitted()
+        self._console_settings()["raw_cli_permitted"] = loaded_value
+        saved_value = loaded_value
         draft = self._settings_drafts.get(category)
         current_value = (
             draft.values.get(RAW_CLI_PERMITTED_DRAFT_KEY) is True
@@ -21770,8 +21797,31 @@ class SettingsScreen(BaseAppScreen):
             value,
         )
 
+    def _start_raw_cli_save(self, value: bool) -> bool:
+        """Start one serialized raw CLI unlock save."""
+        if getattr(self, "_raw_cli_save_pending", False):
+            self.app.notify(
+                "Raw CLI unlock save is already in progress.", severity="warning"
+            )
+            return False
+        self._raw_cli_save_pending = True
+        try:
+            self._settings_save_raw_cli_worker(value)
+        except Exception:
+            self._raw_cli_save_pending = False
+            raise
+        return True
+
     def _save_raw_cli_draft(self) -> None:
         category = SettingsCategoryId.PRIVACY_SECURITY
+        if getattr(self, "_raw_cli_save_pending", False):
+            self._start_raw_cli_save(self._raw_cli_draft_value())
+            return
+        if getattr(self, "_raw_cli_unlock_confirmation_pending", False):
+            self.app.notify(
+                "Raw CLI unlock confirmation is already open.", severity="warning"
+            )
+            return
         draft = self._settings_drafts.get(category)
         if draft is None or RAW_CLI_PERMITTED_DRAFT_KEY not in draft.dirty_keys:
             self._settings_drafts.pop(category, None)
@@ -21781,21 +21831,31 @@ class SettingsScreen(BaseAppScreen):
             return
         value = draft.values.get(RAW_CLI_PERMITTED_DRAFT_KEY) is True
         if not value or self._loaded_raw_cli_permitted():
-            self._settings_save_raw_cli_worker(value)
+            self._start_raw_cli_save(value)
             return
 
         async def _confirmed_unlock() -> None:
-            self._settings_save_raw_cli_worker(True)
+            self._raw_cli_unlock_confirmation_pending = False
+            self._start_raw_cli_save(True)
 
-        self.app.push_screen(
-            ConfirmationDialog(
-                title="Unlock raw CLI host access",
-                message="\n\n".join(RAW_CLI_DISCLOSURE_LINES),
-                confirm_label="Save unlock",
-                cancel_label="Cancel",
-                confirm_callback=_confirmed_unlock,
+        async def _cancelled_unlock() -> None:
+            self._raw_cli_unlock_confirmation_pending = False
+
+        self._raw_cli_unlock_confirmation_pending = True
+        try:
+            self.app.push_screen(
+                ConfirmationDialog(
+                    title="Unlock raw CLI host access",
+                    message="\n\n".join(RAW_CLI_DISCLOSURE_LINES),
+                    confirm_label="Save unlock",
+                    cancel_label="Cancel",
+                    confirm_callback=_confirmed_unlock,
+                    cancel_callback=_cancelled_unlock,
+                )
             )
-        )
+        except Exception:
+            self._raw_cli_unlock_confirmation_pending = False
+            raise
 
     def action_settings_save_category(
         self, *, allow_text_entry_focus: bool = False
@@ -22591,6 +22651,13 @@ class SettingsScreen(BaseAppScreen):
         if not allow_text_entry_focus and self._settings_text_entry_has_focus():
             return
         category = self._active_category_id()
+        if category is SettingsCategoryId.PRIVACY_SECURITY and getattr(
+            self, "_raw_cli_save_pending", False
+        ):
+            self.app.notify(
+                "Raw CLI unlock save is still in progress.", severity="warning"
+            )
+            return
         if category is SettingsCategoryId.SPEECH_TTS:
             try:
                 panel = self.query_one(

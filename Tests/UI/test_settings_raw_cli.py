@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-from pathlib import Path
 import threading
 import time
 
@@ -35,22 +34,6 @@ RAW_CLI_DISCLOSURE = (
     "Command text and bounded output may persist in local run logs.",
     "This is not a sandbox and is not limited to your workspace.",
 )
-
-_AGENTIC_TERMINAL_CSS_PATH = (
-    Path(__file__).parents[2] / "tldw_chatbook/css/components/_agentic_terminal.tcss"
-)
-_AGENTIC_TERMINAL_CSS = _AGENTIC_TERMINAL_CSS_PATH.read_text(encoding="utf-8")
-_RAW_CLI_CSS = _AGENTIC_TERMINAL_CSS.split(
-    "/* RAW CLI DANGER GATE START */",
-    1,
-)[1].split("/* RAW CLI DANGER GATE END */", 1)[0]
-
-
-class RawCliStyledSettingsHarness(StyledSettingsDestinationHarness):
-    """Mount the app bundle plus the exact owned raw CLI source block."""
-
-    CSS_PATH = StyledSettingsDestinationHarness.CSS_PATH
-    CSS = _RAW_CLI_CSS
 
 
 async def _wait_until(pilot, predicate, *, timeout: float = 1.0) -> None:
@@ -117,7 +100,7 @@ def _painted_style_of_text(app: App, button: Button):
 @pytest.mark.asyncio
 async def test_raw_cli_unlock_and_arm_are_separate_confirmed_gates():
     app = _build_test_app(config_overrides={"console": {"raw_cli_permitted": False}})
-    host = RawCliStyledSettingsHarness(app, "settings")
+    host = StyledSettingsDestinationHarness(app, "settings")
 
     async with host.run_test(size=(120, 35)) as pilot:
         screen = await _open_privacy(pilot)
@@ -126,6 +109,9 @@ async def test_raw_cli_unlock_and_arm_are_separate_confirmed_gates():
             "Privacy & Security must mount the raw CLI danger gate"
         )
         card = screen.query_one("#settings-raw-cli-card")
+        locked_border = card.styles.border
+        locked_background = card.styles.background
+        error_color = card.query_one("#settings-raw-cli-state", Static).styles.color
         assert (
             str(card.query_one("#settings-raw-cli-title", Static).content)
             == "DANGER!!! RAW CLI HOST ACCESS"
@@ -226,11 +212,19 @@ async def test_raw_cli_unlock_and_arm_are_separate_confirmed_gates():
         card = screen.query_one("#settings-raw-cli-card")
         assert app.raw_cli_runtime.armed is True
         assert card.has_class("settings-raw-cli-armed")
-        armed_rule = _RAW_CLI_CSS.split(
-            ".settings-raw-cli-danger.settings-raw-cli-armed", 1
-        )[1].split("}", 1)[0]
-        assert "border: solid $error;" in armed_rule
-        assert "background: $error 10%;" in armed_rule
+        armed_border = card.styles.border
+        armed_edges = (
+            armed_border.top,
+            armed_border.right,
+            armed_border.bottom,
+            armed_border.left,
+        )
+        assert armed_border != locked_border
+        assert all(kind == "solid" for kind, _color in armed_edges)
+        assert all(color == error_color for _kind, color in armed_edges)
+        armed_background = card.styles.background
+        assert armed_background != locked_background
+        assert armed_background == error_color.with_alpha(0.1)
         assert "ARMED — HOST ACCESS" in str(
             card.query_one("#settings-raw-cli-state", Static).content
         )
@@ -244,9 +238,102 @@ async def test_raw_cli_unlock_and_arm_are_separate_confirmed_gates():
 
 
 @pytest.mark.asyncio
+async def test_raw_cli_confirmation_actions_are_serialized(monkeypatch):
+    app = _build_test_app(config_overrides={"console": {"raw_cli_permitted": False}})
+    loaded_config = dict(app.app_config)
+    loaded_config["console"] = dict(app.app_config["console"])
+    loaded_config["console"]["raw_cli_permitted"] = True
+    monkeypatch.setattr(
+        SettingsScreen,
+        "_save_raw_cli_permitted_value",
+        staticmethod(lambda _value: (True, loaded_config)),
+    )
+    host = StyledSettingsDestinationHarness(app, "settings")
+
+    async with host.run_test(size=(120, 35)) as pilot:
+        screen = await _open_privacy(pilot)
+        checkbox = screen.query_one("#settings-raw-cli-permitted", Checkbox)
+        checkbox.value = True
+        await pilot.pause()
+
+        screen.action_settings_save_category()
+        await _wait_until(pilot, lambda: isinstance(host.screen, ConfirmationDialog))
+        unlock_dialog = host.screen
+        unlock_depth = len(host.screen_stack)
+        screen.action_settings_save_category()
+        await pilot.pause()
+        assert host.screen is unlock_dialog
+        assert len(host.screen_stack) == unlock_depth
+        assert screen._raw_cli_unlock_confirmation_pending is True
+
+        await pilot.press("escape")
+        await _wait_until(pilot, lambda: host.screen is screen)
+        assert screen._raw_cli_unlock_confirmation_pending is False
+
+        screen.action_settings_save_category()
+        await _wait_until(pilot, lambda: isinstance(host.screen, ConfirmationDialog))
+        assert await pilot.click("#confirm-button")
+        await _wait_for_save(pilot)
+        assert screen._raw_cli_unlock_confirmation_pending is False
+
+        arm_button = screen.query_one("#settings-raw-cli-arm", Button)
+        arm_button.press()
+        await _wait_until(pilot, lambda: isinstance(host.screen, ConfirmationDialog))
+        arm_dialog = host.screen
+        arm_depth = len(host.screen_stack)
+        screen.handle_raw_cli_arm_pressed(Button.Pressed(arm_button))
+        await pilot.pause()
+        assert host.screen is arm_dialog
+        assert len(host.screen_stack) == arm_depth
+        assert screen._raw_cli_arm_confirmation_pending is True
+
+        await pilot.press("escape")
+        await _wait_until(pilot, lambda: host.screen is screen)
+        assert screen._raw_cli_arm_confirmation_pending is False
+
+        arm_button.press()
+        await _wait_until(pilot, lambda: isinstance(host.screen, ConfirmationDialog))
+        assert await pilot.click("#confirm-button")
+        await _wait_until(pilot, lambda: host.screen is screen)
+        assert screen._raw_cli_arm_confirmation_pending is False
+        assert app.raw_cli_runtime.armed is True
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("confirmation", ("unlock", "arm"))
+async def test_raw_cli_confirmation_pending_clears_when_push_fails(
+    monkeypatch, confirmation: str
+):
+    permitted = confirmation == "arm"
+    app = _build_test_app(
+        config_overrides={"console": {"raw_cli_permitted": permitted}}
+    )
+    host = StyledSettingsDestinationHarness(app, "settings")
+
+    async with host.run_test(size=(120, 35)) as pilot:
+        screen = await _open_privacy(pilot)
+
+        def failed_push(*_args, **_kwargs):
+            raise RuntimeError("push failed")
+
+        monkeypatch.setattr(host, "push_screen", failed_push)
+        if confirmation == "unlock":
+            screen.query_one("#settings-raw-cli-permitted", Checkbox).value = True
+            await pilot.pause()
+            with pytest.raises(RuntimeError, match="push failed"):
+                screen.action_settings_save_category()
+            assert screen._raw_cli_unlock_confirmation_pending is False
+        else:
+            arm_button = screen.query_one("#settings-raw-cli-arm", Button)
+            with pytest.raises(RuntimeError, match="push failed"):
+                screen.handle_raw_cli_arm_pressed(Button.Pressed(arm_button))
+            assert screen._raw_cli_arm_confirmation_pending is False
+
+
+@pytest.mark.asyncio
 async def test_raw_cli_unlock_uses_ordinary_settings_revert():
     app = _build_test_app(config_overrides={"console": {"raw_cli_permitted": False}})
-    host = RawCliStyledSettingsHarness(app, "settings")
+    host = StyledSettingsDestinationHarness(app, "settings")
 
     async with host.run_test(size=(120, 35)) as pilot:
         screen = await _open_privacy(pilot)
@@ -272,7 +359,7 @@ async def test_raw_cli_unlock_uses_ordinary_settings_revert():
 async def test_raw_cli_disarm_is_immediate_and_saved_lock_starts_cleanup(monkeypatch):
     app = _build_test_app(config_overrides={"console": {"raw_cli_permitted": True}})
     assert app.raw_cli_runtime.arm().armed is True
-    host = RawCliStyledSettingsHarness(app, "settings")
+    host = StyledSettingsDestinationHarness(app, "settings")
 
     async with host.run_test(size=(120, 35)) as pilot:
         screen = await _open_privacy(pilot)
@@ -326,7 +413,7 @@ async def test_raw_cli_disarm_is_immediate_and_saved_lock_starts_cleanup(monkeyp
 async def test_failed_raw_cli_lock_save_keeps_saved_authority_and_draft(monkeypatch):
     app = _build_test_app(config_overrides={"console": {"raw_cli_permitted": True}})
     assert app.raw_cli_runtime.arm().armed is True
-    host = RawCliStyledSettingsHarness(app, "settings")
+    host = StyledSettingsDestinationHarness(app, "settings")
 
     async with host.run_test(size=(120, 35)) as pilot:
         screen = await _open_privacy(pilot)
@@ -350,6 +437,150 @@ async def test_failed_raw_cli_lock_save_keeps_saved_authority_and_draft(monkeypa
         assert "ARMED — HOST ACCESS" in str(
             screen.query_one("#settings-raw-cli-state", Static).content
         )
+        assert screen._raw_cli_save_pending is False
+
+
+@pytest.mark.asyncio
+async def test_pending_raw_cli_save_preserves_a_newer_clean_draft(monkeypatch):
+    app = _build_test_app(config_overrides={"console": {"raw_cli_permitted": False}})
+    loaded_config = dict(app.app_config)
+    loaded_config["console"] = dict(app.app_config["console"])
+    loaded_config["console"]["raw_cli_permitted"] = True
+    save_started = threading.Event()
+    release_save = threading.Event()
+    save_calls: list[bool] = []
+
+    def blocked_save(value: bool) -> tuple[bool, dict | None]:
+        save_calls.append(value)
+        save_started.set()
+        assert release_save.wait(timeout=3)
+        return True, loaded_config
+
+    monkeypatch.setattr(
+        SettingsScreen,
+        "_save_raw_cli_permitted_value",
+        staticmethod(blocked_save),
+    )
+    host = StyledSettingsDestinationHarness(app, "settings")
+
+    async with host.run_test(size=(120, 35)) as pilot:
+        screen = await _open_privacy(pilot)
+        checkbox = screen.query_one("#settings-raw-cli-permitted", Checkbox)
+        checkbox.value = True
+        await pilot.pause()
+        screen.action_settings_save_category()
+        await _wait_until(pilot, lambda: isinstance(host.screen, ConfirmationDialog))
+        assert await pilot.click("#confirm-button")
+        await _wait_until(pilot, save_started.is_set)
+
+        try:
+            screen.action_settings_save_category()
+            await pilot.pause()
+            assert host.screen is screen
+            assert save_calls == [True]
+
+            checkbox.value = False
+            await pilot.pause()
+            draft = screen._settings_drafts[SettingsCategoryId.PRIVACY_SECURITY]
+            assert not draft.is_dirty
+            screen.action_settings_save_category()
+            await pilot.pause()
+            assert save_calls == [True]
+            assert screen._settings_drafts[SettingsCategoryId.PRIVACY_SECURITY] is draft
+            assert checkbox.value is False
+        finally:
+            release_save.set()
+            await _wait_for_save(pilot)
+
+        assert screen._raw_cli_save_pending is False
+        assert app.app_config["console"]["raw_cli_permitted"] is True
+        assert draft.originals == {"console.raw_cli_permitted": True}
+        assert draft.values == {"console.raw_cli_permitted": False}
+        assert draft.is_dirty
+        assert checkbox.value is False
+
+
+@pytest.mark.asyncio
+async def test_raw_cli_revert_is_blocked_while_save_is_pending(monkeypatch):
+    app = _build_test_app(config_overrides={"console": {"raw_cli_permitted": False}})
+    loaded_config = dict(app.app_config)
+    loaded_config["console"] = dict(app.app_config["console"])
+    loaded_config["console"]["raw_cli_permitted"] = True
+    save_started = threading.Event()
+    release_save = threading.Event()
+
+    def blocked_save(_value: bool) -> tuple[bool, dict | None]:
+        save_started.set()
+        assert release_save.wait(timeout=3)
+        return True, loaded_config
+
+    monkeypatch.setattr(
+        SettingsScreen,
+        "_save_raw_cli_permitted_value",
+        staticmethod(blocked_save),
+    )
+    host = StyledSettingsDestinationHarness(app, "settings")
+
+    async with host.run_test(size=(120, 35)) as pilot:
+        screen = await _open_privacy(pilot)
+        checkbox = screen.query_one("#settings-raw-cli-permitted", Checkbox)
+        checkbox.value = True
+        await pilot.pause()
+        draft = screen._settings_drafts[SettingsCategoryId.PRIVACY_SECURITY]
+        screen.action_settings_save_category()
+        await _wait_until(pilot, lambda: isinstance(host.screen, ConfirmationDialog))
+        assert await pilot.click("#confirm-button")
+        await _wait_until(pilot, save_started.is_set)
+
+        try:
+            screen.action_settings_revert_category()
+            await pilot.pause()
+            assert host.screen is screen
+            assert screen._settings_drafts[SettingsCategoryId.PRIVACY_SECURITY] is draft
+        finally:
+            release_save.set()
+            await _wait_for_save(pilot)
+
+
+@pytest.mark.asyncio
+async def test_raw_cli_save_preserves_unrelated_runtime_config_changes(monkeypatch):
+    app = _build_test_app(config_overrides={"console": {"raw_cli_permitted": True}})
+    loaded_config = dict(app.app_config)
+    loaded_config["console"] = dict(app.app_config["console"])
+    loaded_config["console"]["raw_cli_permitted"] = False
+    save_started = threading.Event()
+    release_save = threading.Event()
+
+    def blocked_save(_value: bool) -> tuple[bool, dict | None]:
+        save_started.set()
+        assert release_save.wait(timeout=3)
+        return True, loaded_config
+
+    monkeypatch.setattr(
+        SettingsScreen,
+        "_save_raw_cli_permitted_value",
+        staticmethod(blocked_save),
+    )
+    host = StyledSettingsDestinationHarness(app, "settings")
+
+    async with host.run_test(size=(120, 35)) as pilot:
+        screen = await _open_privacy(pilot)
+        checkbox = screen.query_one("#settings-raw-cli-permitted", Checkbox)
+        checkbox.value = False
+        await pilot.pause()
+        screen.action_settings_save_category()
+        await _wait_until(pilot, save_started.is_set)
+
+        app.app_config["concurrent_runtime_change"] = {"marker": "preserve me"}
+        app.app_config["console"]["concurrent_runtime_marker"] = "preserve console"
+        release_save.set()
+        await _wait_for_save(pilot)
+
+        assert app.app_config["console"]["raw_cli_permitted"] is False
+        assert (
+            app.app_config["console"]["concurrent_runtime_marker"] == "preserve console"
+        )
+        assert app.app_config["concurrent_runtime_change"] == {"marker": "preserve me"}
 
 
 @pytest.mark.asyncio
@@ -386,7 +617,7 @@ async def test_raw_cli_save_arrival_preserves_a_newer_mounted_checkbox_edit(
         "_save_raw_cli_permitted_value",
         staticmethod(blocked_save),
     )
-    host = RawCliStyledSettingsHarness(app, "settings")
+    host = StyledSettingsDestinationHarness(app, "settings")
 
     async with host.run_test(size=(120, 35)) as pilot:
         screen = await _open_privacy(pilot)
@@ -419,7 +650,7 @@ async def test_raw_cli_save_arrival_preserves_a_newer_mounted_checkbox_edit(
 @pytest.mark.asyncio
 async def test_raw_cli_disclosure_wraps_and_disabled_arm_paints_above_contrast_floor():
     app = _build_test_app(config_overrides={"console": {"raw_cli_permitted": False}})
-    host = RawCliStyledSettingsHarness(app, "settings")
+    host = StyledSettingsDestinationHarness(app, "settings")
 
     async with host.run_test(size=(80, 24)) as pilot:
         screen = await _open_privacy(pilot)
@@ -439,7 +670,7 @@ async def test_raw_cli_disclosure_wraps_and_disabled_arm_paints_above_contrast_f
         body.scroll_to_widget(arm_button, animate=False, force=True)
         await pilot.pause()
         assert arm_button.region.width > 0
-        assert screen.region.contains_region(arm_button.region)
+        assert body.content_region.contains_region(arm_button.region)
 
         painted = _painted_style_of_text(host, arm_button)
         assert painted is not None
