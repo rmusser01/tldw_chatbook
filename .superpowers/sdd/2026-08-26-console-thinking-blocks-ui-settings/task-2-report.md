@@ -117,6 +117,10 @@ reformatted; no broad formatting churn was applied. No CSS changed in this revie
 round, so the already-passing Task 2 CSS source/bundle check did not require a
 rebuild.
 
+Independent re-review returned READY at `3dad2a46a7ca`: 26 fix-specific controls
+and 62 disclosure/manual/lazy/ordinary interaction controls passed. The reviewer
+found no remaining Inspector, lifecycle, ownership, or regression issue.
+
 ## Decisions
 
 - Keep `detail_available` separate from mounted detail children so a collapsed
@@ -129,8 +133,9 @@ rebuild.
   selection survive a thinking row inserted before them.
 - Reuse one causal grouping result inside `set_messages`; thinking projection does not
   add a second full grouping walk.
-- ADR required: no. This is direct implementation of the approved UI plan and Task 1
-  owner/projection contracts; it adds no storage, schema, dependency, or runtime boundary.
+- ADR required: yes; existing `backlog/decisions/090-console-thinking-block-ownership-and-replay.md`
+  governs this long-lived disclosure behavior. This task introduces no additional
+  architectural decision.
 
 ## Files
 

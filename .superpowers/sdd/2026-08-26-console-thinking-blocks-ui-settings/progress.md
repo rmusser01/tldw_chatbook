@@ -84,3 +84,9 @@ Inspector/pruning/windowing tests, and one rendered-Inspector follow-up passed.
 Scoped Ruff lint and `git diff --check` pass; whole-file Ruff format remains the
 pre-existing legacy-file baseline. No CSS changed. Report updated in
 `task-2-report.md`; no ADR required.
+
+Task 2 independent re-review: READY at `3dad2a46a7ca`. The reviewer reran 26
+fix-specific ownership/Inspector controls plus 62 disclosure/manual/lazy/ordinary
+interaction controls; all passed, with Ruff and `git diff --check` clean. Task 2 is
+complete after one bounded review-fix round. Existing ADR-090 remains the governing
+decision; this task introduced no additional architectural decision.
