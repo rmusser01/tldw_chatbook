@@ -1668,12 +1668,18 @@ class AgentLiveSnapshot:
 
 @dataclass
 class _ChildChangeState:
-    """Attributed WRITE intent shared across one spawning turn's children."""
+    """Attributed WRITE intent shared across one spawning turn's children.
+
+    ``pending_scopes`` is the pre-E handle count not yet represented by an
+    active scope. Map membership cannot carry that fact: the same state stays
+    registered after scope exit until settle.
+    """
 
     owner_key: str
     run_ids: set[str] = field(default_factory=set)
     touched_paths: set[str] = field(default_factory=set)
     live_scopes: int = 0
+    pending_scopes: int = 0
 
 
 @dataclass
@@ -4617,6 +4623,7 @@ class ConsoleAgentBridge:
             try:
                 if not service.live_subagent_handles():
                     with self._change_window_lock:
+                        child_change_state.pending_scopes = 0
                         states = self._child_change_states.get(conversation_id)
                         if (
                             states is not None
@@ -4628,6 +4635,13 @@ class ConsoleAgentBridge:
                                 self._child_change_states.pop(
                                     conversation_id, None
                                 )
+                        has_window = (
+                            conversation_id in self._post_turn_change_windows
+                        )
+                    if has_window:
+                        self._close_post_turn_change_window_if_idle(
+                            conversation_id
+                        )
             finally:
                 self._on_fleet_child_settled(
                     conversation_id,
@@ -4881,23 +4895,21 @@ class ConsoleAgentBridge:
                     # never on both cards.
                     self._close_post_turn_change_window(conversation_id)
                     _steps = outcome.steps if "outcome" in locals() else []
-                    _current_state_pending = bool(service.live_subagent_handles())
+                    _current_live_handles = service.live_subagent_handles()
+                    _current_state_pending = bool(_current_live_handles)
                     with self._change_window_lock:
-                        _pending_scope_states_before_e = ()
                         if _current_state_pending:
                             _live_states = self._child_change_states.setdefault(
                                 conversation_id, {}
                             )
-                            if (
-                                _live_states.get(child_change_state.owner_key)
-                                is not child_change_state
-                            ):
-                                _pending_scope_states_before_e = (
-                                    child_change_state,
-                                )
                             _live_states[
                                 child_change_state.owner_key
                             ] = child_change_state
+                            child_change_state.pending_scopes = max(
+                                0,
+                                len(_current_live_handles)
+                                - child_change_state.live_scopes,
+                            )
                         _pending_child_states_before_e = tuple(
                             self._child_change_states.get(
                                 conversation_id, {}
@@ -4934,6 +4946,7 @@ class ConsoleAgentBridge:
                                 is child_change_state
                                 and child_change_state.live_scopes == 0
                             ):
+                                child_change_state.pending_scopes = 0
                                 states.pop(child_change_state.owner_key, None)
                                 if not states:
                                     self._child_change_states.pop(
@@ -4974,9 +4987,6 @@ class ConsoleAgentBridge:
                                 session_id=session_id,
                                 handle=change_handle,
                                 child_states=_pending_child_states_before_e,
-                                pending_scope_states=(
-                                    _pending_scope_states_before_e
-                                ),
                             )
                     elif _records:
                         logger.warning(
@@ -5213,6 +5223,8 @@ class ConsoleAgentBridge:
             self._child_change_states.setdefault(conversation_id, {})[
                 child_change_state.owner_key
             ] = child_change_state
+            if child_change_state.pending_scopes > 0:
+                child_change_state.pending_scopes -= 1
             child_change_state.live_scopes += 1
             self._live_child_counts[conversation_id] = (
                 self._live_child_counts.get(conversation_id, 0) + 1
@@ -5244,7 +5256,12 @@ class ConsoleAgentBridge:
                 # git snapshot and writes a DB row, and holding a lock
                 # every child thread contends on across that would
                 # serialise fleet teardown behind disk I/O.
-                self._close_post_turn_change_window(conversation_id)
+                with self._change_window_lock:
+                    has_window = conversation_id in self._post_turn_change_windows
+                if has_window:
+                    self._close_post_turn_change_window_if_idle(conversation_id)
+                else:
+                    self._close_post_turn_change_window(conversation_id)
 
     def _live_child_count(self, conversation_id: str) -> int:
         """How many of this conversation's sub-agents are mid-run."""
@@ -5371,7 +5388,6 @@ class ConsoleAgentBridge:
         session_id: str,
         handle: Any,
         child_states: Sequence[_ChildChangeState] = (),
-        pending_scope_states: Sequence[_ChildChangeState] = (),
     ) -> None:
         """Start tracking what this turn's survivors do from here on.
 
@@ -5392,8 +5408,6 @@ class ConsoleAgentBridge:
             session_id: Session for the transcript row.
             handle: The turn's own (already ended) ``TurnHandle``.
             child_states: Mutable child WRITE states retained by this window.
-            pending_scope_states: Captured states whose child handle had not yet
-                entered its real child scope at parent E.
         """
         if self._change_tracker is None:
             return
@@ -5417,16 +5431,21 @@ class ConsoleAgentBridge:
             self._close_post_turn_change_window(conversation_id)
             with self._change_window_lock:
                 self._post_turn_change_windows[conversation_id] = window
-                still_live = self._live_child_counts.get(conversation_id, 0) > 0
-                live_states = self._child_change_states.get(conversation_id, {})
-                still_pending = any(
-                    live_states.get(state.owner_key) is state
-                    for state in pending_scope_states
-                )
-            if not still_live and not still_pending:
-                self._close_post_turn_change_window(conversation_id)
+            self._close_post_turn_change_window_if_idle(conversation_id)
         except Exception:  # noqa: BLE001 -- tracking never breaks a reply
             logger.warning("change_review: could not open the post-turn window")
+
+    def _close_post_turn_change_window_if_idle(self, conversation_id: str) -> None:
+        """Close an installed window only after captured child work is idle."""
+        with self._change_window_lock:
+            window = self._post_turn_change_windows.get(conversation_id)
+            if window is None:
+                return
+            if self._live_child_counts.get(conversation_id, 0) > 0:
+                return
+            if any(state.pending_scopes > 0 for state in window.child_states):
+                return
+        self._close_post_turn_change_window(conversation_id)
 
     def _note_successor_turn(self, conversation_id: str, handle: Any) -> None:
         """Tell an open survivor window where it must stop (Task 6c).

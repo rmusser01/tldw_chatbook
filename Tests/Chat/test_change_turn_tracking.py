@@ -2303,6 +2303,8 @@ def test_child_write_during_blocked_parent_e_is_retried_by_immediate_close(
     sentinel = "written while parent E was blocked\n"
     (root / ".gitignore").write_text(f"{target.name}\n")
     child_write_gate = threading.Event()
+    scope_waiting = threading.Event()
+    enter_scope = threading.Event()
     end_started = threading.Event()
     release_end = threading.Event()
     scope_exited = threading.Event()
@@ -2320,6 +2322,8 @@ def test_child_write_during_blocked_parent_e_is_retried_by_immediate_close(
 
     @contextlib.contextmanager
     def pause_after_real_scope(*args, **kwargs):
+        scope_waiting.set()
+        assert enter_scope.wait(5), "test barrier timed out before child scope entry"
         with original_scope(*args, **kwargs):
             yield
         scope_exited.set()
@@ -2358,7 +2362,10 @@ def test_child_write_during_blocked_parent_e_is_retried_by_immediate_close(
     parent = threading.Thread(target=run_parent, name="blocked-parent-e")
     parent.start()
     try:
+        assert scope_waiting.wait(5), "child never reached the pre-scope barrier"
         assert end_started.wait(5), "parent never reached its E snapshot"
+        assert not target.exists(), "child wrote before parent E capture"
+        enter_scope.set()
         assert gateway.child_started.wait(5), "child never reached its WRITE gate"
         child_write_gate.set()
         assert scope_exited.wait(5), "real child scope never exited"
@@ -2371,36 +2378,40 @@ def test_child_write_during_blocked_parent_e_is_retried_by_immediate_close(
         release_end.set()
         parent.join(10)
         assert not parent.is_alive(), "parent did not leave E after barrier release"
+
+        if "error" in result:
+            raise result["error"]  # type: ignore[misc]
+        run_id, outcome = result["value"]  # type: ignore[misc]
+        assert outcome.status == "done"
+        assert bridge._post_turn_change_windows.get("conv-1") is None, (
+            "a pre-scope child that exited during E stranded its window"
+        )
+
+        rows = db.change_snapshots_for_run(run_id)
+        survivor_rows = [
+            row for row in rows if row["kind"] == "subagent_post_turn"
+        ]
+        assert len(survivor_rows) == 1, (
+            "the pre-scope child's ignored WRITE path published during E was "
+            f"omitted from immediate survivor close: {rows}"
+        )
+        changed = repo.changed_files(
+            survivor_rows[0]["baseline_sha"], survivor_rows[0]["end_sha"]
+        )
+        assert [item.path for item in changed] == [target.name], changed
+        assert (
+            repo.file_bytes(survivor_rows[0]["end_sha"], target.name)
+            == sentinel.encode()
+        )
     finally:
+        enter_scope.set()
         child_write_gate.set()
         release_end.set()
         allow_settle.set()
         parent.join(10)
         _join_fleet_threads()
 
-    if "error" in result:
-        raise result["error"]  # type: ignore[misc]
-    run_id, outcome = result["value"]  # type: ignore[misc]
-    assert outcome.status == "done"
     assert bridge._child_change_states == {}
-    assert bridge._post_turn_change_windows.get("conv-1") is None, (
-        "zero live child scopes left a survivor window stranded"
-    )
-
-    rows = db.change_snapshots_for_run(run_id)
-    survivor_rows = [row for row in rows if row["kind"] == "subagent_post_turn"]
-    assert len(survivor_rows) == 1, (
-        "the child's ignored WRITE path published during E was omitted from "
-        f"immediate survivor close: {rows}"
-    )
-    changed = repo.changed_files(
-        survivor_rows[0]["baseline_sha"], survivor_rows[0]["end_sha"]
-    )
-    assert [item.path for item in changed] == [target.name], changed
-    assert (
-        repo.file_bytes(survivor_rows[0]["end_sha"], target.name)
-        == sentinel.encode()
-    )
 
 
 def test_settled_child_before_parent_e_keeps_ignored_write_reviewable(
