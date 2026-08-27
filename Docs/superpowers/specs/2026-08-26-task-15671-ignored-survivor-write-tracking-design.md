@@ -43,7 +43,6 @@ Each `run_reply` creates a private `_ChildChangeState` shared by that turn's
 `on_step`, child scope, and settle callback. It contains:
 
 - an opaque owner key for the spawning turn;
-- attributed child run IDs;
 - de-duplicated normalized WRITE paths; and
 - the owner's current child-scope count.
 
@@ -179,6 +178,8 @@ Focused tests additionally prove:
 - existing ordinary-turn ignored-path and oversize behavior stays green;
 - a child stalled before scope entry is retained by its pending fleet handle
   and its later ignored write is reviewed;
+- a child still pending at successor B that writes during the successor marks
+  that turn with the concurrent-sub-agent disclosure;
 - a child publishes a path and exits while E is deliberately blocked, after
   which the immediate survivor close captures it;
 - successor startup claims the old window before B, while a B-start race with

@@ -1679,7 +1679,6 @@ class _ChildChangeState:
     """
 
     owner_key: str
-    run_ids: set[str] = field(default_factory=set)
     touched_paths: set[str] = field(default_factory=set)
     live_scopes: int = 0
     pending_scopes: int = 0
@@ -4400,7 +4399,6 @@ class ConsoleAgentBridge:
                             "child WRITE path"
                         )
                 with self._change_window_lock:
-                    child_change_state.run_ids.add(run_id)
                     child_change_state.touched_paths.update(normalized_paths)
                     window = self._post_turn_change_windows.get(conversation_id)
                     if (
@@ -4667,6 +4665,10 @@ class ConsoleAgentBridge:
                                     for state in prior_window.child_states
                                 }
                             )
+                        concurrent_subagent = concurrent_subagent or any(
+                            state.live_scopes > 0 or state.pending_scopes > 0
+                            for state in inherited_states.values()
+                        )
                         inherited_child_states_at_b = tuple(
                             inherited_states.values()
                         )

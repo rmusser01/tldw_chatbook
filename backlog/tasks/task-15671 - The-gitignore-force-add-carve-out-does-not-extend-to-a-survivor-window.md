@@ -1,11 +1,11 @@
 ---
 id: TASK-15671
 title: The .gitignore force-add carve-out does not extend to a survivor window
-status: In Progress
+status: Done
 assignee:
   - '@codex'
 created_date: '2026-08-11 21:30'
-updated_date: '2026-08-27 15:16'
+updated_date: '2026-08-27 15:40'
 labels:
   - console
   - change-review
@@ -64,27 +64,34 @@ Detailed implementation plan:
 <!-- SECTION:NOTES:BEGIN -->
 - Added a bridge-local child WRITE-path projection covering pending, live,
   inherited, and E-in-flight children. State remains bounded to owner identity,
-  run IDs, scope counts, and normalized paths; no schema or file-content cache
-  was introduced.
+  scope counts, and normalized paths; no schema or file-content cache was
+  introduced.
 - Added an exact successor-boundary claim and shared close-completion handoff.
   Survivor E and successor B remain abutting, concurrent closers share one
   outcome, and a timeout fails change tracking closed instead of inventing an
   overlapping review window.
 - Extended baseline and end snapshots to force-add eligible recorded paths
   atomically. Supplied-SHA closure preserves the supplied commit while priming
-  the shadow index for the next fresh snapshot.
+  the shadow index for the next fresh snapshot. Exact paths use Git's native
+  NUL-delimited `update-index --stdin` transport rather than custom argv
+  chunking.
 - Added production-shaped and race-focused coverage for ignored post-turn
   writes, pending and inherited children, B/E ownership, concurrent close,
-  oversize/refusal behavior, and injected failures.
-- Focused evidence before final rebase: `Tests/Chat/test_change_turn_tracking.py`
-  passed 88 tests; `Tests/Workspaces/test_change_tracking.py` plus
-  `Tests/Workspaces/test_change_bounds.py` passed 62 tests; scoped Ruff,
-  `compileall`, and `git diff --check` passed.
+  oversize/refusal behavior, and injected failures. Final review also added a
+  pending-at-successor-B regression so later child writes receive the existing
+  concurrent-sub-agent disclosure.
+- After rebasing onto current `origin/dev`,
+  `Tests/Chat/test_change_turn_tracking.py` passed 89 tests and
+  `Tests/Workspaces/test_change_tracking.py` plus
+  `Tests/Workspaces/test_change_bounds.py` passed 62 tests. Scoped Ruff,
+  `compileall`, and `git diff --check` also passed.
 - The adjacent Chat aggregate has two baseline-only failures in
   `test_child_run_scope_ordering.py` and `test_fleet_settle_fanout.py`: both
   monkeypatch `_persist` with the old `(self, run_id, outcome)` signature while
   current `origin/dev` calls `_persist(run_id, outcome, durable_handle_ids)`.
   The task-focused module does not fail.
+- Two independent final reviewers passed the disclosure fix, path-transport
+  simplification, state cleanup, acceptance criteria, and governance links.
 - Governance: [ADR-092](../decisions/092-console-live-child-write-path-boundaries.md),
   [design](../../Docs/superpowers/specs/2026-08-26-task-15671-ignored-survivor-write-tracking-design.md),
   and [implementation plan](../../Docs/superpowers/plans/2026-08-26-task-15671-ignored-survivor-write-tracking-implementation.md).

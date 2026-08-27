@@ -100,14 +100,6 @@ _LOCK_RETRY_SECONDS = 0.05
 
 _GIT_TIMEOUT_SECONDS = 120.0
 
-_FORCE_REMOVE_ARGV_BUDGET_BYTES = 8 * 1024
-
-
-def _conservative_argv_cost(argument: str) -> int:
-    """Bound encoded argument cost after quoting plus its separator."""
-    return 2 * len(os.fsencode(argument)) + 3
-
-
 class ChangeTrackingError(Exception):
     """A shadow-repo operation failed. Callers treat this as degradation,
     never as a reason to block an agent run (spec §2 failure posture)."""
@@ -455,41 +447,18 @@ class ShadowRepo:
     def _update_index_exact_paths(
         self, option: str, paths: Sequence[str]
     ) -> None:
-        """Update exact index paths in conservatively bounded argv chunks."""
+        """Update exact index paths through Git's NUL-delimited stdin."""
         if not paths:
             return
-        args = ("update-index", option, "--")
-        command_bytes = sum(
-            _conservative_argv_cost(arg)
-            for arg in (
-                self._git,
-                "--git-dir",
-                str(self.git_dir),
-                "--work-tree",
-                str(self.root),
-                *args,
-            )
+        input_data = b"".join(os.fsencode(path) + b"\0" for path in paths)
+        self._run(
+            "update-index",
+            option,
+            "-z",
+            "--stdin",
+            binary=True,
+            input_data=input_data,
         )
-        chunk: list[str] = []
-        chunk_bytes = command_bytes
-        for path in paths:
-            path_bytes = _conservative_argv_cost(path)
-            if (
-                chunk
-                and chunk_bytes + path_bytes
-                > _FORCE_REMOVE_ARGV_BUDGET_BYTES
-            ):
-                self._run(*args, *chunk)
-                chunk = []
-                chunk_bytes = command_bytes
-            chunk.append(path)
-            chunk_bytes += path_bytes
-            if chunk_bytes > _FORCE_REMOVE_ARGV_BUDGET_BYTES:
-                self._run(*args, *chunk)
-                chunk = []
-                chunk_bytes = command_bytes
-        if chunk:
-            self._run(*args, *chunk)
 
     def _validate_new_index_paths(
         self,

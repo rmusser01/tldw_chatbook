@@ -2,7 +2,7 @@
 
 Status: Accepted
 Date: 2026-08-26
-Related Task: [TASK-15671](../tasks/task-15671%20-%20The-.gitignore-force-add-carve-out-does-not-extend-to-a-survivor-window.md)
+Related Task: [TASK-15671](../tasks/task-15671%20-%20The-gitignore-force-add-carve-out-does-not-extend-to-a-survivor-window.md)
 Related Spec: [Ignored survivor-write tracking](../../Docs/superpowers/specs/2026-08-26-task-15671-ignored-survivor-write-tracking-design.md)
 Extends: ADR-089
 
@@ -28,8 +28,8 @@ shadow repository lock. Supplied-SHA closure never rewrites that SHA, but may
 prime the index so a path first available after B appears at successor E with
 the existing concurrent-subagent disclosure.
 
-The projection stores only owner identity, child run identity, scope count, and
-normalized path strings. AgentRunsDB remains durable step authority. No file
+The projection stores only owner identity, scope counts, and normalized path
+strings. AgentRunsDB remains durable step authority. No file
 content, step payload, schema row, filesystem watcher, or polling job is added.
 
 ## Context

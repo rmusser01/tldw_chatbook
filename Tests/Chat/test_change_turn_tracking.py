@@ -10,6 +10,7 @@ from __future__ import annotations
 import asyncio
 import contextlib
 import json
+import os
 import sqlite3
 import threading
 import time
@@ -281,11 +282,9 @@ def test_snapshot_removes_tip_entries_when_directory_becomes_nested_repo(
     assert str(repo._run("ls-files", "--", child.name).stdout).strip() == ""
 
 
-def test_final_index_validation_chunks_exact_force_removals(
+def test_final_index_validation_uses_nul_delimited_force_removals(
     tracker, root, monkeypatch
 ):
-    import os as _os
-
     repo = tracker.service.repo_for_root(root)
     ordinary_paths = tuple(
         f"nested/dir-{index:05d}/{'x' * 180}-{index:05d}.txt"
@@ -297,7 +296,7 @@ def test_final_index_validation_chunks_exact_force_removals(
     stage_entries = tuple(
         f"100644 {object_id} 0\t{path}" for path in paths
     )
-    calls: list[tuple[str, ...]] = []
+    calls: list[tuple[tuple[str, ...], dict]] = []
 
     def fake_z_tokens(*args):
         if args[:4] == ("ls-tree", "-r", "-z", "--name-only"):
@@ -306,8 +305,8 @@ def test_final_index_validation_chunks_exact_force_removals(
             return list(stage_entries)
         raise AssertionError(f"unexpected git token request: {args!r}")
 
-    def record_run(*args, **_kwargs):
-        calls.append(args)
+    def record_run(*args, **kwargs):
+        calls.append((args, kwargs))
 
     monkeypatch.setattr(repo, "tip", lambda: "tip")
     monkeypatch.setattr(repo, "_z_tokens", fake_z_tokens)
@@ -316,39 +315,22 @@ def test_final_index_validation_chunks_exact_force_removals(
 
     repo._validate_new_index_paths()
 
-    assert len(calls) > 1
-    assert all(
-        call[:3] == ("update-index", "--force-remove", "--")
-        for call in calls
-    )
-    base_args = (
-        repo._git,
-        "--git-dir",
-        str(repo.git_dir),
-        "--work-tree",
-        str(repo.root),
-    )
-
-    def conservative_cost(args):
-        return sum(2 * len(_os.fsencode(arg)) + 3 for arg in args)
-
-    for call in calls:
-        assert (
-            conservative_cost((*base_args, *call)) <= 8 * 1024
-            or call[3:] == (overlong,)
-        )
-    assert next(call for call in calls if overlong in call)[3:] == (overlong,)
-    assert tuple(path for call in calls for path in call[3:]) == paths
+    assert len(calls) == 1
+    args, kwargs = calls[0]
+    assert args == ("update-index", "--force-remove", "-z", "--stdin")
+    assert kwargs == {
+        "binary": True,
+        "input_data": b"".join(os.fsencode(path) + b"\0" for path in paths),
+    }
 
 
 @pytest.mark.parametrize(
     ("operation", "staging_rounds"),
     (("snapshot", 2), ("force_add", 1)),
 )
-def test_exact_force_add_paths_are_chunked_with_conservative_argv_budget(
+def test_exact_force_add_paths_use_nul_delimited_stdin(
     tracker, root, monkeypatch, operation, staging_rounds
 ):
-    import os as _os
     import subprocess as _sp
 
     repo = tracker.service.repo_for_root(root)
@@ -359,12 +341,12 @@ def test_exact_force_add_paths_are_chunked_with_conservative_argv_budget(
     )
     overlong = f"ignored/{'y' * 5_000}"
     paths = (*ordinary_paths[:1_000], overlong, *ordinary_paths[1_000:])
-    calls: list[tuple[str, ...]] = []
+    calls: list[tuple[tuple[str, ...], dict]] = []
     original_run = repo._run
 
     def record_exact_add(*args, **kwargs):
         if args[:2] == ("update-index", "--add"):
-            calls.append(args)
+            calls.append((args, kwargs))
             return _sp.CompletedProcess(args, 0, stdout="", stderr="")
         return original_run(*args, **kwargs)
 
@@ -377,32 +359,13 @@ def test_exact_force_add_paths_are_chunked_with_conservative_argv_budget(
     else:
         repo.force_add(paths)
 
-    base_args = (
-        repo._git,
-        "--git-dir",
-        str(repo.git_dir),
-        "--work-tree",
-        str(repo.root),
-    )
-
-    def conservative_cost(args):
-        return sum(2 * len(_os.fsencode(arg)) + 3 for arg in args)
-
-    assert tuple(path for call in calls for path in call[3:]) == (
-        paths * staging_rounds
-    )
+    assert len(calls) == staging_rounds
+    expected_input = b"".join(os.fsencode(path) + b"\0" for path in paths)
     assert all(
-        call[:3] == ("update-index", "--add", "--") for call in calls
+        args == ("update-index", "--add", "-z", "--stdin")
+        and kwargs == {"binary": True, "input_data": expected_input}
+        for args, kwargs in calls
     )
-    for call in calls:
-        assert (
-            conservative_cost((*base_args, *call)) <= 8 * 1024
-            or call[3:] == (overlong,)
-        )
-    overlong_calls = [call for call in calls if overlong in call]
-    assert [call[3:] for call in overlong_calls] == [
-        (overlong,)
-    ] * staging_rounds
 
 
 def test_force_add_rejects_root_and_directory_paths(tracker, root, monkeypatch):
@@ -2327,6 +2290,102 @@ def test_pending_child_before_scope_entry_keeps_ignored_write_reviewable(
     )
 
 
+def test_pending_inherited_child_at_successor_b_marks_concurrent_turn(
+    tmp_path, root, tracker, monkeypatch
+):
+    import tldw_chatbook.config as config_module
+
+    monkeypatch.setattr(
+        config_module,
+        "get_cli_setting",
+        lambda section, key=None, default=None: (
+            True if section == "tools" and key == "write_file_enabled" else default
+        ),
+    )
+
+    target = root / "pending-successor-output.txt"
+    sentinel = "written by a child that was pending at successor B\n"
+    (root / ".gitignore").write_text(f"{target.name}\n")
+    child_write_gate = threading.Event()
+    scope_waiting = threading.Event()
+    enter_scope = threading.Event()
+
+    def release_child_during_successor() -> None:
+        enter_scope.set()
+        child_write_gate.set()
+        _join_fleet_threads()
+
+    gateway = _FleetSurvivorGateway(
+        parent_scripts=[
+            [_spawn_fence("write during successor")],
+            ["parent one done"],
+            [_calc_fence()],
+            ["parent two done"],
+        ],
+        gate=child_write_gate,
+        parent_side_effect=release_child_during_successor,
+        parent_side_effect_on_call=4,
+        child_scripts=[[_write_fence(Path(target.name), sentinel)], ["child done"]],
+    )
+    bridge, db, store, session, aid = _bridge_with(tmp_path, gateway, tracker)
+    original_scope = bridge._child_run_scope
+
+    @contextlib.contextmanager
+    def delayed_scope(*args, **kwargs):
+        scope_waiting.set()
+        assert enter_scope.wait(5), "test barrier timed out before child scope entry"
+        with original_scope(*args, **kwargs):
+            yield
+
+    monkeypatch.setattr(bridge, "_child_run_scope", delayed_scope)
+    try:
+        _run(
+            bridge,
+            session,
+            aid,
+            root,
+            builtin_gate=_FakeBuiltinGateForRegistry(refuse=False),
+            scratch_root=root,
+            scratch_lease=lambda: contextlib.nullcontext(root),
+        )
+        assert scope_waiting.wait(5), "child never reached the pre-scope barrier"
+        assert bridge._live_child_count("conv-1") == 0
+        assert not target.exists()
+
+        run_2, outcome_2 = _run(
+            bridge,
+            session,
+            _next_turn(store, session),
+            root,
+            builtin_gate=_FakeBuiltinGateForRegistry(refuse=False),
+            scratch_root=root,
+            scratch_lease=lambda: contextlib.nullcontext(root),
+        )
+        assert outcome_2.status == "done"
+    finally:
+        enter_scope.set()
+        child_write_gate.set()
+        _join_fleet_threads()
+
+    repo = tracker.service.repo_for_root(root)
+    rows = db.change_snapshots_for_run(run_2)
+    rows_listing_target = [
+        row
+        for row in rows
+        if target.name
+        in [
+            changed.path
+            for changed in repo.changed_files(row["baseline_sha"], row["end_sha"])
+        ]
+    ]
+    assert len(rows_listing_target) == 1, rows
+    assert rows_listing_target[0]["kind"] == "turn_concurrent_subagent"
+    assert any(
+        "earlier turn" in message.content and "sub-agent" in message.content
+        for message in _tool_rows(store, session)
+    )
+
+
 def test_child_write_during_blocked_parent_e_is_retried_by_immediate_close(
     tmp_path, root, tracker, monkeypatch
 ):
@@ -2645,7 +2704,6 @@ def test_child_write_path_normalization_failure_is_best_effort(
         for step in child_runs[0]["steps"]
     ), child_runs[0]["steps"]
     assert len(child_states) == 1
-    assert child_states[0].run_ids
     assert child_states[0].touched_paths == {str(sibling)}
 
 
@@ -2731,7 +2789,6 @@ def test_scratch_root_normalization_failure_keeps_child_step_processing(
     assert len(child_runs) == 1, child_runs
     assert child_runs[0]["status"] == "done"
     assert len(child_states) == 1
-    assert child_states[0].run_ids
     assert child_states[0].touched_paths == {target.name}
 
 
