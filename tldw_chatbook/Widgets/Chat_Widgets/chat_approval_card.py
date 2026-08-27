@@ -496,6 +496,8 @@ class ChatApprovalCard(Container):
             The row's decision Select when there is one to decide, else the
             card's own container id -- never the Submit button.
         """
+        if self._batch_phase == "finishing":
+            return "chat-approval-card"
         try:
             selects = self.query(".approval-row-decision")
         except Exception:
@@ -511,13 +513,17 @@ class ChatApprovalCard(Container):
         The single seam both review entry points use, so a third caller
         cannot reintroduce a focus target that commits on Enter.
         """
+        if self._batch_phase == "finishing":
+            self.focus()
+            return
         try:
             selects = list(self.query(".approval-row-decision"))
         except Exception:
             selects = []
-        if selects:
-            selects[0].focus()
-            return
+        for select in selects:
+            if not select.disabled and select.can_focus:
+                select.focus()
+                return
         # No rows to decide (card shown for a batch that has since resolved):
         # focus the card itself rather than an action button.
         try:
@@ -661,6 +667,10 @@ class ChatApprovalCard(Container):
         self._batch_round_id = round_id
         self._batch_phase = "finishing" if phase == "finishing" else "approval"
         finishing = self._batch_phase == "finishing"
+        # A finishing card is status, not a decision form. Keep the existing
+        # card container as its keyboard inspection target while every
+        # decision control is disabled.
+        self.can_focus = finishing
         title.update(
             "Finishing — Stop will not cancel" if finishing else "Approval required"
         )
@@ -674,6 +684,7 @@ class ChatApprovalCard(Container):
             pass
         if not calls:
             self.display = False
+            self.can_focus = False
             batch_body.display = False
             self._batch_names = []
             self._batch_selects = []

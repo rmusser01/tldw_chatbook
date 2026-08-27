@@ -1657,13 +1657,11 @@ def build_local_review_hook(
     the full rationale -- every binding point applies unchanged here):
     clear-first stamps at entry (I3: a raising approval round trip must
     never leave a stale prior-turn stamp live for the fail-open runtime
-    to hand to `invoke()`), exactly ONE approval round trip per batch,
-    and verdicts only ever "proceed" -- `LocalToolProvider.invoke()`
-    single-sources refusals (pinned LOCAL_* refusal strings) and the
-    persistence side effects of approve_session/always_allow stamps, so
-    this hook never returns a refusal string itself. Calls the provider
-    doesn't own resolve `None` from `pending_gate_for` and never enter
-    the batch.
+    to hand to `invoke()`), and exactly ONE approval round trip per batch.
+    Name-keyed stamps keep the widest approved scope because the provider
+    gate is tool-scoped; per-call refusal verdicts stop only the denied
+    sibling before dispatch. Calls the provider doesn't own resolve
+    `None` from `pending_gate_for` and never enter the batch.
 
     Args:
         provider: This run's already-composed `LocalToolProvider` (built
@@ -1686,14 +1684,51 @@ def build_local_review_hook(
         provider.apply_batch_decisions(run_id, {})
         pending: list["MCPPendingCall"] = []
         for call in calls:
-            gate = provider.pending_gate_for(call.name, call.args)
+            gate = provider.pending_gate_for(
+                call.name,
+                call.args,
+                str(getattr(call, "call_id", "") or ""),
+            )
             if gate is not None:
                 pending.append(gate)
         if not pending:
             return {}
         decisions = request_approvals(pending)
-        provider.apply_batch_decisions(run_id, decisions)
-        return {call.llm_name: "proceed" for call in pending}
+
+        def _decision_for(row: "MCPPendingCall") -> str | None:
+            key = str(getattr(row, "call_id", "") or "")
+            if key and key in decisions:
+                return decisions[key]
+            return decisions.get(row.llm_name)
+
+        approvals: dict[str, str] = {}
+        denied: set[str] = set()
+        for row in pending:
+            decision = _decision_for(row)
+            if decision is None:
+                continue
+            if decision == "deny":
+                denied.add(row.llm_name)
+                continue
+            current = approvals.get(row.llm_name)
+            if current is None or _APPROVAL_SCOPE_RANK.get(
+                decision, 0
+            ) > _APPROVAL_SCOPE_RANK.get(current, 0):
+                approvals[row.llm_name] = decision
+        stamps = dict(approvals)
+        for name in denied:
+            stamps.setdefault(name, "deny")
+        provider.apply_batch_decisions(run_id, stamps)
+
+        verdicts: dict[str, str] = {
+            row.llm_name: "proceed" for row in pending
+        }
+        for row in pending:
+            if _decision_for(row) != "deny":
+                continue
+            key = str(getattr(row, "call_id", "") or "") or row.llm_name
+            verdicts[key] = USER_DENIED_REFUSAL.format(name=row.llm_name)
+        return verdicts
 
     return review_tool_calls
 

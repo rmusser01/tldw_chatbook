@@ -72,7 +72,8 @@ tools available to the agent (the chip stays hidden until tools are counted,
 which happens after your first send), and
 "Approvals: N pending" counts tool calls waiting on you. The Approvals chip is
 clickable: it jumps you to the pending approval card (with nothing pending it
-just says "No approval is pending.").
+just says "No approval is pending."). A mutation already in **Finishing** is
+status, not a pending decision, so it no longer contributes to this count.
 
 ## Features & controls
 
@@ -140,7 +141,9 @@ mutation starts, the card changes to **“Finishing — Stop will not cancel”*
 its decision controls are disabled and the row stays visible until the actual
 commit, rollback, or scrubbed failure result arrives. Stop can still end the
 rest of the run, but it cannot truthfully cancel a transaction already in
-progress, so Console does not claim that it did. Closing that Console chat
+progress, so Console does not claim that it did. Keyboard inspection focuses
+the finishing card itself rather than one of its disabled decision controls.
+Closing that Console chat
 removes its finishing row because the session no longer exists; it does not
 retroactively cancel a mutation that already started.
 

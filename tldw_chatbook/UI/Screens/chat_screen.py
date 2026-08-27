@@ -9625,10 +9625,21 @@ class ChatScreen(BaseAppScreen):
             return coerce_non_negative_int(explicit_count)
 
         pending_approval = getattr(self.app_instance, "pending_console_approval", None)
-        if pending_approval:
+        if pending_approval and not (
+            isinstance(pending_approval, dict)
+            and pending_approval.get("phase") == "finishing"
+        ):
             return 1
 
-        return 1 if self._task_resume_state.has_pending_approval() else 0
+        task_approval = self._task_resume_state.pending_approval
+        if not task_approval:
+            return 0
+        if (
+            isinstance(task_approval, dict)
+            and task_approval.get("phase") == "finishing"
+        ):
+            return 0
+        return 1
 
     def _console_tool_count(self) -> int:
         return coerce_non_negative_int(

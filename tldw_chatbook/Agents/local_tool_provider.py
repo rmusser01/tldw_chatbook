@@ -717,13 +717,17 @@ class LocalToolProvider:
                 }
                 self._stamps.update(saved)
 
-    def pending_gate_for(self, name: str, args: dict) -> MCPPendingCall | None:
+    def pending_gate_for(
+        self, name: str, args: dict, call_id: str = ""
+    ) -> MCPPendingCall | None:
         """The approval payload when this call needs human gating, else None.
 
         Args:
             name: Catalog id (``local:<name>``) or bare LLM-facing tool
                 name -- same prefix tolerance as ``invoke()``.
             args: The call's arguments, echoed into the pending payload.
+            call_id: Provider call identity when available. Empty preserves
+                the name-keyed fence and single-call fallback contract.
 
         Returns:
             The ``MCPPendingCall`` to render for approval, or ``None``
@@ -741,12 +745,12 @@ class LocalToolProvider:
         if spec is None:
             return None
         gate, _resolve_failed = self._resolve_pending_gate(
-            name, args, self.hub_tool_for(name)
+            name, args, self.hub_tool_for(name), call_id=call_id
         )
         return gate
 
     def _resolve_pending_gate(
-        self, name: str, args: dict, hub: HubTool
+        self, name: str, args: dict, hub: HubTool, *, call_id: str = ""
     ) -> tuple[MCPPendingCall | None, bool]:
         """Shared resolution behind `pending_gate_for()`, plus (Fix Round I,
         Item 5) whether a `None` result came from the resolver RAISING.
@@ -773,6 +777,8 @@ class LocalToolProvider:
                 the caller).
             args: The call's arguments, echoed into the pending payload.
             hub: The tool's ``HubTool`` view for permission resolution.
+            call_id: Provider call identity when the batch runtime supplied
+                one; empty on the compatible fence/fallback paths.
 
         Returns:
             ``(gate, resolve_failed)`` -- ``gate`` is the pending call to
@@ -809,6 +815,7 @@ class LocalToolProvider:
                 else args
             ),
             reason=reason,
+            call_id=str(call_id or ""),
             effects=self._specs[name].approval_effects,
             execution_policy=self._specs[name].execution_policy,
         )

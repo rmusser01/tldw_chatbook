@@ -220,8 +220,13 @@ expiry or Stop does not return control while its side effects may continue; the
 existing tool row changes to the disabled, keyed finishing state **“Finishing
 — Stop will not cancel”** until commit, rollback, or a scrubbed crash result
 produces one real terminal. The run/call-keyed completion path removes the row;
-run termination sweeps an approved row that never reached dispatch. This
-property neither authorizes the call nor changes external exposure. Closing a
+native local-tool call ids preserve independent decisions and out-of-order
+completion for same-name calls, while the permission store keeps the widest
+approved name-level scope. Run termination sweeps an approved row that never
+reached dispatch from a `BaseException`-safe loop terminal boundary. A
+finishing row does not count as pending approval, and its keyboard inspection
+target is the focusable status card rather than a disabled decision control.
+This property neither authorizes the call nor changes external exposure. Closing a
 Console session removes its retained finishing rows because their UI owner no
 longer exists, without representing that teardown as cancellation of an
 already-started mutation.

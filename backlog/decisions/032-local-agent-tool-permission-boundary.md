@@ -224,10 +224,16 @@ begins, Stop or budget expiry cannot emit a cancellation/timeout while the
 mutation can still commit. The approval payload therefore carries the same
 code-owned policy into Console: after approval, the keyed row remains visible
 as **“Finishing — Stop will not cancel”** with every decision control disabled.
-The real run/call-keyed provider terminal removes that row, including a
-scrubbed crash result; run termination removes any approved row that never
-reached dispatch. Session close removes finishing rows owned by the deleted UI
-session without representing that removal as cancellation. Provider
+Native call ids pass through the local approval provider so same-name calls
+retain per-call decisions and keyed, out-of-order completion; the tool-scoped
+permission stamp preserves the widest approved scope and per-call refusals stop
+before dispatch. The real run/call-keyed provider terminal removes that row,
+including a scrubbed crash result; a `BaseException`-safe loop-terminal
+observer removes any approved row that never reached dispatch exactly once.
+Finishing is status rather than a pending approval count, and keyboard
+inspection targets the focusable card instead of a disabled decision control.
+Session close removes finishing rows owned by the deleted UI session without
+representing that removal as cancellation. Provider
 ``BaseException`` terminals are converted into the same single scrubbed
 ``ToolResult`` contract rather than escaping the run.
 This policy grants no permission, changes no risk tag, and adds no external

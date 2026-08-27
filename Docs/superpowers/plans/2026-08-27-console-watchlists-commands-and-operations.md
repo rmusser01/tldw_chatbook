@@ -180,8 +180,13 @@ Do not change the timeout behavior of ordinary read or network tools. The
 existing mutation approval row remains keyed and visible after approval as
 **“Finishing — Stop will not cancel”**, with every decision control disabled,
 until the real tool-completion path returns commit, rollback, or a scrubbed
-crash result. Run completion clears an approved row that never dispatched. The
-closing-session path removes finishing rows owned by that deleted session
+crash result. Carry native call ids through local review so same-name calls can
+be decided and completed independently; name-level permission stamps retain the
+widest approved scope. Finishing rows are status rather than pending approvals,
+and keyboard inspection targets the focusable card rather than a disabled
+decision control. Run completion, including a loop-level `BaseException`,
+clears an approved row that never dispatched exactly once. The closing-session
+path removes finishing rows owned by that deleted session
 without claiming to cancel work already started. The execution policy does not
 authorize a call or change its exposure.
 

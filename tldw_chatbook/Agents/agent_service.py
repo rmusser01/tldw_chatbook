@@ -5644,71 +5644,79 @@ class AgentService:
         )
         deps.owner_seq_start = lifecycle_owner_seq
         try:
-            # PR2a Task 7: bind THIS run as the dispatching run for the
-            # whole loop, on the loop's own thread.
-            #
-            # `_make_invoke_tool` already binds it around each provider
-            # tool call, but that binding is established on the per-call
-            # daemon thread and covers only what runs there. Two things
-            # that arm HUMAN APPROVAL CARDS run here, on the loop thread,
-            # instead:
-            #
-            #   1. `review_tool_calls` -- one batch-approval round trip
-            #      per turn (`ConsoleChatController.request_mcp_approvals`).
-            #   2. The in-loop runtime tools, of which `run_skill_script`
-            #      raises a confirm card of its own (see agent_runtime's
-            #      RUN_SKILL_SCRIPT dispatch: called straight from the
-            #      loop, never through `invoke_tool`).
-            #
-            # Both bridges record `current_run_id()` at arm time so a
-            # cancelled child's card can be revoked without touching a
-            # live sibling's -- and neither can be handed the id as a
-            # parameter (the approval bridge is a pre-bound partial shared
-            # with `MCPToolProvider.approval_callback`; the runtime-tool
-            # closures are built by the bridge, one layer below any run
-            # identity). One binding here covers both, and every future
-            # loop-thread consumer, with no signature churn.
-            #
-            # Nested inline sub-agent runs unwind LIFO (`use_run_actor`
-            # resets in its own `finally`), and a threaded child simply
-            # sets its own value on its own thread.
-            continuation_kwargs: dict[str, Any] = {}
-            if restore_provider_continuation is not None:
-                continuation_kwargs["restore_provider_continuation"] = (
-                    restore_provider_continuation
-                )
-            if restore_provider_target is not None:
-                continuation_kwargs["restore_provider_target"] = restore_provider_target
-            if resume_provider_continuation:
-                continuation_kwargs["resume_provider_continuation"] = True
-            with use_run_actor(run_actor):
-                outcome = run_agent_loop(
-                    config,
-                    run_messages,
-                    active,
-                    deps,
-                    **continuation_kwargs,
-                )
-        except _ProjectInstructionPayloadError as error:
-            outcome = RunOutcome(
-                status=RUN_ERROR,
-                steps=[self._service_error_step(run_id, str(error))],
-            )
-        except Exception as exc:  # noqa: BLE001 — a run never raises out
-            from tldw_chatbook.Chat.provider_failures import describe_stream_failure
-
-            # TASK-335: raw str(exc) is httpx's status line + MDN boilerplate;
-            # the classified copy carries the provider's response-body message
-            # instead — this summary becomes user-facing failure copy.
-            outcome = RunOutcome(
-                status=RUN_ERROR,
-                steps=[
-                    self._service_error_step(
-                        run_id, describe_stream_failure(exc)[:500]
+            try:
+                # PR2a Task 7: bind THIS run as the dispatching run for the
+                # whole loop, on the loop's own thread.
+                #
+                # `_make_invoke_tool` already binds it around each provider
+                # tool call, but that binding is established on the per-call
+                # daemon thread and covers only what runs there. Two things
+                # that arm HUMAN APPROVAL CARDS run here, on the loop thread,
+                # instead:
+                #
+                #   1. `review_tool_calls` -- one batch-approval round trip
+                #      per turn (`ConsoleChatController.request_mcp_approvals`).
+                #   2. The in-loop runtime tools, of which `run_skill_script`
+                #      raises a confirm card of its own (see agent_runtime's
+                #      RUN_SKILL_SCRIPT dispatch: called straight from the
+                #      loop, never through `invoke_tool`).
+                #
+                # Both bridges record `current_run_id()` at arm time so a
+                # cancelled child's card can be revoked without touching a
+                # live sibling's -- and neither can be handed the id as a
+                # parameter (the approval bridge is a pre-bound partial shared
+                # with `MCPToolProvider.approval_callback`; the runtime-tool
+                # closures are built by the bridge, one layer below any run
+                # identity). One binding here covers both, and every future
+                # loop-thread consumer, with no signature churn.
+                #
+                # Nested inline sub-agent runs unwind LIFO (`use_run_actor`
+                # resets in its own `finally`), and a threaded child simply
+                # sets its own value on its own thread.
+                continuation_kwargs: dict[str, Any] = {}
+                if restore_provider_continuation is not None:
+                    continuation_kwargs["restore_provider_continuation"] = (
+                        restore_provider_continuation
                     )
-                ],
-            )
-        self._notify_run_terminal(run_id)
+                if restore_provider_target is not None:
+                    continuation_kwargs["restore_provider_target"] = (
+                        restore_provider_target
+                    )
+                if resume_provider_continuation:
+                    continuation_kwargs["resume_provider_continuation"] = True
+                with use_run_actor(run_actor):
+                    outcome = run_agent_loop(
+                        config,
+                        run_messages,
+                        active,
+                        deps,
+                        **continuation_kwargs,
+                    )
+            except _ProjectInstructionPayloadError as error:
+                outcome = RunOutcome(
+                    status=RUN_ERROR,
+                    steps=[self._service_error_step(run_id, str(error))],
+                )
+            except Exception as exc:  # noqa: BLE001 — a run never raises out
+                from tldw_chatbook.Chat.provider_failures import (
+                    describe_stream_failure,
+                )
+
+                # TASK-335: raw str(exc) is httpx's status line + MDN boilerplate;
+                # the classified copy carries the provider's response-body message
+                # instead — this summary becomes user-facing failure copy.
+                outcome = RunOutcome(
+                    status=RUN_ERROR,
+                    steps=[
+                        self._service_error_step(
+                            run_id, describe_stream_failure(exc)[:500]
+                        )
+                    ],
+                )
+        finally:
+            # A BaseException still owns its normal control-flow semantics, but
+            # approved definitive rows must not survive the run that owned them.
+            self._notify_run_terminal(run_id)
         self._persist(run_id, outcome, durable_handle_ids)
         return run_id, outcome
 

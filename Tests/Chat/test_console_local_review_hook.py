@@ -22,6 +22,7 @@ from tldw_chatbook.Agents.mcp_tool_provider import MCPPendingCall
 from tldw_chatbook.Agents.run_context import use_run_id
 from tldw_chatbook.Chat.console_chat_controller import (
     ConsoleChatController,
+    USER_DENIED_REFUSAL,
     build_combined_review_hook,
     build_local_review_hook,
 )
@@ -104,6 +105,47 @@ def test_hook_gates_ask_calls_in_one_batch(tmp_path):
     assert p._stamps == {(RUN, "fs_list"): "approve_once"}
 
 
+def test_hook_keeps_same_name_watchlist_decisions_per_call(tmp_path):
+    """One denied collection target must not cancel its approved sibling."""
+    p = provider(ASK, tmp_path)
+    seen: list[list[MCPPendingCall]] = []
+
+    def decide(pending: list[MCPPendingCall]) -> dict[str, str]:
+        seen.append(pending)
+        return {
+            "call-denied": "deny",
+            "call-session": "approve_session",
+        }
+
+    hook = build_local_review_hook(p, decide)
+    verdicts = hook(
+        [
+            ToolCall(
+                name="watchlists_create_collection",
+                args={"name": "Blocked target", "if_exists": "conflict"},
+                call_id="call-denied",
+            ),
+            ToolCall(
+                name="watchlists_create_collection",
+                args={"name": "Approved target", "if_exists": "conflict"},
+                call_id="call-session",
+            ),
+        ],
+        RUN,
+    )
+
+    assert [row.call_id for row in seen[0]] == ["call-denied", "call-session"]
+    assert verdicts == {
+        "watchlists_create_collection": "proceed",
+        "call-denied": USER_DENIED_REFUSAL.format(
+            name="watchlists_create_collection"
+        ),
+    }
+    assert p._stamps == {
+        (RUN, "watchlists_create_collection"): "approve_session"
+    }
+
+
 def test_local_pending_gate_carries_descriptor_owned_effects(tmp_path):
     gate = provider(ASK, tmp_path).pending_gate_for("fs_list", {"path": "."})
 
@@ -161,7 +203,7 @@ def test_hook_skips_non_ask_calls(tmp_path):
     assert hook([ToolCall(name="fs_list", args={"path": "."})], RUN) == {}
 
 
-def test_combined_hook_merges_verdicts(tmp_path):
+def test_combined_hook_does_not_overwrite_a_local_refusal(tmp_path):
     p1, p2 = provider(ASK, tmp_path), provider(ASK, tmp_path)
     hook = build_combined_review_hook(
         [
@@ -169,9 +211,12 @@ def test_combined_hook_merges_verdicts(tmp_path):
             build_local_review_hook(p2, lambda pending: {"fs_list": "deny"}),
         ]
     )
-    # each provider only gates what it owns; both see the batch
+    # This deliberately impossible double-owner arrangement pins the merge
+    # safety rule: a later refusal cannot be weakened to proceed.
     out = hook([ToolCall(name="fs_list", args={"path": "."})], RUN)
-    assert out == {"fs_list": "proceed"}
+    assert out == {
+        "fs_list": USER_DENIED_REFUSAL.format(name="fs_list")
+    }
 
 
 def test_combined_hook_empty_list_is_noop():
