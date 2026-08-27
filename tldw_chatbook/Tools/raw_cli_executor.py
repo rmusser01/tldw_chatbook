@@ -43,6 +43,9 @@ RawCliTerminalState: TypeAlias = Literal[
     "cleanup_unproven",
 ]
 RawCliStream: TypeAlias = Literal["stdout", "stderr"]
+RawCliAdmissionCallback: TypeAlias = Callable[
+    [ExecutorProcessTree, Callable[[], None]], object
+]
 
 _SHELL_ENVIRONMENT_KEYS = (
     "PATH",
@@ -634,12 +637,72 @@ def _close_parent_queue(output_queue: Any) -> None:
     _safe_close(getattr(output_queue, "_writer", None))
 
 
+class _QueueRelay:
+    """Confine a possibly corrupt multiprocessing queue read to one daemon."""
+
+    def __init__(self, source: Any) -> None:
+        self._source = source
+        self._messages: queue.Queue[tuple[Any, ...]] = queue.Queue(
+            maxsize=_RAW_OUTPUT_QUEUE_SIZE
+        )
+        self._stop = threading.Event()
+        self._thread = threading.Thread(
+            target=self._run,
+            name="raw-cli-queue-relay",
+            daemon=True,
+        )
+
+    def start(self) -> None:
+        self._thread.start()
+
+    def get(self, *, timeout: float) -> tuple[Any, ...]:
+        """Read only the safe in-process relay queue."""
+        return self._messages.get(timeout=timeout)
+
+    def request_stop(self) -> None:
+        self._stop.set()
+
+    def join(self, timeout: float) -> bool:
+        """Wait boundedly and report whether the relay actually stopped."""
+        self._thread.join(max(0.0, timeout))
+        return not self._thread.is_alive()
+
+    def _run(self) -> None:
+        while not self._stop.is_set():
+            try:
+                message = self._source.get(timeout=_RAW_QUEUE_POLL_SECONDS)
+            except queue.Empty:
+                continue
+            except (EOFError, OSError, ValueError):
+                return
+            while not self._stop.is_set():
+                try:
+                    self._messages.put(message, timeout=_RAW_QUEUE_POLL_SECONDS)
+                    break
+                except queue.Full:
+                    continue
+
+
+def _request_relay_stop(relay: _QueueRelay | None) -> None:
+    """Stop new IPC reads and boundedly settle an ordinary queue read."""
+    if relay is None:
+        return
+    relay.request_stop()
+    relay.join(_RAW_QUEUE_POLL_SECONDS * 2)
+
+
 class _LaunchCommit:
     """Monotonically commit launch and timestamp it inside the runtime lock."""
 
-    def __init__(self, tree: ExecutorProcessTree, launch_event: Any) -> None:
+    def __init__(
+        self,
+        tree: ExecutorProcessTree,
+        launch_event: Any,
+        cancel_event: Any,
+    ) -> None:
         self._tree = tree
         self._launch_event = launch_event
+        self._cancel_event = cancel_event
         self._lock = threading.Lock()
         self._committed = threading.Event()
         self._closed = False
@@ -647,6 +710,9 @@ class _LaunchCommit:
 
     def __call__(self) -> None:
         with self._lock:
+            if self._cancel_event.is_set():
+                self._closed = True
+                return
             if self._closed or self._started_at is not None or not self._tree.admitted:
                 return
             self._started_at = time.monotonic()
@@ -746,9 +812,13 @@ class RawShellExecutor:
         *,
         cancel_event: Any,
         on_event: Callable[[RawCliStreamEvent], None],
-        admit_worker: Callable[[ExecutorProcessTree, Callable[[], None]], bool],
+        admit_worker: RawCliAdmissionCallback,
     ) -> RawCliResult:
-        """Validate, admit, stream, and finalize exactly one shell invocation."""
+        """Execute once; ``admit_worker``'s return value is ignored.
+
+        The callback must call ``tree.admit()`` and then ``commit_launch()`` while
+        holding its authority lock. Launch commitment alone signals success.
+        """
         validate_raw_cli_request(request)
         if not callable(on_event) or not callable(admit_worker):
             raise TypeError("on_event and admit_worker must be callable")
@@ -761,6 +831,7 @@ class RawShellExecutor:
         identity_receive: Any | None = None
         identity_send: Any | None = None
         output_queue: Any | None = None
+        output_relay: _QueueRelay | None = None
         abort_event: Any | None = None
         launch_event: Any | None = None
         launch_commit: _LaunchCommit | None = None
@@ -831,7 +902,7 @@ class RawShellExecutor:
                 )
 
             tree = ExecutorProcessTree(process, admission_event, identity)
-            launch_commit = _LaunchCommit(tree, launch_event)
+            launch_commit = _LaunchCommit(tree, launch_event, cancel_event)
             admission_done = threading.Event()
 
             def run_admission() -> None:
@@ -878,10 +949,12 @@ class RawShellExecutor:
                     cleanup_proven,
                 )
 
+            output_relay = _QueueRelay(output_queue)
+            output_relay.start()
             terminal_state, exit_code, resolved_shell, triggered = self._consume(
                 request,
                 process,
-                output_queue,
+                output_relay,
                 accumulator,
                 cancel_event,
                 on_event,
@@ -891,8 +964,11 @@ class RawShellExecutor:
                 shell_exit_code,
             )
             if triggered:
+                _request_relay_stop(output_relay)
                 cleanup_proven = _cleanup_tree(tree, terminate=True)
             else:
+                process.join(_RAW_QUEUE_POLL_SECONDS * 4)
+                _request_relay_stop(output_relay)
                 cleanup_proven = _cleanup_tree(tree, terminate=False)
             accumulator.finish_all(on_event)
             return self._result(
@@ -909,6 +985,7 @@ class RawShellExecutor:
                 launch_commit.close()
             if abort_event is not None:
                 abort_event.set()
+            _request_relay_stop(output_relay)
             if tree is not None:
                 _cleanup_tree(tree, terminate=False)
             elif _process_is_alive(process):
@@ -917,6 +994,8 @@ class RawShellExecutor:
             _safe_close(identity_send)
             if output_queue is not None:
                 _close_parent_queue(output_queue)
+            if output_relay is not None:
+                output_relay.join(_RAW_QUEUE_POLL_SECONDS * 2)
             spool_owner.close()
 
     @staticmethod
@@ -947,7 +1026,7 @@ class RawShellExecutor:
     def _consume(
         request: RawCliRequest,
         process: Any,
-        output_queue: Any,
+        messages: Any,
         accumulator: _OutputAccumulator,
         cancel_event: Any,
         on_event: Callable[[RawCliStreamEvent], None],
@@ -964,13 +1043,11 @@ class RawShellExecutor:
         while True:
             message: tuple[Any, ...] | None = None
             try:
-                message = output_queue.get(timeout=_RAW_QUEUE_POLL_SECONDS)
+                message = messages.get(timeout=_RAW_QUEUE_POLL_SECONDS)
                 dead_empty_polls = 0
             except queue.Empty:
                 if not _process_is_alive(process):
                     dead_empty_polls += 1
-                    if dead_empty_polls >= 4:
-                        return "cleanup_unproven", None, resolved_shell, False
 
             if message is not None:
                 kind = message[0]
@@ -995,7 +1072,12 @@ class RawShellExecutor:
                 if exited_terminal_seen and ended_streams == {"stdout", "stderr"}:
                     return "exited", exited_code, resolved_shell, False
                 if time.monotonic() - exited_at >= _RAW_POST_EXIT_DRAIN_SECONDS:
+                    if ended_streams != {"stdout", "stderr"}:
+                        accumulator.truncated = True
                     return "exited", exited_code, resolved_shell, True
+
+            if dead_empty_polls >= 4:
+                return "cleanup_unproven", None, resolved_shell, False
 
             if not _process_is_alive(process):
                 continue

@@ -6,6 +6,7 @@ import shutil
 import signal
 import subprocess
 import sys
+import threading
 import time
 from pathlib import Path
 from types import SimpleNamespace
@@ -333,6 +334,99 @@ def test_windows_dead_leader_still_terminates_and_proves_empty_job() -> None:
         ("join", 0.2),
         ("close_job", 99),
     ]
+
+
+def test_cleanup_serializes_late_windows_admission_and_closes_job_once() -> None:
+    calls: list[object] = []
+    terminate_entered = threading.Event()
+    release_terminate = threading.Event()
+
+    class BlockingWindowsApi(_FakeWindowsApi):
+        def terminate_job(self, job_handle: int) -> None:
+            calls.append(("terminate_job", job_handle))
+            terminate_entered.set()
+            assert release_terminate.wait(5.0)
+            process._alive = False
+
+    process = _FakeProcess(calls)
+    admission = _RecordingEvent(calls)
+    api = BlockingWindowsApi(calls)
+    identity = WorkerContainmentIdentity(pid=process.pid, process_group_id=None)
+    tree = ExecutorProcessTree(
+        process,
+        admission,
+        identity,
+        platform_name="nt",
+        windows_api=api,
+    )
+    tree.admit()
+    cleanup_results: list[bool] = []
+    late_errors: list[BaseException] = []
+    cleanup_started = threading.Event()
+
+    def run_cleanup() -> None:
+        cleanup_started.set()
+        cleanup_results.append(tree.close())
+
+    tree._lock.acquire()
+    cleanup = threading.Thread(target=run_cleanup)
+    cleanup.start()
+    assert cleanup_started.wait(5.0)
+    tree._lock.release()
+    assert terminate_entered.wait(5.0)
+
+    def late_admit() -> None:
+        try:
+            tree.admit()
+        except BaseException as error:
+            late_errors.append(error)
+
+    late = threading.Thread(target=late_admit)
+    late.start()
+    release_terminate.set()
+    cleanup.join(5.0)
+    late.join(5.0)
+
+    assert cleanup.is_alive() is False
+    assert late.is_alive() is False
+    assert cleanup_results == [True]
+    assert len(late_errors) == 1
+    assert isinstance(late_errors[0], ProcessContainmentError)
+    assert tree.admitted is False
+    assert tree._closed is True
+    assert tree._job_handle == 0
+    assert calls.count("create_job") == 1
+    assert calls.count(("close_job", 99)) == 1
+    assert calls.count("admit") == 1
+
+
+def test_cleanup_exception_permanently_closes_late_admission() -> None:
+    calls: list[object] = []
+    process = _FakeProcess(calls)
+    admission = _RecordingEvent(calls)
+    identity = WorkerContainmentIdentity(pid=process.pid, process_group_id=process.pid)
+    tree = ExecutorProcessTree(
+        process,
+        admission,
+        identity,
+        platform_name="posix",
+    )
+    tree.admit()
+
+    def fail_cleanup(**_kwargs: object) -> bool:
+        raise RuntimeError("synthetic cleanup failure")
+
+    tree._terminate_posix_group = fail_cleanup  # type: ignore[method-assign]
+
+    with pytest.raises(RuntimeError, match="synthetic cleanup failure"):
+        tree.close()
+    with pytest.raises(ProcessContainmentError):
+        tree.admit()
+
+    assert tree.admitted is False
+    assert tree.quarantined is True
+    assert tree._closed is True
+    assert tree.close() is False
 
 
 def test_unproven_tree_death_quarantines_containment(

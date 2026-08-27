@@ -7,6 +7,7 @@ import multiprocessing.queues
 from multiprocessing.connection import wait
 import os
 from pathlib import Path
+import queue
 import shlex
 import stat
 import subprocess
@@ -50,10 +51,9 @@ def _executor() -> Any:
     return executor_type()
 
 
-def _admit(tree: ExecutorProcessTree, commit_launch: Any) -> bool:
+def _admit(tree: ExecutorProcessTree, commit_launch: Any) -> None:
     tree.admit()
     commit_launch()
-    return True
 
 
 def _python_command(source: str) -> str:
@@ -398,6 +398,74 @@ def test_closed_admission_cannot_be_committed_late_after_cancellation(
     assert marker.exists() is False
 
 
+def test_launch_commit_refuses_preexisting_cancellation() -> None:
+    cancel_event = threading.Event()
+    cancel_event.set()
+    launch_event = threading.Event()
+    commit = raw_cli._LaunchCommit(
+        SimpleNamespace(admitted=True),
+        launch_event,
+        cancel_event,
+    )
+
+    commit()
+
+    assert commit.settle() is None
+    assert launch_event.is_set() is False
+
+
+def test_cancel_during_wait_refuses_delayed_launch_commit(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    callback_waiting = threading.Event()
+    allow_callback = threading.Event()
+    callback_finished = threading.Event()
+    cancel_event = threading.Event()
+    process_events: list[Any] = []
+    real_event = multiprocessing.context.BaseContext.Event
+
+    def recording_event(context: Any) -> Any:
+        event = real_event(context)
+        process_events.append(event)
+        return event
+
+    def admit(tree: ExecutorProcessTree, commit_launch: Any) -> None:
+        callback_waiting.set()
+        assert allow_callback.wait(5.0)
+        try:
+            tree.admit()
+            commit_launch()
+        finally:
+            callback_finished.set()
+
+    monkeypatch.setattr(multiprocessing.context.BaseContext, "Event", recording_event)
+    results: list[Any] = []
+    thread = threading.Thread(
+        target=lambda: results.append(
+            _executor().execute(
+                _request(
+                    tmp_path,
+                    _python_command("raise SystemExit('must not launch')"),
+                ),
+                cancel_event=cancel_event,
+                on_event=lambda _event: None,
+                admit_worker=admit,
+            )
+        )
+    )
+    thread.start()
+    assert callback_waiting.wait(5.0)
+    cancel_event.set()
+    allow_callback.set()
+    thread.join(5.0)
+
+    assert thread.is_alive() is False
+    assert callback_finished.wait(5.0)
+    assert results[0].terminal_state == "cancelled"
+    assert process_events[1].is_set() is False
+
+
 def test_commit_between_failed_wait_and_parent_settlement_is_honored(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -420,6 +488,8 @@ def test_commit_between_failed_wait_and_parent_settlement_is_honored(
     class BoundaryCancel:
         def is_set(self) -> bool:
             if not wait_returned_false.is_set():
+                return False
+            if threading.current_thread().name.startswith("raw-cli-admission-"):
                 return False
             assert commit_finished.wait(5.0)
             return True
@@ -852,9 +922,11 @@ def test_saturated_output_cancellation_never_reads_queue_after_forced_stop(
     cancel_event = threading.Event()
     saw_output = threading.Event()
     termination_started = threading.Event()
+    relay_stop_requested = threading.Event()
     get_after_termination: list[bool] = []
     real_get = multiprocessing.queues.Queue.get
     real_terminate = raw_cli.ExecutorProcessTree.terminate_tree
+    real_relay_stop = raw_cli._QueueRelay.request_stop
 
     def guarded_get(queue: Any, *args: Any, **kwargs: Any) -> Any:
         if termination_started.is_set():
@@ -863,10 +935,16 @@ def test_saturated_output_cancellation_never_reads_queue_after_forced_stop(
         return real_get(queue, *args, **kwargs)
 
     def recording_terminate(tree: ExecutorProcessTree, **kwargs: Any) -> bool:
+        assert relay_stop_requested.is_set()
         termination_started.set()
         return real_terminate(tree, **kwargs)
 
+    def recording_relay_stop(relay: Any) -> None:
+        relay_stop_requested.set()
+        real_relay_stop(relay)
+
     monkeypatch.setattr(multiprocessing.queues.Queue, "get", guarded_get)
+    monkeypatch.setattr(raw_cli._QueueRelay, "request_stop", recording_relay_stop)
     monkeypatch.setattr(
         raw_cli.ExecutorProcessTree, "terminate_tree", recording_terminate
     )
@@ -892,6 +970,121 @@ def test_saturated_output_cancellation_never_reads_queue_after_forced_stop(
     assert get_after_termination == []
     assert result.terminal_state == "cancelled"
     assert result.cleanup_proven is True
+
+
+def test_dead_worker_cannot_block_control_thread_in_underlying_queue_get(
+    tmp_path: Path,
+) -> None:
+    get_entered = threading.Event()
+    release_get = threading.Event()
+
+    class BlockingQueue:
+        def get(self, **_kwargs: Any) -> Any:
+            get_entered.set()
+            assert release_get.wait(30.0)
+            raise queue.Empty
+
+    relay = raw_cli._QueueRelay(BlockingQueue())
+    relay.start()
+    assert get_entered.wait(5.0)
+    spool = tempfile.TemporaryFile(mode="w+b")
+    accumulator = raw_cli._OutputAccumulator(spool, 1024)
+    process = SimpleNamespace(is_alive=lambda: False)
+
+    result = raw_cli.RawShellExecutor._consume(
+        _request(tmp_path, "ignored"),
+        process,
+        relay,
+        accumulator,
+        threading.Event(),
+        lambda _event: None,
+        time.monotonic(),
+        "bash",
+        threading.Event(),
+        SimpleNamespace(value=0),
+    )
+    relay.request_stop()
+
+    assert result[:2] == ("cleanup_unproven", None)
+    assert relay.join(0.05) is False
+    release_get.set()
+    assert relay.join(5.0) is True
+    spool.close()
+
+
+def test_published_exit_beats_dead_worker_missing_terminal_fallback(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    shell_exited = threading.Event()
+
+    class MissingTerminalQueue:
+        def __init__(self) -> None:
+            self.calls = 0
+
+        def get(self, **_kwargs: Any) -> Any:
+            self.calls += 1
+            if self.calls == 4:
+                shell_exited.set()
+            raise queue.Empty
+
+    monkeypatch.setattr(raw_cli, "_RAW_POST_EXIT_DRAIN_SECONDS", 0.0)
+    spool = tempfile.TemporaryFile(mode="w+b")
+    accumulator = raw_cli._OutputAccumulator(spool, 1024)
+
+    result = raw_cli.RawShellExecutor._consume(
+        _request(tmp_path, "ignored"),
+        SimpleNamespace(is_alive=lambda: False),
+        MissingTerminalQueue(),
+        accumulator,
+        threading.Event(),
+        lambda _event: None,
+        time.monotonic(),
+        "bash",
+        shell_exited,
+        SimpleNamespace(value=23),
+    )
+
+    assert result == ("exited", 23, "bash", True)
+    assert accumulator.truncated is True
+    spool.close()
+
+
+def test_post_exit_grace_marks_discarded_stream_output_truncated(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    messages: queue.Queue[tuple[Any, ...]] = queue.Queue()
+    messages.put(("terminal", "exited", 0, "bash"))
+    messages.put(("stream_end", "stdout", 0))
+    shell_exited = threading.Event()
+    shell_exited.set()
+    monkeypatch.setattr(raw_cli, "_RAW_POST_EXIT_DRAIN_SECONDS", 0.0)
+    spool = tempfile.TemporaryFile(mode="w+b")
+    accumulator = raw_cli._OutputAccumulator(spool, 1024)
+
+    result = raw_cli.RawShellExecutor._consume(
+        _request(tmp_path, "ignored"),
+        SimpleNamespace(is_alive=lambda: True),
+        messages,
+        accumulator,
+        threading.Event(),
+        lambda _event: None,
+        time.monotonic(),
+        "bash",
+        shell_exited,
+        SimpleNamespace(value=0),
+    )
+
+    assert result == ("exited", 0, "bash", True)
+    assert accumulator.truncated is True
+    spool.close()
+
+
+def test_admission_callback_return_value_is_not_the_success_signal() -> None:
+    assert raw_cli.RawCliAdmissionCallback is not None
+    assert "return value is ignored" in (raw_cli.RawShellExecutor.execute.__doc__ or "")
+    assert "commit_launch" in (raw_cli.RawShellExecutor.execute.__doc__ or "")
 
 
 def test_parent_queue_finalization_never_joins_a_terminated_writer() -> None:

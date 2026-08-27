@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import os
 import signal
+import threading
 import time
 from dataclasses import dataclass
 from typing import Any
@@ -212,6 +213,7 @@ class ExecutorProcessTree:
         if self._platform_name not in {"posix", "nt"}:
             raise ValueError("unsupported process containment platform")
         self._windows_api = windows_api
+        self._lock = threading.RLock()
         self._job_handle = 0
         self._admitted = False
         self._quarantined = False
@@ -221,17 +223,23 @@ class ExecutorProcessTree:
     def admitted(self) -> bool:
         """Return whether this generation passed parent admission."""
 
-        return self._admitted
+        with self._lock:
+            return self._admitted
 
     @property
     def quarantined(self) -> bool:
         """Return whether worker-tree death could not be proven."""
 
-        return self._quarantined
+        with self._lock:
+            return self._quarantined
 
     def admit(self) -> None:
         """Establish platform containment before releasing the worker."""
 
+        with self._lock:
+            self._admit_locked()
+
+    def _admit_locked(self) -> None:
         if self._closed or self._quarantined:
             raise ProcessContainmentError("worker containment is unavailable")
         if self._admitted:
@@ -269,7 +277,24 @@ class ExecutorProcessTree:
     ) -> bool:
         """Terminate the contained tree and return only after proven death."""
 
-        self._admitted = False
+        with self._lock:
+            self._admitted = False
+            self._closed = True
+            try:
+                return self._terminate_tree_locked(
+                    term_timeout=term_timeout,
+                    kill_timeout=kill_timeout,
+                )
+            except BaseException:
+                self._quarantined = True
+                raise
+
+    def _terminate_tree_locked(
+        self,
+        *,
+        term_timeout: float,
+        kill_timeout: float,
+    ) -> bool:
         if self._platform_name == "posix":
             return self._terminate_posix_group(
                 term_timeout=term_timeout,
@@ -366,9 +391,10 @@ class ExecutorProcessTree:
     def close(self) -> bool:
         """Idempotently close containment, terminating a live worker if needed."""
 
-        if self._closed:
-            return not self._quarantined
-        return self.terminate_tree()
+        with self._lock:
+            if self._closed:
+                return not self._quarantined
+            return self.terminate_tree()
 
     def _terminate_unadmitted(self) -> None:
         if not self._process.is_alive():
@@ -380,10 +406,11 @@ class ExecutorProcessTree:
             self._process.join(2.0)
 
     def _close_job_handle(self) -> None:
-        if not self._job_handle:
-            return
-        self._windows_api.close_handle(self._job_handle)
-        self._job_handle = 0
+        with self._lock:
+            if not self._job_handle:
+                return
+            self._windows_api.close_handle(self._job_handle)
+            self._job_handle = 0
 
 
 __all__ = [
