@@ -693,6 +693,9 @@ from tldw_chatbook.Subscriptions.fts_backfill import (  # noqa: E402
 from tldw_chatbook.Subscriptions.watchlist_bundle_service import (  # noqa: E402
     WatchlistBundleService,
 )
+from tldw_chatbook.Subscriptions.watchlists_operation_coordinator import (  # noqa: E402
+    WatchlistsOperationCoordinator,
+)
 from tldw_chatbook.Translation_Interop import (  # noqa: E402
     ServerTranslationService,
     TranslationScopeService,
@@ -12599,6 +12602,11 @@ class TldwCli(
 
     def on_mount(self) -> None:
         """Configure logging and schedule post-mount setup."""
+        self.watchlists_operation_coordinator = WatchlistsOperationCoordinator(
+            local_service=self.local_watchlists_service,
+            briefing_db=self.subscriptions_db,
+        )
+        self.watchlists_operation_coordinator.bind_running_loop()
         self._bind_tts_service()
         self._notes_sync_runtime_start_task = asyncio.create_task(
             self.notes_sync_runtime_owner.start(),
@@ -14304,14 +14312,11 @@ class TldwCli(
                 "captured, so an unscoped sweep could fail live rows."
             )
             return
-        from tldw_chatbook.Subscriptions.startup_reconcile import (
-            reconcile_interrupted_subscription_work,
-        )
-
         try:
-            reconciled = await asyncio.to_thread(
-                reconcile_interrupted_subscription_work, db, boundary
-            )
+            coordinator = getattr(self, "watchlists_operation_coordinator", None)
+            if coordinator is None:
+                return
+            reconciled = await coordinator.reconcile_startup(boundary)
         except Exception as exc:  # noqa: BLE001 - a launch never dies on this
             self.loguru_logger.warning(
                 f"Startup reconcile of interrupted subscriptions work failed "
@@ -15223,6 +15228,9 @@ class TldwCli(
 
     async def _shutdown_app_owned_lifecycles(self) -> None:
         """Drain durable app-owned work before Textual closes screen state."""
+        coordinator = getattr(self, "watchlists_operation_coordinator", None)
+        if coordinator is not None:
+            await coordinator.shutdown()
         await self._shutdown_notes_sync_runtime()
         await self._shutdown_actor_pack_import()
         await self._shutdown_actor_pack_export()

@@ -1,7 +1,13 @@
 """Serializable native Console task-resume state."""
 
 from dataclasses import dataclass
+import re
 from typing import Any
+
+
+_WATCHLISTS_OPERATION_ID = re.compile(
+    r"^local:(?:watchlist_run|briefing):[1-9][0-9]*$"
+)
 
 
 @dataclass
@@ -29,6 +35,7 @@ class TaskResumeState:
     pending_skill_script: dict[str, Any] | None = None
     diff_summary: str = ""
     next_action: str = ""
+    followed_watchlists_operations: tuple[str, ...] = ()
 
     def has_resume_content(self) -> bool:
         """Return whether the resume panel should be visible.
@@ -69,6 +76,9 @@ class TaskResumeState:
             "pending_skill_script": self.pending_skill_script,
             "diff_summary": self.diff_summary,
             "next_action": self.next_action,
+            "followed_watchlists_operations": list(
+                self.followed_watchlists_operations
+            ),
         }
 
     @classmethod
@@ -146,6 +156,16 @@ class TaskResumeState:
             value = data.get(key)
             return dict(value) if isinstance(value, dict) else None
 
+        followed = data.get("followed_watchlists_operations")
+        followed_ids = tuple(
+            dict.fromkeys(
+                value
+                for value in followed
+                if isinstance(value, str)
+                and _WATCHLISTS_OPERATION_ID.fullmatch(value) is not None
+            )
+        ) if isinstance(followed, list) else ()
+
         return cls(
             summary=_text("summary"),
             last_step=_text("last_step"),
@@ -159,4 +179,5 @@ class TaskResumeState:
             pending_skill_script=None,
             diff_summary=_text("diff_summary"),
             next_action=_text("next_action"),
+            followed_watchlists_operations=followed_ids,
         )

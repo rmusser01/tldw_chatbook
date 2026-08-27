@@ -4822,44 +4822,69 @@ class SubscriptionsDB(BaseDB):
         self, source_id: int, *, created_at: str
     ) -> Dict[str, Any]:
         """Insert one queued source receipt or return its active winner."""
+        return self.accept_watchlist_runs([source_id], created_at=created_at)[0]
+
+    def accept_watchlist_runs(
+        self, source_ids: Sequence[int], *, created_at: str
+    ) -> List[Dict[str, Any]]:
+        """Atomically validate and accept a bounded ordered source batch."""
         with self.transaction(immediate=True) as conn:
-            try:
-                cursor = conn.execute(
-                    "INSERT INTO local_watchlist_runs "
-                    "(source_id, job_id, status, stats_json, created_at, updated_at) "
-                    "VALUES (?, ?, 'queued', ?, ?, ?)",
-                    (
-                        source_id,
-                        source_id,
-                        json.dumps({"source_id": source_id}),
-                        created_at,
-                        created_at,
-                    ),
+            ordered_ids = [int(source_id) for source_id in source_ids]
+            if ordered_ids:
+                placeholders = ",".join("?" for _ in ordered_ids)
+                found = {
+                    int(row["id"])
+                    for row in conn.execute(
+                        f"SELECT id FROM subscriptions WHERE id IN ({placeholders})",
+                        ordered_ids,
+                    )
+                }
+                missing = next(
+                    (source_id for source_id in ordered_ids if source_id not in found),
+                    None,
                 )
-                row = conn.execute(
-                    "SELECT * FROM local_watchlist_runs WHERE id = ?",
-                    (cursor.lastrowid,),
-                ).fetchone()
-                receipt = dict(row)
-                receipt["_claim_acquired"] = True
-                return receipt
-            except sqlite3.IntegrityError as exc:
-                if (
-                    getattr(exc, "sqlite_errorcode", None)
-                    != sqlite3.SQLITE_CONSTRAINT_UNIQUE
-                ):
-                    raise
-                winner = conn.execute(
-                    "SELECT * FROM local_watchlist_runs "
-                    "WHERE source_id = ? AND status IN ('queued', 'running') "
-                    "ORDER BY created_at DESC, id DESC LIMIT 1",
-                    (source_id,),
-                ).fetchone()
-                if winner is not None:
+                if missing is not None:
+                    raise KeyError(f"Subscription not found: {missing}")
+
+            receipts: List[Dict[str, Any]] = []
+            for source_id in ordered_ids:
+                try:
+                    cursor = conn.execute(
+                        "INSERT INTO local_watchlist_runs "
+                        "(source_id, job_id, status, stats_json, created_at, updated_at) "
+                        "VALUES (?, ?, 'queued', ?, ?, ?)",
+                        (
+                            source_id,
+                            source_id,
+                            json.dumps({"source_id": source_id}),
+                            created_at,
+                            created_at,
+                        ),
+                    )
+                    row = conn.execute(
+                        "SELECT * FROM local_watchlist_runs WHERE id = ?",
+                        (cursor.lastrowid,),
+                    ).fetchone()
+                    receipt = dict(row)
+                    receipt["_claim_acquired"] = True
+                except sqlite3.IntegrityError as exc:
+                    if (
+                        getattr(exc, "sqlite_errorcode", None)
+                        != sqlite3.SQLITE_CONSTRAINT_UNIQUE
+                    ):
+                        raise
+                    winner = conn.execute(
+                        "SELECT * FROM local_watchlist_runs "
+                        "WHERE source_id = ? AND status IN ('queued', 'running') "
+                        "ORDER BY created_at DESC, id DESC LIMIT 1",
+                        (source_id,),
+                    ).fetchone()
+                    if winner is None:
+                        raise
                     receipt = dict(winner)
                     receipt["_claim_acquired"] = False
-                    return receipt
-                raise
+                receipts.append(receipt)
+            return receipts
 
     def transition_watchlist_run(
         self,
@@ -4915,16 +4940,20 @@ class SubscriptionsDB(BaseDB):
             return dict(row) if row is not None else None
 
     def accept_briefing(
-        self, watchlist_id: int, *, created_at: str
+        self,
+        watchlist_id: int,
+        *,
+        created_at: str,
+        preset_id: int | None = None,
     ) -> Dict[str, Any]:
         """Insert one generating briefing or return its durable active winner."""
         with self.transaction(immediate=True) as conn:
             try:
                 cursor = conn.execute(
                     "INSERT INTO briefings "
-                    "(watchlist_id, status, created_at, updated_at) "
-                    "VALUES (?, 'generating', ?, ?)",
-                    (watchlist_id, created_at, created_at),
+                    "(watchlist_id, status, preset_id, created_at, updated_at) "
+                    "VALUES (?, 'generating', ?, ?, ?)",
+                    (watchlist_id, preset_id, created_at, created_at),
                 )
                 row = conn.execute(
                     "SELECT * FROM briefings WHERE id = ?", (cursor.lastrowid,)

@@ -9,7 +9,16 @@ from tldw_chatbook.Subscriptions.watchlist_bundle_service import WatchlistBundle
 from tldw_chatbook.Tools.watchlists_command_service import WatchlistsCommandService
 
 
-def _service(*, runtime="local", create_sources=None, create_collection=None, update=None):
+def _service(
+    *,
+    runtime="local",
+    create_sources=None,
+    create_collection=None,
+    update=None,
+    accept_checks=None,
+    accept_briefing=None,
+    collection_sources=None,
+):
     def default_sources(rows):
         return [
             {
@@ -40,7 +49,153 @@ def _service(*, runtime="local", create_sources=None, create_collection=None, up
         create_sources_batch=create_sources or default_sources,
         create_collection=create_collection or default_collection,
         update_collection_sources=update or default_update,
+        accept_source_checks=accept_checks,
+        accept_briefing=accept_briefing,
+        resolve_collection_sources=collection_sources,
     )
+
+
+def test_check_sources_accepts_exact_receipts_with_poll_contract():
+    calls = []
+
+    def accept(source_ids):
+        calls.append(source_ids)
+        return [
+            {"run_id": 31, "source_id": 4, "status": "queued"},
+            {"run_id": 32, "source_id": 8, "status": "queued"},
+        ]
+
+    result = json.loads(
+        _service(accept_checks=accept).check_sources(
+            {
+                "source_ids": [
+                    "local:subscription:4",
+                    "local:subscription:8",
+                ]
+            }
+        )
+    )
+
+    assert calls == [[4, 8]]
+    assert result == {
+        "status": "accepted",
+        "retryable": False,
+        "operations": [
+            {
+                "operation_id": "local:watchlist_run:31",
+                "source_id": "local:subscription:4",
+                "status": "queued",
+                "poll_tool": "watchlists_get_operation_status",
+                "poll_arguments": {"operation_id": "local:watchlist_run:31"},
+                "suggested_poll_seconds": 2,
+                "maximum_poll_seconds": 8,
+                "terminal_states": ["completed", "failed", "cancelled"],
+            },
+            {
+                "operation_id": "local:watchlist_run:32",
+                "source_id": "local:subscription:8",
+                "status": "queued",
+                "poll_tool": "watchlists_get_operation_status",
+                "poll_arguments": {"operation_id": "local:watchlist_run:32"},
+                "suggested_poll_seconds": 2,
+                "maximum_poll_seconds": 8,
+                "terminal_states": ["completed", "failed", "cancelled"],
+            },
+        ],
+    }
+
+
+def test_check_sources_resolves_one_collection_and_rejects_oversize_before_accept():
+    accepted = []
+
+    def resolve(watchlist_id):
+        assert watchlist_id == 7
+        return list(range(1, 52))
+
+    result = json.loads(
+        _service(
+            accept_checks=lambda ids: accepted.append(ids),
+            collection_sources=resolve,
+        ).check_sources({"collection_id": "local:watchlist:7"})
+    )
+
+    assert result["status"] == "invalid_argument"
+    assert "at most 50" in result["message"]
+    assert accepted == []
+
+
+@pytest.mark.parametrize(
+    "arguments",
+    [
+        {},
+        {"source_ids": [], "collection_id": "local:watchlist:1"},
+        {"source_ids": ["local:subscription:1"] * 2},
+        {"source_ids": [f"local:subscription:{number}" for number in range(1, 52)]},
+        {"collection_id": "local:watchlist:0"},
+    ],
+)
+def test_check_sources_rejects_ambiguous_or_unbounded_scope(arguments):
+    calls = []
+    result = json.loads(
+        _service(
+            accept_checks=lambda ids: calls.append(ids),
+            collection_sources=lambda _watchlist_id: [1],
+        ).check_sources(arguments)
+    )
+
+    assert result["status"] == "invalid_argument"
+    assert calls == []
+
+
+def test_generate_briefing_returns_exact_durable_poll_contract():
+    calls = []
+
+    def accept(watchlist_id, preset_id):
+        calls.append((watchlist_id, preset_id))
+        return {"id": 42, "watchlist_id": watchlist_id, "status": "generating"}
+
+    result = json.loads(
+        _service(accept_briefing=accept).generate_briefing(
+            {"collection_id": "local:watchlist:7", "preset_id": 3}
+        )
+    )
+
+    assert calls == [(7, 3)]
+    assert result == {
+        "status": "accepted",
+        "retryable": False,
+        "operation_id": "local:briefing:42",
+        "collection_id": "local:watchlist:7",
+        "receipt_status": "generating",
+        "poll_tool": "watchlists_get_operation_status",
+        "poll_arguments": {"operation_id": "local:briefing:42"},
+        "suggested_poll_seconds": 2,
+        "maximum_poll_seconds": 8,
+        "terminal_states": ["complete", "empty", "failed"],
+    }
+
+
+@pytest.mark.parametrize(
+    "method,arguments",
+    [
+        ("check_sources", {"source_ids": ["local:subscription:1"]}),
+        ("generate_briefing", {"collection_id": "local:watchlist:1"}),
+    ],
+)
+def test_long_commands_refuse_server_mode_before_coordinator(method, arguments):
+    calls = []
+    service = _service(
+        runtime="server",
+        accept_checks=lambda ids: calls.append(ids),
+        accept_briefing=lambda watchlist_id, preset_id: calls.append(
+            (watchlist_id, preset_id)
+        ),
+    )
+
+    result = json.loads(getattr(service, method)(arguments))
+
+    assert result["status"] == "unsupported"
+    assert calls == []
 
 
 def test_delayed_collection_mutation_returns_only_after_definitive_commit(tmp_path):

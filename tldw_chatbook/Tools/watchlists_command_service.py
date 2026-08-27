@@ -23,6 +23,8 @@ _COLLECTION_KEYS = frozenset(
 _UPDATE_KEYS = frozenset(
     {"collection_id", "add_source_ids", "remove_source_ids"}
 )
+_CHECK_KEYS = frozenset({"source_ids", "collection_id"})
+_GENERATE_KEYS = frozenset({"collection_id", "preset_id"})
 _COLLISION_POLICIES = frozenset({"conflict", "return_existing", "auto_suffix"})
 _HOST_LABEL = re.compile(r"[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\Z", re.IGNORECASE)
 
@@ -37,11 +39,17 @@ class WatchlistsCommandService:
         create_sources_batch: Callable[[list[Mapping[str, Any]]], Any],
         create_collection: Callable[..., Any],
         update_collection_sources: Callable[..., Any],
+        accept_source_checks: Callable[[list[int]], Any] | None = None,
+        accept_briefing: Callable[[int, int | None], Any] | None = None,
+        resolve_collection_sources: Callable[[int], Any] | None = None,
     ) -> None:
         self._runtime_source_loader = runtime_source_loader
         self._create_sources_batch = create_sources_batch
         self._create_collection = create_collection
         self._update_collection_sources = update_collection_sources
+        self._accept_source_checks = accept_source_checks
+        self._accept_briefing = accept_briefing
+        self._resolve_collection_sources = resolve_collection_sources
 
     @staticmethod
     def _json(payload: Mapping[str, Any]) -> str:
@@ -472,6 +480,148 @@ class WatchlistsCommandService:
                     "added": added,
                     "removed": removed,
                     "membership_count": membership_count,
+                }
+            )
+        except Exception:  # noqa: BLE001 - fixed protocol-safe failure
+            return self._unavailable()
+
+    @staticmethod
+    def _poll_contract(operation_id: str, terminal_states: list[str]) -> dict[str, Any]:
+        return {
+            "poll_tool": "watchlists_get_operation_status",
+            "poll_arguments": {"operation_id": operation_id},
+            "suggested_poll_seconds": 2,
+            "maximum_poll_seconds": 8,
+            "terminal_states": terminal_states,
+        }
+
+    def check_sources(self, arguments: object) -> str:
+        """Accept one bounded explicit or collection-scoped source check."""
+        refusal = self._local_or_refusal()
+        if refusal is not None:
+            return refusal
+        values = self._exact_object(
+            arguments,
+            allowed=_CHECK_KEYS,
+            required=frozenset(),
+        )
+        if values is None or set(values) not in ({"source_ids"}, {"collection_id"}):
+            return self._invalid("Provide source_ids or one collection_id, not both.")
+
+        try:
+            if "source_ids" in values:
+                source_ids = self._canonical_ids(values["source_ids"], maximum=50)
+                if not source_ids:
+                    return self._invalid("Provide between 1 and 50 unique source IDs.")
+            else:
+                watchlist_id = self._canonical_id(values["collection_id"], _WATCHLIST_ID)
+                if watchlist_id is None:
+                    return self._invalid("Use one canonical collection ID.")
+                if self._resolve_collection_sources is None:
+                    return self._unavailable()
+                resolved = self._resolve_collection_sources(watchlist_id)
+                if type(resolved) is not list or any(
+                    type(source_id) is not int or source_id < 1 for source_id in resolved
+                ):
+                    return self._unavailable()
+                source_ids = list(dict.fromkeys(resolved))
+                if not source_ids:
+                    return self._invalid("The collection has no sources to check.")
+                if len(source_ids) > 50:
+                    return self._invalid(
+                        "The collection has more than 50 sources; list it and submit batches of at most 50."
+                    )
+            if self._accept_source_checks is None:
+                return self._unavailable()
+            receipts = self._accept_source_checks(source_ids)
+            if type(receipts) is not list or len(receipts) != len(source_ids):
+                return self._unavailable()
+            operations: list[dict[str, Any]] = []
+            for receipt in receipts:
+                run_id = receipt.get("run_id") if isinstance(receipt, Mapping) else None
+                source_id = receipt.get("source_id") if isinstance(receipt, Mapping) else None
+                status = receipt.get("status") if isinstance(receipt, Mapping) else None
+                if (
+                    type(run_id) is not int
+                    or run_id < 1
+                    or type(source_id) is not int
+                    or source_id < 1
+                    or status not in {"queued", "running", "completed", "failed", "cancelled"}
+                ):
+                    return self._unavailable()
+                operation_id = f"local:watchlist_run:{run_id}"
+                operations.append(
+                    {
+                        "operation_id": operation_id,
+                        "source_id": f"local:subscription:{source_id}",
+                        "status": status,
+                        **self._poll_contract(
+                            operation_id,
+                            ["completed", "failed", "cancelled"],
+                        ),
+                    }
+                )
+            return self._json(
+                {"status": "accepted", "retryable": False, "operations": operations}
+            )
+        except KeyError:
+            return self._json(
+                {
+                    "status": "not_found",
+                    "retryable": False,
+                    "message": "The collection or one of its sources was not found.",
+                }
+            )
+        except Exception:  # noqa: BLE001 - fixed protocol-safe failure
+            return self._unavailable()
+
+    def generate_briefing(self, arguments: object) -> str:
+        """Accept one durable local briefing generation receipt."""
+        refusal = self._local_or_refusal()
+        if refusal is not None:
+            return refusal
+        values = self._exact_object(
+            arguments,
+            allowed=_GENERATE_KEYS,
+            required=frozenset({"collection_id"}),
+        )
+        if values is None:
+            return self._invalid("Briefing arguments are invalid.")
+        watchlist_id = self._canonical_id(values["collection_id"], _WATCHLIST_ID)
+        preset_id = values.get("preset_id")
+        if watchlist_id is None or (
+            preset_id is not None
+            and (type(preset_id) is not int or not 1 <= preset_id <= 2**63 - 1)
+        ):
+            return self._invalid("Use a canonical collection ID and valid preset ID.")
+        if self._accept_briefing is None:
+            return self._unavailable()
+        try:
+            receipt = self._accept_briefing(watchlist_id, preset_id)
+            briefing_id = receipt.get("id") if isinstance(receipt, Mapping) else None
+            status = receipt.get("status") if isinstance(receipt, Mapping) else None
+            if type(briefing_id) is not int or briefing_id < 1 or status != "generating":
+                return self._unavailable()
+            operation_id = f"local:briefing:{briefing_id}"
+            return self._json(
+                {
+                    "status": "accepted",
+                    "retryable": False,
+                    "operation_id": operation_id,
+                    "collection_id": f"local:watchlist:{watchlist_id}",
+                    "receipt_status": status,
+                    **self._poll_contract(
+                        operation_id,
+                        ["complete", "empty", "failed"],
+                    ),
+                }
+            )
+        except KeyError:
+            return self._json(
+                {
+                    "status": "not_found",
+                    "retryable": False,
+                    "message": "The collection or briefing preset was not found.",
                 }
             )
         except Exception:  # noqa: BLE001 - fixed protocol-safe failure

@@ -48,7 +48,7 @@ from __future__ import annotations
 import asyncio
 import inspect
 import re
-from contextlib import contextmanager
+from contextlib import contextmanager, nullcontext
 from datetime import datetime, timezone
 from typing import TYPE_CHECKING, Any, Callable, Collection, Iterator, Mapping, Sequence
 
@@ -613,19 +613,18 @@ async def _invoke_chat(
 
 
 def _start_generation(
-    db: "SubscriptionsDB", watchlist_id: int, preset_id: int | None, now: datetime | None
+    db: "SubscriptionsDB",
+    briefing_id: int,
+    watchlist_id: int,
+    preset_id: int | None,
+    now: datetime | None,
 ) -> tuple[
-    int,
     str,
     int | None,
-    BriefingSelection | None,
-    dict[str, Any] | None,
+    BriefingSelection,
     dict[str, Any] | None,
 ]:
-    """Everything before the chat call: insert the row, resolve the mode,
-    read the prior watermark, select, and resolve the preset (if any).
-    Returns the accepted id and setup values, plus an existing durable winner
-    when another database owner already holds the claim.
+    """Resolve generation inputs for one already accepted durable row.
 
     The preset lookup is grouped into this same `to_thread` hop (spec #2
     phase 2a) rather than given its own -- one more plain SQLite read costs
@@ -636,17 +635,58 @@ def _start_generation(
     return value alone, but it doesn't need to: both mean "proceed on
     defaults."
     """
-    receipt = db.accept_briefing(
-        watchlist_id, created_at=datetime.now(timezone.utc).isoformat()
-    )
-    briefing_id = int(receipt["id"])
-    if not receipt.pop("_claim_acquired"):
-        return briefing_id, "", None, None, None, receipt
+    receipt = db.get_briefing(briefing_id)
+    if receipt is None or int(receipt["watchlist_id"]) != int(watchlist_id):
+        raise KeyError(f"Briefing not found: {briefing_id}")
+    if receipt["status"] != STATUS_GENERATING:
+        raise ValueError(f"Briefing is not generating: {briefing_id}")
     mode = _selection_mode(db, watchlist_id)
     prior_watermark = db.latest_completed_watermark(watchlist_id)
     selection = select_briefing_items(db, watchlist_id, mode=mode, now=now)
     preset = db.get_briefing_preset(preset_id) if preset_id is not None else None
-    return briefing_id, mode, prior_watermark, selection, preset, None
+    return mode, prior_watermark, selection, preset
+
+
+def _accept_briefing(
+    db: "SubscriptionsDB",
+    watchlist_id: int,
+    preset_id: int | None,
+    *,
+    validate_preset: bool,
+) -> dict[str, Any]:
+    """Validate and commit or resolve one database-owned briefing claim."""
+    with db.transaction() as conn:
+        if conn.execute(
+            "SELECT 1 FROM watchlists WHERE id = ?", (watchlist_id,)
+        ).fetchone() is None:
+            raise KeyError(f"Watchlist not found: {watchlist_id}")
+        if (
+            validate_preset
+            and preset_id is not None
+            and conn.execute(
+                "SELECT 1 FROM briefing_presets WHERE id = ?", (preset_id,)
+            ).fetchone()
+            is None
+        ):
+            raise KeyError(f"Briefing preset not found: {preset_id}")
+    return db.accept_briefing(
+        watchlist_id,
+        preset_id=preset_id if validate_preset else None,
+        created_at=datetime.now(timezone.utc).isoformat(),
+    )
+
+
+async def accept_briefing(
+    db: "SubscriptionsDB", watchlist_id: int, preset_id: int | None = None
+) -> dict[str, Any]:
+    """Commit or resolve one durable generating receipt before return."""
+    return await asyncio.to_thread(
+        _accept_briefing,
+        db,
+        int(watchlist_id),
+        int(preset_id) if preset_id is not None else None,
+        validate_preset=True,
+    )
 
 
 def _finish_empty(
@@ -752,8 +792,9 @@ def _finish_failure(
     return row or db.get_briefing(briefing_id)
 
 
-async def generate_briefing(
+async def _execute_accepted_briefing(
     db: "SubscriptionsDB",
+    briefing_id: int,
     watchlist_id: int,
     *,
     chat: Callable[..., Any] = chat_api_call,
@@ -761,8 +802,10 @@ async def generate_briefing(
     model: str | None = None,
     preset_id: int | None = None,
     now: datetime | None = None,
+    claim_held: bool = False,
+    scrub_failures: bool = False,
 ) -> dict[str, Any]:
-    """Generate one briefing for a watchlist and return the stored row.
+    """Execute one accepted row while holding its in-process claim.
 
     Never raises for a provider failure: the failure becomes the row's
     status and error, because a briefing the user can see failed is worth
@@ -825,18 +868,16 @@ async def generate_briefing(
     for the same watchlist slip past the check while this attempt is still
     running, defeating the whole point of the claim.
     """
-    with _claim_briefing(watchlist_id):
-        (
+    claim = nullcontext() if claim_held else _claim_briefing(watchlist_id)
+    with claim:
+        mode, prior_watermark, selection, preset = await asyncio.to_thread(
+            _start_generation,
+            db,
             briefing_id,
-            mode,
-            prior_watermark,
-            selection,
-            preset,
-            existing,
-        ) = await asyncio.to_thread(_start_generation, db, watchlist_id, preset_id, now)
-        if existing is not None:
-            return existing
-        assert selection is not None
+            watchlist_id,
+            preset_id,
+            now,
+        )
         # Task-1812, AC #3: record the row THIS claim is now writing, as the
         # very next statement after the `to_thread` hop above returns (no
         # `await` in between) -- so nothing else on this event loop can
@@ -912,7 +953,17 @@ async def generate_briefing(
                 f"{type(exc).__name__}"
             )
             return await asyncio.to_thread(
-                _finish_failure, db, briefing_id, mode, recorded_preset_id, model_used, _error_text(exc)
+                _finish_failure,
+                db,
+                briefing_id,
+                mode,
+                recorded_preset_id,
+                model_used,
+                (
+                    "Watchlists briefing generation failed. Try again."
+                    if scrub_failures
+                    else _error_text(exc)
+                ),
             )
 
         body = extract_response_content(raw).strip()
@@ -947,6 +998,67 @@ async def generate_briefing(
             f"{selection.overflow_count} overflow, watermark {covers_through}"
         )
         return row
+
+
+async def execute_accepted_briefing(
+    db: "SubscriptionsDB",
+    briefing_id: int,
+    *,
+    chat: Callable[..., Any] = chat_api_call,
+    provider: str | None = None,
+    model: str | None = None,
+    now: datetime | None = None,
+    scrub_failures: bool = False,
+) -> dict[str, Any]:
+    """Generate exactly one already accepted durable briefing receipt."""
+    receipt = await asyncio.to_thread(db.get_briefing, int(briefing_id))
+    if receipt is None:
+        raise KeyError(f"Briefing not found: {briefing_id}")
+    return await _execute_accepted_briefing(
+        db,
+        int(briefing_id),
+        int(receipt["watchlist_id"]),
+        chat=chat,
+        provider=provider,
+        model=model,
+        preset_id=receipt.get("preset_id"),
+        now=now,
+        scrub_failures=scrub_failures,
+    )
+
+
+async def generate_briefing(
+    db: "SubscriptionsDB",
+    watchlist_id: int,
+    *,
+    chat: Callable[..., Any] = chat_api_call,
+    provider: str | None = None,
+    model: str | None = None,
+    preset_id: int | None = None,
+    now: datetime | None = None,
+) -> dict[str, Any]:
+    """Compatibility facade that accepts, then executes, one briefing."""
+    with _claim_briefing(int(watchlist_id)):
+        receipt = await asyncio.to_thread(
+            _accept_briefing,
+            db,
+            int(watchlist_id),
+            int(preset_id) if preset_id is not None else None,
+            validate_preset=False,
+        )
+        if not receipt["_claim_acquired"]:
+            return receipt
+        return await _execute_accepted_briefing(
+            db,
+            int(receipt["id"]),
+            int(watchlist_id),
+            chat=chat,
+            provider=provider,
+            model=model,
+            preset_id=preset_id,
+            now=now,
+            claim_held=True,
+        )
 
 
 def fail_interrupted_briefings(

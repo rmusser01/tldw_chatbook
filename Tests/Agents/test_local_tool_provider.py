@@ -24,6 +24,7 @@ from tldw_chatbook.Agents.local_tool_provider import (
     LocalToolSpec,
 )
 from tldw_chatbook.Agents.run_context import use_run_id
+from tldw_chatbook.Agents.tool_catalog import ToolExecutionPolicy
 from tldw_chatbook.Agents.session_todo_store import (
     MAX_TODO_CONTENT_CHARS,
     MAX_TODO_ITEMS,
@@ -395,6 +396,8 @@ def test_catalog_lists_default_specs_with_local_ids(tmp_path):
         "local:watchlists_create_sources",
         "local:watchlists_create_collection",
         "local:watchlists_update_collection_sources",
+        "local:watchlists_check_sources",
+        "local:watchlists_generate_briefing",
     ]
     assert entries[0].name == "fs_list" and entries[0].source == "local"
     schema = p.load_schema("local:fs_list")
@@ -446,6 +449,12 @@ def test_catalog_exposure_and_effects_are_explicit_and_queryable(tmp_path):
         "watchlists_create_sources",
         "watchlists_create_collection",
         "watchlists_update_collection_sources",
+        "watchlists_check_sources",
+        "watchlists_generate_briefing",
+        "watchlists_check_sources",
+        "watchlists_generate_briefing",
+        "watchlists_check_sources",
+        "watchlists_generate_briefing",
     }
     assert provider.approval_effects_for("fs_read") == (
         LocalApprovalEffect.PRIVATE_READ,
@@ -456,6 +465,34 @@ def test_catalog_exposure_and_effects_are_explicit_and_queryable(tmp_path):
     assert provider.approval_effects_for("fs_write") == (
         LocalApprovalEffect.MUTATES_LOCAL,
     )
+
+
+def test_long_watchlists_commands_are_console_only_and_definitive_on_accept(tmp_path):
+    provider = make_provider(root=tmp_path)
+
+    console_specs = {
+        spec.name: spec
+        for spec in provider.specs_for_exposure(LocalToolExposure.CONSOLE_ONLY)
+    }
+    check = console_specs["watchlists_check_sources"]
+    briefing = console_specs["watchlists_generate_briefing"]
+
+    assert check.exposure is briefing.exposure is LocalToolExposure.CONSOLE_ONLY
+    assert check.approval_effects == (
+        LocalApprovalEffect.MUTATES_LOCAL,
+        LocalApprovalEffect.NETWORK,
+    )
+    assert briefing.approval_effects == (
+        LocalApprovalEffect.MUTATES_LOCAL,
+        LocalApprovalEffect.LLM_SPEND,
+    )
+    assert check.execution_policy is ToolExecutionPolicy.DEFINITIVE_AFTER_START
+    assert briefing.execution_policy is ToolExecutionPolicy.DEFINITIVE_AFTER_START
+    assert check.parameters["oneOf"] == [
+        {"required": ["source_ids"]},
+        {"required": ["collection_id"]},
+    ]
+    assert briefing.parameters["required"] == ["collection_id"]
 
 
 def test_read_only_provider_omits_future_watchlists_mutations_by_effect(tmp_path):
@@ -529,6 +566,8 @@ def test_hub_tools_lists_every_spec_under_the_local_server_key(tmp_path):
         "watchlists_create_sources",
         "watchlists_create_collection",
         "watchlists_update_collection_sources",
+        "watchlists_check_sources",
+        "watchlists_generate_briefing",
     ]
     for hub in hubs:
         assert hub.server_key == "local:__local__"
@@ -601,6 +640,14 @@ class RecordingWatchlistsCommandService:
         self.calls.append(("update_collection_sources", dict(arguments)))
         return '{"status":"ok"}'
 
+    def check_sources(self, arguments: object) -> str:
+        self.calls.append(("check_sources", dict(arguments)))
+        return '{"status":"accepted"}'
+
+    def generate_briefing(self, arguments: object) -> str:
+        self.calls.append(("generate_briefing", dict(arguments)))
+        return '{"status":"accepted"}'
+
     @staticmethod
     def approval_source_destinations(arguments):
         return {"source_count": len(arguments["sources"]), "destination_hosts": ["example.com"]}
@@ -618,6 +665,8 @@ def test_watchlists_authoring_specs_are_console_only_mutations_with_safe_approva
         "watchlists_create_sources",
         "watchlists_create_collection",
         "watchlists_update_collection_sources",
+        "watchlists_check_sources",
+        "watchlists_generate_briefing",
     }
 
     assert authoring <= names
@@ -625,7 +674,11 @@ def test_watchlists_authoring_specs_are_console_only_mutations_with_safe_approva
         spec.name
         for spec in provider.specs_for_exposure(LocalToolExposure.CONSOLE_ONLY)
     }
-    for name in authoring:
+    for name in {
+        "watchlists_create_sources",
+        "watchlists_create_collection",
+        "watchlists_update_collection_sources",
+    }:
         assert provider.approval_effects_for(name) == (
             LocalApprovalEffect.MUTATES_LOCAL,
         )
@@ -678,6 +731,8 @@ def test_watchlists_catalog_has_exact_read_only_schemas_and_trust_warnings(tmp_p
         "local:watchlists_create_sources",
         "local:watchlists_create_collection",
         "local:watchlists_update_collection_sources",
+        "local:watchlists_check_sources",
+        "local:watchlists_generate_briefing",
     }
 
     shared_names = {
@@ -2940,6 +2995,8 @@ def test_web_deep_search_pinned_catalog_list_unchanged_by_default(tmp_path):
         "watchlists_create_sources",
         "watchlists_create_collection",
         "watchlists_update_collection_sources",
+        "watchlists_check_sources",
+        "watchlists_generate_briefing",
     ]
 
 

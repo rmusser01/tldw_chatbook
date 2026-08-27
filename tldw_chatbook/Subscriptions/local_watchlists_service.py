@@ -1244,6 +1244,33 @@ class LocalWatchlistsService:
         run["_claim_acquired"] = receipt["_claim_acquired"]
         return run
 
+    async def accept_source_checks(
+        self, source_ids: Sequence[int]
+    ) -> list[dict[str, Any]]:
+        """Atomically commit or resolve one durable receipt per source."""
+        normalized_ids = [int(source_id) for source_id in source_ids]
+        if not normalized_ids:
+            raise ValueError("At least one source is required")
+        if len(normalized_ids) > 50 or len(set(normalized_ids)) != len(normalized_ids):
+            raise ValueError("Provide between 1 and 50 unique source IDs")
+        db = self._db()
+        receipts = await run_db_off_loop(
+            db,
+            db.accept_watchlist_runs,
+            normalized_ids,
+            created_at=self._utc_now(),
+        )
+        accepted: list[dict[str, Any]] = []
+        for receipt in receipts:
+            normalized = self._normalize_run_row(receipt)
+            normalized["_claim_acquired"] = bool(receipt["_claim_acquired"])
+            accepted.append(normalized)
+        return accepted
+
+    async def execute_accepted_run(self, run_id: Any) -> dict[str, Any]:
+        """Execute exactly one previously accepted durable run receipt."""
+        return await self.execute_run(run_id, scrub_failures=True)
+
     @staticmethod
     def _insert_queued_run(
         db: SubscriptionsDB, source_id: int, now: str
@@ -1251,7 +1278,9 @@ class LocalWatchlistsService:
         """Accept one database-owned source claim."""
         return db.accept_watchlist_run(source_id, created_at=now)
 
-    async def execute_run(self, run_id: Any) -> dict[str, Any]:
+    async def execute_run(
+        self, run_id: Any, *, scrub_failures: bool = False
+    ) -> dict[str, Any]:
         """Execute a queued local watchlist run and persist its observed result.
 
         task-15463: every synchronous sqlite call below goes through
@@ -1439,7 +1468,11 @@ class LocalWatchlistsService:
             return await self.record_run_failure(
                 run_id,
                 source_id=source_id,
-                error=exc,
+                error=(
+                    "Watchlists source check failed. Try again."
+                    if scrub_failures
+                    else exc
+                ),
                 elapsed_ms=int((time.time() - start_time) * 1000),
             )
 

@@ -7,16 +7,23 @@ bigger harness's noise.
 """
 from __future__ import annotations
 
+from types import SimpleNamespace
+
 import pytest
-from textual.app import App, ComposeResult
+from textual.app import ComposeResult
 
 # Harness apps load the consolidated widget CSS the real app loads
 # (TASK-15450); without it the widgets under test mount unstyled.
 from Tests.UI.consolidated_css import ConsolidatedCSSApp
 
+import tldw_chatbook.UI.Screens.chat_screen as chat_screen_module
 from tldw_chatbook.UI.Screens.chat_screen_state import TaskResumeState
+from tldw_chatbook.UI.Screens.chat_screen import ChatScreen
 from tldw_chatbook.Widgets.Chat_Widgets.chat_approval_card import ChatApprovalCard
 from tldw_chatbook.Widgets.Chat_Widgets.chat_task_cards import ChatTaskCards
+from tldw_chatbook.Widgets.Chat_Widgets.watchlists_operation_card import (
+    WatchlistsOperationCard,
+)
 
 
 class _CardsHarness(ConsolidatedCSSApp):
@@ -72,3 +79,119 @@ async def test_sync_state_routes_an_approval_batch_to_the_card():
         cards.sync_state(TaskResumeState())
         await pilot.pause()
         assert cards.display is False, "cleared state must hide the surface"
+
+
+@pytest.mark.asyncio
+async def test_sync_state_mounts_only_canonical_watchlists_receipts():
+    app = _CardsHarness()
+    async with app.run_test() as pilot:
+        cards = app.query_one(ChatTaskCards)
+        state = TaskResumeState(
+            followed_watchlists_operations=(
+                "local:watchlist_run:7",
+                "local:briefing:9",
+            )
+        )
+
+        cards.sync_state(
+            state,
+            operation_rows={
+                "local:watchlist_run:7": {
+                    "id": "local:watchlist_run:7",
+                    "status_detail": "running",
+                    "destination": "runs",
+                },
+                "local:briefing:9": {
+                    "id": "local:briefing:9",
+                    "status_detail": "empty",
+                    "destination": "artifacts",
+                },
+            },
+        )
+        await pilot.pause()
+        await pilot.pause()
+
+        assert cards.display is True
+        assert {card.operation_id for card in cards.query(WatchlistsOperationCard)} == {
+            "local:watchlist_run:7",
+            "local:briefing:9",
+        }
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("operation_id", "operation", "expected_call", "expected_followed"),
+    [
+        (
+            "local:watchlist_run:7",
+            {"source": {"id": "local:subscription:4"}},
+            ("check", 4),
+            ("local:watchlist_run:17",),
+        ),
+        (
+            "local:briefing:9",
+            {"collection": {"id": "local:watchlist:5"}},
+            ("briefing", 5),
+            ("local:briefing:19",),
+        ),
+    ],
+)
+async def test_receipt_retry_consumes_tool_shaped_canonical_entity_ids(
+    operation_id, operation, expected_call, expected_followed
+):
+    calls: list[tuple[str, int]] = []
+
+    class Coordinator:
+        async def accept_checks(self, source_ids):
+            calls.append(("check", source_ids[0]))
+            return [{"run_id": 17}]
+
+        async def accept_briefing(self, watchlist_id):
+            calls.append(("briefing", watchlist_id))
+            return {"id": 19}
+
+    screen = ChatScreen.__new__(ChatScreen)
+    screen.app_instance = SimpleNamespace(
+        watchlists_operation_coordinator=Coordinator()
+    )
+    screen._watchlists_operation_rows = {operation_id: operation}
+    followed: list[tuple[str, ...]] = []
+    screen._follow_console_watchlists_operations = followed.append
+
+    await ChatScreen._retry_console_watchlists_operation(screen, operation_id)
+
+    assert calls == [expected_call]
+    assert followed == [expected_followed]
+
+
+@pytest.mark.asyncio
+async def test_poll_keeps_following_an_active_receipt_through_a_missing_refresh(
+    monkeypatch,
+):
+    operation_id = "local:watchlist_run:7"
+
+    def unavailable_refresh(_ids):
+        raise RuntimeError("temporary local read failure")
+
+    screen = SimpleNamespace(
+        is_mounted=True,
+        _task_resume_state=TaskResumeState(
+            followed_watchlists_operations=(operation_id,)
+        ),
+        _watchlists_operation_rows={
+            operation_id: {"id": operation_id, "status_detail": "running"}
+        },
+        _read_console_watchlists_operation_rows=unavailable_refresh,
+        sync_task_resume_state=lambda: None,
+    )
+    sleeps: list[float] = []
+
+    async def stop_after_sleep(seconds):
+        sleeps.append(seconds)
+        screen.is_mounted = False
+
+    monkeypatch.setattr(chat_screen_module.asyncio, "sleep", stop_after_sleep)
+
+    await ChatScreen._poll_console_watchlists_operations(screen)
+
+    assert sleeps == [2.0]

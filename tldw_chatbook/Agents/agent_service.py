@@ -1450,6 +1450,9 @@ class AgentService:
         # at the wiring site.
         revoke_approvals: Callable[[str], object] | None = None,
         on_tool_terminal: Callable[[str, str, str], object] | None = None,
+        on_tool_result_terminal: (
+            Callable[[str, str, str, ToolResult], object] | None
+        ) = None,
         on_run_terminal: Callable[[str], object] | None = None,
         child_model_scope: Callable[[], "contextlib.AbstractContextManager"]
         | None = None,
@@ -1598,6 +1601,7 @@ class AgentService:
         # card sweep for approved calls cancelled before dispatch.  Neither
         # callback is permission-bearing or load-bearing for execution.
         self._on_tool_terminal = on_tool_terminal
+        self._on_tool_result_terminal = on_tool_result_terminal
         self._on_run_terminal = on_run_terminal
         # PR3a-1 Task 1 -- THE CHILD'S MODEL-CALL LIFETIME.
         #
@@ -2307,9 +2311,10 @@ class AgentService:
                         error=f"tool call cancelled before start: {call.name}",
                         outcome=TOOL_OUTCOME_CANCELLED,
                     )
+                result: ToolResult
                 try:
                     try:
-                        return _invoke()
+                        result = _invoke()
                     except BaseException:  # noqa: BLE001 - protocol boundary
                         # This branch runs synchronously after the approved
                         # mutation has started.  Every terminal -- including
@@ -2317,15 +2322,22 @@ class AgentService:
                         # must collapse to one scrubbed result instead of
                         # escaping the agent loop or being mistaken for the
                         # pre-start cooperative-cancel outcome above.
-                        return ToolResult(
+                        result = ToolResult(
                             ok=False,
                             error=f"tool call failed: {call.name}",
                         )
+                    return result
                 finally:
                     self._notify_tool_terminal(
                         run_id,
                         call.call_id or call.name,
                         call.name,
+                    )
+                    self._notify_tool_result_terminal(
+                        run_id,
+                        call.call_id or call.name,
+                        call.name,
+                        result,
                     )
 
             timeout = self.registry.timeout_for(call.name) or (
@@ -2438,6 +2450,22 @@ class AgentService:
             callback(run_id, call_key, tool_name)
         except BaseException:  # noqa: BLE001 - observer cannot escape boundary
             logger.warning("could not report definitive tool completion")
+
+    def _notify_tool_result_terminal(
+        self,
+        run_id: str,
+        call_key: str,
+        tool_name: str,
+        result: ToolResult,
+    ) -> None:
+        """Report a structured definitive result without affecting it."""
+        callback = self._on_tool_result_terminal
+        if callback is None:
+            return
+        try:
+            callback(run_id, call_key, tool_name, result)
+        except BaseException:  # noqa: BLE001 - observer cannot escape boundary
+            logger.warning("could not report definitive tool result")
 
     def _notify_run_terminal(self, run_id: str) -> None:
         """Sweep approved-but-never-dispatched definitive card rows."""

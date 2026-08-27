@@ -12,7 +12,7 @@ from types import SimpleNamespace
 import pytest
 
 import tldw_chatbook.Chat.console_chat_controller as controller_mod
-from tldw_chatbook.Agents.agent_models import ToolCall
+from tldw_chatbook.Agents.agent_models import ToolCall, ToolResult
 from tldw_chatbook.Agents.local_tool_provider import (
     LOCAL_AUTHORITY_UNAVAILABLE_REFUSAL,
     LocalApprovalEffect,
@@ -23,6 +23,7 @@ from tldw_chatbook.Agents.run_context import use_run_id
 from tldw_chatbook.Chat.console_chat_controller import (
     ConsoleChatController,
     USER_DENIED_REFUSAL,
+    watchlists_operation_receipt_ids,
     build_combined_review_hook,
     build_local_review_hook,
 )
@@ -60,6 +61,80 @@ ALLOW = EffectiveToolState(state="allow", origin="tool_override")
 #: writes is keyed by it. These tests each drive ONE run; the assertions
 #: are unchanged apart from that key.
 RUN = "run-1"
+
+
+def test_watchlists_receipt_capture_accepts_only_structured_canonical_ids():
+    secret = "private article body and arguments"
+    check_result = ToolResult(
+        ok=True,
+        content=json.dumps(
+            {
+                "status": "accepted",
+                "operations": [
+                    {"operation_id": "local:watchlist_run:7", "body": secret},
+                    {"operation_id": "local:watchlist_run:0"},
+                    {"operation_id": "external:mcp:8"},
+                ],
+                "arguments": {"source_ids": [secret]},
+            }
+        ),
+    )
+    briefing_result = ToolResult(
+        ok=True,
+        content=json.dumps(
+            {
+                "status": "accepted",
+                "operation_id": "local:briefing:9",
+                "body": secret,
+            }
+        ),
+    )
+
+    assert watchlists_operation_receipt_ids(
+        "watchlists_check_sources", check_result
+    ) == ("local:watchlist_run:7",)
+    assert watchlists_operation_receipt_ids(
+        "watchlists_generate_briefing", briefing_result
+    ) == ("local:briefing:9",)
+    assert watchlists_operation_receipt_ids(
+        "watchlists_check_sources", ToolResult(ok=False, content=check_result.content)
+    ) == ()
+    assert watchlists_operation_receipt_ids("calculator", check_result) == ()
+    assert secret not in repr(
+        watchlists_operation_receipt_ids("watchlists_check_sources", check_result)
+    )
+
+
+def test_controller_retains_and_publishes_only_canonical_receipt_identity():
+    controller = ConsoleChatController(
+        store=ConsoleChatStore(),
+        provider_gateway=object(),
+    )
+    published: list[tuple[str, ...]] = []
+    controller.follow_watchlists_operations = published.append
+    controller.app = SimpleNamespace(call_from_thread=lambda callback: callback())
+
+    controller.observe_watchlists_operation_result(
+        "run-1",
+        "call-1",
+        "watchlists_generate_briefing",
+        ToolResult(
+            ok=True,
+            content=json.dumps(
+                {
+                    "status": "accepted",
+                    "operation_id": "local:briefing:9",
+                    "body": "never retain me",
+                }
+            ),
+        ),
+    )
+
+    assert controller._followed_watchlists_operation_ids == (
+        "local:briefing:9",
+    )
+    assert published == [("local:briefing:9",)]
+    assert "never retain me" not in repr(controller._followed_watchlists_operation_ids)
 
 
 @pytest.fixture(autouse=True)
@@ -748,6 +823,62 @@ async def test_compose_local_provider_wires_transactional_watchlists_commands(
         "retryable": False,
         "message": "A collection with that name already exists.",
     }
+
+
+@pytest.mark.asyncio
+async def test_compose_local_provider_routes_long_watchlists_work_to_app_coordinator(
+    monkeypatch, tmp_path
+):
+    monkeypatch.setattr(
+        controller_mod,
+        "get_cli_setting",
+        _console_settings(workspace_root=str(tmp_path)),
+    )
+    profile = tmp_path / "profile" / "config.toml"
+    profile.parent.mkdir()
+    profile.write_text("", encoding="utf-8")
+    monkeypatch.setenv("TLDW_CONFIG_PATH", str(profile))
+    RuntimeSourceStateStore(default_runtime_policy_path()).save(RuntimeSourceState())
+
+    class Coordinator:
+        def __init__(self):
+            self.checks = []
+            self.briefings = []
+
+        def submit_checks(self, source_ids):
+            self.checks.append(source_ids)
+            return [{"run_id": 7, "source_id": 3, "status": "queued"}]
+
+        def submit_briefing(self, watchlist_id, preset_id):
+            self.briefings.append((watchlist_id, preset_id))
+            return {"id": 11, "status": "generating"}
+
+    coordinator = Coordinator()
+    bundle = SimpleNamespace(list_sources=lambda watchlist_id: [3])
+    app = SimpleNamespace(
+        unified_mcp_service=_FakeService(state=ALLOW),
+        watchlists_operation_coordinator=coordinator,
+        watchlist_bundle_service=bundle,
+    )
+    provider, _hook = _compose_local_provider(_bare_controller(app))
+
+    check = await asyncio.to_thread(
+        provider.invoke,
+        "local:watchlists_check_sources",
+        {"collection_id": "local:watchlist:5"},
+    )
+    briefing = await asyncio.to_thread(
+        provider.invoke,
+        "local:watchlists_generate_briefing",
+        {"collection_id": "local:watchlist:5", "preset_id": 2},
+    )
+
+    assert json.loads(check.content)["operations"][0]["operation_id"] == (
+        "local:watchlist_run:7"
+    )
+    assert json.loads(briefing.content)["operation_id"] == "local:briefing:11"
+    assert coordinator.checks == [[3]]
+    assert coordinator.briefings == [(5, 2)]
 
 
 def test_console_watchlists_real_reads_leave_app_owned_state_unchanged(

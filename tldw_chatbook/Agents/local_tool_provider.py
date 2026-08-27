@@ -2162,6 +2162,81 @@ def _default_specs(
             execution_policy=ToolExecutionPolicy.DEFINITIVE_AFTER_START,
             tags=("mutates",),
         ),
+        LocalToolSpec(
+            name="watchlists_check_sources",
+            description=(
+                "Accept durable checks for 1-50 local Watchlists sources or one "
+                "collection, contact their configured network destinations with "
+                "at most four checks in flight, and return exact polling receipts."
+            ),
+            parameters={
+                "type": "object",
+                "properties": {
+                    "source_ids": {
+                        "type": "array",
+                        "minItems": 1,
+                        "maxItems": 50,
+                        "items": {
+                            "type": "string",
+                            "pattern": r"^local:subscription:[1-9][0-9]*$",
+                            "maxLength": 40,
+                        },
+                        "uniqueItems": True,
+                    },
+                    "collection_id": {
+                        "type": "string",
+                        "pattern": r"^local:watchlist:[1-9][0-9]*$",
+                        "maxLength": 36,
+                    },
+                },
+                "oneOf": [
+                    {"required": ["source_ids"]},
+                    {"required": ["collection_id"]},
+                ],
+                "additionalProperties": False,
+            },
+            handler=watchlists_command_service.check_sources,
+            exposure=LocalToolExposure.CONSOLE_ONLY,
+            approval_effects=(
+                LocalApprovalEffect.MUTATES_LOCAL,
+                LocalApprovalEffect.NETWORK,
+            ),
+            execution_policy=ToolExecutionPolicy.DEFINITIVE_AFTER_START,
+            tags=("mutates",),
+        ),
+        LocalToolSpec(
+            name="watchlists_generate_briefing",
+            description=(
+                "Accept one durable briefing generation for a local Watchlists "
+                "collection using its existing configured model path, then return "
+                "the exact polling receipt."
+            ),
+            parameters={
+                "type": "object",
+                "properties": {
+                    "collection_id": {
+                        "type": "string",
+                        "pattern": r"^local:watchlist:[1-9][0-9]*$",
+                        "maxLength": 36,
+                    },
+                    "preset_id": {
+                        "type": "integer",
+                        "minimum": 1,
+                        "maximum": 2**63 - 1,
+                    },
+                },
+                "required": ["collection_id"],
+                "additionalProperties": False,
+            },
+            handler=watchlists_command_service.generate_briefing,
+            exposure=LocalToolExposure.CONSOLE_ONLY,
+            approval_effects=(
+                LocalApprovalEffect.MUTATES_LOCAL,
+                LocalApprovalEffect.LLM_SPEND,
+            ),
+            execution_policy=ToolExecutionPolicy.DEFINITIVE_AFTER_START,
+            tags=("mutates",),
+        ),
     ]
     if todo_store is not None:
         content_schema = {

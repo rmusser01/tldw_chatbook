@@ -6923,6 +6923,19 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
         {"completed", "complete", "succeeded", "success"}
     )
 
+    @staticmethod
+    def _local_source_row_id(source: Mapping[str, Any]) -> int | None:
+        """Return the bare local row id carried by a source projection."""
+        candidate = source.get("source_id")
+        if type(candidate) is int and candidate > 0:
+            return candidate
+        canonical = source.get("id")
+        if isinstance(canonical, str) and canonical.startswith("local:subscription:"):
+            suffix = canonical.rsplit(":", 1)[-1]
+            if suffix.isdigit() and int(suffix) > 0:
+                return int(suffix)
+        return None
+
     @classmethod
     def _check_failure_message(cls, result: Any) -> str | None:
         """The reason a completed check failed, or None if it succeeded.
@@ -7057,10 +7070,26 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
         reached_terminal = False
         try:
             try:
-                result = await self._controller.check_now(
-                    runtime_backend=runtime_backend,
-                    source_id=source_id,
+                coordinator = getattr(
+                    self.app_instance,
+                    "watchlists_operation_coordinator",
+                    None,
                 )
+                local_source_id = self._local_source_row_id(source)
+                if (
+                    str(runtime_backend).strip().casefold() == "local"
+                    and coordinator is not None
+                    and local_source_id is not None
+                ):
+                    receipt = (await coordinator.accept_checks([local_source_id]))[0]
+                    result = await self.app_instance.local_watchlists_service.wait_for_terminal_run(
+                        receipt["run_id"]
+                    )
+                else:
+                    result = await self._controller.check_now(
+                        runtime_backend=runtime_backend,
+                        source_id=source_id,
+                    )
             except Exception as exc:
                 logger.opt(exception=True).warning(
                     f"Check now failed for watchlist source {source_id!r}: {exc}"
@@ -9840,6 +9869,11 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
         recorded, still inside `_start_generation`'s own `to_thread` hop.
         Passed as `exclude_watchlists`, never in place of `exclude`.
         """
+        if getattr(self.app_instance, "watchlists_operation_coordinator", None) is not None:
+            # App startup owns process-loss reconciliation. A screen-local
+            # sweep cannot distinguish navigation from process loss and must
+            # never race the coordinator's accepted generation.
+            return 0
         if not self._zombie_sweep_is_safe():
             return 0
         claims = active_briefing_claim_row_ids()
@@ -9941,6 +9975,20 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
         3's review found exactly that leak in the service; this is the same
         rule, one layer up.
         """
+        coordinator = getattr(
+            self.app_instance,
+            "watchlists_operation_coordinator",
+            None,
+        )
+        if coordinator is not None:
+            await self._follow_coordinated_briefing(
+                db,
+                watchlist_id,
+                preset_id,
+                coordinator,
+            )
+            return
+
         generated_id: int | None = None
         try:
             try:
@@ -10033,6 +10081,47 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
             # status, and the failure path may leave a `generating` row this
             # attempt inserted before it broke.
             self._request_briefings_refresh(select_briefing_id=generated_id)
+
+    async def _follow_coordinated_briefing(
+        self,
+        db: Any,
+        watchlist_id: int,
+        preset_id: int | None,
+        coordinator: Any,
+    ) -> None:
+        """Accept app-owned generation and follow its durable receipt."""
+        generated_id: int | None = None
+        row: Mapping[str, Any] = {}
+        following_cancelled = False
+        try:
+            receipt = await coordinator.accept_briefing(watchlist_id, preset_id)
+            generated_id = int(receipt["id"])
+            while True:
+                row = await asyncio.to_thread(db.get_briefing, generated_id)
+                status = str(row.get("status") or "").strip().casefold()
+                if status != STATUS_GENERATING:
+                    break
+                await asyncio.sleep(0.1)
+            if status == STATUS_FAILED:
+                self._notify_briefing_failure(row)
+        except asyncio.CancelledError:
+            following_cancelled = True
+            raise
+        except Exception as exc:  # noqa: BLE001 - UI reports fixed, safe copy
+            logger.warning(
+                f"Briefing acceptance failed for watchlist {watchlist_id}: "
+                f"{type(exc).__name__}"
+            )
+            self._notify_watchlists(
+                "Could not accept this briefing. Nothing new was started.",
+                severity="error",
+                markup=False,
+            )
+        finally:
+            self._briefing_in_flight = False
+            self._briefing_in_flight_watchlist_id = None
+            if not following_cancelled and self.is_mounted:
+                await self._load_briefings(select_briefing_id=generated_id)
 
     # --- Cast a script from the selected briefing (spec #2 phase 2a, ------
     # Task 5). Sibling of the Generate chain immediately above: own

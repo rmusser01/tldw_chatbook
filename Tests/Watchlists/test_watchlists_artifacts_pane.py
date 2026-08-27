@@ -53,6 +53,10 @@ from Tests.UI.test_destination_visual_parity_correction import (
 from Tests.UI.app_factory import _build_test_app
 from tldw_chatbook.DB.ChaChaNotes_DB import CharactersRAGDB
 from tldw_chatbook.Subscriptions import briefing_cast, briefing_service
+from tldw_chatbook.Subscriptions import watchlists_operation_coordinator as coordinator_module
+from tldw_chatbook.Subscriptions.watchlists_operation_coordinator import (
+    WatchlistsOperationCoordinator,
+)
 import tldw_chatbook.Subscriptions.briefing_audio as briefing_audio
 from tldw_chatbook.Subscriptions.briefing_audio import AudioGenerationError
 from tldw_chatbook.Subscriptions.briefing_cast import dump_roster
@@ -125,7 +129,13 @@ def _use_fake_chat(monkeypatch, chat) -> None:
             db, watchlist_id, chat=chat, **kwargs
         )
 
+    async def _execute(db, briefing_id, **kwargs):
+        return await briefing_service.execute_accepted_briefing(
+            db, briefing_id, chat=chat, **kwargs
+        )
+
     monkeypatch.setattr(screen_module, "generate_briefing", _generate)
+    monkeypatch.setattr(coordinator_module, "execute_accepted_briefing", _execute)
 
 
 def _seed_watchlist(app, *, items: int = 2) -> int:
@@ -655,6 +665,47 @@ async def test_detached_audio_does_not_request_artifacts_refresh(monkeypatch):
 
     assert not screen.is_attached
     screen._request_briefings_refresh.assert_not_called()
+async def test_leaving_artifacts_stops_following_but_generation_continues(monkeypatch):
+    app = _build_test_app()
+    app.notify = Mock()
+    watchlist_id = _seed_watchlist(app)
+
+    class BlockingChat:
+        def __init__(self):
+            self.started = threading.Event()
+            self.release = threading.Event()
+
+        def __call__(self, **_kwargs):
+            self.started.set()
+            assert self.release.wait(timeout=5)
+            return CANNED_BODY
+
+    chat = BlockingChat()
+    _use_fake_chat(monkeypatch, chat)
+    app.watchlists_operation_coordinator = WatchlistsOperationCoordinator(
+        local_service=app.local_watchlists_service,
+        briefing_db=app.watchlist_bundle_service.db,
+    )
+    app.watchlists_operation_coordinator.bind_running_loop()
+
+    async with _open_artifacts(app, watchlist_id) as (screen, pilot, _host):
+        screen.query_one("#artifacts-generate-button", Button).press()
+        for _ in range(100):
+            await pilot.pause(0.02)
+            if chat.started.is_set():
+                break
+        assert chat.started.is_set(), "the accepted generation must start"
+
+        await screen.remove()
+        chat.release.set()
+        rows = []
+        for _ in range(100):
+            await pilot.pause(0.02)
+            rows = _briefing_rows(app, watchlist_id)
+            if rows and rows[0]["status"] == "complete":
+                break
+
+        assert rows and rows[0]["status"] == "complete"
 
 
 # --- 3. A stuck `generating` row is recovered, and says so -----------------

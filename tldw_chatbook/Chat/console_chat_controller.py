@@ -1059,6 +1059,48 @@ PROVIDER_CONTINUATION_RECOVERY_REQUIRED = (
 # annotations and provider serialization strips every private key.
 NATIVE_MESSAGE_ID_KEY = "_native_message_id"
 
+_WATCHLISTS_RECEIPT_ID_RE = re.compile(
+    r"^local:(?:watchlist_run|briefing):[1-9][0-9]*$"
+)
+
+
+def watchlists_operation_receipt_ids(
+    tool_name: str,
+    result: Any,
+) -> tuple[str, ...]:
+    """Extract canonical receipt identity from a structured local result."""
+    if tool_name not in {
+        "watchlists_check_sources",
+        "watchlists_generate_briefing",
+    } or getattr(result, "ok", False) is not True:
+        return ()
+    content = getattr(result, "content", None)
+    if not isinstance(content, str):
+        return ()
+    try:
+        payload = json.loads(content)
+    except (TypeError, ValueError):
+        return ()
+    if not isinstance(payload, Mapping) or payload.get("status") != "accepted":
+        return ()
+    if tool_name == "watchlists_generate_briefing":
+        candidates = (payload.get("operation_id"),)
+    else:
+        operations = payload.get("operations")
+        if not isinstance(operations, list):
+            return ()
+        candidates = tuple(
+            row.get("operation_id")
+            for row in operations[:50]
+            if isinstance(row, Mapping)
+        )
+    return tuple(
+        operation_id
+        for operation_id in candidates
+        if isinstance(operation_id, str)
+        and _WATCHLISTS_RECEIPT_ID_RE.fullmatch(operation_id)
+    )
+
 
 def _flatten_preflight_messages(
     semantic: PreparedConsoleRequest,
@@ -2518,6 +2560,8 @@ class ConsoleChatController:
         #: `mark_session_visited`), never from a worker thread, so they
         #: carry no cross-thread hazard this lock needs to close.
         self._approval_state_lock = threading.Lock()
+        self._watchlists_receipt_lock = threading.Lock()
+        self._followed_watchlists_operation_ids: tuple[str, ...] = ()
         # Revision tokens fence destructive lifecycle confirmations without
         # mirroring any activity values. Counts remain derived on demand from
         # ``ConsoleControllerActivity``; these integers only reveal that one
@@ -2529,6 +2573,9 @@ class ConsoleChatController:
         #: persisted, run about to start) so the composer can clear immediately
         #: instead of holding the sent text for the whole run.
         self.on_submission_accepted: Callable[[], None] | None = None
+        self.follow_watchlists_operations: (
+            Callable[[tuple[str, ...]], None] | None
+        ) = None
         #: Content-free queued counterpart to ``on_submission_accepted``.
         #: It may refresh transcript/queue UI, but cannot clear a composer.
         self.on_queued_submission_accepted: (
@@ -10019,6 +10066,11 @@ class ConsoleChatController:
         )
         local_watchlists_service = getattr(self.app, "local_watchlists_service", None)
         watchlist_bundle_service = getattr(self.app, "watchlist_bundle_service", None)
+        watchlists_coordinator = getattr(
+            self.app,
+            "watchlists_operation_coordinator",
+            None,
+        )
 
         def _create_collection(**kwargs: Any) -> Any:
             if watchlist_bundle_service is None:
@@ -10040,6 +10092,21 @@ class ConsoleChatController:
             create_sources_batch=_create_sources_batch,
             create_collection=_create_collection,
             update_collection_sources=_update_collection_sources,
+            accept_source_checks=(
+                watchlists_coordinator.submit_checks
+                if watchlists_coordinator is not None
+                else None
+            ),
+            accept_briefing=(
+                watchlists_coordinator.submit_briefing
+                if watchlists_coordinator is not None
+                else None
+            ),
+            resolve_collection_sources=(
+                watchlist_bundle_service.list_sources
+                if watchlist_bundle_service is not None
+                else None
+            ),
         )
         provider = LocalToolProvider(
             workspace_root=root,
@@ -10433,6 +10500,37 @@ class ConsoleChatController:
                 self.set_pending_approval,
                 affected_session,
             )
+
+    def observe_watchlists_operation_result(
+        self,
+        _run_id: str,
+        _call_key: str,
+        tool_name: str,
+        result: Any,
+    ) -> None:
+        """WORKER THREAD: retain only canonical local receipt identities."""
+        operation_ids = watchlists_operation_receipt_ids(tool_name, result)
+        if not operation_ids:
+            return
+        with self._watchlists_receipt_lock:
+            followed = list(self._followed_watchlists_operation_ids)
+            for operation_id in operation_ids:
+                if operation_id not in followed:
+                    followed.append(operation_id)
+            self._followed_watchlists_operation_ids = tuple(followed)
+        app = getattr(self, "app", None)
+        marshal = getattr(app, "call_from_thread", None)
+        if callable(marshal):
+            marshal(self.remount_watchlists_operation_receipts)
+
+    def remount_watchlists_operation_receipts(self) -> None:
+        """UI THREAD: publish the process-local canonical receipt snapshot."""
+        callback = self.follow_watchlists_operations
+        if callback is None:
+            return
+        with self._watchlists_receipt_lock:
+            operation_ids = self._followed_watchlists_operation_ids
+        callback(operation_ids)
 
     def complete_definitive_run(self, run_id: str) -> None:
         """WORKER THREAD: remove finishing rows a run never dispatched."""
@@ -18684,6 +18782,7 @@ class ConsoleChatController:
                 # which shares this same session -- keeps its own card.
                 revoke_approvals=self.revoke_approval_rounds_for_run,
                 on_tool_terminal=self.complete_definitive_tool,
+                on_tool_result_terminal=self.observe_watchlists_operation_result,
                 on_run_terminal=self.complete_definitive_run,
                 restore_provider_continuation=restore_provider_continuation,
                 restore_provider_target=restore_provider_target,

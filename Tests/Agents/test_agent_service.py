@@ -3020,6 +3020,71 @@ def test_make_invoke_tool_cancels_definitive_call_before_start(db, monkeypatch):
     assert invoked == []
 
 
+def test_definitive_result_observer_receives_structured_success_and_failure_only(
+    db, monkeypatch
+):
+    """Receipt capture observes results without changing the legacy callback."""
+    from tldw_chatbook.Agents.agent_models import ToolCall
+    from tldw_chatbook.Agents.tool_catalog import ToolExecutionPolicy
+
+    observed: list[tuple[str, str, str, ToolResult]] = []
+    legacy: list[tuple[str, str, str]] = []
+    service = AgentService(
+        db=db,
+        registry=ToolCatalogRegistry(),
+        chat_call=lambda **_kwargs: provider_reply("unused"),
+        on_tool_terminal=lambda *args: legacy.append(args),
+        on_tool_result_terminal=lambda *args: observed.append(args),
+    )
+    monkeypatch.setattr(
+        service.registry,
+        "execution_policy_for",
+        lambda name: (
+            ToolExecutionPolicy.DEFINITIVE_AFTER_START
+            if name == "watchlists_check_sources"
+            else ToolExecutionPolicy.BOUNDED_ABANDONABLE
+        ),
+    )
+    results = iter(
+        (
+            ToolResult(ok=True, content='{"status":"accepted"}'),
+            ToolResult(ok=False, error="safe failure"),
+            ToolResult(ok=True, content="ordinary"),
+        )
+    )
+    monkeypatch.setattr(
+        service.registry, "invoke_by_name", lambda _name, _args: next(results)
+    )
+    config = AgentConfig(
+        model="test-model",
+        system_prompt="s",
+        allowed_tools=("watchlists_check_sources", "calculator"),
+    )
+    invoke = service._make_invoke_tool(
+        config,
+        disclosed_names={"watchlists_check_sources", "calculator"},
+        run_id="run-receipt",
+    )
+
+    success = invoke(
+        ToolCall(name="watchlists_check_sources", args={}, call_id="success")
+    )
+    failure = invoke(
+        ToolCall(name="watchlists_check_sources", args={}, call_id="failure")
+    )
+    invoke(ToolCall(name="calculator", args={}, call_id="ordinary"))
+
+    assert [row[:3] for row in observed] == [
+        ("run-receipt", "success", "watchlists_check_sources"),
+        ("run-receipt", "failure", "watchlists_check_sources"),
+    ]
+    assert [row[3] for row in observed] == [success, failure]
+    assert legacy == [
+        ("run-receipt", "success", "watchlists_check_sources"),
+        ("run-receipt", "failure", "watchlists_check_sources"),
+    ]
+
+
 @pytest.mark.parametrize(
     "failure_factory",
     [
