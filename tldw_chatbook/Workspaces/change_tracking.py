@@ -262,7 +262,11 @@ class ShadowRepo:
         *args: str,
         check: bool = True,
         binary: bool = False,
+        input_data: str | bytes | None = None,
     ) -> subprocess.CompletedProcess:
+        if input_data is not None and binary != isinstance(input_data, bytes):
+            expected = "bytes" if binary else "str"
+            raise TypeError(f"binary={binary} requires {expected} input_data")
         cmd = [
             self._git,
             "--git-dir",
@@ -276,6 +280,7 @@ class ShadowRepo:
                 cmd,
                 capture_output=True,
                 env=self._env(),
+                input=input_data,
                 timeout=_GIT_TIMEOUT_SECONDS,
                 text=not binary,
             )
@@ -440,10 +445,8 @@ class ShadowRepo:
             ancestor = ancestor.parent
         return None
 
-    def _drop_new_force_paths_over_cap(
-        self, paths: Sequence[str]
-    ) -> tuple[str, ...]:
-        """Remove and return newly indexed force paths over the size cap."""
+    def _drop_new_index_paths_over_cap(self) -> tuple[str, ...]:
+        """Remove and disclose new stage-0 blobs over the size cap."""
         from tldw_chatbook.Workspaces.change_bounds import (
             DEFAULT_MAX_FILE_BYTES,
             change_review_setting,
@@ -451,26 +454,56 @@ class ShadowRepo:
 
         cap = change_review_setting("max_file_bytes", DEFAULT_MAX_FILE_BYTES)
         tip = self.tip()
-        removed: list[str] = []
-        for rel in paths:
-            literal = f":(literal){rel}"
-            if tip and self._z_tokens(
-                "ls-tree", "-z", "--name-only", tip, "--", literal
-            ):
-                continue
-            staged = self._z_tokens(
-                "ls-files", "--stage", "-z", "--", literal
-            )
-            if not staged:
-                continue
-            fields = staged[0].split(" ", 2)
-            if len(fields) < 2:
+        tip_paths = set(
+            self._z_tokens("ls-tree", "-r", "-z", "--name-only", tip)
+            if tip
+            else ()
+        )
+        new_entries: list[tuple[str, str]] = []
+        for entry in self._z_tokens("ls-files", "--stage", "-z"):
+            metadata, separator, rel = entry.partition("\t")
+            fields = metadata.split()
+            if not separator or len(fields) != 3:
                 raise ChangeTrackingError("git ls-files returned malformed output")
-            size = int(str(self._run("cat-file", "-s", fields[1]).stdout))
-            if size > cap:
-                self._run("update-index", "--force-remove", "--", rel)
-                removed.append(rel)
-        return tuple(removed)
+            _mode, object_id, stage = fields
+            if stage != "0" or rel in tip_paths:
+                continue
+            new_entries.append((rel, object_id))
+        if not new_entries:
+            return ()
+
+        object_ids = tuple(dict.fromkeys(object_id for _, object_id in new_entries))
+        proc = self._run(
+            "cat-file",
+            "--batch-check=%(objectname) %(objecttype) %(objectsize)",
+            input_data="".join(f"{object_id}\n" for object_id in object_ids),
+        )
+        lines = str(proc.stdout).splitlines()
+        if len(lines) != len(object_ids):
+            raise ChangeTrackingError("git cat-file returned malformed output")
+        sizes: dict[str, int] = {}
+        for line in lines:
+            fields = line.split()
+            if len(fields) != 3:
+                raise ChangeTrackingError("git cat-file returned malformed output")
+            object_id, object_type, size_text = fields
+            if object_type == "blob":
+                sizes[object_id] = int(size_text)
+
+        removed = tuple(
+            rel
+            for rel, object_id in new_entries
+            if sizes.get(object_id, 0) > cap
+        )
+        if removed:
+            self._run("update-index", "--force-remove", "--", *removed)
+        included = {rel for rel, _object_id in new_entries}.difference(removed)
+        self.last_oversize_excluded = tuple(
+            rel
+            for rel in dict.fromkeys((*self.last_oversize_excluded, *removed))
+            if rel not in included
+        )
+        return removed
 
     def _drop_new_force_paths_no_longer_safe(
         self, staged_paths: Sequence[str], safe_paths: Sequence[str]
@@ -528,7 +561,6 @@ class ShadowRepo:
             exact_paths = self._exact_force_paths(force_paths)
             if exact_paths:
                 self._run("update-index", "--add", "--", *exact_paths)
-                self._drop_new_force_paths_over_cap(exact_paths)
             scan = scan_root(
                 self.root,
                 max_files=_sys.maxsize,
@@ -607,31 +639,7 @@ class ShadowRepo:
                     self.last_nested_repos = tuple(
                         dict.fromkeys((*self.last_nested_repos, *late_nested))
                     )
-                    tip = self.tip()
-                    new_final_paths = {
-                        rel
-                        for rel in post_stage_paths
-                        if not tip
-                        or not self._z_tokens(
-                            "ls-tree",
-                            "-z",
-                            "--name-only",
-                            tip,
-                            "--",
-                            f":(literal){rel}",
-                        )
-                    }
-                    late_oversize = self._drop_new_force_paths_over_cap(
-                        post_stage_paths
-                    )
-                    included = new_final_paths.difference(late_oversize)
-                    self.last_oversize_excluded = tuple(
-                        rel
-                        for rel in dict.fromkeys(
-                            (*self.last_oversize_excluded, *late_oversize)
-                        )
-                        if rel not in included
-                    )
+            self._drop_new_index_paths_over_cap()
             had_tip = self.tip() is not None
             if had_tip:
                 staged = self._run("diff", "--cached", "--quiet", check=False)
@@ -776,7 +784,7 @@ class ShadowRepo:
                 unsafe = self._drop_new_force_paths_no_longer_safe(
                     exact_paths, final_paths
                 )
-                oversized = self._drop_new_force_paths_over_cap(final_paths)
+                oversized = self._drop_new_index_paths_over_cap()
                 if unsafe:
                     paths_text = ", ".join(unsafe)
                     raise ChangeTrackingError(
@@ -785,8 +793,11 @@ class ShadowRepo:
                             f"{paths_text}"
                         )[:400]
                     )
-                if oversized:
-                    paths_text = ", ".join(oversized)
+                attempt_oversized = tuple(
+                    rel for rel in oversized if rel in final_paths
+                )
+                if attempt_oversized:
+                    paths_text = ", ".join(attempt_oversized)
                     raise ChangeTrackingError(
                         (
                             "forced path exceeds change-tracking size cap: "

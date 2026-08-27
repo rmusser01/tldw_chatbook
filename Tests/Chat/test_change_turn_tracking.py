@@ -249,7 +249,7 @@ def test_force_path_final_restage_discloses_blob_still_over_cap(
             in_root
             and grew_provisionally
             and not shrank_for_scan
-            and args[:2] == ("update-index", "--force-remove")
+            and args[:2] == ("update-index", "--add")
         ):
             target.write_bytes(b"small")
             shrank_for_scan = True
@@ -588,6 +588,47 @@ def test_supplied_successor_sha_primes_a_late_ignored_path_for_successor_e(
     assert successor_records[0].baseline_sha == supplied
     repo = tracker.service.repo_for_root(root)
     assert repo.file_bytes(successor_records[0].end_sha, target.name) == expected
+
+
+def test_supplied_sha_primed_file_growing_before_successor_e_is_disclosed(
+    tracker, root, monkeypatch
+):
+    monkeypatch.setenv("TLDW_CHANGE_REVIEW_MAX_FILE_BYTES", "8")
+    target = root / "x"
+    (root / ".gitignore").write_text(f"{target.name}\n")
+
+    parent = tracker.begin_turn([root])
+    parent.await_baseline()
+    assert tracker.end_turn(parent) == []
+    continuation = tracker.continuation(parent)
+    assert continuation is not None
+
+    successor = tracker.begin_turn([root])
+    successor.await_baseline()
+    key = str(root.resolve())
+    supplied = successor.baselines[key]
+    target.write_bytes(b"small")
+
+    assert tracker.end_turn(
+        continuation,
+        touched_paths=[str(target)],
+        end_shas=successor.baselines,
+    ) == []
+    assert continuation.end_shas[key] == supplied
+    repo = tracker.service.repo_for_root(root)
+    assert repo._run("show", f":{target.name}", binary=True).stdout == b"small"
+
+    target.write_bytes(b"x" * 9)
+    records = tracker.end_turn(successor)
+
+    assert len(records) == 1
+    record = records[0]
+    assert record.baseline_sha == supplied
+    assert record.end_sha == supplied
+    assert record.files_changed == 0
+    assert record.untracked_oversize == 1
+    assert repo.file_bytes(record.end_sha, target.name) is None
+    assert str(repo._run("ls-files", "--", target.name).stdout).strip() == ""
 
 
 def test_supplied_sha_priming_treats_pathspec_magic_as_a_literal_filename(
