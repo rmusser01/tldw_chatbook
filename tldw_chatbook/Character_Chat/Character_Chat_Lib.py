@@ -43,6 +43,10 @@ from tldw_chatbook.Chat.assistant_generation_state import (  # noqa: E402
     normalize_assistant_generation_state,
     render_exported_assistant_content,
 )
+from tldw_chatbook.Chat.thinking_blocks import (  # noqa: E402
+    preflight_thinking_history_policy,
+    thinking_exchange_to_json,
+)
 from tldw_chatbook.model_capabilities import (  # noqa: E402
     moonshot_model_returns_reasoning_content,
 )
@@ -75,6 +79,7 @@ _MAX_EXPORTED_HISTORY_TOTAL_CONTENT_CHARS = 8 * 1024 * 1024
 _MAX_EXPORTED_HISTORY_ID_CHARS = 256
 _MAX_EXPORTED_HISTORY_TOTAL_ID_CHARS = 1024 * 1024
 _MAX_EXPORTED_HISTORY_PRIVATE_BYTES = 8 * 1024 * 1024
+_MAX_EXPORTED_HISTORY_THINKING_BYTES = 8 * 1024 * 1024
 _MAX_EXPORTED_HISTORY_JSON_DEPTH = 32
 
 
@@ -3221,9 +3226,13 @@ def load_chat_history_from_file_and_save_to_db(
             ):
                 raise ValueError("Invalid exported chat history.")
             staged_messages: list[dict[str, Any]] = []
+            thinking_policy, policy_warning = preflight_thinking_history_policy(
+                chat_data_dict.get("thinking_history_policy")
+            )
             total_content_chars = 0
             total_id_chars = 0
             total_private_bytes = 0
+            total_thinking_bytes = 0
             for ordinal, message in enumerate(projected_history, start=1):
                 role = message.get("role")
                 content = message.get("content")
@@ -3247,6 +3256,20 @@ def load_chat_history_from_file_and_save_to_db(
                 if total_id_chars > _MAX_EXPORTED_HISTORY_TOTAL_ID_CHARS:
                     raise ValueError("Invalid exported chat history.")
                 staged = {"sender": role, "role": role, "content": content}
+                thinking_value = message.get("thinking_blocks")
+                if thinking_value is not None:
+                    if role != "assistant":
+                        raise ValueError("Invalid exported chat history.")
+                    canonical_thinking = thinking_exchange_to_json(thinking_value)
+                    total_thinking_bytes += len(
+                        canonical_thinking.encode("utf-8")
+                    )
+                    if (
+                        total_thinking_bytes
+                        > _MAX_EXPORTED_HISTORY_THINKING_BYTES
+                    ):
+                        raise ValueError("Invalid exported chat history.")
+                    staged["thinking_blocks_json"] = canonical_thinking
                 private = message.get("_private")
                 checkpoint = None
                 if (
@@ -3313,13 +3336,20 @@ def load_chat_history_from_file_and_save_to_db(
                 )
                 staged_messages.append(staged)
 
+            if policy_warning is not None:
+                logger.warning(policy_warning)
+
             title = chat_data_dict.get("conversation_name")
             if not isinstance(title, str) or not title.strip():
                 title = "Imported Chat"
             title = title[:255]
             with db.transaction():
                 new_conv_id = db.add_conversation(
-                    {"title": title, "assistant_authority_id": None}
+                    {
+                        "title": title,
+                        "assistant_authority_id": None,
+                        "thinking_history_policy": thinking_policy,
+                    }
                 )
                 if not new_conv_id:
                     raise CharactersRAGDBError("Failed to import chat history.")

@@ -7,3 +7,32 @@ Dependencies: TASK-18932.1 complete at `9906b4d4bd`; TASK-18932.2 complete at `7
 Execution: serial subagent-driven development with RED/GREEN evidence, spec review, then code-quality review for each task. Full-suite verification remains excluded unless the user opts in.
 
 Task 1: round-trip supported thinking and replay policy through selected-conversation JSON and Chatbook V2, with whole-conversation preflight and shared sensitivity warnings.
+
+Task 1 RED (2026-08-26): `Tests/Chat/test_thinking_conversation_exchange.py`
+failed 11/11 and `Tests/Chatbooks/test_chatbook_thinking_round_trip.py` failed
+10/10 before production changes. Failures showed absent policy/thinking projections,
+missing shared warnings, unsupported-version export not refusing, and imports that did
+not yet restore or preflight thinking data.
+
+Task 1 GREEN (2026-08-26): the required portability, provider-continuation,
+Character Chat, Chatbook creator/importer/integration, and nearest reachable
+assistant-generation-state suites passed: 165 passed. A continuation-only warning
+control subsequently passed with its companion privacy suite: 56 passed. Scoped Ruff
+and `git diff --check` passed. The dependency environment reports one pre-existing
+RequestsDependencyWarning; no test failures remain.
+
+Task 1 implementation: selected-conversation JSON now projects normalized
+conversation policy and canonical structured assistant thinking while preserving its
+caller-supplied selected/active rows. `save_chat_history` passes the caller-owned DB
+instance through to content generation. Character Chat performs complete policy and
+thinking staging before its existing conversation transaction. Chatbook V2 projects
+thinking for every message graph owner it already exports and stages policy plus all
+envelopes before its existing per-conversation transaction. Both formats use the
+shared sensitivity warning for thinking or ADR-063 continuation, reject opaque future
+envelope versions with upgrade-oriented content-free copy, and preserve unrelated
+conversation isolation.
+
+Task 1 ADR check: no new ADR. The implementation follows ADR-090's dedicated
+assistant-owned thinking envelope, normalized conversation replay policy, importable
+round-trip and sensitivity boundary while retaining ADR-063 continuation as a
+separate `_private` owner. Human-readable/derivative surfaces remain Task 2.

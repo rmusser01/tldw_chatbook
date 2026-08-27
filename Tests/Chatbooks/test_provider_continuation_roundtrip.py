@@ -306,6 +306,15 @@ def test_v2_export_preserves_graph_and_private_owner(
     assert conversation["private_data_warning"] == (
         "This conversation contains private provider continuation data."
     )
+    shared_warning = (
+        "This conversation export contains model thinking or private provider "
+        "continuation. Treat it as sensitive conversation data."
+    )
+    assert conversation["sensitive_data_warning"] == shared_warning
+    assert manifest["content_items"][0]["metadata"][
+        "sensitive_data_warning"
+    ] == shared_warning
+    assert shared_warning in readme
     assert conversation["active_leaf_message_id"] == ids["selected"]
     assert conversation["selected_path_message_ids"] == [
         ids["user"],

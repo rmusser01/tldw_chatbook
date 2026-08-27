@@ -82,6 +82,10 @@ def test_conversation_json_uses_explicit_private_projection() -> None:
     assert payload["private_data_warning"] == (
         "This JSON contains private provider continuation data."
     )
+    assert payload["sensitive_data_warning"] == (
+        "This conversation export contains model thinking or private provider "
+        "continuation. Treat it as sensitive conversation data."
+    )
     assert payload["history"] == [
         {
             "id": "assistant-1",

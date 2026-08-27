@@ -14,6 +14,15 @@ MAX_THINKING_TEXT_BYTES = 256 * 1024
 MAX_THINKING_ENVELOPE_BYTES = 1024 * 1024
 MAX_THINKING_PROVENANCE_CHARS = 200
 MAX_THINKING_BLOCK_ID_CHARS = 128
+MAX_THINKING_HISTORY_POLICY_CHARS = 64
+
+THINKING_EXPORT_WARNING = (
+    "This conversation export contains model thinking or private provider "
+    "continuation. Treat it as sensitive conversation data."
+)
+UNKNOWN_THINKING_HISTORY_POLICY_WARNING = (
+    "Unknown thinking history policy was reset to Auto."
+)
 
 ThinkingVisibility = Literal["displayable", "proprietary"]
 ThinkingStatus = Literal["complete", "stopped", "failed"]
@@ -45,6 +54,10 @@ _CANONICAL_ENCODER = json.JSONEncoder(
 
 class ThinkingEnvelopeValidationError(ValueError):
     """Raised when a thinking envelope is not canonical V1 data."""
+
+
+class ThinkingEnvelopeVersionError(ThinkingEnvelopeValidationError):
+    """Raised when round-trip export needs a newer Chatbook version."""
 
 
 class _InvalidThinking(Exception):
@@ -368,6 +381,51 @@ def dump_thinking_blocks_json(envelope: ThinkingEnvelope | None) -> str | None:
         raise ThinkingEnvelopeValidationError(
             _INVALID_MESSAGE.format(rule="envelope")
         ) from None
+
+
+def thinking_envelope_to_exchange(raw_json: object) -> dict[str, object] | None:
+    """Project durable canonical V1 JSON into a structured exchange object."""
+    if raw_json is None:
+        return None
+    result = read_thinking_blocks_json(raw_json)
+    if result.opaque_json is not None:
+        raise ThinkingEnvelopeVersionError(
+            "Upgrade Chatbook before exporting this conversation's thinking data."
+        )
+    if result.envelope is None:
+        raise ThinkingEnvelopeValidationError(
+            _INVALID_MESSAGE.format(rule="envelope")
+        )
+    canonical = dump_thinking_blocks_json(result.envelope)
+    return cast(dict[str, object], json.loads(canonical or "null"))
+
+
+def thinking_exchange_to_json(value: object) -> str:
+    """Validate a structured exchange object and return canonical V1 JSON."""
+    try:
+        raw = _CANONICAL_ENCODER.encode(value)
+    except Exception:
+        raise ThinkingEnvelopeValidationError(
+            _INVALID_MESSAGE.format(rule="envelope")
+        ) from None
+    return dump_thinking_blocks_json(parse_thinking_blocks_json(raw)) or ""
+
+
+def preflight_thinking_history_policy(
+    value: object,
+) -> tuple[ThinkingHistoryPolicy, str | None]:
+    """Validate imported raw policy and normalize bounded unknown strings."""
+    if value is None or value == "":
+        return "auto", None
+    if type(value) is not str or len(cast(str, value)) > MAX_THINKING_HISTORY_POLICY_CHARS:
+        raise ValueError("Invalid thinking history policy.")
+    normalized = normalize_thinking_history_policy(value)
+    warning = (
+        None
+        if normalized == value
+        else UNKNOWN_THINKING_HISTORY_POLICY_WARNING
+    )
+    return normalized, warning
 
 
 def normalize_thinking_history_policy(value: object) -> ThinkingHistoryPolicy:
