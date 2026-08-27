@@ -4,7 +4,7 @@ title: Console context/cost estimate has three small modelling gaps
 status: Done
 assignee: []
 created_date: '2026-08-06 02:21'
-updated_date: '2026-08-27 14:55'
+updated_date: '2026-08-27 15:01'
 labels:
   - console
   - rag
@@ -80,4 +80,6 @@ Files: tldw_chatbook/RAG_Search/local_citation_capture.py, tldw_chatbook/Event_H
 Verification: Ruff passed on all changed Python files; git diff --check passed; 6 focused RAG capture/authority tests passed; 7 prompted/staged estimator tests passed; the exact pre-send context-estimate test passed; and 8 existing Chat context-estimate tests passed. Full suite was not run per repository guidance.
 
 Tradeoff: estimates intentionally avoid authority I/O and remain formatted pre-authority previews; the send path rechecks authority and fails closed. ADR required: no. ADR path: N/A. Reason: routine parity fix reusing existing boundaries. No new generalizable lesson was produced.
+
+Final review corrected `build_console_context_estimate()` documentation to describe `staged_text` as canonical formatted pre-authority evidence that authoritative send capture may shrink; runtime behavior was unchanged.
 <!-- SECTION:NOTES:END -->
