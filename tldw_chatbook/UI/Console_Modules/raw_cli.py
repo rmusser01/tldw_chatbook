@@ -11,15 +11,29 @@ from time import monotonic
 from typing import Any
 import uuid
 
+from ...Agents.agent_models import STEP_TOOL_CALL, STEP_TOOL_RESULT
+from ...Agents.run_log import (
+    DEFAULT_MAX_RECORD_BYTES,
+    RunLogWriter,
+    configured_max_record_bytes,
+)
 from ...Chat.console_chat_models import (
-    ConsoleActivityPresentation,
     ConsoleChatMessage,
     ConsoleMessageRole,
-    RawCliLifecycleState,
     RawCliPresentation,
 )
 from ...Chat.console_chat_store import RawCliMarkerTransitionError
 from ...Chat.console_message_actions import ConsoleMessageActionService
+from ...Chat.console_raw_cli import (
+    LOCAL_COMMAND_AGENT_KIND,
+    LOCAL_COMMAND_RUN_LOG_DIR,
+    LOCAL_COMMAND_TASK,
+    LOCAL_COMMAND_TOOL_NAME,
+    format_raw_cli_content,
+    local_command_run_status,
+    raw_cli_activity_presentation,
+    raw_cli_terminal_lifecycle,
+)
 from ...Tools.raw_cli_executor import (
     MAX_RAW_TIMEOUT_SECONDS,
     MAX_RAW_PREVIEW_BYTES,
@@ -49,20 +63,11 @@ _CONTAINMENT_REFUSAL = (
     "Raw CLI did not launch because authority changed or process containment "
     "could not be established. The exact draft was restored."
 )
+_PERSISTENCE_REFUSAL = (
+    "Raw CLI could not persist this command locally. The exact draft was restored."
+)
 
 _RAW_CLI_REPAINT_SECONDS = 0.05
-_RAW_CLI_COMPACT_OUTPUT_BYTES = 4 * 1024
-
-
-def _literal_terminal_text(value: str) -> str:
-    """Make terminal controls visible while leaving ordinary text literal."""
-    return "".join(
-        character
-        if character in "\n\t"
-        or not (ord(character) < 0x20 or 0x7F <= ord(character) <= 0x9F)
-        else f"\\x{ord(character):02x}"
-        for character in value
-    )
 
 
 def _utf8_prefix(value: str, byte_limit: int) -> tuple[str, bool]:
@@ -92,72 +97,6 @@ def _bounded_stream_append(
     return stdout, stderr, clipped
 
 
-def _raw_cli_output(stdout: str, stderr: str) -> str:
-    safe_stdout = _literal_terminal_text(stdout) or "(no output)"
-    safe_stderr = _literal_terminal_text(stderr) or "(no output)"
-    return f"stdout:\n{safe_stdout}\n\nstderr:\n{safe_stderr}"
-
-
-def _raw_cli_content(
-    presentation: RawCliPresentation,
-    stdout: str,
-    stderr: str,
-) -> tuple[str, str]:
-    full_output = _raw_cli_output(stdout, stderr)
-    compact_output, clipped = _utf8_prefix(
-        full_output,
-        _RAW_CLI_COMPACT_OUTPUT_BYTES,
-    )
-    if clipped:
-        compact_output += "\n… output preview clipped; use Full output"
-    exit_code = (
-        "Pending" if presentation.exit_code is None else str(presentation.exit_code)
-    )
-    cleanup = {
-        None: "Pending",
-        True: "Proven",
-        False: "Unproven",
-    }[presentation.cleanup_proven]
-    content = (
-        f"Command:\n{_literal_terminal_text(presentation.command)}\n\n"
-        f"Caller: {presentation.caller.title()}\n"
-        f"Shell: {_literal_terminal_text(presentation.shell)}\n"
-        f"CWD: {_literal_terminal_text(presentation.cwd)}\n"
-        f"Elapsed: {presentation.elapsed_seconds:.1f}s\n"
-        f"Exit code: {exit_code}\n"
-        f"Truncated: {'Yes' if presentation.truncated else 'No'}\n"
-        f"Cleanup: {cleanup}\n\n"
-        f"{compact_output}"
-    )
-    return content, full_output
-
-
-def _terminal_lifecycle(result: RawCliResult) -> RawCliLifecycleState:
-    if result.terminal_state in {
-        "exited",
-        "timed_out",
-        "cancelled",
-        "cleanup_unproven",
-    }:
-        return result.terminal_state
-    return "failed"
-
-
-def _activity_for_raw_cli(
-    lifecycle_state: RawCliLifecycleState,
-    exit_code: int | None,
-) -> ConsoleActivityPresentation:
-    if lifecycle_state == "exited" and exit_code == 0:
-        status = "success"
-    elif lifecycle_state in {"starting", "running", "stopping"}:
-        status = "done"
-    elif lifecycle_state in {"timed_out", "cancelled"}:
-        status = "blocked"
-    else:
-        status = "failed"
-    return ConsoleActivityPresentation("tool", "Raw CLI", status)
-
-
 def restore_refused_raw_cli_stash(
     session_id: str | None,
     stash: ConsoleDraftStash,
@@ -183,7 +122,9 @@ class ConsoleRawCliController:
         *,
         raw_cli_runtime: Callable[[], Any],
         active_session_id: Callable[[], str | None],
-        persisted_leaf_anchor: Callable[[str], str | None],
+        persist_session_if_needed: Callable[[str], str | None],
+        active_leaf_anchor: Callable[[str], str | None],
+        persisted_leaf_anchor: Callable[[str, str], str | None],
         selected_local_root: Callable[[str], Path | None],
         private_scratch_root: Callable[[str], Path],
         refusal_stash_bank: dict[str, list[Any]],
@@ -200,6 +141,8 @@ class ConsoleRawCliController:
     ) -> None:
         self._raw_cli_runtime = raw_cli_runtime
         self._active_session_id = active_session_id
+        self._persist_session_if_needed = persist_session_if_needed
+        self._active_leaf_anchor = active_leaf_anchor
         self._persisted_leaf_anchor = persisted_leaf_anchor
         self._selected_local_root = selected_local_root
         self._private_scratch_root = private_scratch_root
@@ -241,6 +184,11 @@ class ConsoleRawCliController:
                 "Raw CLI needs an active Console session. The exact draft was restored.",
             )
         try:
+            native_anchor = self._active_leaf_anchor(session_id)
+            if native_anchor is not None and (
+                type(native_anchor) is not str or not native_anchor.strip()
+            ):
+                raise RuntimeError("invalid active leaf")
             request = RawCliRequest(
                 invocation_id=uuid.uuid4().hex,
                 caller="user",
@@ -249,7 +197,7 @@ class ConsoleRawCliController:
                 initial_directory=self._submission_root(session_id),
                 timeout_seconds=MAX_RAW_TIMEOUT_SECONDS,
                 console_session_id=session_id,
-                transcript_anchor_id=self._persisted_leaf_anchor(session_id),
+                transcript_anchor_id=None,
             )
             validate_raw_cli_request(request)
         except ValueError as exc:
@@ -266,7 +214,14 @@ class ConsoleRawCliController:
 
         try:
             self._start_worker(
-                partial(self._execute, runtime, request, session_id, stash),
+                partial(
+                    self._execute,
+                    runtime,
+                    request,
+                    session_id,
+                    stash,
+                    native_anchor,
+                ),
                 thread=True,
                 exclusive=False,
                 name=f"console-raw-cli-{request.invocation_id}",
@@ -292,7 +247,225 @@ class ConsoleRawCliController:
         request: RawCliRequest,
         session_id: str,
         stash: ConsoleDraftStash,
+        native_anchor: str | None,
     ) -> None:
+        db = None
+        run_id: str | None = None
+        writer: RunLogWriter | None = None
+        private_record_limit = configured_max_record_bytes()
+        finalized = False
+        persistence_error_reported = False
+
+        def report_persistence_error(message: str) -> None:
+            nonlocal persistence_error_reported
+            if persistence_error_reported:
+                return
+            persistence_error_reported = True
+            try:
+                self._marshal_to_ui(
+                    self._append_execution_error,
+                    session_id,
+                    message,
+                )
+            except Exception:  # noqa: BLE001 -- persistence failure stays local
+                pass
+
+        def refuse_for_persistence_error() -> None:
+            nonlocal persistence_error_reported
+            if persistence_error_reported:
+                return
+            persistence_error_reported = True
+            try:
+                self._marshal_to_ui(
+                    self._refuse,
+                    session_id,
+                    stash,
+                    _PERSISTENCE_REFUSAL,
+                )
+            except Exception:  # noqa: BLE001 -- refusal remains best-effort
+                pass
+
+        try:
+            durable_conversation_id = self._persist_session_if_needed(session_id)
+            if (
+                type(durable_conversation_id) is not str
+                or not durable_conversation_id.strip()
+            ):
+                refuse_for_persistence_error()
+                return
+            anchor = (
+                self._persisted_leaf_anchor(session_id, native_anchor)
+                if native_anchor is not None
+                else None
+            )
+            if anchor is not None and (type(anchor) is not str or not anchor.strip()):
+                anchor = None
+            request = replace(request, transcript_anchor_id=anchor)
+        except Exception:  # noqa: BLE001 -- durable identity is mandatory
+            refuse_for_persistence_error()
+            return
+
+        try:
+            db = self._agent_runs_db()
+        except Exception:  # noqa: BLE001 -- unavailable persistence fails locally
+            db = None
+        if db is None:
+            refuse_for_persistence_error()
+            return
+        try:
+            run_id = db.create_run(
+                conversation_id=durable_conversation_id,
+                agent_kind=LOCAL_COMMAND_AGENT_KIND,
+                task=LOCAL_COMMAND_TASK,
+                assistant_message_id=request.transcript_anchor_id,
+            )
+            try:
+                db.append_steps(
+                    run_id,
+                    [
+                        {
+                            "index": 0,
+                            "kind": STEP_TOOL_CALL,
+                            "summary": "Local command started",
+                            "tool_name": LOCAL_COMMAND_TOOL_NAME,
+                            "args": {
+                                "command": request.command,
+                                "shell": request.shell,
+                                "cwd": str(request.initial_directory),
+                                "invocation_id": request.invocation_id,
+                            },
+                        }
+                    ],
+                )
+            except Exception:  # noqa: BLE001 -- terminalize the admitted row
+                try:
+                    db.set_status(run_id, "error")
+                except Exception:  # noqa: BLE001 -- original failure stays local
+                    pass
+                raise
+        except Exception:  # noqa: BLE001 -- never launch without its run row
+            refuse_for_persistence_error()
+            return
+
+        candidate_writer: RunLogWriter | None = None
+        try:
+            root = self._run_log_access()
+            if root is None:
+                raise RuntimeError("local command run-log root unavailable")
+            candidate_writer = RunLogWriter(
+                root=Path(root),
+                dir_name=LOCAL_COMMAND_RUN_LOG_DIR,
+                max_record_bytes=private_record_limit,
+            )
+            candidate_writer.bind(run_id)
+            if not candidate_writer.is_active:
+                raise RuntimeError("local command run-log bind failed")
+            initial_record = candidate_writer.append(
+                run_id=run_id,
+                kind=LOCAL_COMMAND_AGENT_KIND,
+                type=STEP_TOOL_CALL,
+                content=request.command,
+                tool=LOCAL_COMMAND_TOOL_NAME,
+                status="running",
+                call_id=request.invocation_id,
+            )
+            if initial_record is None or not candidate_writer.is_active:
+                raise RuntimeError("local command run-log append failed")
+            writer = candidate_writer
+        except Exception:  # noqa: BLE001 -- DB remains the durable owner
+            report_persistence_error("Raw CLI persistence was incomplete.")
+            if candidate_writer is not None:
+                try:
+                    candidate_writer.close()
+                except Exception:  # noqa: BLE001 -- close was attempted
+                    pass
+
+        def finalize_local_run(result: RawCliResult) -> None:
+            nonlocal finalized
+            if finalized:
+                return
+            finalized = True
+            status = local_command_run_status(result)
+            durable_output, _ = _utf8_prefix(
+                result.record_output,
+                DEFAULT_MAX_RECORD_BYTES,
+            )
+            private_output, _ = _utf8_prefix(
+                result.record_output,
+                private_record_limit,
+            )
+            stdout_preview, _ = _utf8_prefix(
+                result.stdout_preview,
+                MAX_RAW_PREVIEW_BYTES,
+            )
+            remaining = MAX_RAW_PREVIEW_BYTES - len(stdout_preview.encode("utf-8"))
+            stderr_preview, _ = _utf8_prefix(result.stderr_preview, remaining)
+            tool_outcome = (
+                "success"
+                if result.terminal_state == "exited" and result.exit_code == 0
+                else (
+                    "blocked"
+                    if result.terminal_state in {"cancelled", "timed_out"}
+                    else "failed"
+                )
+            )
+            result_step = {
+                "index": 1,
+                "kind": STEP_TOOL_RESULT,
+                "summary": "Local command completed",
+                "tool_name": LOCAL_COMMAND_TOOL_NAME,
+                "result": durable_output,
+                "args": {
+                    "invocation_id": result.invocation_id,
+                    "shell": result.resolved_shell,
+                    "cwd": str(result.initial_directory),
+                    "stdout_preview": stdout_preview,
+                    "stderr_preview": stderr_preview,
+                    "elapsed_seconds": result.elapsed_seconds,
+                    "exit_code": result.exit_code,
+                    "terminal_state": result.terminal_state,
+                    "truncated": result.truncated,
+                    "cleanup_proven": result.cleanup_proven,
+                },
+                "status": status,
+                "tool_outcome": tool_outcome,
+            }
+            try:
+                db.set_terminal_with_step(run_id, status, None, result_step)
+            except Exception:  # noqa: BLE001 -- display completion must still land
+                report_persistence_error("Raw CLI persistence was incomplete.")
+            if writer is not None:
+                try:
+                    terminal_record = writer.append(
+                        run_id=run_id,
+                        kind=LOCAL_COMMAND_AGENT_KIND,
+                        type=STEP_TOOL_RESULT,
+                        content=private_output,
+                        tool=LOCAL_COMMAND_TOOL_NAME,
+                        status=status,
+                        call_id=result.invocation_id,
+                    )
+                    if terminal_record is None or not writer.is_active:
+                        report_persistence_error(
+                            "Raw CLI persistence was incomplete."
+                        )
+                except Exception:  # noqa: BLE001 -- best-effort private log
+                    report_persistence_error("Raw CLI persistence was incomplete.")
+                try:
+                    writer.write_manifest(
+                        {
+                            "run_id": run_id,
+                            "agent_kind": LOCAL_COMMAND_AGENT_KIND,
+                            "status": status,
+                        }
+                    )
+                except Exception:  # noqa: BLE001 -- best-effort private log
+                    report_persistence_error("Raw CLI persistence was incomplete.")
+                try:
+                    writer.close()
+                except Exception:  # noqa: BLE001 -- close was attempted
+                    report_persistence_error("Raw CLI persistence was incomplete.")
+
         started_at: float | None = None
         stdout = ""
         stderr = ""
@@ -383,6 +556,25 @@ class ConsoleRawCliController:
             )
         except Exception:  # noqa: BLE001 -- runtime already owns diagnostic detail
             cancel_repaint()
+            failed_result = RawCliResult(
+                invocation_id=request.invocation_id,
+                caller=request.caller,
+                resolved_shell=request.shell,
+                initial_directory=request.initial_directory,
+                elapsed_seconds=(
+                    0.0
+                    if started_at is None
+                    else max(0.0, monotonic() - started_at)
+                ),
+                stdout_preview=stdout,
+                stderr_preview=stderr,
+                record_output="",
+                exit_code=None,
+                terminal_state="spawn_failed",
+                truncated=stream_truncated,
+                cleanup_proven=False,
+            )
+            finalize_local_run(failed_result)
             if marker_started:
                 self._marshal_to_ui(
                     self._fail_running_marker,
@@ -401,6 +593,7 @@ class ConsoleRawCliController:
                 )
             return
         cancel_repaint()
+        finalize_local_run(result)
         if marker_started:
             self._marshal_to_ui(
                 self._finish_marker,
@@ -446,13 +639,13 @@ class ConsoleRawCliController:
             truncated=False,
             cleanup_proven=None,
         )
-        content, full_output = _raw_cli_content(presentation, "", "")
+        content, full_output = format_raw_cli_content(presentation, "", "")
         self._append_store_marker(
             session_id,
             role=ConsoleMessageRole.TOOL,
             content=content,
             tool_output_full=full_output,
-            activity_presentation=_activity_for_raw_cli("starting", None),
+            activity_presentation=raw_cli_activity_presentation("starting", None),
             raw_cli_presentation=presentation,
             record_trajectory=False,
             message_id=self._marker_id(request.invocation_id),
@@ -481,14 +674,14 @@ class ConsoleRawCliController:
             truncated=bool(truncated),
             cleanup_proven=None,
         )
-        content, full_output = _raw_cli_content(presentation, stdout, stderr)
+        content, full_output = format_raw_cli_content(presentation, stdout, stderr)
         try:
             self._update_store_marker(
                 session_id,
                 self._marker_id(request.invocation_id),
                 content=content,
                 tool_output_full=full_output,
-                activity_presentation=_activity_for_raw_cli("running", None),
+                activity_presentation=raw_cli_activity_presentation("running", None),
                 raw_cli_presentation=presentation,
             )
         except (KeyError, RawCliMarkerTransitionError):
@@ -502,7 +695,7 @@ class ConsoleRawCliController:
         started_at: float | None,
         result: RawCliResult,
     ) -> None:
-        lifecycle = _terminal_lifecycle(result)
+        lifecycle = raw_cli_terminal_lifecycle(result)
         presentation = RawCliPresentation(
             invocation_id=request.invocation_id,
             caller=request.caller,
@@ -516,7 +709,7 @@ class ConsoleRawCliController:
             truncated=result.truncated,
             cleanup_proven=result.cleanup_proven,
         )
-        content, full_output = _raw_cli_content(
+        content, full_output = format_raw_cli_content(
             presentation,
             result.stdout_preview,
             result.stderr_preview,
@@ -527,7 +720,7 @@ class ConsoleRawCliController:
                 self._marker_id(request.invocation_id),
                 content=content,
                 tool_output_full=full_output,
-                activity_presentation=_activity_for_raw_cli(
+                activity_presentation=raw_cli_activity_presentation(
                     lifecycle,
                     result.exit_code,
                 ),
@@ -592,7 +785,7 @@ class ConsoleRawCliController:
             self._update_store_marker(
                 session_id,
                 marker.id,
-                activity_presentation=_activity_for_raw_cli("stopping", None),
+                activity_presentation=raw_cli_activity_presentation("stopping", None),
                 raw_cli_presentation=stopping,
             )
         except KeyError:

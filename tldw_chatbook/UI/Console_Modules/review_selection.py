@@ -194,7 +194,14 @@ def _build_trajectory_snapshot(
             turn_by_message[str(row_message_id)] = str(row_turn_id)
     if agent_runs_db is not None:
         try:
-            raw_runs = agent_runs_db.list_runs(conversation_id)
+            raw_runs = (
+                raw_run
+                for agent_kind in ("primary", "subagent")
+                for raw_run in agent_runs_db.list_runs(
+                    conversation_id,
+                    agent_kind=agent_kind,
+                )
+            )
             for raw_run in raw_runs:
                 try:
                     run = dict(raw_run) if isinstance(raw_run, Mapping) else {}

@@ -100,6 +100,35 @@ def test_oversized_record_is_capped_and_marked(root):
     assert parsed.truncated_from == 500
 
 
+def test_local_command_writer_uses_dedicated_private_tree_and_bounded_records(
+    tmp_path,
+):
+    from tldw_chatbook.Chat.console_raw_cli import LOCAL_COMMAND_RUN_LOG_DIR
+
+    writer = RunLogWriter(
+        root=tmp_path,
+        dir_name=LOCAL_COMMAND_RUN_LOG_DIR,
+        max_record_bytes=32,
+    )
+    writer.bind("local-run")
+    writer.append(
+        run_id="local-run",
+        kind="local_command",
+        type="tool_result",
+        content="LOCAL_OUTPUT_SECRET_" + "x" * 200,
+        tool="raw_cli",
+        status="done",
+    )
+    writer.close()
+
+    assert writer.log_dir == tmp_path / ".local-command-runs" / "local-run"
+    payload = (writer.log_dir / "logs.0001.txt").read_bytes()
+    (record,) = list(iter_records(payload))
+    assert record.kind == "local_command"
+    assert len(record.content.encode("utf-8")) <= 32
+    assert record.truncated_from is not None
+
+
 def test_unresolvable_root_deactivates_the_writer(monkeypatch):
     monkeypatch.setattr(run_log_module, "resolve_log_root", lambda: None)
     writer = RunLogWriter()

@@ -54,6 +54,7 @@ from tldw_chatbook.Chat.console_prompt_queue import (
     QueueMutationStatus,
 )
 from tldw_chatbook.Chat.console_prompt_queue_coordinator import _PromptChain
+from tldw_chatbook.DB.AgentRuns_DB import AgentRunsDB
 from tldw_chatbook.Tools.raw_cli_executor import RawCliResult
 from tldw_chatbook.UI.Console_Modules.raw_cli import ConsoleRawCliController
 from tldw_chatbook.Widgets.Console.console_composer_bar import ConsoleDraftStash
@@ -494,6 +495,7 @@ async def test_raw_cli_worker_runs_while_model_owner_is_active_without_queueing(
     await asyncio.wait_for(gateway.started.wait(), timeout=5)
 
     runtime = _ImmediateRawRuntime()
+    runs_db = AgentRunsDB(tmp_path / "raw-agent-runs.db")
     worker_threads: list[threading.Thread] = []
 
     def start_worker(work: Any, **options: Any) -> threading.Thread:
@@ -507,7 +509,9 @@ async def test_raw_cli_worker_runs_while_model_owner_is_active_without_queueing(
     raw_controller = ConsoleRawCliController(
         raw_cli_runtime=lambda: runtime,
         active_session_id=lambda: "session-1",
-        persisted_leaf_anchor=lambda _session_id: None,
+        persist_session_if_needed=store.persist_session_if_needed,
+        active_leaf_anchor=lambda _session_id: None,
+        persisted_leaf_anchor=lambda _session_id, _leaf_id: None,
         selected_local_root=lambda _session_id: tmp_path,
         private_scratch_root=lambda _session_id: tmp_path,
         refusal_stash_bank={},
@@ -516,8 +520,8 @@ async def test_raw_cli_worker_runs_while_model_owner_is_active_without_queueing(
         append_local_error=lambda _session_id, _text: None,
         append_store_marker=lambda *args, **kwargs: None,
         update_store_marker=lambda *args, **kwargs: None,
-        agent_runs_db=lambda: None,
-        run_log_access=lambda: None,
+        agent_runs_db=lambda: runs_db,
+        run_log_access=lambda: tmp_path / "raw-run-logs",
         start_worker=start_worker,
         marshal_to_ui=lambda callback, *args: callback(*args),
     )
@@ -544,3 +548,101 @@ async def test_raw_cli_worker_runs_while_model_owner_is_active_without_queueing(
     await asyncio.wait_for(model_task, timeout=10)
     for thread in worker_threads:
         await asyncio.to_thread(thread.join, 5)
+
+
+@pytest.mark.asyncio
+async def test_raw_first_persistence_refuses_provider_reservation_then_reuses_commit(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Raw cannot mint a second identity while first provider commit is pending."""
+
+    db, store, chat_controller, _gateway = _controller(tmp_path)
+    gateway = _HoldingGateway(db)
+    gateway.hold = False
+    chat_controller.provider_gateway = gateway
+    persistence = store.persistence
+    assert persistence is not None
+    commit_entered = threading.Event()
+    release_commit = threading.Event()
+    original_commit = persistence.commit_durable_turn
+
+    def blocked_commit(**kwargs: Any):
+        commit_entered.set()
+        assert release_commit.wait(timeout=5)
+        return original_commit(**kwargs)
+
+    monkeypatch.setattr(persistence, "commit_durable_turn", blocked_commit)
+
+    def fail_identity_publication(*_args: Any, **_kwargs: Any) -> None:
+        raise RuntimeError("hold after durable commit")
+
+    monkeypatch.setattr(
+        store,
+        "publish_durable_turn_identity",
+        fail_identity_publication,
+    )
+    provider_task = asyncio.create_task(
+        chat_controller.run_prompt_chain("first", session_id="session-1")
+    )
+    assert await asyncio.to_thread(commit_entered.wait, 5)
+    preparation = store.preparation_for_session("session-1")
+    assert preparation is not None
+    reserved_identity = store.staged_durable_turn_identity_for(
+        preparation.preparation_id
+    )
+    assert reserved_identity is not None
+
+    runtime = _ImmediateRawRuntime()
+    runs_db = AgentRunsDB(tmp_path / "raw-agent-runs.db")
+    workers: list[Any] = []
+    errors: list[str] = []
+    raw_controller = ConsoleRawCliController(
+        raw_cli_runtime=lambda: runtime,
+        active_session_id=lambda: "session-1",
+        persist_session_if_needed=store.persist_session_if_needed,
+        active_leaf_anchor=lambda _session_id: None,
+        persisted_leaf_anchor=lambda _session_id, _leaf_id: None,
+        selected_local_root=lambda _session_id: tmp_path,
+        private_scratch_root=lambda _session_id: tmp_path,
+        refusal_stash_bank={},
+        accepts_raw_cli_refusal_callbacks=lambda: True,
+        restore_stash=lambda _session_id, _stash: True,
+        append_local_error=lambda _session_id, text: errors.append(text),
+        append_store_marker=lambda *args, **kwargs: None,
+        update_store_marker=lambda *args, **kwargs: None,
+        agent_runs_db=lambda: runs_db,
+        run_log_access=lambda: tmp_path / "raw-run-logs",
+        start_worker=lambda work, **_kwargs: workers.append(work),
+        marshal_to_ui=lambda callback, *args: callback(*args),
+    )
+    stash = ConsoleDraftStash(
+        segments=[],
+        text="! printf raw",
+        has_paste=False,
+        raw_cli_prefix_typed=True,
+    )
+
+    assert raw_controller.start_user_command(stash) is True
+    await asyncio.to_thread(workers.pop(),)
+    release_commit.set()
+    provider_result = await asyncio.wait_for(provider_task, timeout=10)
+
+    assert provider_result.accepted is True
+    assert runtime.requests == []
+    assert runs_db.list_runs("session-1", agent_kind="local_command") == []
+    assert len(errors) == 1
+
+    session = next(item for item in store.sessions() if item.id == "session-1")
+    assert session.persisted_conversation_id is None
+    durable_id = reserved_identity.conversation_id
+    conversation_count = db.get_connection().execute(
+        "SELECT COUNT(*) FROM conversations"
+    ).fetchone()[0]
+    assert conversation_count == 1
+
+    assert raw_controller.start_user_command(stash) is True
+    await asyncio.to_thread(workers.pop(),)
+
+    assert len(runtime.requests) == 1
+    assert len(runs_db.list_runs(durable_id, agent_kind="local_command")) == 1

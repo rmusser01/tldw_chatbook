@@ -11,19 +11,97 @@ Real DB round-trips: a real ``CharactersRAGDB`` behind the real
 full-tree flatten -- no hand-rolled fakes for the pieces under test.
 """
 
+import json
+from types import SimpleNamespace
 from unittest.mock import AsyncMock
 
 import pytest
 
 from tldw_chatbook.Chat.chat_conversation_service import ChatConversationService
 from tldw_chatbook.Chat.chat_persistence_service import ChatPersistenceService
+from tldw_chatbook.Chat.console_agent_bridge import (
+    ConsoleAgentBridge,
+    inject_resume_agent_markers,
+)
+from tldw_chatbook.Chat.console_chat_controller import ConsoleChatController
+from tldw_chatbook.Chat.console_chat_models import (
+    ConsoleChatMessage,
+    ConsoleMessageRole,
+)
 from tldw_chatbook.Chat.console_chat_store import ConsoleChatSession, ConsoleChatStore
 from tldw_chatbook.Chat.console_session_settings import ConsoleSessionSettings
+from tldw_chatbook.Chat.console_turn_grouping import (
+    group_console_transcript_messages,
+    visual_messages,
+)
+from tldw_chatbook.DB.AgentRuns_DB import AgentRunsDB
 from tldw_chatbook.DB.ChaChaNotes_DB import CharactersRAGDB
+from tldw_chatbook.UI.Console_Modules.review_selection import (
+    _build_trajectory_snapshot,
+)
 from tldw_chatbook.UI.Console_Modules.session import ConsoleSessionController
-from tldw_chatbook.UI.Screens.chat_screen import ChatScreen
+from tldw_chatbook.UI.Screens.chat_screen import (
+    ChatScreen,
+    _console_cost_snapshot_messages,
+)
 
 from Tests.UI.test_destination_shells import _build_test_app
+
+
+def _append_local_command_run(
+    db: AgentRunsDB,
+    *,
+    conversation_id: str,
+    anchor: str | None,
+    command: str = "printf LOCAL_COMMAND_SECRET",
+    output: str = "[stdout]\nLOCAL_OUTPUT_SECRET\n",
+) -> str:
+    run_id = db.create_run(
+        conversation_id=conversation_id,
+        agent_kind="local_command",
+        task="Local command",
+        assistant_message_id=anchor,
+    )
+    db.append_steps(
+        run_id,
+        [
+            {
+                "index": 0,
+                "kind": "tool_call",
+                "summary": "Local command started",
+                "tool_name": "raw_cli",
+                "args": {
+                    "command": command,
+                    "shell": "/bin/zsh",
+                    "cwd": "/private/tmp",
+                    "invocation_id": "local-invocation",
+                },
+            },
+            {
+                "index": 1,
+                "kind": "tool_result",
+                "summary": "Local command completed",
+                "tool_name": "raw_cli",
+                "result": output,
+                "args": {
+                    "invocation_id": "local-invocation",
+                    "shell": "/bin/zsh",
+                    "cwd": "/private/tmp",
+                    "stdout_preview": "LOCAL_OUTPUT_SECRET\n",
+                    "stderr_preview": "",
+                    "elapsed_seconds": 0.25,
+                    "exit_code": 7,
+                    "terminal_state": "exited",
+                    "truncated": False,
+                    "cleanup_proven": True,
+                },
+                "status": "done",
+                "tool_outcome": "failed",
+            },
+        ],
+    )
+    db.set_status(run_id, "done")
+    return run_id
 
 
 def _persist_branched_conversation(db: CharactersRAGDB):
@@ -1188,3 +1266,201 @@ async def test_durable_resume_restores_only_guarded_roleplay_context():
         assert future.user_display_name_override is None
         assert future.character_system_template is None
         assert future.settings.system_prompt == "Ordinary safe future fallback."
+
+
+def test_local_command_resume_restores_one_anchored_display_only_marker(tmp_path):
+    db = AgentRunsDB(tmp_path / "agent-runs.db")
+    conversation_id = "local-resume"
+    _append_local_command_run(
+        db, conversation_id=conversation_id, anchor="assistant-leaf"
+    )
+    _append_local_command_run(
+        db, conversation_id=conversation_id, anchor="deleted-leaf"
+    )
+    store = ConsoleChatStore()
+    session = store.create_session(session_id=conversation_id)
+    store.append_message(
+        session.id,
+        role=ConsoleMessageRole.USER,
+        content="normal user prompt",
+    )
+    assistant = store.append_message(
+        session.id,
+        role=ConsoleMessageRole.ASSISTANT,
+        content="normal assistant reply",
+    )
+    assistant.persisted_message_id = "assistant-leaf"
+    controller = ConsoleChatController(
+        store=store,
+        provider_gateway=SimpleNamespace(),
+    )
+    before = json.dumps(
+        controller._provider_messages_for_session(session.id),
+        sort_keys=True,
+        separators=(",", ":"),
+    ).encode("utf-8")
+
+    bridge = ConsoleAgentBridge(
+        agent_runs_db=db,
+        store=store,
+        provider_gateway=SimpleNamespace(),
+    )
+    blocks = bridge.resume_marker_messages(conversation_id)
+    resumed = inject_resume_agent_markers(
+        [
+            ConsoleChatMessage(role=ConsoleMessageRole.USER, content="normal user prompt"),
+            ConsoleChatMessage(
+                role=ConsoleMessageRole.ASSISTANT,
+                content="normal assistant reply",
+                persisted_message_id="assistant-leaf",
+            ),
+        ],
+        blocks,
+    )
+
+    markers = [message for message in resumed if message.role is ConsoleMessageRole.TOOL]
+    assert len(markers) == 1
+    marker = markers[0]
+    assert resumed.index(marker) == 2
+    assert marker.raw_cli_presentation is not None
+    assert marker.raw_cli_presentation.exit_code == 7
+    assert marker.raw_cli_presentation.lifecycle_state == "exited"
+    units = group_console_transcript_messages(resumed)
+    assert units[1].assistant_turn is not None
+    assert units[1].assistant_turn.assistant is resumed[1]
+    assert units[1].assistant_turn.activities == ()
+    assert units[2].standalone is marker
+    assert tuple(visual_messages(units)) == tuple(resumed)
+
+    store.append_message(
+        session.id,
+        role=ConsoleMessageRole.TOOL,
+        content=marker.content,
+        tool_output_full=marker.tool_output_full,
+        activity_presentation=marker.activity_presentation,
+        raw_cli_presentation=marker.raw_cli_presentation,
+        record_trajectory=False,
+    )
+    after = json.dumps(
+        controller._provider_messages_for_session(session.id),
+        sort_keys=True,
+        separators=(",", ":"),
+    ).encode("utf-8")
+    assert after == before
+
+
+@pytest.mark.parametrize("local_query_fails", [False, True])
+def test_resume_drops_poison_local_rows_without_breaking_primary_markers(
+    tmp_path,
+    monkeypatch,
+    local_query_fails,
+):
+    db = AgentRunsDB(tmp_path / "agent-runs.db")
+    primary_id = db.create_run(
+        conversation_id="poison-local-resume",
+        agent_kind="primary",
+        assistant_message_id="assistant-leaf",
+    )
+    db.append_steps(
+        primary_id,
+        [
+            {
+                "index": 0,
+                "kind": "tool_result",
+                "tool_name": "calculator",
+                "result": "primary marker survived",
+                "args": None,
+            }
+        ],
+    )
+    db.set_status(primary_id, "done")
+    projection_calls: list[str] = []
+
+    def local_command_resume_records(conversation_id):
+        projection_calls.append(conversation_id)
+        if local_query_fails:
+            raise ValueError("corrupt local-command steps")
+        return [
+            42,
+            {
+                "id": "poison-local-run",
+                "agent_kind": "local_command",
+                "assistant_message_id": "assistant-leaf",
+                "status": "done",
+                "steps": "not-a-step-sequence",
+            },
+        ]
+
+    monkeypatch.setattr(
+        db,
+        "local_command_resume_records",
+        local_command_resume_records,
+        raising=False,
+    )
+    bridge = ConsoleAgentBridge(
+        agent_runs_db=db,
+        store=None,
+        provider_gateway=None,
+    )
+
+    blocks = bridge.resume_marker_messages("poison-local-resume")
+    markers = [marker for _anchor, block in blocks for marker in block]
+
+    assert projection_calls == ["poison-local-resume"]
+    assert len(markers) == 1
+    assert markers[0].raw_cli_presentation is None
+    assert "primary marker survived" in markers[0].content
+
+
+def test_local_command_is_ignored_by_trajectory_rails_fleet_and_cost(tmp_path):
+    db = AgentRunsDB(tmp_path / "agent-runs.db")
+    conversation_id = "local-exclusions"
+    run_id = _append_local_command_run(
+        db, conversation_id=conversation_id, anchor="assistant-leaf"
+    )
+    store = ConsoleChatStore()
+    store.create_session(session_id=conversation_id)
+    bridge = ConsoleAgentBridge(
+        agent_runs_db=db,
+        store=store,
+        provider_gateway=SimpleNamespace(),
+    )
+
+    assert bridge.latest_primary_run_id(conversation_id) is None
+    assert bridge.subagent_count(conversation_id) == 0
+    assert bridge.subagent_runs(conversation_id) == []
+    assert bridge.fleet_snapshot(conversation_id) == []
+    historical = bridge.historical_snapshot(conversation_id)
+    assert historical.status == "idle"
+    assert historical.steps == ()
+    assert historical.subagents == ()
+
+    class _MessageDB:
+        def get_messages_for_conversation(self, *_args, **_kwargs):
+            return []
+
+        def get_trajectory_rows(self, *_args, **_kwargs):
+            return []
+
+        def get_conversation_active_leaf(self, *_args, **_kwargs):
+            return None
+
+    trajectory_store = SimpleNamespace(
+        persistence=SimpleNamespace(db=_MessageDB()),
+        variant_sets_for_conversation=lambda _conversation_id: (),
+    )
+    snapshot = _build_trajectory_snapshot(
+        trajectory_store,
+        conversation_id,
+        agent_runs_db=db,
+    )
+    assert run_id not in repr(snapshot)
+    assert "LOCAL_COMMAND_SECRET" not in repr(snapshot)
+    assert "LOCAL_OUTPUT_SECRET" not in repr(snapshot)
+
+    ordinary = ConsoleChatMessage(
+        role=ConsoleMessageRole.USER,
+        content="ordinary",
+    )
+    (marker,) = bridge.resume_marker_messages(conversation_id)[0][1]
+    assert _console_cost_snapshot_messages([ordinary, marker]) == [ordinary]

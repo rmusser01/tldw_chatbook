@@ -126,6 +126,13 @@ def _displayed_console_composer_draft(screen: Any) -> str | None:
     return composer.draft_text() if composer is not None else None
 
 
+def _raw_cli_run_log_root() -> Path:
+    """Resolve the app-private local-command log root at call time."""
+    from tldw_chatbook.config import get_user_data_dir
+
+    return get_user_data_dir()
+
+
 def _console_screen_is_displayed(screen: Any) -> bool:
     """Return whether ``screen`` is displayed, preserving fixture fallback."""
     try:
@@ -342,20 +349,27 @@ def _schedule_raw_cli_projection(screen: Any, session_id: str) -> None:
             close()
 
 
-def _raw_cli_persisted_leaf_anchor(screen: Any, session_id: str) -> str | None:
-    """Capture the active leaf's durable id without turning it into authority."""
+def _raw_cli_active_leaf_anchor(screen: Any, session_id: str) -> str | None:
+    """Capture the exact native leaf while the user submits the command."""
+    return screen._ensure_console_chat_store().active_leaf(session_id)
+
+
+def _raw_cli_persisted_leaf_anchor(
+    screen: Any,
+    session_id: str,
+    native_leaf_id: str,
+) -> str | None:
+    """Resolve the captured native leaf after first identity persistence."""
     store = screen._ensure_console_chat_store()
-    leaf_id = store.active_leaf(session_id)
-    if leaf_id is None:
-        return None
-    return next(
-        (
-            message.persisted_message_id
-            for message in store.messages_for_session(session_id)
-            if message.id == leaf_id
-        ),
-        None,
-    )
+    return store.persisted_message_id_for_session_node(session_id, native_leaf_id)
+
+
+def _raw_cli_persist_session_if_needed(
+    screen: Any,
+    session_id: str,
+) -> str | None:
+    """Persist an ordinary session through the established durability gate."""
+    return screen._ensure_console_chat_store().persist_session_if_needed(session_id)
 
 
 def _raw_cli_selected_local_root(screen: Any, session_id: str) -> Path | None:
@@ -1596,8 +1610,16 @@ def build_console_controllers(
     screen._raw_cli = ConsoleRawCliController(
         raw_cli_runtime=lambda: screen.app_instance.raw_cli_runtime,
         active_session_id=lambda: _raw_cli_active_session_id(screen),
+        persist_session_if_needed=(
+            lambda session_id: _raw_cli_persist_session_if_needed(screen, session_id)
+        ),
+        active_leaf_anchor=(
+            lambda session_id: _raw_cli_active_leaf_anchor(screen, session_id)
+        ),
         persisted_leaf_anchor=(
-            lambda session_id: _raw_cli_persisted_leaf_anchor(screen, session_id)
+            lambda session_id, native_leaf_id: _raw_cli_persisted_leaf_anchor(
+                screen, session_id, native_leaf_id
+            )
         ),
         selected_local_root=(
             lambda session_id: _raw_cli_selected_local_root(screen, session_id)
@@ -1641,10 +1663,10 @@ def build_console_controllers(
                 screen._ensure_console_chat_store(), "update_tool_marker"
             )(*args, **kwargs)
         ),
-        agent_runs_db=(lambda: getattr(screen.app_instance, "agent_runs_db", None)),
-        run_log_access=(
-            lambda: getattr(screen.app_instance, "raw_cli_run_log_access", None)
+        agent_runs_db=(
+            lambda: getattr(screen._ensure_console_agent_bridge(), "_db", None)
         ),
+        run_log_access=lambda: _raw_cli_run_log_root(),
         start_worker=lambda work, **kwargs: screen.run_worker(work, **kwargs),
         marshal_to_ui=(
             lambda callback, *args: screen.app.call_from_thread(callback, *args)

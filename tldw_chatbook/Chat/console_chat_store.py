@@ -1227,6 +1227,13 @@ class ConsoleChatStore:
         # token (the same-process ABA boundary this fence owns).
         self._generation_attempt_sequence = 0
         self._generation_attempt_tokens: dict[str, int] = {}
+        # ponytail: one per-store lock intentionally serializes first-identity
+        # acquisition/I/O. The reservation map below is session-scoped; split
+        # the lock only if unrelated-session contention becomes measurable.
+        self._first_persistence_lock = threading.RLock()
+        self._first_identity_reservations: dict[
+            str, tuple[str | None, ConsoleStagedConversationIdentity, bool]
+        ] = {}
         self._preparations_by_session: dict[str, ConsoleTurnPreparation] = {}
         self._preparations_by_id: dict[str, ConsoleTurnPreparation] = {}
         self._durable_identity_by_preparation: dict[
@@ -3656,33 +3663,60 @@ class ConsoleChatStore:
     ) -> ConsoleStagedConversationIdentity:
         """Reserve one stable first-send identity without publishing it."""
 
-        session = self._session_or_raise(session_id)
         if type(preparation_id) is not str or not preparation_id:
             raise ValueError("preparation_id must be non-empty text")
-        with self._preparation_lock:
-            preparation = self._preparations_by_id.get(preparation_id)
-            if preparation is None or preparation.session_id != session_id:
-                raise RuntimeError("Durable preparation owner changed.")
-            if preparation_id in self._durable_tombstones:
-                raise RuntimeError("Durable preparation was already retired.")
-            existing = self._durable_identity_by_preparation.get(preparation_id)
-            if existing is not None:
-                expected_title = title if title is not None else session.title
-                expected_conversation_id = (
-                    session.persisted_conversation_id or existing.conversation_id
+        with self._first_persistence_lock:
+            with self._preparation_lock:
+                return self._stage_durable_turn_identity_locked(
+                    session_id,
+                    preparation_id,
+                    title=title,
                 )
-                if (
-                    existing.title != expected_title
-                    or existing.conversation_id != expected_conversation_id
-                ):
-                    raise RuntimeError("Durable identity owner changed.")
-                return existing
-            identity = ConsoleStagedConversationIdentity(
-                conversation_id=session.persisted_conversation_id or str(uuid4()),
-                title=title if title is not None else session.title,
+
+    def _stage_durable_turn_identity_locked(
+        self,
+        session_id: str,
+        preparation_id: str,
+        *,
+        title: str | None,
+    ) -> ConsoleStagedConversationIdentity:
+        """Stage identity while ``_preparation_lock`` is already held."""
+
+        session = self._session_or_raise(session_id)
+        preparation = self._preparations_by_id.get(preparation_id)
+        if preparation is None or preparation.session_id != session_id:
+            raise RuntimeError("Durable preparation owner changed.")
+        if preparation_id in self._durable_tombstones:
+            raise RuntimeError("Durable preparation was already retired.")
+        existing = self._durable_identity_by_preparation.get(preparation_id)
+        if existing is not None:
+            expected_title = title if title is not None else session.title
+            expected_conversation_id = (
+                session.persisted_conversation_id or existing.conversation_id
             )
-            self._durable_identity_by_preparation[preparation_id] = identity
-            return identity
+            if (
+                existing.title != expected_title
+                or existing.conversation_id != expected_conversation_id
+            ):
+                raise RuntimeError("Durable identity owner changed.")
+            return existing
+        reservation = self._first_identity_reservations.get(session_id)
+        if session.persisted_conversation_id is None and reservation is not None:
+            owner_id, _identity, _is_durable = reservation
+            if owner_id != preparation_id:
+                raise RuntimeError("First durable identity is already reserved.")
+        identity = ConsoleStagedConversationIdentity(
+            conversation_id=session.persisted_conversation_id or str(uuid4()),
+            title=title if title is not None else session.title,
+        )
+        self._durable_identity_by_preparation[preparation_id] = identity
+        if session.persisted_conversation_id is None:
+            self._first_identity_reservations[session_id] = (
+                preparation_id,
+                identity,
+                False,
+            )
+        return identity
 
     def staged_durable_turn_identity_for(
         self, preparation_id: str
@@ -4028,7 +4062,7 @@ class ConsoleChatStore:
                 staged = self._durable_identity_by_preparation.get(
                     acceptance.preparation_id
                 )
-                identity = self.stage_durable_turn_identity(
+                identity = self._stage_durable_turn_identity_locked(
                     session.id,
                     acceptance.preparation_id,
                     title=staged.title if staged is not None else session.title,
@@ -4169,6 +4203,20 @@ class ConsoleChatStore:
                 policy_candidate=policy_candidate,
                 conversation_kwargs=conversation_kwargs,
             )
+            with self._preparation_lock:
+                identity_reservation = self._first_identity_reservations.get(
+                    reservation.session_id
+                )
+                if identity_reservation == (
+                    reservation.preparation_id,
+                    identity,
+                    False,
+                ):
+                    self._first_identity_reservations[reservation.session_id] = (
+                        reservation.preparation_id,
+                        identity,
+                        True,
+                    )
             commit = ConsoleDurableTurnCommit(
                 identity=identity,
                 user_message_id=owners.user_message_id,
@@ -4397,6 +4445,14 @@ class ConsoleChatStore:
                     return
                 raise RuntimeError("Durable acceptance fingerprint changed.")
             effects = self._durable_effects_by_preparation.get(preparation_id)
+            preparation = self._preparations_by_id.get(preparation_id)
+            session_id = (
+                effects.session_id
+                if effects is not None
+                else preparation.session_id
+                if preparation is not None
+                else None
+            )
             completed = effects.completed if effects is not None else frozenset()
             self._durable_identity_by_preparation.pop(preparation_id, None)
             self._durable_owner_ids_by_preparation.pop(preparation_id, None)
@@ -4414,6 +4470,11 @@ class ConsoleChatStore:
                 fingerprint=fingerprint,
                 completed=completed,
             )
+            reservation = self._first_identity_reservations.get(session_id or "")
+            if session_id is not None and (
+                reservation is not None and reservation[0] == preparation_id
+            ):
+                self._first_identity_reservations.pop(session_id, None)
             self._evict_durable_tombstones_locked()
 
     def _evict_durable_tombstones_locked(self) -> None:
@@ -4488,6 +4549,13 @@ class ConsoleChatStore:
         with self._preparation_lock:
             if preparation_id in self._durable_commit_by_preparation:
                 raise RuntimeError("Committed durable acceptance cannot be discarded.")
+            # ponytail: bounded by live sessions; keep cleanup independent of
+            # preparation indexes because controller drop removes those first.
+            for session_id, reservation in tuple(
+                self._first_identity_reservations.items()
+            ):
+                if reservation[0] == preparation_id:
+                    self._first_identity_reservations.pop(session_id, None)
             self._durable_identity_by_preparation.pop(preparation_id, None)
             self._durable_owner_ids_by_preparation.pop(preparation_id, None)
             self._durable_fingerprint_by_preparation.pop(preparation_id, None)
@@ -4519,6 +4587,10 @@ class ConsoleChatStore:
         """Publish committed identity and the matching durable policy snapshot."""
 
         self.publish_committed_identity(session_id, commit.identity)
+        with self._preparation_lock:
+            reservation = self._first_identity_reservations.get(session_id)
+            if reservation is not None and reservation[1] == commit.identity:
+                self._first_identity_reservations.pop(session_id, None)
         session = self._session_or_raise(session_id)
         repository = getattr(
             self.persistence, "console_library_policy_repository", None
@@ -7725,6 +7797,17 @@ class ConsoleChatStore:
         message = self._message_or_raise(message_id)
         self._materialize_stream_buffer(message)
         return self._snapshot(message)
+
+    def persisted_message_id_for_session_node(
+        self,
+        session_id: str,
+        native_message_id: str,
+    ) -> str | None:
+        """Return one node's persisted ID only for its exact owning session."""
+        if self._message_session_index.get(native_message_id) != session_id:
+            return None
+        node = self._nodes_by_session.get(session_id, {}).get(native_message_id)
+        return node.persisted_message_id if node is not None else None
 
     def update_tool_marker(
         self,
@@ -11631,6 +11714,44 @@ class ConsoleChatStore:
     def persist_session_if_needed(
         self, session_id: str, *, strict_roleplay_context: bool = False
     ) -> str | None:
+        """Serialize first identity acquisition and return its durable ID."""
+        with self._first_persistence_lock:
+            session = self._session_or_raise(session_id)
+            if session.persisted_conversation_id is not None:
+                return self._persist_session_if_needed(
+                    session_id,
+                    strict_roleplay_context=strict_roleplay_context,
+                )
+            with self._preparation_lock:
+                provider_reservation = self._first_identity_reservations.get(
+                    session_id
+                )
+                if provider_reservation is not None:
+                    owner_id, identity, is_durable = provider_reservation
+                    if owner_id is not None and is_durable:
+                        return identity.conversation_id
+                    return None
+                staged_identity = self.stage_first_persistence(session_id)
+                reservation = (None, staged_identity, False)
+                self._first_identity_reservations[session_id] = reservation
+            try:
+                return self._persist_session_if_needed(
+                    session_id,
+                    strict_roleplay_context=strict_roleplay_context,
+                    staged_identity=staged_identity,
+                )
+            finally:
+                with self._preparation_lock:
+                    if self._first_identity_reservations.get(session_id) == reservation:
+                        self._first_identity_reservations.pop(session_id, None)
+
+    def _persist_session_if_needed(
+        self,
+        session_id: str,
+        *,
+        strict_roleplay_context: bool = False,
+        staged_identity: ConsoleStagedConversationIdentity | None = None,
+    ) -> str | None:
         """Persist a session once, returning its persisted conversation ID.
 
         Returns:
@@ -11701,7 +11822,7 @@ class ConsoleChatStore:
                     "Persistence adapter cannot store staged reply-speech preferences."
                 )
             create_kwargs["speech_preferences"] = session.speech_preferences
-        staged_identity = self.stage_first_persistence(session_id)
+        staged_identity = staged_identity or self.stage_first_persistence(session_id)
         policy_snapshot = session.library_policy_holder.snapshot
         policy_candidate = ConsoleLibraryPolicyCandidate(
             auto_retrieve=policy_snapshot.auto_retrieve,

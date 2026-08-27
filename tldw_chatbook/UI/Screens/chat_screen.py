@@ -1,6 +1,6 @@
 """Chat screen implementation with comprehensive state management."""
 
-from collections.abc import Awaitable, Callable, Mapping
+from collections.abc import Awaitable, Callable, Mapping, Sequence
 from collections.abc import Set as AbstractSet
 from contextlib import contextmanager
 from dataclasses import dataclass, replace
@@ -1025,6 +1025,14 @@ CONSOLE_WORKBENCH_SHORTCUTS_SETUP_BLOCKED = tuple(
 )
 
 
+def _console_cost_snapshot_messages(messages: Sequence[Any]) -> list[Any]:
+    """Keep only finalized provider transcript rows in cost summaries."""
+    return [
+        message
+        for message in messages
+        if getattr(message, "status", "complete") not in {"pending", "streaming"}
+        and getattr(message, "raw_cli_presentation", None) is None
+    ]
 #: TASK-362: the full Console keyboard vocabulary for the F1 help panel, grouped
 #: by surface. The flat CONSOLE_WORKBENCH_SHORTCUTS above stays the compact
 #: footer set; the transcript j/k/c/e/r keys, F2, Shift+Enter and Alt+M were
@@ -6614,12 +6622,7 @@ class ChatScreen(BaseAppScreen):
             # it here freezes the snapshot at its pre-send total until the
             # row lands as "complete"/"stopped"/"failed" (all of which bump
             # the payload revision and stop changing further).
-            snapshot_messages = [
-                message
-                for message in messages
-                if getattr(message, "status", "complete")
-                not in {"pending", "streaming"}
-            ]
+            snapshot_messages = _console_cost_snapshot_messages(messages)
             # task-6: staged (not-yet-sent) evidence used to be invisible to
             # the cost chip entirely -- `ConsoleStagedSource` carries no
             # text, so a session with zero messages but several staged

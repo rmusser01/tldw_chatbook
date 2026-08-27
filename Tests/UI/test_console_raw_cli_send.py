@@ -9,12 +9,16 @@ from typing import Any
 import pytest
 
 from tldw_chatbook.Chat.console_command_grammar import CommandParse, KIND_NOT_COMMAND
+from tldw_chatbook.Chat.console_chat_models import ConsoleMessageRole
+from tldw_chatbook.Chat.console_chat_store import ConsoleChatStore
 from tldw_chatbook.Chat.console_runtime import ConsoleRuntime
+from tldw_chatbook.DB.AgentRuns_DB import AgentRunsDB
 from tldw_chatbook.Tools.raw_cli_executor import RawCliResult
 from tldw_chatbook.UI.Console_Modules.raw_cli import (
     ConsoleRawCliController,
     restore_refused_raw_cli_stash,
 )
+from tldw_chatbook.UI.Console_Modules.wiring import _raw_cli_persisted_leaf_anchor
 from tldw_chatbook.UI.Screens.chat_screen import ChatScreen
 from tldw_chatbook.Widgets.Console.console_composer_bar import (
     ConsoleComposerBar,
@@ -132,11 +136,16 @@ def _controller(
         marshal_to_ui = default_marshal_to_ui
     if refusal_stash_bank is None:
         refusal_stash_bank = {}
+    runs_db = AgentRunsDB(tmp_path / "agent-runs.db")
 
     controller = ConsoleRawCliController(
         raw_cli_runtime=lambda: runtime,
         active_session_id=active_session_id,
-        persisted_leaf_anchor=lambda session_id: anchor,
+        persist_session_if_needed=lambda _session_id: "conversation-1",
+        active_leaf_anchor=lambda _session_id: (
+            "native-leaf" if anchor is not None else None
+        ),
+        persisted_leaf_anchor=lambda _session_id, _leaf_id: anchor,
         selected_local_root=read_selected,
         private_scratch_root=read_scratch,
         refusal_stash_bank=refusal_stash_bank,
@@ -145,8 +154,8 @@ def _controller(
         append_local_error=append_local_error,
         append_store_marker=lambda *args, **kwargs: None,
         update_store_marker=lambda *args, **kwargs: None,
-        agent_runs_db=lambda: None,
-        run_log_access=lambda: None,
+        agent_runs_db=lambda: runs_db,
+        run_log_access=lambda: tmp_path / "app-data",
         start_worker=start_worker,
         marshal_to_ui=marshal_to_ui,
     )
@@ -191,6 +200,72 @@ def test_raw_cli_controller_captures_one_submission_snapshot_and_named_worker(
     assert request.timeout_seconds == 300.0
     assert request.console_session_id == "session-1"
     assert request.transcript_anchor_id == "persisted-leaf"
+
+
+def test_raw_cli_anchor_resolves_the_leaf_captured_before_branch_switch(
+    tmp_path: Path,
+) -> None:
+    runtime = _Runtime()
+    runs_db = AgentRunsDB(tmp_path / "agent-runs.db")
+    workers: list[Any] = []
+    current_leaf = "native-leaf-a"
+
+    def persist(_session_id: str) -> str:
+        nonlocal current_leaf
+        current_leaf = "native-leaf-b"
+        return "conversation-1"
+
+    controller = ConsoleRawCliController(
+        raw_cli_runtime=lambda: runtime,
+        active_session_id=lambda: "session-1",
+        persist_session_if_needed=persist,
+        active_leaf_anchor=lambda _session_id: current_leaf,
+        persisted_leaf_anchor=lambda _session_id, leaf_id: {
+            "native-leaf-a": "persisted-leaf-a",
+            "native-leaf-b": "persisted-leaf-b",
+        }[leaf_id],
+        selected_local_root=lambda _session_id: tmp_path,
+        private_scratch_root=lambda _session_id: tmp_path,
+        refusal_stash_bank={},
+        accepts_raw_cli_refusal_callbacks=lambda: True,
+        restore_stash=lambda _session_id, _stash: True,
+        append_local_error=lambda _session_id, _message: None,
+        append_store_marker=lambda *args, **kwargs: None,
+        update_store_marker=lambda *args, **kwargs: None,
+        agent_runs_db=lambda: runs_db,
+        run_log_access=lambda: tmp_path / "app-data",
+        start_worker=lambda work, **_kwargs: workers.append(work),
+        marshal_to_ui=lambda callback, *args: callback(*args),
+    )
+
+    assert controller.start_user_command(_stash("! printf branch")) is True
+    assert current_leaf == "native-leaf-a"
+    workers.pop()()
+
+    assert current_leaf == "native-leaf-b"
+    assert runtime.requests[0].transcript_anchor_id == "persisted-leaf-a"
+
+
+def test_raw_cli_persisted_anchor_rejects_leaf_owned_by_another_session() -> None:
+    store = ConsoleChatStore()
+    first = store.create_session(session_id="session-a")
+    second = store.create_session(session_id="session-b")
+    leaf = store.append_message(
+        first.id,
+        role=ConsoleMessageRole.ASSISTANT,
+        content="first-session leaf",
+        persist=False,
+    )
+    store._nodes_by_session[first.id][leaf.id].persisted_message_id = (
+        "persisted-leaf-a"
+    )
+    screen = SimpleNamespace(_ensure_console_chat_store=lambda: store)
+
+    assert _raw_cli_persisted_leaf_anchor(screen, second.id, leaf.id) is None
+    assert (
+        _raw_cli_persisted_leaf_anchor(screen, first.id, leaf.id)
+        == "persisted-leaf-a"
+    )
 
 
 def test_raw_cli_controller_falls_back_to_private_scratch_once(tmp_path: Path) -> None:

@@ -6,7 +6,12 @@ from contextlib import contextmanager
 import pytest
 
 from tldw_chatbook.Agents.agent_models import AgentDefinition
+from tldw_chatbook.Chat.console_raw_cli import local_command_resume_marker
 from tldw_chatbook.DB.AgentRuns_DB import AgentRunsDB, AgentStepConflictError
+from tldw_chatbook.Tools.raw_cli_executor import (
+    MAX_RAW_COMMAND_BYTES,
+    MAX_RAW_PREVIEW_BYTES,
+)
 
 
 @pytest.fixture()
@@ -66,6 +71,288 @@ def test_count_subagents_counts_only_subagent_kind(db):
         conversation_id="other", agent_kind="subagent", task="x", parent_run_id="zzz"
     )
     assert db.count_subagent_runs("c") == 3
+
+
+def test_local_command_kind_is_stored_but_ignored_by_agent_summaries(db):
+    primary = db.create_run(conversation_id="c", agent_kind="primary")
+    db.create_run(
+        conversation_id="c",
+        agent_kind="local_command",
+        task="Local command",
+        assistant_message_id="leaf-1",
+    )
+
+    assert [row["agent_kind"] for row in db.list_runs("c")] == [
+        "local_command",
+        "primary",
+    ]
+    assert db.latest_primary_run("c")["id"] == primary
+    assert db.count_subagent_runs("c") == 0
+    assert db.count_subagents_by_conversation(["c"]) == {}
+
+
+def _local_command_steps(
+    *,
+    invocation_id: str,
+    command: str = "printf secret",
+    stdout_preview: str = "ok\n",
+    stderr_preview: str = "",
+    cleanup_proven: bool = True,
+    full_result: object = "full output",
+) -> list[dict]:
+    return [
+        {
+            "index": 0,
+            "kind": "tool_call",
+            "tool_name": "raw_cli",
+            "args": {
+                "command": command,
+                "shell": "auto",
+                "cwd": "/private/tmp",
+                "invocation_id": invocation_id,
+            },
+        },
+        {
+            "index": 1,
+            "kind": "tool_result",
+            "tool_name": "raw_cli",
+            "result": full_result,
+            "args": {
+                "invocation_id": invocation_id,
+                "shell": "/bin/zsh",
+                "cwd": "/private/tmp",
+                "stdout_preview": stdout_preview,
+                "stderr_preview": stderr_preview,
+                "elapsed_seconds": 0.25,
+                "exit_code": 0,
+                "terminal_state": "exited",
+                "truncated": False,
+                "cleanup_proven": cleanup_proven,
+            },
+            "status": "done",
+            "tool_outcome": "success",
+        },
+    ]
+
+
+def test_local_command_resume_projection_is_bounded_and_omits_full_result(db):
+    valid_id = db.create_run(
+        conversation_id="local-projection",
+        agent_kind="local_command",
+        assistant_message_id="assistant-leaf",
+    )
+    full_result_secret = "FULL_RESULT_MUST_NOT_BE_PROJECTED_" + "x" * 1_000_000
+    db.append_steps(
+        valid_id,
+        _local_command_steps(
+            invocation_id="valid-invocation",
+            full_result={"nested": full_result_secret},
+        ),
+    )
+    db.set_status(valid_id, "done")
+
+    oversize_id = db.create_run(
+        conversation_id="local-projection",
+        agent_kind="local_command",
+        assistant_message_id="assistant-leaf",
+    )
+    db.append_steps(
+        oversize_id,
+        _local_command_steps(
+            invocation_id="oversize-invocation",
+            command="x" * (MAX_RAW_COMMAND_BYTES + 1),
+        ),
+    )
+    db.set_status(oversize_id, "done")
+
+    preview_id = db.create_run(
+        conversation_id="local-projection",
+        agent_kind="local_command",
+        assistant_message_id="assistant-leaf",
+    )
+    db.append_steps(
+        preview_id,
+        _local_command_steps(
+            invocation_id="preview-invocation",
+            stdout_preview="x" * MAX_RAW_PREVIEW_BYTES,
+            stderr_preview="y",
+        ),
+    )
+    db.set_status(preview_id, "done")
+
+    malformed_id = db.create_run(
+        conversation_id="local-projection",
+        agent_kind="local_command",
+        assistant_message_id="assistant-leaf",
+    )
+    malformed_steps = _local_command_steps(invocation_id="malformed-invocation")
+    malformed_steps[1]["args"] = "not-a-mapping"
+    db.append_steps(malformed_id, malformed_steps)
+    db.set_status(malformed_id, "done")
+
+    primary_id = db.create_run(
+        conversation_id="local-projection",
+        agent_kind="primary",
+        assistant_message_id="assistant-leaf",
+    )
+    db.append_steps(
+        primary_id,
+        _local_command_steps(
+            invocation_id="primary-poison",
+            full_result=full_result_secret,
+        ),
+    )
+    db.set_status(primary_id, "done")
+
+    records = db.local_command_resume_records("local-projection")
+
+    assert [record["id"] for record in records] == [
+        valid_id,
+        oversize_id,
+        preview_id,
+    ]
+    assert records[0]["agent_kind"] == "local_command"
+    assert records[0]["assistant_message_id"] == "assistant-leaf"
+    assert "result" not in records[0]["steps"][1]
+    assert local_command_resume_marker(records[0]) is not None
+    assert local_command_resume_marker(records[1]) is None
+    assert local_command_resume_marker(records[2]) is None
+    projected = repr(records)
+    assert "FULL_RESULT_MUST_NOT_BE_PROJECTED" not in projected
+    assert len(projected.encode("utf-8")) < 100_000
+
+
+def test_local_command_resume_projection_bounds_raw_rows_before_json_projection(db):
+    run_id = db.create_run(
+        conversation_id="local-projection-shape",
+        agent_kind="local_command",
+        assistant_message_id="assistant-leaf",
+    )
+    db.append_steps(
+        run_id,
+        _local_command_steps(
+            invocation_id="bounded-query",
+            full_result="UNPROJECTED_FULL_RESULT_" + "x" * 1_000_000,
+        ),
+    )
+    db.set_status(run_id, "done")
+
+    oversized_result_id = db.create_run(
+        conversation_id="local-projection-shape",
+        agent_kind="local_command",
+        assistant_message_id="assistant-leaf",
+    )
+    db.append_steps(
+        oversized_result_id,
+        _local_command_steps(
+            invocation_id="oversized-result-payload",
+            full_result="x" * 10_000_000,
+        ),
+    )
+    db.set_status(oversized_result_id, "done")
+
+    oversized_metadata_id = db.create_run(
+        conversation_id="local-projection-shape",
+        agent_kind="local_command",
+        assistant_message_id="assistant-leaf",
+    )
+    db.append_steps(
+        oversized_metadata_id,
+        _local_command_steps(invocation_id="oversized-metadata"),
+    )
+    db.set_status(oversized_metadata_id, "done")
+    with db.transaction() as conn:
+        conn.execute(
+            "UPDATE agent_runs SET status = ?, created_at = ? WHERE id = ?",
+            ("x" * 1_000, "y" * 1_000, oversized_metadata_id),
+        )
+
+    statements: list[str] = []
+    db._held_connection().set_trace_callback(statements.append)
+    assert [row["id"] for row in db.local_command_resume_records(
+        "local-projection-shape"
+    )] == [run_id]
+
+    query = next(
+        statement
+        for statement in statements
+        if "agent_kind = 'local_command'" in statement
+    )
+    eligibility = query.split("), projected AS", maxsplit=1)[0]
+    retained_columns = eligibility.split("SELECT", maxsplit=1)[1].split(
+        "FROM agent_runs", maxsplit=1
+    )[0]
+    assert "eligible_local_commands AS MATERIALIZED" in eligibility
+    assert "json_" not in eligibility
+    assert ".payload" not in retained_columns
+    assert "ar.steps" not in retained_columns
+    assert "length(CAST(ar.id AS BLOB))" in query
+    assert "length(CAST(ar.assistant_message_id AS BLOB))" in query
+    assert "length(CAST(ar.status AS BLOB))" in eligibility
+    assert "length(CAST(ar.created_at AS BLOB))" in eligibility
+    assert "length(CAST(ar.steps AS BLOB))" in eligibility
+    assert "length(CAST(call_step.payload AS BLOB))" in eligibility
+    assert "length(CAST(result_step.payload AS BLOB))" in eligibility
+
+
+def test_local_command_projection_bounds_args_then_uses_canonical_parser(db):
+    run_id = db.create_run(
+        conversation_id="local-projection-parser",
+        agent_kind="local_command",
+        assistant_message_id="assistant-leaf",
+    )
+    steps = _local_command_steps(
+        invocation_id="malformed-exit-code",
+        full_result="UNPROJECTED_RESULT_" + "x" * 1_000_000,
+    )
+    steps[1]["args"]["exit_code"] = False
+    db.append_steps(run_id, steps)
+    db.set_status(run_id, "done")
+
+    statements: list[str] = []
+    db._held_connection().set_trace_callback(statements.append)
+    (record,) = db.local_command_resume_records("local-projection-parser")
+
+    assert record["id"] == run_id
+    assert "result" not in record["steps"][1]
+    assert local_command_resume_marker(record) is None
+    query = next(
+        statement
+        for statement in statements
+        if "agent_kind = 'local_command'" in statement
+    )
+    assert "AS call_args_json" in query
+    assert "AS result_args_json" in query
+    assert "$.args.command" not in query
+    assert "$.args.stdout_preview" not in query
+
+
+def test_local_command_resume_projection_drops_invalid_utf8_row_only(db):
+    valid_ids: list[str] = []
+    for invocation_id in ("valid-before", "poison", "valid-after"):
+        run_id = db.create_run(
+            conversation_id="local-projection-utf8",
+            agent_kind="local_command",
+            assistant_message_id="assistant-leaf",
+        )
+        db.append_steps(
+            run_id,
+            _local_command_steps(invocation_id=invocation_id),
+        )
+        db.set_status(run_id, "done")
+        if invocation_id == "poison":
+            with db.transaction() as conn:
+                conn.execute(
+                    "UPDATE agent_runs SET status = CAST(X'80' AS TEXT) WHERE id = ?",
+                    (run_id,),
+                )
+        else:
+            valid_ids.append(run_id)
+
+    records = db.local_command_resume_records("local-projection-utf8")
+
+    assert [record["id"] for record in records] == valid_ids
+    assert all(local_command_resume_marker(record) is not None for record in records)
 
 
 # --- Finding A: batched per-conversation sub-agent counts (single query,
@@ -135,6 +422,40 @@ def test_supersede_run_tree_marks_run_and_terminal_children(db):
     assert db.get_run(parent)["status"] == "superseded"
     assert db.get_run(child)["status"] == "superseded"
     assert db.get_run(other)["status"] == "running"
+
+
+def test_supersede_run_tree_leaves_parented_local_command_resumable(db):
+    parent = db.create_run(conversation_id="c", agent_kind="primary")
+    db.set_status(parent, "done")
+    child = db.create_run(
+        conversation_id="c",
+        agent_kind="subagent",
+        task="child",
+        parent_run_id=parent,
+    )
+    db.set_status(child, "done")
+    local_command = db.create_run(
+        conversation_id="c",
+        agent_kind="local_command",
+        task="Local command",
+        parent_run_id=parent,
+        assistant_message_id="assistant-leaf",
+    )
+    db.append_steps(
+        local_command,
+        _local_command_steps(invocation_id="malformed-parent-local-command"),
+    )
+    db.set_status(local_command, "done")
+
+    changed = db.supersede_run_tree(parent)
+
+    assert changed == 2
+    assert db.get_run(parent)["status"] == "superseded"
+    assert db.get_run(child)["status"] == "superseded"
+    assert db.get_run(local_command)["status"] == "done"
+    assert [
+        row["id"] for row in db.local_command_resume_records("c")
+    ] == [local_command]
 
 
 def test_supersede_run_tree_leaves_live_child_untouched(db):
@@ -423,6 +744,48 @@ def test_reconcile_preserves_existing_result(tmp_path):
     assert len(diagnostics) == 1
     assert diagnostics[0]["status"] == "incomplete"
     assert diagnostics[0]["parent_event_id"] == f"agent-run:{rid}"
+
+
+def test_reconcile_local_commands_without_agent_lifecycle_diagnostics(tmp_path):
+    db_path = tmp_path / "local-command-reconcile.db"
+    setup = AgentRunsDB(db_path)
+    completed_id = setup.create_run(
+        conversation_id="c",
+        agent_kind="local_command",
+        assistant_message_id="assistant-leaf",
+    )
+    setup.append_steps(
+        completed_id,
+        _local_command_steps(invocation_id="completed-invocation"),
+    )
+    setup.set_status(completed_id, "done")
+    running_id = setup.create_run(
+        conversation_id="c",
+        agent_kind="local_command",
+        assistant_message_id="assistant-leaf",
+    )
+    setup.append_steps(
+        running_id,
+        [_local_command_steps(invocation_id="running-invocation")[0]],
+    )
+    setup.close()
+    AgentRunsDB._swept_paths.discard(str(db_path))
+
+    reopened = AgentRunsDB(db_path)
+
+    completed = reopened.get_run(completed_id)
+    running = reopened.get_run(running_id)
+    assert completed["status"] == "done"
+    assert [step["kind"] for step in completed["steps"]] == [
+        "tool_call",
+        "tool_result",
+    ]
+    assert running["status"] == "error"
+    assert running["result"] is None
+    assert [step["kind"] for step in running["steps"]] == ["tool_call"]
+    assert [
+        record["id"] for record in reopened.local_command_resume_records("c")
+    ] == [completed_id]
 
 
 def test_terminal_status_and_lifecycle_insert_are_atomic_on_fault(tmp_path, monkeypatch):

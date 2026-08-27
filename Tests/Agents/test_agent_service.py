@@ -1403,7 +1403,7 @@ def test_child_cannot_spawn(db):
     assert db.count_subagent_runs("c") == 1  # no grandchildren
 
 
-def test_supersede_marks_old_tree_before_new_run(db):
+def test_supersede_marks_old_tree_before_new_run(db, monkeypatch):
     service, _ = make_service(db, ["first answer"])
     old_id, _ = service.run_turn(
         conversation_id="c",
@@ -1411,6 +1411,22 @@ def test_supersede_marks_old_tree_before_new_run(db):
         config=CFG,
         api_endpoint="llama_cpp",
     )
+    local_id = db.create_run(
+        conversation_id="c",
+        agent_kind="local_command",
+        task="Local command",
+    )
+    original_list_runs = db.list_runs
+    requested_kinds: list[str | None] = []
+
+    def exact_kind_only(conversation_id, *args, **kwargs):
+        kind = kwargs.get("agent_kind")
+        requested_kinds.append(kind)
+        if kind is None:
+            raise AssertionError("broad query would hydrate poison local-command steps")
+        return original_list_runs(conversation_id, *args, **kwargs)
+
+    monkeypatch.setattr(db, "list_runs", exact_kind_only)
     service2, _ = make_service(db, ["second answer"])
     new_id, _ = service2.run_turn(
         conversation_id="c",
@@ -1421,6 +1437,8 @@ def test_supersede_marks_old_tree_before_new_run(db):
     )
     assert db.get_run(old_id)["status"] == "superseded"
     assert db.get_run(new_id)["status"] == "done"
+    assert db.get_run(local_id)["status"] == "running"
+    assert requested_kinds == ["primary", "subagent"]
     assert [
         step["kind"]
         for step in db.get_run(old_id)["steps"]

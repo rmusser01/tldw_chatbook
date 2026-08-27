@@ -24,6 +24,7 @@ from tldw_chatbook.Chat.console_chat_models import (
     RawCliPresentation,
 )
 from tldw_chatbook.Chat.console_chat_store import ConsoleChatStore
+from tldw_chatbook.DB.AgentRuns_DB import AgentRunsDB
 from tldw_chatbook.Chat.console_message_actions import ConsoleMessageActionService
 from tldw_chatbook.Chat.console_raw_cli import RawCliRuntime
 from tldw_chatbook.Tools.raw_cli_executor import (
@@ -478,6 +479,7 @@ def _controller_with_store(
 ]:
     store = ConsoleChatStore()
     session = store.create_session(title="raw")
+    runs_db = AgentRunsDB(tmp_path / "agent-runs.db")
     workers: list[Any] = []
     appended: list[ConsoleChatMessage] = []
     updated: list[ConsoleChatMessage] = []
@@ -495,7 +497,9 @@ def _controller_with_store(
     controller = ConsoleRawCliController(
         raw_cli_runtime=lambda: runtime,
         active_session_id=lambda: session.id,
-        persisted_leaf_anchor=lambda _session_id: None,
+        persist_session_if_needed=lambda _session_id: "conversation-1",
+        active_leaf_anchor=lambda _session_id: None,
+        persisted_leaf_anchor=lambda _session_id, _leaf_id: None,
         selected_local_root=lambda _session_id: tmp_path,
         private_scratch_root=lambda _session_id: tmp_path,
         refusal_stash_bank={},
@@ -504,8 +508,8 @@ def _controller_with_store(
         append_local_error=lambda _session_id, _text: None,
         append_store_marker=append_marker,
         update_store_marker=update_marker,
-        agent_runs_db=lambda: None,
-        run_log_access=lambda: None,
+        agent_runs_db=lambda: runs_db,
+        run_log_access=lambda: tmp_path / "app-data",
         start_worker=lambda work, **_kwargs: workers.append(work),
         marshal_to_ui=lambda callback, *args: callback(*args),
         schedule_projection=schedule_projection,

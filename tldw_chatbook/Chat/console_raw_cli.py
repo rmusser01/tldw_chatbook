@@ -2,15 +2,24 @@
 
 from __future__ import annotations
 
-from collections.abc import Callable
+from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
 import math
 import threading
 import time
 from typing import Any, Literal, TypeAlias
 
+from tldw_chatbook.Chat.console_chat_models import (
+    ConsoleActivityPresentation,
+    ConsoleChatMessage,
+    ConsoleMessageRole,
+    RawCliLifecycleState,
+    RawCliPresentation,
+)
 from tldw_chatbook.STT.executor_process_tree import ExecutorProcessTree
 from tldw_chatbook.Tools.raw_cli_executor import (
+    MAX_RAW_COMMAND_BYTES,
+    MAX_RAW_PREVIEW_BYTES,
     RawCliRequest,
     RawCliResult,
     RawCliStreamEvent,
@@ -19,11 +28,317 @@ from tldw_chatbook.Tools.raw_cli_executor import (
 )
 
 RAW_CLI_SHUTDOWN_TIMEOUT_SECONDS = 5.0
+LOCAL_COMMAND_AGENT_KIND = "local_command"
+LOCAL_COMMAND_TASK = "Local command"
+LOCAL_COMMAND_TOOL_NAME = "raw_cli"
+LOCAL_COMMAND_RUN_LOG_DIR = "local-command-runs"
+
+_RAW_CLI_COMPACT_OUTPUT_BYTES = 4 * 1024
 
 RawCliArmReason: TypeAlias = Literal["armed", "locked", "shutdown"]
 RawCliEventSink: TypeAlias = Callable[[RawCliStreamEvent], None]
 RawCliRegisteredSink: TypeAlias = Callable[[], None]
 RawCliStartedSink: TypeAlias = Callable[[float], None]
+
+
+def _literal_terminal_text(value: str) -> str:
+    """Make terminal controls visible while leaving ordinary text literal."""
+    return "".join(
+        character
+        if character in "\n\t"
+        or not (ord(character) < 0x20 or 0x7F <= ord(character) <= 0x9F)
+        else f"\\x{ord(character):02x}"
+        for character in value
+    )
+
+
+def _utf8_prefix(value: str, byte_limit: int) -> tuple[str, bool]:
+    encoded = value.encode("utf-8")
+    if len(encoded) <= byte_limit:
+        return value, False
+    return encoded[:byte_limit].decode("utf-8", errors="ignore"), True
+
+
+def _raw_cli_output(stdout: str, stderr: str) -> str:
+    safe_stdout = _literal_terminal_text(stdout) or "(no output)"
+    safe_stderr = _literal_terminal_text(stderr) or "(no output)"
+    return f"stdout:\n{safe_stdout}\n\nstderr:\n{safe_stderr}"
+
+
+def format_raw_cli_content(
+    presentation: RawCliPresentation,
+    stdout: str,
+    stderr: str,
+) -> tuple[str, str]:
+    """Return the bounded compact marker and its bounded full-output body."""
+    full_output = _raw_cli_output(stdout, stderr)
+    compact_output, clipped = _utf8_prefix(
+        full_output,
+        _RAW_CLI_COMPACT_OUTPUT_BYTES,
+    )
+    if clipped:
+        compact_output += "\n… output preview clipped; use Full output"
+    exit_code = (
+        "Pending" if presentation.exit_code is None else str(presentation.exit_code)
+    )
+    cleanup = {None: "Pending", True: "Proven", False: "Unproven"}[
+        presentation.cleanup_proven
+    ]
+    content = (
+        f"Command:\n{_literal_terminal_text(presentation.command)}\n\n"
+        f"Caller: {presentation.caller.title()}\n"
+        f"Shell: {_literal_terminal_text(presentation.shell)}\n"
+        f"CWD: {_literal_terminal_text(presentation.cwd)}\n"
+        f"Elapsed: {presentation.elapsed_seconds:.1f}s\n"
+        f"Exit code: {exit_code}\n"
+        f"Truncated: {'Yes' if presentation.truncated else 'No'}\n"
+        f"Cleanup: {cleanup}\n\n"
+        f"{compact_output}"
+    )
+    return content, full_output
+
+
+def raw_cli_terminal_lifecycle(result: RawCliResult) -> RawCliLifecycleState:
+    """Map executor settlement onto the display lifecycle vocabulary."""
+    if result.terminal_state in {
+        "exited",
+        "timed_out",
+        "cancelled",
+        "cleanup_unproven",
+    }:
+        return result.terminal_state
+    return "failed"
+
+
+def raw_cli_activity_presentation(
+    lifecycle_state: RawCliLifecycleState,
+    exit_code: int | None,
+) -> ConsoleActivityPresentation:
+    """Build the shared live/resume activity header."""
+    if lifecycle_state == "exited" and exit_code == 0:
+        status = "success"
+    elif lifecycle_state in {"starting", "running", "stopping"}:
+        status = "done"
+    elif lifecycle_state in {"timed_out", "cancelled"}:
+        status = "blocked"
+    else:
+        status = "failed"
+    return ConsoleActivityPresentation("tool", "Raw CLI", status)
+
+
+def local_command_run_status(result: RawCliResult) -> str:
+    """Map executor settlement onto the durable run terminal vocabulary."""
+    if result.terminal_state == "exited":
+        return "done"
+    if result.terminal_state == "cancelled":
+        return "cancelled"
+    return "error"
+
+
+def _resume_utf8_text(
+    value: object,
+    *,
+    max_bytes: int,
+    nonblank: bool = False,
+    single_line: bool = False,
+    nul_free: bool = False,
+) -> str:
+    """Return strictly typed, bounded UTF-8 text or reject the record."""
+    if type(value) is not str:
+        raise TypeError("persisted local-command text must be a string")
+    encoded = value.encode("utf-8")
+    if len(encoded) > max_bytes:
+        raise ValueError("persisted local-command text exceeds its live limit")
+    if nonblank and not value.strip():
+        raise ValueError("persisted local-command text must not be blank")
+    if single_line and any(character in value for character in "\r\n"):
+        raise ValueError("persisted local-command text must be one line")
+    if nul_free and "\x00" in value:
+        raise ValueError("persisted local-command text must not contain NUL")
+    return value
+
+
+def local_command_resume_marker(record: Mapping[str, Any]) -> ConsoleChatMessage | None:
+    """Rebuild one terminal display marker from a local-command run record."""
+    try:
+        if not isinstance(record, Mapping):
+            return None
+        run_id = _resume_utf8_text(
+            record.get("id"),
+            max_bytes=128,
+            nonblank=True,
+            single_line=True,
+            nul_free=True,
+        )
+        if record.get("agent_kind") != LOCAL_COMMAND_AGENT_KIND:
+            return None
+        steps = record.get("steps")
+        if (
+            not isinstance(steps, Sequence)
+            or isinstance(steps, (str, bytes, bytearray))
+            or len(steps) != 2
+            or not all(isinstance(step, Mapping) for step in steps)
+        ):
+            return None
+        call, result = steps
+        if (
+            call.get("kind") != "tool_call"
+            or call.get("tool_name") != LOCAL_COMMAND_TOOL_NAME
+            or type(call.get("index")) is not int
+            or call.get("index") != 0
+            or result.get("kind") != "tool_result"
+            or result.get("tool_name") != LOCAL_COMMAND_TOOL_NAME
+            or type(result.get("index")) is not int
+            or result.get("index") != 1
+        ):
+            return None
+        call_args = call.get("args")
+        result_args = result.get("args")
+        if not isinstance(call_args, Mapping) or not isinstance(result_args, Mapping):
+            return None
+
+        invocation_id = _resume_utf8_text(
+            call_args.get("invocation_id"),
+            max_bytes=128,
+            nonblank=True,
+            single_line=True,
+            nul_free=True,
+        )
+        result_invocation_id = _resume_utf8_text(
+            result_args.get("invocation_id"),
+            max_bytes=128,
+            nonblank=True,
+            single_line=True,
+            nul_free=True,
+        )
+        if result_invocation_id != invocation_id:
+            return None
+        command = _resume_utf8_text(
+            call_args.get("command"),
+            max_bytes=MAX_RAW_COMMAND_BYTES,
+            nonblank=True,
+            nul_free=True,
+        )
+        _resume_utf8_text(
+            call_args.get("shell"),
+            max_bytes=4096,
+            nonblank=True,
+            single_line=True,
+            nul_free=True,
+        )
+        call_cwd = _resume_utf8_text(
+            call_args.get("cwd"),
+            max_bytes=4096,
+            nonblank=True,
+            single_line=True,
+            nul_free=True,
+        )
+        shell = _resume_utf8_text(
+            result_args.get("shell"),
+            max_bytes=4096,
+            nonblank=True,
+            single_line=True,
+            nul_free=True,
+        )
+        cwd = _resume_utf8_text(
+            result_args.get("cwd"),
+            max_bytes=4096,
+            nonblank=True,
+            single_line=True,
+            nul_free=True,
+        )
+        if cwd != call_cwd:
+            return None
+        stdout = _resume_utf8_text(
+            result_args.get("stdout_preview"),
+            max_bytes=MAX_RAW_PREVIEW_BYTES,
+        )
+        stderr = _resume_utf8_text(
+            result_args.get("stderr_preview"),
+            max_bytes=MAX_RAW_PREVIEW_BYTES,
+        )
+        if len(stdout.encode("utf-8")) + len(stderr.encode("utf-8")) > (
+            MAX_RAW_PREVIEW_BYTES
+        ):
+            return None
+
+        elapsed_seconds = result_args.get("elapsed_seconds")
+        if (
+            type(elapsed_seconds) not in {int, float}
+            or not math.isfinite(elapsed_seconds)
+            or elapsed_seconds < 0
+        ):
+            return None
+        exit_code = result_args.get("exit_code")
+        if exit_code is not None and type(exit_code) is not int:
+            return None
+        truncated = result_args.get("truncated")
+        if type(truncated) is not bool:
+            return None
+        cleanup_proven = result_args.get("cleanup_proven")
+        if type(cleanup_proven) is not bool:
+            return None
+
+        terminal_state = result_args.get("terminal_state")
+        terminal_status = {
+            "refused": "error",
+            "shell_unavailable": "error",
+            "spawn_failed": "error",
+            "containment_unavailable": "error",
+            "exited": "done",
+            "timed_out": "error",
+            "cancelled": "cancelled",
+            "cleanup_unproven": "error",
+        }.get(terminal_state)
+        if (
+            terminal_status is None
+            or type(record.get("status")) is not str
+            or record.get("status") != terminal_status
+            or type(result.get("status")) is not str
+            or result.get("status") != terminal_status
+        ):
+            return None
+        lifecycle: RawCliLifecycleState = (
+            terminal_state
+            if terminal_state
+            in {"exited", "timed_out", "cancelled", "cleanup_unproven"}
+            else "failed"
+        )
+        presentation = RawCliPresentation(
+            invocation_id=invocation_id,
+            caller="user",
+            lifecycle_state=lifecycle,
+            command=command,
+            shell=shell,
+            cwd=cwd,
+            started_at_monotonic=None,
+            elapsed_seconds=elapsed_seconds,
+            exit_code=exit_code,
+            truncated=truncated,
+            cleanup_proven=cleanup_proven,
+        )
+        content, full_output = format_raw_cli_content(presentation, stdout, stderr)
+    except (
+        AttributeError,
+        KeyError,
+        OverflowError,
+        TypeError,
+        ValueError,
+        UnicodeError,
+    ):
+        return None
+    return ConsoleChatMessage(
+        id=f"raw-cli-run-{run_id}",
+        role=ConsoleMessageRole.TOOL,
+        content=content,
+        status="complete",
+        tool_output_full=full_output,
+        activity_presentation=raw_cli_activity_presentation(
+            lifecycle,
+            exit_code,
+        ),
+        raw_cli_presentation=presentation,
+    )
 
 
 @dataclass(frozen=True, slots=True)
@@ -281,6 +596,10 @@ class RawCliRuntime:
 
 
 __all__ = [
+    "LOCAL_COMMAND_AGENT_KIND",
+    "LOCAL_COMMAND_RUN_LOG_DIR",
+    "LOCAL_COMMAND_TASK",
+    "LOCAL_COMMAND_TOOL_NAME",
     "RAW_CLI_SHUTDOWN_TIMEOUT_SECONDS",
     "RawCliArmReason",
     "RawCliArmResult",
@@ -288,4 +607,9 @@ __all__ = [
     "RawCliRuntime",
     "RawCliStartedSink",
     "RawCliShutdownResult",
+    "format_raw_cli_content",
+    "local_command_resume_marker",
+    "local_command_run_status",
+    "raw_cli_activity_presentation",
+    "raw_cli_terminal_lifecycle",
 ]
