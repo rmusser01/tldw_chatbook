@@ -228,6 +228,46 @@ def test_snapshot_drops_a_gitlink_replacing_a_tip_regular_file_after_scan(
     assert str(repo._run("ls-files", "--stage", "--", child.name).stdout) == ""
 
 
+def test_snapshot_removes_tip_entries_when_directory_becomes_nested_repo(
+    tracker, root
+):
+    import subprocess as _sp
+
+    child = root / "child"
+    child.mkdir()
+    target = child / "file.txt"
+    target.write_text("parent version\n")
+    link = child / "file-link"
+    link.symlink_to(target.name)
+    target_rel = target.relative_to(root).as_posix()
+    link_rel = link.relative_to(root).as_posix()
+
+    handle = tracker.begin_turn([root])
+    handle.await_baseline()
+    repo = tracker.service.repo_for_root(root)
+    baseline = handle.baselines[str(root.resolve())]
+    assert repo.file_bytes(baseline, target_rel) == b"parent version\n"
+    link_entry = str(repo._run("ls-tree", baseline, "--", link_rel).stdout)
+    assert link_entry.split()[0] == "120000"
+
+    _sp.run(["git", "init", "--quiet", str(child)], check=True)
+    target.write_text("nested version\n")
+    records = tracker.end_turn(handle)
+
+    assert len(records) == 1
+    record = records[0]
+    assert record.tracking_error == ""
+    assert repo.file_bytes(record.end_sha, target_rel) is None
+    assert repo.file_bytes(record.end_sha, link_rel) is None
+    changed = repo.changed_files(record.baseline_sha, record.end_sha)
+    assert [(change.path, change.status) for change in changed] == [
+        (link_rel, "D"),
+        (target_rel, "D"),
+    ]
+    assert record.nested_repos == (child.name,)
+    assert str(repo._run("ls-files", "--", child.name).stdout).strip() == ""
+
+
 def test_force_add_rejects_root_and_directory_paths(tracker, root, monkeypatch):
     monkeypatch.setenv("TLDW_CHANGE_REVIEW_MAX_FILE_BYTES", "100")
     ignored = root / "ignored"

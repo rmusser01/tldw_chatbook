@@ -448,7 +448,7 @@ class ShadowRepo:
     def _validate_new_index_paths(
         self,
     ) -> tuple[tuple[str, ...], tuple[str, ...]]:
-        """Remove and disclose unsafe or oversized new stage-0 entries."""
+        """Remove nested-owned entries and unsafe or oversized new entries."""
         from tldw_chatbook.Workspaces.change_bounds import (
             DEFAULT_MAX_FILE_BYTES,
             change_review_setting,
@@ -461,19 +461,31 @@ class ShadowRepo:
             if tip
             else ()
         )
-        new_entries: list[tuple[str, str, str]] = []
+        stage_entries: list[tuple[str, str, str]] = []
         for entry in self._z_tokens("ls-files", "--stage", "-z"):
             metadata, separator, rel = entry.partition("\t")
             fields = metadata.split()
             if not separator or len(fields) != 3:
                 raise ChangeTrackingError("git ls-files returned malformed output")
             mode, object_id, stage = fields
-            if stage != "0" or (rel in tip_paths and mode != "160000"):
-                continue
-            new_entries.append((rel, object_id, mode))
-        if not new_entries:
+            if stage == "0":
+                stage_entries.append((rel, object_id, mode))
+        if not stage_entries:
             return (), ()
 
+        new_entries = tuple(
+            entry for entry in stage_entries if entry[0] not in tip_paths
+        )
+        nested_owners = {
+            rel: owner
+            for rel, _object_id, mode in stage_entries
+            if (
+                owner := (
+                    rel if mode == "160000" else self._nested_owner(self.root / rel)
+                )
+            )
+            is not None
+        }
         regular_entries = tuple(
             entry for entry in new_entries if entry[2] in {"100644", "100755"}
         )
@@ -494,8 +506,12 @@ class ShadowRepo:
                 and self._nested_owner(self.root / path) is None
             ):
                 safe.add(rel)
+        new_paths = {rel for rel, _object_id, _mode in new_entries}
         unsafe_entries = tuple(
-            entry for entry in new_entries if entry[0] not in safe
+            entry
+            for entry in stage_entries
+            if entry[0] in nested_owners
+            or (entry[0] in new_paths and entry[0] not in safe)
         )
         unsafe = tuple(rel for rel, _object_id, _mode in unsafe_entries)
         if unsafe:
@@ -503,15 +519,8 @@ class ShadowRepo:
         nested = tuple(
             dict.fromkeys(
                 owner
-                for rel, _object_id, mode in unsafe_entries
-                if (
-                    owner := (
-                        rel
-                        if mode == "160000"
-                        else self._nested_owner(self.root / rel)
-                    )
-                )
-                is not None
+                for rel, _object_id, _mode in unsafe_entries
+                if (owner := nested_owners.get(rel)) is not None
             )
         )
         self.last_nested_repos = tuple(
