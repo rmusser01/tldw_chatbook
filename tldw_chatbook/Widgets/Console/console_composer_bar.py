@@ -726,8 +726,20 @@ class ConsoleComposerBar(Horizontal):
         self._raw_cli_prefix_stage_one = False
         return self._raw_cli_prefix_typed and self.draft_text().startswith("! ")
 
-    def _finish_raw_cli_mutation(self, preserve_trusted_prefix: bool) -> None:
-        """Preserve trust only when a localized mutation left the prefix untouched."""
+    def _finish_raw_cli_mutation(
+        self,
+        preserve_trusted_prefix: bool,
+        *,
+        mutation_start: int | None = None,
+        replaces_selection: bool = False,
+    ) -> None:
+        """Preserve trust only when a mutation began after the typed prefix."""
+        if mutation_start is not None:
+            preserve_trusted_prefix = (
+                preserve_trusted_prefix
+                and not replaces_selection
+                and mutation_start >= 2
+            )
         self._raw_cli_prefix_typed = bool(
             preserve_trusted_prefix and self.draft_text().startswith("! ")
         )
@@ -4066,7 +4078,9 @@ class ConsoleComposerBar(Horizontal):
             text: Typed text to insert without paste-collapse transformation.
         """
         preserve_raw_cli_prefix = self._begin_raw_cli_mutation()
-        replaces_full_draft = self._draft_selection_all
+        replaces_selection = (
+            self._draft_selection_all or self._draft_selection_range is not None
+        )
         self._mark_manual_draft_edit()
         if not text:
             self._finish_raw_cli_mutation(preserve_raw_cli_prefix)
@@ -4089,10 +4103,13 @@ class ConsoleComposerBar(Horizontal):
             self._cursor_index = 0
         self._reset_pending_unfurl_state()
         self._clamp_cursor()
+        insertion_offset = self._cursor_index
         self._insert_literal_at_cursor(text)
         self._prune_orphaned_generated_boundaries()
         self._finish_raw_cli_mutation(
-            preserve_raw_cli_prefix and not replaces_full_draft
+            preserve_raw_cli_prefix,
+            mutation_start=insertion_offset,
+            replaces_selection=replaces_selection,
         )
         self._sync_hidden_input()
         self._refresh_visible_draft()
@@ -4132,7 +4149,9 @@ class ConsoleComposerBar(Horizontal):
             text: Raw text inserted through a paste event.
         """
         preserve_raw_cli_prefix = self._begin_raw_cli_mutation()
-        replaces_full_draft = self._draft_selection_all
+        replaces_selection = (
+            self._draft_selection_all or self._draft_selection_range is not None
+        )
         self._mark_manual_draft_edit()
         if not text:
             self._finish_raw_cli_mutation(preserve_raw_cli_prefix)
@@ -4158,6 +4177,7 @@ class ConsoleComposerBar(Horizontal):
             self.collapse_large_pastes_enabled
             and len(text) > self.paste_collapse_threshold
         )
+        insertion_offset = self._cursor_index
         if should_collapse:
             paste_index = self._insert_segment_at_cursor(
                 _DraftSegment(
@@ -4180,7 +4200,9 @@ class ConsoleComposerBar(Horizontal):
             )
             self._prune_orphaned_generated_boundaries()
         self._finish_raw_cli_mutation(
-            preserve_raw_cli_prefix and not replaces_full_draft
+            preserve_raw_cli_prefix,
+            mutation_start=insertion_offset,
+            replaces_selection=replaces_selection,
         )
         self._sync_hidden_input()
         self._refresh_visible_draft()
@@ -4211,7 +4233,9 @@ class ConsoleComposerBar(Horizontal):
                 ``"📄 notes.md · 4 KB"``).
         """
         preserve_raw_cli_prefix = self._begin_raw_cli_mutation()
-        replaces_full_draft = self._draft_selection_all
+        replaces_selection = (
+            self._draft_selection_all or self._draft_selection_range is not None
+        )
         self._mark_manual_draft_edit()
         if not text:
             self._finish_raw_cli_mutation(preserve_raw_cli_prefix)
@@ -4231,6 +4255,7 @@ class ConsoleComposerBar(Horizontal):
             self._cursor_index = 0
         self._reset_pending_unfurl_state()
         self._clamp_cursor()
+        insertion_offset = self._cursor_index
         self._insert_segment_at_cursor(
             _DraftSegment(
                 text,
@@ -4241,7 +4266,9 @@ class ConsoleComposerBar(Horizontal):
         )
         self._prune_orphaned_generated_boundaries()
         self._finish_raw_cli_mutation(
-            preserve_raw_cli_prefix and not replaces_full_draft
+            preserve_raw_cli_prefix,
+            mutation_start=insertion_offset,
+            replaces_selection=replaces_selection,
         )
         self._sync_hidden_input()
         self._refresh_visible_draft()
@@ -4289,6 +4316,11 @@ class ConsoleComposerBar(Horizontal):
         self._record_undo_snapshot(coalesce=False)
         segment_index, offset = self._locate_canonical(self._cursor_index)
         segment = self._segments[segment_index]
+        deletion_start = (
+            self._cursor_index - offset
+            if segment.collapse_state in {"collapsed", "confirm"}
+            else self._cursor_index - 1
+        )
         if segment.collapse_state in {"collapsed", "confirm"}:
             # A paste token deletes as a unit; the caret lands where it started.
             self._cursor_index -= offset
@@ -4303,7 +4335,11 @@ class ConsoleComposerBar(Horizontal):
                 del self._segments[segment_index]
         self._prune_orphaned_generated_boundaries()
         self._clamp_cursor()
-        self._finish_raw_cli_mutation(preserve_raw_cli_prefix)
+        self._finish_raw_cli_mutation(
+            preserve_raw_cli_prefix,
+            mutation_start=deletion_start,
+            replaces_selection=self._draft_selection_range is not None,
+        )
         self._sync_hidden_input()
         self._refresh_visible_draft()
         self._sync_interaction_classes()
@@ -4330,6 +4366,12 @@ class ConsoleComposerBar(Horizontal):
         self._record_undo_snapshot(coalesce=False)
         segment_index, offset = self._locate_canonical(self._cursor_index)
         segment = self._segments[segment_index]
+        deletion_start = (
+            self._cursor_index - offset
+            if offset != len(segment.text)
+            and segment.collapse_state in {"collapsed", "confirm"}
+            else self._cursor_index
+        )
         if offset == len(segment.text):
             # Caret on a boundary: the next segment holds the deletion target.
             next_segment = self._segments[segment_index + 1]
@@ -4353,7 +4395,11 @@ class ConsoleComposerBar(Horizontal):
                 del self._segments[segment_index]
         self._prune_orphaned_generated_boundaries()
         self._clamp_cursor()
-        self._finish_raw_cli_mutation(preserve_raw_cli_prefix)
+        self._finish_raw_cli_mutation(
+            preserve_raw_cli_prefix,
+            mutation_start=deletion_start,
+            replaces_selection=self._draft_selection_range is not None,
+        )
         self._sync_hidden_input()
         self._refresh_visible_draft()
         self._sync_interaction_classes()
@@ -4418,7 +4464,11 @@ class ConsoleComposerBar(Horizontal):
             return False
         self._record_undo_snapshot(coalesce=False)
         self._delete_canonical_range(start, cursor)
-        self._finish_raw_cli_mutation(preserve_raw_cli_prefix)
+        self._finish_raw_cli_mutation(
+            preserve_raw_cli_prefix,
+            mutation_start=start,
+            replaces_selection=self._draft_selection_range is not None,
+        )
         self._sync_hidden_input()
         self._refresh_visible_draft()
         self._sync_interaction_classes()

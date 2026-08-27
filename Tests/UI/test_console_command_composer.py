@@ -263,6 +263,90 @@ def test_raw_cli_edit_delete_move_or_replace_of_prefix_clears_trust(mutation) ->
     assert composer_module.classify_console_raw_draft(stash).kind != "raw"
 
 
+def _move_raw_cli_cursor(composer: ConsoleComposerBar, offset: int) -> None:
+    composer.move_cursor_home()
+    for _ in range(offset):
+        assert composer.move_cursor_right() is True
+
+
+@pytest.mark.unit
+@pytest.mark.parametrize("mutation", ["text", "paste", "file"])
+@pytest.mark.parametrize(("offset", "trusted"), [(1, False), (2, True)])
+def test_raw_cli_insertions_preserve_trust_only_at_command_body_boundary(
+    mutation: str,
+    offset: int,
+    trusted: bool,
+) -> None:
+    composer = ConsoleComposerBar()
+    _type_raw_cli_prefix(composer)
+    _move_raw_cli_cursor(composer, offset)
+
+    if mutation == "text":
+        composer.insert_text(" ")
+    elif mutation == "paste":
+        composer.insert_pasted_text(" ")
+    else:
+        composer.insert_file_segment(" ", "one-space.txt")
+    stash = composer.stash_draft_for_send()
+
+    assert stash is not None
+    assert stash.text == "!  "
+    assert stash.raw_cli_prefix_typed is trusted
+    expected_kind = "raw" if trusted else "chat"
+    assert composer_module.classify_console_raw_draft(stash).kind == expected_kind
+
+
+@pytest.mark.unit
+@pytest.mark.parametrize("mutation", ["left", "right", "word_left"])
+@pytest.mark.parametrize(("delete_body", "trusted"), [(False, False), (True, True)])
+def test_raw_cli_deletions_preserve_trust_only_when_deleted_range_starts_at_two(
+    mutation: str,
+    delete_body: bool,
+    trusted: bool,
+) -> None:
+    composer = ConsoleComposerBar()
+    _type_raw_cli_prefix(composer)
+    composer.insert_text("x")
+    if mutation == "left":
+        _move_raw_cli_cursor(composer, 3 if delete_body else 2)
+        composer.delete_left()
+    elif mutation == "right":
+        _move_raw_cli_cursor(composer, 2 if delete_body else 1)
+        composer.delete_right()
+    else:
+        _move_raw_cli_cursor(composer, 3 if delete_body else 2)
+        composer.delete_word_left()
+    stash = composer.stash_draft_for_send()
+
+    assert stash is not None
+    assert stash.raw_cli_prefix_typed is trusted
+    expected_kind = "raw" if trusted else "chat"
+    assert composer_module.classify_console_raw_draft(stash).kind == expected_kind
+
+
+@pytest.mark.unit
+@pytest.mark.parametrize("mutation", ["left", "right", "word_left"])
+def test_raw_cli_noop_deletions_do_not_clear_trust(mutation: str) -> None:
+    composer = ConsoleComposerBar()
+    _type_raw_cli_prefix(composer)
+    composer.insert_text("x")
+    if mutation in {"left", "word_left"}:
+        composer.move_cursor_home()
+
+    if mutation == "left":
+        composer.delete_left()
+    elif mutation == "right":
+        composer.delete_right()
+    else:
+        assert composer.delete_word_left() is False
+    stash = composer.stash_draft_for_send()
+
+    assert stash is not None
+    assert stash.text == "! x"
+    assert stash.raw_cli_prefix_typed is True
+    assert composer_module.classify_console_raw_draft(stash).kind == "raw"
+
+
 @pytest.mark.unit
 def test_raw_cli_refused_stash_restore_preserves_exact_trusted_payload() -> None:
     composer = ConsoleComposerBar()
