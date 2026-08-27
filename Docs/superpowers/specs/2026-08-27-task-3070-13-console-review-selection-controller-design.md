@@ -1,7 +1,7 @@
 # TASK-3070.13 Console Review and Selection Controller Design
 
 **Status:** design direction approved by the owner 2026-08-26; written amendment
-prepared for final review 2026-08-27
+reviewed and hardened 2026-08-27 before implementation planning
 
 **Task:** `TASK-3070.13 - Extract Console review and selection workflow ownership`
 
@@ -61,6 +61,8 @@ must not change product behavior to satisfy them.
    and user-visible behavior.
 6. Remove at least 399 physical `ChatScreen` lines and seven direct methods without
    raising a ratchet.
+7. Keep persistence work off the event loop without mutating controller/UI state from
+   the persistence worker thread.
 
 ## Non-goals
 
@@ -150,10 +152,22 @@ improve ownership and are rejected.
   privacy-safe failure logging, and notification policy;
 - trajectory snapshot orchestration and background build sequencing.
 
+The existing module-level `_build_trajectory_snapshot` adapter moves unchanged from
+`chat_screen.py` into `review_selection.py` with this owner. Leaving it behind would
+force the new controller to import `chat_screen` (an import cycle through `wiring.py`)
+or require a hidden screen dependency. It remains a service-read adapter over the
+existing store/repositories; the pure `Chat/trajectory.py` projection stays
+stdlib-only and query-free. `test_trajectory_live.py` retargets its helper import to
+the owning module rather than preserving a stale `chat_screen` re-export.
+
 The controller does not query the DOM, focus widgets, construct or push Textual
 screens/modals, reference `ChatScreen`, or hold sibling-controller objects. External
 work is expressed through named, late-bound callables installed in
 `UI/Console_Modules/wiring.py`.
+
+The review module does not instantiate databases, issue SQL, mutate schema, or acquire
+Git authority. Its trajectory adapter and controller invoke the existing store,
+repository, and database service APIs supplied through the reviewed seams.
 
 `ChatScreen` retains exactly:
 
@@ -182,8 +196,10 @@ wiring path is introduced.
 
 Named callables cover these capabilities:
 
-- current/ensured Console chat controller and store;
-- current/ensured agent bridge and current run state;
+- the current Console store and persisted session metadata;
+- active agent-conversation identity, change-review provider resolution, live
+  run-active probes, and current turn workspace roots;
+- the current agent-runs database read seam;
 - native Console messages;
 - worker scheduling and UI-thread callback marshaling;
 - prompt-queue dispatch;
@@ -199,8 +215,12 @@ only the snapshot inputs, worker sequencing, and handoff. The feedback-modal cal
 similarly owns Textual modal construction/wait while returning only the comment
 result to the controller.
 
-Sibling behavior is reached through purpose-named callables, never by passing
-`screen._agent`, `screen._prompt_queue`, or another controller object.
+No constructor dependency returns a sibling controller object. Wiring may call
+through `screen._agent`, `screen._prompt_queue`, or the Console chat controller at
+invocation time, but it exposes only the exact operation or immutable fact the review
+controller needs. Existing store, bridge-provider, repository, and database service
+objects may cross their named accessors for one operation; they are not controller
+objects and are not cached across sessions.
 
 ## State and Compatibility
 
@@ -219,6 +239,9 @@ The controller is the sole owner of:
 - no descriptor or screen instance stores a shadow copy;
 - mutable-map identity is preserved so existing in-place preview updates and focused
   tests continue to observe the controller-owned map.
+
+The implementation reuses `chat_screen.py`'s existing `_ControllerState` descriptor;
+it does not introduce a second compatibility abstraction.
 
 `_console_review_notes_inflight` remains screen-owned. The review-note flow may call
 the controller's annotation loader during its forced reload, but it continues to own
@@ -248,6 +271,14 @@ the named modal callback, composes identical feedback text, records audit and op
 annotation off-thread before dispatch, sends through the named prompt-queue callable,
 and releases the guard on every exit.
 
+Before entering `asyncio.to_thread`, the event-loop path captures the current store
+and session id. The blocking persistence helper returns whether it created an
+annotation (and any identifier needed for the decision); it never mutates
+`annotation_previews`. After the await resumes on the event loop, the controller
+updates the preview map and then dispatches the feedback. This preserves
+audit-before-send and immediate-marker behavior while removing the current cross-thread
+map mutation and avoiding sibling-controller access from the worker.
+
 Audit failure remains non-fatal. Comment annotations update the controller-owned
 preview map immediately. Raw selected text never enters new logs or diagnostic fields.
 
@@ -276,7 +307,9 @@ The Textual action delegates to the controller. The controller resolves the curr
 persisted conversation, title, run database, and snapshot builder; emits the same
 empty-state/building notifications; and builds off-thread. The named UI-thread and
 presentation callbacks push the same live-tail `TrajectoryScreen`. No controller DOM
-or Textual screen dependency is introduced.
+or Textual screen dependency is introduced. The presentation callback keeps the
+`TrajectoryScreen` import lazy, so importing `review_selection.py` does not widen the
+Chat first-paint import leg.
 
 ## Error Handling and Privacy
 
@@ -303,16 +336,24 @@ Add a source-inspected architecture suite proving:
 
 - all seven exact move methods are absent from `ChatScreen` and owned by
   `ConsoleReviewSelectionController`;
+- `_build_trajectory_snapshot` is absent from `chat_screen.py`, owned by the review
+  module, and does not pull `trajectory_screen` onto the first-paint import leg;
 - the six exact stays remain on `ChatScreen`;
 - the three exact delegates retain their binding/action surfaces, contain only the
   allowed handoff, and fit the five-line ceiling;
 - the controller has no Textual DOM queries, screen reference, mixin, dynamic facade,
   sibling-controller object, Git authority, or database implementation;
-- wiring is the sole constructor and supplies the reviewed named dependencies;
+- wiring is the sole constructor, supplies the reviewed fine-grained named
+  dependencies, and exposes no sibling-controller object accessor;
 - compatibility descriptors are read/write, fail loudly before wiring, and store no
   shadow state;
 - the current-base family spans and conservative 399-line / seven-method removal are
   met without a ratchet increase.
+
+Moving the module-level trajectory adapter removes additional `chat_screen.py` lines,
+but those lines are intentionally excluded from the frozen 399-line family arithmetic.
+The guaranteed reduction therefore remains conservative and directly comparable with
+the approved inventory.
 
 ### Isolated controller tests
 
@@ -322,7 +363,7 @@ Use plain fakes to cover:
 - annotation transition clearing, stale-load rejection, native-id re-keying, and load
   failure behavior;
 - feedback blank/duplicate guards, cancel, dispatch composition, audit-before-send,
-  annotation preview update, and `finally` release;
+  event-loop annotation preview update, and `finally` release;
 - note validation, provenance/title caps, off-thread persistence, markup-safe success,
   and privacy-safe failure;
 - trajectory missing-conversation behavior and worker-to-presentation handoff.
@@ -335,10 +376,17 @@ keeping their product expectations unchanged. Run the related annotation, select
 change-review opener, trajectory, turn-undo, controller-wiring, and architecture
 suites. Do not run a local full suite.
 
+Explicit compatibility updates include the trajectory helper import in
+`test_trajectory_live.py`, direct annotation-discovery calls, and the two turn-undo
+tests that currently monkeypatch `_console_change_review_provider` on the screen.
+They retarget the owning controller seam; no callable screen facade or stale module
+re-export is added. A thread-bound preview-map fake proves persistence happens on a
+worker while the map mutation happens only after control returns to the event loop.
+
 Use bounded manual mutation checks after a checkpoint commit for the highest-risk
 policy branches: stale annotation result rejection, feedback inflight release,
-audit-before-dispatch ordering, and selection-note privacy logging. Each temporary
-semantic edit must make its exact focused node fail, then be restored with
+audit-before-dispatch ordering/UI-thread preview update, and selection-note privacy
+logging. Each temporary semantic edit must make its exact focused node fail, then be restored with
 `apply_patch` and rerun green. The implementation plan will name the precise edits and
 commands.
 
@@ -352,8 +400,9 @@ widening, or unrelated changes.
 
 1. Freeze the current 7/3/6 boundary and state/wiring contracts with RED tests.
 2. Add the controller, state descriptors, and plain-fake tests.
-3. Move annotation, change-review, feedback, note, and trajectory policy in coherent
-   slices, keeping focused tests green after each slice.
+3. Move the trajectory snapshot adapter plus annotation, change-review, feedback,
+   note, and trajectory policy in coherent slices, keeping focused tests green after
+   each slice.
 4. Install the three complete delegates and retarget direct call sites/patch handles.
 5. Correct the four stale nested-marker unit traversals without production changes.
 6. Run focused behavioral, mutation, architecture, static, privacy, diagnostic,
