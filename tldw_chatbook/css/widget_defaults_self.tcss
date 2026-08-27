@@ -1681,6 +1681,17 @@
     }
 
 
+/* ===== WIDGET: GlobalFullCaptureConfirmation (Widgets/Console/console_capture_policy_dialog.py) ===== */
+
+    GlobalFullCaptureConfirmation { align: center middle; }
+
+
+
+
+
+
+
+
 /* ===== WIDGET: ConsoleConversationInspector (Widgets/Console/console_conversation_inspector.py) ===== */
 
     ConsoleConversationInspector { align: center middle; }
