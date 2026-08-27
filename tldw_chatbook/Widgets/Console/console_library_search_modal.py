@@ -26,7 +26,7 @@ class ConsoleLibrarySearchResult:
 class ConsoleLibrarySearchModal(ConsoleRagSettingsModal):
     """Search now without reading or changing standing Library policy."""
 
-    DEFAULT_CSS = """
+    BUNDLED_CSS = """
     ConsoleLibrarySearchModal {
         align: center middle;
     }

@@ -1748,6 +1748,39 @@
 
 
 
+/* ===== WIDGET: ConsoleLibraryAccessModal (Widgets/Console/console_library_access_modal.py) ===== */
+
+    ConsoleLibraryAccessModal {
+        align: center middle;
+    }
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+/* ===== WIDGET: ConsoleLibrarySearchModal (Widgets/Console/console_library_search_modal.py) ===== */
+
+    ConsoleLibrarySearchModal {
+        align: center middle;
+    }
+
+    ConsoleLibrarySearchModal #console-rag-settings {
+        width: 64;
+        max-width: 96%;
+        height: 20;
+        max-height: 96%;
+    }
+
+
 /* ===== WIDGET: ConsoleProjectInstructionStatusRow (Widgets/Console/console_project_instructions.py) ===== */
 
     ConsoleProjectInstructionStatusRow {

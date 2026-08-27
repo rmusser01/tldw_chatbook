@@ -2188,6 +2188,56 @@
     }
 
 
+/* ===== WIDGET: ConsoleLibraryAccessModal (Widgets/Console/console_library_access_modal.py) ===== */
+
+
+
+    ConsoleLibraryAccessModal #console-library-access {
+        width: 76;
+        max-width: 96%;
+        height: 34;
+        max-height: 96%;
+        border: tall $border;
+        background: $surface;
+        padding: 1 2;
+    }
+
+    ConsoleLibraryAccessModal #console-library-access-body {
+        height: 1fr;
+        min-height: 0;
+        max-height: 24;
+        scrollbar-gutter: stable;
+    }
+
+    ConsoleLibraryAccessModal .console-library-access-axis {
+        height: auto;
+        margin: 1 0;
+    }
+
+    ConsoleLibraryAccessModal .console-library-access-actions {
+        height: 1;
+        min-height: 1;
+        max-height: 1;
+        margin-top: 1;
+    }
+
+    ConsoleLibraryAccessModal #console-library-access .console-library-access-actions Button {
+        width: auto;
+        min-width: 0;
+        height: 1;
+        min-height: 1;
+        max-height: 1;
+        border: none;
+        padding: 0;
+        margin-right: 1;
+    }
+
+    ConsoleLibraryAccessModal #library-access-feedback {
+        color: $text-muted;
+        margin-top: 1;
+    }
+
+
 /* ===== WIDGET: ConsoleProjectInstructionStatusRow (Widgets/Console/console_project_instructions.py) ===== */
 
 

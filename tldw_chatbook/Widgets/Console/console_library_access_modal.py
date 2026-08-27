@@ -41,7 +41,7 @@ class ConsoleLibraryAccessModal(
     SAFE_MODAL_CONTENT = "#console-library-access"
     BINDINGS = [("escape", "request_safe_cancel", "Cancel")]
 
-    DEFAULT_CSS = """
+    BUNDLED_CSS = """
     ConsoleLibraryAccessModal {
         align: center middle;
     }

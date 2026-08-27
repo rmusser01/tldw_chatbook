@@ -6,9 +6,9 @@ import asyncio
 from collections.abc import Awaitable
 
 import pytest
-from textual.app import App
 from textual.widgets import Button, RadioButton, RadioSet, Static
 
+from Tests.UI.consolidated_css import ConsolidatedCSSApp
 from tldw_chatbook.Chat.console_display_state import (
     ConsoleLibraryPolicyDisplayState,
 )
@@ -37,7 +37,7 @@ def _state(snapshot: ConsoleLibraryPolicySnapshot, **overrides):
     return ConsoleLibraryPolicyDisplayState.from_snapshot(snapshot, **overrides)
 
 
-class _ModalApp(App[None]):
+class _ModalApp(ConsolidatedCSSApp):
     def __init__(
         self,
         modal: ConsoleLibraryAccessModal,
@@ -270,7 +270,7 @@ async def test_clean_dismissal_restores_the_library_access_opener(
         reload_policy=lambda: _async_snapshot(snapshot),
     )
 
-    class OpenerApp(App[None]):
+    class OpenerApp(ConsolidatedCSSApp):
         def compose(self):
             yield Button("Library", id="library-access-opener")
 
