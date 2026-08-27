@@ -4,7 +4,7 @@ title: Resume prior character chats from Roleplay
 status: In Progress
 assignee: []
 created_date: '2026-08-26 15:14'
-updated_date: '2026-08-27 04:20'
+updated_date: '2026-08-27 05:55'
 labels:
   - roleplay
   - console
@@ -79,4 +79,6 @@ Post-push Qodo follow-up: addressed all ten findings. Added the named resume-ID 
 Final rebase/required-check follow-up: rebased onto origin/dev 6bed8d6f. Generated stylesheet conflicts were resolved by rebuilding from source modules. Investigated the failed Derived Artifacts gate, reviewed all six changed diagnostic statements (+4 workspace, +2 chat_screen), removed the raw conversation ID from the saved-chat presentation warning, added a regression proving the identifier is absent from persistent logs, and regenerated Docs/security/production-diagnostic-inventory.json. The complete six-check local equivalent of the required job passed, as did the rebased nine-file feature gate (1204/1204). ADR check remains unchanged: ADR-046 governs this boundary; no new ADR is required.
 
 Merge-candidate rebase follow-up: rebased onto origin/dev c6218918. The joined console_chat_store conflict preserves both exact Resume rollback and upstream semantic-capture policy hydration; generated CSS and the reviewed diagnostic inventory were regenerated from the combined tree. The repository's six derived-artifact checks, backlog ID guard, Ruff across all changed Python/test files, and diff checks pass. The focused gate recorded 1,201 passes; its only three failures are unchanged origin/dev tests that still import CONSOLE_REALTIME_EMPTY_TRANSCRIPT_PLACEHOLDER from chat_screen after upstream moved that constant to Console_Modules.realtime. The two unaffected long UI shards passed 300/300 and 376/376. The task was renumbered from TASK-22507 to TASK-22988 under the older-arrival rule after the rebase introduced the already-landed semantic-capture TASK-22507. All ten Qodo findings remain addressed and their review threads resolved. ADR check remains unchanged: ADR-046 applies and no new ADR is required.
+
+Final merge-window refresh: while the required run for c6218918 was queued, origin/dev advanced to 9f7b914a (citation tests and backlog documentation only). Rebased cleanly onto 9f7b914a. Post-rebase evidence: all six required derived-artifact commands passed; Resume startup navigation passed 17/17; the Roleplay conversation-focused workbench subset passed 37/37; metadata/hydration/resume/workspace paths passed 156/157, with the sole failure being the unchanged origin/dev test_console_resume_active_path import of CONSOLE_REALTIME_EMPTY_TRANSCRIPT_PLACEHOLDER from its pre-refactor chat_screen location. The feature source paths had no conflict or upstream semantic change.
 <!-- SECTION:NOTES:END -->
