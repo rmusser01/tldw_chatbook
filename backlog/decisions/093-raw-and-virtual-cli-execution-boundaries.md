@@ -2,7 +2,7 @@
 
 Status: Accepted
 Date: 2026-08-26
-Related Task: [TASK-18926 - Console composer shell passthrough](../tasks/task-18926%20-%20Console-composer-shell-passthrough-command.md)
+Related Tasks: [TASK-18926 - Raw CLI executor and Console user command](../tasks/task-18926%20-%20Raw-CLI-executor-and-Console-user-command.md), TASK-22509, TASK-22510, TASK-22512
 Design: [Raw and virtual CLI design](../../Docs/superpowers/specs/2026-08-26-raw-and-virtual-cli-design.md)
 Partially supersedes: [ADR-033](033-local-agent-process-execution-boundary.md), only its rejection of raw shell execution
 
@@ -54,7 +54,9 @@ User command records are durable but model-excluded. They use additive
 `agent_kind="local_command"` rows in the unconstrained `AgentRunsDB.agent_kind`
 column, anchored to the current persisted transcript leaf where available.
 Their tool-style transcript markers are rebuilt on resume. Existing agent
-counts and agent rails exclude this kind. This requires no database migration.
+counts and agent rails exclude this kind. Their run logs live under a dedicated
+app-private root that model-facing run-log search/slice/statistics providers do
+not register. This requires no database migration.
 
 The future persistent PTY/ConPTY terminal is a separate backlog task. It is not
 part of this decision's first implementation phase.
