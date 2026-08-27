@@ -14,6 +14,7 @@ import sqlite3
 import threading
 import time
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 
@@ -21,7 +22,11 @@ from Tests.Agents.test_agent_service import SUBAGENT_PROMPT_PREFIX
 from Tests.Chat.test_console_agent_bridge import _FakeBuiltinGateForRegistry
 from tldw_chatbook.Agents.agent_models import STEP_TOOL_RESULT, TOOL_OUTCOME_SUCCESS
 from tldw_chatbook.Agents.agent_runtime import FENCE_OPEN
-from tldw_chatbook.Chat.console_agent_bridge import ConsoleAgentBridge
+from tldw_chatbook.Chat.console_agent_bridge import (
+    ConsoleAgentBridge,
+    _ChildChangeState,
+    _PostTurnChangeWindow,
+)
 from tldw_chatbook.Chat.console_chat_models import ConsoleMessageRole
 from tldw_chatbook.Chat.console_chat_store import ConsoleChatStore
 from tldw_chatbook.Chat.console_provider_gateway import ConsoleProviderResolution
@@ -3057,6 +3062,92 @@ def test_opening_a_window_whose_last_child_already_left_closes_it_at_once(
     rows = db.change_snapshots_for_run(run_id)
     assert [r["kind"] for r in rows] == ["subagent_post_turn"], rows
     assert rows[0]["files_changed"] == 1, rows
+
+
+def test_shared_pending_scope_count_closes_only_after_each_child_enters(
+    tmp_path, monkeypatch
+):
+    bridge = ConsoleAgentBridge(
+        agent_runs_db=AgentRunsDB(tmp_path / "runs.db", client_id="t"),
+        store=None,
+        provider_gateway=None,
+    )
+    state = _ChildChangeState(owner_key="owner", pending_scopes=2)
+    window = _PostTurnChangeWindow(
+        run_id="parent-run",
+        session_id="session",
+        handle=object(),
+        child_states=(state,),
+    )
+    bridge._post_turn_change_windows["conv-1"] = window
+    closes: list[str] = []
+
+    def record_close(conversation_id: str) -> None:
+        with bridge._change_window_lock:
+            removed = bridge._post_turn_change_windows.pop(conversation_id, None)
+        if removed is not None:
+            closes.append(conversation_id)
+
+    monkeypatch.setattr(bridge, "_close_post_turn_change_window", record_close)
+    adapter = SimpleNamespace(child_lifeline=contextlib.nullcontext)
+
+    with bridge._child_run_scope("conv-1", adapter, state):
+        assert state.pending_scopes == 1
+    assert bridge._post_turn_change_windows.get("conv-1") is window
+    assert closes == []
+
+    with bridge._child_run_scope("conv-1", adapter, state):
+        assert state.pending_scopes == 0
+    assert bridge._post_turn_change_windows.get("conv-1") is None
+    assert closes == ["conv-1"]
+
+
+def test_final_settle_cleanup_keeps_window_for_other_pending_state(
+    tmp_path, monkeypatch
+):
+    bridge = ConsoleAgentBridge(
+        agent_runs_db=AgentRunsDB(tmp_path / "runs.db", client_id="t"),
+        store=None,
+        provider_gateway=None,
+    )
+    settling = _ChildChangeState(owner_key="settling", pending_scopes=1)
+    other = _ChildChangeState(owner_key="other", pending_scopes=1)
+    window = _PostTurnChangeWindow(
+        run_id="parent-run",
+        session_id="session",
+        handle=object(),
+        child_states=(settling, other),
+    )
+    bridge._post_turn_change_windows["conv-1"] = window
+    bridge._child_change_states["conv-1"] = {
+        settling.owner_key: settling,
+        other.owner_key: other,
+    }
+    closes: list[str] = []
+
+    def record_close(conversation_id: str) -> None:
+        with bridge._change_window_lock:
+            removed = bridge._post_turn_change_windows.pop(conversation_id, None)
+        if removed is not None:
+            closes.append(conversation_id)
+
+    monkeypatch.setattr(bridge, "_close_post_turn_change_window", record_close)
+
+    with bridge._change_window_lock:
+        settling.pending_scopes = 0
+        bridge._child_change_states["conv-1"].pop(settling.owner_key)
+    bridge._close_post_turn_change_window_if_idle("conv-1")
+
+    assert bridge._post_turn_change_windows.get("conv-1") is window
+    assert closes == []
+
+    with bridge._change_window_lock:
+        other.pending_scopes = 0
+        bridge._child_change_states.pop("conv-1")
+    bridge._close_post_turn_change_window_if_idle("conv-1")
+
+    assert bridge._post_turn_change_windows.get("conv-1") is None
+    assert closes == ["conv-1"]
 
 
 def test_a_survivor_finishing_mid_turn_is_counted_in_exactly_one_window(
