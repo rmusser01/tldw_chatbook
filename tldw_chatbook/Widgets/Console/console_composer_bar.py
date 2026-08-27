@@ -29,7 +29,15 @@ from textual.app import ComposeResult
 from textual.containers import Horizontal
 from textual.content import Content
 from textual.css.query import NoMatches
-from textual.events import Click, DescendantBlur, DescendantFocus, Key, MouseUp
+from textual.events import (
+    Click,
+    DescendantBlur,
+    DescendantFocus,
+    Enter,
+    Key,
+    Leave,
+    MouseUp,
+)
 from textual.geometry import Region
 from textual.message import Message
 from textual.widget import Widget
@@ -471,6 +479,14 @@ class ConsoleComposerBar(Horizontal):
     DICTATION_IDLE_TOOLTIP = (
         "Dictate into the draft with the configured speech-to-text provider."
     )
+    #: Shown on an enabled Send whenever the next-send price is not the copy
+    #: on the button -- i.e. whenever the pointer is not on Send, which is the
+    #: only state in which a tooltip can be displayed at all.
+    SEND_READY_TOOLTIP = "Send the active Console session draft."
+    #: The degraded price copy, kept byte-identical to the controller's own
+    #: failure copy so a provider that raises and a provider that fails
+    #: internally read the same to the user.
+    SEND_PRICE_UNAVAILABLE_TOOLTIP = "Next request: cost unavailable"
 
     def __init__(
         self,
@@ -479,10 +495,21 @@ class ConsoleComposerBar(Horizontal):
         collapse_large_pastes: bool = True,
         paste_collapse_threshold: int = DEFAULT_CONSOLE_PASTE_COLLAPSE_THRESHOLD,
         send_price_tooltip_provider: Callable[[str], str | None] | None = None,
+        send_price_available_provider: Callable[[str], bool] | None = None,
         **kwargs: Any,
     ) -> None:
         super().__init__(**kwargs)
+        # TASK-23018: two seams, deliberately. The AVAILABLE provider must be
+        # cheap -- it runs on the keystroke path because the Send label's
+        # "| $" suffix depends on it. The TOOLTIP provider re-derives the
+        # whole next request and is only ever called when the pointer is
+        # actually on Send, where a 0.5s hover delay pays for it.
         self._send_price_tooltip_provider = send_price_tooltip_provider
+        self._send_price_available_provider = send_price_available_provider
+        #: Whether the last `sync_action_state` decided a price tooltip
+        #: exists. Gates the hover handlers so they never overwrite a
+        #: blocked/idle Send tooltip.
+        self._send_price_available = False
         self._collapsed = bool(collapsed)
         self.can_focus = not self._collapsed
         self.styles.height = self.MIN_DRAFT_ROWS + self.COMPOSER_CHROME_ROWS
@@ -1686,6 +1713,127 @@ class ConsoleComposerBar(Horizontal):
             # until the next ordinary voice-status repaint restores it.
             strip.styles.display = "none"
 
+    def _send_price_is_available(self) -> bool:
+        """Answer the cheap "is there a price to show?" question.
+
+        Runs on the keystroke path, so it must never reach the transcript.
+        A missing seam or a raising one both resolve to True: the derivation
+        itself degrades to an honest "cost unavailable" tooltip, so the
+        ``| $`` suffix still has something behind it.
+
+        Returns:
+            True when Send should advertise a next-send price.
+        """
+        provider = self._send_price_available_provider
+        if provider is None:
+            return True
+        try:
+            return bool(provider(self.draft_text()))
+        except Exception:  # noqa: BLE001 -- pricing cannot block Send
+            return True
+
+    def _derive_send_price_tooltip(self) -> str:
+        """Render the next-send price for the CURRENT draft, right now.
+
+        Deliberately uncached: it is called only when the pointer is on Send,
+        so it always reads the live draft and the live session and can never
+        show a number the composer has since moved past.
+
+        Returns:
+            The rendered price tooltip, or the honest degraded copy.
+        """
+        provider = self._send_price_tooltip_provider
+        if provider is None:
+            return self.SEND_READY_TOOLTIP
+        try:
+            tooltip = provider(self.draft_text())
+        except Exception:  # noqa: BLE001 -- pricing presentation cannot block Send
+            return self.SEND_PRICE_UNAVAILABLE_TOOLTIP
+        return tooltip or self.SEND_READY_TOOLTIP
+
+    @staticmethod
+    def _node_is_send(node: Any | None, send_button: Button) -> bool:
+        """Whether ``node`` is the Send button or lives inside it."""
+        if node is None:
+            return False
+        return any(
+            candidate is send_button
+            for candidate in getattr(node, "ancestors_with_self", ())
+        )
+
+    def _pointer_is_on_send(self, send_button: Button) -> bool:
+        """Whether the pointer currently rests on the Send button.
+
+        Reads ``App.mouse_over`` rather than ``Button.mouse_hover``: Textual
+        clears ``mouse_hover`` when a widget is disabled under the pointer
+        (``Widget.watch_disabled``), so a Send that goes empty and then
+        sendable again -- staging an attachment, say -- without the mouse
+        moving would otherwise never re-derive its price.
+
+        Args:
+            send_button: The composer's Send button.
+
+        Returns:
+            True when the pointer is on Send.
+        """
+        try:
+            under_pointer = self.app.mouse_over
+        except Exception:  # noqa: BLE001 -- no active app (teardown/unmounted)
+            return False
+        return self._node_is_send(under_pointer, send_button)
+
+    def _refresh_send_price_for_pointer(self) -> None:
+        """Put the price on Send while the pointer is on it, take it off when not.
+
+        Reads the pointer's CURRENT position rather than the position the
+        triggering event carried: Textual queues a synthetic ``Leave`` when a
+        widget is disabled under the pointer (``Widget.watch_disabled``), and
+        that message can be delivered after Send has already become sendable
+        again -- a stale "the pointer left" that never happened.
+        """
+        if not self._send_price_available:
+            # Send is blocked or empty; its tooltip belongs to the blocked
+            # copy and pricing must not overwrite it.
+            return
+        try:
+            send_button = self.query_one("#console-send-message", Button)
+        except NoMatches:
+            return
+        send_button.tooltip = (
+            self._derive_send_price_tooltip()
+            if self._pointer_is_on_send(send_button)
+            else self.SEND_READY_TOOLTIP
+        )
+
+    def on_enter(self, event: Enter) -> None:
+        """Derive the Send price when the pointer arrives (TASK-23018).
+
+        Textual shows a tooltip ``App.TOOLTIP_DELAY`` (0.5s) after the
+        pointer settles and posts ``Enter`` immediately, so deriving here is
+        both far off the keystroke path and always in time.
+
+        Args:
+            event: The arriving pointer event. Deliberately unread --
+                ``_refresh_send_price_for_pointer`` resolves the *current*
+                pointer from ``App.mouse_over`` instead, because
+                ``Button.watch_disabled`` can queue a synthetic ``Leave``
+                that arrives after Send is sendable again, so the event's
+                own node is not a reliable answer to "where is the pointer
+                now". Accepted to match Textual's handler signature.
+        """
+        self._refresh_send_price_for_pointer()
+
+    def on_leave(self, event: Leave) -> None:
+        """Take the derived price back off Send when the pointer leaves.
+
+        Args:
+            event: The departing pointer event. Deliberately unread, for the
+                same reason as :meth:`on_enter` -- the current pointer is
+                read from ``App.mouse_over`` rather than trusted from the
+                event's node. Accepted to match Textual's handler signature.
+        """
+        self._refresh_send_price_for_pointer()
+
     def sync_action_state(
         self,
         *,
@@ -1739,15 +1887,21 @@ class ConsoleComposerBar(Horizontal):
         normalized_send_label = send_label.strip() or "Send"
         self._send_label = normalized_send_label
         send_ready = has_draft and not send_blocked
-        price_tooltip = None
+        # TASK-23018: this used to call the TOOLTIP provider, which re-derives
+        # the entire next request (whole-session provider projection + token
+        # count) -- measured at 5.85 ms per keypress on a 400-message session
+        # against a 0.37 ms baseline, scaling with conversation length, on a
+        # method reached from `insert_text` for every printable key. Only the
+        # cheap availability question is asked here now; the rendered tooltip
+        # is derived in `_refresh_send_price_for_pointer` when it reaches
+        # Send, which is the only moment a tooltip can be seen.
+        price_available = send_ready and self._send_price_tooltip_provider is not None
+        if price_available:
+            price_available = self._send_price_is_available()
+        self._send_price_available = price_available
         displayed_send_label = normalized_send_label
-        if send_ready and self._send_price_tooltip_provider is not None:
-            try:
-                price_tooltip = self._send_price_tooltip_provider(self.draft_text())
-            except Exception:  # noqa: BLE001 -- pricing presentation cannot block Send
-                price_tooltip = "Next request: cost unavailable"
-            if price_tooltip:
-                displayed_send_label = f"{normalized_send_label} | $"
+        if price_available:
+            displayed_send_label = f"{normalized_send_label} | $"
 
         self._send_button_width = max(6, cell_len(displayed_send_label) + 2)
         send_button.label = displayed_send_label
@@ -1780,10 +1934,14 @@ class ConsoleComposerBar(Horizontal):
             send_button.tooltip = (
                 "Wait for the active Console run to finish before sending."
             )
-        elif price_tooltip:
-            send_button.tooltip = price_tooltip
+        elif price_available and self._pointer_is_on_send(send_button):
+            # The pointer is already parked on Send (typing with the mouse at
+            # rest, or a re-sync mid-hover). Textual re-reads `.tooltip` from
+            # the setter while a tooltip is displayed, so re-deriving here is
+            # what keeps a VISIBLE price honest as the draft changes.
+            send_button.tooltip = self._derive_send_price_tooltip()
         elif has_draft:
-            send_button.tooltip = "Send the active Console session draft."
+            send_button.tooltip = self.SEND_READY_TOOLTIP
         else:
             send_button.tooltip = "Type a message to send."
         send_button.set_class(send_ready, "console-action-primary")

@@ -116,6 +116,9 @@ async def test_typing_enables_send_and_clears_reason_immediately():
         assert send_button.disabled is False
         assert reason.styles.display == "none"
         assert send_button.label.plain == "Send | $"
+        # TASK-23018: typing advertises the price with the label suffix; the
+        # estimate itself is derived when the pointer reaches Send.
+        await pilot.hover("#console-send-message")
         assert str(send_button.tooltip).startswith("Next request:")
 
         # Deleting back to empty restores both, again synchronously.
@@ -170,6 +173,8 @@ async def test_setup_block_shows_reason_and_clears_when_unblocked():
         assert send_button.disabled is False
         assert reason.styles.display == "none"
         assert send_button.label.plain == "Send | $"
+        # TASK-23018: see above -- the price lands on the pointer, not the key.
+        await pilot.hover("#console-send-message")
         assert str(send_button.tooltip).startswith("Next request:")
 
 

@@ -34,6 +34,30 @@ class ConsoleNextSendPrice:
     tooltip: str
 
 
+#: The honest degraded copy. Pricing must never block Send, so every failure
+#: below renders this instead of raising.
+UNAVAILABLE_PRICE = ConsoleNextSendPrice("Next request: cost unavailable")
+
+
+@dataclass(frozen=True, slots=True)
+class _DraftPriceContext:
+    """The cheap half of the price decision (TASK-23018).
+
+    Everything that decides *whether* a price tooltip exists at all, settled
+    without projecting the session transcript or counting a single token.
+    ``ConsoleSendPriceController._resolve_context`` returns one of these when
+    -- and only when -- the expensive half is worth running, so
+    :meth:`ConsoleSendPriceController.availability_for_draft` can answer the
+    Send button's label question on the keystroke path while the rendered
+    tooltip is derived on demand.
+    """
+
+    session_id: str
+    validated_draft: str
+    has_draft: bool
+    attachment_count: int
+
+
 class ConsoleSendPriceController:
     """Read-only coordinator for the next Console request price preview."""
 
@@ -57,8 +81,79 @@ class ConsoleSendPriceController:
         self._token_counter = token_counter
         self._token_cache = TokenEstimateCache(max_entries=1)
 
+    def _resolve_context(
+        self, draft_text: str
+    ) -> "_DraftPriceContext | ConsoleNextSendPrice | None":
+        """Settle the availability question without touching the transcript.
+
+        Args:
+            draft_text: Current composer text before send validation.
+
+        Returns:
+            A :class:`_DraftPriceContext` when a real estimate should be
+            derived, or the final answer already (the degraded copy, or
+            ``None`` when there is nothing to price).
+
+        Raises:
+            Exception: Whatever the store accessor raises; both public
+                entry points below own that translation.
+        """
+        store = self._chat_store_accessor()
+        session_id = store.active_session_id if store is not None else None
+        raw_has_draft = bool(str(draft_text or "").strip())
+        validated_draft, validation_error = validate_console_draft(
+            draft_text,
+            allow_empty=True,
+        )
+        if validation_error is not None:
+            return UNAVAILABLE_PRICE if raw_has_draft else None
+        has_draft = bool(validated_draft.strip())
+        if store is None or session_id is None:
+            return UNAVAILABLE_PRICE if has_draft else None
+        try:
+            attachment_count = len(store.pending_attachments(session_id))
+        except KeyError:
+            return UNAVAILABLE_PRICE if has_draft else None
+        if not has_draft and attachment_count == 0:
+            return None
+        return _DraftPriceContext(
+            session_id=session_id,
+            validated_draft=validated_draft,
+            has_draft=has_draft,
+            attachment_count=attachment_count,
+        )
+
+    def availability_for_draft(self, draft_text: str) -> bool:
+        """Return whether a price tooltip exists for ``draft_text``.
+
+        Answers exactly ``presentation_for_draft(draft_text) is not None``
+        -- both route through :meth:`_resolve_context`, so the two cannot
+        drift -- but without the whole-session history projection or any
+        token counting. TASK-23018: this is the only price question the
+        composer is allowed to ask per keystroke, because the Send button's
+        ``| $`` label suffix depends on it; the rendered tooltip itself is
+        derived on demand when the pointer actually reaches Send.
+
+        Args:
+            draft_text: Current composer text before send validation.
+
+        Returns:
+            True when hovering Send would show a price tooltip.
+        """
+        try:
+            resolved = self._resolve_context(draft_text)
+        except Exception:  # noqa: BLE001 -- mirrors presentation_for_draft
+            # presentation_for_draft renders the degraded copy for this, so a
+            # tooltip does exist.
+            return True
+        return resolved is not None
+
     def presentation_for_draft(self, draft_text: str) -> ConsoleNextSendPrice | None:
         """Return a best-effort next-request estimate for the current draft.
+
+        Expensive: projects the whole session's provider history and counts
+        its tokens. Never call this on the keystroke path -- see
+        :meth:`availability_for_draft`.
 
         Args:
             draft_text: Current composer text before send validation.
@@ -67,55 +162,32 @@ class ConsoleSendPriceController:
             The price preview, or ``None`` when there is nothing to send.
         """
         try:
+            resolved = self._resolve_context(draft_text)
+            if not isinstance(resolved, _DraftPriceContext):
+                return resolved
+
             settings = self._settings_accessor()
             provider = settings.provider
             model = settings.model or ""
             normalized_provider = provider_config_key(provider)
-
-            store = self._chat_store_accessor()
-            session_id = store.active_session_id if store is not None else None
-            raw_has_draft = bool(str(draft_text or "").strip())
-            validated_draft, validation_error = validate_console_draft(
-                draft_text,
-                allow_empty=True,
-            )
-            if validation_error is not None:
-                return (
-                    ConsoleNextSendPrice("Next request: cost unavailable")
-                    if raw_has_draft
-                    else None
-                )
-            has_draft = bool(validated_draft.strip())
-            if store is None or session_id is None:
-                return (
-                    ConsoleNextSendPrice("Next request: cost unavailable")
-                    if has_draft
-                    else None
-                )
+            session_id = resolved.session_id
             try:
-                attachment_count = len(store.pending_attachments(session_id))
                 projection = self._provider_history_accessor(session_id)
             except KeyError:
-                return (
-                    ConsoleNextSendPrice("Next request: cost unavailable")
-                    if has_draft
-                    else None
-                )
-
-            if not has_draft and attachment_count == 0:
-                return None
+                # `_resolve_context` already decided a tooltip is warranted,
+                # so a projection failure degrades to the honest copy rather
+                # than silently withdrawing the tooltip the `| $` label
+                # suffix has already promised.
+                return UNAVAILABLE_PRICE
 
             row_pairs = list(projection.rows)
-            if has_draft:
-                row_pairs.append(("user", validated_draft))
+            if resolved.has_draft:
+                row_pairs.append(("user", resolved.validated_draft))
             staged_text = console_prompted_evidence_text(
                 self._pending_launch_accessor()
             )
             if staged_text.strip():
                 row_pairs.append(("user", staged_text))
-            counter_rows = [
-                {"role": role, "content": content} for role, content in row_pairs
-            ]
             signature = token_estimate_signature(
                 row_pairs,
                 model,
@@ -125,8 +197,15 @@ class ConsoleSendPriceController:
                 input_tokens = self._token_cache.estimate(
                     session_id,
                     signature,
+                    # Built inside the miss callback: the counter rows are an
+                    # O(session) list of dicts that a cache HIT never reads,
+                    # and eagerly building them made every hit cost more than
+                    # it saved (TASK-23018).
                     lambda: self._token_counter(
-                        counter_rows,
+                        [
+                            {"role": role, "content": content}
+                            for role, content in row_pairs
+                        ],
                         model,
                         normalized_provider,
                     ),
@@ -141,11 +220,11 @@ class ConsoleSendPriceController:
                 pricing=pricing,
                 provider=provider,
                 model=model,
-                attachment_count=attachment_count,
+                attachment_count=resolved.attachment_count,
                 historical_media_count=projection.historical_media_count,
             )
         except Exception:
-            return ConsoleNextSendPrice("Next request: cost unavailable")
+            return UNAVAILABLE_PRICE
 
     def tooltip_for_draft(self, draft_text: str) -> str | None:
         """Return only the rendered tooltip for widget consumption.

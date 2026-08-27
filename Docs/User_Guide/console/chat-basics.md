@@ -41,6 +41,22 @@ task...".
   Mic and Attach have their own page:
   [attachments, images & voice](attachments-images-voice.md).
 
+### What the next send will cost
+
+When there is something to send, Send reads **Send | $** (or **Queue | $**
+mid-run). That suffix means an estimate is available; **hover Send** to read
+it. The tooltip breaks out the estimated input tokens and cost, the reply-token
+ceiling and its cost at the configured limit, and the provider/model plus the
+date of the rates used. Attachments and media already in the conversation are
+listed but not priced, and anything the app cannot work out honestly reads
+"Next request: cost unavailable" rather than guessing.
+
+The estimate is worked out when you hover, from the draft and conversation as
+they are at that moment — so it is always the current number, and typing costs
+nothing while the pointer is elsewhere. A blocked Send (setup incomplete, a run
+in flight, an auto-wake turn delivering) shows the reason for the block instead
+of a price.
+
 ### Collapsed rail labels
 
 Collapsed Console rails use horizontal **Context->** and **<-Inspect** handles
@@ -346,4 +362,7 @@ painted probes). The Send→Queue behaviour described above was re-verified
 live against dev @ a71e62e4b — 2026-08-24 (TASK-22000: the page was
 correct and the app was not; mid-run the button now reads **Queue**, is
 enabled with a draft, and admits a FIFO follow-up that drains after the
-current turn).*
+current turn).* *The "What the next send will cost" section was added against
+dev @ 40ba8fe74d — 2026-08-27 (TASK-23018: the estimate shipped in #2114 was
+undocumented and was being re-derived on every keystroke; it is now derived on
+hover, and the tooltip content above was read off a live 400-message session).*
