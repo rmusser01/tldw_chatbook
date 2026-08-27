@@ -1663,6 +1663,10 @@ def _load_settings_uncached(
         final_console_settings_cli.get("local_tools_enabled", True),
         True,
     )
+    final_console_settings_cli["raw_cli_permitted"] = coerce_bool_setting(
+        final_console_settings_cli.get("raw_cli_permitted", False),
+        False,
+    )
     for key in (
         "project_instructions_startup_max_bytes",
         "project_instructions_nested_max_bytes",
@@ -3156,6 +3160,7 @@ rail_layout_scope = "global"  # Share Console rail disclosure across workspaces;
 assistant_library_access_default = false  # New Console sessions block assistant Library access
 paste_collapse_threshold = 50  # Collapse pasted/inserted chunks only when longer than this many characters
 local_tools_enabled = true      # workspace, web, and Watchlists agent tools; every call still uses MCP Ask/Allow/Off permissions
+raw_cli_permitted = false       # Persisted unlock only; every app launch still starts unarmed
 # Root-source byte limit; allowed range is 1-1048576 (1 MiB).
 project_instructions_startup_max_bytes = 32768
 # Cumulative nested-source byte limit per dispatch; allowed range is 1-1048576 (1 MiB).
