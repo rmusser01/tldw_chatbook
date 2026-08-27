@@ -11,6 +11,7 @@ import pytest
 # Harness apps load the consolidated widget CSS the real app loads
 # (TASK-15450); without it the widgets under test mount unstyled.
 from Tests.UI.consolidated_css import BUNDLED_STYLESHEET, ConsolidatedCSSApp
+from textual.color import Color
 from textual.events import Key
 from textual.widgets import Button, Input, Static
 
@@ -558,6 +559,9 @@ async def test_raw_cli_collapsed_state_retains_danger_label_and_one_row_geometry
         semantic_error_color = composer.query_one(
             "#console-raw-cli-status", Static
         ).styles.color
+        # Production $ds-status-error-readable resolves to this AA-safe foreground.
+        readable_error_color = Color.parse("#ff8fa3")
+        assert semantic_error_color == readable_error_color
         assert semantic_error_color != ordinary_presentation[0]
 
         composer.set_collapsed(True)
@@ -574,6 +578,7 @@ async def test_raw_cli_collapsed_state_retains_danger_label_and_one_row_geometry
         assert status.has_class("console-raw-cli-danger")
         assert status.has_class("console-voice-status-error")
         assert status.styles.color == semantic_error_color
+        assert status.styles.color == readable_error_color
         assert status.styles.color != ordinary_presentation[0]
         assert status.styles.background == ordinary_presentation[1]
         assert status.styles.text_style.bold

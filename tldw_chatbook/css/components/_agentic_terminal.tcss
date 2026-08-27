@@ -4403,8 +4403,9 @@ ConsoleBoundedSection {
     color: $ds-text-muted;
 }
 
+#console-raw-cli-status.console-raw-cli-danger,
 #console-composer-collapsed-status.console-raw-cli-danger {
-    color: $ds-status-error;
+    color: $ds-status-error-readable;
     text-style: bold;
 }
 
