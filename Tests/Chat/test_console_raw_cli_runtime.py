@@ -455,14 +455,17 @@ def test_disarm_cannot_finish_between_authority_decision_and_launch_commit(
     assert executor.commit_started.wait(2.0)
 
     disarm_results: list[tuple[str, ...]] = []
+    disarm_started = threading.Event()
     disarm_finished = threading.Event()
 
     def disarm() -> None:
+        disarm_started.set()
         disarm_results.append(runtime.disarm())
         disarm_finished.set()
 
     disarm_thread = threading.Thread(target=disarm)
     disarm_thread.start()
+    assert disarm_started.wait(2.0)
     disarm_finished_before_commit = disarm_finished.wait(0.2)
 
     executor.release_commit.set()
