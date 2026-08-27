@@ -23,8 +23,20 @@ _FALLBACK_CONSOLE = Console(width=80)
 def divide_source_line(line: str, width: int) -> list[int]:
     """Return the offsets at which ``line`` wraps at ``width``.
 
-    Uses Rich's ``divide_line`` when available. Falls back to the public
-    ``Text.wrap`` API if the private API is unavailable.
+    Uses Rich's ``divide_line`` when available -- that is the function
+    ``Static`` itself wraps with, so its offsets are what makes this widget
+    paint identically to the ``Static`` it replaces. Those offsets are
+    pinned exactly by ``test_divide_source_line_offsets_match_the_private_
+    api_exactly``.
+
+    Falls back to the public ``Text.wrap`` API if that private API ever
+    disappears. The fallback is deliberately best-effort about WHERE lines
+    break: ``Text.wrap`` returns each divided line already rstripped, and
+    cannot distinguish whitespace absorbed after a word break (which Rich
+    keeps on the preceding segment) from whitespace after a hard mid-word
+    fold (which Rich gives its own segment). What the fallback does
+    guarantee -- and what is tested -- is that no character is dropped and
+    no segment carries real content past ``width``.
 
     Args:
         line: The source text to divide.
@@ -38,11 +50,28 @@ def divide_source_line(line: str, width: int) -> list[int]:
         return []
     if _rich_divide_line is not None:
         return list(_rich_divide_line(line, width))
+    # ``Text.wrap`` rstrips each divided line, so summing the rendered
+    # segment lengths under-counts by exactly the whitespace Rich stripped
+    # at each wrap point. Left uncorrected the error accumulates and the
+    # final segment runs long -- ``["aaa ", "  bb", "b   ", "ccc   ddd"]``
+    # for width 4 -- and ``adjust_cell_length`` then truncates it, dropping
+    # text off the end of the document. Skipping the stripped whitespace
+    # after each division restores Rich's own offsets, which keep the
+    # trailing run attached to the segment that precedes the break.
     lines = Text(line).wrap(_FALLBACK_CONSOLE, width)
     offsets: list[int] = []
     running = 0
     for segment in lines[:-1]:
         running += len(segment.plain)
+        skipped = running
+        while skipped < len(line) and line[skipped].isspace():
+            skipped += 1
+        # Rich only folds a whitespace run into the preceding segment when
+        # more content follows it; a line that ENDS in whitespace keeps that
+        # run as its own trailing segment, so skipping to the end here would
+        # break the last offset.
+        if skipped < len(line):
+            running = skipped
         offsets.append(running)
     return offsets
 
@@ -70,7 +99,7 @@ class WrapIndex:
         self._width = width
         self._starts = starts
         self.virtual_height = height
-        self._segment_cache: dict[int, list[str]] = {}
+        self._segment_cache: dict[int, tuple[list[str], list[int]]] = {}
 
     @classmethod
     def build(cls, lines: Sequence[str], width: int) -> "WrapIndex":
@@ -130,21 +159,59 @@ class WrapIndex:
         Returns:
             A list of strings, one per wrapped segment of the source line.
         """
+        return self._segments_and_starts(line_index)[0]
+
+    def segment_start(self, line_index: int, segment_index: int) -> int:
+        """Return a wrapped segment's start offset within its source line.
+
+        Reads a precomputed prefix sum rather than re-adding the lengths of
+        every preceding segment. Summing on demand made both callers
+        quadratic in the segment index: copying a 2.5 MB single-line
+        document took 5.7 s, and highlighting a row 20,000 segments deep
+        cost 0.368 ms against 0.010 ms at the top of the same line.
+
+        Args:
+            line_index: The index of a source line (0-based).
+            segment_index: The index of a wrapped segment within that line.
+
+        Returns:
+            The 0-based character offset at which the segment begins inside
+            its source line, clamped to the line's own segment range.
+        """
+        starts = self._segments_and_starts(line_index)[1]
+        if not starts:
+            return 0
+        clamped = max(0, min(segment_index, len(starts) - 1))
+        return starts[clamped]
+
+    def _segments_and_starts(self, line_index: int) -> tuple[list[str], list[int]]:
+        """Return a source line's wrapped segments and their start offsets.
+
+        Args:
+            line_index: The index of a source line (0-based).
+
+        Returns:
+            A tuple of the segment strings and their start offsets within
+            the source line; both lists are the same length.
+        """
         cached = self._segment_cache.get(line_index)
         if cached is not None:
             return cached
         line = self._lines[line_index]
         breaks = divide_source_line(line, self._width)
         segments: list[str] = []
+        starts: list[int] = []
         start = 0
         for offset in (*breaks, len(line)):
+            starts.append(start)
             segments.append(line[start:offset])
             start = offset
         if not segments:
             segments = [""]
+            starts = [0]
         # Bounded: one pathological 500k-character line costs ~9.4 ms per
         # divide_line call, which render_line would otherwise pay per row.
         if len(self._segment_cache) >= self._SEGMENT_CACHE_LIMIT:
             self._segment_cache.clear()
-        self._segment_cache[line_index] = segments
-        return segments
+        self._segment_cache[line_index] = (segments, starts)
+        return (segments, starts)

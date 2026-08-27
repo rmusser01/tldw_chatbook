@@ -2978,10 +2978,15 @@ with stray left-edge border fragments), and padding 0 1 so the full
 }
 
 #library-media-viewer-content-text {
-    /* task-22500: the widget sets its own height from the wrap index
-       (min(virtual rows, 18)); width must fill so the index is built at
-       the real render width. */
+    /* task-22500: the widget sets its own height from the wrap index,
+       bounded by the room its parent actually has (the parent's max-height
+       is an OUTER bound, so its border rows are not available to us);
+       width must fill so the index is built at the real render width. */
     width: 100%;
+    /* The reader wraps, so horizontal scrolling has nothing to reach. A
+       horizontal scrollbar here would also shrink the render width below
+       the width the wrap index was built at, truncating every row. */
+    overflow-x: hidden;
 }
 
 #library-media-edit-form {

@@ -112,7 +112,14 @@ async def test_virtual_height_reflects_wrapped_rows():
 async def test_short_document_stays_compact_and_long_document_is_capped():
     """CSS gives the body height:auto/max-height:18; the widget must not
     request its virtual height or the pane balloons to tens of thousands
-    of rows."""
+    of rows.
+
+    The cap is the room the PARENT actually has, never a constant: the
+    container's max-height is an outer bound that its border rows come out
+    of, so pinning a literal here is what let the widget overflow its
+    parent by exactly the border and strand the tail of the document
+    (see test_the_last_row_is_reachable_under_production_css).
+    """
     app = _Harness("one\ntwo\nthree")
     async with app.run_test(size=(100, 40)) as pilot:
         widget = app.query_one("#raw", VirtualizedRawContent)
@@ -122,7 +129,9 @@ async def test_short_document_stays_compact_and_long_document_is_capped():
     async with app.run_test(size=(100, 40)) as pilot:
         widget = app.query_one("#raw", VirtualizedRawContent)
         await pilot.pause()
-        assert widget.styles.height.value == 18
+        available = widget.parent.content_region.height
+        assert widget.wrap_index.virtual_height > available, "fixture too short to cap"
+        assert widget.styles.height.value == available
 
 
 @pytest.mark.asyncio
@@ -408,7 +417,14 @@ async def test_a_resize_burst_reindexes_once():
             return original(width)
 
         widget._build_index_now = counting
-        for width in (99, 98, 97, 96, 95):
+        # End the burst on the width the widget is actually painted at.
+        # render_line re-arms a rebuild whenever the indexed width differs
+        # from the real render width (that convergence is what stops a
+        # scrollbar appearing mid-life from truncating every row), so a
+        # burst ending on a fictional width would legitimately cost a
+        # second, corrective rebuild and mask what this test measures.
+        painted = widget.scrollable_content_region.width or widget.size.width
+        for width in (painted + 4, painted + 3, painted + 2, painted + 1, painted):
             widget._request_reindex(width)
         await pilot.pause(0.3)
         assert builds["n"] == 1, f"re-indexed {builds['n']} times for one burst"
@@ -686,3 +702,109 @@ async def test_highlight_styles_only_the_first_occurrence_on_a_wrapped_line():
     assert any(reverse for reverse, _bold in _style_run(static_rows[0]))
     assert not any(reverse for reverse, _bold in _style_run(static_rows[1]))
     assert not any(reverse for reverse, _bold in _style_run(raw_rows[1]))
+
+
+# --- Geometry against the real CSS box (TASK-22500 review: C1/C2/C3) ---------
+#
+# The fidelity test above compares rstripped TEXT, which is structurally blind
+# to three regressions the review found: rows wider than the widget (wrong
+# Strip cell length), an unreachable last row (widget taller than its parent's
+# CONTENT box), and rows silently truncated (index built at a width the widget
+# is not painted at). These mount the widget in the production container's box
+# -- `height: auto; max-height: 18; border: solid; padding: 0 1` -- and assert
+# the properties that box actually has to satisfy.
+
+_PRODUCTION_BOX_CSS = """
+#body {
+    height: auto;
+    max-height: 18;
+    min-height: 3;
+    border: solid white;
+    padding: 0 1;
+}
+#raw { width: 100%; overflow-x: hidden; }
+"""
+
+
+class _BoxedHarness(App):
+    """Mirrors #library-media-viewer-content's real box around the widget."""
+
+    CSS = _PRODUCTION_BOX_CSS
+
+    def __init__(self, content: str) -> None:
+        super().__init__()
+        self._content = content
+
+    def compose(self) -> ComposeResult:
+        from textual.containers import Container
+
+        with Container(id="body"):
+            yield VirtualizedRawContent(
+                content=self._content, query="", match_index=0, id="raw"
+            )
+
+
+def _visible_text(widget: VirtualizedRawContent) -> list[str]:
+    height = widget.scrollable_content_region.height
+    return [widget.render_line(y).text.rstrip() for y in range(height)]
+
+
+@pytest.mark.asyncio
+async def test_the_last_row_is_reachable_under_production_css():
+    """The container's max-height is an OUTER bound: its two border rows are
+    not available to the child. A child that claims the full max-height
+    overflows by exactly the border, and ScrollView still computes
+    max_scroll_y against the height it thinks it has -- so the final rows of
+    every long document become unreachable by scrolling."""
+    doc = "\n".join(f"line {i}" for i in range(200))
+    app = _BoxedHarness(doc)
+    async with app.run_test(size=(100, 40)) as pilot:
+        widget = app.query_one("#raw", VirtualizedRawContent)
+        await pilot.pause()
+        body = app.query_one("#body")
+        assert widget.size.height <= body.content_region.height, (
+            f"widget claims {widget.size.height} rows inside a "
+            f"{body.content_region.height}-row content box"
+        )
+        widget.scroll_end(animate=False)
+        await pilot.pause()
+        assert "line 199" in "\n".join(_visible_text(widget))
+
+
+@pytest.mark.asyncio
+async def test_no_row_is_truncated_under_production_css():
+    """The index is built from the width measured before scrollbars exist.
+    If the widget later paints narrower than it indexed, every wrapped row
+    loses the difference off its end -- cut, not re-flowed."""
+    doc = "\n".join("abcdefghij" * 20 for _ in range(200))
+    app = _BoxedHarness(doc)
+    async with app.run_test(size=(60, 40)) as pilot:
+        widget = app.query_one("#raw", VirtualizedRawContent)
+        await pilot.pause(0.3)  # let any convergence rebuild settle
+        painted = widget.scrollable_content_region.width
+        assert widget._indexed_width == painted, (
+            f"indexed at {widget._indexed_width}, painted at {painted}"
+        )
+        first_segment = widget.wrap_index.segments(0)[0]
+        rendered = widget.render_line(0).text.rstrip()
+        assert rendered == first_segment.rstrip()
+
+
+@pytest.mark.asyncio
+async def test_wide_glyph_rows_declare_their_true_cell_length():
+    """Strip's second argument is a CELL count. Passing a CHARACTER count
+    under-declares any 2-cell glyph, and adjust_cell_length then PADS
+    instead of truncating -- emitting rows wider than the widget."""
+    from rich.segment import Segment
+
+    doc = "\n".join("unicode wide " + "日本語" * 6 for _ in range(20))
+    app = _BoxedHarness(doc)
+    async with app.run_test(size=(60, 40)) as pilot:
+        widget = app.query_one("#raw", VirtualizedRawContent)
+        await pilot.pause(0.3)
+        width = widget.scrollable_content_region.width
+        for y in range(widget.scrollable_content_region.height):
+            strip = widget.render_line(y)
+            real = Segment.get_line_length(strip._segments)
+            assert strip.cell_length == real, f"row {y} declares {strip.cell_length}, is {real}"
+            assert real == width, f"row {y} is {real} cells in a {width}-cell widget"

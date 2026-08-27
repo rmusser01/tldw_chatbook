@@ -16,7 +16,10 @@ from textual.widgets import Button, Input, Markdown, Static
 
 from tldw_chatbook.Library.library_media_viewer_state import find_content_matches
 from tldw_chatbook.Utils.markdown_parsing import front_matter_parser_factory
-from tldw_chatbook.Widgets.Library.library_media_raw_view import VirtualizedRawContent
+from tldw_chatbook.Widgets.Library.library_media_raw_view import (
+    EMPTY_CONTENT_MESSAGE,
+    VirtualizedRawContent,
+)
 
 
 def build_raw_content_match_lines(content: str, query: str) -> tuple[int, ...]:
@@ -282,7 +285,7 @@ class LibraryMediaContentBody(Container):
 
     def _build_markdown_widget(self) -> Markdown:
         return Markdown(
-            self.content or "No stored content.",
+            self.content or EMPTY_CONTENT_MESSAGE,
             id="library-media-viewer-content-markdown",
             parser_factory=front_matter_parser_factory(),
         )

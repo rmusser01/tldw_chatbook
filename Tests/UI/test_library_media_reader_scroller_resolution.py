@@ -118,7 +118,29 @@ async def _open_raw_view_ready(screen, pilot) -> LibraryMediaContentBody:
         lambda: body.raw_view is not None and body.raw_view.wrap_index is not None,
         message="Raw view's wrap index never built (no layout pass yet).",
     )
+    await _wait_for_stable_index(pilot, body.raw_view)
     return body
+
+
+async def _wait_for_stable_index(pilot, raw_view) -> None:
+    """Wait until the Raw view's wrap index has settled at its final width.
+
+    The first index is built from the width measured BEFORE the vertical
+    scrollbar exists; once it appears, the render width shrinks and the view
+    re-indexes (debounced) to converge. A row number captured across that
+    rebuild belongs to the old index and can never be reached, which is how
+    this file produced an intermittent timeout under load.
+    """
+
+    def settled() -> bool:
+        painted = raw_view.scrollable_content_region.width or raw_view.size.width
+        return raw_view._reindex_timer is None and raw_view._indexed_width == painted
+
+    await _wait_for_condition(
+        pilot,
+        settled,
+        message="Raw view's wrap index never settled at its painted width.",
+    )
 
 
 def _markdown_wrapping_document(

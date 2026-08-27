@@ -98,3 +98,94 @@ def test_divide_source_line_fallback_matches_private_api(monkeypatch):
         ours = len(divide_source_line(line, 40)) + 1
         theirs = max(1, len(Text(line).wrap(console, 40)))
         assert ours == theirs, f"fallback row count disagreed for {line!r}"
+
+
+# Whitespace-heavy on purpose: Text.wrap rstrips each divided line, so any
+# fallback that sums the RENDERED segment lengths under-counts by exactly the
+# stripped run and drifts further with every wrap point. The drift is invisible
+# to a row-count comparison -- the counts still match -- which is why the two
+# agreement tests above could not see it.
+_OFFSET_FIXTURES = [
+    ("hello world  foo bar baz", 5),
+    ("aaa   bbb   ccc   ddd", 4),
+    ("the quick brown fox jumps over the lazy dog", 10),
+    ("supercalifragilisticexpialidocious", 5),
+    ("   leading spaces here", 3),
+    ("trailing spaces   ", 4),
+    ("a b", 1),
+    ("one", 10),
+    ("", 5),
+    ("word " * 30, 13),
+    ("日本語 wide text here", 6),
+]
+
+
+def test_divide_source_line_offsets_match_the_private_api_exactly():
+    """Row counts are not enough: the OFFSETS have to match.
+
+    A fallback that agreed on counts while disagreeing on offsets produced a
+    9-character segment at width 4, which adjust_cell_length then truncated --
+    silently dropping text off the end of the document.
+    """
+    from rich._wrap import divide_line
+
+    for line, width in _OFFSET_FIXTURES:
+        assert divide_source_line(line, width) == list(divide_line(line, width)), (
+            f"offsets disagreed for {line!r} at width {width}"
+        )
+
+
+def test_the_fallback_never_loses_text_or_outruns_its_width(monkeypatch):
+    """The fallback's real contract.
+
+    Exact offset parity is NOT achievable through the public API: Rich
+    absorbs the whitespace after a WORD break into the preceding segment but
+    starts a new segment after a hard mid-word fold, and ``Text.wrap``
+    erases that distinction (both arrive rstripped). Matching it exactly
+    would mean reimplementing ``divide_line``.
+
+    So the fallback is best-effort on where lines break, and strict on what
+    must never happen: no character may be lost, and no segment may carry
+    real content past the width -- that combination is what silently dropped
+    text off the end of the document when the offsets drifted.
+    """
+    import tldw_chatbook.Utils.text_wrap_index as wrap_module
+
+    monkeypatch.setattr(wrap_module, "_rich_divide_line", None)
+    for line, width in _OFFSET_FIXTURES:
+        index = WrapIndex.build([line], width)
+        segments = index.segments(0)
+        assert "".join(segments) == line, f"text lost for {line!r} at width {width}"
+        for segment in segments:
+            assert len(segment.rstrip()) <= width, (
+                f"segment {segment!r} outruns width {width} for line {line!r}"
+            )
+        assert index.virtual_height == len(segments)
+
+
+def test_no_segment_outruns_its_width_on_the_fallback_path(monkeypatch):
+    """The failure mode the offset drift actually caused: an oversized
+    trailing segment that gets truncated rather than wrapped."""
+    import tldw_chatbook.Utils.text_wrap_index as wrap_module
+
+    monkeypatch.setattr(wrap_module, "_rich_divide_line", None)
+    index = WrapIndex.build(["aaa   bbb   ccc   ddd"], width=4)
+    segments = index.segments(0)
+    assert "".join(segments) == "aaa   bbb   ccc   ddd"
+    # Trailing whitespace may legitimately ride along past the width (Rich
+    # keeps it attached and rstrips at render); real CONTENT may not.
+    for segment in segments:
+        assert len(segment.rstrip()) <= 4, f"segment {segment!r} outruns width 4"
+
+
+def test_segment_start_matches_a_running_sum():
+    lines = ["alpha beta gamma delta " * 8, "short", "x" * 97]
+    index = WrapIndex.build(lines, width=11)
+    for line_index in range(len(lines)):
+        segments = index.segments(line_index)
+        running = 0
+        for segment_index, segment in enumerate(segments):
+            assert index.segment_start(line_index, segment_index) == running
+            running += len(segment)
+    # Out-of-range indices clamp rather than raise.
+    assert index.segment_start(0, 10_000) == index.segment_start(0, len(index.segments(0)) - 1)

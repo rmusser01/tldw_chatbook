@@ -24,6 +24,7 @@ from statistics import median
 from time import perf_counter
 
 import pytest
+from textual.selection import Selection
 from textual.widgets import Button, Input, Static
 
 import tldw_chatbook.UI.Screens.library_screen as library_screen_module
@@ -103,8 +104,11 @@ def _count_document_passes():
 
     _wrap(library_screen_module, "find_content_matches", "matches")
     _wrap(media_content_module, "find_content_matches", "matches")
-    _wrap(media_content_module, "build_raw_content_renderable", "renderable")
-    _wrap(media_content_module, "build_raw_content_highlight_plan", "plan")
+    # `build_raw_content_renderable` / `build_raw_content_highlight_plan`
+    # were deleted by TASK-22500 (the virtualized view styles per row instead
+    # of rebuilding a whole-document Text). `_wrap` returns early on a
+    # missing attribute, so naming them here would be a silent no-op that
+    # reads like coverage; the gate now rides on `find_content_matches`.
     try:
         yield counts
     finally:
@@ -371,6 +375,12 @@ async def test_clearing_the_search_mid_navigation_drops_every_highlight():
         raw = _raw_static(screen)
         assert raw._query == ""
         assert _highlighted_words_in_raw(raw) == set()
+        # Highlights gone is only half the claim -- the DOCUMENT must survive
+        # the clear too. The retired assertion read `str(raw.renderable)`,
+        # which the virtualized view no longer has; select-all is the
+        # equivalent read of its full text.
+        selected, _ = raw.get_selection(Selection(None, None))
+        assert selected == content
 
         # A stray advance after the clear is a no-op, not a crash.
         screen._advance_library_media_content_match(1)

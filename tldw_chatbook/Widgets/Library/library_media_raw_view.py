@@ -11,6 +11,7 @@ from typing import Any
 
 from rich.style import Style
 from rich.text import Text
+from textual import events
 from textual.geometry import Size
 from textual.scroll_view import ScrollView
 from textual.selection import Selection
@@ -100,10 +101,14 @@ class VirtualizedRawContent(ScrollView):
         # heavily wrapped line (thousands of segments) would otherwise pay
         # a full-line `find` on every visible row of that line, every time
         # the widget repaints.
+        # Unbounded on purpose, unlike WrapIndex's segment cache: an entry is
+        # one small int per SOURCE line actually rendered while a query is
+        # active, and the whole dict is dropped on any query change. Worst
+        # case is bounded by the document's line count.
         self._match_hit_cache: dict[int, int] = {}
         self._match_hit_cache_query: str | None = None
 
-    def on_resize(self, _event: Any = None) -> None:
+    def on_resize(self, _event: events.Resize | None = None) -> None:
         """Reindex on a width change, debounced after the first layout pass.
 
         ``on_mount`` runs before this widget has been given a real size
@@ -124,6 +129,11 @@ class VirtualizedRawContent(ScrollView):
             self._build_index_now(width)
         else:
             self._request_reindex(width)
+        # Re-run unconditionally: the height cap depends on the PARENT's
+        # content region, which settles a layout pass after this widget
+        # first claims a height. `_build_index_now` no-ops when the width is
+        # unchanged, so without this the cap would keep its pre-settle value.
+        self._apply_height_cap()
 
     def on_mount(self) -> None:
         """Build the initial wrap index synchronously, if already sized.
@@ -144,13 +154,9 @@ class VirtualizedRawContent(ScrollView):
         """Cancel any pending debounced reindex so it never fires into a
         detached widget.
 
-        ``is_attached`` (not ``is_mounted``) is the correct attachment
-        check here: this repo has previously hit a widget whose
-        ``is_mounted`` stayed True after ``remove()``, while
-        ``is_attached`` correctly reflects whether it still has a path to
-        the DOM root. Stopping the timer explicitly is still needed even
-        with that guard in place, since an unstopped ``Timer`` otherwise
-        keeps running until it fires.
+        Stopping the timer explicitly is needed even though
+        :meth:`_fire_pending_reindex` also guards on attachment, since an
+        unstopped ``Timer`` otherwise keeps running until it fires.
         """
         if self._reindex_timer is not None:
             self._reindex_timer.stop()
@@ -189,8 +195,13 @@ class VirtualizedRawContent(ScrollView):
         This is the timer callback armed by :meth:`_request_reindex`. It
         can legitimately fire after this widget has been removed from the
         DOM (the timer was already running when removal happened), so it
-        must check ``is_attached`` rather than assume it is still safe to
-        touch widget state.
+        must check attachment rather than assume it is still safe to touch
+        widget state.
+
+        ``is_attached``, not ``is_mounted``: this repo has previously hit a
+        widget whose ``is_mounted`` stayed True after ``remove()``, while
+        ``is_attached`` correctly reflects whether it still has a path to
+        the DOM root.
         """
         self._reindex_timer = None
         width = self._pending_reindex_width
@@ -211,9 +222,44 @@ class VirtualizedRawContent(ScrollView):
             return
         self.wrap_index = WrapIndex.build(self.source_lines, width)
         self._indexed_width = width
-        self.virtual_size = Size(width, self.wrap_index.virtual_height)
-        self.styles.height = min(self.wrap_index.virtual_height, self._max_visible_rows)
+        # Width 0, deliberately: this reader wraps, so there is never
+        # anything to reach by scrolling horizontally. Claiming the indexed
+        # width here grew a horizontal scrollbar the moment the vertical one
+        # appeared; that scrollbar consumed a row, shrank the render width
+        # below the width the index was built at, and every wrapped row was
+        # then silently truncated by the difference (2 columns, measured)
+        # rather than re-flowed. `on_resize` does not fire for that, because
+        # the widget's own size never changed.
+        self.virtual_size = Size(0, self.wrap_index.virtual_height)
+        self._apply_height_cap()
         self.refresh()
+
+    def _visible_row_cap(self) -> int:
+        """Return how many rows this widget may occupy.
+
+        Derived from the parent's own content region rather than assumed,
+        because the container's ``max-height`` is an OUTER bound: with
+        ``border: solid`` the two border rows come out of it, so a widget
+        that claims the full ``max-height`` overflows by exactly the border
+        and has its last rows clipped -- while ``ScrollView`` still computes
+        ``max_scroll_y`` against the unclipped height it thinks it has, so
+        the tail of the document becomes unreachable by scrolling.
+
+        Returns:
+            The parent's available content height, or the configured
+            fallback when the parent is not yet sized.
+        """
+        parent = self.parent
+        available = getattr(parent, "content_region", None)
+        if available is not None and available.height > 0:
+            return available.height
+        return self._max_visible_rows
+
+    def _apply_height_cap(self) -> None:
+        """Size this widget to its content, bounded by the room available."""
+        if self.wrap_index is None:
+            return
+        self.styles.height = min(self.wrap_index.virtual_height, self._visible_row_cap())
 
     def sync_search(self, query: str, match_index: int) -> None:
         """Restyle the visible rows for a new query or active match.
@@ -283,6 +329,14 @@ class VirtualizedRawContent(ScrollView):
         width = self.scrollable_content_region.width or self.size.width
         if self.wrap_index is None or width <= 0:
             return Strip.blank(max(width, 0))
+        if width != self._indexed_width:
+            # The render width can change without a Resize on this widget --
+            # a scrollbar appearing inside it shrinks the content region
+            # while `size` stays put. Re-arm the (debounced) rebuild so the
+            # index converges on the width actually being painted instead of
+            # truncating every row by the difference. Costs one rebuild, and
+            # self-limits: once rebuilt, the widths match.
+            self._request_reindex(width)
         row = y + int(self.scroll_offset.y)
         if row < 0 or row >= self.wrap_index.virtual_height:
             return Strip.blank(width)
@@ -302,7 +356,7 @@ class VirtualizedRawContent(ScrollView):
             hit = self._hit_for_line(line_index)
             if hit >= 0:
                 match_end = hit + len(self._query)
-                segment_start = sum(len(s) for s in segments[:segment_index])
+                segment_start = self.wrap_index.segment_start(line_index, segment_index)
                 segment_end = segment_start + len(piece)
                 local_start = max(hit, segment_start) - segment_start
                 local_end = min(match_end, segment_end) - segment_start
@@ -342,7 +396,15 @@ class VirtualizedRawContent(ScrollView):
                 )
                 text.stylize(selection_style, select_start, select_end)
         rendered = list(text.render(self.app.console))
-        strip = Strip(rendered, len(piece))
+        # No explicit cell length: `len(piece)` is a CHARACTER count, and
+        # Strip's second argument is a CELL count. They diverge on any
+        # 2-cell glyph (CJK, emoji), and because the declared length came
+        # out SHORT, `adjust_cell_length` below padded instead of
+        # truncating -- emitting 43-46 cell rows into a 40 cell screen on a
+        # document containing wide characters. Letting Strip measure the
+        # segments itself restores byte-identical output to the Static this
+        # widget replaces.
+        strip = Strip(rendered)
         # Embed a per-cell content offset (column-in-piece, document row) so
         # Textual's mouse hit-testing (Compositor.get_widget_and_offset_at)
         # can resolve a real (x, y) inside this row. A ScrollView that
@@ -417,8 +479,11 @@ class VirtualizedRawContent(ScrollView):
             piece = segments[segment_index] if segment_index < len(segments) else ""
             # Offset of this wrapped segment's start within the full
             # EXPANDED line -- the same cumulative column count Static's
-            # own per-cell offsets carry across a wrap boundary.
-            segment_start = sum(len(s) for s in segments[:segment_index])
+            # own per-cell offsets carry across a wrap boundary. Read from
+            # the index's prefix sums: re-summing it per row made a
+            # select-all copy quadratic (5.7 s on a 2.5 MB single-line
+            # document).
+            segment_start = self.wrap_index.segment_start(line_index, segment_index)
             row_end = segment_start + len(piece)
             abs_start = segment_start + start_col if row == first_row else segment_start
             if row == last_row:
