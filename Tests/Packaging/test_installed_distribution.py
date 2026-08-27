@@ -2131,6 +2131,34 @@ def test_release_checker_rejects_unexpected_tiktoken_symlink(
     assert unexpected in result.stdout + result.stderr
 
 
+def test_release_checker_rejects_expected_tiktoken_symlink_in_wheel(
+    built_distributions: BuiltDistributions,
+    tmp_path: Path,
+) -> None:
+    dist_dir = tmp_path / "dist"
+    shutil.copytree(built_distributions.dist_dir, dist_dir)
+    wheel = next(dist_dir.glob("*.whl"))
+    rewritten = wheel.with_suffix(".rewritten")
+    expected = f"{TIKTOKEN_CACHE_PREFIX}manifest.json"
+    with (
+        zipfile.ZipFile(wheel) as source,
+        zipfile.ZipFile(rewritten, "w") as destination,
+    ):
+        for member in source.infolist():
+            if member.filename != expected:
+                destination.writestr(member, source.read(member.filename))
+        added = zipfile.ZipInfo(expected)
+        added.create_system = 3
+        added.external_attr = (stat.S_IFLNK | 0o777) << 16
+        destination.writestr(added, "NOTICE.txt")
+    rewritten.replace(wheel)
+
+    result = _run_manifest_checker(built_distributions, dist_dir, tmp_path)
+
+    assert result.returncode == 1
+    assert expected in result.stdout + result.stderr
+
+
 @pytest.mark.parametrize("archive_kind", ["wheel", "sdist"])
 def test_release_checker_rejects_nonexact_tiktoken_requirement(
     built_distributions: BuiltDistributions,

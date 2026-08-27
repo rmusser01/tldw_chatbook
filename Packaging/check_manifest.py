@@ -9,6 +9,7 @@ from email.parser import Parser
 import fnmatch
 from pathlib import Path, PurePosixPath
 import re
+import stat
 import tarfile
 import zipfile
 
@@ -253,6 +254,24 @@ def _wheel_members(path: Path) -> set[str]:
         return {name for name in archive.namelist() if not name.endswith("/")}
 
 
+def _wheel_tiktoken_members(path: Path) -> tuple[set[str], list[str]]:
+    """Return wheel cache entries and reject declared non-regular types."""
+    members: set[str] = set()
+    errors: list[str] = []
+    with zipfile.ZipFile(path) as archive:
+        for member in archive.infolist():
+            if member.is_dir() or not member.filename.startswith(TIKTOKEN_CACHE_PREFIX):
+                continue
+            members.add(member.filename)
+            file_type = stat.S_IFMT(member.external_attr >> 16)
+            if file_type not in {0, stat.S_IFREG}:
+                errors.append(
+                    "wheel: tiktoken cache entry is not a regular file: "
+                    f"{member.filename}"
+                )
+    return members, errors
+
+
 def _sdist_member_text(path: Path, member: str) -> str | None:
     with tarfile.open(path, "r:gz") as archive:
         for item in archive.getmembers():
@@ -484,6 +503,8 @@ def check_distribution(dist_dir: Path = Path("dist")) -> bool:
     errors.extend(sdist_errors)
     sdist_tiktoken_members, sdist_tiktoken_errors = _sdist_tiktoken_members(sdist)
     errors.extend(sdist_tiktoken_errors)
+    wheel_tiktoken_members, wheel_tiktoken_errors = _wheel_tiktoken_members(wheel)
+    errors.extend(wheel_tiktoken_errors)
 
     # Migration requirements are derived, not listed (task-19860): the source
     # tree states what the artifacts owe, and each artifact's own schema
@@ -519,6 +540,7 @@ def check_distribution(dist_dir: Path = Path("dist")) -> bool:
             required_paths=REQUIRED_WHEEL_PATHS | source_migrations | wheel_migrations,
             required_globs=REQUIRED_WHEEL_GLOBS,
             forbidden_paths=FORBIDDEN_WHEEL_PATHS,
+            tiktoken_members=wheel_tiktoken_members,
         )
     )
     errors.extend(
