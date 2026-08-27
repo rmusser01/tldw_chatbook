@@ -55,6 +55,18 @@ from .chat_screen_state import TaskResumeState
 # `action_open_trajectory_view`; the guard is
 # `Tests/Packaging/test_rag_boot_import_closure.py`
 # (`test_chat_screen_import_does_not_execute_the_deferred_packages`).
+#
+# The same constraint holds TRANSITIVELY, through files this comment cannot
+# see from here (TASK-23020: #2126 breached it ~24 h after 22213 shipped, via
+# `console_conversation_inspector` -> `console_exchange_export_dialog` /
+# `Chat/console_exchange_export.py`, each importing ONE enum name from
+# `Chat.trajectory_export`). Anything reachable from this module at import
+# time must take `TraceExportProfile` from `Chat/trace_export_profiles.py`
+# and the shared profile copy from
+# `Widgets/Console/trace_export_profile_ui.py` -- never from
+# `Chat.trajectory_export` or `Widgets/Console/trace_export_dialog.py`.
+# Per-file guard that names the offender:
+# `Tests/Packaging/test_exchange_export_trajectory_deferral.py`.
 from .provider_model_resolution import (
     ResolvedProviderModelOption,
     resolve_effective_provider_model,

@@ -12,7 +12,9 @@ from textual.widgets import Input, RadioButton, Static
 
 from Tests.UI.consolidated_css import ConsolidatedCSSApp
 from tldw_chatbook.Chat.console_exchange_capture import CaptureDetail, ExchangeCapture
-from tldw_chatbook.Chat.trajectory_export import TraceExportProfile
+# The chat-leg surface under test imports the enum from the light leaf
+# (TASK-23020); its tests model the same seam.
+from tldw_chatbook.Chat.trace_export_profiles import TraceExportProfile
 from tldw_chatbook.Widgets.Console.console_exchange_export_dialog import (
     ConsoleExchangeExportDialog,
 )
