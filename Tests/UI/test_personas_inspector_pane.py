@@ -1,8 +1,10 @@
 """Mounted tests for the Personas inspector pane."""
 
+import asyncio
 from pathlib import Path
 
 import pytest
+from textual.containers import Horizontal
 from textual.message import Message
 from textual.widgets import Button, Checkbox, ListItem, ListView, Static
 
@@ -28,6 +30,24 @@ pytestmark = pytest.mark.asyncio
 def _row_text(item: ListItem) -> str:
     """Visible text of a conversation row (the ListItem's inner Static)."""
     return str(item.query_one(Static).renderable)
+
+
+def _painted_region_text(app, widget) -> tuple[str, ...]:
+    """Return only compositor-painted cells inside a contained widget region."""
+    screen_region = app.screen.region
+    assert screen_region.contains_region(widget.region), (
+        f"{widget!r} must fit the viewport: "
+        f"widget_region={widget.region!r}, screen_region={screen_region!r}"
+    )
+    strips = list(app.screen._compositor.render_strips())
+    assert 0 <= widget.region.y and widget.region.bottom <= len(strips)
+    return tuple(
+        "".join(
+            segment.text
+            for segment in strips[y].crop(widget.region.x, widget.region.right)
+        )
+        for y in range(widget.region.y, widget.region.bottom)
+    )
 
 
 class InspectorApp(ConsolidatedCSSApp):
@@ -63,6 +83,19 @@ class StyledInspectorApp(InspectorApp):
         / "css"
         / "tldw_cli_modular.tcss"
     )
+
+    def compose(self):
+        with Horizontal(
+            id="personas-workbench",
+            classes="destination-workbench personas-workbench-compact",
+        ):
+            yield PersonasInspectorPane(
+                id="personas-inspector-pane",
+                classes=(
+                    "destination-workbench-pane ds-inspector "
+                    "personas-workbench-compact-pane"
+                ),
+            )
 
 
 async def test_older_conversations_request_is_a_parameterless_typed_message():
@@ -1064,6 +1097,8 @@ async def test_older_loading_replaces_only_tail_and_is_highlightable_but_inert()
         assert _row_text(loading_tail) == "Loading older conversations..."
         assert loading_tail.disabled is False
         assert list_view.highlighted_child is loading_tail
+        assert loading_tail.highlighted is True
+        assert loading_tail.has_class("-highlight") is True
 
         await pilot.press("enter")
         await pilot.press("enter")
@@ -1251,10 +1286,75 @@ async def test_append_highlights_first_new_row_only_from_focused_loading_tail():
         await pane.append_conversations((("conv-3", "Closed file"),), has_more=True)
         await pilot.pause()
 
+        new_row = app.query_one("#personas-conversation-row-conv-3", ListItem)
         assert list_view.has_focus is True
-        assert list_view.highlighted_child is app.query_one(
-            "#personas-conversation-row-conv-3", ListItem
+        assert list_view.highlighted_child is new_row
+        assert new_row.highlighted is True
+        assert new_row.has_class("-highlight") is True
+        assert loading_tail.highlighted is False
+        assert loading_tail.has_class("-highlight") is False
+        assert [item for item in list_view.children if item.highlighted] == [new_row]
+
+
+@pytest.mark.parametrize("interaction", ("cursor", "focus"))
+async def test_append_completion_preserves_interaction_during_real_mount(
+    interaction: str, monkeypatch
+):
+    app = InspectorApp()
+    async with app.run_test() as pilot:
+        pane = app.query_one(PersonasInspectorPane)
+        pane.show_selection(name="Detective Sam", kind="character")
+        await pane.show_conversations(
+            (("conv-1", "First case"), ("conv-2", "Cold trail")),
+            has_more=True,
         )
+        list_view = app.query_one("#personas-conversations-list", ListView)
+        list_view.focus()
+        list_view.index = len(list_view.children) - 1
+        await pilot.pause()
+        await pane.show_older_conversations_loading()
+        loading_tail = list_view.children[-1]
+        mount_settled = asyncio.Event()
+        release_mount = asyncio.Event()
+        real_mount = list_view.mount
+
+        async def gated_real_mount(*widgets, **kwargs):
+            await real_mount(*widgets, **kwargs)
+            mount_settled.set()
+            await release_mount.wait()
+
+        monkeypatch.setattr(list_view, "mount", gated_real_mount)
+        append_task = asyncio.create_task(
+            pane.append_conversations((("conv-3", "Closed file"),), has_more=False)
+        )
+        await mount_settled.wait()
+        assert append_task.done() is False
+        assert loading_tail.highlighted is True
+        assert loading_tail.has_class("-highlight") is True
+
+        if interaction == "cursor":
+            list_view.index = 0
+            expected_highlight = list_view.children[0]
+            expected_focus = list_view
+        else:
+            expected_focus = app.query_one(
+                "#personas-inspector-rail-collapse", Button
+            )
+            expected_focus.focus()
+            expected_highlight = loading_tail
+        await pilot.pause()
+
+        release_mount.set()
+        await append_task
+        await pilot.pause()
+
+        new_row = app.query_one("#personas-conversation-row-conv-3", ListItem)
+        assert app.focused is expected_focus
+        assert list_view.highlighted_child is expected_highlight
+        assert [item for item in list_view.children if item.highlighted] == [
+            expected_highlight
+        ]
+        assert new_row.highlighted is (expected_highlight is new_row)
 
 
 @pytest.mark.parametrize("tail_state", ("load", "retry", "exhausted"))
@@ -1376,9 +1476,12 @@ async def test_retry_tail_wraps_without_changing_conversation_row_ellipsis(
         list_view = app.query_one("#personas-conversations-list", ListView)
         tail = list_view.children[-1]
         tail_copy = tail.query_one(Static)
+        assert app.screen.region.contains_region(pane.region)
         assert tail.region.height >= 2
         assert tail_copy.region.height >= 2
-        assert expected_retry in str(tail_copy.renderable)
+        painted_copy = " ".join("\n".join(_painted_region_text(app, tail)).split())
+        assert "Load failed." in painted_copy
+        assert expected_retry in painted_copy
 
         if not initial:
             row = list_view.children[0]

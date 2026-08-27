@@ -697,7 +697,8 @@ class PersonasInspectorPane(VerticalScroll):
         list_view = self.query_one("#personas-conversations-list", ListView)
         old_tail = self._conversation_tail
         highlighted_before = list_view.highlighted_child
-        advance_from_loading_tail = bool(
+        index_before = list_view.index
+        may_advance_from_loading_tail = bool(
             self._conversation_tail_loading
             and old_tail is not None
             and list_view.has_focus
@@ -717,10 +718,23 @@ class PersonasInspectorPane(VerticalScroll):
             actionable=has_more,
             disabled=False,
         )
-        if advance_from_loading_tail and new_items:
-            list_view.index = first_new_index
-        elif highlighted_before is old_tail and old_tail is not None:
-            list_view.index = list_view.children.index(old_tail)
+        if highlighted_before is old_tail and old_tail is not None:
+            tail_index = list_view.children.index(old_tail)
+            index_changed = list_view.index != index_before
+            advance_from_loading_tail = bool(
+                may_advance_from_loading_tail
+                and new_items
+                and list_view.has_focus
+                and not index_changed
+            )
+            target_index = (
+                first_new_index
+                if advance_from_loading_tail
+                else list_view.index if index_changed else tail_index
+            )
+            list_view.index = tail_index
+            if target_index != tail_index:
+                list_view.index = target_index
 
     def on_mount(self) -> None:
         """Replay any state pushed before the composed children existed.
