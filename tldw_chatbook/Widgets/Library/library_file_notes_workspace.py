@@ -944,6 +944,7 @@ class LibraryFileNotesWorkspace(Vertical):
         self._autosave_timer: Timer | None = None
         self._poll_worker: Worker[Any] | None = None
         self._save_worker: Worker[Any] | None = None
+        self._save_task: asyncio.Task[bool] | None = None
         self._git_status_worker: Worker[Any] | None = None
         self._git_action_worker: Worker[Any] | None = None
         self._git_status_task: asyncio.Task[SessionGitStatus] | None = None
@@ -1231,7 +1232,7 @@ class LibraryFileNotesWorkspace(Vertical):
         layout: AdaptiveReaderEffectiveLayout,
     ) -> None:
         """Attach the screen-owned Library rail before this workspace mounts."""
-        if self.is_mounted:
+        if self.is_attached:
             raise RuntimeError("configure_reader_shell requires a detached workspace")
         self._reader_shell_external = True
         self._reader_layout = layout
@@ -1524,6 +1525,8 @@ class LibraryFileNotesWorkspace(Vertical):
         self._set_action_status(self._action_detail)
         self._update_root_surface()
         self._sync_navigator_mode()
+        if self._search_paths:
+            self._rebuild_search_results(self._search_paths)
         self._rehydrate_git_presentation()
         self._update_controls()
         self.run_worker(
@@ -1537,6 +1540,13 @@ class LibraryFileNotesWorkspace(Vertical):
             self._start_poll,
             pause=False,
         )
+        if self._save_task is not None and not self._save_task.done():
+            self._attach_save_observer(self._save_task)
+        elif self._save_state == "saving":
+            self._set_save_state("dirty", "save interrupted")
+            self._arm_autosave()
+        elif self._save_state == "dirty":
+            self._arm_autosave()
 
     def on_unmount(self) -> None:
         """Pause timers; Textual cancels node workers during removal."""
@@ -1548,7 +1558,9 @@ class LibraryFileNotesWorkspace(Vertical):
         self._reader_shell = None
         self._reader_items_widget = self._build_reader_items_pane()
         self._reader_work_widget = self._build_reader_work_pane()
-        if self._save_state == "saving":
+        if self._save_state == "saving" and (
+            self._save_task is None or self._save_task.done()
+        ):
             self._save_state = "dirty"
             self._save_detail = "save interrupted"
         for timer in (
@@ -1586,6 +1598,12 @@ class LibraryFileNotesWorkspace(Vertical):
         self._poll_timer = None
         self._autosave_timer = None
         self._git_refresh_timer = None
+        save_task = self._save_task
+        if save_task is not None and not save_task.done():
+            try:
+                await asyncio.shield(save_task)
+            except (asyncio.CancelledError, Exception):
+                pass
         if self._owns_session_owner:
             await asyncio.to_thread(self._session_owner.shutdown)
         elif self._owns_replica:
@@ -2372,10 +2390,13 @@ class LibraryFileNotesWorkspace(Vertical):
         self._append_tree_page(node, page)
 
     def _rebuild_search_results(self, paths: tuple[str, ...]) -> None:
+        self._search_paths = paths
         if not self._active or not self.is_mounted:
             return
-        results = self.query_one("#file-notes-search-results", Tree)
-        self._search_paths = paths
+        matches = self.query("#file-notes-search-results")
+        if not matches:
+            return
+        results = matches.first(Tree)
         results.reset(Text("Search results"))
         self._append_tree_page(
             results.root,
@@ -4907,23 +4928,71 @@ class LibraryFileNotesWorkspace(Vertical):
 
     def _start_autosave(self) -> None:
         self._autosave_timer = None
-        if (
-            not self._active
-            or self._save_state != "dirty"
-            or (self._save_worker is not None and not self._save_worker.is_finished)
-        ):
+        if not self._active or self._save_state != "dirty":
+            return
+        task = self._save_task
+        if task is None or task.done():
+            task = self._begin_save_task()
+        self._attach_save_observer(task)
+
+    def _begin_save_task(self) -> asyncio.Task[bool]:
+        """Start one process-owned save that survives Textual node removal."""
+        task = asyncio.create_task(
+            self._save_draft(),
+            name="file-notes-autosave-task",
+        )
+        self._save_task = task
+        task.add_done_callback(self._save_task_finished)
+        return task
+
+    def _attach_save_observer(self, task: asyncio.Task[bool]) -> None:
+        """Attach one mount-owned Worker observer without owning the save task."""
+        if not self._active or not self.is_attached or task.done():
+            return
+        if self._save_worker is not None and not self._save_worker.is_finished:
             return
         self._save_worker = self.run_worker(
-            self._save_draft(),
+            self._observe_save_task(task),
             name="file-notes-autosave",
             group="file-notes-save",
             exclusive=False,
         )
 
+    @staticmethod
+    async def _observe_save_task(task: asyncio.Task[bool]) -> bool:
+        """Observe a retained save without letting Worker cancellation own it."""
+        return await asyncio.shield(task)
+
+    def _save_task_finished(self, task: asyncio.Task[bool]) -> None:
+        """Consume one save result and schedule a newer retained draft once."""
+        if self._save_task is task:
+            self._save_task = None
+        try:
+            saved = task.result()
+        except asyncio.CancelledError:
+            if self._save_state == "saving":
+                self._set_save_state("dirty", "save interrupted")
+        except Exception as error:
+            self._set_save_state("error", str(error))
+        else:
+            if not saved and self._save_state == "saving":
+                self._set_save_state("dirty", "save authority changed")
+        if (
+            self._active
+            and self.is_attached
+            and not self._shutdown
+            and self._save_state == "dirty"
+            and self._autosave_timer is None
+        ):
+            self._arm_autosave()
+
     async def _save_draft(self) -> bool:
         async with self._save_lock:
             opened = self._opened
             service = self._service
+            generation = self._root_generation
+            binding = self._session_binding
+            session_key = self._session_key
             if opened is None or service is None:
                 return True
             if self._save_state in {"conflict", "error"}:
@@ -4936,12 +5005,18 @@ class LibraryFileNotesWorkspace(Vertical):
                     service.save_file,
                     opened,
                     body,
-                    session_key=self._session_key,
+                    session_key=session_key,
                 )
             except Exception as error:
                 self._set_save_state("error", str(error))
                 return False
-            if not self._active:
+            if (
+                service is not self._service
+                or generation != self._root_generation
+                or binding != self._session_binding
+                or session_key != self._session_key
+                or opened is not self._opened
+            ):
                 return False
             if result.status == "ok" and result.content_hash is not None:
                 self._opened = replace(
@@ -4953,7 +5028,8 @@ class LibraryFileNotesWorkspace(Vertical):
                     self._set_save_state("saved")
                 else:
                     self._set_save_state("dirty")
-                    self._arm_autosave()
+                    if self._active and self.is_attached:
+                        self._arm_autosave()
                 self._set_action_status(result.replica_warning or "")
                 self._refresh_session_changes()
                 return True
@@ -4983,16 +5059,21 @@ class LibraryFileNotesWorkspace(Vertical):
         if self._autosave_timer is not None:
             self._autosave_timer.stop()
             self._autosave_timer = None
-        worker = self._save_worker
-        if worker is not None and not worker.is_finished:
+        task = self._save_task
+        if task is not None and not task.done():
             try:
-                await worker.wait()
+                await asyncio.shield(task)
             except Exception:
                 pass
         if self._save_state in {"conflict", "error"}:
             return False
         if self._save_state == "dirty":
-            await self._save_draft()
+            task = self._begin_save_task()
+            self._attach_save_observer(task)
+            try:
+                await asyncio.shield(task)
+            except Exception:
+                pass
         binding = self._session_binding
         if self._mutation_blocks_flush(binding):
             return False
@@ -6160,6 +6241,7 @@ class LibraryFileNotesWorkspace(Vertical):
         pending_save = (
             self._save_state in {"dirty", "saving"}
             or self._autosave_timer is not None
+            or (self._save_task is not None and not self._save_task.done())
             or (self._save_worker is not None and not self._save_worker.is_finished)
         )
         if (action == "stage" or pending_save) and not await self.flush_pending_work():
