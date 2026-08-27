@@ -109,6 +109,51 @@ def test_seek_cursor_treats_naive_datetime_as_utc(db):
     assert _ids(second_page) == ["tie-a", "older"]
 
 
+def test_seek_cursor_excludes_current_timestamp_style_row(db):
+    for conversation_id, last_modified in [
+        ("tie-z", "2026-08-27 04:00:00"),
+        ("tie-a", "2026-08-27 04:00:00"),
+        ("older", "2026-08-27 03:00:00"),
+    ]:
+        _seed_conversation(db, conversation_id, last_modified)
+
+    first_page = db.get_conversations_for_character(1, limit=1)
+    cursor = first_page[-1]
+    second_page = db.get_conversations_for_character(
+        1,
+        limit=2,
+        before_last_modified=cursor["last_modified"],
+        before_id=cursor["id"],
+    )
+
+    assert _ids(first_page) == ["tie-z"]
+    assert _ids(second_page) == ["tie-a", "older"]
+    assert set(_ids(first_page)).isdisjoint(_ids(second_page))
+
+
+def test_offset_and_seek_share_temporal_order_across_timestamp_formats(db):
+    expected_ids = ["space-newest", "canonical-z", "canonical-a", "space-older"]
+    for conversation_id, last_modified in [
+        ("space-newest", "2026-08-27 05:00:00"),
+        ("canonical-z", "2026-08-27T04:00:00.123Z"),
+        ("canonical-a", "2026-08-27T04:00:00.123Z"),
+        ("space-older", "2026-08-27 03:00:00"),
+    ]:
+        _seed_conversation(db, conversation_id, last_modified)
+
+    first_page = db.get_conversations_for_character(1, limit=2)
+    cursor = first_page[-1]
+    second_page = db.get_conversations_for_character(
+        1,
+        limit=2,
+        before_last_modified=cursor["last_modified"],
+        before_id=cursor["id"],
+    )
+
+    assert _ids(db.get_conversations_for_character(1, 2, 1)) == expected_ids[1:3]
+    assert _ids(first_page + second_page) == expected_ids
+
+
 def test_legacy_positional_limit_and_offset_return_expected_slice(db):
     for conversation_id, last_modified in [
         ("newest", "2026-08-27T05:00:00Z"),

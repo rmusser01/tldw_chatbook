@@ -9700,17 +9700,17 @@ UPDATE db_schema_version
         """
         Lists conversations associated with a specific character ID.
 
-        Only non-deleted global conversations are returned, ordered by
-        ``last_modified`` descending with ``id`` as a deterministic tie-breaker.
+        Only non-deleted global conversations are returned, ordered by the
+        temporal value of ``last_modified`` descending with ``id`` as a
+        deterministic tie-breaker.
 
         Args:
             character_id: The integer ID of the character.
             limit: The maximum number of conversations to return. Defaults to 50.
             offset: The number of conversations to skip. Defaults to 0.
-            before_last_modified: Canonical timestamp text or the SQLite-returned
-                DATETIME value from the final row of the previous seek page. Naive
-                datetime values are treated as UTC before canonical millisecond-Z
-                binding.
+            before_last_modified: Timestamp text or the SQLite-returned DATETIME
+                value from the final row of the previous seek page. Naive datetime
+                values are adapted as UTC.
             before_id: Conversation ID of the final row from the previous seek
                 page.
 
@@ -9730,28 +9730,19 @@ UPDATE db_schema_version
         if cursor_supplied and offset != 0:
             raise InputError("A seek cursor cannot be combined with a nonzero offset.")
 
-        cursor_last_modified = before_last_modified
-        if isinstance(cursor_last_modified, datetime):
-            if cursor_last_modified.tzinfo is None:
-                cursor_last_modified = cursor_last_modified.replace(tzinfo=timezone.utc)
-            cursor_last_modified = (
-                cursor_last_modified.astimezone(timezone.utc)
-                .isoformat(timespec="milliseconds")
-                .replace("+00:00", "Z")
-            )
-
         start_time = time.time()
         if cursor_supplied:
             query = (
                 "SELECT * FROM conversations "
                 "WHERE character_id = ? AND deleted = 0 AND scope_type = 'global' "
-                "AND (last_modified < ? OR (last_modified = ? AND id < ?)) "
-                "ORDER BY last_modified DESC, id DESC LIMIT ?"
+                "AND (julianday(last_modified) < julianday(?) "
+                "OR (julianday(last_modified) = julianday(?) AND id < ?)) "
+                "ORDER BY julianday(last_modified) DESC, id DESC LIMIT ?"
             )
             params = (
                 character_id,
-                cursor_last_modified,
-                cursor_last_modified,
+                before_last_modified,
+                before_last_modified,
                 before_id,
                 limit,
             )
@@ -9759,7 +9750,7 @@ UPDATE db_schema_version
             query = (
                 "SELECT * FROM conversations "
                 "WHERE character_id = ? AND deleted = 0 AND scope_type = 'global' "
-                "ORDER BY last_modified DESC, id DESC LIMIT ? OFFSET ?"
+                "ORDER BY julianday(last_modified) DESC, id DESC LIMIT ? OFFSET ?"
             )
             params = (character_id, limit, offset)
         try:
