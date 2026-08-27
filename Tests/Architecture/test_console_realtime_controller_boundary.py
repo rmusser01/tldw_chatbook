@@ -68,7 +68,7 @@ REALTIME_CONTROLLER_LAMBDA_TEMPLATES = {
     "ui_thread_id_accessor": "lambda: screen.app_instance._thread_id",
     "event_loop_accessor": 'lambda: getattr(screen.app_instance, "_loop", None)',
     "set_interval": "lambda *args, **kwargs: screen.set_interval(*args, **kwargs)",
-    "run_worker": "lambda *args, **kwargs: screen.run_worker(*args, **kwargs)",
+    "run_worker": 'lambda *args, **kwargs: screen.run_worker(*args, group=kwargs.pop("group"), **kwargs)',
     "defer_native_sync": "lambda: screen.call_later(screen._sync_native_console_chat_ui)",
     "repaint_chip": "lambda: screen._repaint_console_realtime_chip()",
     "restore_voice_chip": "lambda: screen._restore_console_voice_chip()",

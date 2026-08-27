@@ -662,6 +662,7 @@ async def test_failed_switch_to_local_retries_the_normal_load_path() -> None:
         ]
     )
     app = _build_test_app()
+    app.notify = Mock()
     bundle = app.watchlist_bundle_service
     source_id = bundle._db.add_subscription(
         name="Recovery local source",
