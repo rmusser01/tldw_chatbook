@@ -33,7 +33,6 @@ routed around.
 """
 
 import json
-from types import SimpleNamespace
 
 import pytest
 
@@ -88,9 +87,19 @@ class _Gateway:
 
 
 def _all_runs(agent_db: AgentRunsDB) -> list[dict]:
-    """Read every persisted run record directly (steps stays a JSON string)."""
+    """Read every run with its legacy and child-table steps hydrated."""
     with agent_db.connection() as conn:
-        return [dict(r) for r in conn.execute("SELECT * FROM agent_runs").fetchall()]
+        rows = [dict(r) for r in conn.execute("SELECT * FROM agent_runs").fetchall()]
+        for row in rows:
+            blob_steps = json.loads(row["steps"] or "[]")
+            child_rows = conn.execute(
+                "SELECT payload FROM agent_run_steps WHERE run_id = ? ORDER BY seq",
+                (row["id"],),
+            ).fetchall()
+            row["steps"] = json.dumps(
+                blob_steps + [json.loads(child["payload"]) for child in child_rows]
+            )
+        return rows
 
 
 def _user_and_assistant(messages):
@@ -101,6 +110,17 @@ def _user_and_assistant(messages):
     user = next(m for m in messages if m.role is ConsoleMessageRole.USER)
     assistant = next(m for m in messages if m.role is ConsoleMessageRole.ASSISTANT)
     return user, assistant
+
+
+def _tool_markers(messages):
+    """Return actual tool-result markers, excluding the thinking activity row."""
+    return [
+        message
+        for message in messages
+        if message.role is ConsoleMessageRole.TOOL
+        and message.activity_presentation is not None
+        and message.activity_presentation.kind == "tool"
+    ]
 
 
 def _new_agent_controller(db: CharactersRAGDB, agent_db: AgentRunsDB, scripts):
@@ -185,7 +205,9 @@ async def test_agent_marker_anchoring_across_two_sibling_branches_on_resume(tmp_
     run's marker, placed immediately after its own reply -- never the
     sibling's.
     """
-    db = CharactersRAGDB(":memory:", "test_client")
+    # Agent work crosses thread boundaries; a named SQLite database keeps the
+    # schema visible to every connection, unlike per-connection ``:memory:``.
+    db = CharactersRAGDB(tmp_path / "chat.db", "test_client")
     agent_db = AgentRunsDB(tmp_path / "runs.db", client_id="t")
     try:
         scripts = [
@@ -243,15 +265,13 @@ async def test_agent_marker_anchoring_across_two_sibling_branches_on_resume(tmp_
         )
         view_a = resumed_a_store.messages_for_session(resumed_a_session.id)
         assert [m.content for m in view_a[:2]] == ["what is 6*7?", "42."]
-        assert len(view_a) == 3  # U1, A1, exactly one TOOL marker
-        assert view_a[2].role is ConsoleMessageRole.TOOL
-        assert "calculator" in view_a[2].content
-        assert "6*7" in view_a[2].content
+        tool_rows_a = _tool_markers(view_a)
+        assert len(tool_rows_a) == 1
+        assert "calculator" in tool_rows_a[0].content
+        assert "6*7" in tool_rows_a[0].content
         # Branch A1''s run is off-path -- absent, not just its own marker
         # (checked on the TOOL row only: U1's own question text legitimately
         # contains "6*7" regardless of which branch is active).
-        tool_rows_a = [m for m in view_a if m.role is ConsoleMessageRole.TOOL]
-        assert len(tool_rows_a) == 1
         assert "7*8" not in tool_rows_a[0].content
 
         # ---- Fresh resume ON BRANCH A1': the reverse ----
@@ -263,12 +283,10 @@ async def test_agent_marker_anchoring_across_two_sibling_branches_on_resume(tmp_
         )
         view_b = resumed_b_store.messages_for_session(resumed_b_session.id)
         assert [m.content for m in view_b[:2]] == ["what is 6*7?", "56."]
-        assert len(view_b) == 3
-        assert view_b[2].role is ConsoleMessageRole.TOOL
-        assert "calculator" in view_b[2].content
-        assert "7*8" in view_b[2].content
-        tool_rows_b = [m for m in view_b if m.role is ConsoleMessageRole.TOOL]
+        tool_rows_b = _tool_markers(view_b)
         assert len(tool_rows_b) == 1
+        assert "calculator" in tool_rows_b[0].content
+        assert "7*8" in tool_rows_b[0].content
         assert "6*7" not in tool_rows_b[0].content
     finally:
         db.close_connection()
@@ -412,7 +430,7 @@ async def test_retry_supersedes_prior_run_dropping_its_resume_markers(tmp_path):
             active_leaf_persisted_id=retried.persisted_message_id,
         )
         view = resumed_store.messages_for_session(resumed_session.id)
-        tool_rows = [m for m in view if m.role is ConsoleMessageRole.TOOL]
+        tool_rows = _tool_markers(view)
         # Exactly ONE marker -- the fresh run's (9*9), never a stale
         # duplicate from the superseded one (1*1).
         assert len(tool_rows) == 1

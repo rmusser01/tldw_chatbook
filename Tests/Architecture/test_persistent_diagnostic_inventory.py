@@ -413,7 +413,8 @@ TASK_15743_FINAL_REBASE_DIAGNOSTICS = {
         "Managed model deletion failed": (1, ("type(exc).__name__",)),
     },
     "tldw_chatbook/UI/Screens/watchlists_collections_screen.py": {
-        "Failed to load watchlist items": (2, ("type(exc).__name__",)),
+        "Failed to load watchlist items": (1, ("type(exc).__name__",)),
+        "Failed to load watchlist item page": (1, ("type(exc).__name__",)),
     },
     "tldw_chatbook/UI/Wizards/FirstRunSetupWizard.py": {
         "Wizard delete rejected non-owned sections": (1, ()),

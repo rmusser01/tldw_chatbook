@@ -999,6 +999,9 @@ async def test_clicking_a_specific_subagent_row_drills_into_that_run_directly():
             def subagent_runs(self, conversation_id):
                 return list(self._RUNS)
 
+            def subagent_counts(self, conversation_ids):
+                return {"conv-A": len(self._RUNS)} if "conv-A" in conversation_ids else {}
+
             def subagent_run(self, run_id):
                 return next((r for r in self._RUNS if r["id"] == run_id), None)
 

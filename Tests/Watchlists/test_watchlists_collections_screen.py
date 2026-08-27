@@ -670,7 +670,6 @@ async def test_failed_switch_to_local_retries_the_normal_load_path() -> None:
     )
     watchlist = bundle.create("Recovery local watchlist")
     bundle.add_source(watchlist["id"], source_id)
-    app.notify = Mock()
     host = DestinationHarness(app, "watchlists_collections")
 
     async with host.run_test(size=(180, 50)) as pilot:

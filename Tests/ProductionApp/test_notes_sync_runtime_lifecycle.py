@@ -113,23 +113,29 @@ async def test_real_mounted_runtime_migrates_then_opens_the_cutover_gate(
 
 
 @pytest.mark.asyncio
-async def test_runtime_start_completion_refreshes_the_current_library_screen() -> None:
-    from types import SimpleNamespace
-
-    from tldw_chatbook.app import TldwCli
-
+async def test_runtime_start_completion_refreshes_the_current_library_screen(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     refreshed: list[str] = []
-    screen = SimpleNamespace(
-        refresh_notes_sync_runtime=lambda: refreshed.append("refreshed")
-    )
-    app = SimpleNamespace(
-        screen=screen,
-        call_after_refresh=lambda callback: callback(),
-    )
-    task = asyncio.create_task(asyncio.sleep(0))
-    await task
+    app = _build_test_app(configured_default="library")
+    app.app_config["_first_run"] = False
+    app.app_config.setdefault("first_run", {})["setup_completed"] = True
+    async with app.run_test(size=(120, 40)) as pilot:
+        for _ in range(300):
+            if isinstance(app.screen, LibraryScreen):
+                break
+            await pilot.pause(0.01)
+        assert isinstance(app.screen, LibraryScreen)
+        monkeypatch.setattr(
+            app.screen,
+            "refresh_notes_sync_runtime",
+            lambda: refreshed.append("refreshed"),
+        )
+        task = asyncio.create_task(asyncio.sleep(0))
+        await task
 
-    TldwCli._observe_notes_sync_runtime_start(app, task)
+        app._observe_notes_sync_runtime_start(task)
+        await pilot.pause()
 
     assert refreshed == ["refreshed"]
 

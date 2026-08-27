@@ -3171,9 +3171,8 @@ async def test_section_loader_results_landing_in_the_mount_window_still_paint():
     test that only covered the deep-link's own section would let the other five
     rot.
     """
+    from tldw_chatbook.Subscriptions.watchlist_item_page import WatchlistItemPage
     from tldw_chatbook.UI.Watchlists_Modules.artifacts_pane import ArtifactsPane
-    from tldw_chatbook.UI.Watchlists_Modules.items_pane import ItemsPane  # noqa: F401
-    from tldw_chatbook.UI.Watchlists_Modules.overview_pane import OverviewPane  # noqa: F401
     from tldw_chatbook.UI.Watchlists_Modules.watchlist_tree import (
         TreeScope,
         TreeScopeChanged,
@@ -3200,8 +3199,20 @@ async def test_section_loader_results_landing_in_the_mount_window_still_paint():
         screen._controller.list_runs = AsyncMock(
             return_value=[{"id": "r1", "source_title": "Feed One", "status": "ok"}]
         )
-        screen._controller.list_items = AsyncMock(
-            return_value=[{"id": "i1", "title": "Item One", "source_name": "Feed One"}]
+        screen._controller.list_reader_items_page = AsyncMock(
+            return_value=WatchlistItemPage(
+                items=(
+                    {
+                        "id": "i1",
+                        "title": "Item One",
+                        "source_name": "Feed One",
+                    },
+                ),
+                has_more=False,
+                snapshot_max_item_id=1,
+                snapshot_count=1,
+                next_cursor=None,
+            )
         )
         screen._controller.list_alert_rules = AsyncMock(
             return_value=[{"id": "a1", "name": "Rule One", "condition_type": "no_items"}]
@@ -3222,7 +3233,12 @@ async def test_section_loader_results_landing_in_the_mount_window_still_paint():
         cases = [
             ("runs", "#watchlists-runs-pane", "runs", lambda: screen._load_runs()),
             ("sources", "#watchlists-sources-pane", "sources", lambda: screen._load_sources()),
-            ("items", "#watchlists-items-pane", "items", lambda: screen._load_items()),
+            (
+                "items",
+                "#watchlists-items-pane",
+                "items",
+                lambda: screen._replace_items_snapshot(reason="refresh"),
+            ),
             ("rules", "#watchlists-rules-pane", "rules", lambda: screen._load_rules()),
             (
                 "notifications",
@@ -3242,6 +3258,7 @@ async def test_section_loader_results_landing_in_the_mount_window_still_paint():
                     pane = found.first()
                     break
             assert pane is not None, f"precondition: the {section} pane mounted"
+            await host.workers.wait_for_complete()
 
             # Rewind the pane to "nothing loaded", so only an in-window push
             # can satisfy the assertion below.

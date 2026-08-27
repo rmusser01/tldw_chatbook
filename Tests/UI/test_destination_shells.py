@@ -721,7 +721,18 @@ class PolicyDeniedLibraryNotesScopeService:
         )
 
 
-class StaticWatchlistsScopeService:
+class _WatchlistsScopeContract:
+    """Shared create-form capability required by the Watchlists screen."""
+
+    def create_form_source_types(self, *, runtime_backend=None):
+        return (
+            ("rss", "site", "forum")
+            if runtime_backend == "server"
+            else ("rss", "atom", "url")
+        )
+
+
+class StaticWatchlistsScopeService(_WatchlistsScopeContract):
     def __init__(self, watch_items):
         self.watch_items = tuple(watch_items)
         self.calls = []
@@ -731,12 +742,12 @@ class StaticWatchlistsScopeService:
         return list(self.watch_items)
 
 
-class RaisingWatchlistsScopeService:
+class RaisingWatchlistsScopeService(_WatchlistsScopeContract):
     async def list_watch_items(self, **kwargs):
         raise RuntimeError("watchlists unavailable")
 
 
-class PolicyDeniedWatchlistsScopeService:
+class PolicyDeniedWatchlistsScopeService(_WatchlistsScopeContract):
     def __init__(
         self,
         *,
@@ -760,7 +771,7 @@ class PolicyDeniedWatchlistsScopeService:
         )
 
 
-class HangingWatchlistsScopeService:
+class HangingWatchlistsScopeService(_WatchlistsScopeContract):
     async def list_watch_items(self, **kwargs):
         await asyncio.sleep(10)
         return []

@@ -116,7 +116,7 @@ async def test_summarize_span_excludes_an_empty_transcript_placeholder():
     SUMMARIZER's context too -- the same defect `_provider_message_
     payloads` had before its fix, one layer removed."""
     from tldw_chatbook.Chat.message_metadata import MessageMetadata
-    from tldw_chatbook.UI.Screens.chat_screen import (
+    from tldw_chatbook.UI.Console_Modules.realtime import (
         CONSOLE_REALTIME_EMPTY_TRANSCRIPT_PLACEHOLDER,
     )
 
@@ -146,7 +146,7 @@ async def test_summarize_nothing_before_target_when_only_prior_is_empty_transcri
     absent too -- otherwise it would proceed to send an empty span to the
     provider instead of the honest block."""
     from tldw_chatbook.Chat.message_metadata import MessageMetadata
-    from tldw_chatbook.UI.Screens.chat_screen import (
+    from tldw_chatbook.UI.Console_Modules.realtime import (
         CONSOLE_REALTIME_EMPTY_TRANSCRIPT_PLACEHOLDER,
     )
 
@@ -579,7 +579,7 @@ async def test_native_message_id_key_stripped_before_provider():
         provider="llama_cpp",
         model="test-model",
     )
-    session = store.ensure_session()
+    session = store.create_session(ephemeral=True)
     _u1, _a1, _u2, _a2, u3, _a3 = _seed_conversation(store, session.id)
     store.set_session_context_summary(session.id, "S", u3.id)
 

@@ -25,7 +25,7 @@ from tldw_chatbook.Chat.console_provider_gateway import (
 )
 from tldw_chatbook.Chat.trajectory import derive_trajectory
 from tldw_chatbook.DB.ChaChaNotes_DB import CharactersRAGDB, TrajectoryRowWrite
-from Tests.console_provider_doubles import provider_resolution
+from Tests.console_provider_doubles import provider_resolution, with_destination
 
 
 def _store_with_db(tmp_path):
@@ -475,13 +475,15 @@ async def test_real_llamacpp_fallback_retry_reaches_console_owner(
 
     db, store = _store_with_db(tmp_path)
     gateway = ConsoleProviderGateway()
-    resolution = ConsoleProviderResolution(
-        provider="llama_cpp",
-        base_url="http://127.0.0.1:9099",
-        model="model",
-        ready=True,
-        execution_key="llama_cpp",
-        streaming=True,
+    resolution = with_destination(
+        ConsoleProviderResolution(
+            provider="llama_cpp",
+            base_url="http://127.0.0.1:9099",
+            model="model",
+            ready=True,
+            execution_key="llama_cpp",
+            streaming=True,
+        )
     )
 
     async def resolve_for_send(_selection):

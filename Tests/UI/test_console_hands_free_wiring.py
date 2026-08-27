@@ -194,6 +194,16 @@ class _HandsFreeReplyGateway(_ReadyResolutionGateway):
         yield self.reply_text
 
 
+def _make_active_conversation_temporary(console) -> None:
+    """Allow real sends in the database-free screen harness."""
+
+    store = console._ensure_console_chat_store()
+    active_id = store.active_session_id
+    next(session for session in store.sessions() if session.id == active_id).ephemeral = (
+        True
+    )
+
+
 def _fast_countdown(monkeypatch, seconds: float = 0.3) -> None:
     """Speed up the hands-free countdown so wiring tests don't wait 1.5s+."""
     monkeypatch.setattr(
@@ -290,6 +300,7 @@ async def test_countdown_chip_painted_and_two_stage_send_drives_real_flow(
 
     async with host.run_test(size=(160, 48)) as pilot:
         console = await _mounted_console(host, pilot)
+        _make_active_conversation_temporary(console)
         composer = console.query_one(
             "#console-native-composer", chat_screen_module.ConsoleComposerBar
         )
@@ -469,6 +480,7 @@ async def test_spoken_feedback_false_still_speaks_reply(monkeypatch):
 
     async with host.run_test(size=(160, 48)) as pilot:
         console = await _mounted_console(host, pilot)
+        _make_active_conversation_temporary(console)
         composer = console.query_one(
             "#console-native-composer", chat_screen_module.ConsoleComposerBar
         )
@@ -537,6 +549,7 @@ async def test_two_sequential_replies_both_drain_through_the_real_wiring(
 
     async with host.run_test(size=(160, 48)) as pilot:
         console = await _mounted_console(host, pilot)
+        _make_active_conversation_temporary(console)
         composer = console.query_one(
             "#console-native-composer", chat_screen_module.ConsoleComposerBar
         )
@@ -598,6 +611,7 @@ async def test_spoken_send_mid_loop_drives_a_real_send_and_speaks_the_reply(
 
     async with host.run_test(size=(160, 48)) as pilot:
         console = await _mounted_console(host, pilot)
+        _make_active_conversation_temporary(console)
         composer = console.query_one(
             "#console-native-composer", chat_screen_module.ConsoleComposerBar
         )

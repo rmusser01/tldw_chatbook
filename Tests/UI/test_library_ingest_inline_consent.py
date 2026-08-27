@@ -83,6 +83,7 @@ def _minimal_library_screen() -> LibraryScreen:
     rendered line is pinned by the pilot tests below.
     """
     screen = object.__new__(LibraryScreen)
+    screen._is_mounted = False
     screen._library_ingest_form = LibraryIngestFormState()
     screen._library_ingest_preflight_worker = None
     screen._library_ingest_preflight_generation = 0

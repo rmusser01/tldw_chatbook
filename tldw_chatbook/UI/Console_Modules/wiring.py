@@ -1145,7 +1145,9 @@ def build_console_controllers(
         ui_thread_id_accessor=lambda: screen.app_instance._thread_id,
         event_loop_accessor=lambda: getattr(screen.app_instance, "_loop", None),
         set_interval=lambda *args, **kwargs: screen.set_interval(*args, **kwargs),
-        run_worker=lambda *args, **kwargs: screen.run_worker(*args, **kwargs),
+        run_worker=lambda *args, **kwargs: screen.run_worker(
+            *args, group=kwargs.pop("group"), **kwargs
+        ),
         defer_native_sync=(
             lambda: screen.call_later(screen._sync_native_console_chat_ui)
         ),
@@ -1519,7 +1521,9 @@ def build_console_controllers(
             )
         ),
         native_messages_accessor=lambda: screen._native_console_messages(),
-        run_worker=lambda *args, **kwargs: screen.run_worker(*args, **kwargs),
+        run_worker=lambda *args, **kwargs: screen.run_worker(
+            *args, group=kwargs.pop("group"), **kwargs
+        ),
         show_feedback_comment=(
             lambda action, quote: _show_console_feedback_comment(screen, action, quote)
         ),

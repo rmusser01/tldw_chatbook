@@ -1568,9 +1568,14 @@ def test_task4_transitive_modal_contract_table_is_complete_and_adopted() -> None
         assert contract.guard
         assert contract.focus_postcondition == _RESTORE_OPENER
 
-    launch_source = inspect.getsource(ChangeReviewScreen._confirm_and_revert)
-    launch_source += inspect.getsource(ChangeReviewScreen.action_undo_all)
-    assert "ChangeRevertConfirmModal(" in launch_source
+    # Revert preflight now runs off the UI thread; inspect the async launch
+    # sites rather than their thin action/worker dispatchers.
+    assert "ChangeRevertConfirmModal(" in inspect.getsource(
+        ChangeReviewScreen._prepare_confirm_and_revert
+    )
+    assert "ChangeRevertConfirmModal(" in inspect.getsource(
+        ChangeReviewScreen._prepare_undo_all
+    )
 
     # TASK-16801 arc B: the two git modals are launched from ONE method
     # each -- pinning the launch SITE (not just the class's existence) is

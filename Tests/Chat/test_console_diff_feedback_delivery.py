@@ -542,10 +542,11 @@ def test_no_pending_notes_leaves_payload_byte_identical(tmp_path):
 
     assert outcome.status == "done"
     sent = captured["messages_by_call"][-1]
-    # Byte-identical to pre-feature behavior: the very same list object,
-    # not merely equal content -- guards against an unconditional mutation
-    # seam that would just happen to be a no-op today.
-    assert sent is agent_messages
+    # Byte-identical provider content with the caller's payload left untouched.
+    # The bridge may copy the outer list for other first-request transforms.
+    assert sent == agent_messages
+    assert agent_messages == [original_user_message]
+    assert agent_messages[0] is original_user_message
     assert sent[-1]["content"] == "hi"
 
     tool_rows = [

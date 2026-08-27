@@ -2478,6 +2478,7 @@ def test_backend_switch_during_external_hash_cancels_and_fences_callback(
     screen._library_external_submit_generation = 0
     screen._library_external_submit_scope_id = None
     screen._library_external_submit_worker = None
+    screen._library_ingest_start_consent = None
     worker = MagicMock(is_finished=False)
     screen._prepare_library_external_submission = MagicMock(return_value=worker)
     screen.refresh = MagicMock()

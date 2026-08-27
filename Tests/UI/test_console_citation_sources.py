@@ -76,6 +76,9 @@ from Tests.UI.console_controller_stubs import (
 from tldw_chatbook.DB.ChaChaNotes_DB import CharactersRAGDB
 import tldw_chatbook.UI.Screens.chat_screen as chat_screen_module
 from tldw_chatbook.UI.Screens.chat_screen import ChatScreen
+from tldw_chatbook.UI.Console_Modules.review_selection import (
+    ConsoleReviewSelectionController,
+)
 from tldw_chatbook.Widgets.Console.console_citation_sources_modal import (
     ConsoleCitationSourceRow,
     ConsoleCitationSourcesModal,
@@ -481,6 +484,23 @@ def _bare_screen(
     # controller's kwargs (TASK-21381).
     stub_fleet_controller(screen, context="_bare_screen")
     screen._console_chat_store = _FakeStore(messages)
+    screen._review_selection = ConsoleReviewSelectionController(
+        store_accessor=lambda: screen._console_chat_store,
+        agent_conversation_id_accessor=lambda: None,
+        change_review_provider_accessor=lambda _conversation_id: None,
+        run_active_accessor=lambda: False,
+        run_active_for_root=lambda _root: False,
+        workspace_roots_accessor=lambda: None,
+        agent_runs_db_accessor=lambda: None,
+        capture_policy_bindings_accessor=lambda _session_id, _conv_id: None,
+        native_messages_accessor=lambda: messages,
+        run_worker=lambda *args, **kwargs: screen.run_worker(*args, **kwargs),
+        show_feedback_comment=lambda _action, _quote: None,  # type: ignore[arg-type]
+        dispatch_prompt=lambda _text: None,  # type: ignore[arg-type]
+        marshal_to_ui=lambda callback, *args: callback(*args),
+        present_trajectory=lambda _launch: None,
+        notify=lambda *args, **kwargs: None,
+    )
     screen._console_citation_counts = {}
     screen._console_annotation_previews = {}
     screen._console_annotation_loaded_conversation = None
@@ -976,7 +996,7 @@ async def test_zero_result_is_cached_and_not_requeried_on_unrelated_changes() ->
     transcript.set_citation_counts(screen._console_citation_counts)
     citation_row_ids = {
         row.message.id
-        for row in transcript._transcript_rows()
+        for row in transcript._flat_transcript_rows()
         if row.kind == "citations" and row.message is not None
     }
     assert citation_row_ids == {"assistant-2", "assistant-3"}

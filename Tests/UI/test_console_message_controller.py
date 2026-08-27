@@ -34,6 +34,7 @@ from Tests.UI.test_product_maturity_gate1_core_loop_screen_adaptation import (
 )
 from Tests.UI.test_console_native_chat_flow import (
     CapturingGateway,
+    _build_console_send_test_app,
     _configure_native_ready_console,
     _select_llamacpp_console,
     _wait_for_selector,
@@ -51,7 +52,7 @@ async def test_console_message_send_persists_user_and_assistant_rows():
     """Send/receive path: a real send queues a user turn and persists the
     streamed assistant reply as store rows, not just visible text."""
     gateway = CapturingGateway(chunks=("hello ", "there"))
-    app = _build_test_app()
+    app = _build_console_send_test_app()
     _configure_native_ready_console(app)
     app.console_provider_gateway_factory = lambda: gateway
     host = ConsoleHarness(app)

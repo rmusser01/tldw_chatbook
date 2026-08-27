@@ -60,7 +60,7 @@ class _FakeStreamResponse:
         yield self._body
 
 
-def test_fetch_image_bytes_strips_credentials_on_cross_origin_redirect(monkeypatch, ifu):
+def test_fetch_image_bytes_filters_headers_on_cross_origin_redirect(monkeypatch, ifu):
     from tldw_chatbook.Image_Generation import http_client as hc
 
     seen = []
@@ -79,7 +79,11 @@ def test_fetch_image_bytes_strips_credentials_on_cross_origin_redirect(monkeypat
     content, ctype = ifu.fetch_image_bytes(
         "https://api.example.com/img",
         timeout=5,
-        headers={"Authorization": "Bearer secret", "X-Other": "keep"},
+        headers={
+            "Authorization": "Bearer secret",
+            "Accept": "image/png",
+            "X-Other": "drop",
+        },
         cookies={"session": "abc"},
         trusted_origins=frozenset({"api.example.com"}),
     )
@@ -92,7 +96,8 @@ def test_fetch_image_bytes_strips_credentials_on_cross_origin_redirect(monkeypat
     second_url, second_headers, second_cookies = seen[1]
     assert second_url == "https://attacker.example/img2"
     assert "Authorization" not in second_headers
-    assert second_headers.get("X-Other") == "keep"
+    assert second_headers.get("Accept") == "image/png"
+    assert "X-Other" not in second_headers
     assert second_cookies is None
 
 

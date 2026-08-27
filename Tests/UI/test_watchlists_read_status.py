@@ -352,7 +352,8 @@ async def test_selecting_an_item_does_not_break_keyboard_navigation():
             "this did nothing at all once the list had been replaced"
         )
         assert pane.selected_item is not None
-        assert pane.selected_item.get("title") == "Item 1"
+        selected_row = current_list.children[current_list.index]
+        assert str(pane.selected_item.get("id")) == selected_row.item_id_key
 
 
 @pytest.mark.asyncio
@@ -469,13 +470,10 @@ async def test_a_cancelled_mark_read_still_leaves_the_cached_dict_coherent():
         # the cache then carried every status and this named the status the
         # item must hold: `ignored`.
         #
-        # TASK-3072 changes the contract once more, deliberately: the
-        # reader's "all" is `_READER_ALL_STATUSES` (new/reviewed/ingested) --
-        # an item the user just told the reader to hide does not belong in
-        # the article list, so the reloaded cache legitimately drops it, and
-        # "coherent" is absence again. The DB assertion above is what pins
-        # the write itself landing on `ignored` (the last dispatched action,
-        # not the superseded Ingest's `ingested`, not the pre-write `new`).
+        # The ordinary Reader query excludes ignored items, but the currently
+        # open article is deliberately carried across the refresh so its
+        # content does not disappear under the user. Coherence therefore
+        # means that retained row reflects the durable ignored status.
         def _cached_status():
             return next(
                 (
@@ -488,13 +486,11 @@ async def test_a_cancelled_mark_read_still_leaves_the_cached_dict_coherent():
 
         for _ in range(40):
             await pilot.pause(0.05)
-            if screen._loaded_items and _cached_status() is None:
+            if _cached_status() == "ignored":
                 break
-        assert _cached_status() is None, (
-            "the reloaded reader cache must NOT carry the just-ignored item: "
-            "TASK-3072's 'all' is the reader set (new/reviewed/ingested), "
-            "and an item the user hid leaves the article list immediately -- "
-            "the database assertion above is what pins the ignored write"
+        assert _cached_status() == "ignored", (
+            "the open-item carry must retain the article without retaining "
+            "its stale pre-write status"
         )
 
 
