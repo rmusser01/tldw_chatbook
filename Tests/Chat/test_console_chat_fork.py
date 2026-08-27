@@ -1239,10 +1239,11 @@ def test_staged_session_and_conversation_id_collision_is_rejected_before_publish
 @pytest.mark.parametrize(
     "collision",
     tuple(
-        combinations(
-            ("session", "conversation", "native", "persisted", "turn", "variant"),
-            2,
+        pair
+        for pair in combinations(
+            ("session", "conversation", "native", "persisted", "turn", "variant"), 2
         )
+        if pair != ("native", "persisted")
     ),
 )
 def test_fork_registration_rejects_cross_domain_ownership_id_collisions(
@@ -1250,6 +1251,46 @@ def test_fork_registration_rejects_cross_domain_ownership_id_collisions(
 ) -> None:
     store = ConsoleChatStore()
     snapshot = _registration_snapshot(collision)
+
+    with pytest.raises(ValueError, match="ownership"):
+        store.register_fork_snapshot(snapshot, activate=False)
+
+    assert store.sessions() == []
+    assert store._message_session_index == {}
+
+
+def test_fork_registration_allows_each_messages_native_and_persisted_id_to_match(
+) -> None:
+    store = ConsoleChatStore()
+    snapshot = _registration_snapshot()
+    snapshot = replace(
+        snapshot,
+        messages=tuple(
+            replace(
+                message,
+                persisted_message_id=message.native_message_id,
+                persisted_parent_id=message.native_parent_id,
+            )
+            for message in snapshot.messages
+        ),
+    )
+
+    session = store.register_fork_snapshot(snapshot, activate=False)
+
+    assert all(
+        message.id == message.persisted_message_id
+        for message in store.messages_for_session(session.id)
+    )
+
+
+def test_fork_registration_rejects_persisted_id_matching_another_message_native_id(
+) -> None:
+    store = ConsoleChatStore()
+    snapshot = _registration_snapshot()
+    first, second = snapshot.messages
+    first = replace(first, persisted_message_id=second.native_message_id)
+    second = replace(second, persisted_parent_id=first.persisted_message_id)
+    snapshot = replace(snapshot, messages=(first, second))
 
     with pytest.raises(ValueError, match="ownership"):
         store.register_fork_snapshot(snapshot, activate=False)

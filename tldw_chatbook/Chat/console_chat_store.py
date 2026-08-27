@@ -5185,6 +5185,14 @@ class ConsoleChatStore:
             raise ValueError("Fork ownership ids must be nonblank.")
         target_turn_ids = set(turn_ids)
         target_variant_ids = set(variant_ids)
+        target_native_ids = set(native_ids)
+        target_persisted_ids = set(persisted_ids)
+        if any(
+            message.persisted_message_id in target_native_ids
+            and message.persisted_message_id != message.native_message_id
+            for message in messages
+        ):
+            raise ValueError("Fork message ownership ids must correspond.")
         target_ownership_ids: set[str] = set()
         target_domains = (
             {snapshot.fork_session_id},
@@ -5193,8 +5201,7 @@ class ConsoleChatStore:
                 if snapshot.fork_conversation_id is not None
                 else set()
             ),
-            set(native_ids),
-            set(persisted_ids),
+            target_native_ids | target_persisted_ids,
             target_turn_ids,
             target_variant_ids,
         )
