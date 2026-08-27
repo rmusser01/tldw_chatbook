@@ -717,6 +717,16 @@ def census() -> dict[tuple[str, str, str], dict]:
 
 @pytest.fixture(scope="module")
 def timer_path_census() -> dict[tuple[str, str, str], dict]:
+    """Build the census once for the whole module.
+
+    Module-scoped because :func:`census` parses every file in the package
+    (1,889 modules at the time of writing) and every test below asks the same
+    question of the same answer.
+
+    Returns:
+        The mapping :func:`census` returns -- see its docstring for the key
+        and the per-site record.
+    """
     return census()
 
 

@@ -79,6 +79,11 @@ ADRs explain why significant architectural decisions were made. Backlog tasks, S
 | [ADR-084](084-change-review-consent-and-asynchronous-finalization.md) | Accepted | Make Change Review explicit per workspace, asynchronous after Console completion, durably published, and conservatively bounded before tool dispatch. |
 | [ADR-084](084-mcp-profile-driven-rag-search-contract.md) | Accepted | Keep MCP RAG search media-only while default requests follow the active profile through the shared runtime with truthful score and reranking provenance. |
 | [ADR-086](086-library-adaptive-reader-shell.md) | Accepted | Share one structural adaptive reader shell inside Library while keeping Media, Conversations, Notes, Prompts, and Skills behavior destination-owned. |
+| [ADR-087](087-console-read-only-next-send-estimate-projection.md) | Superseded by ADR-088 | Original read-only projection decision; replaced after review found it still passed historical media through provider base64 serialization on the composer sync path. |
+| [ADR-088](088-console-lightweight-next-send-history-projection.md) | Accepted | Share a lightweight pre-serialization Console history projection so next-send pricing observes admitted text/media without database writes or base64 encoding. |
+| [ADR-089](089-console-per-turn-change-review-ownership.md) | Accepted | Make agent-turn cards and Change Review the Console file-change owners, add guarded per-turn Undo All, and retire the redundant Inspector projection. |
+| [ADR-091](091-bounded-epub-archive-admission.md) | Accepted | Isolate ebook parsing in one-worker pool generations and reject EPUB ZIP structures whose expanded resource cost exceeds fixed safety bounds. |
+| [ADR-092](092-console-full-semantic-capture-policy.md) | Accepted | Keep Safe as the default while allowing scoped Full semantic exchange capture with frozen run policy, invariant credential/binary protections, distinct export profiles, and conversation-scoped erasure. |
 
 ## Historical Decision Material
 

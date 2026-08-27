@@ -474,7 +474,8 @@ from tldw_chatbook.UI.Wizards.first_run_setup_state import (
 
 class TestActiveStepIds:
     def test_full_track_without_key(self):
-        """Voice follows Model; Speech remains after RAG in the Full track."""
+        """Voice follows Model; Speech remains after RAG; Protect is always
+        present (TASK-21148, UAT N-6 — stable step totals)."""
         assert active_step_ids(TRACK_FULL, key_entered=False) == (
             STEP_WELCOME,
             STEP_PROVIDER,
@@ -485,6 +486,7 @@ class TestActiveStepIds:
             STEP_TOOLS,
             STEP_NOTES,
             STEP_APPEARANCE,
+            STEP_PROTECT,
             STEP_SUMMARY,
         )
 
@@ -504,11 +506,14 @@ class TestActiveStepIds:
         )
 
     def test_quick_track(self):
+        # TASK-21148 (UAT N-6): Protect is always on the track — the step
+        # total never changes mid-flight when a key is entered.
         assert active_step_ids(TRACK_QUICK, key_entered=False) == (
             STEP_WELCOME,
             STEP_PROVIDER,
             STEP_MODEL,
             STEP_VOICE,
+            STEP_PROTECT,
             STEP_SUMMARY,
         )
 
@@ -2225,3 +2230,160 @@ class TestSummaryTemplateHonesty:
         }
         assert rows["RAG"].ok is True
         assert "bge-large-en" in rows["RAG"].detail
+
+
+class TestProviderTrustChain:
+    """TASK-21143 (UAT S-1/M-2/N-7): probe outcomes drive tracker, gate,
+    and summary — "configured" must never masquerade as "working"."""
+
+    def test_classify_discovery_failure(self):
+        classify = setup_state.classify_discovery_failure
+        assert classify("available", "") == setup_state.PROVIDER_PROBE_NONE
+        assert (
+            classify("listing_unavailable", "")
+            == setup_state.PROVIDER_PROBE_NONE
+        )
+        assert (
+            classify("connection_failed", "authentication")
+            == setup_state.PROVIDER_PROBE_AUTH
+        )
+        for category in ("connection error", "request failed", "timeout", ""):
+            assert (
+                classify("connection_failed", category)
+                == setup_state.PROVIDER_PROBE_CONNECTION
+            )
+
+    def test_summary_actions_flip_on_probe_failure(self):
+        primary, secondary, tertiary = setup_state.build_first_run_summary_actions(
+            provider_configured=True,
+            model_configured=True,
+            provider_probe_failed=True,
+        )
+        assert primary == "review_provider"
+        assert (secondary, tertiary) == ("explore_home", "review_settings")
+        # The saved-and-working case keeps its happy primary.
+        primary, _, _ = setup_state.build_first_run_summary_actions(
+            provider_configured=True,
+            model_configured=True,
+            provider_probe_failed=False,
+        )
+        assert primary == "start_chatting"
+
+    def test_summary_actions_reject_non_bool_probe_state(self):
+        with pytest.raises(ValueError):
+            setup_state.build_first_run_summary_actions(
+                provider_configured=True,
+                model_configured=True,
+                provider_probe_failed="yes",
+            )
+
+    def test_probe_failure_overlays_only_configured_provider_row(self):
+        rows = (
+            setup_state.SummaryRow(
+                label="Provider", state=setup_state.ROW_CONFIGURED, detail=""
+            ),
+            setup_state.SummaryRow(
+                label="Default model",
+                state=setup_state.ROW_CONFIGURED,
+                detail="m",
+            ),
+        )
+        out = setup_state.apply_probe_failure_to_summary_rows(
+            rows, setup_state.PROVIDER_PROBE_AUTH
+        )
+        assert out[0].state == setup_state.ROW_ATTENTION
+        assert "authentication" in out[0].detail
+        assert out[1] == rows[1]
+        # No failure — untouched (identity, not equality, is fine too).
+        assert (
+            setup_state.apply_probe_failure_to_summary_rows(rows, "") == rows
+        )
+        # An unconfigured Provider row keeps its own, more specific message.
+        unconfigured = (
+            setup_state.SummaryRow(
+                label="Provider",
+                state=setup_state.ROW_ATTENTION,
+                detail="no credentials or saved endpoint",
+            ),
+        )
+        kept = setup_state.apply_probe_failure_to_summary_rows(
+            unconfigured, setup_state.PROVIDER_PROBE_CONNECTION
+        )
+        assert kept == unconfigured
+
+    def test_progress_attention_downgrades_only_completed_steps(self):
+        items = setup_state.build_setup_progress(
+            (
+                setup_state.STEP_WELCOME,
+                setup_state.STEP_PROVIDER,
+                setup_state.STEP_MODEL,
+                setup_state.STEP_SUMMARY,
+            ),
+            3,
+            attention_ids=frozenset(
+                {setup_state.STEP_PROVIDER, setup_state.STEP_MODEL}
+            ),
+        )
+        assert [item.state for item in items] == [
+            "complete",
+            "attention",
+            "attention",
+            "active",
+        ]
+        # The active step never downgrades, even if flagged.
+        items = setup_state.build_setup_progress(
+            (setup_state.STEP_WELCOME, setup_state.STEP_PROVIDER),
+            1,
+            attention_ids=frozenset({setup_state.STEP_PROVIDER}),
+        )
+        assert [item.state for item in items] == ["complete", "active"]
+
+
+class TestEnvKeyFirstRunNotice:
+    """TASK-21147 (UAT E-1): name the env vars that silenced the wizard
+    offer, exactly once, and only on genuinely fresh env-key installs."""
+
+    def _config(self, first_run=None, api_key=None, env_var="OPENAI_API_KEY"):
+        cfg = {
+            "api_settings": {
+                "openai": {"api_key_env_var": env_var}
+                | ({"api_key": api_key} if api_key else {})
+            }
+        }
+        if first_run is not None:
+            cfg["first_run"] = first_run
+        return cfg
+
+    def test_fresh_install_with_env_key_names_the_var(self):
+        names = setup_state.env_keys_that_silenced_first_run(
+            self._config(), {"OPENAI_API_KEY": "sk-live-abc123456789"}
+        )
+        assert names == ("OPENAI_API_KEY",)
+
+    def test_no_env_value_means_no_notice(self):
+        assert (
+            setup_state.env_keys_that_silenced_first_run(self._config(), {})
+            == ()
+        )
+
+    def test_inline_config_key_means_no_notice(self):
+        names = setup_state.env_keys_that_silenced_first_run(
+            self._config(api_key="sk-live-abc123456789"),
+            {"OPENAI_API_KEY": "sk-live-abc123456789"},
+        )
+        assert names == ()
+
+    @pytest.mark.parametrize(
+        "flags",
+        [
+            {"setup_started": True},
+            {"setup_completed": True},
+            {setup_state.ENV_KEY_NOTICE_KEY: True},
+        ],
+    )
+    def test_any_recorded_state_suppresses_the_notice(self, flags):
+        names = setup_state.env_keys_that_silenced_first_run(
+            self._config(first_run=flags),
+            {"OPENAI_API_KEY": "sk-live-abc123456789"},
+        )
+        assert names == ()

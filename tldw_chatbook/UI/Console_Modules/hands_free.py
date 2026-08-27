@@ -165,7 +165,7 @@ logger = logger.bind(module="ChatScreen")
 CONSOLE_HANDS_FREE_DEGRADED_MESSAGE = (
     "Hands-free is degraded: voice-activity detection (webrtcvad) is not "
     "installed, so it cannot auto-send on a pause or hear a spoken barge-in. "
-    "Use the mic button, \"Console, stop.\", or Esc/ctrl+shift+h to end a turn."
+    'Use the mic button, "Console, stop.", or Esc/ctrl+shift+h to end a turn.'
 )
 
 
@@ -521,8 +521,7 @@ class ConsoleHandsFreeController:
         error ever surfacing. `RuntimeError` propagates instead.
         """
         raise RuntimeError(
-            "_console_pending_voice_action is write-only on "
-            "ConsoleHandsFreeController"
+            "_console_pending_voice_action is write-only on ConsoleHandsFreeController"
         )
 
     @_console_pending_voice_action.setter
@@ -550,8 +549,9 @@ class ConsoleHandsFreeController:
     @property
     def _console_realtime(self) -> Any:
         """Calls the injected `realtime_session_accessor`. The realtime
-        engine's live session, or None -- screen-owned; see the module
-        docstring's two-engine boundary section."""
+        engine's live session, or None -- owned by
+        `ConsoleRealtimeController.session`; see the module docstring's
+        two-engine boundary section."""
         return self._realtime_session_accessor()
 
     @property
@@ -760,7 +760,9 @@ class ConsoleHandsFreeController:
         # else ("starting"/"transcribing"): a stop is already in flight for
         # this same capture; its own tail will pick up the queued action.
 
-    def _console_hands_free_assistant_ids(self, session_id: str | None) -> frozenset[str]:
+    def _console_hands_free_assistant_ids(
+        self, session_id: str | None
+    ) -> frozenset[str]:
         """Return every assistant message id currently in `session_id`.
 
         Used to snapshot "pre-existing" reply ids before a send, so the
@@ -886,9 +888,7 @@ class ConsoleHandsFreeController:
                 # controller's own configured delay -- exactly what the
                 # first tick would compute anyway (`remaining = send_delay
                 # - 0`).
-                session.countdown_remaining = (
-                    session.controller._send_delay_seconds
-                )
+                session.countdown_remaining = session.controller._send_delay_seconds
         self._repaint_console_hands_free_chip()
 
     def _begin_console_hands_free_reply(self) -> None:
@@ -1058,10 +1058,7 @@ class ConsoleHandsFreeController:
         # `uninstall_console_hands_free_store_tap`.
         self._console_hands_free_store_tap_undo = (
             store,
-            {
-                name: (name in store.__dict__, getattr(store, name))
-                for name in wrappers
-            },
+            {name: (name in store.__dict__, getattr(store, name)) for name in wrappers},
             wrappers,
         )
         for name, wrapper in wrappers.items():
@@ -1413,7 +1410,6 @@ class ConsoleHandsFreeController:
             had_segments=had_segments, limit_hit=True
         )
 
-
     def _console_pipeline_hands_free_blocker(self) -> str | None:
         """Why the V3 pipeline loop is not a usable fallback, or None.
 
@@ -1442,7 +1438,6 @@ class ConsoleHandsFreeController:
             return f"{reason} {remedy}".strip() if remedy else reason
         return None
 
-
     def action_exit_console_hands_free(self) -> None:
         """Priority Esc: exit the hands-free loop from any point (task-5
         review I2) -- see `check_action`'s gate and the `BINDINGS` entry's
@@ -1465,7 +1460,9 @@ class ConsoleHandsFreeController:
         moved: whether EITHER engine is running, so the priority-Esc
         binding (`action_exit_console_hands_free` above) only lights up
         while there is something for it to exit."""
-        return self._console_hands_free is not None or self._console_realtime is not None
+        return (
+            self._console_hands_free is not None or self._console_realtime is not None
+        )
 
     def teardown(self) -> None:
         """Abandon the pipeline loop's timer during screen unmount.

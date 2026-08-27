@@ -743,3 +743,106 @@ def test_widget_ids_are_stable_from_block_ids_not_titles_or_indexes() -> None:
     assert unsafe.startswith("encoded-")
     assert ":" not in unsafe and "/" not in unsafe
     assert unsafe != PromptBlockEditor.widget_token_for_block_id("server:goal/2")
+
+
+def _count_footer_writes(app, editor: PromptBlockEditor) -> dict[str, list]:
+    """Instrument the footer's three Statics and the save-menu tooltip write.
+
+    TASK-22228 item 5. ``Widget.tooltip``'s setter is not a plain
+    assignment -- it calls ``self.screen._update_tooltip(self)`` -- so the
+    tooltip arm counts through the screen seam the setter actually reaches.
+    """
+    log: dict[str, list] = {"statics": [], "tooltips": []}
+    for static_id in (
+        "prompt-editor-validation",
+        "prompt-editor-apply-reason",
+        "prompt-editor-update-reason",
+    ):
+        static = editor.query_one(f"#{static_id}", Static)
+        original = static.update
+
+        def patched(renderable="", _original=original, _id=static_id, **kwargs):
+            log["statics"].append((_id, str(renderable)))
+            return _original(renderable, **kwargs)
+
+        static.update = patched  # type: ignore[method-assign]
+
+    screen = app.screen
+    original_tooltip = screen._update_tooltip
+
+    def counting_tooltip(widget, _original=original_tooltip):
+        log["tooltips"].append(getattr(widget, "id", None))
+        return _original(widget)
+
+    screen._update_tooltip = counting_tooltip  # type: ignore[method-assign]
+    return log
+
+
+@pytest.mark.asyncio
+async def test_footer_writes_nothing_when_a_keystroke_changes_no_footer_copy() -> None:
+    """TASK-22228 item 5: typing re-syncs the footer without repainting it.
+
+    ``_sync_footer`` runs on every keystroke in every block
+    (``_change_field`` -> ``replace_block_state``). Before the guards it
+    made three ``Static.update`` calls (each ``layout=True``) plus a
+    tooltip write per keystroke, every one of them writing exactly the copy
+    already rendered: measured 15 updates for 5 keystrokes, all 15 no-ops.
+    """
+    app = BlockEditorHarness(_state())
+
+    async with app.run_test(size=(80, 24)) as pilot:
+        await pilot.pause()
+        editor = app.query_one("#editor", PromptBlockEditor)
+        goal = app.query_one("#prompt-block-content-goal", TextArea)
+        goal.focus()
+        app.query_one("#prompt-editor-scroll").scroll_to_widget(goal, animate=False)
+        await pilot.pause()
+        await pilot.press("end")
+        await pilot.pause()
+
+        log = _count_footer_writes(app, editor)
+        for _ in range(5):
+            await pilot.press("x")
+            await pilot.pause()
+
+        # The keystrokes really did reach the editor (else this is vacuous).
+        assert goal.text.endswith("xxxxx"), goal.text
+        assert log["statics"] == []
+        assert log["tooltips"] == []
+
+
+@pytest.mark.asyncio
+async def test_footer_still_repaints_when_the_copy_actually_changes() -> None:
+    """Control arm: a real validation transition writes, and only once.
+
+    The second ``_sync_footer`` for the SAME state must write nothing --
+    that is the property the guard depends on (the rendered text reads back
+    equal to what was written), and it is what makes the guard safe rather
+    than merely quiet.
+    """
+    app = BlockEditorHarness(_state())
+
+    async with app.run_test(size=(80, 24)) as pilot:
+        await pilot.pause()
+        editor = app.query_one("#editor", PromptBlockEditor)
+        validation = app.query_one("#prompt-editor-validation", Static)
+        before = str(validation.renderable)
+        assert before.startswith("Valid ·"), before
+
+        log = _count_footer_writes(app, editor)
+        await editor.replace_block_state(
+            "goal", delete_block(editor.state, "goal")
+        )
+        await pilot.pause()
+
+        written = [entry for entry in log["statics"] if entry[0] == "prompt-editor-validation"]
+        assert written, log["statics"]
+        assert str(validation.renderable) != before
+        assert str(validation.renderable) == written[-1][1]
+
+        # ...and a repeat sync for the unchanged state writes nothing.
+        log["statics"].clear()
+        log["tooltips"].clear()
+        editor._sync_footer()
+        assert log["statics"] == []
+        assert log["tooltips"] == []

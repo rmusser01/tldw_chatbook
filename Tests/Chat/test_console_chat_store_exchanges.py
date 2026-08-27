@@ -24,8 +24,18 @@ from dataclasses import replace
 import pytest
 
 from tldw_chatbook.Chat.console_chat_models import ConsoleMessageRole
-from tldw_chatbook.Chat.console_chat_store import ConsoleChatStore
-from tldw_chatbook.Chat.console_exchange_capture import ExchangeCapture
+from tldw_chatbook.Chat import console_chat_store as store_module
+from tldw_chatbook.Chat import console_capture_policy_repository as repository_module
+from tldw_chatbook.Chat.console_capture_policy_repository import (
+    CapturePolicyWriteResult,
+    CapturePolicyWriteStatus,
+    ConversationCapturePolicy,
+)
+from tldw_chatbook.Chat.console_chat_store import (
+    ConsoleChatStore,
+    ConsoleStagedConversationIdentity,
+)
+from tldw_chatbook.Chat.console_exchange_capture import CaptureDetail, ExchangeCapture
 
 
 def _cap(run_tag="r1", seq=0, status="complete"):
@@ -34,6 +44,138 @@ def _cap(run_tag="r1", seq=0, status="complete"):
         endpoint=None, request={"messages_payload": []},
         response={"content": "x"}, status=status, usage_json=None,
         omitted_keys=())
+
+
+def test_capture_policy_state_uses_exact_revisions():
+    store = ConsoleChatStore()
+    session = store.ensure_session()
+    initial = store.capture_policy_state(session.id)
+
+    value, slot_revision, policy_revision = store.set_session_next_capture_detail(
+        session.id,
+        CaptureDetail.FULL,
+        expected_policy_revision=initial.policy_revision,
+    )
+
+    assert value is CaptureDetail.FULL
+    assert slot_revision == 1
+    assert policy_revision == 1
+    assert store.consume_session_next_capture_detail(
+        session.id, expected_next_revision=slot_revision
+    ) is True
+    assert store.capture_policy_state(session.id).next_detail is None
+
+
+def test_capture_policy_rejects_stale_mutation_without_disclosure():
+    store = ConsoleChatStore()
+    session = store.ensure_session()
+    store.set_session_next_capture_detail(
+        session.id, CaptureDetail.SAFE, expected_policy_revision=0
+    )
+
+    with pytest.raises(store_module.CapturePolicyStaleError) as raised:
+        store.replace_session_capture_override(
+            session.id,
+            CaptureDetail.FULL,
+            expected_policy_revision=0,
+        )
+
+    assert str(raised.value) == ""
+    assert store.capture_policy_state(session.id).conversation_detail is None
+
+
+def test_exact_revision_consumption_preserves_concurrently_rearmed_slot():
+    store = ConsoleChatStore()
+    session = store.ensure_session()
+    _, admitted_revision, policy_revision = store.set_session_next_capture_detail(
+        session.id, CaptureDetail.FULL, expected_policy_revision=0
+    )
+    store.set_session_next_capture_detail(
+        session.id,
+        CaptureDetail.SAFE,
+        expected_policy_revision=policy_revision,
+    )
+
+    assert store.consume_session_next_capture_detail(
+        session.id, expected_next_revision=admitted_revision
+    ) is False
+    assert store.capture_policy_state(session.id).next_detail is CaptureDetail.SAFE
+
+
+def test_capture_policy_hydrates_from_the_existing_repository():
+    class Repository:
+        @staticmethod
+        def read(conversation_id):
+            assert conversation_id == "conversation-1"
+            return repository_module.CapturePolicyReadResult(
+                repository_module.CapturePolicyReadStatus.FOUND,
+                ConversationCapturePolicy(
+                    conversation_id,
+                    CaptureDetail.FULL,
+                    "2026-08-26T00:00:00Z",
+                ),
+            )
+
+    store = ConsoleChatStore()
+    store.capture_policy_repository = Repository()
+    session = store.ensure_session()
+    session.persisted_conversation_id = "conversation-1"
+
+    store.hydrate_session_capture_policy(session.id)
+
+    assert store.capture_policy_state(session.id).conversation_detail is CaptureDetail.FULL
+
+
+def test_unavailable_capture_policy_hydration_publishes_explicit_safe_pending() -> None:
+    class Repository:
+        @staticmethod
+        def read(_conversation_id):
+            return repository_module.CapturePolicyReadResult(
+                repository_module.CapturePolicyReadStatus.UNAVAILABLE_OR_CORRUPT,
+                None,
+            )
+
+    store = ConsoleChatStore()
+    store.capture_policy_repository = Repository()
+    session = store.ensure_session()
+    session.persisted_conversation_id = "conversation-1"
+    session.capture_detail_override = CaptureDetail.FULL
+
+    outcome = store.hydrate_session_capture_policy(session.id)
+
+    state = store.capture_policy_state(session.id)
+    assert outcome.status is repository_module.CapturePolicyReadStatus.UNAVAILABLE_OR_CORRUPT
+    assert state.conversation_detail is CaptureDetail.SAFE
+    assert state.save_pending is True
+
+
+def test_failed_staged_safe_flush_stays_safe_and_pending_after_publication():
+    class Repository:
+        @staticmethod
+        def replace(conversation_id, detail):
+            assert (conversation_id, detail) == (
+                "conversation-1",
+                CaptureDetail.SAFE,
+            )
+            return CapturePolicyWriteResult(CapturePolicyWriteStatus.UNAVAILABLE, None)
+
+    store = ConsoleChatStore()
+    store.capture_policy_repository = Repository()
+    session = store.ensure_session()
+    store.replace_session_capture_override(
+        session.id,
+        CaptureDetail.SAFE,
+        expected_policy_revision=0,
+    )
+
+    store.publish_committed_identity(
+        session.id,
+        ConsoleStagedConversationIdentity("conversation-1", "Conversation"),
+    )
+
+    state = store.capture_policy_state(session.id)
+    assert state.conversation_detail is CaptureDetail.SAFE
+    assert state.save_pending is True
 
 
 def _recording_exchange_persistence():
@@ -191,6 +333,15 @@ def test_terminal_mark_flushes_exchanges(store_with_fake_persistence):
     assert persistence.appended_exchange_rows  # fake recorded the flush
 
 
+def test_flush_derives_capture_detail_from_the_immutable_capture(store_with_fake_persistence):
+    store, mid, persistence = store_with_fake_persistence
+    capture = _cap()
+    object.__setattr__(capture, "capture_detail", CaptureDetail.FULL)
+    store.attach_message_exchanges(mid, [capture])
+    store.mark_message_complete(mid)
+    assert persistence.appended_exchange_rows[0]["capture_detail"] == "full"
+
+
 def test_attach_after_terminal_flushes_immediately(store_with_fake_persistence):
     """Stop-path inversion: stop finalizes first, capture attaches late."""
     store, mid, persistence = store_with_fake_persistence
@@ -272,7 +423,7 @@ def test_deferred_terminal_persistence_flushes_exchanges(
 
 
 def test_persist_exchanges_only_survives_a_serialization_failure(
-        store_with_fake_persistence):
+        store_with_fake_persistence, monkeypatch):
     """FINDING 2: row-building (``capture_to_blob``'s JSON serialization)
     must run INSIDE ``_persist_exchanges_only``'s try, not before it -- a
     malformed capture (a circular reference in ``request``) degrades to the
@@ -281,19 +432,23 @@ def test_persist_exchanges_only_survives_a_serialization_failure(
     from loguru import logger as loguru_logger
 
     store, mid, persistence = store_with_fake_persistence
-    circular: dict = {}
-    circular["self"] = circular
+    canary = "CANARY_FULL_CAPTURE_MUST_NOT_REACH_LOGS"
     bad_capture = ExchangeCapture(
         run_tag="r1", seq=0, created_at="t", provider="p", model="m",
-        endpoint=None, request=circular, response={"content": "x"},
+        endpoint=None, request={}, response={"content": "x"},
         status="complete", usage_json=None, omitted_keys=())
     store.attach_message_exchanges(mid, [bad_capture])
+    monkeypatch.setattr(
+        store_module,
+        "capture_to_blob",
+        lambda _capture: (_ for _ in ()).throw(RuntimeError(canary)),
+    )
 
     diagnostics: list[str] = []
     sink_id = loguru_logger.add(
         diagnostics.append,
         level="WARNING",
-        format="{extra[message_id]} {extra[error]} {message}",
+        format="{extra} {message}",
     )
     try:
         store.mark_message_complete(mid)  # must not raise
@@ -302,20 +457,28 @@ def test_persist_exchanges_only_survives_a_serialization_failure(
 
     assert persistence.appended_exchange_rows == []  # never reached the writer
     assert any("exchange_flush_failed" in d for d in diagnostics), diagnostics
+    assert any("RuntimeError" in d for d in diagnostics), diagnostics
+    assert canary not in "\n".join(diagnostics)
 
 
 def test_append_message_exchanges_service_wrapper_logs_and_returns_false():
     """FINDING 4: real coverage for ``ChatPersistenceService.
     append_message_exchanges`` -- a raising DB must not escape the wrapper,
-    the call must report ``False``, and the warning log must carry only
-    ``message_id``/``error`` (never row contents or capture bytes)."""
+    the call must report ``False``, and the warning log must carry only a
+    stable category, ``message_id``, and exception type (never semantic
+    exception text, row contents, or capture bytes)."""
     from loguru import logger as loguru_logger
 
     from tldw_chatbook.Chat.chat_persistence_service import ChatPersistenceService
 
+    canary = "CANARY_SEMANTIC_REQUEST_RESPONSE_MUST_NOT_REACH_LOGS"
+    failure = RuntimeError(
+        f"{canary}: request=private-prompt response=private-completion"
+    )
+
     class _RaisingDb:
         def append_message_exchanges_local(self, message_id, rows):
-            raise RuntimeError("disk full")
+            raise failure
 
     service = ChatPersistenceService(_RaisingDb())
     rows = [{
@@ -323,11 +486,10 @@ def test_append_message_exchanges_service_wrapper_logs_and_returns_false():
         "capture_blob": b"SECRET-CAPTURE-BYTES", "created_at": "t",
     }]
 
-    diagnostics: list[str] = []
+    events: list[dict] = []
     sink_id = loguru_logger.add(
-        diagnostics.append,
+        lambda message: events.append(message.record.copy()),
         level="WARNING",
-        format="{extra[message_id]} {extra[error]} {message}",
     )
     try:
         result = service.append_message_exchanges(message_id="msg-1", rows=rows)
@@ -335,10 +497,14 @@ def test_append_message_exchanges_service_wrapper_logs_and_returns_false():
         loguru_logger.remove(sink_id)
 
     assert result is False
-    assert any(
-        "exchange_append_failed" in d and "msg-1" in d for d in diagnostics
-    ), diagnostics
-    assert not any("SECRET-CAPTURE-BYTES" in d for d in diagnostics), diagnostics
+    event = next(e for e in events if e["message"] == "exchange_append_failed")
+    assert event["extra"]["message_id"] == "msg-1"
+    assert event["extra"]["error_type"] == "RuntimeError"
+    assert "error" not in event["extra"]
+    serialized_event = repr(event)
+    assert canary not in serialized_event
+    assert repr(failure) not in serialized_event
+    assert "SECRET-CAPTURE-BYTES" not in serialized_event
 
 
 # --- Blob-compression memoization (Qodo PR #1883 finding 4) ----------------

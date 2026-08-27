@@ -4,6 +4,27 @@
 methods in the matching `DB/*.py` module. Filenames are
 `<db>_v<from>_to_v<to>_<what>.sql`.
 
+## Which schemas live here (and which do not)
+
+Two of the eight versioned schemas do: `chachanotes` (`ChaChaNotes_DB.py`) and
+`workspaces` (`Workspace_DB.py`). The other six — media
+(`Client_Media_DB_v2.py`), agent runs, prompts, library ingest jobs, library
+collections, subscriptions — keep each step as a module-level SQL constant and
+run it from their own migration method. No `media_*.sql` has ever existed here.
+
+That is a scope statement, not a backlog item, and it is written down because
+reviewers keep reading "add `<db>_v<n>_to_v<n+1>.sql`" as repo-wide and filing
+the media DB's inline steps as a violation (twice on TASK-21126 and
+TASK-21593). What the rules below actually require of *every* schema is the
+behaviour: one guarded transaction per step, re-enterable, rewinding the
+version stamp on failure. `Client_Media_DB_v2._apply_migration_v8_to_v9` meets
+it through `self.transaction()` + `_execute_transactional_script`, and
+`Tests/DB/test_media_db_schema_v9.py::test_failed_v8_to_v9_rolls_back_and_
+leaves_a_working_v8_db` proves the rollback. Moving one media step into this
+directory would leave that module split across two conventions and buy
+nothing; moving all of them is a separate change, and would have to carry the
+packaging derivation in step 3 with it.
+
 ## Adding a migration
 
 1. Bump `_CURRENT_SCHEMA_VERSION` in the owning DB module.
@@ -31,6 +52,54 @@ methods in the matching `DB/*.py` module. Filenames are
 5. **If it contains `CREATE INDEX`, add the index to
    `EXPECTED_CHACHANOTES_INDEXES` in `Tests/ChaChaNotesDB/test_index_census.py`.**
 6. Run `./scripts/preflight.sh`. It checks 4 and reports exactly what to paste.
+
+## Editing a migration that has already shipped (TASK-22225)
+
+Editing an applied step is not automatically forbidden, and "leave it alone,
+fix it forward" is not automatically the safe choice. The question to answer is
+**where do the two populations end up**:
+
+* a database that has NOT yet reached the step sees the edited SQL;
+* a database that already ran it never re-enters the step at all.
+
+So an edit alone *guarantees* divergence, permanently — that is the real
+hazard, not the edit itself. A forward step that brings the already-migrated
+population to the edited step's outcome removes it, because both populations
+reach the end of the chain inside the same `_initialize_schema` transaction.
+
+v47→v48 seeded `console_conversation_library_policy` from
+`SELECT id FROM conversations` with no `deleted` predicate: one insert per
+conversation the profile had ever held, inside the boot version-bump
+transaction, and a permanent row for every tombstone. The repair was **both**
+halves — `WHERE deleted = 0` in the seed, and a v49→v50 step deleting every
+policy row with no live conversation behind it. Fixing it only forward would
+have made every not-yet-upgraded user pay the full O(all conversations) insert
+and *then* the delete; editing only v48 would have left the already-upgraded
+user carrying the rows forever.
+`Tests/DB/test_chachanotes_v50_console_policy_tombstone_cleanup.py` asserts
+the convergence directly (it replays the shipped seed verbatim under
+`patch.object` and compares the two profiles row for row) rather than trusting
+that the two paths agree.
+
+Two things to establish before choosing a cleanup, in this order:
+
+1. **What the bad rows actually DO today**, read from the consumers, not from
+   the migration. Here they did nothing observable — the repository's read
+   joins `conversations` and fail-closes on `deleted`, both writers refuse a
+   deleted conversation, and the turn commit raises earlier — so the cleanup
+   is a storage/boot-cost repair, not a correctness one, and the task could
+   honestly have stopped at "documented as inert". Discovering that also
+   supplied the *predicate*: delete exactly the set the read path already
+   treats as absent.
+2. **Whether the end state you are creating is a supported one.** Removing the
+   rows is safe because "conversation with no policy row" is ordinary —
+   `add_conversation` has never written one and the coordinator inserts
+   revision one on demand — not because the rows looked unused.
+
+A DML-only step needs no `VALID_TABLES` or index-census entry, but it still
+belongs in a `.sql` file with a guarded version bump and
+`_execute_migration_statements`, so a failure rewinds the deletes with the
+stamp.
 
 ## A migration step may not require caller-supplied data (TASK-21441)
 

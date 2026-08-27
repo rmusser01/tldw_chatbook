@@ -72,6 +72,7 @@ from tldw_chatbook.Widgets.Console.console_transcript import (
     ConsoleTranscriptMessage,
     _SELECTION_FEEDBACK_ACTIVE_RUN_STATUSES,
 )
+from Tests.UI.app_factory import attach_chachanotes_db
 
 
 class _ComposerApp(App[None]):
@@ -228,6 +229,7 @@ class _FakeSideChatGateway:
 async def _side_chat_console_pilot(gateway: _FakeSideChatGateway):
     """Real ChatScreen console with the provider gateway injected offline."""
     app = _build_test_app()
+    attach_chachanotes_db(app)
     _configure_native_ready_console(app)
     app.console_provider_gateway_factory = lambda: gateway
     host = ConsoleHarness(app)

@@ -26,6 +26,8 @@ from tldw_chatbook.Character_Chat.local_chat_dictionary_service import (
 from tldw_chatbook.Chat.console_chat_models import ConsoleMessageRole
 from tldw_chatbook.Chat.console_provider_gateway import ConsoleProviderResolution
 from tldw_chatbook.DB.ChaChaNotes_DB import CharactersRAGDB
+from Tests.console_provider_doubles import with_destination
+from Tests.UI.app_factory import attach_chachanotes_db
 
 
 @pytest.fixture
@@ -47,7 +49,7 @@ class _CapturingGateway:
         self.captured = None
 
     async def resolve_for_send(self, selection):
-        return ConsoleProviderResolution(
+        return with_destination(ConsoleProviderResolution(
             provider=selection.provider,
             base_url=selection.base_url or "",
             model=(
@@ -58,7 +60,7 @@ class _CapturingGateway:
             ready=True,
             readiness_key="llama_cpp",
             execution_key="llama_cpp",
-        )
+        ))
 
     async def stream_chat(self, _resolution, provider_messages, **kwargs):
         self.captured = [dict(m) for m in provider_messages]
@@ -77,6 +79,7 @@ async def test_native_send_applies_conversation_dictionary_provider_branch(
     dictionary_db,
 ):
     app = _build_test_app()
+    attach_chachanotes_db(app)
     app.app_config.setdefault("console", {})["agent_runtime"] = False
     app.chachanotes_db = dictionary_db
     app.chat_dictionary_scope_service = ChatDictionaryScopeService(
@@ -117,6 +120,7 @@ async def test_native_send_applies_conversation_dictionary_provider_branch(
 @pytest.mark.asyncio
 async def test_native_send_applies_conversation_dictionary_agent_branch(dictionary_db):
     app = _build_test_app()
+    attach_chachanotes_db(app)
     app.chachanotes_db = dictionary_db
     app.chat_dictionary_scope_service = ChatDictionaryScopeService(
         local_service=LocalChatDictionaryService(dictionary_db), server_service=None

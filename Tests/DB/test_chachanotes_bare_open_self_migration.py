@@ -294,14 +294,18 @@ def test_a_failure_inside_the_v48_step_rewinds_the_whole_chain(tmp_path: Path):
     assert _raw_version(db_path) == CURRENT
 
 
+#: The child signals "I am inside the step" by CREATING A FILE rather than by
+#: printing, so the parent's wait is an existence poll with a real deadline
+#: instead of a `readline()` that cannot honour one. See the loop below.
 _STALL_CHILD = """
-import sys, time
+import os, sys, time
 sys.path.insert(0, {repo!r})
 from tldw_chatbook.DB.ChaChaNotes_DB import CharactersRAGDB
 
 
 def stalled(self, cursor):
-    print("inside-the-v48-transaction", flush=True)
+    fd = os.open({marker!r}, os.O_CREAT | os.O_EXCL | os.O_WRONLY)
+    os.close(fd)
     time.sleep(600)
 
 
@@ -321,11 +325,23 @@ def test_a_sigkill_inside_the_v48_transaction_cannot_brick_the_database(
     read-only connection first (still v47, table not visible), because a
     partial apply that was ALREADY visible would be the brick this asserts
     against.
+
+    The wait for "the child got there" polls for a marker FILE, the shape
+    `test_chachanotes_v47_messages_fts_backfill.py` uses. The obvious
+    `child.stdout.readline()` inside a deadline loop cannot honour the
+    deadline -- it blocks until a newline or EOF -- so the exact regression
+    this test guards (a step that wedges before it is reached) would hang
+    the run instead of failing it. Measured: a child that neither prints nor
+    exits leaves that loop still blocked 8s after a 2s deadline. For the
+    same reason the pipes are only ever read once the child has EXITED; a
+    `child.stderr.read()` built into an assertion message is a second
+    unbounded wait, on a process that is sleeping by design.
     """
     source = tmp_path / "source.db"
     _seed_historical(source, 47, ["k1", "k2", "k3"])
     killed = tmp_path / "killed.db"
     control = tmp_path / "control.db"
+    marker_path = tmp_path / "inside-the-v48-transaction"
     shutil.copy2(source, killed)
     shutil.copy2(source, control)
     before = _content_hash(killed)
@@ -334,7 +350,9 @@ def test_a_sigkill_inside_the_v48_transaction_cannot_brick_the_database(
         [
             sys.executable,
             "-c",
-            _STALL_CHILD.format(repo=str(REPO_ROOT), path=str(killed)),
+            _STALL_CHILD.format(
+                repo=str(REPO_ROOT), path=str(killed), marker=str(marker_path)
+            ),
         ],
         stdout=subprocess.PIPE,
         stderr=subprocess.PIPE,
@@ -342,15 +360,21 @@ def test_a_sigkill_inside_the_v48_transaction_cannot_brick_the_database(
     )
     try:
         deadline = time.monotonic() + 60.0
-        marker = ""
+        entered = False
         while time.monotonic() < deadline:
-            marker = child.stdout.readline()
-            if marker or child.poll() is not None:
+            entered = marker_path.exists()
+            if entered or child.poll() is not None:
                 break
-        assert "inside-the-v48-transaction" in marker, (
-            f"child never entered the step (marker={marker!r} "
-            f"stderr={child.stderr.read()!r})"
-        )
+            time.sleep(0.02)
+        if not entered:
+            # Make the pipes safe to read before quoting them.
+            if child.poll() is None:
+                child.kill()
+                child.wait(timeout=60)
+            raise AssertionError(
+                "child never entered the step "
+                f"(stdout={child.stdout.read()!r} stderr={child.stderr.read()!r})"
+            )
         # The transaction is genuinely OPEN at kill time, not merely entered
         # and already rolled back: no second writer can take the lock. Without
         # this witness the assertions below would also pass against a child

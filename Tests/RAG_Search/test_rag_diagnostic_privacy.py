@@ -332,9 +332,18 @@ def _interpolated_expressions(node: ast.Call) -> list[ast.AST]:
     for sub in ast.walk(node):
         if isinstance(sub, ast.FormattedValue):
             expressions.append(sub.value)
-    # loguru brace style and %-style both put the values in trailing args, and
-    # `extra=` keywords are rendered by some handlers too.
-    expressions.extend(node.args[1:])
+    # The FIRST argument is the message body, not just a format string, so it
+    # is scanned like any other. `logger.error(query)` and `logger.info(
+    # query[:50])` render the whole value -- the second is precisely the
+    # truncation shape TASK-21700 was filed for, merely passed positionally
+    # instead of interpolated, and an `args[1:]` scan let both through. A
+    # literal format string is harmless here because it contains no `ast.Name`
+    # at all; verified on the whole tree, this scans 0 -> 0 findings, so the
+    # widening costs no false positive.
+    #
+    # loguru brace style and %-style put the remaining values in trailing args,
+    # and `extra=` keywords are rendered by some handlers too.
+    expressions.extend(node.args)
     expressions.extend(keyword.value for keyword in node.keywords)
     return expressions
 
@@ -458,6 +467,22 @@ def test_census_detects_the_shape_it_exists_to_catch() -> None:
         ("logger.info('q=%s', query)", {"query"}),
         ("logger.info('q={}', response)", {"response"}),
         ("logger.debug(f'{query.strip()}')", {"query"}),
+        # The message argument itself. loguru renders `args[0]` as the body,
+        # so these leak exactly as hard as the f-string forms above -- and an
+        # `args[1:]` scan passed every one of them.
+        ("logger.error(query)", {"query"}),
+        ("logger.warning(response)", {"response"}),
+        ("logger.exception(text)", {"text"}),
+        # ...including the precise truncation shape TASK-21700 was filed for,
+        # merely passed positionally instead of interpolated.
+        ("logger.info(query[:50])", {"query"}),
+        ("logger.debug('prefix ' + query)", {"query"}),
+        # `logger.log` takes the level first, so the body is args[1]; both
+        # positions must be scanned for this to be caught.
+        ("logger.log('INFO', query)", {"query"}),
+        # A literal format string stays harmless: it contains no name at all.
+        ("logger.info('Cache hit for query')", set()),
+        ("logger.info('q=%s', len(query))", set()),
     ],
 )
 def test_census_classifier_boundaries(source: str, expected: set[str]) -> None:

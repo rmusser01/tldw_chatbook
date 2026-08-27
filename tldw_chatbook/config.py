@@ -1,6 +1,8 @@
 # tldw_cli/config.py
 # Description: Configuration management for the tldw_cli application.
 #
+from __future__ import annotations
+
 # Imports
 import copy
 from contextlib import ExitStack, contextmanager
@@ -42,6 +44,11 @@ from loguru import logger
 from tldw_chatbook.DB.ChaChaNotes_DB import CharactersRAGDB
 from tldw_chatbook.DB.Client_Media_DB_v2 import MediaDatabase
 from tldw_chatbook.DB.Prompts_DB import PromptsDatabase
+if TYPE_CHECKING:
+    from tldw_chatbook.Chat.console_exchange_capture import CaptureDetail
+from tldw_chatbook.Utils.adaptive_reader_state import (
+    normalize_adaptive_reader_preferences,
+)
 from tldw_chatbook.Utils.console_background_effects import (
     normalize_console_background_effects,
 )
@@ -1801,12 +1808,15 @@ def _load_settings_uncached(
             f"Darwin platform-preferred STT provider resolved to: {default_stt_provider}"
         )
 
-    # Lazy import avoids pulling the Library package through config's module
-    # initialization path while still sharing the canonical normalization.
-    from tldw_chatbook.Library.library_adaptive_reader_state import (
-        normalize_adaptive_reader_preferences,
-    )
-
+    # TASK-22223: `normalize_adaptive_reader_preferences` comes from the
+    # stdlib-only leaf `Utils/adaptive_reader_state.py` (module-top import).
+    # This function runs at config-module import (`load_settings()` at module
+    # scope), so NOTHING here may import a feature package -- a previous
+    # `Library.library_adaptive_reader_state` import claimed to be lazy but
+    # executed the whole Library `__init__` service stack on every config
+    # import and closed a live cycle through `runtime_policy.bootstrap`.
+    # Guarded by `Tests/Packaging/test_config_import_closure.py`; share logic
+    # with features through config-safe leaf modules only.
     legacy_media_reader = (
         library_section.get("media_reader", {})
         if isinstance(library_section.get("media_reader"), Mapping)
@@ -1882,6 +1892,7 @@ def _load_settings_uncached(
         "model_catalog": final_model_catalog_settings_cli,
         "chat_defaults": final_chat_defaults_cli,
         "character_defaults": final_character_defaults_cli,
+        "appearance": copy.deepcopy(toml_config_data.get("appearance", {})),
         "notes": final_notes_settings_cli,  # For notes auto-save settings
         "chunking": final_chunking_settings_cli,  # Template default for ingest (§9.1)
         "console": final_console_settings_cli,  # For Console behavior settings
@@ -3190,6 +3201,8 @@ sidechat_prompt_template = "Give me more details about: {selection}"  # {selecti
 # Conversation Inspector: capture each provider exchange (request/response)
 # locally per turn. Local-only; never synced. Set false to disable.
 exchange_capture = true
+# Safe is the application default; no UI exposes Full activation.
+exchange_capture_detail = "safe"
 
 [console.background_effects]
 enabled = false  # Optional Console ambience. Off by default for readability.
@@ -3258,7 +3271,8 @@ ingest_url_preflight_probe = false
 library_open = true
 items_open = true
 custom_widths_enabled = false
-library_width = 28
+# Compatibility fallback for fresh profiles; matches LIBRARY_REFERENCE_WIDTH.
+library_width = 31
 items_width = 40
 
 [library.conversations_reader]
@@ -5578,6 +5592,16 @@ def get_runtime_config_snapshot(
         )
 
 
+def _published_runtime_config_snapshot() -> RuntimeConfigSnapshot:
+    """Read the already-published config generation without filesystem I/O."""
+
+    with _settings_rebuild_lock(), _config_file_lock():
+        return RuntimeConfigSnapshot(
+            generation=_CONFIG_GENERATION,
+            values=copy.deepcopy(settings),
+        )
+
+
 def run_if_runtime_config_generation_current(
     expected_generation: int,
     action: Callable[[], bool],
@@ -6080,6 +6104,8 @@ def apply_settings_mutation_to_cli_config(
     delete_keys: Mapping[str, Collection[str]] | None = None,
     mutation_precondition: Callable[[], bool] | None = None,
     locked_snapshot_precondition: Callable[[AtomicConfigSnapshot], bool] | None = None,
+    before_replace: Callable[[], None] | None = None,
+    after_replace: Callable[[], None] | None = None,
 ) -> ConfigMutationResult:
     """Atomically apply exact config sets/deletes, then refresh caches."""
     global _CONFIG_CACHE, _SETTINGS_CACHE, settings
@@ -6091,6 +6117,10 @@ def apply_settings_mutation_to_cli_config(
             locked_snapshot_precondition
         ):
             raise TypeError("Locked configuration precondition must be callable")
+        if before_replace is not None and not callable(before_replace):
+            raise TypeError("Before-replace callback must be callable")
+        if after_replace is not None and not callable(after_replace):
+            raise TypeError("After-replace callback must be callable")
         config_path = _get_effective_config_path()
     except Exception as error:
         logger.error(
@@ -6184,6 +6214,17 @@ def apply_settings_mutation_to_cli_config(
                     conflict_reason="identity_changed",
                 )
 
+        if before_replace is not None:
+            try:
+                before_replace()
+            except Exception as error:
+                logger.error(
+                    "Configuration mutation failed "
+                    "(phase=before_replace_callback, error_type={}).",
+                    type(error).__name__,
+                )
+                return ConfigMutationResult(False, False, "before_replace")
+
         try:
             deleted_any = _delete_config_keys(config_data, requested_deletes)
             for section, values in section_values.items():
@@ -6224,6 +6265,17 @@ def apply_settings_mutation_to_cli_config(
         file_replaced = True
         logger.success(f"Successfully replaced settings file at {config_path}")
 
+        if after_replace is not None:
+            try:
+                after_replace()
+            except Exception as error:
+                logger.error(
+                    "Configuration mutation failed "
+                    "(phase=after_replace_callback, error_type={}).",
+                    type(error).__name__,
+                )
+                return ConfigMutationResult(True, False, "cache_reload")
+
         try:
             _publish_runtime_config_unlocked(raw_config=raw_written)
         except Exception as error:
@@ -6237,6 +6289,122 @@ def apply_settings_mutation_to_cli_config(
 
         logger.info("Global configuration caches invalidated and reloaded.")
         return ConfigMutationResult(file_replaced, True, None)
+
+
+@dataclass(frozen=True, slots=True)
+class RuntimeCapturePolicy:
+    """Canonical process projection for future Console capture admission."""
+
+    enabled: bool
+    detail: CaptureDetail
+    generation: int
+
+
+_RUNTIME_CAPTURE_POLICY_LOCK = _threading.RLock()
+_RUNTIME_CAPTURE_POLICY: RuntimeCapturePolicy | None = None
+
+
+def _publish_runtime_capture_policy(
+    enabled: bool,
+    detail: CaptureDetail,
+    generation: int,
+) -> RuntimeCapturePolicy:
+    """Publish one validated capture policy without touching general caches."""
+    from tldw_chatbook.Chat.console_exchange_capture import CaptureDetail
+
+    if not isinstance(detail, CaptureDetail):
+        raise TypeError("detail must be CaptureDetail")
+    policy = RuntimeCapturePolicy(bool(enabled), detail, generation)
+    global _RUNTIME_CAPTURE_POLICY
+    with _RUNTIME_CAPTURE_POLICY_LOCK:
+        _RUNTIME_CAPTURE_POLICY = policy
+    return policy
+
+
+def runtime_capture_policy() -> RuntimeCapturePolicy:
+    """Return the shared runtime capture policy, resolving invalid detail Safe.
+
+    Returns:
+        The canonical enabled/detail projection and its config generation.
+    """
+    from tldw_chatbook.Chat.console_exchange_capture import CaptureDetail
+
+    global _RUNTIME_CAPTURE_POLICY
+    with _RUNTIME_CAPTURE_POLICY_LOCK:
+        current = _RUNTIME_CAPTURE_POLICY
+        if current is not None and current.generation == _CONFIG_GENERATION:
+            return current
+    snapshot = _published_runtime_config_snapshot()
+    with _RUNTIME_CAPTURE_POLICY_LOCK:
+        current = _RUNTIME_CAPTURE_POLICY
+        if current is not None and current.generation == snapshot.generation:
+            return current
+        console = snapshot.values.get("console", {})
+        if not isinstance(console, Mapping):
+            console = {}
+        try:
+            detail = CaptureDetail(console.get("exchange_capture_detail", "safe"))
+        except (TypeError, ValueError):
+            detail = CaptureDetail.SAFE
+        current = RuntimeCapturePolicy(
+            coerce_bool_setting(console.get("exchange_capture", True), True),
+            detail,
+            snapshot.generation,
+        )
+        _RUNTIME_CAPTURE_POLICY = current
+        return current
+
+
+def apply_console_capture_settings(
+    *,
+    enabled: bool,
+    detail: CaptureDetail,
+    expected_generation: int,
+) -> ConfigMutationResult:
+    """Apply the kill switch/detail with privacy-safe publication ordering.
+
+    Args:
+        enabled: Future-capture kill-switch state.
+        detail: Safe or Full global capture detail.
+        expected_generation: Config generation observed by the caller.
+
+    Returns:
+        Structured replacement/cache-publication status, including conflicts
+        and partial post-replacement cache failures.
+    """
+    from tldw_chatbook.Chat.console_exchange_capture import CaptureDetail
+
+    if type(enabled) is not bool or not isinstance(detail, CaptureDetail):
+        return ConfigMutationResult(False, False, "before_replace")
+
+    def generation_is_current(snapshot: AtomicConfigSnapshot) -> bool:
+        return snapshot.generation == expected_generation
+
+    def publish_before_replace() -> None:
+        _publish_runtime_capture_policy(enabled, detail, expected_generation)
+
+    def publish_after_replace() -> None:
+        # The general config generation advances only after cache publication
+        # succeeds. Publishing the committed capture owner at the still-current
+        # generation keeps it authoritative if that later step fails; on
+        # success, the generation bump makes the next read rebuild from the new
+        # canonical snapshot. This callback runs while the config write lock is
+        # still held, so a newer writer cannot be overwritten afterward.
+        _publish_runtime_capture_policy(enabled, detail, expected_generation)
+
+    privacy_safe = not enabled or detail is CaptureDetail.SAFE
+    result = apply_settings_mutation_to_cli_config(
+        {
+            "console": {
+                "exchange_capture": enabled,
+                "exchange_capture_detail": detail.value,
+            }
+        },
+        locked_snapshot_precondition=generation_is_current,
+        before_replace=publish_before_replace if privacy_safe else None,
+        after_replace=None if privacy_safe else publish_after_replace,
+    )
+    return result
 
 
 def save_settings_to_cli_config(

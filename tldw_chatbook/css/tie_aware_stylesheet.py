@@ -57,6 +57,25 @@ class TieAwareStylesheet(Stylesheet):
     it, dropping the re-tied source's rules from that apply altogether.
     """
 
+    #: TASK-22222 instrumentation: how many times a lowered tie-breaker armed
+    #: a full reparse on this stylesheet. Each arm makes the NEXT `apply()`
+    #: reparse every source (833,841 B of boot-parsed CSS measured 2026-08-25,
+    #: pinned by `Tests/Performance/test_boot_css_byte_budget.py`; 125-380 ms
+    #: measured fully cold, cheaper when the parse cache is warm), so consecutive
+    #: arms with no `apply()` between them coalesce into one actual reparse --
+    #: this counter is an upper bound on reparses paid, priced per arm.
+    #: Class-level default so any reader gets 0 before the first arm; the
+    #: increment writes an instance attribute. Measured during a real headless
+    #: boot to `_ui_ready` (2026-08-25, warm profile, TASK-22222): **14 arms**,
+    #: which coalesced into **8 actual extra full reparses** (20 total
+    #: `Stylesheet.parse()` calls with arming vs 12 with the arming neutered,
+    #: A/B on the same profile). All 14 land during first mount and none in
+    #: the following second; warm reparses hit Textual's parse cache, so each
+    #: costs well under the 125-380 ms cold figure -- but 8 full passes over
+    #: the whole bundle inside the first-paint window is exactly the kind of
+    #: cost finding 22222 wants visible.
+    tie_breaker_lowering_rearm_count: int = 0
+
     def add_source(
         self,
         css: str,
@@ -109,3 +128,4 @@ class TieAwareStylesheet(Stylesheet):
             # width/height None/None instead of inheriting 1fr/1fr.
             self._require_parse = True
             self._rules_map = None
+            self.tie_breaker_lowering_rearm_count += 1

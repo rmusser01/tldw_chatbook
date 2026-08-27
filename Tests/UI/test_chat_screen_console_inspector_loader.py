@@ -13,12 +13,23 @@ over the returned loader callable.
 
 from __future__ import annotations
 
+from types import SimpleNamespace
+from unittest.mock import Mock
+
 import pytest
 from loguru import logger as loguru_logger
 
 from tldw_chatbook.Chat.console_chat_models import ConsoleChatMessage, ConsoleMessageRole
-from tldw_chatbook.Chat.console_exchange_capture import ExchangeCapture, capture_to_blob
+from tldw_chatbook.Chat.console_chat_controller import CapturePolicyMutationStatus
+from tldw_chatbook.Chat.console_exchange_capture import CaptureDetail
+from tldw_chatbook.Chat.console_exchange_capture import (
+    CaptureCorruptError,
+    ExchangeCapture,
+    capture_from_storage,
+    capture_to_blob,
+)
 from tldw_chatbook.UI.Screens.chat_screen import (
+    ChatScreen,
     _build_console_inspector_exchanges_loader,
 )
 
@@ -242,6 +253,22 @@ async def test_a_corrupt_blob_is_skipped_not_fatal_to_the_rest() -> None:
 
 
 @pytest.mark.asyncio
+async def test_column_blob_provenance_mismatch_is_skipped() -> None:
+    capture = _capture()
+    with pytest.raises(CaptureCorruptError):
+        capture_from_storage(capture_to_blob(capture), "full")
+    db = _FakeExchangesDB(rows=[{
+        "run_tag": "run-1", "seq": 1, "status": "complete", "abandoned": False,
+        "capture_detail": "full", "capture_blob": capture_to_blob(capture),
+        "created_at": "t",
+    }])
+    loader = _build_console_inspector_exchanges_loader(
+        {"n1": _message(exchanges=())}, lambda: db
+    )
+    assert await loader("n1") == []
+
+
+@pytest.mark.asyncio
 async def test_corrupt_blob_diagnostic_omits_traceback_and_blob_bytes() -> None:
     """Review finding M8: the decode-failure log line used to call
     ``logger.opt(exception=True)`` in a frame holding the raw
@@ -281,3 +308,65 @@ async def test_corrupt_blob_diagnostic_omits_traceback_and_blob_bytes() -> None:
     joined = "\n".join(diagnostics)
     assert "CANARY_BLOB_BYTES_SHOULD_NOT_APPEAR_IN_LOG" not in joined
     assert "Traceback" not in joined
+
+
+def test_inspector_push_captures_immutable_revision_target() -> None:
+    session = SimpleNamespace(
+        id="session-at-open", persisted_conversation_id="conversation-at-open"
+    )
+    quiescent = SimpleNamespace(value=False)
+    store = SimpleNamespace(
+        active_session_id=session.id,
+        sessions=lambda: [session],
+        capture_quiescent=lambda _session_id: quiescent.value,
+    )
+    capture_revision = Mock(return_value=11)
+    policy_snapshot = SimpleNamespace(session_id=session.id)
+    controller = SimpleNamespace(
+        store=store,
+        capture_revision=capture_revision,
+        capture_policy_snapshot=Mock(return_value=policy_snapshot),
+        apply_global_capture_settings=Mock(),
+    )
+    pushed = Mock()
+    screen = SimpleNamespace(
+        _build_console_inspector_cost_data=lambda: (
+            [],
+            SimpleNamespace(),
+            [],
+            _empty_loader,
+        ),
+        _ensure_console_chat_controller=lambda: controller,
+        _console_active_session_is_ephemeral=lambda: False,
+        app=SimpleNamespace(push_screen=pushed),
+    )
+
+    async def snapshot_factory():
+        return SimpleNamespace()
+
+    ChatScreen._push_console_inspector(
+        screen,
+        initial_tab="inspector-costs",
+        snapshot_factory=snapshot_factory,
+    )
+
+    inspector = pushed.call_args.args[0]
+    store.active_session_id = "session-selected-later"
+    assert inspector._target_session_id == "session-at-open"
+    assert inspector._target_conversation_id == "conversation-at-open"
+    assert inspector._capture_revision_at_open == 11
+    assert inspector._capture_revision_provider() == 11
+    quiescent.value = True
+    assert inspector._capture_revision_provider() is None
+    capture_revision.assert_called_with("session-at-open")
+
+    result = inspector._capture_policy_bindings.apply_global(
+        True, CaptureDetail.FULL, 2, 3
+    )
+    assert result.status is CapturePolicyMutationStatus.TARGET_MISSING
+    assert result.snapshot is policy_snapshot
+    controller.apply_global_capture_settings.assert_not_called()
+
+
+async def _empty_loader(_native_message_id: str):
+    return []

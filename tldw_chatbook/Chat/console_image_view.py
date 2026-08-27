@@ -10,6 +10,7 @@ legacy chat defines those keys but never reads them.
 
 from __future__ import annotations
 
+import math
 import re
 import threading
 from collections import OrderedDict
@@ -78,6 +79,58 @@ def fit_image_cell_size(
     w_cells = max(1, min(box_cols, w_cells))
     h_cells = max(1, min(box_lines, h_cells))
     return w_cells, h_cells
+
+
+def scale_image_pixel_size_for_cell_box(
+    pixel_width: int, pixel_height: int, box_cols: int, box_lines: int
+) -> tuple[int, int]:
+    """Return the pixel size ``scale_image_for_cell_box`` would produce.
+
+    Exactly replicates ``PIL.Image.thumbnail``'s aspect-preserving size
+    arithmetic (``preserve_aspect_ratio``/``round_aspect``, Pillow 12.3.0)
+    WITHOUT copying or resampling the image. Callers that only need the
+    resulting dimensions -- ``fit_character_avatar_cell_box`` reads
+    ``.width``/``.height`` off the scaled copy and discards every pixel --
+    must use this instead: a LANCZOS thumbnail of a 1024px card costs ~0.7 ms,
+    and the Console rail pays one per distinct viewport size during a
+    resize drag, synchronously on the event loop (TASK-22221).
+
+    ``Image.thumbnail`` never enlarges: a box at least as large as the source
+    in both axes leaves the source size untouched. ``draft()`` only changes
+    the JPEG decode box, never the final size, so the result is a pure
+    function of the source size and the requested box.
+
+    Args:
+        pixel_width: Source image width in pixels.
+        pixel_height: Source image height in pixels.
+        box_cols: Destination box width in character columns.
+        box_lines: Destination box height in character lines.
+
+    Returns:
+        ``(width, height)`` in pixels, identical to the size of the image
+        returned by ``scale_image_for_cell_box`` for the same arguments.
+    """
+    source_width = max(1, int(pixel_width))
+    source_height = max(1, int(pixel_height))
+    # The same requested box scale_image_for_cell_box asks thumbnail for.
+    requested_width = math.floor(max(1, int(box_cols)))
+    requested_height = math.floor(max(1, int(box_lines)) * 2)
+    if requested_width >= source_width and requested_height >= source_height:
+        # thumbnail() returns early: the source is already within the box.
+        return source_width, source_height
+
+    def round_aspect(number: float, key) -> int:
+        return max(min(math.floor(number), math.ceil(number), key=key), 1)
+
+    aspect = source_width / source_height
+    width, height = requested_width, requested_height
+    if width / height >= aspect:
+        width = round_aspect(height * aspect, key=lambda n: abs(aspect - n / height))
+    else:
+        height = round_aspect(
+            width / aspect, key=lambda n: 0 if n == 0 else abs(aspect - width / n)
+        )
+    return width, height
 
 
 def scale_image_for_cell_box(

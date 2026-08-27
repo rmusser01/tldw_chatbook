@@ -107,6 +107,8 @@ disturbing the ops surfaces built in the rebuild.
 - Design spec: `Docs/superpowers/specs/2026-08-05-watchlists-reader-first-design.md`
 - NetNewsWire reader and collapsible rails amendment:
   `Docs/superpowers/specs/2026-08-23-watchlists-netnewswire-reader-collapsible-rails-design.md`
+- Aggregate feed selection extension:
+  `Docs/superpowers/specs/2026-08-25-watchlists-read-aggregate-feed-selection-design.md`
 - Phase 1 plan: `Docs/superpowers/plans/2026-08-05-watchlists-reader-first-phase-1-reading-loop.md`
 - Amends: `backlog/decisions/018-watchlists-tui-screen.md`
 - Keybinding conventions: `backlog/decisions/031-tui-keybinding-and-footer-hint-conventions.md`

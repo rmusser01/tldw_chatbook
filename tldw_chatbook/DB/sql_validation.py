@@ -69,6 +69,7 @@ VALID_TABLES = {
         "conversation_world_books",
         "conversations",
         "console_auxiliary_attempts",
+        "console_conversation_capture_policy",
         "console_conversation_context_policy",
         "console_conversation_library_policy",
         "console_conversation_memories",
@@ -582,6 +583,45 @@ def validate_identifier(identifier: str, identifier_type: str = "identifier") ->
         return False
 
     return True
+
+
+_SAFE_ORDER_BY_PROFILES = {
+    "subscription_items_agent": (
+        ("i", "effective_date", "DESC"),
+        ("i", "id", "ASC"),
+    ),
+    "subscription_items_reader": (
+        ("i", "effective_date", "DESC"),
+        ("i", "id", "DESC"),
+    ),
+}
+
+
+def get_safe_order_by_clause(profile: str) -> str:
+    """Return a centrally allow-listed and identifier-validated ORDER BY body.
+
+    Args:
+        profile: Stable name of a registered ordering profile.
+
+    Returns:
+        A validated SQL fragment containing only identifier and direction terms.
+
+    Raises:
+        ValueError: If the profile or any registered term is invalid.
+    """
+    terms = _SAFE_ORDER_BY_PROFILES.get(profile)
+    if terms is None:
+        raise ValueError("Unsupported SQL ordering profile")
+    rendered = []
+    for qualifier, column, direction in terms:
+        if (
+            not validate_identifier(qualifier, "ORDER BY qualifier")
+            or not validate_identifier(column, "ORDER BY column")
+            or direction not in {"ASC", "DESC"}
+        ):
+            raise ValueError("Invalid registered SQL ordering profile")
+        rendered.append(f"{qualifier}.{column} {direction}")
+    return ", ".join(rendered)
 
 
 def validate_table_name(table_name: str, db_type: str) -> bool:

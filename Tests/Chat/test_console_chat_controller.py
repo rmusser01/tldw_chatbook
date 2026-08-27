@@ -30,6 +30,7 @@ from tldw_chatbook.Chat.console_provider_gateway import (
 )
 from tldw_chatbook.Chat.provider_continuation import parse_provider_continuation_json
 from tldw_chatbook.Chat.console_chat_models import (
+    ConsoleNextSendHistoryProjection,
     ConsoleMessageRole,
     ConsoleProviderSelection,
     ConsoleRunState,
@@ -1046,6 +1047,67 @@ async def test_character_dispatch_shares_active_pack_prompt_and_capture_snapshot
         assert completed.metadata.character_emote.asset_id == smug_asset["id"]
     finally:
         db.close_connection()
+
+
+def test_emote_snapshot_projection_normalizes_each_asset_once(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """TASK-22227: the per-send snapshot build is O(assets), not O(assets^2).
+
+    The retired implementation re-projected a singleton tuple per state
+    against every raw asset (~1,700 regex-bearing normalize calls for a
+    40-asset pack); the lookup now normalizes each asset exactly once.
+    """
+
+    import tldw_chatbook.Character_Chat.emote_directives as emote_directives_module
+
+    calls = {"count": 0}
+    real_normalize_state = emote_directives_module.normalize_character_emote_state
+    real_normalize_key = emote_directives_module.normalize_expression_key
+
+    def counting_state(value):
+        calls["count"] += 1
+        return real_normalize_state(value)
+
+    def counting_key(value):
+        calls["count"] += 1
+        return real_normalize_key(value)
+
+    monkeypatch.setattr(
+        emote_directives_module, "normalize_character_emote_state", counting_state
+    )
+    monkeypatch.setattr(
+        emote_directives_module, "normalize_expression_key", counting_key
+    )
+
+    asset_count = 40
+    graph = {
+        "pack": {"id": 11},
+        "version": {"id": 13},
+        "assets": [
+            {"expression_key": f"custom:state_{index:02d}", "id": index + 1}
+            for index in range(asset_count)
+        ],
+    }
+    authority = controller_module._CharacterEmoteAuthority(
+        identity_revision=1,
+        runtime_backend="direct",
+        assistant_id="7",
+        assistant_authority_id="7",
+        local_character_id=7,
+    )
+
+    snapshot = ConsoleChatController._build_character_emote_snapshot(
+        authority, graph, fallback_reason="no_active_pack"
+    )
+
+    assert snapshot.states == tuple(
+        f"state_{index:02d}" for index in range(asset_count)
+    )
+    assert [asset.asset_id for asset in snapshot.assets] == list(
+        range(1, asset_count + 1)
+    )
+    assert calls["count"] <= 2 * asset_count + 8
 
 
 @pytest.mark.asyncio
@@ -2741,6 +2803,182 @@ def test_image_budget_counts_images_newest_first(monkeypatch):
 
     decoded = base64.b64decode(older_images[0]["image_url"]["url"].split(",", 1)[1])
     assert decoded == b"old-0"
+
+
+def test_provider_messages_for_next_send_estimate_uses_lightweight_projection_without_media_serialization(
+    monkeypatch,
+):
+    monkeypatch.setattr(controller_module, "is_vision_capable", lambda p, m: True)
+    monkeypatch.setattr(controller_module, "max_history_images", lambda p, m: 1)
+    monkeypatch.setattr(
+        controller_module,
+        "image_url_part",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(
+            AssertionError("estimate serialized media")
+        ),
+    )
+    store = ConsoleChatStore()
+    session = store.create_session(ephemeral=True)
+    controller = ConsoleChatController(
+        store=store,
+        provider_gateway=StreamingGateway(),
+        model="vision-model",
+        system_prompt="system",
+    )
+    store.append_message(
+        session.id, role=ConsoleMessageRole.SYSTEM, content="transcript system"
+    )
+    store.append_message(session.id, role=ConsoleMessageRole.ASSISTANT, content="hello")
+    failed = store.append_message(
+        session.id, role=ConsoleMessageRole.USER, content="failed"
+    )
+    store.mark_message_send_blocked(failed.id)
+    store.append_message(
+        session.id,
+        role=ConsoleMessageRole.USER,
+        content="(no speech detected)",
+        metadata=MessageMetadata(engine="realtime", transcript_status="empty"),
+    )
+    disallowed = store.append_message(
+        session.id, role=ConsoleMessageRole.ASSISTANT, content="not admitted"
+    )
+    store._message_or_raise(disallowed.id).assistant_generation_state = "failed"
+    store.append_message(
+        session.id,
+        role=ConsoleMessageRole.USER,
+        content="older",
+        attachments=(MessageAttachment(b"old", "image/png", "old.png", 0),),
+    )
+    store.append_message(
+        session.id, role=ConsoleMessageRole.ASSISTANT, content="answer"
+    )
+    store.append_message(
+        session.id,
+        role=ConsoleMessageRole.USER,
+        content="newer",
+        attachments=(MessageAttachment(b"new", "image/png", "new.png", 0),),
+    )
+    live = store.append_message(
+        session.id, role=ConsoleMessageRole.ASSISTANT, content=""
+    )
+    store.append_stream_chunk(live.id, "buffered answer")
+    live_content = store._message_or_raise(live.id).content
+    revisions = (
+        dict(store._stream_materialized_counts),
+        dict(store._payload_revisions),
+        dict(store._message_speech_revisions),
+    )
+
+    result = controller.provider_messages_for_next_send_estimate(session.id)
+
+    assert result == ConsoleNextSendHistoryProjection(
+        rows=(
+            (
+                "system",
+                "system\n\nYou already opened this conversation with the following "
+                "message, which the user has seen:\nhello",
+            ),
+            ("user", "older"),
+            ("assistant", "answer"),
+            ("user", "newer"),
+            ("assistant", "buffered answer"),
+        ),
+        historical_media_count=1,
+    )
+    assert store._message_or_raise(live.id).content == live_content == ""
+    assert revisions == (
+        dict(store._stream_materialized_counts),
+        dict(store._payload_revisions),
+        dict(store._message_speech_revisions),
+    )
+
+
+def test_provider_messages_for_next_send_estimate_uses_owning_session_selection(
+    monkeypatch,
+):
+    monkeypatch.setattr(
+        controller_module,
+        "is_vision_capable",
+        lambda provider, model: (provider, model)
+        == ("openai", "session-vision-model"),
+    )
+    monkeypatch.setattr(
+        controller_module,
+        "max_history_images",
+        lambda provider, model: (
+            1
+            if (provider, model)
+            == ("openai", "session-vision-model")
+            else 0
+        ),
+    )
+    store = ConsoleChatStore()
+    session = store.create_session(
+        settings=ConsoleSessionSettings(
+            provider="openai",
+            model="session-vision-model",
+            system_prompt="session system",
+        ),
+        ephemeral=True,
+    )
+    controller = ConsoleChatController(
+        store=store,
+        provider_gateway=StreamingGateway(),
+        provider="anthropic",
+        model="global-text-model",
+        system_prompt="global system",
+    )
+    store.append_message(
+        session.id,
+        role=ConsoleMessageRole.USER,
+        content="image question",
+        attachments=(MessageAttachment(b"image", "image/png", "image.png", 0),),
+    )
+
+    result = controller.provider_messages_for_next_send_estimate(session.id)
+
+    assert result.rows[0] == ("system", "session system")
+    assert result.historical_media_count == 1
+
+
+def test_provider_message_payloads_serializes_only_after_lightweight_projection(
+    monkeypatch,
+):
+    monkeypatch.setattr(controller_module, "is_vision_capable", lambda p, m: True)
+    monkeypatch.setattr(controller_module, "max_history_images", lambda p, m: 1)
+    calls = []
+
+    def _serialize(data, mime_type):
+        calls.append((data, mime_type))
+        return {"type": "image_url", "image_url": {"url": "serialized"}}
+
+    monkeypatch.setattr(controller_module, "image_url_part", _serialize)
+    store = ConsoleChatStore()
+    session = store.create_session(ephemeral=True)
+    controller = ConsoleChatController(
+        store=store, provider_gateway=StreamingGateway(), model="vision-model"
+    )
+    store.append_message(
+        session.id,
+        role=ConsoleMessageRole.USER,
+        content="look",
+        attachments=(MessageAttachment(b"image", "", "image.png", 0),),
+    )
+
+    payloads = controller._provider_message_payloads(
+        store.messages_for_session(session.id), skip_failed=True
+    )
+
+    assert calls == [(b"image", "image/png")]
+    assert payloads == [
+        {
+            "role": "user",
+            "content": [
+                {"type": "text", "text": "look"},
+                {"type": "image_url", "image_url": {"url": "serialized"}},
+            ],
+        }
+    ]
 
 
 def test_history_image_with_empty_mime_type_falls_back_to_default_mime(monkeypatch):

@@ -465,3 +465,22 @@ def test_normalize_coerces_is_flagged_to_a_real_bool():
     assert flagged["is_flagged"] is True
     assert unflagged["is_flagged"] is False
     assert legacy_row["is_flagged"] is False
+
+
+def test_normalize_watchlist_item_preserves_reader_effective_date():
+    """Reader-normalized items retain the SQLite ordering date."""
+    from tldw_chatbook.Subscriptions.watchlist_normalizers import (
+        normalize_watchlist_item,
+    )
+
+    item = normalize_watchlist_item(
+        "local",
+        {
+            "id": 14,
+            "subscription_id": 3,
+            "title": "Dated reader row",
+            "effective_date": "2026-08-25 12:00:00",
+        },
+    )
+
+    assert item["effective_date"] == "2026-08-25 12:00:00"

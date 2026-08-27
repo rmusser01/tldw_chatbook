@@ -62,6 +62,29 @@ from tldw_chatbook.Chat.console_project_instructions import (
 )
 from tldw_chatbook.Chat.console_session_settings import ConsoleSessionSettings
 from tldw_chatbook.Chat.console_chat_store import ConsoleChatStore
+from Tests.console_provider_doubles import provider_resolution, with_destination
+
+
+def _first(matches, *, what: str):
+    """First match, or an assertion naming what never arrived.
+
+    A bare `next(<genexpr>)` raises StopIteration, which Python re-raises out of
+    a coroutine as `RuntimeError: coroutine raised StopIteration` -- naming
+    neither the missing item nor the turn that failed to produce it. 33 failures
+    in this module reported that way, hiding their real causes behind one
+    opaque message.
+
+    Args:
+        matches: Iterable of candidates.
+        what: Human-readable name of the thing expected, for the failure text.
+
+    Returns:
+        The first match.
+    """
+    value = next(iter(matches), None)
+    assert value is not None, f"no {what} was produced by the turn under test"
+    return value
+
 
 
 class _RequestBuilder:
@@ -229,13 +252,7 @@ class _RecordingGateway:
         self.messages_seen = None
 
     async def resolve_for_send(self, _selection):
-        return SimpleNamespace(
-            ready=True,
-            visible_copy="",
-            provider="llama_cpp",
-            model="test-model",
-            max_tokens=128,
-        )
+        return provider_resolution(max_tokens=128)
 
     async def stream_chat(self, _resolution, messages, signals=None):
         if self.builder_ref is not None:
@@ -297,7 +314,7 @@ class _ScriptedCitationGateway:
         *,
         mark_fallback_calls: frozenset[int] = frozenset(),
     ) -> None:
-        self.resolution = ConsoleProviderResolution(
+        self.resolution = with_destination(ConsoleProviderResolution(
             provider="openai",
             base_url="https://provider.invalid/v1",
             model="repair-model",
@@ -319,7 +336,7 @@ class _ScriptedCitationGateway:
             thinking_effort="high",
             thinking_budget_tokens=777,
             streaming=True,
-        )
+        ))
         self.scripts = scripts
         self.mark_fallback_calls = mark_fallback_calls
         self.calls: list[dict[str, Any]] = []
@@ -433,8 +450,16 @@ def _persisted_store(
     persistence: _ReadyCitationPersistence | None = None,
 ) -> ConsoleChatStore:
     store = ConsoleChatStore(persistence=persistence)
-    session = store.ensure_session(
-        settings=ConsoleSessionSettings(provider="llama_cpp")
+    # EPHEMERAL: these doubles record `create_message` calls, which is the
+    # citation-write seam under test. They predate `commit_durable_turn`, so a
+    # non-ephemeral MANUAL send is refused before any provider call -- and the
+    # tests then wait forever on an Event the refused turn never sets.
+    # `durable_turn = not session.ephemeral and origin in {MANUAL, QUEUED}`, so
+    # an ephemeral session keeps the send on the `create_message` path these
+    # doubles actually observe.
+    session = store.create_session(
+        settings=ConsoleSessionSettings(provider="llama_cpp"),
+        ephemeral=True,
     )
     session.project_instruction_state = (
         ProjectInstructionControlState.legacy_disabled()
@@ -496,8 +521,16 @@ def _recording_citation_store(
     persistence: _ReadyCitationPersistence | None = None,
 ) -> _RecordingCitationStore:
     store = _RecordingCitationStore(persistence=persistence)
-    session = store.ensure_session(
-        settings=ConsoleSessionSettings(provider="openai", model="repair-model")
+    # EPHEMERAL, for the same reason as `_persisted_store`: these doubles record
+    # `create_message` calls, which is the citation-write seam under test, and
+    # they carry `db = None`. A non-ephemeral MANUAL send is therefore refused
+    # twice over -- once because the adapter cannot `commit_durable_turn`, and
+    # again by TASK-22030's DB-open gate -- before any provider call. Both gates
+    # are guarded by `not session.ephemeral`, which is production's own carve-out
+    # for a chat that is not being saved.
+    session = store.create_session(
+        settings=ConsoleSessionSettings(provider="openai", model="repair-model"),
+        ephemeral=True,
     )
     session.project_instruction_state = (
         ProjectInstructionControlState.legacy_disabled()
@@ -547,11 +580,11 @@ def _capture_result(
 
 
 def _assistant(store: ConsoleChatStore):
-    return next(
+    return _first((
         message
         for message in store.messages_for_session(store.active_session_id)
         if message.role is ConsoleMessageRole.ASSISTANT
-    )
+    ), what="ASSISTANT message")
 
 
 # Task 3b rebase note: the controller's in-flight bookkeeping is now a
@@ -594,11 +627,11 @@ def _assert_no_terminal_state(store: ConsoleChatStore) -> None:
 
 
 def _final_user_content(messages) -> str:
-    return next(
+    return _first((
         message["content"]
         for message in reversed(messages)
         if message["role"] == ConsoleMessageRole.USER.value
-    )
+    ), what="message in the provider payload")
 
 
 @pytest.mark.asyncio
@@ -670,11 +703,11 @@ async def test_console_canonical_evidence_is_added_after_prompt_transforms_and_b
     result = await controller.submit_draft(ordinary_prompt)
 
     assert result.accepted is True
-    stored_user = next(
+    stored_user = _first((
         message
         for message in store.messages_for_session(store.active_session_id)
         if message.role is ConsoleMessageRole.USER
-    )
+    ), what="expected item")
     assert stored_user.content == ordinary_prompt
     provider_user = _final_user_content(gateway.messages_seen)
     assert provider_user == (
@@ -1761,7 +1794,8 @@ async def test_original_attempt_cache_cleans_up_and_is_never_reconstructed():
         content="First repaired [S1]",
     )
     second_session = store.create_session(
-        settings=ConsoleSessionSettings(provider="openai", model="repair-model")
+        settings=ConsoleSessionSettings(provider="openai", model="repair-model"),
+        ephemeral=True,
     )
     second = store.append_message(
         second_session.id,
@@ -2043,11 +2077,11 @@ async def test_citation_repair_direct_completed_initial_does_not_leak_into_lifec
         ((initial_body,), (replacement_body,)),
         persistence=persistence,
     )
-    initial_user = next(
+    initial_user = _first((
         message
         for message in store.messages_for_session(store.active_session_id)
         if message.role is ConsoleMessageRole.USER
-    )
+    ), what="expected item")
     initial_assistant = _assistant(store)
     assert initial_assistant.content == initial_body
     _assert_no_terminal_state(store)
@@ -2313,9 +2347,9 @@ async def test_citation_repair_agent_missing_placeholder_keeps_runtime_row_witho
             self.calls.append(kwargs)
             original_id = kwargs["assistant_message_id"]
             session_id = self.store.session_id_for_message(original_id)
-            session = next(
+            session = _first((
                 item for item in self.store.sessions() if item.id == session_id
-            )
+            ), what="session")
             retained = [
                 message
                 for message in self.store.messages_for_session(session_id)
@@ -2482,26 +2516,26 @@ def _assert_user_citation_repair_cancel(
         *expected_leading_system_messages,
         "Citation repair canceled by user.",
     ]
-    append_call = next(
+    append_call = _first((
         call
         for call in store.message_append_calls
         if call["role"] is ConsoleMessageRole.SYSTEM
         and call["content"] == "Citation repair canceled by user."
-    )
+    ), what="store message-append call")
     assert append_call["kwargs"]["persist"] is (persistence is not None)
 
     if persistence is not None:
-        assistant_write = next(
+        assistant_write = _first((
             call
             for call in persistence.create_calls
             if call["sender"] == ConsoleMessageRole.ASSISTANT.value
-        )
-        system_write = next(
+        ), what="persistence create CALL")
+        system_write = _first((
             call
             for call in persistence.create_calls
             if call["sender"] == ConsoleMessageRole.SYSTEM.value
             and call["content"] == "Citation repair canceled by user."
-        )
+        ), what="persistence create CALL")
         assert persistence.create_calls.index(
             assistant_write
         ) < persistence.create_calls.index(system_write)
@@ -2852,17 +2886,17 @@ async def test_citation_repair_cancel_row_persistence_failure_is_fail_soft(
     ]
     assert len(assistant_writes) == 1
     assert assistant_writes[0]["content"] == initial_body
-    cancel_attempt = next(
+    cancel_attempt = _first((
         call
         for call in persistence.create_attempts
         if call["sender"] == ConsoleMessageRole.SYSTEM.value
-    )
+    ), what="persistence create ATTEMPT")
     assert persistence.create_attempts.index(
-        next(
+        _first((
             call
             for call in persistence.create_attempts
             if call["sender"] == ConsoleMessageRole.ASSISTANT.value
-        )
+        ), what="persistence create ATTEMPT")
     ) < persistence.create_attempts.index(cancel_attempt)
     assert cancel_attempt["parent_message_id"] == assistant.persisted_message_id
 
@@ -3224,9 +3258,9 @@ async def test_agent_replaced_placeholder_does_not_transfer_finalizer():
         def run_reply(self, **kwargs):
             original_id = kwargs["assistant_message_id"]
             session_id = self.store.session_id_for_message(original_id)
-            session = next(
+            session = _first((
                 session for session in self.store.sessions() if session.id == session_id
-            )
+            ), what="session")
             retained = [
                 message
                 for message in self.store.messages_for_session(session_id)

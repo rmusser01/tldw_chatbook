@@ -45,6 +45,36 @@
 
 
 
+/* ===== WIDGET: ConsoleCapturePolicyDialog (Widgets/Console/console_capture_policy_dialog.py) ===== */
+
+    ConsoleCapturePolicyDialog { align: center middle; }
+
+
+
+
+
+
+
+
+
+
+
+
+/* ===== WIDGET: ConsoleExchangeExportDialog (Widgets/Console/console_exchange_export_dialog.py) ===== */
+
+    ConsoleExchangeExportDialog { align: center middle; }
+
+
+
+
+
+
+
+
+
+
+
+
 /* ===== WIDGET: ConsolePromptComparisonModal (Widgets/Console/console_prompt_comparison_modal.py) ===== */
 
     ConsolePromptComparisonModal {

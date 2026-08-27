@@ -25,6 +25,7 @@ import os
 import subprocess
 import sys
 import textwrap
+import zipfile
 from pathlib import Path
 
 import pytest
@@ -924,6 +925,32 @@ def test_run_parse_job_through_real_spawn_pool(tmp_path: Path) -> None:
     assert event.generation == 1
     assert event.job_id == "ingest-job-1"
     assert event.phase == "inspecting"
+
+
+@pytest.mark.integration
+def test_real_spawn_pool_rejects_epub_archive_before_extraction(
+    tmp_path: Path,
+) -> None:
+    """The production subprocess path enforces the EPUB admission guard."""
+    source = tmp_path / "compressed-bomb.epub"
+    with zipfile.ZipFile(
+        source,
+        "w",
+        compression=zipfile.ZIP_DEFLATED,
+    ) as archive:
+        archive.writestr("chapter.xhtml", b"x" * 1_000_000)
+
+    ctx = multiprocessing.get_context("spawn")
+    with ctx.Pool(1) as pool:
+        async_result = pool.apply_async(
+            run_parse_job,
+            (str(source), {"perform_analysis": False}),
+        )
+        result = async_result.get(timeout=120)
+
+    assert result["ok"] is False
+    assert "EPUB archive exceeds safety limits." in result["error"]
+    assert result["permanent"] is False
 
 
 # --- empty-extraction guard (task-677) --------------------------------------

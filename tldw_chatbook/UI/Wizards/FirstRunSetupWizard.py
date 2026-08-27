@@ -116,6 +116,7 @@ from tldw_chatbook.Widgets.delete_confirmation_dialog import DeleteConfirmationD
 from tldw_chatbook.Widgets.confirmation_dialog import ConfirmationDialog
 
 if TYPE_CHECKING:
+    from textual.geometry import Region
     from tldw_chatbook.Chat.console_provider_support import (
         ConsoleProviderCatalogEntry,
     )
@@ -146,7 +147,105 @@ class SetupRadioButton(RadioButton):
         return super()._button
 
 
+class SetupCheckbox(Checkbox):
+    """Checkbox whose checked state is structural, not color-only.
+
+    TASK-21146 follow-on to TASK-1497 (SetupRadioButton): stock
+    ToggleButton renders a constant "X" glyph and conveys on/off purely
+    through color — in live UAT the UNCHECKED consent box read as checked
+    (▐X▌). The inner glyph itself switches: ✓ checked, blank unchecked.
+    """
+
+    @property
+    def _button(self):
+        self.BUTTON_INNER = "✓" if self.value else " "
+        return super()._button
+
+
+class SetupRadioSet(RadioSet):
+    """Wizard radio group with WAI-ARIA radio semantics (TASK-21142).
+
+    UAT N-8: stock RadioSet separates highlight from selection, so a user
+    who arrows to "Full setup" and presses Next silently proceeds on the
+    Quick track — the highlight glyph is far subtler than the ● selection
+    glyph and reads as a no-op. Here selection follows the highlight, the
+    way OS radio groups and the WAI-ARIA radio pattern behave.
+
+    UAT N-1: stock RadioSet consumes Enter as a redundant re-toggle. With
+    selection following the highlight there is nothing left for Enter to
+    toggle, so it requests a wizard advance instead — the "form + Enter =
+    continue" reflex.
+    """
+
+    class AdvanceRequested(Message):
+        """Enter on a settled radio group asks the wizard to advance."""
+
+    BINDINGS = [Binding("enter", "request_advance", "Next", show=False)]
+
+    def action_next_button(self) -> None:
+        """Move the highlight down and select it (selection follows focus)."""
+        super().action_next_button()
+        self._select_highlighted()
+
+    def action_previous_button(self) -> None:
+        """Move the highlight up and select it (selection follows focus)."""
+        super().action_previous_button()
+        self._select_highlighted()
+
+    def _select_highlighted(self) -> None:
+        # Follow the highlight only during USER navigation: RadioSet's own
+        # _on_mount calls action_next_button() to seat the initial
+        # highlight, and following that call would auto-select the first
+        # option on every mount — clobbering deliberately-unselected
+        # groups (AppearanceStep's fresh-run theme radio commits nothing
+        # precisely because nothing is pressed). Focus is the discriminator:
+        # key bindings only fire on the focused set.
+        if not self.has_focus:
+            return
+        # ``_selected`` is RadioSet's highlight index — private, but this
+        # repo pins textual >=8,<9 and the coupling fails loudly in the
+        # keyboard contract tests on any upgrade that changes it.
+        index = self._selected
+        buttons = list(self.query(RadioButton))
+        if index is None or not (0 <= index < len(buttons)):
+            return
+        button = buttons[index]
+        if not button.value and not button.disabled:
+            button.value = True
+
+    def action_request_advance(self) -> None:
+        self._select_highlighted()
+        self.post_message(self.AdvanceRequested())
+
+
 class SetupWizardProgress(WizardProgress):
+
+    #: TASK-21148 (UAT F-2/F-3): the stacked number+title layout. Declared
+    #: as BUNDLED_CSS so build_css.py lifts it into the widget-defaults
+    #: tier of the app bundle — a class-level DEFAULT_CSS would register
+    #: another stylesheet source against Textual's 64-entry parse cache
+    #: (see Tests/UI/test_widget_css_consolidation.py for the rule).
+    BUNDLED_CSS = """
+    SetupWizardProgress .setup-progress-item {
+        height: auto;
+    }
+    SetupWizardProgress .step-indicator-stack {
+        layout: vertical;
+        align: center top;
+        width: auto;
+        height: auto;
+    }
+    SetupWizardProgress .step-number {
+        width: auto;
+        min-width: 4;
+        margin-right: 0;
+    }
+    SetupWizardProgress .step-title {
+        margin-right: 0;
+        text-align: center;
+    }
+    """
+
     """Progress indicator rendered from the resolved first-run track."""
 
     _NUMBER_WIDTH = 4
@@ -197,12 +296,13 @@ class SetupWizardProgress(WizardProgress):
     def _titled_track_width(self) -> int:
         """Return the minimum safe width for the fully titled tracker."""
 
+        # TASK-21148 (UAT F-2): titles render UNDER the number boxes, so an
+        # item costs max(number, title) width — the full 10-step track keeps
+        # its titles at 140 columns instead of collapsing to anonymous boxes.
         item_width = sum(
-            self._NUMBER_WIDTH
-            + self._TITLE_HORIZONTAL_MARGIN
+            max(self._NUMBER_WIDTH, len(item.title))
             + self._ITEM_HORIZONTAL_MARGIN
             + self._ITEM_SAFETY_WIDTH
-            + len(item.title)
             for item in self.items
         )
         connector_width = self._CONNECTOR_WIDTH * max(len(self.items) - 1, 0)
@@ -224,20 +324,31 @@ class SetupWizardProgress(WizardProgress):
                 id=f"setup-progress-{item.step_id}",
                 classes=f"step-indicator-container setup-progress-item {state_class}",
             ):
-                number_classes = f"step-number {item.state}"
-                yield Static(
-                    "✓" if item.state == "complete" else str(index + 1),
-                    classes=number_classes,
-                )
-                title = Label(
-                    item.title,
-                    classes=f"step-title {item.state}",
-                )
-                title.display = not compact
-                yield title
+                # TASK-21148 (UAT F-2/F-3): number box and title stack
+                # vertically — titles survive at full-track widths, and the
+                # box grows for two-digit step numbers instead of clipping
+                # "10" down to "1".
+                with Vertical(classes="step-indicator-stack"):
+                    number_classes = f"step-number {item.state}"
+                    # TASK-21143 (UAT N-7): "attention" = visited, but its
+                    # probe failed — "!" instead of the ✓ users read as "OK".
+                    yield Static(
+                        "✓"
+                        if item.state == "complete"
+                        else "!"
+                        if item.state == "attention"
+                        else str(index + 1),
+                        classes=number_classes,
+                    )
+                    title = Label(
+                        item.title,
+                        classes=f"step-title {item.state}",
+                    )
+                    title.display = not compact
+                    yield title
                 if index < len(self.items) - 1:
                     connector_classes = "step-connector"
-                    if item.state == "complete":
+                    if item.state in ("complete", "attention"):
                         connector_classes += " complete"
                     connector = Static("", classes=connector_classes)
                     connector.display = not compact
@@ -385,7 +496,7 @@ class SetupStep(WizardStep):
             # Textual's per-item "attach to the enclosing with-block
             # container" step (compose_add_child), which normally runs
             # inside the SAME loop that calls next() on this generator.
-            # Nested containers (``with RadioSet(): yield SetupRadioButton``)
+            # Nested containers (``with SetupRadioSet(): yield SetupRadioButton``)
             # would silently end up childless -- their leaves float as
             # stray top-level siblings instead -- if drained with a bare
             # list(). textual.compose.compose() reproduces that per-item
@@ -462,11 +573,124 @@ class SetupStep(WizardStep):
         """
         return None
 
+    def confirm_before_advance(self) -> Optional[str]:
+        """A question the user must answer before Next commits this step.
+
+        TASK-21143 (UAT M-2): steps that KNOW their state is broken (a
+        failed credential probe) return the question here; the container
+        shows it as a confirmation dialog and only advances on an explicit
+        "Continue anyway". None (the default) advances normally.
+        """
+        return None
+
     def show_step_error(self, message: str) -> None:
+        """Render a step error on the wizard's pinned error strip.
+
+        TASK-21140 (UAT W-1/G-3 and the F-1 investigation): the previous
+        per-step ``.setup-step-error`` tail Static sat at the BOTTOM of an
+        overflowing scroll region -- a refused Next rendered its reason
+        below the fold and the wizard just looked stuck. The pinned strip
+        lives in the container chrome between the step body and the nav
+        bar, so it is visible at any terminal size. It is cleared on every
+        step change (``show_step``).
+        """
         try:
-            self.query_one(".setup-step-error", Static).update(message)
+            strip = self.screen.query_one("#setup-step-error-pinned", Static)
         except Exception:
             logger.warning("Setup step error had nowhere to render: {}", message)
+            return
+        strip.update(message)
+        strip.remove_class("hidden")
+
+    def refresh(
+        self,
+        *regions: "Region",
+        repaint: bool = True,
+        layout: bool = False,
+        recompose: bool = False,
+    ) -> "SetupStep":
+        """TASK-22281 (UAT F-1): recompose must never orphan keyboard focus.
+
+        A recompose rebuilds this step's children; if ``app.focused`` is one
+        of them, Textual 8.2.8 leaves it pointing at the DETACHED widget --
+        every subsequent key event then dispatches into a dead message pump,
+        so no binding anywhere (container ctrl+n/ctrl+b, screen escape, even
+        the app palette) ever resolves and the wizard soft-locks. Confirmed
+        live: SpeechSetupStep's first ``on_show`` schedules exactly this
+        recompose an instant before ``show_step``'s focus fix targets a
+        pre-recompose child. The heal runs after every recompose (first-show
+        load, load-completion, discovery updates alike) because a one-shot
+        fix at the focus site would be re-orphaned by the next recompose.
+        """
+        if recompose:
+            try:
+                self.call_after_refresh(self._heal_orphaned_focus)
+            except Exception:
+                # Not mounted yet (compose-time refresh): nothing to heal.
+                pass
+        return super().refresh(
+            *regions, repaint=repaint, layout=layout, recompose=recompose
+        )
+
+    def _heal_orphaned_focus(self) -> None:
+        """Re-anchor focus if the recompose just detached the focused widget.
+
+        No-ops when focus is alive (attached and displayed) or when this
+        step is hidden -- a background recompose on a non-visible step must
+        never steal focus from the step the user is on. Restore priority:
+        the same-id widget in the rebuilt tree (so focus appears not to
+        move), then this step's preferred/first focusable, then the wizard
+        nav bar -- mirroring show_step()'s F-B focus fix so the container
+        stays in the focused widget's ancestry and ctrl+n/ctrl+b resolve.
+        """
+        try:
+            app = self.app
+        except Exception:
+            return
+        focused = app.focused
+        if focused is not None and focused.is_attached and focused.display:
+            return
+        if not self.display or not self.is_attached:
+            return
+        target: Optional[Widget] = None
+        prior_id = getattr(focused, "id", None) if focused is not None else None
+        if prior_id:
+            try:
+                candidate = self.query_one(f"#{prior_id}", Widget)
+                if (
+                    candidate.focusable
+                    and candidate.display
+                    and not candidate.has_class("hidden")
+                ):
+                    target = candidate
+            except Exception:
+                target = None
+        if target is None:
+            preferred = self.preferred_focus()
+            if (
+                preferred is not None
+                and preferred.focusable
+                and preferred.display
+                and not preferred.has_class("hidden")
+            ):
+                target = preferred
+        if target is None:
+            target = next(
+                (
+                    widget
+                    for widget in self.walk_children(Widget)
+                    if widget.focusable
+                    and widget.display
+                    and not widget.has_class("hidden")
+                ),
+                None,
+            )
+        if target is None:
+            try:
+                target = self.screen.query_one("#wizard-next", Button)
+            except Exception:
+                return
+        target.focus()
 
 
 @dataclass(frozen=True, slots=True)
@@ -820,6 +1044,19 @@ class _CredentialObservation:
         return self.source == source and hmac.compare_digest(self.digest, digest)
 
 
+#: TASK-21149 (UAT P-3): where a first-time user gets a key, per provider.
+_PROVIDER_KEY_URLS = {
+    "openai": "platform.openai.com/api-keys",
+    "anthropic": "console.anthropic.com",
+    "groq": "console.groq.com/keys",
+    "openrouter": "openrouter.ai/keys",
+    "mistralai": "console.mistral.ai",
+    "deepseek": "platform.deepseek.com",
+    "cohere": "dashboard.cohere.com",
+    "google": "aistudio.google.com/apikey",
+}
+
+
 class ProviderStep(SetupStep):
     """Choose a provider, supply credentials, verify without blocking."""
 
@@ -984,9 +1221,15 @@ class ProviderStep(SetupStep):
                     id="setup-provider-endpoint-status",
                     classes="setup-probe-status",
                 )
+                # TASK-21144 (UAT P-8): labels name the outcome, not the
+                # mechanism — "Detect" vs "Test" was an unexplained pair.
                 with Horizontal(classes="setup-provider-connection-actions"):
-                    yield Button("Detect", id="setup-provider-detect")
-                    yield Button("Test", id="setup-provider-test", variant="primary")
+                    yield Button("Find local servers", id="setup-provider-detect")
+                    yield Button(
+                        "Test connection",
+                        id="setup-provider-test",
+                        variant="primary",
+                    )
                 yield ProviderEndpointCandidateList(
                     ProviderEndpointCandidateOption(
                         Text("Detected endpoints", style="bold"),
@@ -999,6 +1242,15 @@ class ProviderStep(SetupStep):
                     id="setup-provider-detection-results",
                     classes="setup-detection-results hidden",
                 )
+            # TASK-21144 (UAT P-6): the probe/discovery status renders
+            # ABOVE the Authentication collapsible, directly under the
+            # connection controls it reports on — at its old panel-bottom
+            # position it fell below the fold at 40-row terminals, which
+            # (compounded by the F-1 focus soft-lock eating the button
+            # presses) is how UAT experienced "silent" probes.
+            yield Static(
+                "", id="setup-provider-probe-status", classes="setup-probe-status"
+            )
             with Collapsible(
                 title="Authentication (optional)",
                 collapsed=True,
@@ -1018,10 +1270,6 @@ class ProviderStep(SetupStep):
                     yield Button("Keep current", id="setup-provider-key-keep")
                     yield Button("Replace", id="setup-provider-key-replace")
                     yield Button("Clear", id="setup-provider-key-clear")
-            yield Static(
-                "", id="setup-provider-probe-status", classes="setup-probe-status"
-            )
-            yield Static("", classes="setup-step-error")
 
     # TASK-1498: providers most first-time users are actually looking for, in
     # display order. Filtered against the live catalog, so a missing key
@@ -1769,8 +2017,20 @@ class ProviderStep(SetupStep):
         test_button.disabled = not readiness.ready or not test_available
         status = self.query_one("#setup-provider-key-status", Static)
         if not readiness.ready:
-            recovery = readiness.recovery or "Add a provider credential."
-            status.update(f"API key required. {recovery}")
+            # TASK-21149 (UAT P-3): the input right above is the primary
+            # path — lead with it and where to get a key; the env-var route
+            # is the expert aside, not the headline.
+            pointer = _PROVIDER_KEY_URLS.get(self.selected_provider_key, "")
+            parts = ["An API key is needed — paste it above."]
+            if pointer:
+                parts.append(f"New keys: {pointer}.")
+            env_var = getattr(readiness, "env_var", "") or ""
+            if env_var:
+                parts.append(
+                    f"(Already exported {env_var}? It's picked up "
+                    "automatically.)"
+                )
+            status.update(" ".join(parts))
             return
         if self._clear_requested:
             status.update(
@@ -1796,7 +2056,7 @@ class ProviderStep(SetupStep):
             )
         elif credential_source == "draft":
             status.update(
-                f"A replacement API key is ready for this provider.{unavailable}"
+                f"Key staged — it will be checked when you continue.{unavailable}"
             )
         else:
             status.update(unavailable.strip())
@@ -2462,7 +2722,7 @@ class ProviderStep(SetupStep):
             )
             actions.remove_class("hidden")
         elif ui_draft.api_key:
-            status.update("A replacement API key is ready for this provider.")
+            status.update("Key staged — it will be checked when you continue.")
             actions.remove_class("hidden")
         elif presence.inline_configured:
             status.update("An API key is already configured for this provider.")
@@ -2583,6 +2843,16 @@ class ProviderStep(SetupStep):
     def _on_key_changed(self, event: Input.Changed) -> None:
         if self._updating_connection_controls:
             return
+        # Review TASK-21143 follow-up (P-5): the returned-to-Provider notice
+        # ("this API key was rejected") must not outlive the edit that
+        # addresses it — a stale rejection over a fresh key reads as "still
+        # broken".
+        try:
+            wizard = self.wizard
+            if wizard is not None and hasattr(wizard, "_clear_pinned_step_error"):
+                wizard._clear_pinned_step_error()
+        except Exception:
+            pass
         captured = self._provider_drafts.get(self.selected_provider_key)
         if (
             captured is not None
@@ -2894,6 +3164,46 @@ class ModelStep(SetupStep):
         # instead of leaving a stale custom value in place.
         self._model_id_from_custom_input: bool = False
         self._model_load_generation = 0
+        # TASK-21143 (UAT S-1/M-2): the classified outcome of the discovery
+        # probe rendered for _rendered_discovery_key ("", "authentication",
+        # "connection"). Read via current_probe_failure(), which returns ""
+        # whenever the rendered key no longer matches the live identity —
+        # the same staleness discipline the rest of this step uses.
+        self._rendered_probe_failure: str = ""
+
+    def current_probe_failure(self) -> str:
+        """The failed-probe classification for the CURRENT provider identity.
+
+        Returns:
+            "" when the probe succeeded, never ran, or belongs to a
+            superseded identity; otherwise "authentication" or
+            "connection" (wizard_state.PROVIDER_PROBE_*).
+        """
+        if self._rendered_discovery_key is None:
+            return ""
+        try:
+            current_key = self._current_discovery_key()
+        except Exception:
+            return ""
+        if current_key != self._rendered_discovery_key:
+            return ""
+        return self._rendered_probe_failure
+
+    def confirm_before_advance(self) -> Optional[str]:
+        """UAT M-2: a known-failed probe must not be Next-ed past silently."""
+
+        failure = self.current_probe_failure()
+        if failure == wizard_state.PROVIDER_PROBE_AUTH:
+            return (
+                "The API key failed an authentication check, so this model "
+                "setup is unverified. Continue anyway?"
+            )
+        if failure == wizard_state.PROVIDER_PROBE_CONNECTION:
+            return (
+                "The server couldn't be reached, so this model setup is "
+                "unverified. Continue anyway?"
+            )
+        return None
 
     def invalidate_credential_bound_selection(self) -> None:
         """Drop model state derived under a credential that has rotated."""
@@ -2907,6 +3217,7 @@ class ModelStep(SetupStep):
         self._shown_for_discovery_key = None
         self._selection_discovery_key = None
         self._rendered_discovery_key = None
+        self._rendered_probe_failure = ""
         self._selection_config_precondition = None
         self._manual_decision_active = False
         self.selected_model_id = ""
@@ -2927,7 +3238,7 @@ class ModelStep(SetupStep):
         with Vertical(classes="setup-model"):
             yield Static("Pick a default model", classes="setup-title")
             yield Static("", id="setup-model-provider-line", classes="setup-subtitle")
-            with RadioSet(id="setup-model-choice", classes="setup-choice-list"):
+            with SetupRadioSet(id="setup-model-choice", classes="setup-choice-list"):
                 # disabled=True: an un-disabled placeholder is a real,
                 # toggleable RadioButton -- pressing Enter/Space while it is
                 # the only/highlighted option (e.g. an impatient user, or
@@ -2943,7 +3254,6 @@ class ModelStep(SetupStep):
             yield Button(
                 "Retry", id="setup-model-retry", variant="default", classes="hidden"
             )
-            yield Static("", classes="setup-step-error")
 
     def _current_provider(self) -> tuple[str, str]:
         provider_draft = self._current_provider_draft()
@@ -3325,9 +3635,43 @@ class ModelStep(SetupStep):
             )
         elif discovery_state == "connection_failed":
             category = failure_category or "connection error"
+            # TASK-21143 (UAT M-1/M-4): auth failures point at the fix (the
+            # key lives one step Back — Retry cannot succeed there);
+            # connection failures name the server the user has to start.
+            probe_failure = wizard_state.classify_discovery_failure(
+                discovery_state, category
+            )
+            if probe_failure == wizard_state.PROVIDER_PROBE_AUTH:
+                failed_text = (
+                    "Authentication failed — this API key was rejected. Go "
+                    "Back to fix it, or enter a model ID below."
+                )
+            else:
+                provider_key = getattr(discovery_key, "provider_key", "")
+                endpoint = ""
+                identity = getattr(discovery_key, "connection_identity", ())
+                if len(identity) > 1 and identity[1]:
+                    endpoint = str(identity[1])
+                at_endpoint = f" at {endpoint}" if endpoint else ""
+                if provider_key in ("ollama", "local_ollama"):
+                    failed_text = (
+                        f"Ollama isn't running{at_endpoint}. Start it "
+                        "(ollama serve), then Retry — or enter a model ID "
+                        "below."
+                    )
+                elif provider_key in ("llama_cpp", "local_llamacpp"):
+                    failed_text = (
+                        f"The llama.cpp server isn't reachable{at_endpoint}. "
+                        "Start it, then Retry — or enter a model ID below."
+                    )
+                else:
+                    failed_text = (
+                        f"Couldn't reach the server ({category}). Check it's "
+                        "running, then Retry — or enter a model ID below."
+                    )
             await radio_set.mount(
                 SetupRadioButton(
-                    f"Connection failed ({category}). Retry or enter a model ID below.",
+                    failed_text,
                     id="setup-model-connection-failed",
                     disabled=True,
                 )
@@ -3358,9 +3702,23 @@ class ModelStep(SetupStep):
             )
         if not self.is_attached:
             return
+        # TASK-21143: record the classified outcome for the trust chain
+        # (tracker "!", Model-step confirm gate, Summary override) before
+        # the retry-button lookup's early return can skip it.
+        self._rendered_probe_failure = wizard_state.classify_discovery_failure(
+            discovery_state, failure_category or "connection error"
+        )
         try:
             retry = self.query_one("#setup-model-retry", Button)
-            retry.set_class(discovery_state != "connection_failed", "hidden")
+            # Retry stays for connection failures (start the server, retry);
+            # it is hidden for auth failures — retrying cannot fix a
+            # rejected key, the fix lives one step Back (UAT M-1).
+            retry.set_class(
+                discovery_state != "connection_failed"
+                or self._rendered_probe_failure
+                == wizard_state.PROVIDER_PROBE_AUTH,
+                "hidden",
+            )
         except NoMatches:
             return
         self._rendered_discovery_key = discovery_key
@@ -3737,11 +4095,22 @@ class VoiceSetupStep(SetupStep):
         )
 
     def compose_step(self) -> ComposeResult:
+        # TASK-21148 (UAT V-1/V-2): outcome first. The step used to open on
+        # raw plumbing (endpoint URL, model ids) and hid its human parts —
+        # sample text, "Test and Hear", the default toggle — below the fold
+        # at 40-row terminals with no hint of what "voice" was even for.
+        # Now: purpose line, service choice, try-it controls; the plumbing
+        # lives under an Advanced disclosure with unchanged widget ids.
         draft = self._initial_draft()
         with Vertical(classes="setup-voice"):
             yield Static("Set up a voice", classes="setup-title")
+            yield Static(
+                "Hear replies read aloud — optional. PocketTTS runs locally, "
+                "no account needed; skip with Next if you don't want voice.",
+                classes="setup-subtitle",
+            )
             yield Label("Service", classes="setup-field-label")
-            with RadioSet(id="setup-voice-preset", classes="setup-voice-segmented"):
+            with SetupRadioSet(id="setup-voice-preset", classes="setup-voice-segmented"):
                 yield SetupRadioButton(
                     "PocketTTS",
                     id="setup-voice-preset-pocket",
@@ -3755,31 +4124,6 @@ class VoiceSetupStep(SetupStep):
                     "Custom compatible",
                     id="setup-voice-preset-custom",
                 )
-            yield Label("Endpoint", classes="setup-field-label")
-            yield Input(
-                value=draft.endpoint,
-                id="setup-voice-endpoint",
-                placeholder="http://127.0.0.1:8765/v1/audio/speech",
-            )
-            yield Label("Authentication", classes="setup-field-label")
-            with RadioSet(id="setup-voice-auth", classes="setup-voice-segmented"):
-                yield SetupRadioButton(
-                    "None",
-                    id="setup-voice-auth-none",
-                    value=True,
-                )
-                yield SetupRadioButton("API key", id="setup-voice-auth-key")
-            yield Label("Model", classes="setup-field-label")
-            yield Input(value=draft.model_id, id="setup-voice-model")
-            yield Label("Voice", classes="setup-field-label")
-            yield Input(value=draft.voice_id, id="setup-voice-voice")
-            with Horizontal(classes="setup-voice-output-row"):
-                with Vertical():
-                    yield Label("Format", classes="setup-field-label")
-                    yield Input(value=draft.response_format, id="setup-voice-format")
-                with Vertical():
-                    yield Label("Speed", classes="setup-field-label")
-                    yield Input(value=str(draft.speed), id="setup-voice-speed")
             yield Label("Sample text", classes="setup-field-label")
             yield Input(
                 value=draft.sample_text,
@@ -3797,7 +4141,7 @@ class VoiceSetupStep(SetupStep):
                 variant="primary",
             )
             yield Static(
-                "Needs test. You can save this configuration while offline.",
+                "Not tested yet — that's fine. You can save now and test later.",
                 id="setup-voice-status",
                 classes="setup-subtitle",
             )
@@ -3807,12 +4151,45 @@ class VoiceSetupStep(SetupStep):
             )
             add_key.display = False
             yield add_key
-            yield Checkbox(
+            yield SetupCheckbox(
                 "Use as default",
                 id="setup-voice-default",
                 value=False,
             )
-            yield Static("", classes="setup-step-error")
+            with Collapsible(
+                title="Advanced — endpoint, model & output",
+                collapsed=True,
+                id="setup-voice-advanced",
+            ):
+                yield Label("Endpoint", classes="setup-field-label")
+                yield Input(
+                    value=draft.endpoint,
+                    id="setup-voice-endpoint",
+                    placeholder="http://127.0.0.1:8765/v1/audio/speech",
+                )
+                yield Label("Authentication", classes="setup-field-label")
+                with SetupRadioSet(
+                    id="setup-voice-auth", classes="setup-voice-segmented"
+                ):
+                    yield SetupRadioButton(
+                        "None",
+                        id="setup-voice-auth-none",
+                        value=True,
+                    )
+                    yield SetupRadioButton("API key", id="setup-voice-auth-key")
+                yield Label("Model", classes="setup-field-label")
+                yield Input(value=draft.model_id, id="setup-voice-model")
+                yield Label("Voice", classes="setup-field-label")
+                yield Input(value=draft.voice_id, id="setup-voice-voice")
+                with Horizontal(classes="setup-voice-output-row"):
+                    with Vertical():
+                        yield Label("Format", classes="setup-field-label")
+                        yield Input(
+                            value=draft.response_format, id="setup-voice-format"
+                        )
+                    with Vertical():
+                        yield Label("Speed", classes="setup-field-label")
+                        yield Input(value=str(draft.speed), id="setup-voice-speed")
 
     def _selected_authentication(self) -> str:
         pressed = self.query_one("#setup-voice-auth", RadioSet).pressed_button
@@ -3889,7 +4266,7 @@ class VoiceSetupStep(SetupStep):
         try:
             current = self._draft_from_controls()
         except (TypeError, ValueError):
-            self.query_one(".setup-step-error", Static).update(
+            self.show_step_error(
                 "Enter a valid speed before changing the service preset."
             )
             return
@@ -3932,7 +4309,7 @@ class VoiceSetupStep(SetupStep):
             pass
         try:
             self.query_one("#setup-voice-status", Static).update(
-                "Needs test. You can save this configuration while offline."
+                "Not tested yet — that's fine. You can save now and test later."
             )
         except Exception:
             pass
@@ -3991,7 +4368,7 @@ class VoiceSetupStep(SetupStep):
                 and self._test_in_progress_generation is None
             ):
                 status.update(
-                    "Needs test. You can save this configuration while offline."
+                    "Not tested yet — that's fine. You can save now and test later."
                 )
         except Exception:
             return
@@ -4013,7 +4390,7 @@ class VoiceSetupStep(SetupStep):
             pass
         try:
             self.query_one("#setup-voice-status", Static).update(
-                "Needs test. The sample was cancelled; retry when ready."
+                "Not tested yet — the sample was cancelled. Retry when ready."
             )
         except Exception:
             pass
@@ -4125,13 +4502,13 @@ class VoiceSetupStep(SetupStep):
         except asyncio.CancelledError:
             if generation == self._test_generation:
                 self.query_one("#setup-voice-status", Static).update(
-                    "Needs test. The sample was cancelled; retry when ready."
+                    "Not tested yet — the sample was cancelled. Retry when ready."
                 )
             raise
         except Exception:
             if generation == self._test_generation:
                 self.query_one("#setup-voice-status", Static).update(
-                    "Needs test. The sample failed; review the service and retry."
+                    "Not tested yet — the sample failed. Check the service, then retry."
                 )
             return
         else:
@@ -4325,10 +4702,9 @@ class RagStep(SetupStep):
         with Vertical(classes="setup-rag"):
             yield Static("Search & RAG", classes="setup-title")
             yield Static("", id="setup-rag-status", classes="setup-subtitle")
-            with RadioSet(id="setup-rag-model-choice", classes="setup-choice-list"):
+            with SetupRadioSet(id="setup-rag-model-choice", classes="setup-choice-list"):
                 for model_id in self._embedding_model_ids():
                     yield SetupRadioButton(model_id)
-            yield Static("", classes="setup-step-error")
 
     def _embedding_model_ids(self) -> list[str]:
         app_config = getattr(self.wizard.app_instance, "app_config", {}) or {}
@@ -4353,9 +4729,10 @@ class RagStep(SetupStep):
                 # silently vanishes from the rendered text instead of showing.
                 # TASK-1502: quoted plainly — backticks are markdown idiom and
                 # render literally in a TUI.
-                "RAG needs optional dependencies that aren't installed. Install the "
-                'extras package "tldw_chatbook\\[embeddings_rag]" with your package '
-                "manager, then revisit Settings ▸ RAG. Skipping for now is fine."
+                "RAG lets the assistant search your own documents. Its "
+                "optional dependencies aren't installed — install with: pip "
+                'install "tldw_chatbook\\[embeddings_rag]" — then revisit '
+                "Settings ▸ RAG. Skipping for now is fine."
             )
             try:
                 # TASK-1502: hide the model list outright — a wall of disabled
@@ -4527,8 +4904,8 @@ class SpeechSetupStep(SetupStep):
         with Vertical(classes="setup-speech"):
             yield Static("Speech transcription (optional)", classes="setup-title")
             yield Static(
-                f"Selected: {self._model_label()} — on-device speech-to-text. "
-                "Skip and set this up later from Lab ▸ Models.",
+                f"Selected: {self._model_label()} — on-device "
+                "speech-to-text for dictation. Optional; Next skips it.",
                 classes="setup-subtitle",
             )
             prefill_text = self._prefill_status_text()
@@ -4609,9 +4986,8 @@ class SpeechSetupStep(SetupStep):
                 id="setup-speech-choose-transcribe-cpp-gguf",
                 disabled=self._external_commit_pending,
             )
-            yield Static("", classes="setup-step-error")
             yield Label("Language", classes="setup-field-label")
-            with RadioSet(
+            with SetupRadioSet(
                 id="setup-speech-language-choice", classes="setup-choice-list"
             ):
                 for option in speech_state.speech_language_options(
@@ -4632,7 +5008,7 @@ class SpeechSetupStep(SetupStep):
                         disabled=not option.selectable or self._lifecycle_pending,
                     )
             yield Label("Precision", classes="setup-field-label")
-            with RadioSet(
+            with SetupRadioSet(
                 id="setup-speech-precision-choice", classes="setup-choice-list"
             ):
                 for option in speech_state.speech_precision_options(
@@ -6064,7 +6440,6 @@ class ToolsStep(SetupStep):
                             classes="setup-tool-desc",
                             markup=False,
                         )
-            yield Static("", classes="setup-step-error")
 
     # TASK-1501: plain-language names and one-line descriptions per built-in
     # tool. The ⚠ marks tools that create or change data on disk — a static
@@ -6139,9 +6514,11 @@ class NotesSyncStep(SetupStep):
                 "After setup, use Library → Notes → Add from files… to review a folder before activating sync.",
                 classes="setup-subtitle",
             )
+            # TASK-21140 (UAT G-3): reassurance, not an error — the error
+            # class painted this calm sentence bold red-on-maroon.
             yield Static(
                 "Nothing is activated during first-run setup.",
-                classes="setup-step-error",
+                classes="setup-step-note",
             )
 
     async def commit(self) -> tuple[bool, str]:
@@ -6181,7 +6558,7 @@ class AppearanceStep(SetupStep):
         with Vertical(classes="setup-appearance"):
             yield Static("Appearance", classes="setup-title")
             yield Label("Theme", classes="setup-field-label")
-            with RadioSet(id="setup-theme-choice", classes="setup-choice-list"):
+            with SetupRadioSet(id="setup-theme-choice", classes="setup-choice-list"):
                 yield from self._theme_buttons(self._theme_shortlist())
             yield Button(
                 "Show all themes…",
@@ -6189,11 +6566,17 @@ class AppearanceStep(SetupStep):
                 classes="setup-tertiary-button",
             )
             yield Label("Splash screen card", classes="setup-field-label")
-            with RadioSet(id="setup-splash-choice", classes="setup-choice-list"):
+            with SetupRadioSet(id="setup-splash-choice", classes="setup-choice-list"):
                 yield SetupRadioButton("Surprise me (random)", value=True)
-                for card_name in self._card_names()[:10]:
-                    yield SetupRadioButton(card_name)
-            yield Static("", classes="setup-step-error")
+                # TASK-21149 (UAT G-5): human names in the list; the raw
+                # card id rides on the button (same pattern as _theme_name)
+                # so commits never see display text.
+                yield from self._card_buttons(self._card_names()[:10])
+            yield Button(
+                "Show all cards…",
+                id="setup-splash-show-all",
+                classes="setup-tertiary-button",
+            )
 
     def _theme_buttons(self, names: list[str]):
         """Radio rows for theme names, marking the persisted one "(current)".
@@ -6299,14 +6682,53 @@ class AppearanceStep(SetupStep):
                 logger.debug("Theme preview revert failed", exc_info=True)
             self._preview_original = None
 
+    @staticmethod
+    def _card_display_name(card_name: str) -> str:
+        """Human name for a snake_case splash card id (UAT G-5)."""
+        return card_name.replace("_", " ").strip().title()
+
+    def _card_buttons(self, names: list[str]):
+        """Radio rows for splash cards, pressing the retained selection.
+
+        Args:
+            names: Raw snake_case card ids in display order.
+
+        Yields:
+            SetupRadioButton rows with the human name as label and the raw
+            id riding as ``_card_name`` (Qodo review: without value= here,
+            show-all rebuilds and draft restoration rendered every card
+            unpressed even when one was selected).
+        """
+        for card_name in names:
+            button = SetupRadioButton(
+                self._card_display_name(card_name),
+                value=bool(card_name)
+                and card_name == self.selected_splash_card,
+            )
+            button._card_name = card_name
+            yield button
+
+    @on(Button.Pressed, "#setup-splash-show-all")
+    async def _on_show_all_cards(self, event: Button.Pressed) -> None:
+        """UAT G-5: parity with themes — the first ten cards are a teaser."""
+        event.stop()
+        radio_set = self.query_one("#setup-splash-choice", RadioSet)
+        keep_surprise = SetupRadioButton(
+            "Surprise me (random)", value=not self.selected_splash_card
+        )
+        await radio_set.remove_children()
+        await radio_set.mount(keep_surprise)
+        await radio_set.mount_all(self._card_buttons(self._card_names()))
+        self.query_one("#setup-splash-show-all", Button).display = False
+
     @on(RadioSet.Changed, "#setup-splash-choice")
     def _on_card(self, event: RadioSet.Changed) -> None:
-        label = str(event.pressed.label)
-        if label.startswith("Surprise me"):
+        card_name = getattr(event.pressed, "_card_name", "")
+        if not card_name:
             self.selected_splash_card = ""
             self._picked_surprise_me = True
         else:
-            self.selected_splash_card = label
+            self.selected_splash_card = card_name
             self._picked_surprise_me = False
 
     async def commit(self) -> tuple[bool, str]:
@@ -6370,25 +6792,32 @@ class WelcomeStep(SetupStep):
     def compose_step(self) -> ComposeResult:
         with Vertical(classes="setup-welcome"):
             yield Static("Welcome to tldw chatbook", classes="setup-title")
+            # TASK-21149 (UAT W-3/W-2): say what the app IS before asking
+            # jargon questions, and give each path an honest time estimate.
             yield Static(
-                "Let's get you set up. Pick a path — everything here can be "
-                "changed later in Settings, and every step can be skipped.",
+                "Chat with cloud or local AI models, keep notes, and work "
+                "with your own documents — all in your terminal.",
                 classes="setup-subtitle",
             )
-            with RadioSet(id="setup-track-choice", classes="setup-choice-list"):
+            yield Static(
+                "Quick takes about 2 minutes; Full about 10. Everything can "
+                "be changed later in Settings, and every step can be "
+                "skipped with Next.",
+                classes="setup-subtitle",
+            )
+            with SetupRadioSet(id="setup-track-choice", classes="setup-choice-list"):
                 # TASK-2154.9 (FR-02): name the steps the tracker will show
                 # (Welcome is this one; Provider, Model and Summary follow)
                 # so the "Step 1 of 4" count is not a surprise after picking
                 # what read as a two-item "provider & model" track.
                 yield SetupRadioButton(
-                    "Quick setup — provider, model, voice & summary (recommended)",
+                    "Quick setup — provider, model, voice, protection (recommended)",
                     value=True,
                     id="setup-track-quick",
                 )
                 yield SetupRadioButton(
                     "Full setup — configure everything", id="setup-track-full"
                 )
-            yield Static("", classes="setup-step-error")
 
     def get_step_data(self) -> Dict[str, Any]:
         return {"track": self.chosen_track()}
@@ -6429,7 +6858,38 @@ class ProtectKeysStep(SetupStep):
                 "Set a password", id="setup-protect-set-password", variant="primary"
             )
             yield Static("", id="setup-protect-status", classes="setup-probe-status")
-            yield Static("", classes="setup-step-error")
+
+    def on_show(self) -> None:
+        """Render the nothing-to-do state while no key exists (UAT N-6).
+
+        TASK-21148: Protect is always on the track now (a stable step
+        total beats a shorter one), so a keyless run reaches this step —
+        say why there is nothing to do instead of offering a password for
+        keys that don't exist.
+        """
+        super().on_show()
+        key_entered = bool(getattr(self.wizard, "key_entered", False))
+        stored = False
+        try:
+            stored = wizard_state.stored_plaintext_key_present(
+                getattr(self.wizard.app_instance, "app_config", {}) or {}
+            )
+        except Exception:
+            logger.debug("Protect stored-key probe skipped", exc_info=True)
+        has_keys = key_entered or stored
+        try:
+            button = self.query_one("#setup-protect-set-password", Button)
+            status = self.query_one("#setup-protect-status", Static)
+        except NoMatches:
+            return
+        button.display = has_keys
+        if not has_keys and not self.encryption_enabled:
+            status.update(
+                "No API keys saved yet — nothing to protect. This step "
+                "matters once a key is stored; Next continues."
+            )
+        elif has_keys and not self.encryption_enabled:
+            status.update("")
 
     @on(Button.Pressed, "#setup-protect-set-password")
     def _on_set_password(self) -> None:
@@ -6543,6 +7003,19 @@ class SummaryStep(SetupStep):
             # literal "[...]" -- Static.update() otherwise parses that as Rich
             # markup and silently drops it from the rendered text.
             yield Static("", id="setup-summary-rows", markup=False)
+            # TASK-21146 (UAT H-1): the online model-list consent belongs in
+            # setup, not as a surprise modal the moment "Start chatting"
+            # lands in Console. Default OFF (deny-by-default, same privacy
+            # posture as the modal); shown only while no consent answer is
+            # recorded (see _render_rows), so re-runs never re-ask. The
+            # answer persists on completion (commit) via the exact
+            # [model_catalog] contract _handle_model_catalog_consent writes.
+            yield SetupCheckbox(
+                "Keep model lists fresh — checks your configured providers "
+                "online at startup",
+                id="setup-summary-model-catalog-consent",
+                classes="hidden",
+            )
             yield Static(
                 "", id="setup-summary-footer", classes="setup-subtitle", markup=False
             )
@@ -6641,6 +7114,27 @@ class SummaryStep(SetupStep):
         )
         from tldw_chatbook.UI.Wizards.first_run_setup_state import build_summary_rows
 
+        # TASK-21146 (UAT H-1): offer the model-list consent only while no
+        # answer is recorded — a rerun after any answer never re-asks.
+        try:
+            from tldw_chatbook.LLM_Provider_Catalog.model_catalog_settings import (
+                load_model_catalog_settings,
+            )
+
+            consent_recorded = load_model_catalog_settings(
+                config
+            ).refresh_consent_recorded
+        except Exception:
+            consent_recorded = True  # fail closed: never re-ask on a bad read
+        try:
+            consent_box = self.query_one(
+                "#setup-summary-model-catalog-consent", Checkbox
+            )
+            consent_box.set_class(consent_recorded, "hidden")
+            self._model_catalog_consent_offered = not consent_recorded
+        except NoMatches:
+            self._model_catalog_consent_offered = False
+
         rows = build_summary_rows(
             config,
             dict(os.environ),
@@ -6651,12 +7145,28 @@ class SummaryStep(SetupStep):
         row_states = {row.label: row.state for row in rows}
         from tldw_chatbook.UI.Wizards.first_run_setup_state import (
             ROW_CONFIGURED,
+            apply_probe_failure_to_summary_rows,
             build_first_run_summary_actions,
         )
+
+        # TASK-21143 (UAT S-1): build_summary_rows reads the config file,
+        # where a saved-but-rejected key is indistinguishable from a working
+        # one — the exact incident where the summary said "✓ Provider"
+        # minutes after the probe got a 401. Overlay what the wizard's own
+        # probe learned, and let it flip the primary action to
+        # review_provider (the affordance that already existed for the
+        # never-saved case).
+        probe_failure = ""
+        try:
+            probe_failure = self.wizard.provider_probe_failure()
+        except Exception:
+            logger.debug("Summary probe-failure lookup skipped", exc_info=True)
+        rows = apply_probe_failure_to_summary_rows(rows, probe_failure)
 
         primary, _, _ = build_first_run_summary_actions(
             provider_configured=row_states.get("Provider") == ROW_CONFIGURED,
             model_configured=row_states.get("Default model") == ROW_CONFIGURED,
+            provider_probe_failed=bool(probe_failure),
         )
         self.provider_model_complete = primary == "start_chatting"
         primary_button = self.query_one("#setup-exit-chat", Button)
@@ -6710,7 +7220,8 @@ class SummaryStep(SetupStep):
             config_path_text = "(unknown — see Settings ▸ Diagnostics)"
         try:
             self.query_one("#setup-summary-footer", Static).update(
-                f"Config file: {config_path_text}\n"
+                "Config file: "
+                f"{wizard_state.middle_truncate_path(config_path_text, max(40, (self.size.width or 120) - 18))}\n"
                 "Re-run setup any time: Settings ▸ Diagnostics ▸ Run setup wizard."
             )
         except Exception:
@@ -6752,6 +7263,42 @@ class SummaryStep(SetupStep):
         # Next button are unchanged.
         self.wizard.advance_programmatically()
 
+    def preferred_focus(self) -> Optional[Widget]:
+        """Land on the primary exit so Enter finishes setup (TASK-21146).
+
+        Without this, whichever widget the async row-render reveals first
+        (the consent checkbox) would race the step-change focus fix.
+        """
+        try:
+            return self.query_one("#setup-exit-chat", Button)
+        except NoMatches:
+            return None
+
+    async def commit(self) -> tuple[bool, str]:
+        """Persist the model-list consent answer, when it was offered.
+
+        TASK-21146 (UAT H-1): mirrors _handle_model_catalog_consent's exact
+        [model_catalog] contract — the answer is recorded either way, and
+        an unchecked box (the default) also disables auto refresh, so the
+        Console modal never fires after a completed wizard while the
+        skip-the-wizard path keeps the existing consent flow untouched.
+        """
+        if not getattr(self, "_model_catalog_consent_offered", False):
+            return True, ""
+        try:
+            allowed = self.query_one(
+                "#setup-summary-model-catalog-consent", Checkbox
+            ).value
+        except NoMatches:
+            return True, ""
+        section: Dict[str, Any] = {"refresh_consent_recorded": True}
+        if not allowed:
+            section["auto_refresh_enabled"] = False
+        ok = await self.wizard.commit_config({"model_catalog": section})
+        if not ok:
+            return False, "Saving the model-list preference failed."
+        return True, ""
+
     def get_step_data(self) -> Dict[str, Any]:
         return {"exit_route": self.exit_route}
 
@@ -6762,8 +7309,56 @@ class _ProviderSaveStatus(Static):
     can_focus = True
 
 
+class SetupWizardNavigation(WizardNavigation):
+    """Footer where Tab reaches Next before the abandon action (UAT N-2).
+
+    TASK-21142: Textual's focus order is VISUAL order — siblings sort by
+    ``_focus_sort_key`` = (y, x), not DOM order — so with the stock
+    layout (Cancel far left) Tab from step content always landed on the
+    abandon action first, and a web-form "Tab, Enter" reflex opened the
+    exit dialog. A DOM reorder alone changes nothing (measured: the chain
+    stayed Cancel-first). The fix is the Windows-wizard footer
+    convention: progress text docked left, and a right-aligned
+    [← Back] [Next →] [Exit] cluster — visually conventional, and the
+    (y, x) sort then yields Back → Next → Exit, with Next as the first
+    enabled stop after step content. Layout lives in the
+    ``.setup-navigation`` rules in _wizards.tcss; BaseWizard stays
+    unmodified per this module's house rule.
+    """
+
+    def compose(self) -> ComposeResult:
+        yield Static("", id="wizard-progress", classes="wizard-progress-text")
+        yield Button("← Back", id="wizard-back", variant="default", disabled=True)
+        yield Button("Next →", id="wizard-next", variant="default", disabled=True)
+        yield Button("Cancel", id="wizard-cancel", variant="error")
+
+
 class SetupWizardContainer(WizardContainer):
     """Navigates over the active-step subset; commits on Next via one worker."""
+
+    # TASK-21142 (UAT N-1): Enter advances whenever the focused widget does
+    # not consume it (Buttons press, OptionLists select, Inputs submit —
+    # see _advance_on_input_submit; SetupRadioSet requests an advance).
+    # Merges with WizardContainer's escape/ctrl+b/ctrl+n bindings.
+    BINDINGS = [Binding("enter", "next", "Next step", show=False)]
+
+    @on(SetupRadioSet.AdvanceRequested)
+    def _on_radio_advance_requested(
+        self, event: SetupRadioSet.AdvanceRequested
+    ) -> None:
+        event.stop()
+        self.action_next()
+
+    @on(Input.Submitted)
+    def _advance_on_input_submit(self, event: Input.Submitted) -> None:
+        """Enter in a step Input means "continue" (UAT N-1) — with one
+        exception: the provider key field, where Enter launches the
+        credential probe (TASK-1506's live-but-never-blocking check).
+        """
+        if event.input.id == "setup-provider-api-key":
+            return
+        event.stop()
+        self.action_next()
 
     def __init__(
         self,
@@ -6846,6 +7441,7 @@ class SetupWizardContainer(WizardContainer):
         )
         self.skipped_step_reasons: dict[str, str] = {}
         self._advancing = False
+        self._advance_confirmed = False
         self._failure_action_running = False
         self._failure_action: _SetupFailureAction | None = None
         # F3 hardening: guards _dismiss_screen/_finalize against ever
@@ -7491,7 +8087,18 @@ class SetupWizardContainer(WizardContainer):
             classes="setup-step-error hidden",
             markup=False,
         )
-        yield WizardNavigation(classes="wizard-navigation")
+        # TASK-21140 (UAT W/G findings): the one step-error surface, pinned
+        # between the scrollable step body and the nav bar so a refused Next
+        # is always explained on screen. Steps' show_step_error() renders
+        # here; the old per-step tail Statics sat below the fold of every
+        # overflowing step and made commit failures invisible.
+        yield Static(
+            "",
+            id="setup-step-error-pinned",
+            classes="setup-step-error hidden",
+            markup=False,
+        )
+        yield SetupWizardNavigation(classes="wizard-navigation setup-navigation")
 
     def _post_mount_hook(self) -> None:
         """Refresh the initial active track after all steps have composed.
@@ -7545,13 +8152,13 @@ class SetupWizardContainer(WizardContainer):
                 "Close setup and stop showing it at launch. You can rerun it "
                 "from Settings ▸ Diagnostics."
             )
-            hints.update("Ctrl+N next · Ctrl+B back · Esc skip setup")
+            hints.update("Enter / Ctrl+N next · Ctrl+B back · Esc skip setup")
         else:
             cancel.label = "Exit setup"
             cancel.tooltip = (
                 "Save completed steps and continue later from Settings ▸ Diagnostics."
             )
-            hints.update("Ctrl+N next · Ctrl+B back · Esc exit setup")
+            hints.update("Enter / Ctrl+N next · Ctrl+B back · Esc exit setup")
 
     def _restore_resume_target(self) -> None:
         """Show a validated resume target and clear its marker after paint."""
@@ -7695,8 +8302,10 @@ class SetupWizardContainer(WizardContainer):
                     appearance_step._picked_surprise_me = False
                     self._restore_radio_selection(
                         appearance_step.query_one("#setup-splash-choice", RadioSet),
+                        # Qodo review fix: labels are humanized (TASK-21149);
+                        # match on the raw-id rider, mirroring _theme_name.
                         lambda button: (
-                            str(button.label) == splash_card
+                            getattr(button, "_card_name", "") == splash_card
                             if splash_card
                             else str(button.label).startswith("Surprise me")
                         ),
@@ -7977,6 +8586,26 @@ class SetupWizardContainer(WizardContainer):
             return
         step_index = self._resolve_visible_index(step_index)
         super().show_step(step_index)
+        self._clear_pinned_step_error()
+        # TASK-21143 (UAT P-5): the step that owns the fix must show the
+        # failure — returning to Provider after a failed probe explains
+        # what went wrong right where the key/endpoint is edited.
+        try:
+            shown = self.steps[self.current_step]
+        except IndexError:
+            shown = None
+        if isinstance(shown, ProviderStep):
+            failure = self.provider_probe_failure()
+            if failure == wizard_state.PROVIDER_PROBE_AUTH:
+                shown.show_step_error(
+                    "The last connection check failed: this API key was "
+                    "rejected. Update it, then continue."
+                )
+            elif failure == wizard_state.PROVIDER_PROBE_CONNECTION:
+                shown.show_step_error(
+                    "The last connection check couldn't reach the server. "
+                    "Check it's running, then continue."
+                )
         self._sync_exit_controls()
         try:
             current_step = self.steps[self.current_step]
@@ -8032,9 +8661,17 @@ class SetupWizardContainer(WizardContainer):
     def _rebuild_progress(self) -> None:
         """Refresh the setup-specific tracker from the active-track projection."""
         try:
+            # TASK-21143 (UAT N-7): a visited Provider/Model pair whose
+            # probe failed shows "!" instead of the ✓ users read as "OK".
+            attention: frozenset[str] = frozenset()
+            if self.provider_probe_failure():
+                attention = frozenset(
+                    {wizard_state.STEP_PROVIDER, wizard_state.STEP_MODEL}
+                )
             items = wizard_state.build_setup_progress(
                 self.active_ids,
                 self._active_position(self.current_step or 0),
+                attention_ids=attention,
             )
             self.query_one(".wizard-progress", SetupWizardProgress).set_items(items)
         except Exception:
@@ -8429,11 +9066,80 @@ class SetupWizardContainer(WizardContainer):
         method's docstring for why). This is the extracted guard + worker
         dispatch body shared by both callers; the real Next button's dispatch
         semantics (the prevent_default() suppression) are unchanged.
+
+        TASK-21143 (UAT M-2): a step that knows its state is broken can gate
+        the advance behind an explicit confirmation (confirm_before_advance).
+        The one-shot ``_advance_confirmed`` flag lets the dialog's "Continue
+        anyway" re-enter this method exactly once without re-asking.
         """
+        # Consume the one-shot confirmation UP FRONT (review TASK-21143
+        # follow-up): if the dialog's resolution re-enters while an early
+        # guard trips, a surviving flag would let the NEXT press bypass the
+        # gate silently. Losing a confirmation to a blocked re-entry only
+        # re-asks — the safe direction for a trust gate.
+        confirmed = self._advance_confirmed
+        self._advance_confirmed = False
         if self._advancing or self._failure_action_running or not self.can_proceed:
             return
+        if not confirmed:
+            try:
+                step = self.steps[self.current_step]
+            except IndexError:
+                step = None
+            if isinstance(step, SetupStep):
+                prompt = step.confirm_before_advance()
+                if prompt:
+                    self._push_advance_confirmation(prompt)
+                    return
         self._set_advancing(True)
         self.run_worker(self._advance(), exclusive=True, group="setup-wizard-advance")
+
+    def _push_advance_confirmation(self, prompt: str) -> None:
+        """Ask before committing a step that reports itself broken."""
+
+        dialog = _SettlingGuardedConfirmationDialog(
+            title="Continue anyway?",
+            message=prompt,
+            confirm_label="Continue anyway",
+            cancel_label="Keep editing",
+        )
+
+        def _resolve(confirmed: bool | None) -> None:
+            if confirmed:
+                self._advance_confirmed = True
+                self.advance_programmatically()
+
+        self.app.push_screen(dialog, _resolve)
+
+    def provider_probe_failure(self) -> str:
+        """The Model step's classified probe failure for the live identity.
+
+        TASK-21143: single source for the trust chain — the tracker's "!"
+        state, the Provider step's returned-to notice, and the Summary's
+        row/action override all read this. Returns "" whenever the Model
+        step can't vouch for a CURRENT failure (never probed, superseded
+        identity, step missing).
+        """
+        index = self._step_index_for_id(wizard_state.STEP_MODEL)
+        if index is None:
+            return ""
+        step = self.steps[index]
+        if not isinstance(step, ModelStep):
+            return ""
+        try:
+            return step.current_probe_failure()
+        except Exception:
+            return ""
+
+    def _clear_pinned_step_error(self) -> None:
+        """Empty and hide the pinned error strip (on every step change)."""
+
+        try:
+            strip = self.query_one("#setup-step-error-pinned", Static)
+        except NoMatches:
+            return
+        strip.update("")
+        strip.add_class("hidden")
 
     def _set_advancing(self, active: bool) -> None:
         """Fence navigation while a step's config handoff is settling."""
@@ -8449,7 +9155,10 @@ class SetupWizardContainer(WizardContainer):
                     return
                 ok, error = await step.commit()
                 if not ok:
-                    step.show_step_error(f"{error}  (Retry, or Skip this step.)")
+                    # TASK-21140 (UAT F-1 follow-on): the old suffix offered
+                    # "Skip this step", a control that does not exist. Name
+                    # only affordances that are on screen.
+                    step.show_step_error(f"{error}  Retry with Next, or go Back.")
                     return
             if isinstance(step, WelcomeStep):
                 self.select_track(step.chosen_track())
@@ -9203,14 +9912,41 @@ class FirstRunSetupWizard(WizardScreen):
         # TASK-1505: the wizard's keys are otherwise undiscoverable — one
         # quiet, always-visible line names them.
         yield Static(
-            "Ctrl+N next · Ctrl+B back · Esc skip setup",
+            "Enter / Ctrl+N next · Ctrl+B back · Esc skip setup",
             id="setup-key-hints",
             classes="setup-key-hints",
         )
+        # TASK-21148 (UAT Z-1/Z-2): stock macOS Terminal is 80x24 — every
+        # step still works there, but content scrolls hard and nothing used
+        # to say so. One quiet line names the fix.
+        yield Static("", id="setup-size-hint", classes="setup-size-hint hidden")
 
     def on_mount(self) -> None:
         if not self.rerun:
             self._persist_started_flag()
+        self._sync_size_hint()
+
+    def on_resize(self, event: object = None) -> None:
+        self._sync_size_hint()
+
+    def _sync_size_hint(self) -> None:
+        """Show the enlarge-terminal nudge below ~100x30 (UAT Z-2)."""
+        try:
+            hint = self.query_one("#setup-size-hint", Static)
+        except NoMatches:
+            return
+        width, height = self.size.width, self.size.height
+        small = 0 < width < 100 or 0 < height < 30
+        if small:
+            hint.update(
+                f"Small terminal ({width}×{height}) — setup works best at "
+                "100×30 or larger. Everything still works; steps may scroll."
+            )
+        hint.set_class(not small, "hidden")
+        # Styles-level too: hosts without the app stylesheet (bare test
+        # harnesses) have no `.hidden` rule, and a docked row that only
+        # PRETENDS to hide shifts every geometry below it.
+        hint.display = small
 
     @work(thread=True, group="setup-wizard-started-flag")
     def _persist_started_flag(self) -> None:

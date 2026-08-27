@@ -12,6 +12,7 @@ from collections import OrderedDict, deque
 from dataclasses import dataclass, field, fields, is_dataclass, replace
 from datetime import datetime, timezone
 from enum import Enum
+from types import MappingProxyType
 from typing import TYPE_CHECKING, Any, Callable, Iterable, Mapping, Protocol, Sequence
 from uuid import uuid4
 
@@ -102,7 +103,13 @@ from tldw_chatbook.Chat.console_turn_preparation import (
 from tldw_chatbook.Chat.console_transaction_contribution import (
     ConsoleTransactionContribution,
 )
-from tldw_chatbook.Chat.console_exchange_capture import capture_to_blob
+from tldw_chatbook.Chat.console_exchange_capture import CaptureDetail, capture_to_blob
+from tldw_chatbook.Chat.console_capture_policy_repository import (
+    CapturePolicyReadResult,
+    CapturePolicyReadStatus,
+    CapturePolicyWriteStatus,
+    ConsoleCapturePolicyRepository,
+)
 from tldw_chatbook.Chat.console_roleplay_identity import (
     ConsolePresentationContext,
     effective_user_display_name,
@@ -183,6 +190,21 @@ class _CharacterEmoteCapture:
 
 class ConsoleDispatchSettlementError(RuntimeError):
     """An owned dispatch terminal could not commit atomically."""
+
+
+class ConsoleDurableAcceptanceRetired(RuntimeError):
+    """The preparation was retired underneath an in-flight postcommit effect.
+
+    TASK-22587: closing a Console session retires its durable preparation, so
+    an effect still in flight finds its fingerprint gone. That is an ORDINARY
+    consequence of the user closing a chat, and it is not the same event as a
+    fingerprint that changed unexpectedly -- which is a bug, and which must
+    keep raising the bare ``RuntimeError`` the postcommit APIs already document.
+
+    Retirement is decidable rather than inferred: ``retire_durable_acceptance``
+    leaves a tombstone carrying the SAME fingerprint, so a matching tombstone
+    proves the preparation was retired rather than mutated.
+    """
 
 
 def _refuse_roleplay_projection_write(**_kwargs: object) -> bool:
@@ -681,6 +703,43 @@ class ContinuationDurabilityResult:
     reason: str
 
 
+class CapturePolicyStaleError(RuntimeError):
+    """A capture-policy write lost its process-local revision race."""
+
+
+class CapturePurgeStaleError(RuntimeError):
+    """A staged capture purge lost its process-local revision race."""
+
+
+@dataclass(frozen=True, slots=True)
+class CapturePolicyState:
+    """Process-local capture policy owned by one Console session."""
+
+    next_detail: CaptureDetail | None
+    conversation_detail: CaptureDetail | None
+    next_revision: int
+    policy_revision: int
+    capture_revision: int
+    save_pending: bool
+
+
+@dataclass(frozen=True, slots=True)
+class StagedCapturePurge:
+    """Precomputed live/cache replacements for one Full-capture purge."""
+
+    session_id: str
+    conversation_id: str | None
+    expected_revision: int
+    durable_keys: frozenset[tuple[str, str, int]]
+    message_swaps: tuple[tuple[ConsoleChatMessage, tuple["ExchangeCapture", ...]], ...]
+    blob_cache: tuple[
+        tuple[str, Mapping[tuple[str, int, str], bytes]], ...
+    ]
+    abandoned_tags: tuple[tuple[str, frozenset[str]], ...]
+    capture_revisions: tuple[tuple[ConsoleChatSession, int], ...]
+    removed_count: int
+
+
 def _utc_now_iso() -> str:
     return datetime.now(timezone.utc).isoformat()
 
@@ -737,6 +796,11 @@ class ConsoleChatSession:
     #: Live opaque identity for the one-shot slot. Every write, including
     #: clearing or re-arming the same text, advances this token.
     one_shot_prefill_revision: int = 0
+    capture_detail_override: CaptureDetail | None = None
+    next_capture_detail: CaptureDetail | None = None
+    next_capture_detail_revision: int = 0
+    capture_revision: int = 0
+    capture_policy_save_pending: bool = False
     #: RAG retrieval scope (task-9) for a not-yet-persisted session -- see
     #: ``SessionScopeHolder``. ``persist_session_if_needed`` flushes it
     #: through to durable storage exactly once, at first persistence.
@@ -942,6 +1006,15 @@ class ConsoleChatStore:
         self._active_session_epoch = 0
         self._speech_preference_epoch_sequence = 0
         self._sessions: dict[str, ConsoleChatSession] = {}
+        self._capture_policy_revision = 0
+        self._capture_policy_lock = threading.RLock()
+        self._capture_policy_mutation: object | None = None
+        capture_policy_db = getattr(persistence, "db", None)
+        self.capture_policy_repository = (
+            ConsoleCapturePolicyRepository(capture_policy_db)
+            if capture_policy_db is not None
+            else None
+        )
         # Task 13: one app-lifetime, process-memory preparation owner per
         # session.  This state deliberately belongs to the store rather than
         # a mounted Console screen so navigation cannot lose or duplicate a
@@ -966,6 +1039,11 @@ class ConsoleChatStore:
         self._durable_fingerprint_by_preparation: dict[
             str, ConsoleDurableAcceptanceFingerprint
         ] = {}
+        #: Preparations whose postcommit sequence has begun and has not yet
+        #: been released. Their tombstones are the ONLY proof that an
+        #: in-flight effect's preparation was retired rather than mutated,
+        #: so FIFO eviction must not reclaim them first (TASK-22587).
+        self._durable_active_postcommit: set[str] = set()
         self._durable_tombstones: OrderedDict[str, _ConsoleDurableTombstone] = (
             OrderedDict()
         )
@@ -990,15 +1068,6 @@ class ConsoleChatStore:
         self._tool_markers_by_session: dict[
             str, list[tuple[str | None, ConsoleChatMessage]]
         ] = {}
-        #: TASK-21121: single-slot VERIFIED memo behind
-        #: ``newest_change_review_run_id`` --
-        #: ``(session_id, view_list, len(view_list), newest_run_id)``. Holding
-        #: the view LIST itself (not its ``id()``) is what makes the identity
-        #: check sound: a memoized list can never be freed and have its address
-        #: recycled under us. See that method for the invariant this rests on.
-        self._newest_change_review_memo: (
-            tuple[str, list[ConsoleChatMessage], int, str | None] | None
-        ) = None
         self._message_session_index: dict[str, str] = {}
         #: Full conversation tree -- ALL branches, on- and off-path. ``_nodes``
         #: maps a native id to the LIVE ``ConsoleChatMessage`` (never a copy --
@@ -1080,6 +1149,8 @@ class ConsoleChatStore:
         # disappears some OTHER way is not itself proof this cache's entry
         # for it goes away too.
         self._exchange_blob_cache: dict[str, dict[tuple[str, int, str], bytes]] = {}
+        self._capture_quiescence_lock = threading.RLock()
+        self._capture_quiescent_sessions: set[str] = set()
         # Ephemeral fence for issued speech snapshots. It deliberately lives
         # outside ConsoleChatMessage so it is neither persisted nor restored.
         self._message_speech_revisions: dict[str, int] = {}
@@ -1519,7 +1590,6 @@ class ConsoleChatStore:
         ):
             return False
         self._messages_by_session.pop(session_id, None)
-        self._drop_newest_change_review_memo(session_id)
         self._tool_markers_by_session.pop(session_id, None)
         self._nodes_by_session.pop(session_id, None)
         self._children_by_parent.pop(session_id, None)
@@ -1636,6 +1706,7 @@ class ConsoleChatStore:
             activate=activate,
         )
         session.persisted_conversation_id = str(persisted_conversation_id)
+        self.hydrate_session_capture_policy(session.id)
         self._hydrate_dispatch_recovery(
             session.id,
             str(persisted_conversation_id),
@@ -1782,6 +1853,22 @@ class ConsoleChatStore:
         second manual turn, and a queued follow-up is only *submitted* from
         ``_drain_waiting``, which runs after the previous turn reaches a
         terminal status -- by which point settlement has popped this owner.
+
+        Args:
+            session_id: Native Console session id. ``None`` -- and equally an
+                empty string or any non-``str`` -- means "no session to have
+                an owner", which ``dispatch_recovery_for_session`` answers
+                with ``None``, so the gate is open. Callers on a screen with
+                no active session therefore need no guard of their own.
+
+        Returns:
+            ``True`` only when that session has a recovery owner the user is
+            currently being shown a card for AND its kind is one of the five
+            unresolved source-local kinds above. ``False`` for no owner, for
+            a healthy in-flight owner (``recovery_needed=False``), and for
+            the three kinds outside that set (``REMOTE_ACCEPTED``,
+            ``REMOTE_DISPATCH_STARTED``, ``CONTINUATION``) -- i.e. the send
+            is admitted.
         """
 
         recovery = self.dispatch_recovery_for_presentation(session_id)
@@ -2766,7 +2853,6 @@ class ConsoleChatStore:
             self._character_emote_captures.pop(message_id, None)
 
         self._messages_by_session.pop(session_id, None)
-        self._drop_newest_change_review_memo(session_id)
         self._tool_markers_by_session.pop(session_id, None)
         self._nodes_by_session.pop(session_id, None)
         self._children_by_parent.pop(session_id, None)
@@ -3743,6 +3829,7 @@ class ConsoleChatStore:
         self._session_or_raise(session_id)
         with self._preparation_lock:
             self._require_durable_fingerprint_locked(preparation_id, fingerprint)
+            self._durable_active_postcommit.add(preparation_id)
             existing = self._durable_effects_by_preparation.get(preparation_id)
             if existing is not None:
                 if (
@@ -3772,6 +3859,30 @@ class ConsoleChatStore:
         with self._preparation_lock:
             self._require_durable_fingerprint_locked(preparation_id, fingerprint)
             return self._durable_effects_by_preparation.get(preparation_id)
+
+    def durable_completed_effects_for(
+        self,
+        preparation_id: str,
+        *,
+        fingerprint: ConsoleDurableAcceptanceFingerprint,
+    ) -> frozenset[str]:
+        """Return completed effect names from the live ledger OR a tombstone.
+
+        TASK-22587: recovery needs to know whether the checkpoint transition
+        ran, and it asks *after* a failure -- by which point the user may have
+        closed the chat and retired the preparation. Reading the ledger
+        directly raises there, which masked the original failure. The tombstone
+        retains `completed` for exactly this reason, so the answer survives a
+        close instead of becoming an exception.
+        """
+
+        with self._preparation_lock:
+            if self._durable_retired_locked(preparation_id, fingerprint):
+                tombstone = self._durable_tombstones.get(preparation_id)
+                return tombstone.completed if tombstone is not None else frozenset()
+            self._require_durable_fingerprint_locked(preparation_id, fingerprint)
+            effects = self._durable_effects_by_preparation.get(preparation_id)
+            return effects.completed if effects is not None else frozenset()
 
     def durable_turn_commit_for(
         self,
@@ -3839,6 +3950,12 @@ class ConsoleChatStore:
         """Release a failed effect claim without recording completion."""
 
         with self._preparation_lock:
+            if self._durable_retired_locked(preparation_id, fingerprint):
+                # TASK-22587: `retire_durable_acceptance` already dropped every
+                # in-flight key for this preparation, so there is nothing left
+                # to release and nothing left to protect. Raising here would
+                # only mask the failure that sent us down the release path.
+                return
             self._require_durable_fingerprint_locked(preparation_id, fingerprint)
             self._durable_effects_in_flight.discard((preparation_id, effect_name))
 
@@ -3850,7 +3967,21 @@ class ConsoleChatStore:
         if not isinstance(fingerprint, ConsoleDurableAcceptanceFingerprint):
             raise TypeError("fingerprint must be ConsoleDurableAcceptanceFingerprint")
         if self._durable_fingerprint_by_preparation.get(preparation_id) != fingerprint:
+            if self._durable_retired_locked(preparation_id, fingerprint):
+                raise ConsoleDurableAcceptanceRetired(
+                    "Durable acceptance was retired."
+                )
             raise RuntimeError("Durable postcommit fingerprint changed.")
+
+    def _durable_retired_locked(
+        self,
+        preparation_id: str,
+        fingerprint: ConsoleDurableAcceptanceFingerprint,
+    ) -> bool:
+        """True when this exact preparation was retired, not mutated."""
+
+        tombstone = self._durable_tombstones.get(preparation_id)
+        return tombstone is not None and tombstone.fingerprint == fingerprint
 
     def retire_durable_acceptance(
         self,
@@ -3862,6 +3993,12 @@ class ConsoleChatStore:
         with self._preparation_lock:
             current = self._durable_fingerprint_by_preparation.get(preparation_id)
             if current != fingerprint:
+                if self._durable_retired_locked(preparation_id, fingerprint):
+                    # TASK-22587: closing a chat retires the preparation, and
+                    # the postcommit sequence retires it again when it ends.
+                    # Retiring what is already retired is a no-op, not a bug --
+                    # the tombstone proves this is the SAME acceptance.
+                    return
                 raise RuntimeError("Durable acceptance fingerprint changed.")
             effects = self._durable_effects_by_preparation.get(preparation_id)
             completed = effects.completed if effects is not None else frozenset()
@@ -3879,8 +4016,46 @@ class ConsoleChatStore:
                 fingerprint=fingerprint,
                 completed=completed,
             )
-            while len(self._durable_tombstones) > self.DURABLE_TOMBSTONE_CAP:
+            self._evict_durable_tombstones_locked()
+
+    def _evict_durable_tombstones_locked(self) -> None:
+        """Hold the cap while preserving retirement proof still in use.
+
+        TASK-22587 (Qodo review of #2123): a plain FIFO `popitem` could reclaim
+        the tombstone of a preparation whose postcommit sequence was STILL
+        RUNNING, and that tombstone is the only proof its retirement was an
+        ordinary close rather than a mutation. Losing it put the generic
+        fingerprint-change error back on the in-flight effect -- making
+        correctness depend on unrelated session-close volume.
+
+        Protected entries are skipped, oldest-first, so the cap still holds:
+        if every entry is protected the oldest is evicted anyway, because a
+        bounded cache that can be pinned open without limit is a leak.
+        """
+
+        while len(self._durable_tombstones) > self.DURABLE_TOMBSTONE_CAP:
+            victim = next(
+                (
+                    key
+                    for key in self._durable_tombstones
+                    if key not in self._durable_active_postcommit
+                ),
+                None,
+            )
+            if victim is None:
                 self._durable_tombstones.popitem(last=False)
+                continue
+            self._durable_tombstones.pop(victim, None)
+
+    def release_durable_postcommit_activity(self, preparation_id: str) -> None:
+        """Allow this preparation's tombstone to be evicted again.
+
+        Called once the postcommit sequence is finished with the preparation,
+        by either the normal tail or the closed-session path (TASK-22587).
+        """
+
+        with self._preparation_lock:
+            self._durable_active_postcommit.discard(preparation_id)
 
     def discard_uncommitted_durable_preparation(self, preparation_id: str) -> None:
         """Forget staged content for an acceptance which never committed."""
@@ -4014,6 +4189,19 @@ class ConsoleChatStore:
         if assistant.role is not ConsoleMessageRole.ASSISTANT:
             raise RuntimeError("Committed assistant owner changed role.")
         assistant.persisted_message_id = commit.assistant_message_id
+        # TASK-22302: arm here, AFTER the durable id is assigned.
+        # `append_message` gates arming on its own `persist` flag, which is
+        # False on this path and correctly so -- the checkpoint already wrote
+        # the row. But "this call does not create the row" is not "this message
+        # has no durable row", and arming needs the latter.
+        if (
+            terminal_citation_finalizer is not None
+            and self._citation_persistence_ready()
+        ):
+            self._terminal_citation_finalizers[assistant.id] = (
+                terminal_citation_finalizer
+            )
+            self._terminal_persistence_deferred_ids.add(assistant.id)
         return user, assistant
 
     def publish_committed_identity(
@@ -4027,6 +4215,7 @@ class ConsoleChatStore:
         session = self._session_or_raise(session_id)
         session.persisted_conversation_id = identity.conversation_id
         session.title = identity.title
+        self._flush_staged_capture_policy(session)
 
     def session_settings(self, session_id: str) -> ConsoleSessionSettings | None:
         """Return in-memory settings for a native Console session."""
@@ -4232,6 +4421,378 @@ class ConsoleChatStore:
     def session_one_shot_prefill(self, session_id: str) -> str | None:
         """Return the armed one-shot response prefill for a session, if any."""
         return self._session_or_raise(session_id).one_shot_prefill
+
+    def capture_policy_state(self, session_id: str) -> CapturePolicyState:
+        """Return one immutable session policy view and the shared revision."""
+        with self._capture_policy_lock:
+            session = self._session_or_raise(session_id)
+            return CapturePolicyState(
+                next_detail=session.next_capture_detail,
+                conversation_detail=session.capture_detail_override,
+                next_revision=session.next_capture_detail_revision,
+                policy_revision=self._capture_policy_revision,
+                capture_revision=session.capture_revision,
+                save_pending=session.capture_policy_save_pending,
+            )
+
+    def capture_revision(self, session_id: str) -> int:
+        """Return the current Full-capture invalidation revision."""
+        return self._session_or_raise(session_id).capture_revision
+
+    def begin_capture_quiescence(self, session_id: str) -> bool:
+        """Block exchange attachment/flush for one live session."""
+        with self._capture_quiescence_lock:
+            self._session_or_raise(session_id)
+            if session_id in self._capture_quiescent_sessions:
+                return False
+            self._capture_quiescent_sessions.add(session_id)
+            return True
+
+    def capture_quiescent(self, session_id: str) -> bool:
+        """Return whether one live session currently rejects capture writers."""
+        with self._capture_quiescence_lock:
+            return session_id in self._capture_quiescent_sessions
+
+    def end_capture_quiescence(self, session_id: str) -> None:
+        """Release one session's exchange writer fence."""
+        with self._capture_quiescence_lock:
+            self._capture_quiescent_sessions.discard(session_id)
+
+    def stage_full_capture_purge(self, session_id: str) -> StagedCapturePurge:
+        """Build every replacement needed after a durable Full-row delete."""
+        session = self._session_or_raise(session_id)
+        conversation_id = session.persisted_conversation_id
+        durable_keys: frozenset[tuple[str, str, int]] = frozenset()
+        if not session.ephemeral and conversation_id is not None:
+            reader = getattr(
+                self.persistence, "list_full_exchange_keys_for_conversation", None
+            )
+            if not callable(reader):
+                raise RuntimeError("Full capture inventory is unavailable.")
+            durable_keys = frozenset(reader(conversation_id))
+
+        seen: set[int] = set()
+        messages: list[ConsoleChatMessage] = []
+        for message in self._nodes_by_session.get(session_id, {}).values():
+            if id(message) not in seen:
+                seen.add(id(message))
+                messages.append(message)
+        for _owner, marker in self._tool_markers_by_session.get(session_id, ()):
+            if id(marker) not in seen:
+                seen.add(id(marker))
+                messages.append(marker)
+
+        message_swaps: list[
+            tuple[ConsoleChatMessage, tuple["ExchangeCapture", ...]]
+        ] = []
+        live_full_keys: set[tuple[str, str, int]] = set()
+        remaining_run_tags: dict[str, set[str]] = {}
+        remaining_capture_keys: dict[str, set[tuple[str, int, str]]] = {}
+        for message in messages:
+            exchanges = tuple(
+                capture
+                for capture in message.exchanges
+                if capture.capture_detail is not CaptureDetail.FULL
+            )
+            persisted_id = message.persisted_message_id or message.id
+            live_full_keys.update(
+                (persisted_id, capture.run_tag, capture.seq)
+                for capture in message.exchanges
+                if capture.capture_detail is CaptureDetail.FULL
+            )
+            if exchanges != message.exchanges:
+                message_swaps.append((message, exchanges))
+            remaining_run_tags[message.id] = {capture.run_tag for capture in exchanges}
+            remaining_capture_keys[message.id] = {
+                (capture.run_tag, capture.seq, capture.status)
+                for capture in exchanges
+            }
+
+        blob_cache = tuple(
+            (
+                message.id,
+                MappingProxyType(
+                    {
+                        key: blob
+                        for key, blob in self._exchange_blob_cache[message.id].items()
+                        if key in remaining_capture_keys[message.id]
+                    }
+                ),
+            )
+            for message in messages
+            if message.id in self._exchange_blob_cache
+        )
+        abandoned_tags = tuple(
+            (
+                message.id,
+                frozenset(
+                    self._abandoned_exchange_run_tags[message.id]
+                    & remaining_run_tags[message.id]
+                ),
+            )
+            for message in messages
+            if message.id in self._abandoned_exchange_run_tags
+        )
+        capture_revisions = ((session, session.capture_revision + 1),)
+        return StagedCapturePurge(
+            session_id=session_id,
+            conversation_id=conversation_id,
+            expected_revision=session.capture_revision,
+            durable_keys=durable_keys,
+            message_swaps=tuple(message_swaps),
+            blob_cache=blob_cache,
+            abandoned_tags=abandoned_tags,
+            capture_revisions=capture_revisions,
+            removed_count=len(durable_keys | live_full_keys),
+        )
+
+    def commit_full_capture_purge(self, stage: StagedCapturePurge) -> int:
+        """Delete durable Full rows, then publish only staged assignments."""
+        session = self._session_or_raise(stage.session_id)
+        if session.capture_revision != stage.expected_revision:
+            raise CapturePurgeStaleError()
+        if not session.ephemeral and stage.conversation_id is not None:
+            deleter = getattr(
+                self.persistence, "delete_full_exchanges_for_conversation", None
+            )
+            if not callable(deleter):
+                raise RuntimeError("Full capture deletion is unavailable.")
+            deleter(
+                stage.conversation_id,
+                expected_count=len(stage.durable_keys),
+            )
+        for message_id, cache in stage.blob_cache:
+            self._exchange_blob_cache[message_id] = cache
+        for message_id, tags in stage.abandoned_tags:
+            self._abandoned_exchange_run_tags[message_id] = tags
+        for message, exchanges in stage.message_swaps:
+            message.exchanges = exchanges
+        for target_session, revision in stage.capture_revisions:
+            target_session.capture_revision = revision
+        return stage.removed_count
+
+    def hydrate_session_capture_policy(self, session_id: str) -> CapturePolicyReadResult:
+        """Hydrate a persisted conversation override into process-local state."""
+        with self._capture_policy_lock:
+            session = self._session_or_raise(session_id)
+            repository = self.capture_policy_repository
+            if session.persisted_conversation_id is None:
+                return CapturePolicyReadResult(CapturePolicyReadStatus.ABSENT, None)
+            if repository is None:
+                result = CapturePolicyReadResult(
+                    CapturePolicyReadStatus.UNAVAILABLE_OR_CORRUPT,
+                    None,
+                )
+            else:
+                try:
+                    result = repository.read(session.persisted_conversation_id)
+                except Exception:
+                    result = CapturePolicyReadResult(
+                        CapturePolicyReadStatus.UNAVAILABLE_OR_CORRUPT,
+                        None,
+                    )
+            if result.status is CapturePolicyReadStatus.FOUND:
+                if result.policy is None:
+                    result = CapturePolicyReadResult(
+                        CapturePolicyReadStatus.UNAVAILABLE_OR_CORRUPT,
+                        None,
+                    )
+                else:
+                    session.capture_detail_override = result.policy.detail
+                    session.capture_policy_save_pending = False
+            elif result.status is CapturePolicyReadStatus.ABSENT:
+                session.capture_detail_override = None
+                session.capture_policy_save_pending = False
+            else:
+                session.capture_detail_override = CaptureDetail.SAFE
+                session.capture_policy_save_pending = True
+            return result
+
+    def _flush_staged_capture_policy(self, session: ConsoleChatSession) -> None:
+        """Best-effort flush of an ephemeral policy after identity publication."""
+        if session.capture_detail_override is None:
+            return
+        repository = self.capture_policy_repository
+        if repository is None or session.persisted_conversation_id is None:
+            session.capture_policy_save_pending = True
+            return
+        result = repository.replace(
+            session.persisted_conversation_id,
+            session.capture_detail_override,
+        )
+        session.capture_policy_save_pending = result.status not in {
+            CapturePolicyWriteStatus.STORED,
+            CapturePolicyWriteStatus.UNCHANGED,
+        }
+
+    def set_session_next_capture_detail(
+        self,
+        session_id: str,
+        detail: CaptureDetail | None,
+        *,
+        expected_policy_revision: int,
+    ) -> tuple[CaptureDetail | None, int, int]:
+        """Arm or disarm a next-send detail behind the shared revision fence."""
+        if detail is not None and not isinstance(detail, CaptureDetail):
+            raise TypeError("detail must be CaptureDetail or None")
+        with self._capture_policy_lock:
+            session = self._session_or_raise(session_id)
+            if (
+                self._capture_policy_mutation is not None
+                or self._capture_policy_revision != expected_policy_revision
+            ):
+                raise CapturePolicyStaleError
+            session.next_capture_detail = detail
+            session.next_capture_detail_revision += 1
+            self._capture_policy_revision += 1
+            return (
+                session.next_capture_detail,
+                session.next_capture_detail_revision,
+                self._capture_policy_revision,
+            )
+
+    def consume_session_next_capture_detail(
+        self,
+        session_id: str,
+        *,
+        expected_next_revision: int,
+    ) -> bool:
+        """Clear only the exact next-send slot captured by admission."""
+        with self._capture_policy_lock:
+            session = self._session_or_raise(session_id)
+            if session.next_capture_detail_revision != expected_next_revision:
+                return False
+            session.next_capture_detail = None
+            session.next_capture_detail_revision += 1
+            self._capture_policy_revision += 1
+            return True
+
+    def replace_session_capture_override(
+        self,
+        session_id: str,
+        detail: CaptureDetail | None,
+        *,
+        expected_policy_revision: int,
+        save_pending: bool = False,
+    ) -> int:
+        """Replace future conversation detail behind the shared revision fence."""
+        if detail is not None and not isinstance(detail, CaptureDetail):
+            raise TypeError("detail must be CaptureDetail or None")
+        with self._capture_policy_lock:
+            session = self._session_or_raise(session_id)
+            if (
+                self._capture_policy_mutation is not None
+                or self._capture_policy_revision != expected_policy_revision
+            ):
+                raise CapturePolicyStaleError
+            session.capture_detail_override = detail
+            session.capture_policy_save_pending = bool(save_pending)
+            self._capture_policy_revision += 1
+            return self._capture_policy_revision
+
+    def disarm_all_next_capture_details(self) -> int:
+        """Disarm every live one-shot after the global kill switch turns off."""
+        with self._capture_policy_lock:
+            if self._capture_policy_mutation is not None:
+                raise CapturePolicyStaleError
+            changed = False
+            for session in self._sessions.values():
+                if session.next_capture_detail is None:
+                    continue
+                session.next_capture_detail = None
+                session.next_capture_detail_revision += 1
+                changed = True
+            if changed:
+                self._capture_policy_revision += 1
+            return self._capture_policy_revision
+
+    def advance_capture_policy_revision(
+        self,
+        *,
+        expected_policy_revision: int,
+        disarm_next: bool = False,
+    ) -> int:
+        """Advance the shared fence for a non-session policy mutation."""
+        with self._capture_policy_lock:
+            if (
+                self._capture_policy_mutation is not None
+                or self._capture_policy_revision != expected_policy_revision
+            ):
+                raise CapturePolicyStaleError
+            if disarm_next:
+                for session in self._sessions.values():
+                    if session.next_capture_detail is None:
+                        continue
+                    session.next_capture_detail = None
+                    session.next_capture_detail_revision += 1
+            self._capture_policy_revision += 1
+            return self._capture_policy_revision
+
+    def reserve_capture_policy_mutation(
+        self, *, expected_policy_revision: int
+    ) -> object:
+        """Reserve the shared policy owner before an external durable write."""
+        with self._capture_policy_lock:
+            if (
+                self._capture_policy_mutation is not None
+                or self._capture_policy_revision != expected_policy_revision
+            ):
+                raise CapturePolicyStaleError
+            token = object()
+            self._capture_policy_mutation = token
+            self._capture_policy_revision += 1
+            return token
+
+    def publish_reserved_capture_safe(
+        self,
+        token: object,
+        *,
+        session_id: str,
+        save_pending: bool,
+    ) -> int:
+        """Publish an explicit Safe override while retaining mutation ownership."""
+        with self._capture_policy_lock:
+            if self._capture_policy_mutation is not token:
+                raise CapturePolicyStaleError
+            session = self._session_or_raise(session_id)
+            session.capture_detail_override = CaptureDetail.SAFE
+            session.capture_policy_save_pending = bool(save_pending)
+            return self._capture_policy_revision
+
+    def finish_capture_policy_mutation(
+        self,
+        token: object,
+        *,
+        session_id: str | None = None,
+        detail: CaptureDetail | None = None,
+        save_pending: bool = False,
+        disarm_next: bool = False,
+    ) -> int:
+        """Publish a reserved durable mutation and release its owner."""
+        with self._capture_policy_lock:
+            if self._capture_policy_mutation is not token:
+                raise CapturePolicyStaleError
+            try:
+                if session_id is not None:
+                    session = self._session_or_raise(session_id)
+                    session.capture_detail_override = detail
+                    session.capture_policy_save_pending = bool(save_pending)
+                if disarm_next:
+                    for session in self._sessions.values():
+                        if session.next_capture_detail is not None:
+                            session.next_capture_detail = None
+                            session.next_capture_detail_revision += 1
+                return self._capture_policy_revision
+            finally:
+                self._capture_policy_mutation = None
+
+    def abandon_capture_policy_mutation(self, token: object) -> int:
+        """Release a failed reserved mutation without publishing policy state."""
+        with self._capture_policy_lock:
+            if self._capture_policy_mutation is not token:
+                raise CapturePolicyStaleError
+            self._capture_policy_mutation = None
+            return self._capture_policy_revision
 
     def set_session_one_shot_prefill(
         self, session_id: str, prefill: str | None
@@ -5267,126 +5828,31 @@ class ConsoleChatStore:
             self._snapshot(message) for message in self._messages_by_session[session_id]
         ]
 
-    def newest_change_review_run_id(self, session_id: str) -> str | None:
-        """Newest ``change_review_run_id`` on the session's active-path view.
-
-        TASK-21121. The Console rail's changed-files guard needs exactly this
-        one string on every 0.2s run tick, and used to get it by calling
-        ``messages_for_session`` and reverse-scanning the result -- which
-        ``dataclasses.replace``-copies EVERY message in the session first, so
-        the reverse scan's early break bought nothing and a several-hundred
-        message session paid a full O(messages) copy pass five times a second
-        (the docstring of the old caller conceded the worst case; it was the
-        common case, because a session with no change-review marker at all
-        never breaks early).
-
-        **Verified memo, no invalidation protocol** -- deliberately the
-        :class:`~tldw_chatbook.Chat.console_cost_tracker.TokenEstimateCache`
-        shape: a hit is served only after re-checking the full signature the
-        answer depends on, so a missed "bump" can cost a recompute but can
-        never serve a stale run id. **That guarantee rests on the signature
-        being sampled BEFORE the scan, not after** -- see the comment at the
-        `length = len(view)` line below; a length taken after the loop can
-        outrun the answer it is stored with, and the memo then keeps
-        matching on a signature the answer never had. The signature is
-        ``(session_id, the view list OBJECT, its length)``, and it is exact
-        because of two store invariants:
-
-        * ``change_review_run_id`` is write-once -- set in the
-          ``ConsoleChatMessage`` constructor (live markers via
-          ``append_message``, resume-derived ones built by
-          ``ConsoleAgentBridge.resume_marker_messages``) and never reassigned
-          anywhere. So an unchanged list of unchanged elements has an
-          unchanged answer, even though streaming mutates those same message
-          objects' ``content`` in place.
-        * Every write to ``_messages_by_session[session_id]`` either installs
-          a NEW list object (``_recompute_active_path`` -- the single writer,
-          reached by send/edit/delete/variant/branch-switch/ingest;
-          ``apply_resume_marker_overlay``; ``create_session``;
-          ``restore_state``) or appends to the existing one (the TOOL-marker
-          branch of ``append_message``, the ONLY in-place mutation). Identity
-          catches the first, length catches the second.
-
-        Those two components carry the correctness. ``session_id`` is kept as
-        cheap defence-in-depth, not as a load-bearing check: a view list is
-        uniquely owned by one session and the memo pins that list alive, so
-        identity alone already cannot match across sessions.
-
-        Single-slot on purpose: the only caller asks about the ACTIVE session
-        every tick, so one slot hits ~always and retains exactly one list.
-        ``close_session``/``rollback_created_pristine_session`` drop the slot
-        explicitly -- purely to stop it pinning a dead session's whole view
-        (and therefore every ``ConsoleChatMessage`` in it) for an unbounded
-        time when the closed session was the active one and nothing queries
-        again. Dropping a memo can only cost a recompute, so that is hygiene,
-        not an invalidation protocol; ``restore_state`` needs no such hook
-        because the next query re-derives against a new list anyway.
+    def read_only_messages_for_session(
+        self, session_id: str
+    ) -> list[ConsoleChatMessage]:
+        """Return current transcript snapshots without mutating the store.
 
         Args:
-            session_id: Native Console session id.
+            session_id: Session whose transcript should be projected.
 
         Returns:
-            The ``change_review_run_id`` of the LAST message in the active-path
-            view that carries one, or ``None`` when no such message is on the
-            path (the common case, and the one this memo exists to make free).
+            Detached snapshots including the latest buffered streaming text.
 
         Raises:
-            KeyError: The session id is unknown -- same contract as
-                ``messages_for_session``, whose callers already catch it.
+            KeyError: If ``session_id`` does not identify a stored session.
         """
         self._session_or_raise(session_id)
-        view = self._messages_by_session.get(session_id)
-        if not view:
-            return None
-        memo = self._newest_change_review_memo
-        if (
-            memo is not None
-            and memo[0] == session_id
-            and memo[1] is view
-            and memo[2] == len(view)
-        ):
-            return memo[3]
-        # Sample the length BEFORE the scan, never after (review fix
-        # round). A marker append can land concurrently -- the agent
-        # bridge's marker seam runs on the worker thread with no
-        # `call_from_thread` marshalling while `run_reply` is under
-        # `asyncio.to_thread` -- and `reversed()` snapshots the size when
-        # its iterator is created, so the answer below describes the list
-        # as it was HERE. Sampling afterwards would pair a pre-append
-        # answer with a post-append length: a signature that keeps
-        # matching, so the stale answer is served for as long as the list
-        # object survives. Recording a length that is short can only cost
-        # an extra miss; recording one that is long is a stale hit.
-        length = len(view)
-        newest: str | None = None
-        for message in reversed(view):
-            run_id = getattr(message, "change_review_run_id", None)
-            if run_id:
-                newest = str(run_id)
-                break
-        self._newest_change_review_memo = (session_id, view, length, newest)
-        return newest
-
-    def _drop_newest_change_review_memo(self, session_id: str) -> None:
-        """Release the memo slot if it belongs to ``session_id``.
-
-        Called from the two session-teardown paths. Purely a RETENTION
-        fix, never a correctness one: the slot pins the session's whole
-        view list, and hence every ``ConsoleChatMessage`` in it, and the
-        usual "the next query for another session evicts it" argument
-        fails exactly when the closed session was the ACTIVE one --
-        `_console_changed_files_scope` then short-circuits on a falsy
-        `active_session_id` and never queries again, so nothing evicts it
-        for the remaining life of the store. Dropping a memo can only
-        cost a recompute, so this adds no invalidation protocol to get
-        wrong.
-
-        Args:
-            session_id: Session being torn down.
-        """
-        memo = self._newest_change_review_memo
-        if memo is not None and memo[0] == session_id:
-            self._newest_change_review_memo = None
+        snapshots: list[ConsoleChatMessage] = []
+        for message in self._messages_by_session[session_id]:
+            snapshot = self._snapshot(message)
+            buffer = self._stream_chunks_by_message.get(message.id)
+            if buffer and self._stream_materialized_counts.get(message.id) != len(
+                buffer
+            ):
+                snapshot.content = "".join(buffer)
+            snapshots.append(snapshot)
+        return snapshots
 
     def get_message(self, message_id: str) -> ConsoleChatMessage:
         """Return a message by native message ID."""
@@ -6800,29 +7266,6 @@ class ConsoleChatStore:
         self._session_or_raise(session_id)
         return self._active_leaf_by_session.get(session_id)
 
-    def nearest_persisted_ancestor_id(self, message_id: str) -> str | None:
-        """Return the durable parent for a newly staged message.
-
-        The message itself may still be transient, so its public
-        ``parent_message_id`` field has not been populated by persistence.
-        Resolve through the native tree instead, using the same skip-over-
-        transient rule as ordinary message persistence.
-
-        Args:
-            message_id: Native message whose durable ancestor should be found.
-
-        Returns:
-            The nearest ancestor's durable message ID, or ``None`` when the
-            message starts a durable conversation.
-
-        Raises:
-            KeyError: If ``message_id`` is not present in the store.
-        """
-
-        message = self._message_or_raise(message_id)
-        session_id = self._message_session_index[message_id]
-        return self._nearest_persisted_ancestor_id(session_id, message)
-
     def set_active_leaf(self, session_id: str, message_id: str | None) -> None:
         """Point a session's active leaf at a node and recompute the active path.
 
@@ -7893,7 +8336,15 @@ class ConsoleChatStore:
         is keyed the same way, so a repeat flush of the same key is always
         harmless.
         """
+        with self._capture_quiescence_lock:
+            self._attach_message_exchanges_locked(message_id, captures)
+
+    def _attach_message_exchanges_locked(
+        self, message_id: str, captures: Sequence["ExchangeCapture"]
+    ) -> None:
         message = self._message_or_raise(message_id)
+        if self._message_session_index[message_id] in self._capture_quiescent_sessions:
+            return
         abandoned = message.id in self._variant_restored_message_ids
         merged = {(c.run_tag, c.seq): c for c in message.exchanges}
         for capture in captures:
@@ -7907,9 +8358,11 @@ class ConsoleChatStore:
             sorted(merged.values(), key=lambda c: (c.run_tag, c.seq))
         )
         if abandoned:
-            self._abandoned_exchange_run_tags.setdefault(message.id, set()).update(
-                c.run_tag for c in captures
-            )
+            abandoned_tags = self._abandoned_exchange_run_tags.get(message.id)
+            if not isinstance(abandoned_tags, set):
+                abandoned_tags = set(abandoned_tags or ())
+                self._abandoned_exchange_run_tags[message.id] = abandoned_tags
+            abandoned_tags.update(c.run_tag for c in captures)
         if message.status not in {"pending", "streaming"}:
             self._persist_exchanges_only(message)
 
@@ -7959,6 +8412,8 @@ class ConsoleChatStore:
             mood_label = capture.events[-1].state
         elif successful and not capture.fail_closed:
             try:
+                # Runs at most once per completed character turn; measured
+                # ~2.3 ms at 16k chars (TASK-22227) -- bounded, kept on-loop.
                 detected = detect_character_mood(
                     assistant_text=message.content,
                     user_text=self._preceding_user_text(message.id),
@@ -8076,6 +8531,12 @@ class ConsoleChatStore:
             recovery is not None
             and recovery.assistant_message_id == message.id
             and recovery.in_flight
+            # TASK-22302: do not let this shortcut swallow a turn that still
+            # owes a terminal citation write -- `finalizer` is popped above, so
+            # returning here discards it. Scoped to an actual finalizer, not
+            # `terminal_persistence`, which is also true for a merely DEFERRED
+            # turn that has no citation to seal.
+            and finalizer is None
         ):
             message.status = "complete"
             self._bump_message_speech_revision(message.id)
@@ -8125,6 +8586,21 @@ class ConsoleChatStore:
             self._bump_payload_revision(session_id)
             self._settle_failed_retry_context(message, provider_visible=True)
             try:
+                if message.persisted_message_id is not None:
+                    # TASK-22302: the dispatch checkpoint already wrote this row
+                    # with EMPTY content, so the final body must be flushed with
+                    # an UPDATE -- `create_message`'s existing-row handling lives
+                    # inside its `prepared_citation is not None` branch and
+                    # verifies rather than updates, so it cannot carry the body.
+                    #
+                    # This matters most on the FAIL-CLOSED path: `finalize()`
+                    # returns None when the builder cannot seal, leaving no
+                    # `citation_write` at all. Guarding this flush on one would
+                    # leave the durable row empty while the in-memory message
+                    # reads complete -- the answer lost, silently.
+                    self._persist_existing_message(
+                        message, preserve_provider_continuation=True
+                    )
                 self._persist_new_message(
                     session_id=session_id,
                     message=message,
@@ -9203,6 +9679,34 @@ class ConsoleChatStore:
             current = self._native_parent_by_message.get(current)
         return None
 
+    def durable_parent_for_message(self, message_id: str) -> str | None:
+        """Resolve the persisted parent one durable write should thread.
+
+        The dispatch checkpoint path used to read ``message.parent_message_id``
+        directly, but that field is the *persisted* parent id and is assigned
+        only by :meth:`_persist_new_message`. A ``persist=False`` optimistic
+        echo has not been through that method, so the field is always ``None``
+        and every checkpointed turn was written as a fresh DB root -- forking
+        the conversation away from its own history.
+
+        Args:
+            message_id: Native id of the message about to be persisted.
+
+        Returns:
+            The nearest PERSISTED ancestor's persisted id -- non-persisted
+            mid-chain nodes are skipped, matching :meth:`_persist_new_message`
+            -- or ``None`` when nothing above it is durable, which is the
+            documented "true persisted root" answer rather than an error.
+        """
+
+        session_id = self._message_session_index.get(message_id)
+        if session_id is None:
+            return None
+        message = self._nodes_by_session.get(session_id, {}).get(message_id)
+        if message is None:
+            return None
+        return self._nearest_persisted_ancestor_id(session_id, message)
+
     def _persist_new_message(
         self,
         *,
@@ -9466,6 +9970,13 @@ class ConsoleChatStore:
         or nothing to write bails out silently rather than falling back to
         ``_persist_existing_message``.
         """
+        with self._capture_quiescence_lock:
+            self._persist_exchanges_only_locked(message)
+
+    def _persist_exchanges_only_locked(self, message: ConsoleChatMessage) -> None:
+        session_id = self._message_session_index.get(message.id)
+        if session_id in self._capture_quiescent_sessions:
+            return
         if self.persistence is None:
             return
         if message.persisted_message_id is None or not message.exchanges:
@@ -9492,7 +10003,10 @@ class ConsoleChatStore:
             # "stopped" snapshot superseded by a later non-"stopped"
             # capture, which is a STATUS change and so is naturally a cache
             # miss (a different key) rather than a stale hit.
-            blob_cache = self._exchange_blob_cache.setdefault(message.id, {})
+            blob_cache = self._exchange_blob_cache.get(message.id)
+            if not isinstance(blob_cache, dict):
+                blob_cache = dict(blob_cache or ())
+                self._exchange_blob_cache[message.id] = blob_cache
             current_keys: set[tuple[str, int, str]] = set()
             rows = []
             for c in message.exchanges:
@@ -9508,6 +10022,7 @@ class ConsoleChatStore:
                         "seq": c.seq,
                         "status": c.status,
                         "abandoned": c.run_tag in abandoned_tags,
+                        "capture_detail": c.capture_detail.value,
                         "capture_blob": blob,
                         "created_at": c.created_at,
                     }
@@ -9519,7 +10034,10 @@ class ConsoleChatStore:
                 del blob_cache[stale_key]
             writer(message_id=message.persisted_message_id, rows=rows)
         except Exception as exc:
-            logger.bind(message_id=message.id, error=repr(exc)).warning(
+            logger.bind(
+                message_id=message.id,
+                error_type=type(exc).__name__,
+            ).warning(
                 "exchange_flush_failed"
             )
 

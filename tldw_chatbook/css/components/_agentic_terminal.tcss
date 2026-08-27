@@ -1102,6 +1102,29 @@ ConsoleRunLogModal {
     background: $ds-surface-panel;
 }
 
+/* Adaptive readers keep the ordinary narrow shell's edge-to-edge canvas
+   without inheriting the legacy library-notes-compact descendant rules. */
+#library-shell-grid.library-adaptive-compact {
+    padding: 0;
+    margin: 0;
+    border: none;
+}
+
+#library-shell-grid.library-adaptive-compact #library-canvas {
+    padding: 0;
+    margin: 0;
+    border: none;
+    overflow-x: hidden;
+    overflow-y: hidden;
+}
+
+#library-emergency-return {
+    width: 100%;
+    height: 1;
+    min-height: 1;
+    border: none;
+}
+
 .library-adaptive-reader-shell {
     width: 1fr;
     min-width: 0;
@@ -2339,9 +2362,24 @@ with stray left-edge border fragments), and padding 0 1 so the full
 /* TASK-202: the prompt editor owns two rows. The only vertical scroll owner
    is the content row; the action area measures to its controls below it. This
    prevents a tall editor from pushing its completion controls past the canvas. */
-#library-prompts-canvas {
+#library-prompts-canvas,
+#library-prompt-work-pane {
     height: 1fr;
     min-height: 0;
+    min-width: 0;
+}
+
+/* Disabled labels carry a visible marker, so the two management actions
+   must share the retained Items width instead of keeping intrinsic widths. */
+#library-prompts-selection-management-actions {
+    width: 100%;
+    min-width: 0;
+}
+
+#library-prompts-selection-management-actions > .library-canvas-action,
+#library-shell-grid.library-notes-compact #library-prompts-selection-management-actions > .library-canvas-action {
+    width: 1fr;
+    min-width: 0;
 }
 
 #library-prompt-editor-shell {
@@ -2732,13 +2770,13 @@ with stray left-edge border fragments), and padding 0 1 so the full
 /* Below the breakpoint Media becomes a dense list: the mounted preview is
    removed from paint/focus participation by the canvas, while the list owns
    the remaining height and keeps its pager pinned below the row scroller. */
-#library-canvas.library-notes-compact #library-media-workbench {
+#library-shell-grid.library-notes-compact #library-media-workbench {
     layout: vertical;
     height: 1fr;
     min-height: 0;
 }
 
-#library-canvas.library-notes-compact #library-media-list {
+#library-shell-grid.library-notes-compact #library-media-list {
     width: 100%;
     height: 100%;
     min-height: 0;
@@ -2747,22 +2785,22 @@ with stray left-edge border fragments), and padding 0 1 so the full
     overflow-y: hidden;
 }
 
-#library-canvas.library-notes-compact #library-media-row-scroll {
+#library-shell-grid.library-notes-compact #library-media-row-scroll {
     height: 1fr;
     min-height: 0;
 }
 
-#library-canvas.library-notes-compact .library-media-row {
+#library-shell-grid.library-notes-compact .library-media-row {
     height: 1;
     min-height: 1;
     margin: 0;
 }
 
-#library-canvas.library-notes-compact #library-media-preview {
+#library-shell-grid.library-notes-compact #library-media-preview {
     display: none;
 }
 
-#library-canvas.library-notes-compact #library-media-detail-empty {
+#library-shell-grid.library-notes-compact #library-media-detail-empty {
     display: none;
 }
 
@@ -4911,9 +4949,10 @@ Button.console-message-speech-action:focus {
     color: $ds-chat-assistant-accent-light;
 }
 
-/* TASK-1990.1: flavor assistant / character prose without rewriting Markdown.
-   Quoted speech, emphasis-as-action, and strong emphasis are Content component
-   spans; labels and Markdown structure continue to carry meaning without color. */
+/* TASK-1990.1/TASK-22454: flavor assistant / character prose without rewriting
+   Markdown. Quoted speech, quoted inner thought, emphasis-as-action, and strong
+   emphasis are Content component spans; visible delimiters, text styles, labels,
+   and Markdown structure continue to carry meaning without color. */
 .-dark-mode .console-transcript-message-immersive-assistant .console-roleplay-markdown-block > .console-rp-speech,
 .-dark-mode .console-transcript-message-immersive-character .console-roleplay-markdown-block > .console-rp-speech {
     color: $ds-chat-rp-speech-dark;
@@ -4922,6 +4961,18 @@ Button.console-message-speech-action:focus {
 .-light-mode .console-transcript-message-immersive-assistant .console-roleplay-markdown-block > .console-rp-speech,
 .-light-mode .console-transcript-message-immersive-character .console-roleplay-markdown-block > .console-rp-speech {
     color: $ds-chat-rp-speech-light;
+}
+
+.-dark-mode .console-transcript-message-immersive-assistant .console-roleplay-markdown-block > .console-rp-thought,
+.-dark-mode .console-transcript-message-immersive-character .console-roleplay-markdown-block > .console-rp-thought {
+    color: $ds-chat-rp-thought-dark;
+    text-style: italic;
+}
+
+.-light-mode .console-transcript-message-immersive-assistant .console-roleplay-markdown-block > .console-rp-thought,
+.-light-mode .console-transcript-message-immersive-character .console-roleplay-markdown-block > .console-rp-thought {
+    color: $ds-chat-rp-thought-light;
+    text-style: italic;
 }
 
 .-dark-mode .console-transcript-message-immersive-assistant .console-roleplay-markdown-block > .console-rp-action,
@@ -4965,6 +5016,7 @@ Button.console-message-speech-action:focus {
 }
 
 .console-transcript-message-failed.console-transcript-message-markdown .console-roleplay-markdown-block > .console-rp-speech,
+.console-transcript-message-failed.console-transcript-message-markdown .console-roleplay-markdown-block > .console-rp-thought,
 .console-transcript-message-failed.console-transcript-message-markdown .console-roleplay-markdown-block > .console-rp-action,
 .console-transcript-message-failed.console-transcript-message-markdown .console-roleplay-markdown-block > .console-rp-strong {
     color: $ds-text-primary;
@@ -4990,6 +5042,7 @@ Button.console-message-speech-action:focus {
 }
 
 .console-transcript-message-selected.console-transcript-message-markdown .console-roleplay-markdown-block > .console-rp-speech,
+.console-transcript-message-selected.console-transcript-message-markdown .console-roleplay-markdown-block > .console-rp-thought,
 .console-transcript-message-selected.console-transcript-message-markdown .console-roleplay-markdown-block > .console-rp-action,
 .console-transcript-message-selected.console-transcript-message-markdown .console-roleplay-markdown-block > .console-rp-strong {
     color: $ds-focus-fg;
@@ -5907,18 +5960,6 @@ ChatScreen.-focus #console-workbench-header {
     min-height: 1;
     max-height: 1;
     margin: 1 0 0 0;
-}
-
-/* TASK-18060 task 5 / TASK-19192: cross-turn "Changed files" section --
-   sibling of the Scope row above, run inspector below. Width lives here
-   (the sibling id-rule convention: #console-retrieval-scope-row,
-   #console-staged-context-tray) instead of inline at the right_rail mount
-   site; height/min-height come from the widget's own DEFAULT_CSS, and the
-   margin/padding rhythm from the shared .console-inspector-context-section
-   class added at mount. */
-#console-changed-files-section {
-    width: 100%;
-    min-width: 0;
 }
 
 .console-retrieval-scope-label {
@@ -9153,7 +9194,7 @@ LibraryIngestCanvas #library-ingest-latest-batch {
     border: none;
 }
 
-#library-canvas.library-notes-compact {
+#library-shell-grid.library-notes-compact #library-canvas {
     padding: 0;
     margin: 0;
     border: none;
@@ -9161,7 +9202,8 @@ LibraryIngestCanvas #library-ingest-latest-batch {
     overflow-y: hidden;
 }
 
-#library-canvas.library-notes-compact #library-notes-canvas {
+#library-shell-grid.library-notes-compact #library-notes-canvas,
+#library-shell-grid.library-notes-compact #library-note-work-pane {
     width: 100%;
     height: 100%;
     min-height: 0;
@@ -9171,7 +9213,8 @@ LibraryIngestCanvas #library-ingest-latest-batch {
     overflow-y: hidden;
 }
 
-#library-canvas.library-notes-compact #library-notes-authority {
+#library-shell-grid.library-notes-compact #library-notes-authority,
+#library-shell-grid.library-notes-compact #library-note-work-authority {
     height: 2;
     min-height: 2;
     max-height: 2;
@@ -9181,7 +9224,7 @@ LibraryIngestCanvas #library-ingest-latest-batch {
     overflow: hidden hidden;
 }
 
-#library-canvas.library-notes-compact #library-notes-header {
+#library-shell-grid.library-notes-compact #library-notes-header {
     height: 1;
     min-height: 1;
     max-height: 1;
@@ -9191,7 +9234,7 @@ LibraryIngestCanvas #library-ingest-latest-batch {
     text-overflow: ellipsis;
 }
 
-#library-canvas.library-notes-compact #library-notes-filter-row {
+#library-shell-grid.library-notes-compact #library-notes-filter-row {
     layout: horizontal;
     height: 1;
     min-height: 1;
@@ -9199,13 +9242,13 @@ LibraryIngestCanvas #library-ingest-latest-batch {
     margin: 0;
 }
 
-#library-canvas.library-notes-compact #library-notes-filter-label {
+#library-shell-grid.library-notes-compact #library-notes-filter-label {
     width: 8;
     height: 1;
     padding: 0 1;
 }
 
-#library-canvas.library-notes-compact #library-notes-filter {
+#library-shell-grid.library-notes-compact #library-notes-filter {
     width: 1fr;
     height: 1;
     min-height: 1;
@@ -9214,13 +9257,13 @@ LibraryIngestCanvas #library-ingest-latest-batch {
     border: none;
 }
 
-#library-canvas.library-notes-compact #library-notes-browse-actions,
-#library-canvas.library-notes-compact #library-notes-sort-choices,
-#library-canvas.library-notes-compact #library-notes-transfer-actions,
-#library-canvas.library-notes-compact #library-notes-selection-actions,
-#library-canvas.library-notes-compact #library-note-primary-actions,
-#library-canvas.library-notes-compact #library-note-conflict-actions,
-#library-canvas.library-notes-compact #library-note-delete-actions {
+#library-shell-grid.library-notes-compact #library-notes-browse-actions,
+#library-shell-grid.library-notes-compact #library-notes-sort-choices,
+#library-shell-grid.library-notes-compact #library-notes-transfer-actions,
+#library-shell-grid.library-notes-compact #library-notes-selection-actions,
+#library-shell-grid.library-notes-compact #library-note-primary-actions,
+#library-shell-grid.library-notes-compact #library-note-conflict-actions,
+#library-shell-grid.library-notes-compact #library-note-delete-actions {
     height: 1;
     min-height: 1;
     max-height: 1;
@@ -9228,7 +9271,7 @@ LibraryIngestCanvas #library-ingest-latest-batch {
     overflow-x: hidden;
 }
 
-#library-canvas.library-notes-compact .library-canvas-action {
+#library-shell-grid.library-notes-compact .library-canvas-action {
     width: auto;
     min-width: 0;
     height: 1;
@@ -9239,7 +9282,7 @@ LibraryIngestCanvas #library-ingest-latest-batch {
     border: none;
 }
 
-#library-canvas.library-notes-compact #library-notes-status-row {
+#library-shell-grid.library-notes-compact #library-notes-status-row {
     layout: horizontal;
     height: 1;
     min-height: 1;
@@ -9248,7 +9291,7 @@ LibraryIngestCanvas #library-ingest-latest-batch {
     overflow-x: hidden;
 }
 
-#library-canvas.library-notes-compact #library-notes-status {
+#library-shell-grid.library-notes-compact #library-notes-status {
     width: 1fr;
     height: 1;
     min-height: 1;
@@ -9258,11 +9301,11 @@ LibraryIngestCanvas #library-ingest-latest-batch {
     text-overflow: ellipsis;
 }
 
-#library-canvas.library-notes-compact #library-notes-filter-clear {
+#library-shell-grid.library-notes-compact #library-notes-filter-clear {
     width: auto;
 }
 
-#library-canvas.library-notes-compact #library-notes-selection-status {
+#library-shell-grid.library-notes-compact #library-notes-selection-status {
     height: 1;
     min-height: 1;
     max-height: 1;
@@ -9270,7 +9313,7 @@ LibraryIngestCanvas #library-ingest-latest-batch {
     padding: 0 1;
 }
 
-#library-canvas.library-notes-compact #library-notes-list {
+#library-shell-grid.library-notes-compact #library-notes-list {
     height: 1fr;
     min-height: 0;
     margin: 0;
@@ -9279,7 +9322,7 @@ LibraryIngestCanvas #library-ingest-latest-batch {
     overflow-x: hidden;
 }
 
-#library-canvas.library-notes-compact #library-notes-empty {
+#library-shell-grid.library-notes-compact #library-notes-empty {
     height: 1fr;
     min-height: 0;
     margin: 0;
@@ -9288,7 +9331,7 @@ LibraryIngestCanvas #library-ingest-latest-batch {
     overflow-x: hidden;
 }
 
-#library-canvas.library-notes-compact #library-note-heading {
+#library-shell-grid.library-notes-compact #library-note-heading {
     layout: horizontal;
     height: 1;
     min-height: 1;
@@ -9297,11 +9340,11 @@ LibraryIngestCanvas #library-ingest-latest-batch {
     overflow-x: hidden;
 }
 
-#library-canvas.library-notes-compact #library-note-editor-title,
-#library-canvas.library-notes-compact #library-note-preview-title,
-#library-canvas.library-notes-compact #library-note-context-title,
-#library-canvas.library-notes-compact #library-note-loading-title,
-#library-canvas.library-notes-compact #library-notes-create-header {
+#library-shell-grid.library-notes-compact #library-note-editor-title,
+#library-shell-grid.library-notes-compact #library-note-preview-title,
+#library-shell-grid.library-notes-compact #library-note-context-title,
+#library-shell-grid.library-notes-compact #library-note-loading-title,
+#library-shell-grid.library-notes-compact #library-notes-create-header {
     width: 1fr;
     height: 1;
     min-height: 1;
@@ -9312,7 +9355,7 @@ LibraryIngestCanvas #library-ingest-latest-batch {
     text-overflow: ellipsis;
 }
 
-#library-canvas.library-notes-compact #library-note-editor-region {
+#library-shell-grid.library-notes-compact #library-note-editor-region {
     height: 1fr;
     min-height: 0;
     margin: 0;
@@ -9320,7 +9363,7 @@ LibraryIngestCanvas #library-ingest-latest-batch {
     overflow-y: hidden;
 }
 
-#library-canvas.library-notes-compact #library-note-title-row {
+#library-shell-grid.library-notes-compact #library-note-title-row {
     layout: horizontal;
     height: 1;
     min-height: 1;
@@ -9328,15 +9371,15 @@ LibraryIngestCanvas #library-ingest-latest-batch {
     margin: 0;
 }
 
-#library-canvas.library-notes-compact #library-note-title-label,
-#library-canvas.library-notes-compact #library-note-context-keywords-label {
+#library-shell-grid.library-notes-compact #library-note-title-label,
+#library-shell-grid.library-notes-compact #library-note-context-keywords-label {
     width: 10;
     height: 1;
     padding: 0 1;
 }
 
-#library-canvas.library-notes-compact #library-note-title,
-#library-canvas.library-notes-compact #library-note-context-keywords {
+#library-shell-grid.library-notes-compact #library-note-title,
+#library-shell-grid.library-notes-compact #library-note-context-keywords {
     width: 1fr;
     height: 1;
     min-height: 1;
@@ -9345,7 +9388,7 @@ LibraryIngestCanvas #library-ingest-latest-batch {
     border: none;
 }
 
-#library-canvas.library-notes-compact #library-note-body-label {
+#library-shell-grid.library-notes-compact #library-note-body-label {
     height: 1;
     min-height: 1;
     max-height: 1;
@@ -9353,7 +9396,7 @@ LibraryIngestCanvas #library-ingest-latest-batch {
     padding: 0 1;
 }
 
-#library-canvas.library-notes-compact #library-note-body {
+#library-shell-grid.library-notes-compact #library-note-body {
     height: 1fr;
     min-height: 0;
     max-height: 100%;
@@ -9361,7 +9404,7 @@ LibraryIngestCanvas #library-ingest-latest-batch {
     overflow-x: hidden;
 }
 
-#library-canvas.library-notes-compact #library-note-preview-region {
+#library-shell-grid.library-notes-compact #library-note-preview-region {
     height: 1fr;
     min-height: 0;
     max-height: 100%;
@@ -9370,7 +9413,7 @@ LibraryIngestCanvas #library-ingest-latest-batch {
     overflow-x: hidden;
 }
 
-#library-canvas.library-notes-compact #library-note-preview-body {
+#library-shell-grid.library-notes-compact #library-note-preview-body {
     height: auto;
     min-height: 0;
     margin: 0;
@@ -9380,7 +9423,7 @@ LibraryIngestCanvas #library-ingest-latest-batch {
     overflow-x: hidden;
 }
 
-#library-canvas.library-notes-compact #library-note-context-status {
+#library-shell-grid.library-notes-compact #library-note-context-status {
     height: 1;
     min-height: 1;
     max-height: 1;
@@ -9390,7 +9433,7 @@ LibraryIngestCanvas #library-ingest-latest-batch {
     text-overflow: ellipsis;
 }
 
-#library-canvas.library-notes-compact #library-note-context-region {
+#library-shell-grid.library-notes-compact #library-note-context-region {
     height: 1fr;
     min-height: 0;
     margin: 0;
@@ -9399,22 +9442,22 @@ LibraryIngestCanvas #library-ingest-latest-batch {
     overflow-x: hidden;
 }
 
-#library-canvas.library-notes-compact #library-note-context-region .destination-section,
-#library-canvas.library-notes-compact #library-note-context-meta,
-#library-canvas.library-notes-compact #library-note-context-region > .library-canvas-action {
+#library-shell-grid.library-notes-compact #library-note-context-region .destination-section,
+#library-shell-grid.library-notes-compact #library-note-context-meta,
+#library-shell-grid.library-notes-compact #library-note-context-region > .library-canvas-action {
     height: 1;
     min-height: 1;
     margin: 0;
 }
 
-#library-canvas.library-notes-compact #library-note-context-keywords-row {
+#library-shell-grid.library-notes-compact #library-note-context-keywords-row {
     layout: horizontal;
     height: 1;
     min-height: 1;
     margin: 0;
 }
 
-#library-canvas.library-notes-compact #library-note-status {
+#library-shell-grid.library-notes-compact #library-note-status {
     height: 1;
     min-height: 1;
     max-height: 1;
@@ -9424,7 +9467,7 @@ LibraryIngestCanvas #library-ingest-latest-batch {
     text-overflow: ellipsis;
 }
 
-#library-canvas.library-notes-compact #library-notes-canvas.library-note-validation #library-note-status {
+#library-shell-grid.library-notes-compact .library-note-validation #library-note-status {
     height: 2;
     min-height: 2;
     max-height: 2;
@@ -9432,22 +9475,22 @@ LibraryIngestCanvas #library-ingest-latest-batch {
     text-overflow: clip;
 }
 
-#library-canvas.library-notes-compact #library-note-transfer-status,
-#library-canvas.library-notes-compact #library-note-context-transfer-status {
+#library-shell-grid.library-notes-compact #library-note-transfer-status,
+#library-shell-grid.library-notes-compact #library-note-context-transfer-status {
     display: none;
     height: 0;
     min-height: 0;
     margin: 0;
 }
 
-#library-canvas.library-notes-compact #library-note-conflict-region {
+#library-shell-grid.library-notes-compact #library-note-conflict-region {
     height: 3;
     min-height: 3;
     max-height: 3;
     margin: 0;
 }
 
-#library-canvas.library-notes-compact #library-note-conflict-copy {
+#library-shell-grid.library-notes-compact #library-note-conflict-copy {
     height: 2;
     min-height: 2;
     max-height: 2;
@@ -9455,14 +9498,14 @@ LibraryIngestCanvas #library-ingest-latest-batch {
     padding: 0 1;
 }
 
-#library-canvas.library-notes-compact #library-note-delete-confirmation {
+#library-shell-grid.library-notes-compact #library-note-delete-confirmation {
     height: 2;
     min-height: 2;
     max-height: 2;
     margin: 0;
 }
 
-#library-canvas.library-notes-compact #library-note-delete-confirm-copy {
+#library-shell-grid.library-notes-compact #library-note-delete-confirm-copy {
     height: 1;
     min-height: 1;
     max-height: 1;
@@ -9472,7 +9515,7 @@ LibraryIngestCanvas #library-ingest-latest-batch {
     text-overflow: ellipsis;
 }
 
-#library-canvas.library-notes-compact #library-notes-create-heading {
+#library-shell-grid.library-notes-compact #library-notes-create-heading {
     layout: horizontal;
     height: 1;
     min-height: 1;
@@ -9480,7 +9523,7 @@ LibraryIngestCanvas #library-ingest-latest-batch {
     margin: 0;
 }
 
-#library-canvas.library-notes-compact #library-notes-create-viewport {
+#library-shell-grid.library-notes-compact #library-notes-create-viewport {
     height: 1fr;
     min-height: 0;
     margin: 0;
@@ -9489,7 +9532,7 @@ LibraryIngestCanvas #library-ingest-latest-batch {
     overflow-x: hidden;
 }
 
-#library-canvas.library-notes-compact #library-note-load-state {
+#library-shell-grid.library-notes-compact #library-note-load-state {
     width: 100%;
     height: 1fr;
     min-height: 0;
@@ -9498,14 +9541,14 @@ LibraryIngestCanvas #library-ingest-latest-batch {
     overflow: hidden;
 }
 
-#library-canvas.library-notes-compact #library-note-load-heading {
+#library-shell-grid.library-notes-compact #library-note-load-heading {
     height: 1;
     min-height: 1;
     max-height: 1;
     margin: 0;
 }
 
-#library-canvas.library-notes-compact #library-note-loading {
+#library-shell-grid.library-notes-compact #library-note-loading {
     height: 1;
     min-height: 1;
     max-height: 1;
@@ -9515,7 +9558,7 @@ LibraryIngestCanvas #library-ingest-latest-batch {
     text-overflow: ellipsis;
 }
 
-#library-canvas.library-notes-compact #library-note-loading-viewport {
+#library-shell-grid.library-notes-compact #library-note-loading-viewport {
     height: 1fr;
     min-height: 0;
     margin: 0;
@@ -9680,17 +9723,95 @@ LibraryIngestCanvas #library-ingest-latest-batch {
     width: 100%;
 }
 
-#library-canvas.library-notes-compact .library-notes-lasting-sync-canvas {
+#library-shell-grid.library-notes-compact .library-notes-lasting-sync-canvas {
     padding: 0;
 }
 
-#library-canvas.library-notes-compact #notes-sync-authority,
-#library-canvas.library-notes-compact #notes-sync-roots-authority,
-#library-canvas.library-notes-compact .library-notes-lasting-status,
-#library-canvas.library-notes-compact #notes-sync-fold-hint {
+#library-shell-grid.library-notes-compact #notes-sync-authority,
+#library-shell-grid.library-notes-compact #notes-sync-roots-authority,
+#library-shell-grid.library-notes-compact .library-notes-lasting-status,
+#library-shell-grid.library-notes-compact #notes-sync-fold-hint {
     height: 1;
     min-height: 1;
     max-height: 1;
     text-wrap: nowrap;
     text-overflow: ellipsis;
+}
+
+/* Governed Console exchange capture surfaces (ADR-089). */
+#console-inspector-policy-status {
+    height: auto;
+    color: $text-muted;
+}
+
+ConsoleCapturePolicyDialog,
+ConsoleExchangeExportDialog {
+    align: center middle;
+}
+
+#capture-policy-dialog,
+#exchange-export-dialog {
+    width: 76;
+    max-width: 96%;
+    height: 22;
+    max-height: 96%;
+    border: tall $primary;
+    background: $surface;
+    padding: 1 2;
+}
+
+#capture-policy-title,
+#exchange-export-title {
+    height: 1;
+    text-style: bold;
+}
+
+#capture-policy-body,
+#exchange-export-body {
+    height: 1fr;
+    scrollbar-gutter: stable;
+}
+
+#capture-policy-scopes,
+#capture-policy-details,
+#exchange-export-profiles,
+#exchange-export-destinations {
+    height: auto;
+}
+
+#capture-policy-effective,
+#capture-policy-reason,
+#capture-policy-count,
+#capture-policy-status,
+#exchange-export-profile-copy,
+#exchange-export-full-reason,
+#exchange-export-status {
+    height: auto;
+}
+
+#capture-policy-reason,
+#exchange-export-full-reason {
+    color: $warning;
+}
+
+#capture-policy-actions,
+#exchange-export-actions {
+    height: 3;
+    min-height: 3;
+    align-horizontal: right;
+}
+
+#capture-policy-actions Button,
+#exchange-export-actions Button {
+    min-width: 10;
+    margin-left: 1;
+}
+
+#capture-policy-status.-error,
+#exchange-export-status.-error {
+    color: $error;
+}
+
+#exchange-export-path {
+    height: 3;
 }

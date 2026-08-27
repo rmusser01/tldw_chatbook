@@ -498,3 +498,45 @@ async def test_no_overlap_thread_when_the_splash_is_disabled(monkeypatch):
         )
         assert type(app.screen).__name__ == "ChatScreen"
         await pilot.pause(0.2)
+
+
+@pytest.mark.parametrize(
+    "schedule",
+    ["_schedule_initial_screen_preimport", "_schedule_screen_preimport"],
+)
+def test_a_thread_that_refuses_to_start_degrades_instead_of_raising(
+    monkeypatch, schedule
+):
+    """A refused `Thread.start()` must not escape the splash-path callback.
+
+    Both schedulers run from a timer / deferred-startup callback during boot,
+    where an exception is an unhandled error in a Textual timer task rather
+    than something a caller can catch. Under thread exhaustion (or a start
+    during interpreter shutdown) the right outcome is losing a speculative
+    warm-up: every module involved is imported normally on first navigation
+    anyway. Recording the handle only after a successful start also leaves the
+    once-guard able to try again rather than latching on a thread that never
+    ran.
+    """
+    monkeypatch.setenv("TLDW_SCREEN_PREIMPORT", "1")
+    app = _arm(_build_test_app())
+    monkeypatch.setattr(
+        app,
+        "_preimport_screens",
+        lambda routes: pytest.fail("the thread never started"),
+    )
+    monkeypatch.setattr(
+        app,
+        "_preimport_heavy_screens",
+        lambda: pytest.fail("the thread never started"),
+    )
+
+    def _refuse_to_start(self):
+        raise RuntimeError("can't start new thread")
+
+    monkeypatch.setattr(threading.Thread, "start", _refuse_to_start)
+
+    getattr(app, schedule)()  # must not raise
+
+    assert app._initial_screen_preimport_thread is None
+    assert app._screen_preimport_thread is None

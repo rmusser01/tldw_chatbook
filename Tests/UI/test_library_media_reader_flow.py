@@ -32,6 +32,7 @@ from tldw_chatbook.Library.library_media_reader_state import (
     LibraryMediaReaderSessionState,
     begin_selection,
     set_mode,
+    settle_success,
 )
 from tldw_chatbook.UI.Screens.library_screen import LibraryScreen
 
@@ -741,6 +742,11 @@ async def test_stale_detail_never_writes_progress_under_new_selected_id():
     fake = SimpleNamespace(
         _library_media_reader_session=session,
         _library_media_read_scroll_by_id={},
+        _library_media_progress_pending_writes={},
+        _library_media_progress_inflight_write=None,
+        _library_media_progress_persisted_offsets={},
+        _library_media_progress_write_worker=None,
+        is_attached=True,
         app_instance=SimpleNamespace(
             media_reading_scope_service=SimpleNamespace(
                 update_reading_progress=update_reading_progress
@@ -749,10 +755,8 @@ async def test_stale_detail_never_writes_progress_under_new_selected_id():
         query_one=lambda *_args, **_kwargs: SimpleNamespace(scroll_x=0, scroll_y=17),
         run_worker=lambda coro, **_kwargs: workers.append(coro),
     )
-    fake._write_library_media_loaded_progress = MethodType(
-        LibraryScreen._write_library_media_loaded_progress, fake
-    )
     fake._run_library_service_call = run_service_call
+    _bind_progress_methods(fake)
 
     LibraryScreen._capture_library_media_loaded_progress(fake)
     await workers[0]
@@ -816,6 +820,7 @@ async def test_progress_loads_from_service_when_detail_has_no_embedded_progress(
     fake = SimpleNamespace(
         _library_media_reader_session=session,
         _library_media_read_scroll_by_id={},
+        _library_media_progress_persisted_offsets={},
         app_instance=SimpleNamespace(
             media_reading_scope_service=SimpleNamespace(
                 get_reading_progress=get_reading_progress
@@ -1034,3 +1039,280 @@ def test_footer_advertises_only_working_current_actions():
     assert LibraryScreen._library_media_escape_label(fake) == "focus Library"
     shell.effective_layout.library_open = False
     assert LibraryScreen._library_media_escape_label(fake) == "back"
+
+
+class CountingProgressMediaService(ControlledDetailMediaService):
+    """Count settled progress writes without gating them (TASK-22210 probe)."""
+
+    def __init__(self, media_items):
+        super().__init__(media_items)
+        self.progress_update_calls: list[dict[str, object]] = []
+
+    def update_reading_progress(self, **kwargs):
+        self.progress_update_calls.append(dict(kwargs))
+        return dict(kwargs)
+
+
+def _bind_progress_methods(fake) -> None:
+    """Bind every progress-write method the screen currently defines."""
+    for name in (
+        "_write_library_media_loaded_progress",
+        "_queue_library_media_progress_write",
+        "_drain_library_media_progress_writes",
+        "_library_media_progress_write_is_current",
+    ):
+        method = getattr(LibraryScreen, name, None)
+        if method is not None:
+            setattr(fake, name, MethodType(method, fake))
+
+
+def _progress_capture_fake(
+    *,
+    workers: list,
+    update_reading_progress,
+    run_service_call,
+    scroll_y: int = 17,
+):
+    """A capture-surface fake carrying the coalescing state slots."""
+    fake = SimpleNamespace(
+        _library_media_reader_session=LibraryMediaReaderSessionState(
+            selected_id="local:media:3",
+            selected_backing_id=3,
+            selected_title="Three",
+            loaded_id="local:media:3",
+            loaded_backing_id=3,
+            loaded_title="Three",
+        ),
+        _library_media_read_scroll_by_id={},
+        _library_media_progress_pending_writes={},
+        _library_media_progress_inflight_write=None,
+        _library_media_progress_persisted_offsets={},
+        _library_media_progress_write_worker=None,
+        is_attached=True,
+        app_instance=SimpleNamespace(
+            media_reading_scope_service=SimpleNamespace(
+                update_reading_progress=update_reading_progress
+            )
+        ),
+        query_one=lambda *_args, **_kwargs: SimpleNamespace(
+            scroll_x=0, scroll_y=scroll_y
+        ),
+        # Production run_worker returns a Worker that stays unfinished until
+        # the drainer completes; the queue seam relies on that to spawn only
+        # one drainer per burst.
+        run_worker=lambda coro, **_kwargs: (
+            workers.append(coro),
+            SimpleNamespace(is_finished=False),
+        )[1],
+    )
+    fake._run_library_service_call = run_service_call
+    _bind_progress_methods(fake)
+    return fake
+
+
+@pytest.mark.asyncio
+async def test_identical_consecutive_captures_settle_a_single_progress_write():
+    """TASK-22210 probe: 30 unchanged captures coalesce to one settled write."""
+    calls = []
+
+    async def update_reading_progress(**kwargs):
+        calls.append(kwargs)
+
+    async def run_service_call(call, *args, **kwargs):
+        kwargs.pop("isolate_in_worker", None)
+        return await call(*args, **kwargs)
+
+    workers: list = []
+    fake = _progress_capture_fake(
+        workers=workers,
+        update_reading_progress=update_reading_progress,
+        run_service_call=run_service_call,
+    )
+
+    for _ in range(30):
+        LibraryScreen._capture_library_media_loaded_progress(fake)
+    for worker in workers:
+        await worker
+
+    assert len(workers) == 1, f"expected one queued writer, got {len(workers)}"
+    assert len(calls) == 1, f"expected one settled write, got {len(calls)}"
+    assert calls[0]["progress_data"] == {"scroll_x": 0, "scroll_y": 17}
+    assert fake._library_media_read_scroll_by_id["local:media:3"] == (0, 17)
+
+
+@pytest.mark.asyncio
+async def test_offset_burst_settles_only_the_newest_value_per_item():
+    """TASK-22210 probe: queued writes coalesce; only the latest offset lands."""
+    calls = []
+
+    async def update_reading_progress(**kwargs):
+        calls.append(kwargs)
+
+    async def run_service_call(call, *args, **kwargs):
+        kwargs.pop("isolate_in_worker", None)
+        return await call(*args, **kwargs)
+
+    workers: list = []
+    body = SimpleNamespace(scroll_x=0, scroll_y=5)
+    fake = _progress_capture_fake(
+        workers=workers,
+        update_reading_progress=update_reading_progress,
+        run_service_call=run_service_call,
+    )
+    fake.query_one = lambda *_args, **_kwargs: body
+
+    for scroll_y in (5, 9, 17):
+        body.scroll_y = scroll_y
+        LibraryScreen._capture_library_media_loaded_progress(fake)
+    # The drainer had no chance to run during the burst (the fake
+    # run_worker defers); drain now and require last-write-wins.
+    for worker in workers:
+        await worker
+
+    assert len(workers) == 1, f"expected one queued drainer, got {len(workers)}"
+    assert [call["progress_data"] for call in calls] == [
+        {"scroll_x": 0, "scroll_y": 17}
+    ]
+    assert fake._library_media_progress_persisted_offsets["local:media:3"] == (0, 17)
+
+
+def test_capture_matching_fetched_progress_skips_the_write():
+    """TASK-22210 probe: an offset already in the DB never re-writes."""
+    workers: list = []
+
+    def update_reading_progress(**kwargs):  # pragma: no cover - must not run
+        pytest.fail("unchanged offset reached the progress service")
+
+    async def run_service_call(call, *args, **kwargs):  # pragma: no cover
+        kwargs.pop("isolate_in_worker", None)
+        return call(*args, **kwargs)
+
+    fake = _progress_capture_fake(
+        workers=workers,
+        update_reading_progress=update_reading_progress,
+        run_service_call=run_service_call,
+        scroll_y=12,
+    )
+    session = begin_selection(
+        LibraryMediaReaderSessionState(), "local:media:3", 3, "Three"
+    )
+    fake._library_media_reader_session = session
+    cached = LibraryScreen._cache_library_media_reading_progress(
+        fake,
+        session.request_generation,
+        "local:media:3",
+        {"scroll_x": 0, "scroll_y": 12},
+    )
+    fake._library_media_reader_session = settle_success(
+        session, session.request_generation, "local:media:3"
+    )
+
+    LibraryScreen._capture_library_media_loaded_progress(fake)
+
+    for coro in workers:
+        coro.close()
+    assert cached is True
+    assert workers == [], "capture queued a write for an unchanged offset"
+
+
+@pytest.mark.asyncio
+async def test_thirty_step_traversal_settles_at_most_one_progress_write():
+    """TASK-22210 probe: a held-key traversal must not stack SQLite writers."""
+    app = _build_media_test_app()
+    items = _many_media_items(40)
+    _seed_conversations(app, _two_conversations(), media=items)
+    service = CountingProgressMediaService(items)
+    app.media_reading_scope_service = service
+    host = LibraryProductionCSSHarness(app)
+
+    async with host.run_test(size=WIDE_SIZE) as pilot:
+        screen = await _open_media_list(host, pilot)
+        first = screen.query_one("#library-media-row-0", Button)
+        first_id, first_backing_id, _ = _row_identity(first)
+        first.press()
+        await _wait_for_detail_call(service, first_backing_id)
+        service.release(first_backing_id)
+        await _wait_for_condition(
+            pilot,
+            lambda: screen._library_media_reader_session.loaded_id == first_id,
+            message="Initial settled row did not load.",
+        )
+        await _wait_for_condition(
+            pilot,
+            lambda: bool(screen.query("#library-media-viewer-content")),
+            message="Loaded content body never mounted.",
+        )
+
+        spawns: list = []
+        original_run_worker = screen.run_worker
+
+        def counting_run_worker(work, *args, **kwargs):
+            if kwargs.get("group") == "library_media_reading_progress":
+                spawns.append(kwargs.get("group"))
+            return original_run_worker(work, *args, **kwargs)
+
+        screen.run_worker = counting_run_worker
+        # 30 traversal steps across the 20-row page: sweep down, then back up.
+        step_indexes = list(range(1, 20)) + list(range(18, 7, -1))
+        assert len(step_indexes) == 30
+        rows = [
+            _row_identity(screen.query_one(f"#library-media-row-{index}", Button))
+            for index in step_indexes
+        ]
+        for canonical_id, _backing_id, title in rows:
+            screen._select_library_media_reader_row(
+                canonical_id, title, immediate=False
+            )
+            # Key repeat spans event-loop turns: give the drainer the chance
+            # to finish between steps so a missing equality skip would
+            # re-queue (and re-write) the unchanged offset every step.
+            await pilot.pause()
+        await _wait_for_condition(
+            pilot,
+            lambda: not any(
+                worker.group == "library_media_reading_progress"
+                and not worker.is_finished
+                for worker in screen.workers
+            ),
+            message="Progress write workers never settled.",
+        )
+
+        # 30 traversal steps used to spawn 30 concurrent writers; the fix
+        # settles exactly one (the loaded item's first snapshot -- every
+        # later step captures the same unchanged offset).
+        assert len(spawns) == 1, f"expected 1 worker spawn, got {len(spawns)}"
+        assert len(service.progress_update_calls) == 1, (
+            f"expected 1 settled progress write, "
+            f"got {len(service.progress_update_calls)}"
+        )
+        for media_id in tuple(service.detail_release):
+            service.release(media_id)
+
+
+@pytest.mark.asyncio
+async def test_unmount_drains_pending_and_ambiguous_inflight_progress_writes():
+    """TASK-22210 teardown: the last captured offsets survive screen teardown."""
+    app = _build_media_test_app()
+    items = _many_media_items(3)
+    _seed_conversations(app, _two_conversations(), media=items)
+    service = CountingProgressMediaService(items)
+    app.media_reading_scope_service = service
+    host = LibraryProductionCSSHarness(app)
+
+    async with host.run_test(size=WIDE_SIZE) as pilot:
+        screen = await _open_media_list(host, pilot)
+        # A queued-but-undrained value, and a write whose drainer may have
+        # been cancelled mid-flight: both must be durable after unmount.
+        screen._library_media_progress_pending_writes["local:media:1"] = (1, (0, 33))
+        screen._library_media_progress_inflight_write = ("local:media:2", 2, (0, 7))
+
+        await screen.on_unmount()
+
+        written = {
+            call["media_id"]: call["progress_data"]
+            for call in service.progress_update_calls
+        }
+        assert written.get(1) == {"scroll_x": 0, "scroll_y": 33}
+        assert written.get(2) == {"scroll_x": 0, "scroll_y": 7}
+        assert screen._library_media_progress_pending_writes == {}
+        assert screen._library_media_progress_inflight_write is None

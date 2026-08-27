@@ -354,6 +354,12 @@ class SQLiteStorage(StorageAdapter):
                 # an in-memory database; set for uniformity with the
                 # file-backed branch below (task-15465).
                 self._memory_conn.execute("PRAGMA synchronous = NORMAL")
+                # task-22224: this branch HOLDS its connection, so it needs
+                # true autocommit (see Library_Ingest_Jobs_DB.py's module
+                # docstring, the store template). Safe: every write in this
+                # class is a single statement inside ``with conn:``, whose
+                # commit-on-exit becomes a harmless no-op.
+                self._memory_conn.isolation_level = None
             return self._memory_conn
         conn = connect_private_sqlite("tamagotchi.sqlite", self.db_path)
         conn.execute("PRAGMA journal_mode = WAL")
@@ -363,6 +369,9 @@ class SQLiteStorage(StorageAdapter):
         # connection per operation, so synchronous must be re-applied on
         # every open, not just the first (task-15465).
         conn.execute("PRAGMA synchronous = NORMAL")
+        # task-22224: autocommit for uniformity with the held ``:memory:``
+        # branch above (single-statement writes make it behavior-preserving).
+        conn.isolation_level = None
         return conn
 
     def close(self) -> None:

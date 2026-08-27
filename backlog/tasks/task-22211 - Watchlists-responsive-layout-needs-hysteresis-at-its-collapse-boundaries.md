@@ -2,19 +2,22 @@
 id: TASK-22211
 title: >-
   Watchlists responsive layout needs hysteresis at its collapse boundaries
-status: To Do
-assignee: []
+status: Done
+assignee:
+  - '@claude'
 created_date: '2026-08-24'
+updated_date: '2026-08-25 20:14'
 labels:
   - performance
   - watchlists
   - ux
-priority: medium
 dependencies: []
+priority: medium
 ---
 
 ## Description
 
+<!-- SECTION:DESCRIPTION:BEGIN -->
 Source: holistic performance review of dev `a71e62e4b` (2026-08-24). Evidence, measurements,
 and full file:line cites: `Docs/Design/2026-08-24-holistic-perf-review.md` (finding 22211).
 
@@ -29,9 +32,30 @@ and Watchlists does not. Aggravator (medium confidence): `_available_layout_widt
 `workbench.size.width` (`watchlists_collections_screen.py:2999`), which is
 scrollbar-sensitive — a scrollbar toggle at the boundary could flap the layout with no
 user resize.
+<!-- SECTION:DESCRIPTION:END -->
 
 ## Acceptance Criteria
+<!-- AC:BEGIN -->
+- [x] Repeated +/-1-cell width changes at a collapse boundary cause no mount/remove churn (hysteresis test at the boundary, both directions)
+- [x] The width source is not flappable by a scrollbar toggle, or a code-level guard absorbs sub-hysteresis changes (the repo rule: never trust a CSS-only guard)
+- [x] Approach consistent with the Library reader's hysteresis precedent
+<!-- AC:END -->
 
-- [ ] Repeated +/-1-cell width changes at a collapse boundary cause no mount/remove churn (hysteresis test at the boundary, both directions)
-- [ ] The width source is not flappable by a scrollbar toggle, or a code-level guard absorbs sub-hysteresis changes (the repo rule: never trust a CSS-only guard)
-- [ ] Approach consistent with the Library reader's hysteresis precedent
+## Implementation Plan
+
+<!-- SECTION:PLAN:BEGIN -->
+1. Add pure four-column hysteresis to the Watchlists resolver with bidirectional tests at every Read and management boundary, including priority-adjusted reopening order.
+2. Make positive screen allocation the sole width authority, keep separate responsive history, require explicit recompute causes, and suppress equal-layout workbench requests.
+3. Add a mode-local priority lease; preserve and park it across Article Focus and tab changes; harden explicit-open, focus, rollback, failed-section-swap, and cold-restart behavior with mounted tests.
+4. Run only changed-functionality Watchlists tests and static checks for modified files, self-review the scoped diff, record evidence and Implementation Notes, then close TASK-22211.
+
+ADR required: no
+ADR path: backlog/decisions/042-watchlists-reader-first-ia.md
+Reason: bounded stabilization of ADR-042 responsive policy using the existing Library hysteresis precedent; no new storage, ownership, dependency, or long-lived pane architecture.
+<!-- SECTION:PLAN:END -->
+
+## Implementation Notes
+
+<!-- SECTION:NOTES:BEGIN -->
+Rebased onto dev after the minimal TASK-22211 implementation landed in PR #2097. The incumbent four-column resolver guard and mount/remove churn probe remain the foundation; this PR contributes the delta specified above: positive screen-width authority, explicit recompute causes, separate responsive history, deterministic reverse reopening, no-op request suppression, mode-local priority leases, Article Focus isolation, and complete rollback restoration. Review found and fixed stale rollback-token reuse when an explicit layout request is suppressed as an equal no-op; `test_suppressed_manual_preference_change_does_not_reuse_stale_token` verifies a later stale failure cannot roll back the current preference. Review also found and fixed a stale responsive baseline after a failed narrow-width section swap; `test_section_factory_failure_rolls_back_mode_and_can_retry` verifies the baseline is reconciled to the rendered fallback and the section can be retried successfully. Final review found that a failed pane-open inside the dead band could leave controller responsive and effective state inconsistent with the workbench fallback. `ManualLayoutRollback` now snapshots both effective and responsive layouts, and a current-token failure restores responsive history plus `event.fallback`; the mounted width-145 test `test_failed_responsive_inspector_open_restores_layout_snapshots` verifies alignment and suppresses a redundant follow-up resize request. Verification after reconciliation: the targeted Watchlists changed-functionality suite passed 95 tests with 111 deselected and 2 dependency warnings; Ruff passed for all modified Python and test files; `git diff --check` passed. Modified implementation and coverage: `tldw_chatbook/UI/Watchlists_Modules/region_layout.py`, `tldw_chatbook/UI/Screens/watchlists_collections_screen.py`, `Tests/Watchlists/test_watchlists_responsive_layout.py`, `Tests/Watchlists/test_watchlists_collections_screen.py`, `Tests/Watchlists/test_watchlists_cold_open_layout.py`, and `Tests/Watchlists/test_watchlists_scoped_rebuilds.py`. Supporting design, plan, critique, and this task record were updated. No persistence or storage schema, CSS, or shared split-pane framework changes were made. ADR required: no; existing ADR 042 governs the reader-first responsive policy.
+<!-- SECTION:NOTES:END -->

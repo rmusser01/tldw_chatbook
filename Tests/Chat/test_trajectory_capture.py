@@ -25,6 +25,7 @@ from tldw_chatbook.Chat.console_provider_gateway import (
 )
 from tldw_chatbook.Chat.trajectory import derive_trajectory
 from tldw_chatbook.DB.ChaChaNotes_DB import CharactersRAGDB, TrajectoryRowWrite
+from Tests.console_provider_doubles import provider_resolution
 
 
 def _store_with_db(tmp_path):
@@ -38,13 +39,13 @@ class _TraceGateway:
         self.outcome = outcome
 
     async def resolve_for_send(self, _selection):
-        return SimpleNamespace(
-            ready=True,
-            provider="llama_cpp",
-            model="test-model",
-            base_url="http://127.0.0.1:9099",
-            visible_copy="",
-        )
+        return provider_resolution(
+                   ready=True,
+                   provider="llama_cpp",
+                   model="test-model",
+                   base_url="http://127.0.0.1:9099",
+                   visible_copy="",
+               )
 
     async def stream_chat(self, _resolution, _messages, **_kwargs):
         if self.outcome == "error":

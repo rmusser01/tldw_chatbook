@@ -845,7 +845,21 @@ def open_private_text_append_stream(
     encoding: str = "utf-8",
     errors: str | None = None,
 ) -> TextIO:
-    """Return a pinned private text stream opened for append."""
+    """Return a pinned private text stream opened for append.
+
+    Every stream this returns writes ``\\n`` as a single LF byte on every
+    platform (``newline="\\n"``). The default (``newline=None``) translates
+    each ``\\n`` a caller writes into ``os.linesep``, which on Windows is
+    ``\\r\\n`` -- so a caller that encodes a line, writes it as text, and then
+    reasons about the file's SIZE (or diffs the file against the bytes it
+    just wrote) is wrong by one byte per line there. ``MCPExecutionLog``
+    does exactly that: it caches a generation's sanitized bytes keyed on
+    ``st_size``, so under CRLF translation the cache was dropped on every
+    append and the whole log was re-parsed and rewritten each time -- the
+    exact per-tool-call cost TASK-21134's cache removed on POSIX. These are
+    line-oriented JSONL/log files, so LF is also the shape every reader here
+    already assumes.
+    """
 
     selected = lexical_path(path)
     _prepare_application_owned_parent(selected, application_owned_directory)
@@ -853,7 +867,9 @@ def open_private_text_append_stream(
     if not _posix_guards_available():
         if _WINDOWS_PLATFORM:
             selected.parent.mkdir(parents=True, exist_ok=True)
-            return selected.open("a", encoding=encoding, errors=errors)
+            return selected.open(
+                "a", encoding=encoding, errors=errors, newline="\n"
+            )
         raise PrivatePathError(
             PrivatePathResult(
                 selected,
@@ -920,6 +936,11 @@ def open_private_text_append_stream(
             "a",
             encoding=encoding,
             errors=errors,
+            # Same LF contract as the Windows branch above. A no-op on this
+            # platform (``os.linesep`` is already LF), stated so the two
+            # branches cannot drift apart on the one property callers of
+            # this helper reason about in bytes.
+            newline="\n",
             closefd=True,
         )
         file_fd = -1

@@ -1789,10 +1789,10 @@ def test_outcome_first_recipe_has_stable_blank_markdown_blocks_in_both_lanes():
     )
     assert tuple(block.id for block in first.lanes[1].blocks) == (
         "goal",
-        "success-criteria",
         "context-evidence",
         "constraints",
         "output",
+        "success-criteria",
         "stop-rules",
     )
     assert all(
@@ -3030,6 +3030,7 @@ def _basic_structured_prompt(*, extra_user_block: bool = False):
         ("", "basic"),
         ("BASIC", "basic"),
         ("advanced", "advanced"),
+        ("info", "info"),
         ("future-mode", "basic"),
         (True, "basic"),
     ],

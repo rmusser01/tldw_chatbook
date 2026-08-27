@@ -234,7 +234,7 @@ class MediaDatabase:
     Requires client_id on initialization. Includes schema versioning.
     """
 
-    _CURRENT_SCHEMA_VERSION = 8  # Define the version this code supports
+    _CURRENT_SCHEMA_VERSION = 9  # Define the version this code supports
     # task-261: idle window within which the per-call `SELECT 1` liveness
     # ping is skipped for a recently-used thread-local connection (see
     # `_get_thread_connection`).
@@ -286,6 +286,14 @@ class MediaDatabase:
             "description": (
                 "Add the engine-version census covering index to "
                 "UnvectorizedMediaChunks"
+            ),
+        },
+        8: {
+            "to_version": 9,
+            "function": "_apply_migration_v8_to_v9",
+            "description": (
+                "Add four active-media partial indexes so the stats-free "
+                "planner stops sorting the whole library per list render"
             ),
         },
     }
@@ -348,6 +356,95 @@ class MediaDatabase:
             ON UnvectorizedMediaChunks(deleted, chunk_engine_version, media_id)
             WHERE deleted = 0;
         UPDATE schema_version SET version = 8;
+    """
+
+    # TASK-21593: the follow-up audit v8 asked for. Every Media list surface
+    # filters `deleted = 0 AND is_trash = 0` and then orders; with no
+    # `sqlite_stat1` the planner answered ALL of them by searching
+    # `idx_media_deleted` and sorting the entire live library in a temp
+    # B-tree to hand back twenty rows. Measured on a 20,000-media /
+    # 200,000-chunk / 278 MB production-schema DB (no ANALYZE -- see the
+    # note on _CHUNK_ENGINE_CENSUS_INDEX_MIGRATION_SQL):
+    #
+    #   Library page (list_library_media_page)      19.5 -> 0.07 ms
+    #   Library page at OFFSET 15000               119.9 -> 1.07 ms
+    #   Library page count                          16.3 -> 0.86 ms
+    #   Media browse page (search_media_db)         24.8 -> 0.08 ms
+    #   Media browse count                          16.8 -> 1.30 ms
+    #   Media browse, type facet                    20.1 -> 0.10 ms
+    #   get_paginated_files page                    19.6 -> 0.06 ms
+    #   selection-dropdown page                     19.8 -> 0.27 ms
+    #   read-it-later list                          17.4 -> 1.44 ms
+    #   sort=date_desc  / date_asc            25.0/28.0 -> 0.42/0.52 ms
+    #   sort=title_asc  / title_desc          23.9/24.2 -> 0.08/0.08 ms
+    #   get_distinct_media_types                    21.9 -> 2.49 ms
+    #
+    # The COLUMN ORDER is measured, not aesthetic, and follows the rule v8
+    # paid for: **lead with the equality columns the stats-free planner
+    # already likes.** A bare `(last_modified DESC, id DESC) WHERE deleted =
+    # 0 AND is_trash = 0` index -- the textbook shape for these ORDER BYs --
+    # is never chosen in that state; every one of the queries above stays on
+    # `idx_media_deleted` plus its temp B-tree. Leading with
+    # `(deleted, is_trash)` makes each index answer a two-column equality
+    # search, which the no-stats planner prefers to the one-column search it
+    # was using, and the trailing sort key then comes out in order for free.
+    #
+    # Why FOUR indexes and not one. `idx_media_active_recent` alone is a
+    # large net win but it REGRESSES the three list queries whose ORDER BY
+    # or DISTINCT it cannot serve, because the planner switches to it anyway
+    # and then still sorts: sort=date_desc 24.1 -> 32.9 ms, sort=title_asc
+    # 23.6 -> 32.8 ms, get_distinct_media_types 20.9 -> 28.7 ms. Shipping
+    # one index would have made three user-selectable surfaces ~38% slower.
+    # The other three exist to take those same queries onto an ordered index
+    # instead, and with all four present every sampled list query is at or
+    # below its pre-change time.
+    #
+    # All four are PARTIAL on the same predicate the readers use, so trashed
+    # and soft-deleted rows cost nothing. (The partial predicate is a DISK
+    # property, not a plan one: dropping it leaves every plan above
+    # byte-identical -- proven by mutation, and the reason the test file
+    # pins it as DDL text rather than pretending a plan assertion covers
+    # it. The same is true of the DESC keywords, which SQLite satisfies by
+    # scanning an ASC index backwards.) Write-side, measured over 200 real
+    # `add_media_with_keywords` calls against the same corpus: +0.05 ms
+    # median (0.612 -> 0.663 ms), +0.78% file size (2.28 MB of 282 MB),
+    # soft-delete unchanged (62.6 -> 62.1 ms), and a one-off 138 ms build for
+    # all four at the first open after upgrade.
+    #
+    # WHAT THIS COSTS, stated. Four queries get SLOWER, all for one reason:
+    # where the ONLY useful predicate is `deleted = 0 AND is_trash = 0` and
+    # there is no ORDER BY for an index to serve, the planner now walks one
+    # of these indexes and looks rows up in ITS order rather than in rowid
+    # order, losing sequential page access. Measured over 15 alternating
+    # repetitions: `search_library_media_page` count 27.0 -> 35.2 ms and
+    # page 43.6 -> 51.0 ms (the `library.search` tool, per call, and already
+    # dominated by two `content LIKE '%q%'` passes over every live row);
+    # the `chunking_status` count 18.3 -> 28.3 ms; `get_media_by_title`
+    # 17.4 -> 22.5 ms. `get_all_active_media_ids` moves +0.35 ms, i.e. noise.
+    #
+    # A fifth, narrow `(deleted, is_trash) WHERE deleted = 0 AND is_trash =
+    # 0` index fixes exactly that class -- it restores rowid-order lookups
+    # and takes those three back to 26.7 / 43.1 / 18.1 ms -- and was
+    # REJECTED, because the planner then prefers it for the ordered queries
+    # too and sort=date_desc goes 0.46 -> 26.05 ms, a 57x loss on a facet
+    # a user clicks. Recorded here with its numbers so nobody re-derives it.
+    #
+    # Like every migration-added artifact in this file they live ONLY here,
+    # not in _INDICES_SQL_V1 (fresh databases replay the whole chain).
+    _ACTIVE_MEDIA_INDEX_MIGRATION_SQL = """
+        CREATE INDEX IF NOT EXISTS idx_media_active_recent
+            ON Media(deleted, is_trash, last_modified DESC, id DESC)
+            WHERE deleted = 0 AND is_trash = 0;
+        CREATE INDEX IF NOT EXISTS idx_media_active_type
+            ON Media(deleted, is_trash, type)
+            WHERE deleted = 0 AND is_trash = 0;
+        CREATE INDEX IF NOT EXISTS idx_media_active_ingested
+            ON Media(deleted, is_trash, ingestion_date DESC, id DESC)
+            WHERE deleted = 0 AND is_trash = 0;
+        CREATE INDEX IF NOT EXISTS idx_media_active_title
+            ON Media(deleted, is_trash, title COLLATE NOCASE, id)
+            WHERE deleted = 0 AND is_trash = 0;
+        UPDATE schema_version SET version = 9;
     """
 
     # task-7 (chunking template parity, spec §5.2): v7 rebuilds
@@ -940,6 +1037,16 @@ class MediaDatabase:
     # --- Connection Management ---
     def _get_thread_connection(self) -> sqlite3.Connection:
         """Retrieve or create the current thread's SQLite connection.
+
+        task-22224 EXCEPTION -- this held connection keeps the legacy
+        default isolation level for now instead of the store template's
+        ``isolation_level = None`` (rule: ``Library_Ingest_Jobs_DB.py``
+        module docstring). ``transaction()`` here borrows via
+        ``in_transaction`` and write helpers still rely on implicit
+        transactions (``execute_query(commit=True)``/``execute_many``), so
+        flipping requires this file's own commit/rollback/write-site census
+        first, as done for ``ChaChaNotes_DB`` -- its own task. Do NOT copy
+        this pattern into new stores.
 
         task-261: the ``SELECT 1`` liveness ping is gated behind an idle
         threshold (``_LIVENESS_PING_IDLE_SECONDS``) instead of running on
@@ -1856,6 +1963,40 @@ class MediaDatabase:
                 f"Unexpected error during migration v7->v8: {error}"
             ) from error
 
+    def _apply_migration_v8_to_v9(self, conn: sqlite3.Connection):
+        """Add the four active-media partial indexes (TASK-21593).
+
+        Pure index addition, exactly like v7->v8: no column, table, trigger
+        or row is touched, so there is nothing to back-fill and nothing a
+        partial application could corrupt. The measurements that chose each
+        index's exact shape -- and the reason there are four of them rather
+        than one -- are recorded on
+        ``_ACTIVE_MEDIA_INDEX_MIGRATION_SQL``.
+
+        Build cost is proportional to LIVE media rows and is paid once, at
+        the first open after upgrade: measured 138 ms for all four on a
+        20,000-media / 278 MB database. It buys back ~19 ms per Library or
+        Media list render at that size, and ~119 ms on a deep page.
+
+        Raises:
+            DatabaseError: On any failure, after rolling the transaction
+                back (the DB remains at v8 and keeps working -- the list
+                surfaces simply stay on the pre-index sort plan).
+        """
+
+        try:
+            with self.transaction():
+                self._execute_transactional_script(
+                    conn,
+                    self._ACTIVE_MEDIA_INDEX_MIGRATION_SQL,
+                )
+        except sqlite3.Error as error:
+            raise DatabaseError(f"Migration v8->v9 failed: {error}") from error
+        except Exception as error:
+            raise DatabaseError(
+                f"Unexpected error during migration v8->v9: {error}"
+            ) from error
+
     @staticmethod
     def _assert_no_foreign_keys_reference(
         conn: sqlite3.Connection, table: str
@@ -2574,12 +2715,34 @@ class MediaDatabase:
         )
         if cleaned_must_have:
             kw_mh_placeholders = ",".join("?" * len(cleaned_must_have))
-            # Subquery to ensure media_id is linked to ALL provided keywords
+            # Subquery to ensure media_id is linked to ALL provided keywords.
+            #
+            # TASK-21593: the predicate is `k_mh.keyword IN (...)`, NOT
+            # `LOWER(k_mh.keyword) IN (...)`. Wrapping the column in a
+            # function makes it non-sargable, so the planner could not use
+            # `sqlite_autoindex_Keywords_1` and instead walked EVERY live
+            # keyword for EVERY candidate media row -- measured 12.3 s on a
+            # 20,000-media / 3,000-keyword database, on a path the chat
+            # scope picker runs per debounced keystroke. Bare, it is
+            # `SEARCH k_mh USING INDEX sqlite_autoindex_Keywords_1
+            # (keyword=?)`: 12,292 -> 18.3 ms with the v9 indexes.
+            #
+            # Dropping LOWER() is not a behaviour change here. `keyword` is
+            # declared `TEXT NOT NULL UNIQUE COLLATE NOCASE`, so a bare
+            # comparison against it is already case-insensitive, and
+            # `cleaned_must_have` above has Python-`.lower()`ed every bound
+            # value. Brute-forced over a hostile alphabet (ASCII case,
+            # E-acute, Turkish dotted/dotless I, sharp s, Kelvin sign, final
+            # sigma, digits, spaces, LIKE metacharacters): for every value
+            # this caller can bind, the two forms return identical row sets;
+            # they diverge only for bound values containing uppercase, which
+            # this caller cannot produce, and there the bare form is the
+            # WIDER of the two. Pinned in Tests/DB/test_media_db_schema_v9.py.
             conditions.append(f"""
                 (SELECT COUNT(DISTINCT k_mh.id)
                  FROM MediaKeywords mk_mh
                  JOIN Keywords k_mh ON mk_mh.keyword_id = k_mh.id
-                 WHERE mk_mh.media_id = m.id AND k_mh.deleted = 0 AND LOWER(k_mh.keyword) IN ({kw_mh_placeholders})
+                 WHERE mk_mh.media_id = m.id AND k_mh.deleted = 0 AND k_mh.keyword IN ({kw_mh_placeholders})
                 ) = ?
             """)
             params.extend(cleaned_must_have)
@@ -2593,12 +2756,17 @@ class MediaDatabase:
         )
         if cleaned_must_not_have:
             kw_mnh_placeholders = ",".join("?" * len(cleaned_must_not_have))
+            # Same TASK-21593 change, same reasoning, as the must-have leg
+            # above: bare column so `sqlite_autoindex_Keywords_1` is usable.
+            # Measured 80.8 -> 53.5 ms before the v9 indexes and 0.15 ->
+            # 0.13 ms after them (the index lets LIMIT short-circuit, which
+            # is where most of that arm's win comes from).
             conditions.append(f"""
                 NOT EXISTS (
                     SELECT 1
                     FROM MediaKeywords mk_mnh
                     JOIN Keywords k_mnh ON mk_mnh.keyword_id = k_mnh.id
-                    WHERE mk_mnh.media_id = m.id AND k_mnh.deleted = 0 AND LOWER(k_mnh.keyword) IN ({kw_mnh_placeholders})
+                    WHERE mk_mnh.media_id = m.id AND k_mnh.deleted = 0 AND k_mnh.keyword IN ({kw_mnh_placeholders})
                 )
             """)
             params.extend(cleaned_must_not_have)
@@ -2821,7 +2989,30 @@ class MediaDatabase:
         join_clause = " ".join(list(dict.fromkeys(joins)))  # Unique joins
         where_clause = "WHERE " + " AND ".join(conditions) if conditions else ""
 
-        count_sql = f"SELECT {count_select} {base_from} {join_clause} {where_clause}"
+        # TASK-21593: the COUNT half of an FTS search had its join order
+        # inverted. With no `sqlite_stat1` the planner made Media the outer
+        # loop and probed `media_fts` once per live media row -- measured
+        # 276 ms against 29 ms for the same answer with `media_fts` outside,
+        # on a 20,000-media corpus. (The ROWS half already gets fts-first on
+        # its own, because its ORDER BY on `fts.rank` forces the issue; it is
+        # deliberately left alone.) A plain `FROM media_fts fts JOIN Media m`
+        # does NOT fix it -- the planner reorders straight back, measured
+        # 266 ms. CROSS JOIN is the only spelling SQLite treats as an order
+        # instruction rather than a suggestion.
+        #
+        # It is applied ONLY when no id allowlist is in play, and that
+        # exception is measured, not defensive: with a five-id
+        # `media_ids_filter` Media really is the cheap side and pinning
+        # fts first costs 0.10 -> 1.92 ms. Every other predicate
+        # (type facet, chunking_status, date range) leaves Media-first
+        # 3.3-9.5x slower, so they keep the pin.
+        count_from_clause = f"{base_from} {join_clause}"
+        if fts_search_active and not media_ids_filter:
+            count_from_clause = (
+                "FROM media_fts fts CROSS JOIN Media m ON fts.rowid = m.id"
+            )
+
+        count_sql = f"SELECT {count_select} {count_from_clause} {where_clause}"
         results_sql = (
             f"{final_select_stmt} {base_from} {join_clause} {where_clause} "
             f"{order_by_clause_str} LIMIT ? OFFSET ?"

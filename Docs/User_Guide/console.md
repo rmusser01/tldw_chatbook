@@ -85,7 +85,9 @@ Top to bottom:
   reply is streaming. **Send** is genuinely disabled whenever a send can't
   go through — nothing typed yet, setup incomplete, or a reply still
   streaming — and the reason shows inline next to it (e.g. "Send blocked —
-  choose a model to continue"), so you never have to hover to find out why.
+  choose a model to continue ›"), so you never have to hover to find out
+  why. When setup is the blocker, that reason is clickable and opens the
+  setup wizard directly.
   You can just start typing from almost anywhere on
   the screen — printable keys go straight into the draft.
 - **Footer** — shortcut hints (F6, Shift+F6, F1, Enter, Ctrl+K, Ctrl+T,
@@ -464,7 +466,7 @@ are covered on the child pages, chiefly [Context & RAG](console/context-and-rag.
   "Console: Change model…".
 
 —
-*Verified against 4646922ed — 2026-08-04 (PR-4 Task 6 live check, including
+*Verified against working tree — 2026-08-25 (TASK-21145: clickable setup-blocked reason; first send never intercepted by the project-instructions folder dialog on a fresh profile). Verified against 4646922ed — 2026-08-04 (PR-4 Task 6 live check, including
 a real-provider send round trip). Verified against e2c706303 — 2026-08-06
 (PR-T2, docs pass against shipped code/tests, live check pending Task 9):
 a legacy `[API] <provider>_api_key` now satisfies this screen's own

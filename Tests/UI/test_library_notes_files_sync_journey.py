@@ -456,6 +456,7 @@ async def test_database_notes_import_once_journey_is_painted_focused_and_retaine
         screen.query_one("#library-row-browse-notes", Button).press()
         await _wait_for_selector(screen, pilot, "#library-notes-add-from-files")
         notes_canvas = screen.query_one("#library-notes-canvas")
+        notes_work = screen.query_one("#library-note-work-pane")
         authority = screen.query_one("#library-notes-authority", Static)
         painted = _painted_text(host)
         purpose = str(
@@ -483,10 +484,11 @@ async def test_database_notes_import_once_journey_is_painted_focused_and_retaine
         await pilot.pause()
         add_from_files.press()
         import_once = await _wait_for_selector(screen, pilot, "#notes-add-import-once")
-        chooser = screen.query_one("#library-notes-canvas")
+        chooser = screen.query_one("#library-note-work-pane")
         await pilot.pause()
 
-        assert chooser is notes_canvas
+        assert screen.query_one("#library-notes-canvas") is notes_canvas
+        assert chooser is notes_work
         assert screen.focused is import_once
         painted = _painted_text(host)
         assert "Import once" in painted
@@ -643,7 +645,10 @@ async def test_lasting_setup_keeps_server_unavailable_copy_painted(
             server_reason, animate=False
         )
         await pilot.pause()
-        assert "server sync-folder capability not installed" in _painted_text(host)
+        painted = _painted_text(host).lower()
+        assert "server sync-folder" in painted
+        assert "capability not" in painted
+        assert "installed" in painted
         assert (
             screen.query_one("#notes-sync-back", Button)
             in host.screen._compositor.visible_widgets

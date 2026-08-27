@@ -1,0 +1,59 @@
+Detached tmux PTY capture — 170-cell Chats adaptive route
+Session: tldw22301-170
+Pane/stty: 170x52
+CWD: /Users/macbook-dev/Documents/GitHub/tldw_chatbook/.worktrees/library-rail-bounded-width
+Command: python3.12 (/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/bin/python -m tldw_chatbook.app)
+Observed geometry: grid=166; Library=31; grip=5; Items=40; grip=5; Work=85
+Activation: Ctrl+P Library, / focus rail search, Tab x3, Enter
+                     ╭────────────╮
+ ⌃1 Home  ⌃2 Console │ ⌃3 Library │ F10 Research  ⌃4 Artifacts  ⌃5 Roleplay  ⌃6 Watchlists  ⌃7 Schedules  ⌃8 Workflows  ⌃9 MCP  ⌃0 ACP  F7 Lab  F8 Logs  F9 Settings
+──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+ Library | Local
+┌────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┐
+│ ┌─────────────────────────────┐     ┌──────────────────────────────────────┐      Conversation reader                                                                  │
+│ │ Navigation                  │     │ Conversations (0)                    │         Read    Info                                                                      │
+│ │     Import…                 │     │ No conversations yet. Chat in        │                                                                                           │
+│ │ ▊▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▎ │     │ Console and it appears here.         │      Select a conversation to read it here.                                               │
+│ │ ▊ Collections             ▎ │     │   Start in Console                   │                                                                                           │
+│ │ ▊▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▎ │     │                                      │      ▊▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▎  │
+│ │                             │     │                                      │      ▊ Find in complete transcript…                                                    ▎  │
+│ │ ─────────────────────────── │     │                                      │      ▊▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▎  │
+│ │  Browse                ▾    │     │                                      │                                                                                           │
+│ │    Media (0) — your files   │     │                                      │                                                                                           │
+│ │  ▸ Conversations (0)        │     │                                      │                                                                                           │
+│ │    Notes (0)                │     │                                      │                                                                                           │
+│ │    Prompts (0) — reuse      │     │                                      │                                                                                           │
+│ │    Skills (0) — AI add-ons  │     │                                      │                                                                                           │
+│ │    Collections              │     │                                      │                                                                                           │
+│ │    Search / RAG — find all  │     │                                      │                                                                                           │
+│ │ ─────────────────────────── │     │                                      │                                                                                           │
+│ │  Create                ▾    │     │                                      │                                                                                           │
+│ │    New note                 │     │                                      │                                                                                           │
+│ │    New prompt               │     │                                      │                                                                                           │
+│ │    New skill                │     │                                      │                                                                                           │
+│ │ ─────────────────────────── │     │                                      │                                                                                           │
+│ │  Study                 ▾    │<--- │                                      │<---                                                                                       │
+│ │    Study decks (0)          │     │                                      │                                                                                           │
+│ │      see what carries over  │     │                                      │                                                                                           │
+│ │    Flashcards due: 0        │     │                                      │                                                                                           │
+│ │      see what carries over  │     │                                      │                                                                                           │
+│ │    Quizzes (0)              │     │                                      │                                                                                           │
+│ │      see what carries over  │     │                                      │                                                                                           │
+│ │ ─────────────────────────── │     │                                      │                                                                                           │
+│ │  Import / Export       ▾    │     │                                      │                                                                                           │
+│ │    Import…                  │     │                                      │                                                                                           │
+│ │    Export                   │     │                                      │                                                                                           │
+│ │ ─────────────────────────── │     │                                      │                                                                                           │
+│ │  Details               ▸    │     │                                      │                                                                                           │
+│ │  Back to Get started        │     │                                      │                                                                                           │
+│ │                             │     │                                      │                                                                                           │
+│ │                             │     │                                      │                                                                                           │
+│ │                             │     │                                      │                                                                                           │
+│ │                             │     │                                      │                                                                                           │
+│ │                             │     │                                      │                                                                                           │
+│ │                             │     │                                      │                                                                                           │
+│ │                             │     │                                      │                                                                                           │
+│ │                             │     │                                      │         ○ Open in Console                                                                 │
+│ └─────────────────────────────┘     └──────────────────────────────────────┘                                                                                           │
+└────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┘
+  F6 next pane | F1 help · Ctrl+P palette · Ctrl+Q quit

@@ -14,6 +14,8 @@ from tldw_chatbook.Chat.console_chat_controller import ConsoleChatController
 from tldw_chatbook.Chat.console_chat_models import ConsoleMessageRole, ConsoleRunStatus
 from tldw_chatbook.Chat.console_chat_store import ConsoleChatStore
 from tldw_chatbook.Skills_Interop.skill_trust_models import SkillTrustBlockedError
+from Tests.console_provider_doubles import persisted_console_store
+from Tests.console_provider_doubles import provider_resolution
 
 
 class _Skills:
@@ -92,7 +94,10 @@ class _RecordingGateway:
         self.payloads = []
 
     async def resolve_for_send(self, selection):
-        return _ReadyResolution()
+        # `provider_resolution` rather than `_ReadyResolution()`: a26cdafd8
+        # made the typed `resolved_destination` mandatory on a ready
+        # resolution, and a bare attribute-class cannot carry one.
+        return provider_resolution(provider="llama_cpp", model="m")
 
     async def stream_chat(self, resolution, messages, **kwargs):
         self.payloads.append(messages)
@@ -102,7 +107,7 @@ class _RecordingGateway:
 
 
 def _controller(skills):
-    store = ConsoleChatStore()
+    store = persisted_console_store()
     return ConsoleChatController(
         store=store,
         provider_gateway=object(),
@@ -173,7 +178,7 @@ async def test_edited_skill_refuses_at_build():
 
 @pytest.mark.asyncio
 async def test_no_skills_service_is_a_noop():
-    store = ConsoleChatStore()
+    store = persisted_console_store()
     controller = ConsoleChatController(
         store=store, provider_gateway=object(), provider="llama_cpp", model="m"
     )
@@ -192,7 +197,7 @@ async def test_no_skills_service_is_a_noop():
 @pytest.mark.asyncio
 async def test_submit_sends_rendered_payload_but_stores_raw_command():
     skills = _Skills("inline")
-    store = ConsoleChatStore()
+    store = persisted_console_store()
     gateway = _RecordingGateway()
     controller = ConsoleChatController(
         store=store,
@@ -216,7 +221,7 @@ async def test_submit_sends_rendered_payload_but_stores_raw_command():
 @pytest.mark.asyncio
 async def test_fork_survives_retry_by_re_rendering_fresh():
     skills = _Skills("fork")
-    store = ConsoleChatStore()
+    store = persisted_console_store()
     failing = _RecordingGateway(fail=True)
     controller = ConsoleChatController(
         store=store,
@@ -248,7 +253,7 @@ async def test_fork_survives_retry_by_re_rendering_fresh():
 @pytest.mark.asyncio
 async def test_submit_refusal_appends_system_row_and_aborts_without_provider_call():
     skills = _Skills(raise_trust=True)
-    store = ConsoleChatStore()
+    store = persisted_console_store()
     gateway = _RecordingGateway()
     controller = ConsoleChatController(
         store=store,
@@ -290,7 +295,7 @@ async def test_submit_refusal_never_invokes_accepted_hook():
     ChatScreen that hook clears the composer, so firing it on a refusal
     would eat the refused draft the user needs to correct in place."""
     skills = _Skills(raise_trust=True)
-    store = ConsoleChatStore()
+    store = persisted_console_store()
     gateway = _RecordingGateway()
     controller = ConsoleChatController(
         store=store,
@@ -315,7 +320,7 @@ async def test_submit_success_still_invokes_accepted_hook_before_assistant_row()
     ASSISTANT placeholder is appended (store order stays
     [USER, ..., ASSISTANT])."""
     skills = _Skills("inline")
-    store = ConsoleChatStore()
+    store = persisted_console_store()
     gateway = _RecordingGateway()
     controller = ConsoleChatController(
         store=store,
@@ -344,7 +349,7 @@ async def test_submit_success_still_invokes_accepted_hook_before_assistant_row()
 @pytest.mark.asyncio
 async def test_regenerate_refusal_after_skill_edit_keeps_prior_answer():
     skills = _Skills("inline")
-    store = ConsoleChatStore()
+    store = persisted_console_store()
     gateway = _RecordingGateway()
     controller = ConsoleChatController(
         store=store,

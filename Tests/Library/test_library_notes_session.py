@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import builtins
+import importlib.util
 from collections import deque
 from dataclasses import replace
 from datetime import datetime, timezone
@@ -31,6 +32,16 @@ from tldw_chatbook.Library.library_notes_state import (
 
 
 NOW = datetime(2026, 7, 31, 12, 34, tzinfo=timezone.utc)
+
+
+def test_notes_reader_has_no_parallel_state_authority() -> None:
+    """The session coordinator remains the only Database Notes reader model."""
+    assert (
+        importlib.util.find_spec(
+            "tldw_chatbook.Library.library_notes_reader_state"
+        )
+        is None
+    )
 
 
 def _detail(

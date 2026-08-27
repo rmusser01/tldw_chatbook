@@ -13,6 +13,7 @@ from tldw_chatbook.Chat.console_chat_controller import ConsoleChatController
 from tldw_chatbook.Chat.console_chat_models import ConsoleMessageRole
 from tldw_chatbook.Chat.console_chat_store import ConsoleChatStore
 from tldw_chatbook.Chat.console_history_budget import bound_messages_to_window
+from Tests.console_provider_doubles import provider_resolution
 
 
 class SummaryGateway:
@@ -25,18 +26,12 @@ class SummaryGateway:
 
     async def resolve_for_send(self, selection):
         ready = self.ready
-        return type(
-            "Resolution",
-            (),
-            {
-                "ready": ready,
-                "provider": "llama_cpp",
-                "model": "test-model",
-                "base_url": "http://127.0.0.1:9099",
-                "max_tokens": 512,
-                "visible_copy": "" if ready else "Provider blocked: no key.",
-            },
-        )()
+        return provider_resolution(
+            ready=ready,
+            base_url="http://127.0.0.1:9099",
+            max_tokens=512,
+            visible_copy="" if ready else "Provider blocked: no key.",
+        )
 
     async def stream_chat(self, resolution, messages, **kwargs):
         self.captured_messages = messages

@@ -4,19 +4,128 @@ import asyncio
 
 from typing import Any
 
-from rich.text import Text
+from rich.text import Span, Text
 from textual.app import ComposeResult
 from textual.containers import Horizontal, Vertical, VerticalScroll
 from textual.widgets import Button, Input, Markdown, Static
 
-from tldw_chatbook.Library.library_media_viewer_state import find_content_matches
 from tldw_chatbook.Utils.markdown_parsing import front_matter_parser_factory
+
+#: Style carried by every highlighted match…
+MATCH_STYLE = "reverse"
+#: …and by the one match the Prev/Next navigation currently sits on.
+ACTIVE_MATCH_STYLE = "reverse bold"
+
+
+class RawContentHighlightPlan:
+    """The single O(document) highlight pass for one (content, query) pair.
+
+    task-22209: match navigation used to rebuild this entire Rich ``Text``
+    per Prev/Next click -- a full ``find_content_matches`` scan plus up to
+    three ``Text.append`` calls for every line of the WHOLE document --
+    only to move one line's highlight from ``reverse`` to ``reverse bold``.
+    The highlight spans are positional and their offsets do NOT move
+    between clicks (the characters are identical; that is the same fact
+    task-21134's ``layout=False`` rests on), so the plan keeps the built
+    ``Text`` and a click rewrites only the one or two ``Span`` entries
+    whose style actually changed.
+
+    Spans are appended in ascending line order alongside ``matches``, so
+    ``text.spans[i]`` is the highlight for ``matches[i]`` -- the plan owns
+    both, derived in the same pass, which is why the renderable no longer
+    needs a ``find_content_matches`` scan of its own.
+
+    Attributes:
+        matches: Ascending source-line indexes of the highlighted lines.
+    """
+
+    __slots__ = ("matches", "_text", "_active_slot")
+
+    def __init__(self, text: Text, matches: tuple[int, ...]) -> None:
+        self.matches = matches
+        self._text = text
+        self._active_slot: int | None = None
+
+    def renderable(self, match_index: int) -> Text:
+        """Return the shared highlighted text with ``match_index`` active.
+
+        Args:
+            match_index: Zero-based index of the active match; wrapped
+                modulo the match count, exactly as the status line wraps it.
+
+        Returns:
+            The plan's ``Text``. This is the SAME object across calls -- it
+            is handed back to ``Static.update`` so the widget re-visualizes
+            it, but nothing is rebuilt.
+        """
+        slot = match_index % len(self.matches)
+        if slot == self._active_slot:
+            return self._text
+        spans = self._text.spans
+        if self._active_slot is not None:
+            stale = spans[self._active_slot]
+            spans[self._active_slot] = Span(stale.start, stale.end, MATCH_STYLE)
+        active = spans[slot]
+        spans[slot] = Span(active.start, active.end, ACTIVE_MATCH_STYLE)
+        self._active_slot = slot
+        return self._text
+
+
+def build_raw_content_highlight_plan(
+    content: str, query: str
+) -> RawContentHighlightPlan | str:
+    """Build the reusable highlight plan for one document and query.
+
+    This is the one document pass: the loop derives the matching line
+    indexes AND their highlight spans together, so the plan's match list
+    is aligned with its spans by construction (a separate
+    ``find_content_matches`` scan could only re-derive the same answer).
+    Matching is case-insensitive on the stripped query, identical to
+    ``find_content_matches``: ``needle in line.lower()`` and
+    ``line.lower().find(needle) >= 0`` are the same predicate.
+
+    Args:
+        content: Source text to display.
+        query: Case-insensitive search text to highlight.
+
+    Returns:
+        A plan when the query matches at least one line; otherwise the
+        plain display string to render as-is (no query, no content, or no
+        matches).
+    """
+    display_content = content or "No stored content."
+    normalized_query = query.strip()
+    if not normalized_query or not content:
+        return display_content
+    needle = normalized_query.lower()
+    needle_length = len(needle)
+    text = Text()
+    matches: list[int] = []
+    for line_index, line in enumerate(display_content.split("\n")):
+        if line_index:
+            text.append("\n")
+        hit = line.lower().find(needle)
+        if hit < 0:
+            text.append(line)
+            continue
+        matches.append(line_index)
+        text.append(line[:hit])
+        text.append(line[hit : hit + needle_length], style=MATCH_STYLE)
+        text.append(line[hit + needle_length :])
+    if not matches:
+        return display_content
+    return RawContentHighlightPlan(text, tuple(matches))
 
 
 def build_raw_content_renderable(
     content: str, query: str, match_index: int
 ) -> Text | str:
     """Build raw text content with matching source lines highlighted.
+
+    A one-shot wrapper over ``build_raw_content_highlight_plan``: callers
+    that navigate between matches should hold the plan instead (see
+    ``LibraryMediaContentBody``), because rebuilding it per click is what
+    task-22209 removed.
 
     Args:
         content: Source text to display.
@@ -27,30 +136,10 @@ def build_raw_content_renderable(
         Highlighted Rich text when a match is active; otherwise, the source
         text or its empty-state message.
     """
-    display_content = content or "No stored content."
-    normalized_query = query.strip()
-    if not normalized_query or not content:
-        return display_content
-    matches = find_content_matches(content, normalized_query)
-    if not matches:
-        return display_content
-    current_line = matches[match_index % len(matches)]
-    needle = normalized_query.lower()
-    text = Text()
-    for line_index, line in enumerate(display_content.split("\n")):
-        if line_index:
-            text.append("\n")
-        hit = line.lower().find(needle)
-        if hit < 0:
-            text.append(line)
-            continue
-        text.append(line[:hit])
-        text.append(
-            line[hit : hit + len(needle)],
-            style="reverse bold" if line_index == current_line else "reverse",
-        )
-        text.append(line[hit + len(needle) :])
-    return text
+    plan = build_raw_content_highlight_plan(content, query)
+    if isinstance(plan, str):
+        return plan
+    return plan.renderable(match_index)
 
 
 class LibraryMediaContentBody(VerticalScroll):
@@ -77,6 +166,17 @@ class LibraryMediaContentBody(VerticalScroll):
         self._mount_lock = asyncio.Lock()
         self._query = query
         self._match_index = match_index
+        # task-22209: the highlight plan for the CURRENTLY displayed
+        # (content, query) pair, plus the pair it was built from. Keyed on
+        # the content OBJECT (``is``) and the stripped query: strings are
+        # immutable, so an identity hit can never be stale, and a miss only
+        # costs the rebuild it would have paid anyway. ``self.content`` is
+        # assigned once per widget instance (a content change recomposes
+        # the viewer and builds a new body), so the identity check holds for
+        # the whole navigable lifetime of one document.
+        self._highlight_source: str | None = None
+        self._highlight_query: str | None = None
+        self._highlight_plan: RawContentHighlightPlan | str | None = None
 
     def compose(self) -> ComposeResult:
         """Construct only the selected initial content view."""
@@ -123,15 +223,47 @@ class LibraryMediaContentBody(VerticalScroll):
         self._match_index = match_index
         if self._raw_widget is not None:
             # TASK-21134: ``layout=False`` -- a search refresh restyles the
-            # SAME characters (``build_raw_content_renderable`` only moves
-            # highlight spans around; it never adds, removes or rewraps a
-            # line), so the widget's size cannot change and the layout pass
+            # SAME characters (the highlight plan only moves the active
+            # span's style; it never adds, removes or rewraps a line), so
+            # the widget's size cannot change and the layout pass
             # Static.update() arms by default was pure waste on every
             # match-nav click and every keystroke in the search box.
             self._raw_widget.update(
-                build_raw_content_renderable(self.content, query, match_index),
+                self._raw_content_renderable(query, match_index),
                 layout=False,
             )
+
+    def _raw_content_renderable(self, query: str, match_index: int) -> Text | str:
+        """Return the highlighted document, reusing the cached plan.
+
+        task-22209: only a new document or a new query rebuilds the plan
+        (one O(document) pass); moving between the matches of the SAME
+        (document, query) pair repaints from the plan the widget already
+        holds.
+
+        Args:
+            query: Case-insensitive search text to highlight.
+            match_index: Zero-based index of the active matching line.
+
+        Returns:
+            The plan's shared ``Text``, or the plain display string when
+            the query is blank or matches nothing.
+        """
+        normalized_query = query.strip()
+        if (
+            self._highlight_plan is None
+            or self._highlight_source is not self.content
+            or self._highlight_query != normalized_query
+        ):
+            self._highlight_source = self.content
+            self._highlight_query = normalized_query
+            self._highlight_plan = build_raw_content_highlight_plan(
+                self.content, normalized_query
+            )
+        plan = self._highlight_plan
+        if isinstance(plan, str):
+            return plan
+        return plan.renderable(match_index)
 
     async def _ensure_mode_mounted(self, mode: str) -> None:
         """Mount the requested view only when it has not been constructed."""
@@ -152,9 +284,7 @@ class LibraryMediaContentBody(VerticalScroll):
 
     def _build_raw_widget(self) -> Static:
         return Static(
-            build_raw_content_renderable(
-                self.content, self._query, self._match_index
-            ),
+            self._raw_content_renderable(self._query, self._match_index),
             id="library-media-viewer-content-text",
             markup=False,
         )

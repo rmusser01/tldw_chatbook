@@ -3860,6 +3860,39 @@ def test_materialize_between_ticks_is_noop_without_new_chunks():
     assert store._stream_chunks_by_message[message.id] == ["steady"]
 
 
+def test_read_only_messages_for_session_projects_stream_buffer_without_mutation():
+    persistence = RecordingPersistence()
+    store = ConsoleChatStore(persistence=persistence)
+    session = store.create_session(ephemeral=True)
+    message = store.append_message(
+        session.id,
+        role=ConsoleMessageRole.ASSISTANT,
+        content="",
+        persist=False,
+    )
+    store.append_stream_chunk(message.id, "seed")
+    assert store.messages_for_session(session.id)[0].content == "seed"
+    store.append_stream_chunk(message.id, " plus")
+    store.append_stream_chunk(message.id, " buffered")
+
+    live = store._message_or_raise(message.id)
+    content_before = live.content
+    materialized_before = dict(store._stream_materialized_counts)
+    payload_before = dict(store._payload_revisions)
+    speech_before = dict(store._message_speech_revisions)
+    persistence_before = (list(persistence.created), list(persistence.updated))
+
+    projected = store.read_only_messages_for_session(session.id)
+
+    assert projected[0] is not live
+    assert projected[0].content == "seed plus buffered"
+    assert live.content == content_before == "seed"
+    assert store._stream_materialized_counts == materialized_before
+    assert store._payload_revisions == payload_before
+    assert store._message_speech_revisions == speech_before
+    assert (persistence.created, persistence.updated) == persistence_before
+
+
 def test_collapsed_buffer_keeps_terminal_flush_content_exact():
     store = ConsoleChatStore()
     session = store.ensure_session()

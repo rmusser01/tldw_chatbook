@@ -25,10 +25,15 @@ from tldw_chatbook.Utils.path_validation import validate_path_simple
 from tldw_chatbook.Widgets.confirmation_dialog import ConfirmationDialog
 from tldw_chatbook.Widgets.modal_dismissal import SafeModalDismissMixin
 
-__all__ = ["TraceExportDialog"]
+__all__ = [
+    "TRACE_EXPORT_PROFILE_COPY",
+    "TRACE_EXPORT_PROFILE_LABELS",
+    "TraceExportDialog",
+    "full_trace_confirmation",
+]
 
 
-_PROFILE_COPY = {
+TRACE_EXPORT_PROFILE_COPY = {
     TraceExportProfile.SAFE_SUMMARY: (
         "Safe summary — causal structure, status, and coarse timing; payload bodies omitted."
     ),
@@ -42,11 +47,24 @@ _PROFILE_COPY = {
     ),
 }
 
-_PROFILE_LABEL = {
+TRACE_EXPORT_PROFILE_LABELS = {
     TraceExportProfile.SAFE_SUMMARY: "Safe summary",
     TraceExportProfile.REDACTED_DIAGNOSTIC: "Redacted diagnostic (recommended)",
     TraceExportProfile.FULL_TRACE: "Full trace",
 }
+
+
+def full_trace_confirmation(*, noun: str) -> ConfirmationDialog:
+    """Build the shared every-disclosure Full export warning."""
+    return ConfirmationDialog(
+        title=f"Export full {noun}?",
+        message=(
+            "Full trace may include prompts, injected instructions, tool arguments, "
+            "outputs, and local paths. Credentials remain structurally blocked."
+        ),
+        confirm_label=f"Export full {noun.lower()}",
+        cancel_label="Go back",
+    )
 
 
 class TraceExportDialog(SafeModalDismissMixin, ModalScreen[Path | None]):
@@ -144,7 +162,7 @@ class TraceExportDialog(SafeModalDismissMixin, ModalScreen[Path | None]):
                 markup=False,
             )
             yield Static(
-                f"Profile: {_PROFILE_LABEL[self._selected_profile]}",
+                f"Profile: {TRACE_EXPORT_PROFILE_LABELS[self._selected_profile]}",
                 id="trace-export-selection",
                 markup=False,
             )
@@ -156,16 +174,18 @@ class TraceExportDialog(SafeModalDismissMixin, ModalScreen[Path | None]):
                 )
                 with RadioSet(id="trace-export-profiles"):
                     yield RadioButton(
-                        _PROFILE_LABEL[TraceExportProfile.SAFE_SUMMARY],
+                        TRACE_EXPORT_PROFILE_LABELS[TraceExportProfile.SAFE_SUMMARY],
                         id="trace-export-profile-safe",
                     )
                     yield RadioButton(
-                        _PROFILE_LABEL[TraceExportProfile.REDACTED_DIAGNOSTIC],
+                        TRACE_EXPORT_PROFILE_LABELS[
+                            TraceExportProfile.REDACTED_DIAGNOSTIC
+                        ],
                         id="trace-export-profile-redacted",
                         value=True,
                     )
                     yield RadioButton(
-                        _PROFILE_LABEL[TraceExportProfile.FULL_TRACE],
+                        TRACE_EXPORT_PROFILE_LABELS[TraceExportProfile.FULL_TRACE],
                         id="trace-export-profile-full",
                     )
                 yield Static("", id="trace-export-profile-copy", markup=False)
@@ -195,7 +215,7 @@ class TraceExportDialog(SafeModalDismissMixin, ModalScreen[Path | None]):
         self.query_one("#trace-export-submit", Button).disabled = True
         self._update_profile_selection()
         self.query_one("#trace-export-profile-copy", Static).update(
-            _PROFILE_COPY[profile]
+            TRACE_EXPORT_PROFILE_COPY[profile]
         )
         self.query_one("#trace-export-inventory", Static).update(
             "Analyzing privacy inventory…"
@@ -227,7 +247,7 @@ class TraceExportDialog(SafeModalDismissMixin, ModalScreen[Path | None]):
         profiles = self.query_one("#trace-export-profiles", RadioSet)
         selection = self.query_one("#trace-export-selection", Static)
         selection.set_class(profiles.has_focus, "is-selector-focused")
-        label = _PROFILE_LABEL[self._selected_profile]
+        label = TRACE_EXPORT_PROFILE_LABELS[self._selected_profile]
         if profiles.has_focus:
             label = label.replace(" (recommended)", "")
             selection.update(f"Profile: {label} · ↑/↓ · Enter apply")
@@ -287,16 +307,7 @@ class TraceExportDialog(SafeModalDismissMixin, ModalScreen[Path | None]):
     async def _confirm_full_export(self) -> bool:
         return bool(
             await self.app.push_screen_wait(
-                ConfirmationDialog(
-                    title="Export full Trace?",
-                    message=(
-                        "Full trace may include prompts, tool arguments, outputs, and "
-                        "local paths. Credentials are still blocked. Share only with "
-                        "a trusted collaborator."
-                    ),
-                    confirm_label="Export full trace",
-                    cancel_label="Go back",
-                )
+                full_trace_confirmation(noun="Trace")
             )
         )
 

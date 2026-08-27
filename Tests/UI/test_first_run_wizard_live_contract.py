@@ -84,6 +84,8 @@ from tldw_chatbook.UI.Wizards.first_run_setup_state import (
     STEP_NOTES,
     STEP_PROTECT,
     STEP_PROVIDER,
+    STEP_RAG,
+    STEP_SPEECH,
     STEP_SUMMARY,
     STEP_TOOLS,
     STEP_VOICE,
@@ -1734,6 +1736,7 @@ async def test_full_track_skip_everything_leaves_app_usable(
                 "tools",
                 "notes",
                 "appearance",
+                "protect-keys",
             ]
 
             # Exit via "Explore Home" (TAB_HOME) to prove the app is
@@ -1796,9 +1799,10 @@ async def _open_rerun_wizard_from_settings(pilot):
 
 async def _walk_rerun_quick_track_to_summary(pilot, wizard_screen) -> "SetupWizardContainer":
     # Quick track is pre-selected; walk welcome -> provider -> model ->
-    # voice -> summary without picking anything (every step is skip-safe).
+    # voice -> protect -> summary without picking anything (every step is
+    # skip-safe; TASK-21148 keeps Protect on the track even keyless).
     container = wizard_screen.query_one(SetupWizardContainer)
-    for _ in range(4):
+    for _ in range(5):
         previous_step = container.current_step
         _press(wizard_screen, "#wizard-next")
         await _wait_until(pilot, lambda: container.current_step != previous_step)
@@ -2203,23 +2207,24 @@ async def test_voice_step_controls_are_stable_and_scroll_reachable(
 
             step = container.steps[voice_index]
             assert isinstance(step, VoiceSetupStep)
-            assert step.virtual_size.height > step.container_size.height
 
-            controls = (
-                step.query_one("#setup-voice-endpoint", Input),
-                step.query_one("#setup-voice-auth"),
-                step.query_one("#setup-voice-model", Input),
-                step.query_one("#setup-voice-voice", Input),
+            # TASK-21148 (UAT V-1/V-2): the try-it controls lead the step;
+            # plumbing lives under the Advanced disclosure. The primary
+            # controls must be reachable immediately, the advanced ones
+            # after expanding — at every size, including 80x24.
+            primary_controls = (
                 step.query_one("#setup-voice-sample", Input),
                 step.query_one("#setup-voice-test", Button),
                 step.query_one("#setup-voice-default", Checkbox),
             )
-            assert all(control.region.width > 0 for control in controls)
-            assert all(control.region.right <= size[0] for control in controls)
+            from textual.widgets import Collapsible as _Collapsible
 
-            for control in controls:
-                control.focus()
-                await pilot.pause(0.2)
+            advanced = step.query_one("#setup-voice-advanced", _Collapsible)
+            assert advanced.collapsed, "plumbing starts folded away"
+            assert all(c.region.width > 0 for c in primary_controls)
+            assert all(c.region.right <= size[0] for c in primary_controls)
+
+            def _assert_reachable(control) -> None:
                 assert control.region.y >= 0
                 assert control.region.bottom <= size[1]
                 assert control in app.screen._compositor.visible_widgets, (
@@ -2228,6 +2233,26 @@ async def test_voice_step_controls_are_stable_and_scroll_reachable(
                     f"viewport={step.container_size}, virtual={step.virtual_size}, "
                     f"offset={step.scroll_offset}"
                 )
+
+            for control in primary_controls:
+                control.focus()
+                await pilot.pause(0.2)
+                _assert_reachable(control)
+
+            advanced.collapsed = False
+            await pilot.pause(0.3)
+            advanced_controls = (
+                step.query_one("#setup-voice-endpoint", Input),
+                step.query_one("#setup-voice-auth"),
+                step.query_one("#setup-voice-model", Input),
+                step.query_one("#setup-voice-voice", Input),
+            )
+            assert all(c.region.width > 0 for c in advanced_controls)
+            assert all(c.region.right <= size[0] for c in advanced_controls)
+            for control in advanced_controls:
+                control.focus()
+                await pilot.pause(0.2)
+                _assert_reachable(control)
 
             for selector in ("#wizard-back", "#wizard-next", "#wizard-cancel"):
                 button = app.screen.query_one(selector, Button)
@@ -2798,7 +2823,7 @@ async def test_focus_scrolls_offscreen_widget_into_view_when_step_overflows(
     app = _build_fresh_wizard_app(monkeypatch, tmp_path)
 
     with patch("tldw_chatbook.app.get_cli_setting", side_effect=_test_cli_setting):
-        async with app.run_test(size=(100, 24)) as pilot:
+        async with app.run_test(size=(100, 18)) as pilot:
             await _wait_until(
                 pilot, lambda: type(app.screen).__name__ == "FirstRunSetupWizard"
             )
@@ -2833,11 +2858,11 @@ async def test_focus_scrolls_offscreen_widget_into_view_when_step_overflows(
             region_before = key_input.region
             fits_before = (
                 region_before.y >= 0
-                and region_before.bottom <= 24
+                and region_before.bottom <= 18
                 and region_before.right <= 100
             )
             assert not fits_before, (
-                "test assumption broken: key Input already fits at 100x24 "
+                "test assumption broken: key Input already fits at 100x18 "
                 f"without any scroll ({region_before}) -- this test needs "
                 "genuine overflow to prove the scroll-into-view fix"
             )
@@ -2847,7 +2872,7 @@ async def test_focus_scrolls_offscreen_widget_into_view_when_step_overflows(
 
             region_after = key_input.region
             assert region_after.width > 0 and region_after.height > 0
-            assert region_after.y >= 0 and region_after.bottom <= 24, (
+            assert region_after.y >= 0 and region_after.bottom <= 18, (
                 f"key Input still clipped after focusing it: {region_after}"
             )
             assert region_after.right <= 100
@@ -2860,7 +2885,7 @@ async def test_focus_scrolls_offscreen_widget_into_view_when_step_overflows(
                 button = app.screen.query_one(widget_id, Button)
                 region = button.region
                 assert region.width > 0 and region.height > 0
-                assert region.right <= 100 and region.bottom <= 24
+                assert region.right <= 100 and region.bottom <= 18
 
 
 # ---------------------------------------------------------------------------
@@ -3054,3 +3079,366 @@ def test_setup_wizard_constructs_before_base_init_sets_app_instance():
     app_instance = SimpleNamespace(app_config={})
     wizard = SetupWizardContainer(app_instance)
     assert wizard.app_instance is app_instance
+
+
+# ---------------------------------------------------------------------------
+# TASK-22281 / UAT F-1: cold full-track entry to Speech must keep keyboard
+# input alive. SpeechSetupStep's first on_show schedules a
+# refresh(recompose=True); show_step's focus fix then targets a child of the
+# pre-recompose tree, and the recompose detaches the focused widget. Textual
+# 8.2.8 leaves app.focused on the detached node, so every subsequent key
+# event (ctrl+n / ctrl+b / escape / tab, even the app palette) dispatches
+# into a dead message pump and the wizard soft-locks until the process is
+# killed. This walks the exact cold path and asserts both the mechanism
+# (focus stays attached through the first-show recompose) and the behavior
+# (a real ctrl+b key event still navigates).
+# ---------------------------------------------------------------------------
+
+
+def _current_step_id(container: SetupWizardContainer) -> "str | None":
+    step = container.steps[container.current_step]
+    return step.config.id if step.config else None
+
+
+@pytest.mark.asyncio
+async def test_cold_full_track_speech_entry_keeps_keyboard_alive(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    app = _build_fresh_wizard_app(monkeypatch, tmp_path)
+
+    with patch("tldw_chatbook.app.get_cli_setting", side_effect=_test_cli_setting):
+        async with app.run_test(size=(140, 50)) as pilot:
+            await _wait_until(
+                pilot, lambda: type(app.screen).__name__ == "FirstRunSetupWizard"
+            )
+            container = app.screen.query_one(SetupWizardContainer)
+            app.screen.query_one("#setup-track-full", RadioButton).value = True
+            await pilot.pause()
+            for expected in (
+                STEP_PROVIDER,
+                STEP_MODEL,
+                STEP_VOICE,
+                STEP_RAG,
+                STEP_SPEECH,
+            ):
+                _press(app.screen, "#wizard-next")
+                await _wait_until(
+                    pilot,
+                    lambda expected=expected: _current_step_id(container) == expected,
+                )
+            # Let the first-show lazy load's recompose land before checking —
+            # the orphaning happens on that recompose, not on arrival.
+            await pilot.pause(0.3)
+            focused = app.focused
+            assert focused is not None, "focus lost entering Speech cold"
+            assert focused.is_attached and focused.display, (
+                f"focus orphaned on detached widget {focused!r} (F-1 soft-lock)"
+            )
+            # The mechanism assertion above is necessary but not sufficient —
+            # prove a real key event still reaches the wizard's bindings.
+            await pilot.press("ctrl+b")
+            await _wait_until(
+                pilot, lambda: _current_step_id(container) == STEP_RAG
+            )
+
+
+# ---------------------------------------------------------------------------
+# TASK-21140: step-commit failures render on the pinned error strip in the
+# wizard chrome (visible at any terminal size — the old per-step tail Static
+# sat below the fold of overflowing steps), and the strip clears on the next
+# successful step change.
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_step_commit_failure_renders_on_pinned_strip_and_clears(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    app = _build_fresh_wizard_app(monkeypatch, tmp_path)
+
+    with patch("tldw_chatbook.app.get_cli_setting", side_effect=_test_cli_setting):
+        async with app.run_test(size=(140, 40)) as pilot:
+            await _wait_until(
+                pilot, lambda: type(app.screen).__name__ == "FirstRunSetupWizard"
+            )
+            container = app.screen.query_one(SetupWizardContainer)
+            strip = app.screen.query_one("#setup-step-error-pinned", Static)
+            assert strip.has_class("hidden"), "strip must start hidden (UAT W-1)"
+
+            async def failing_commit():
+                return False, "Boom failed."
+
+            welcome = container.steps[0]
+            monkeypatch.setattr(welcome, "commit", failing_commit)
+            await _wait_until(pilot, lambda: container.can_proceed)
+            _press(app.screen, "#wizard-next")
+            await _wait_until(
+                pilot, lambda: "Boom failed." in str(strip.renderable)
+            )
+            assert not strip.has_class("hidden")
+            # Honest affordances only — no phantom "Skip this step" control.
+            assert "Skip this step" not in str(strip.renderable)
+            assert _current_step_id(container) == STEP_WELCOME
+
+            async def passing_commit():
+                return True, ""
+
+            monkeypatch.setattr(welcome, "commit", passing_commit)
+            _press(app.screen, "#wizard-next")
+            await _wait_until(
+                pilot, lambda: _current_step_id(container) == STEP_PROVIDER
+            )
+            assert strip.has_class("hidden")
+            assert str(strip.renderable) == ""
+
+
+# ---------------------------------------------------------------------------
+# TASK-21141 (UAT K-3): the app-wide .error-message blanket rule
+# (border: round + padding + margin in _wizards.tcss) must never reach the
+# password dialog's error line. In the real app it inflated the error to ~7
+# rows and pushed Cancel/Submit past the container clip — functional but
+# invisible buttons. Widget-level tests can't catch this (no app
+# stylesheet), so this pins it against the real app.
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_password_dialog_failed_submit_keeps_buttons_visible_in_real_app(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    from textual.widgets import Input as _Input
+
+    from tldw_chatbook.Widgets.password_dialog import PasswordDialog
+
+    app = _build_fresh_wizard_app(monkeypatch, tmp_path)
+    with patch("tldw_chatbook.app.get_cli_setting", side_effect=_test_cli_setting):
+        async with app.run_test(size=(140, 40)) as pilot:
+            await _wait_until(
+                pilot, lambda: type(app.screen).__name__ == "FirstRunSetupWizard"
+            )
+            app.push_screen(PasswordDialog(mode="setup"))
+            await _wait_until(
+                pilot,
+                lambda: isinstance(app.screen, PasswordDialog)
+                and bool(app.screen.query("#password-input")),
+            )
+            dialog = app.screen
+            dialog.query_one("#password-input", _Input).value = "a"
+            dialog.query_one("#confirm-input", _Input).value = "a"
+            dialog.query_one("#submit-button", Button).press()
+            await _wait_until(
+                pilot,
+                lambda: dialog.query_one("#error-message", Static).has_class(
+                    "visible"
+                ),
+            )
+            error = dialog.query_one("#error-message", Static)
+            # With the real stylesheet loaded, the error must stay one line —
+            # the blanket rule's border/padding is what ate the buttons.
+            assert error.region.height <= 2, (
+                f"error inflated to {error.region.height} rows — blanket "
+                ".error-message rule reached the dialog again"
+            )
+            for button_id in ("#cancel-button", "#submit-button"):
+                button = dialog.query_one(button_id, Button)
+                assert button.region.height > 0, f"{button_id} clipped (K-3)"
+            await pilot.press("escape")
+            await _wait_until(
+                pilot, lambda: not isinstance(app.screen, PasswordDialog)
+            )
+
+
+# ---------------------------------------------------------------------------
+# TASK-21142 (UAT N-1/N-2/N-8): the wizard keyboard model.
+#   N-8 — arrowing a wizard radio group SELECTS (selection follows
+#         highlight); "Down then Next" must never silently keep Quick.
+#   N-1 — Enter advances: from a radio group, and from step Inputs (except
+#         the provider key field, whose Enter launches the probe).
+#   N-2 — Tab from step content reaches Next before any abandon action.
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_arrow_selection_follows_highlight_on_track_radio(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    app = _build_fresh_wizard_app(monkeypatch, tmp_path)
+    with patch("tldw_chatbook.app.get_cli_setting", side_effect=_test_cli_setting):
+        async with app.run_test(size=(140, 40)) as pilot:
+            await _wait_until(
+                pilot, lambda: type(app.screen).__name__ == "FirstRunSetupWizard"
+            )
+            container = app.screen.query_one(SetupWizardContainer)
+            radio = app.screen.query_one("#setup-track-choice")
+            radio.focus()
+            await pilot.pause()
+            await pilot.press("down")
+            await pilot.pause()
+            welcome = container.steps[0]
+            assert welcome.chosen_track() == TRACK_FULL, (
+                "Down must select, not merely highlight (UAT N-8)"
+            )
+            await pilot.press("up")
+            await pilot.pause()
+            assert welcome.chosen_track() == TRACK_QUICK
+
+
+@pytest.mark.asyncio
+async def test_enter_advances_from_track_radio(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    app = _build_fresh_wizard_app(monkeypatch, tmp_path)
+    with patch("tldw_chatbook.app.get_cli_setting", side_effect=_test_cli_setting):
+        async with app.run_test(size=(140, 40)) as pilot:
+            await _wait_until(
+                pilot, lambda: type(app.screen).__name__ == "FirstRunSetupWizard"
+            )
+            container = app.screen.query_one(SetupWizardContainer)
+            await _wait_until(pilot, lambda: container.can_proceed)
+            app.screen.query_one("#setup-track-choice").focus()
+            await pilot.pause()
+            await pilot.press("enter")
+            await _wait_until(
+                pilot, lambda: _current_step_id(container) == STEP_PROVIDER
+            )
+
+
+@pytest.mark.asyncio
+async def test_tab_from_step_content_reaches_next_before_cancel(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    app = _build_fresh_wizard_app(monkeypatch, tmp_path)
+    with patch("tldw_chatbook.app.get_cli_setting", side_effect=_test_cli_setting):
+        async with app.run_test(size=(140, 40)) as pilot:
+            await _wait_until(
+                pilot, lambda: type(app.screen).__name__ == "FirstRunSetupWizard"
+            )
+            next_button = app.screen.query_one("#wizard-next", Button)
+            await _wait_until(pilot, lambda: not next_button.disabled)
+            app.screen.query_one("#setup-track-choice").focus()
+            await pilot.pause()
+            await pilot.press("tab")
+            await pilot.pause()
+            assert app.focused is not None and app.focused.id == "wizard-next", (
+                f"Tab landed on {app.focused!r} — the abandon action must not "
+                "be the first stop after step content (UAT N-2)"
+            )
+
+
+@pytest.mark.asyncio
+async def test_enter_in_model_fallback_input_advances(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    from textual.widgets import Input as _Input
+
+    app = _build_fresh_wizard_app(monkeypatch, tmp_path)
+    with patch("tldw_chatbook.app.get_cli_setting", side_effect=_test_cli_setting):
+        async with app.run_test(size=(140, 40)) as pilot:
+            await _wait_until(
+                pilot, lambda: type(app.screen).__name__ == "FirstRunSetupWizard"
+            )
+            container = app.screen.query_one(SetupWizardContainer)
+            await _wait_until(pilot, lambda: container.can_proceed)
+            for expected in (STEP_PROVIDER, STEP_MODEL):
+                _press(app.screen, "#wizard-next")
+                await _wait_until(
+                    pilot,
+                    lambda expected=expected: _current_step_id(container) == expected,
+                )
+            fallback = app.screen.query_one("#setup-model-custom", _Input)
+            fallback.focus()
+            await pilot.pause()
+            fallback.value = "some-model"
+            await pilot.press("enter")
+            await _wait_until(
+                pilot, lambda: _current_step_id(container) == STEP_VOICE
+            )
+
+
+# ---------------------------------------------------------------------------
+# TASK-21144 (UAT P-6/P-7/P-8): local-provider probe feedback. The UAT
+# "silent Detect/Test" incident decomposed into the F-1 focus soft-lock
+# eating the presses plus the status Static sitting at the panel's bottom,
+# below the fold at 40-row terminals. These pin the feedback contract:
+# selecting a local provider reports its reachability unprompted, Test
+# always ends in a visible verdict, and the status renders adjacent to the
+# controls it reports on.
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.loopback_network
+@pytest.mark.asyncio
+async def test_local_provider_probe_feedback_is_visible_and_adjacent(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    app = _build_fresh_wizard_app(monkeypatch, tmp_path)
+    with patch("tldw_chatbook.app.get_cli_setting", side_effect=_test_cli_setting):
+        async with app.run_test(size=(140, 45)) as pilot:
+            await _wait_until(
+                pilot, lambda: type(app.screen).__name__ == "FirstRunSetupWizard"
+            )
+            container = app.screen.query_one(SetupWizardContainer)
+            await _wait_until(pilot, lambda: container.can_proceed)
+            _press(app.screen, "#wizard-next")
+            await _wait_until(
+                pilot, lambda: _current_step_id(container) == STEP_PROVIDER
+            )
+            provider = next(
+                s for s in container.steps if isinstance(s, ProviderStep)
+            )
+            provider.select_provider("llama_cpp")
+            status = provider.query_one("#setup-provider-probe-status", Static)
+            # P-7: selection alone produces reachability feedback (nothing
+            # listens on the endpoint in this environment).
+            await _wait_until(
+                pilot, lambda: str(status.renderable) != "", timeout_seconds=15.0
+            )
+            # P-6: Test always ends in a visible verdict.
+            provider.query_one("#setup-provider-test", Button).press()
+            await _wait_until(
+                pilot,
+                lambda: str(status.renderable).startswith(("✗", "✓")),
+                timeout_seconds=15.0,
+            )
+            # Adjacency: the status renders above the auth collapsible, next
+            # to the connection controls — not at the panel's bottom.
+            auth = provider.query_one("#setup-provider-auth-toggle")
+            test_button = provider.query_one("#setup-provider-test", Button)
+            assert status.region.y >= test_button.region.y
+            assert status.region.y <= auth.region.y or not auth.display
+            # P-8: buttons are labeled by outcome.
+            assert str(provider.query_one("#setup-provider-detect", Button).label) == (
+                "Find local servers"
+            )
+            assert str(test_button.label) == "Test connection"
+
+
+# ---------------------------------------------------------------------------
+# TASK-21145 (UAT H-3): app.run_setup_wizard is the action behind the
+# Console composer's setup-blocked link. It must open the wizard re-run and
+# never stack a second copy.
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_run_setup_wizard_action_opens_once(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    _prepare_clean_environment(monkeypatch, tmp_path)
+    app = _build_test_app(first_run_setup_completed=True)
+    with patch("tldw_chatbook.app.get_cli_setting", side_effect=_test_cli_setting):
+        async with app.run_test(size=(140, 40)) as pilot:
+            await pilot.pause(0.3)
+            assert type(app.screen).__name__ != "FirstRunSetupWizard"
+            app.action_run_setup_wizard()
+            await _wait_until(
+                pilot, lambda: type(app.screen).__name__ == "FirstRunSetupWizard"
+            )
+            app.action_run_setup_wizard()
+            await pilot.pause(0.3)
+            wizards = [
+                screen
+                for screen in app.screen_stack
+                if type(screen).__name__ == "FirstRunSetupWizard"
+            ]
+            assert len(wizards) == 1, "action must never stack a second wizard"

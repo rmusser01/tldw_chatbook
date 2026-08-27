@@ -989,7 +989,9 @@ async def test_console_composer_keeps_disabled_reason_outside_input_row():
         # missing API key, and the strip now says so (it used to mis-name
         # "choose a model" by matching "model" inside "Providers & Models").
         assert _is_displayed(reason)
-        assert reason.renderable.plain == "Send blocked — add an API key to continue"
+        assert reason.renderable.plain == (
+            "Send blocked — add an API key to continue ›"
+        )
         assert reason.region.height <= 1
         assert reason.region.y == send.region.y
         assert visible_draft.region.width >= 20

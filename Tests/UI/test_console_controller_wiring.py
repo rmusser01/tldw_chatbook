@@ -51,7 +51,9 @@ from tldw_chatbook.UI.Console_Modules.prompt_queue import (
     ConsolePromptQueueUIController,
 )
 from tldw_chatbook.UI.Console_Modules.prompts import ConsolePromptsController
+from tldw_chatbook.UI.Console_Modules.realtime import ConsoleRealtimeController
 from tldw_chatbook.UI.Console_Modules.retrieval import ConsoleRetrievalController
+from tldw_chatbook.UI.Console_Modules.send_price import ConsoleSendPriceController
 from tldw_chatbook.UI.Console_Modules.session import ConsoleSessionController
 from tldw_chatbook.UI.Console_Modules.skill import ConsoleSkillController
 from tldw_chatbook.UI.Console_Modules.video import ConsoleVideoController
@@ -81,10 +83,12 @@ _ALL_CONTROLLER_SLOTS: list[tuple[str, type]] = [
     ("_session", ConsoleSessionController),
     ("_dictation", ConsoleDictationController),
     ("_hands_free", ConsoleHandsFreeController),
+    ("_realtime", ConsoleRealtimeController),
     ("_message", ConsoleMessageController),
     ("_prompts", ConsolePromptsController),
     ("_agent", ConsoleAgentController),
     ("_prompt_queue", ConsolePromptQueueUIController),
+    ("_send_price", ConsoleSendPriceController),
 ]
 
 #: Every controller takes `chat_store_accessor=lambda: self._ensure_console_
@@ -115,7 +119,7 @@ def test_all_six_controllers_are_constructed_with_the_right_classes():
         )
 
 
-def test_all_fourteen_controllers_are_constructed_with_the_right_classes() -> None:
+def test_all_sixteen_controllers_are_constructed_with_the_right_classes() -> None:
     screen = _unmounted_console()
     names = [attr for attr, _ in _ALL_CONTROLLER_SLOTS]
     observed = [key for key in vars(screen) if key in set(names)]
@@ -127,6 +131,134 @@ def test_all_fourteen_controllers_are_constructed_with_the_right_classes() -> No
             f"{attr} is {type(controller).__name__}, expected {cls.__name__}"
         )
     assert observed == names, f"controller build order changed: {observed}"
+
+
+def test_send_price_controller_is_constructed_with_late_bound_screen_edges() -> None:
+    screen = _unmounted_console()
+    controller = getattr(screen, "_send_price", None)
+    assert isinstance(controller, ConsoleSendPriceController), (
+        "_send_price was never wired"
+    )
+
+    settings = object()
+    store = object()
+    launch = object()
+    projection = object()
+    screen._session._ensure_active_console_session_settings = lambda: settings
+    screen._console_chat_store = store
+    screen._pending_console_launch_context = launch
+    screen._ensure_console_chat_controller = lambda: SimpleNamespace(
+        provider_messages_for_next_send_estimate=(
+            lambda session_id: (projection, session_id)
+        )
+    )
+
+    assert controller._settings_accessor() is settings
+    assert controller._chat_store_accessor() is store
+    assert controller._pending_launch_accessor() is launch
+    assert controller._provider_history_accessor("session-1") == (
+        projection,
+        "session-1",
+    )
+
+
+def test_realtime_controller_is_wired_late_bound_with_empty_owned_state() -> None:
+    screen = _unmounted_console()
+    controller = screen._realtime
+
+    assert type(controller) is ConsoleRealtimeController
+    assert controller.session is None
+    assert controller.close_worker is None
+
+    session_settings = object()
+    chat_store = object()
+    runtime = object()
+    dictation_state = object()
+    pipeline_blocker = object()
+    recorder_factory = object()
+    provider_session_factory = object()
+    sink_factory = object()
+    ui_thread_id = object()
+    event_loop = object()
+    interval = object()
+    worker = object()
+    screen._session = SimpleNamespace(
+        _ensure_active_console_session_settings=lambda: session_settings
+    )
+    screen._ensure_console_chat_store = lambda: chat_store
+    screen._console_runtime = lambda: runtime
+    screen._console_dictation_state = dictation_state
+
+    dictation_stop_calls: list[None] = []
+    pipeline_loop_calls: list[bool] = []
+    screen._request_console_dictation_stop = lambda: dictation_stop_calls.append(None)
+    screen._hands_free = SimpleNamespace(
+        _console_pipeline_hands_free_blocker=lambda: pipeline_blocker,
+        _enter_console_hands_free_pipeline_loop=(
+            lambda *, capture_live: pipeline_loop_calls.append(capture_live)
+        ),
+    )
+    screen.app_instance.console_realtime_recorder_factory = recorder_factory
+    screen.app_instance.console_realtime_session_factory = provider_session_factory
+    screen.app_instance.console_realtime_sink_factory = sink_factory
+    notify = MagicMock()
+    screen.app_instance.notify = notify
+    screen.app_instance._thread_id = ui_thread_id
+    screen.app_instance._loop = event_loop
+    screen.set_interval = MagicMock(return_value=interval)
+    screen.run_worker = MagicMock(return_value=worker)
+    screen.call_later = MagicMock()
+    native_sync = object()
+    screen._sync_native_console_chat_ui = native_sync
+    screen._repaint_console_realtime_chip = MagicMock()
+    screen._restore_console_voice_chip = MagicMock()
+
+    assert controller._ensure_session_settings() is session_settings
+    assert controller._chat_store_accessor() is chat_store
+    assert controller._runtime_accessor() is runtime
+    assert controller._dictation_state_accessor() is dictation_state
+    assert controller._pipeline_blocker() is pipeline_blocker
+    assert controller._recorder_factory_accessor() is recorder_factory
+    assert controller._provider_session_factory_accessor() is provider_session_factory
+    assert controller._sink_factory_accessor() is sink_factory
+    assert controller._ui_thread_id_accessor() is ui_thread_id
+    assert controller._event_loop_accessor() is event_loop
+
+    controller._request_dictation_stop()
+    controller._enter_pipeline_loop(True)
+    controller._notify("copy", severity="warning")
+    assert controller._set_interval(0.1, "tick") is interval
+    assert controller._run_worker("job", exclusive=True) is worker
+    controller._defer_native_sync()
+    controller._repaint_chip()
+    controller._restore_voice_chip()
+
+    assert dictation_stop_calls == [None]
+    assert pipeline_loop_calls == [True]
+    notify.assert_called_once_with("copy", severity="warning")
+    screen.set_interval.assert_called_once_with(0.1, "tick")
+    screen.run_worker.assert_called_once_with("job", exclusive=True)
+    screen.call_later.assert_called_once_with(native_sync)
+    screen._repaint_console_realtime_chip.assert_called_once_with()
+    screen._restore_console_voice_chip.assert_called_once_with()
+
+
+def test_realtime_outgoing_edges_target_controller_after_method_move() -> None:
+    screen = _unmounted_console()
+    transcript_calls: list[str] = []
+    entry_calls: list[bool] = []
+    screen._realtime._console_realtime_adopt_transcript = lambda transcript: (
+        transcript_calls.append(transcript) or True
+    )
+    screen._realtime._enter_console_realtime_loop = lambda *, capture_live: (
+        entry_calls.append(capture_live)
+    )
+
+    assert screen._dictation._console_realtime_adopt_transcript("late words") is True
+    screen._hands_free._enter_console_realtime_loop(capture_live=True)
+
+    assert transcript_calls == ["late words"]
+    assert entry_calls == [True]
 
 
 def test_fleet_controller_is_constructed_with_late_bound_screen_edges() -> None:

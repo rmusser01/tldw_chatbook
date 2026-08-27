@@ -2,6 +2,9 @@ import pytest
 from unittest.mock import AsyncMock
 
 from tldw_chatbook.UI.Watchlists_Modules.watchlists_backend_controller import WatchlistsBackendController
+from tldw_chatbook.Subscriptions.watchlist_item_page import (
+    WatchlistItemPage,
+)
 
 
 class FakeScopeService:
@@ -127,6 +130,49 @@ async def test_list_items_routes_to_scope_service():
     scope_service.list_items.assert_awaited_once_with(runtime_backend="local")
     assert len(result) == 1
     assert result[0]["title"] == "Post"
+
+
+@pytest.mark.asyncio
+async def test_list_reader_items_page_preserves_typed_page():
+    scope_service = AsyncMock()
+    page = WatchlistItemPage(
+        items=({"id": "local:watchlist_item:1"},),
+        has_more=False,
+        snapshot_max_item_id=1,
+        snapshot_count=1,
+        next_cursor=None,
+    )
+    scope_service.list_reader_items_page = AsyncMock(return_value=page)
+    ctrl = WatchlistsBackendController(
+        app_instance=None, scope_service=scope_service, server_service=None
+    )
+
+    result = await ctrl.list_reader_items_page(
+        runtime_backend=" LOCAL ", statuses=["new", "reviewed"]
+    )
+
+    scope_service.list_reader_items_page.assert_awaited_once_with(
+        runtime_backend="local", statuses=["new", "reviewed"]
+    )
+    assert result is page
+
+
+@pytest.mark.asyncio
+async def test_count_reader_item_arrivals_preserves_integer():
+    scope_service = AsyncMock()
+    scope_service.count_reader_item_arrivals = AsyncMock(return_value=3)
+    ctrl = WatchlistsBackendController(
+        app_instance=None, scope_service=scope_service, server_service=None
+    )
+
+    result = await ctrl.count_reader_item_arrivals(
+        runtime_backend="local", snapshot_max_item_id=42
+    )
+
+    scope_service.count_reader_item_arrivals.assert_awaited_once_with(
+        runtime_backend="local", snapshot_max_item_id=42
+    )
+    assert result == 3
 
 
 @pytest.mark.asyncio

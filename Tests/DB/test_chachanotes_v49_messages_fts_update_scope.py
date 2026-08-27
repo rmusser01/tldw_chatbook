@@ -39,12 +39,14 @@ half is witnessed against the index's PHYSICAL storage, because an fts5
 'delete' of an unindexed row can corrupt silently with a green
 integrity-check (task-21100's review measured that form).
 
-This module carries the repo's EXACT current-schema-version pin. It reached
-here from `test_chachanotes_v47_messages_fts_backfill.py` because the pin
+This module carried the repo's EXACT current-schema-version pin while v49 was
+the newest step; task-22225 added v49 -> v50, so the pin moved on to
+`Tests/DB/test_chachanotes_v50_console_policy_tombstone_cleanup.py`. The pin
 belongs to the NEWEST migration's own file, so a schema bump touches the file
-that caused it rather than an unrelated older one (older files assert `>=`
-their own version instead). Updating the number here is a deliberate
-schema-review act.
+that caused it rather than an unrelated older one. What stays here is the
+entry-version pin (a v48 database is what THIS step upgrades) and end-state
+assertions that read `_CURRENT_SCHEMA_VERSION`: a version literal is only
+correct at a fixture's SEEDED starting point, never after an upgrade.
 
 Renumbered from v47->v48 to v48->v49: the Console Library policy step took 48
 by merging first, and schema versions must be contiguous. Its content was
@@ -270,10 +272,10 @@ def conversation(db: CharactersRAGDB) -> str:
 # ---------------------------------------------------------------------------
 # the step itself
 # ---------------------------------------------------------------------------
-def test_schema_version_is_49(db):
-    """The one exact current-version pin (see this module's docstring)."""
-    assert _version(db.get_connection()) == 49
-    assert CharactersRAGDB._CURRENT_SCHEMA_VERSION == 49
+def test_a_fresh_database_is_at_least_v49(db):
+    """This step's floor. The exact pin lives in the newest step's file."""
+    assert _version(db.get_connection()) >= 49
+    assert CharactersRAGDB._CURRENT_SCHEMA_VERSION >= 49
 
 
 def test_fresh_schema_scopes_messages_au_to_content_and_deleted(db):
@@ -305,7 +307,7 @@ def test_the_insert_and_delete_triggers_are_untouched(db):
 
 
 def test_migrate_from_v48_to_v49_requires_version_48(db):
-    """A fresh DB is already at 49, so re-entering the step must refuse."""
+    """A fresh DB is already past 49, so re-entering the step must refuse."""
     with pytest.raises(SchemaError, match="requires schema version"):
         db._migrate_from_v48_to_v49(db.get_connection())
 
@@ -344,7 +346,9 @@ def test_upgrading_a_v48_database_replaces_the_trigger_and_keeps_its_index(
 
     migrated = CharactersRAGDB(db_path, client_id="v49-upgrade")
     try:
-        assert _version(migrated.get_connection()) == 49
+        assert _version(migrated.get_connection()) == (
+            CharactersRAGDB._CURRENT_SCHEMA_VERSION
+        )
         after_sql = _trigger_sql(migrated, "messages_au")
         assert after_sql != before_sql, "the migration did not replace the trigger"
         assert "after update of content, deleted on messages" in after_sql
@@ -409,7 +413,9 @@ def test_a_failure_mid_v49_rewinds_the_whole_chain(
     monkeypatch.undo()
     migrated = CharactersRAGDB(db_path, client_id="poison-removed")
     try:
-        assert _version(migrated.get_connection()) == 49
+        assert _version(migrated.get_connection()) == (
+            CharactersRAGDB._CURRENT_SCHEMA_VERSION
+        )
         assert "after update of content, deleted" in _trigger_sql(
             migrated, "messages_au"
         )
@@ -665,7 +671,9 @@ def test_the_whole_matrix_is_safe_on_un_backfilled_rows(tmp_path: Path):
         console_library_migration_seed=MIGRATION_SEED,
     )
     try:
-        assert _version(migrated.get_connection()) == 49
+        assert _version(migrated.get_connection()) == (
+            CharactersRAGDB._CURRENT_SCHEMA_VERSION
+        )
         assert _docsize_rowids(migrated) == set(), "the window is not open"
 
         # usage-only flush on an un-backfilled row: the trigger must not fire

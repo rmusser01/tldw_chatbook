@@ -1118,6 +1118,15 @@ def test_next_queued_skip_types_none_when_only_heavy_left():
     assert registry.next_queued(skip_types=frozenset({"audio", "video"})) is None
 
 
+def test_next_queued_only_types_returns_oldest_matching_job():
+    registry = LibraryIngestJobRegistry()
+    registry.submit(source_path="d1.txt", detected_type="plaintext")
+    book = registry.submit(source_path="book.epub", detected_type="ebook")
+    registry.submit(source_path="d2.txt", detected_type="plaintext")
+
+    assert registry.next_queued(only_types=frozenset({"ebook"})).job_id == book.job_id
+
+
 def test_parsing_count_for_types_counts_only_inflight_heavy():
     registry = LibraryIngestJobRegistry()
     a1 = registry.submit(source_path="a1.mp3", detected_type="audio")

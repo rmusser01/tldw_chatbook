@@ -2,6 +2,7 @@
 Unit tests for SQL validation module.
 """
 
+from tldw_chatbook.DB import sql_validation
 from tldw_chatbook.DB.sql_validation import (
     VALID_COLUMNS,
     VALID_TABLES,
@@ -14,6 +15,25 @@ from tldw_chatbook.DB.sql_validation import (
     get_safe_column_name,
     escape_identifier,
 )
+
+
+def test_subscription_item_order_profiles_are_centrally_validated():
+    resolver = getattr(sql_validation, "get_safe_order_by_clause", None)
+    assert callable(resolver), "dynamic ORDER BY profiles need one central validator"
+    assert (
+        resolver("subscription_items_agent")
+        == "i.effective_date DESC, i.id ASC"
+    )
+    assert (
+        resolver("subscription_items_reader")
+        == "i.effective_date DESC, i.id DESC"
+    )
+    try:
+        resolver("i.id DESC; DROP TABLE subscription_items")
+    except ValueError:
+        pass
+    else:
+        raise AssertionError("unknown ORDER BY profiles must fail closed")
 
 
 class TestValidateIdentifier:

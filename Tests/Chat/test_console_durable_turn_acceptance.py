@@ -367,8 +367,13 @@ def _install_failure(
             connection.commit()
 
         return cleanup_commit_fault
+    # TASK-22205: a permanent (not TEMP) trigger — controller-driven durable
+    # commits now run on a worker thread with their own thread-local
+    # connection, and a TEMP trigger is per-connection so it would never
+    # fire there. Permanent triggers fire on every connection, including
+    # this test thread's own direct-call path.
     connection.execute(
-        f"CREATE TEMP TRIGGER {trigger} BEFORE INSERT ON {table}{when} "
+        f"CREATE TRIGGER {trigger} BEFORE INSERT ON {table}{when} "
         "BEGIN SELECT RAISE(ABORT, 'task14 injected failure'); END"
     )
     return lambda: connection.execute(f"DROP TRIGGER {trigger}")

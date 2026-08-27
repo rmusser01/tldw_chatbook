@@ -47,6 +47,17 @@ if __name__ == "__mp_main__" or _early_multiprocessing.parent_process() is not N
     except Exception:
         pass
 
+# TASK-21147 (UAT G-7): when this module IS the entry point
+# (``python -m tldw_chatbook.app``), cap terminal logging at WARNING
+# before the heavy import chain below emits its DEBUG/INFO wall — a cold
+# start's first paint must not be internal debug spew. The packaged CLI
+# entry (tldw_chatbook.cli) makes the same call before importing us;
+# TLDW_VERBOSE_STARTUP=1 restores the historical verbose startup.
+if __name__ == "__main__":
+    from tldw_chatbook.Utils.startup_logging import quiet_startup_stderr
+
+    quiet_startup_stderr()
+
 # Imports
 import argparse
 import concurrent.futures
@@ -305,6 +316,12 @@ from tldw_chatbook.Utils.app_shutdown import (
     register_running_app,
     unregister_running_app,
 )
+from tldw_chatbook.Utils.boot_worker_policy import (
+    BOOT_WORKER_KEY_BY_IDENTITY,
+    MAX_CONCURRENT_STAGGERED_BOOT_WORKERS,
+    STAGGERED_BOOT_WORKER_KEYS,
+    StaggeredBootWorkerGate,
+)
 from tldw_chatbook.Utils.ui_responsiveness import UIResponsivenessMonitor
 from tldw_chatbook.Utils.db_status_manager import DBStatusManager
 from tldw_chatbook.Utils.persistent_diagnostics import persist_event
@@ -408,7 +425,7 @@ from .Actor_Packs.activation import ActorPackActivationService
 from .Actor_Packs.controller import ActorPackExportController
 from .Actor_Packs.export import ActorPackExportService
 from .Actor_Packs.import_controller import ActorPackImportController
-from .Actor_Packs.importer import ActorPackImportService
+from .Actor_Packs.importer import ActorPackImportError, ActorPackImportService
 from .Actor_Packs.repository import ActorPackRepository
 # Persona_Buddy is deliberately NOT imported at module scope (TASK-21103):
 # its controller drags Persona_Visual and PIL (1.28 s cold) onto the boot
@@ -739,6 +756,16 @@ DEFERRED_MEDIA_CLEANUP_DELAY_SECONDS = 5.0
 # thread worker that will not notice cancellation at all.
 WORKER_CANCELLATION_GRACE_SECONDS = 3.0
 
+# TASK-22215: how often the staggered boot fleet reconciles its admission
+# slots against the workers actually holding them. This is a BACKSTOP for a
+# terminal transition that never reaches `on_worker_state_changed`, not the
+# primary mechanism -- so it is deliberately slow (it costs one dict walk over
+# at most `MAX_CONCURRENT_STAGGERED_BOOT_WORKERS` entries) and stops itself the
+# moment the gate drains. Without it, one lost event would strand every
+# remaining member of the fleet for the whole session: exactly the failure a
+# stagger policy must not introduce.
+BOOT_WORKER_RECONCILE_INTERVAL_SECONDS = 2.0
+
 # task-15472: after first paint, warm the lazy screen-module import cache from
 # a background thread so the FIRST click to each tab doesn't pay for a
 # synchronous, UI-thread `import_module` inside the FIFO-locked navigation
@@ -791,6 +818,15 @@ SPLASH_INITIAL_SCREEN_PREIMPORT_DELAY_SECONDS = 0.2
 # So the configured default tab's module is always already in `sys.modules`
 # before this list is consulted -- and if the initial push raised, this pass
 # never runs at all. Reordering would have moved a `sys.modules` dict hit.
+#
+# TASK-22214 considered the opposite reordering -- biggest routes LAST, so
+# the first seconds after mount only carry the 18 cheap (~5-20 ms) routes --
+# and rejected it: the pre-import exists to protect exactly the first click
+# to Library/Settings, and pushing their imports minutes of route-list later
+# widens the window where that click pays a synchronous import on the event
+# loop (the thing this machinery removes). Heavy-first costs little under
+# proportional pacing: chat is a dict hit at pass time, so its gap is ~0 and
+# library/settings are warm within the pass's first ~0.5 s warm.
 SCREEN_PREIMPORT_PRIORITY_ROUTE_IDS: tuple[str, ...] = ("chat", "library", "settings")
 
 # TASK-21113 pacing for the whole-registry pre-importer. The pass is a
@@ -814,10 +850,59 @@ SCREEN_PREIMPORT_PRIORITY_ROUTE_IDS: tuple[str, ...] = ("chat", "library", "sett
 # multi-hundred-millisecond stretches that actually hurt. That is what the
 # low-core tier is for -- same mechanism, 3x the yield and a much higher cap,
 # so a 400 ms import on a slow box is followed by ~1.2 s of quiet.
+#
+# TASK-22214 re-measured after the payload grew +99 modules / +74.5k LOC:
+# the pass now warms 715 modules / 564,326 LOC beyond the app import (478 /
+# 365,692 of it beyond app+chat, which is what the budget guard pins --
+# Tests/Performance/test_screen_preimport_payload_budget.py). At that size
+# the 0.10 s cap had quietly turned the proportional yield back INTO the
+# flat sleep it was designed to replace: library alone costs 156-183 ms
+# warm and 525-615 ms on a bytecode-compiling boot (M-series; slower
+# hardware proportionally worse), so every heavy route asked for a
+# cost-sized gap and got 0.10 s. Observed directly in the requested-gap
+# series on a cold pass: BEFORE `[0.0, 0.1, 0.1, 0.002, 0.003, 0.1]` --
+# clipped flat exactly on the expensive routes -- AFTER `[0.0, 0.529,
+# 0.245, 0.003, 0.113, 0.303]`, tracking cost.
+#
+# So the caps moved from "binds on every heavy route" to "binds only on
+# pathology". They are kept, rather than removed, purely as a boundedness
+# guard: a pathological multi-second import (or a wild clock reading) must
+# not strand the daemon thread in a minutes-long sleep. 2.0 s sits above
+# the largest single-route cost measured on fast hardware with room for a
+# slower box; 6.0 s is the same 3x multiple the low-core tier applies
+# everywhere else.
+#
+# Measured, interleaved A/B in both orders with an A/A control first
+# (in-pass GIL duty = import time / pass wall time, from a headless Pilot
+# boot instrumented on both sides; n=2-4 per arm):
+#
+#   arm                     duty before   duty after   worst 1 s busy
+#   normal tier, warm       49.7-58.0%    47.4-47.8%   wash (~465 ms both)
+#   normal tier, cold       66.2-66.6%    47.8-48.5%   783 -> 681 ms
+#   low-core tier, warm     23.4-23.5%    23.6-24.2%   WASH (overlapping)
+#   low-core tier, cold     24.1-25.0%    23.7-24.1%   WASH (overlapping)
+#
+# Read honestly: the win is entirely on the NORMAL tier, and the low-core
+# tier is a wash in both cache states -- at ratio 3.0 the old 1.5 s cap was
+# already nearly non-binding (3 x 525 ms = 1.58 s), so raising it to 6.0 s
+# clips one route's gap slightly less. That half is design hardening for
+# hardware slower than anything measurable here, not a measured gain, and
+# the A/A control (58.5% vs 59.8%) says the noise floor is ~1.5 points.
+#
+# The accepted cost is a longer total pass: warm 0.90-0.99 -> 1.14-1.24 s,
+# cold 2.43-2.48 -> 3.43-3.51 s, i.e. the LAST route becomes warm ~254 ms
+# (warm) / ~1.07 s (cold) later than before. Nothing waits on the pass, and
+# first-navigation protection is deliberately not traded away: library is
+# route #2 and its warm-at time is unchanged (351 -> 371 ms warm, 700 ->
+# 693 ms cold), settings slips 499 -> 616 ms warm / 1152 -> 1510 ms cold,
+# and a click landing MID-pass is measurably faster than before (Library
+# first-nav at 0.35 s after ready: 63.5 -> 17.8 ms median), because the
+# thread is now usually in a gap rather than mid-import. The gap sleep is
+# sliced (see `_pause_between_preimports`) so a quit never waits one out.
 SCREEN_PREIMPORT_YIELD_RATIO = 1.0
-SCREEN_PREIMPORT_MAX_ROUTE_GAP_SECONDS = 0.10
+SCREEN_PREIMPORT_MAX_ROUTE_GAP_SECONDS = 2.0
 SCREEN_PREIMPORT_LOW_CORE_YIELD_RATIO = 3.0
-SCREEN_PREIMPORT_LOW_CORE_MAX_ROUTE_GAP_SECONDS = 1.5
+SCREEN_PREIMPORT_LOW_CORE_MAX_ROUTE_GAP_SECONDS = 6.0
 # Below this many usable CPUs the pass is throttled rather than switched off:
 # disabling it would push each screen's import back onto the event loop at
 # first navigation, which is work the user has actually asked for, on the
@@ -2141,6 +2226,17 @@ def _stream_fileno(stream: Any) -> int:
 # heavy-lane cap limits how many of these parse concurrently.
 _INGEST_HEAVY_TYPES = frozenset({"audio", "video"})
 
+# ebooklib retains the archive model while extractors build full DOM/text
+# representations, so ebook jobs have their own one-at-a-time memory lane.
+_INGEST_EBOOK_TYPES = frozenset({"ebook"})
+_INGEST_EBOOK_POOL_MODE = "ebook"
+_INGEST_GENERAL_POOL_MODE = "general"
+_INGEST_PARSE_POOL_RESTART_ERROR = (
+    "Library import workers could not shut down cleanly; "
+    "restart the app before retrying."
+)
+_INGEST_WORKER_SHUTDOWN_TIMEOUT_SECONDS = 10.0
+
 
 # (task 10, spec §9.1 AC 37/AC-24b) The named template errors the ingest
 # dispatch fails an item on: an unresolvable choice (deleted/renamed) and a
@@ -2302,6 +2398,7 @@ class LibraryIngestQueueMixin:
     - ``self._ingest_parse_pool``, ``self._ingest_parsed_payloads``,
       ``self._ingest_parse_pool_generation``,
       ``self._ingest_parse_jobs_by_generation``, and
+      ``self._ingest_parse_pool_mode``,
       ``self._ingest_shutdown``: the coordinator's own state, initialized
       once alongside ``library_ingest_jobs`` -- see ``TldwCli.__init__``.
     - Textual's ``App``/``Widget`` worker machinery (``@work`` and
@@ -2312,13 +2409,14 @@ class LibraryIngestQueueMixin:
 
     - **Parse stage (this mixin's coordinator, UI thread).** A lazily
       created spawn-context ``multiprocessing.Pool`` (see
-      ``_create_ingest_parse_pool``) fans file parsing out to worker
-      processes. ``_top_up_ingest_parse_pool`` keeps up to N jobs (the pool
-      size) ``PARSING`` at once -- called after every submission/retry and
-      after every parse completion. A pool completion is marshaled onto the
-      UI thread (``_on_ingest_parse_complete``); success stashes the parsed
-      payload and wakes the writer, failure goes straight to
-      ``mark_failed``.
+      ``_create_ingest_parse_pool``) fans ordinary file parsing out to N
+      workers. Ebook batches instead own one-worker generations, retired
+      before ordinary work resumes so parser high-water heaps cannot
+      accumulate across the configured pool. ``_top_up_ingest_parse_pool``
+      runs after every submission/retry and parse completion. A completion is
+      marshaled onto the UI thread (``_on_ingest_parse_complete``); success
+      stashes the parsed payload and wakes the writer, failure goes straight
+      to ``mark_failed``.
     - **Write stage (the writer, background thread, unchanged shape).**
       Exactly one job is ever being written at a time (SQLite has one
       writer). The writer's claim-or-release loop
@@ -2341,10 +2439,10 @@ class LibraryIngestQueueMixin:
     Shutdown (quit path) order, in ``_shutdown_ingest_parse_pool`` (called
     from ``TldwCli.on_unmount``): (1) ``_ingest_shutdown = True`` + executor
     and pool references detached, synchronously -- callbacks short-circuit
-    before ever marshaling; (2) executor close followed by
-    ``pool.terminate()`` + ``pool.join()`` on one detached daemon thread,
-    never the event-loop thread (deadlock rationale in that method's
-    docstring); (3) the writer thread is swept afterward by ``on_unmount``'s
+    before ever marshaling; (2) executor close followed by a bounded wait for
+    ``pool.terminate()`` + ``pool.join()`` on detached daemon threads, never
+    the event-loop thread (deadlock rationale in that method's docstring); (3)
+    the writer thread is swept afterward by ``on_unmount``'s
     generic worker cancellation, its in-flight DB write completing as
     before. Steps 2 and 3 run concurrently -- safe because the stages share
     no resources (parse workers never touch ``media_db``; the writer never
@@ -2390,6 +2488,9 @@ class LibraryIngestQueueMixin:
         self._ingest_parse_pool_stop_event: Optional[threading.Event] = None
         self._ingest_parse_progress_queue: Any | None = None
         self._ingest_parse_progress_thread: threading.Thread | None = None
+        self._ingest_parse_pool_mode: str | None = None
+        self._ingest_parse_pool_retiring = False
+        self._ingest_parse_pool_retirement_error: str | None = None
         self._ingest_parsed_payloads: dict[str, dict] = {}
         # RLock, not Lock: dev's STT dispatch work re-enters this guard.
         self._local_stt_executor_lock = threading.RLock()
@@ -2698,6 +2799,12 @@ class LibraryIngestQueueMixin:
         from tldw_chatbook.DB.Library_Ingest_Jobs_DB import LibraryIngestJobsDB
         from tldw_chatbook.Library.library_ingest_jobs import plan_restore
 
+        # Bound before the `try` so the failure path can tell "never opened"
+        # from "opened, then a later step failed" -- the second case owns a
+        # live SQLite connection (the store opens one in its constructor, via
+        # `_initialize_schema`) that nothing else will ever close, because the
+        # registry is left store-less.
+        store = None
         try:
             # `LibraryIngestJobsDB` opens with `check_same_thread=False`, so
             # the connection this thread creates stays usable from the UI
@@ -2722,6 +2829,13 @@ class LibraryIngestQueueMixin:
             logger.opt(exception=True).warning(
                 "Failed to restore persisted ingest job history; starting empty."
             )
+            if store is not None:
+                try:
+                    store.close()
+                except Exception:
+                    logger.opt(exception=True).debug(
+                        "Ingest job store close after failed restore failed."
+                    )
             return
 
         try:
@@ -2752,13 +2866,22 @@ class LibraryIngestQueueMixin:
         store attach stay here even though the I/O moved. Uses
         ``merge_restored`` rather than ``restore`` so a job submitted in the
         few milliseconds between ``on_mount`` and this callback survives.
+
+        The store is attached BEFORE the merge, not after: a job submitted in
+        that window was submitted while the registry was store-less, so its
+        own ``_persist`` was a no-op, and nothing later re-offers it. With
+        the store attached first, ``merge_restored`` writes those live jobs
+        through -- which also replaces any persisted row that happens to
+        share their id (both sessions allocate from ``ingest-job-1`` upward,
+        so a collision in this window is the likely case, and the stale row
+        would otherwise be restored in the live job's place next launch).
         """
         if getattr(self, "_ingest_shutdown", False):
             store.close()
             return
         self._library_ingest_jobs_store = store
-        self.library_ingest_jobs.merge_restored(plan.jobs, plan.next_id)
         self.library_ingest_jobs.attach_store(store)
+        self.library_ingest_jobs.merge_restored(plan.jobs, plan.next_id)
 
     def _expand_library_ingest_source(self, source_path: str) -> list[str] | None:
         """Expand a directory source into the files it contains.
@@ -3564,7 +3687,7 @@ class LibraryIngestQueueMixin:
             configured = 0
         return configured if configured > 0 else 1
 
-    def _create_ingest_parse_pool(self):
+    def _create_ingest_parse_pool(self, *, processes: int | None = None):
         """Create the Library ingest parse pool.
 
         UI-thread only. Test seam: monkeypatched to an inline-synchronous
@@ -3598,9 +3721,14 @@ class LibraryIngestQueueMixin:
         the redirect on every (re)construction is harmless. Queue and Pool
         creation are one atomic owner operation: if Pool creation fails, the
         already-created queue is closed before the exception escapes.
+
+        Args:
+            processes: Physical worker count for this generation. ``None``
+                uses the configured ordinary parse-pool size.
         """
         ctx = multiprocessing.get_context("spawn")
-        processes = self._ingest_parse_worker_count()
+        if processes is None:
+            processes = self._ingest_parse_worker_count()
 
         def _construct_resources() -> _IngestParsePoolResources:
             progress_queue = None
@@ -3637,13 +3765,21 @@ class LibraryIngestQueueMixin:
         with contextlib.redirect_stderr(_ingest_pool_real_stderr()):
             return _construct_resources()
 
-    def _ensure_ingest_parse_pool(self):
+    def _ensure_ingest_parse_pool(self, mode: str = _INGEST_GENERAL_POOL_MODE):
         """Return the current parse pool, lazily creating one if needed.
 
         UI-thread only.
+
+        Args:
+            mode: Resource class owned by a newly created generation.
         """
         if self._ingest_parse_pool is None:
-            resources = self._create_ingest_parse_pool()
+            processes = (
+                1
+                if mode == _INGEST_EBOOK_POOL_MODE
+                else self._ingest_parse_worker_count()
+            )
+            resources = self._create_ingest_parse_pool(processes=processes)
             pool = resources.pool
             progress_queue = resources.progress_queue
             try:
@@ -3665,6 +3801,7 @@ class LibraryIngestQueueMixin:
             self._ingest_parse_jobs_by_generation[generation] = set()
             self._ingest_parse_pool_stop_event = stop_event
             self._ingest_parse_pool = pool
+            self._ingest_parse_pool_mode = mode
             self._ingest_parse_progress_queue = progress_queue
             self._ingest_parse_progress_thread = None
             if progress_queue is not None:
@@ -4910,11 +5047,18 @@ class LibraryIngestQueueMixin:
         overall pool cap -- when that lane is full, ``next_queued`` is asked
         to skip those types so a queued document can fill the slot instead,
         letting document parses fan out wide while transcriptions stay
-        capped.
+        capped. Ebook jobs use a separate one-process pool generation. A pool
+        generation never mixes ebook and ordinary jobs, because sequential
+        ebooks scheduled through a wider persistent pool can still rotate
+        across workers and retain one high-water heap per process.
         """
         if self._ingest_shutdown:
             return
-        worker_count = self._ingest_parse_worker_count()
+        if self._ingest_parse_pool_retirement_error:
+            self._fail_queued_ingest_after_parse_pool_retirement()
+            return
+        if self._ingest_parse_pool_retiring:
+            return
         heavy_cap = self._ingest_heavy_lane_max_workers()
         pending_research = getattr(
             self,
@@ -4950,6 +5094,14 @@ class LibraryIngestQueueMixin:
                 for job in pending_research_jobs.values()
             ),
         )
+        ebook_parsing_count = max(
+            0,
+            self.library_ingest_jobs.parsing_count_for_types(_INGEST_EBOOK_TYPES)
+            - sum(
+                job.detected_type in _INGEST_EBOOK_TYPES
+                for job in pending_research_jobs.values()
+            ),
+        )
         provisional_local_jobs = []
         for provisional_job_id in self._ingest_local_stt_jobs:
             provisional = self.library_ingest_jobs.get_job(provisional_job_id)
@@ -4959,7 +5111,24 @@ class LibraryIngestQueueMixin:
         heavy_parsing_count += sum(
             job.detected_type in _INGEST_HEAVY_TYPES for job in provisional_local_jobs
         )
-        while parsing_count < worker_count:
+        while True:
+            pool_mode = self._ingest_parse_pool_mode
+            worker_count = (
+                1
+                if pool_mode == _INGEST_EBOOK_POOL_MODE
+                else self._ingest_parse_worker_count()
+            )
+            # Local STT owns a separate executor. It still participates in the
+            # ordinary global cap, but it must not consume the sole slot in an
+            # ebook pool generation or keep that worker resident after its
+            # ebook batch drains.
+            capacity_count = (
+                ebook_parsing_count
+                if pool_mode == _INGEST_EBOOK_POOL_MODE
+                else parsing_count
+            )
+            if capacity_count >= worker_count:
+                return
             # LocalSTTExecutor intentionally accepts one request at a time.
             # A legacy heavy-lane override above one must not turn the next
             # queued audio/video job into a spurious ExecutorBusyError.
@@ -4971,11 +5140,21 @@ class LibraryIngestQueueMixin:
             heavy_full = (
                 heavy_parsing_count >= heavy_cap or local_stt_busy or dictation_reserved
             )
+            ebook_full = ebook_parsing_count >= 1
+            skipped_types = (_INGEST_HEAVY_TYPES if heavy_full else frozenset()) | (
+                _INGEST_EBOOK_TYPES if ebook_full else frozenset()
+            )
+            only_types = None
+            if pool_mode == _INGEST_EBOOK_POOL_MODE:
+                only_types = _INGEST_EBOOK_TYPES
+            elif pool_mode == _INGEST_GENERAL_POOL_MODE:
+                skipped_types |= _INGEST_EBOOK_TYPES
             preclaimed = False
             eligible_pending = (
                 job
                 for job in pending_research_jobs.values()
-                if not (heavy_full and job.detected_type in _INGEST_HEAVY_TYPES)
+                if job.detected_type not in skipped_types
+                and (only_types is None or job.detected_type in only_types)
             )
             job = min(
                 eligible_pending,
@@ -4987,9 +5166,23 @@ class LibraryIngestQueueMixin:
                 pending_research_jobs.pop(job.job_id, None)
             else:
                 job = self.library_ingest_jobs.next_queued(
-                    skip_types=_INGEST_HEAVY_TYPES if heavy_full else frozenset()
+                    skip_types=skipped_types,
+                    only_types=only_types,
                 )
             if job is None:
+                if pool_mode is not None:
+                    generation_jobs = self._ingest_parse_jobs_by_generation.get(
+                        self._ingest_parse_pool_generation,
+                        set(),
+                    )
+                    queued_ebook = self.library_ingest_jobs.next_queued(
+                        only_types=_INGEST_EBOOK_TYPES
+                    )
+                    should_retire = (
+                        pool_mode == _INGEST_EBOOK_POOL_MODE or queued_ebook is not None
+                    )
+                    if not generation_jobs and should_retire:
+                        self._retire_idle_ingest_parse_pool()
                 return
             try:
                 options = self._ingest_job_options(job)
@@ -5088,8 +5281,15 @@ class LibraryIngestQueueMixin:
             parsing_count += 1
             if job.detected_type in _INGEST_HEAVY_TYPES:
                 heavy_parsing_count += 1
+            if job.detected_type in _INGEST_EBOOK_TYPES:
+                ebook_parsing_count += 1
             try:
-                pool = self._ensure_ingest_parse_pool()
+                mode = (
+                    _INGEST_EBOOK_POOL_MODE
+                    if job.detected_type in _INGEST_EBOOK_TYPES
+                    else _INGEST_GENERAL_POOL_MODE
+                )
+                pool = self._ensure_ingest_parse_pool(mode)
             except Exception as exc:
                 if preclaimed:
                     pending_research.discard(job_id)
@@ -5146,6 +5346,114 @@ class LibraryIngestQueueMixin:
                 # and can't be trusted to ever complete either.
                 self._handle_broken_ingest_parse_pool(generation, job_id, exc)
                 return
+
+    def _retire_idle_ingest_parse_pool(self) -> None:
+        """Release an empty pool generation, then resume queued work.
+
+        Pool termination and joining stay off the UI thread. New submissions
+        pause behind ``_ingest_parse_pool_retiring`` until teardown completes,
+        preventing an ebook worker's retained heap from overlapping the next
+        ordinary pool generation.
+        """
+        if self._ingest_parse_pool_retiring or self._ingest_parse_pool is None:
+            return
+        generation = self._ingest_parse_pool_generation
+        generation_jobs = self._ingest_parse_jobs_by_generation.get(generation)
+        if generation_jobs:
+            return
+
+        self._ingest_parse_jobs_by_generation.pop(generation, None)
+        pool = self._ingest_parse_pool
+        stop_event = self._ingest_parse_pool_stop_event
+        progress_queue = self._ingest_parse_progress_queue
+        progress_thread = self._ingest_parse_progress_thread
+        if stop_event is not None:
+            stop_event.set()
+        self._ingest_parse_pool = None
+        self._ingest_parse_pool_mode = None
+        self._ingest_parse_pool_stop_event = None
+        self._ingest_parse_progress_queue = None
+        self._ingest_parse_progress_thread = None
+        self._ingest_parse_pool_retiring = True
+
+        self._terminate_ingest_parse_pool_off_thread(
+            pool,
+            progress_queue,
+            progress_thread,
+            on_complete=self._resume_ingest_after_parse_pool_retirement,
+            on_failure=self._fail_ingest_after_parse_pool_retirement,
+        )
+
+    def _resume_ingest_after_parse_pool_retirement(self) -> None:
+        """Resume on the UI loop, or just release the gate after loop exit."""
+        if self._ingest_shutdown:
+            return
+        loop = getattr(self, "_loop", None)
+        if loop is None or not loop.is_running():
+            self._ingest_parse_pool_retiring = False
+            return
+        self._marshal_ingest_pool_call(self._on_ingest_parse_pool_retired)
+
+    def _fail_ingest_after_parse_pool_retirement(
+        self,
+        _exc: BaseException,
+    ) -> None:
+        """Surface teardown failure without releasing the no-overlap gate."""
+        if self._ingest_shutdown:
+            return
+        loop = getattr(self, "_loop", None)
+        if loop is None or not loop.is_running():
+            return
+        self._marshal_ingest_pool_call(self._on_ingest_parse_pool_retirement_failed)
+
+    def _on_ingest_parse_pool_retirement_failed(self) -> None:
+        """Fail queued local work when old workers cannot be proven stopped."""
+        if self._ingest_shutdown:
+            return
+        self._ingest_parse_pool_retirement_error = _INGEST_PARSE_POOL_RESTART_ERROR
+        self._fail_queued_ingest_after_parse_pool_retirement()
+
+    def _fail_queued_ingest_after_parse_pool_retirement(self) -> None:
+        """Fail local jobs submitted after an unrecoverable pool teardown."""
+        error = self._ingest_parse_pool_retirement_error
+        if not error:
+            return
+        pending_research = getattr(
+            self,
+            "_research_source_parse_dispatch_pending",
+            set(),
+        )
+        pending_job_ids = tuple(pending_research)
+        pending_research.difference_update(pending_job_ids)
+        for job_id in pending_job_ids:
+            job = self.library_ingest_jobs.get_job(job_id)
+            if (
+                job is None
+                or job.origin != "local"
+                or job.state is not IngestJobState.PARSING
+            ):
+                continue
+            self.library_ingest_jobs.mark_failed(
+                job.job_id,
+                error=error,
+                permanent=False,
+            )
+        for job in self.library_ingest_jobs.jobs():
+            if job.origin != "local" or job.state is not IngestJobState.QUEUED:
+                continue
+            self.library_ingest_jobs.mark_failed(
+                job.job_id,
+                error=error,
+                permanent=False,
+            )
+
+    def _on_ingest_parse_pool_retired(self) -> None:
+        """Finish one pool-mode transition on the UI thread."""
+        if self._ingest_shutdown:
+            return
+        self._ingest_parse_pool_retirement_error = None
+        self._ingest_parse_pool_retiring = False
+        self._top_up_ingest_parse_pool()
 
     def _marshal_ingest_pool_call(
         self,
@@ -5333,8 +5641,10 @@ class LibraryIngestQueueMixin:
         those (retryable) and dropping the pool reference is the only
         sound recovery (see the F3 design spec's "Worker-process death"
         section). The pool is rebuilt lazily by
-        ``_create_ingest_parse_pool`` the next time ``_top_up_ingest_parse_pool``
-        runs (i.e. on the next submission/retry).
+        ``_create_ingest_parse_pool`` after the broken generation has fully
+        terminated. Queued work resumes automatically from the retirement
+        callback, and submissions remain gated until then so generations
+        cannot overlap in memory.
 
         Payload-ready jobs are SPARED (Task 4 review fix): a job whose
         parse already completed sits ``PARSING`` with its payload in
@@ -5367,16 +5677,10 @@ class LibraryIngestQueueMixin:
             stop_event.set()
         self._ingest_parse_pool_stop_event = None
         self._ingest_parse_pool = None
+        self._ingest_parse_pool_mode = None
         self._ingest_parse_progress_queue = None
         self._ingest_parse_progress_thread = None
-        if any(
-            resource is not None for resource in (pool, progress_queue, progress_thread)
-        ):
-            self._terminate_ingest_parse_pool_off_thread(
-                pool,
-                progress_queue,
-                progress_thread,
-            )
+        self._ingest_parse_pool_retiring = True
 
         logger.opt(exception=exc).error(f"Library ingest parse pool failed: {exc}")
         for job in self.library_ingest_jobs.jobs():
@@ -5394,12 +5698,23 @@ class LibraryIngestQueueMixin:
         if self._ingest_parsed_payloads:
             self._start_library_ingest_queue_if_idle()
 
+        self._terminate_ingest_parse_pool_off_thread(
+            pool,
+            progress_queue,
+            progress_thread,
+            on_complete=self._resume_ingest_after_parse_pool_retirement,
+            on_failure=self._fail_ingest_after_parse_pool_retirement,
+        )
+
     @staticmethod
     def _terminate_ingest_parse_pool_off_thread(
         pool: Any | None,
         progress_queue: Any | None = None,
         progress_thread: threading.Thread | None = None,
-    ) -> threading.Thread:
+        *,
+        on_complete: Callable[[], None] | None = None,
+        on_failure: Callable[[BaseException], None] | None = None,
+    ) -> threading.Thread | None:
         """Clean up one detached parse generation away from the UI thread."""
         return LibraryIngestQueueMixin._shutdown_ingest_workers_off_thread(
             None,
@@ -5408,6 +5723,8 @@ class LibraryIngestQueueMixin:
             pool,
             progress_queue,
             progress_thread,
+            on_complete=on_complete,
+            on_failure=on_failure,
         )
 
     def _shutdown_ingest_parse_pool(self) -> Optional[threading.Thread]:
@@ -5421,7 +5738,7 @@ class LibraryIngestQueueMixin:
         point on) and drops every worker reference (nothing can submit to
         them anymore). Source/coordinator/executor close, parse-pool
         terminate/join, queue cleanup, and bounded drain-thread join then run
-        sequentially on one detached daemon thread,
+        on detached daemon threads with a bounded pool-shutdown wait,
         NEVER on the caller's (loop) thread: verifier close may wait and
         CPython's ``Pool._terminate_pool`` does an unbounded
         ``result_handler.join()``, and if that result-handler thread is at
@@ -5464,6 +5781,7 @@ class LibraryIngestQueueMixin:
             stop_event.set()
         self._ingest_parse_pool_stop_event = None
         self._ingest_parse_pool = None
+        self._ingest_parse_pool_mode = None
         self._ingest_parse_progress_queue = None
         self._ingest_parse_progress_thread = None
         if all(
@@ -5495,15 +5813,21 @@ class LibraryIngestQueueMixin:
         pool: Any | None,
         progress_queue: Any | None,
         progress_thread: threading.Thread | None,
-    ) -> threading.Thread:
+        *,
+        on_complete: Callable[[], None] | None = None,
+        on_failure: Callable[[BaseException], None] | None = None,
+    ) -> threading.Thread | None:
         """Close detached ingest workers without blocking the UI thread.
 
         Executor shutdown remains ahead of parse-pool teardown. The parse pool
-        is terminated and joined before its queue is closed/cancelled, then the
-        already-stopped daemon drain receives only a bounded join.
+        gets a bounded terminate/join window before its queue is
+        closed/cancelled, then the already-stopped daemon drain receives only a
+        bounded join. A timeout reports failure once and never calls the later
+        completion callback, so callers keep their no-overlap gate asserted.
         """
 
         def _shutdown_workers() -> None:
+            pool_failure: BaseException | None = None
             if source_service is not None:
                 try:
                     source_service.close()
@@ -5522,11 +5846,38 @@ class LibraryIngestQueueMixin:
                         "Error closing the Library local STT executor."
                     )
             if pool is not None:
+                pool_shutdown_done = threading.Event()
+                pool_failures: list[BaseException] = []
+
+                def _terminate_and_join_pool() -> None:
+                    try:
+                        pool.terminate()
+                        pool.join()
+                    except Exception as exc:
+                        pool_failures.append(exc)
+                    finally:
+                        pool_shutdown_done.set()
+
                 try:
-                    pool.terminate()
-                    pool.join()
-                except Exception:
-                    logger.opt(exception=True).error(
+                    pool_shutdown_thread = threading.Thread(
+                        target=_terminate_and_join_pool,
+                        name="library-ingest-parse-pool-shutdown",
+                        daemon=True,
+                    )
+                    pool_shutdown_thread.start()
+                except Exception as exc:
+                    pool_failure = exc
+                else:
+                    if not pool_shutdown_done.wait(
+                        timeout=_INGEST_WORKER_SHUTDOWN_TIMEOUT_SECONDS
+                    ):
+                        pool_failure = TimeoutError(
+                            "Library ingest parse pool shutdown timed out."
+                        )
+                    elif pool_failures:
+                        pool_failure = pool_failures[0]
+                if pool_failure is not None:
+                    logger.opt(exception=pool_failure).error(
                         "Error terminating the Library ingest parse pool."
                     )
             if progress_queue is not None:
@@ -5559,13 +5910,41 @@ class LibraryIngestQueueMixin:
                     logger.error(
                         "Error joining the Library ingest progress drain thread."
                     )
+            if pool_failure is not None:
+                if on_failure is not None:
+                    try:
+                        on_failure(pool_failure)
+                    except Exception:
+                        logger.opt(exception=True).error(
+                            "Error reporting Library ingest pool retirement failure."
+                        )
+            elif on_complete is not None:
+                try:
+                    on_complete()
+                except Exception:
+                    logger.opt(exception=True).error(
+                        "Error resuming Library ingest after pool retirement."
+                    )
 
-        thread = threading.Thread(
-            target=_shutdown_workers,
-            name="library-ingest-workers-shutdown",
-            daemon=True,
-        )
-        thread.start()
+        try:
+            thread = threading.Thread(
+                target=_shutdown_workers,
+                name="library-ingest-workers-shutdown",
+                daemon=True,
+            )
+            thread.start()
+        except Exception as exc:
+            logger.opt(exception=True).error(
+                "Could not start the Library ingest worker shutdown thread."
+            )
+            if on_failure is not None:
+                try:
+                    on_failure(exc)
+                except Exception:
+                    logger.opt(exception=True).error(
+                        "Error reporting Library ingest pool retirement failure."
+                    )
+            return None
         return thread
 
     # -- Remote poller (server-origin jobs) --------------------------------
@@ -7006,6 +7385,14 @@ class TldwCli(
         self._shutting_down = False  # Track if app is shutting down
         self._quit_in_progress = False
 
+        # TASK-22215: staggered boot-worker fleet state. The gate is built at
+        # `_ui_ready` (`_start_staggered_boot_workers`); until then there is
+        # deliberately nothing to admit, because every member of the fleet is
+        # post-first-paint work by policy.
+        self._boot_worker_gate: StaggeredBootWorkerGate | None = None
+        self._boot_worker_handles: dict[str, Worker] = {}
+        self._boot_worker_reconcile_timer: Optional[Timer] = None
+
         # --- Assign DB instances for event handlers ---
         if self.prompts_service_initialized:
             # Get the database instance using the get_db_instance() function
@@ -8168,6 +8555,15 @@ class TldwCli(
         self.actor_pack_activation_service = None
         self.actor_pack_import_controller = None
         if self.chachanotes_db is not None:
+            # task-22216: this construction is pure — the staging crash
+            # sweep no longer runs inside ActorPackImportService.__init__
+            # (a secure_private_directory walk + scandir on every boot,
+            # the task-21106 class). `ensure_actor_pack_staging_sweep`
+            # runs it once per app session from the deferred startup
+            # worker; the service itself gates `inspect_archive` on the
+            # same once-lock, so an import racing the worker still sweeps
+            # first. Guarded by
+            # Tests/App/test_boot_construct_fs_side_effects.py.
             actor_pack_profile_root = get_user_data_dir()
             self.actor_pack_import_service = ActorPackImportService(
                 self.actor_pack_repository,
@@ -8244,6 +8640,40 @@ class TldwCli(
                     "Actor Pack recovery retained quarantined intents: "
                     "actor_pack_recovery_blocked"
                 )
+
+    def ensure_actor_pack_staging_sweep(self) -> None:
+        """Run the Actor Pack staging crash-sweep once per session (task-22216).
+
+        Safe to call from any thread: the once-gate (and the lock that
+        serializes it against a first ``inspect_archive``) lives on the
+        import service. Called from the deferred startup worker; runs on a
+        thread because the sweep does real filesystem I/O.
+
+        A sweep failure is absorbed and logged rather than raised — the
+        pre-move behavior (the sweep ran inside ``TldwCli.__init__`` via
+        the service constructor, so a failure aborted app construction
+        outright) is deliberately softened to match the task-21106
+        recovery seam: the app stays up, the service's gate stays open,
+        and the next import attempt retries the sweep and surfaces the
+        same categorized error to the user.
+        """
+        service = getattr(self, "actor_pack_import_service", None)
+        if service is None:
+            return
+        try:
+            service.ensure_staging_swept()
+        except ActorPackImportError as exc:
+            # Category tokens only — the importer's errors are path-free by
+            # contract, and this sink is persistent (TASK-15103 rules).
+            self.loguru_logger.warning(
+                "Actor Pack staging sweep failed (will retry on first "
+                f"import use): {exc.category}"
+            )
+        except Exception as exc:
+            self.loguru_logger.warning(
+                "Actor Pack staging sweep failed (will retry on first "
+                f"import use): {type(exc).__name__}"
+            )
 
     def _wire_chat_conversation_services(self) -> None:
         trace_db = getattr(self, "chachanotes_db", None)
@@ -9438,7 +9868,22 @@ class TldwCli(
         hop scheduled onto that thread gets a fresh connection instead of a
         closed one. It is not safe to "improve" this into a close of the
         instance itself.
+
+        TASK-22215: the driver paces itself between chunks (the TASK-22200
+        treatment, now shared) and this worker hands it the Textual worker's
+        cancellation flag -- pacing makes the run longer, and a thread worker
+        that never polls ``is_cancelled`` would make shutdown wait out every
+        remaining pause. Stopping is safe: the resume frontier lives in the
+        database.
         """
+        from textual.worker import NoActiveWorker, get_current_worker
+
+        try:
+            worker = get_current_worker()
+        except NoActiveWorker:
+            worker = None  # direct calls in tests/harnesses run un-cancellable
+        should_abort = (lambda: worker.is_cancelled) if worker is not None else None
+
         db = None
         db_path = get_subscriptions_db_path()
         try:
@@ -9446,7 +9891,7 @@ class TldwCli(
             if db is None:
                 # Only a harness that skipped service wiring gets here.
                 db = SubscriptionsDB(db_path, CLI_APP_CLIENT_ID)
-            backfill_subscription_items_fts(db)
+            backfill_subscription_items_fts(db, should_abort=should_abort)
         except FTSBackfillError as exc:
             logger.opt(exception=True).error(
                 "Subscription items FTS backfill failed for database {} "
@@ -12385,28 +12830,12 @@ class TldwCli(
             group="scheduling",
         )
 
-        # task-688: index subscription_items rows scraped before the FTS5
-        # index existed, so search covers a user's whole back catalogue
-        # without any action on their part. thread=True because this does
-        # blocking sqlite work; never blocks startup or screen mount since
-        # run_worker only schedules it.
-        self.run_worker(
-            self._backfill_subscription_items_fts,
-            thread=True,
-            exclusive=True,
-            group="subscriptions-fts-backfill",
-        )
-
-        # task-21100: reinsert the messages the v45->v46 FTS reset no longer
-        # indexes inline, so an upgraded profile's chat history becomes fully
-        # searchable again without ever blocking boot on the index rewrite.
-        # thread=True for the same reason as the subscriptions backfill above.
-        self.run_worker(
-            self._backfill_chachanotes_messages_fts,
-            thread=True,
-            exclusive=True,
-            group="chachanotes-fts-backfill",
-        )
+        # TASK-22215: the two FTS backfills (task-688 subscription_items,
+        # task-21100 messages) used to start HERE, before first paint, next
+        # to the scheduler. They are whole-table re-tokenizations that
+        # nothing waits on and that resume from a frontier in their own
+        # database, so they belong in the staggered tier -- see
+        # `Utils/boot_worker_policy.py` and `_start_staggered_boot_workers`.
 
     def _init_model_catalog_disk_store(self) -> "ModelCatalogDiskStore | None":
         """Build the disk-backed model catalog cache for startup (ADR-020).
@@ -12645,6 +13074,7 @@ class TldwCli(
             return False
         try:
             from tldw_chatbook.UI.Wizards.first_run_setup_state import (
+                env_keys_that_silenced_first_run,
                 setup_recovery_action,
                 should_show_resume_toast,
             )
@@ -12668,6 +13098,25 @@ class TldwCli(
                     severity="information",
                     timeout=8,
                 )
+            elif action == "none" and (
+                env_key_names := env_keys_that_silenced_first_run(
+                    self.app_config, os.environ
+                )
+            ):
+                # TASK-21147 (UAT E-1): the env-key install skipped the
+                # wizard silently — say so exactly once, and where the
+                # wizard's other value (voice, tools, encryption) lives.
+                shown = ", ".join(env_key_names[:2]) + (
+                    " (and more)" if len(env_key_names) > 2 else ""
+                )
+                self.notify(
+                    f"Found {shown} — you're ready to chat. Run setup any "
+                    "time: Settings ▸ Diagnostics ▸ Run setup wizard.",
+                    title="Provider key detected",
+                    severity="information",
+                    timeout=10,
+                )
+                self._persist_env_key_notice_flag()
         except Exception as exc:
             logger.error(
                 "First-run startup action failed (error_type={})",
@@ -12730,6 +13179,43 @@ class TldwCli(
             title="Profile already open",
             severity="warning",
             timeout=10,
+        )
+
+    def _persist_env_key_notice_flag(self) -> None:
+        """Record the one-time env-key notice (TASK-21147, UAT E-1)."""
+
+        from tldw_chatbook.UI.Wizards.first_run_setup_state import (
+            ENV_KEY_NOTICE_KEY,
+            WIZARD_STATE_SECTION,
+        )
+
+        app_config = self.app_config
+        if isinstance(app_config, dict):
+            app_config.setdefault(WIZARD_STATE_SECTION, {})[
+                ENV_KEY_NOTICE_KEY
+            ] = True
+
+        def _write() -> None:
+            from tldw_chatbook.config import save_settings_to_cli_config
+
+            try:
+                saved = save_settings_to_cli_config(
+                    {WIZARD_STATE_SECTION: {ENV_KEY_NOTICE_KEY: True}}
+                )
+            except Exception as exc:
+                logger.warning(
+                    "Failed to persist env-key notice flag "
+                    f"(category=persistence, error_type={type(exc).__name__})"
+                )
+                return
+            if not saved:
+                logger.warning(
+                    "Failed to persist env-key notice flag "
+                    "(category=persistence, error_type=save_returned_false)"
+                )
+
+        self.run_worker(
+            _write, thread=True, group="first-run-env-key-notice-flag"
         )
 
     def _push_first_run_wizard(self) -> None:
@@ -13025,6 +13511,31 @@ class TldwCli(
         ``_push_first_run_wizard`` with this same handler).
         """
         self._handle_first_run_wizard_result(result)
+
+    def action_run_setup_wizard(self) -> None:
+        """Open the setup wizard for a re-run (TASK-21145, UAT H-3).
+
+        An app-level action so any surface can offer it as an action link
+        (e.g. the Console composer's "Send blocked — finish provider setup"
+        strip renders "[@click=app.run_setup_wizard]Open setup[/]"), not
+        just the Settings button and the command palette.
+        """
+        try:
+            if any(
+                type(screen).__name__ == "FirstRunSetupWizard"
+                for screen in self.screen_stack
+            ):
+                return
+            from tldw_chatbook.UI.Wizards.FirstRunSetupWizard import (
+                FirstRunSetupWizard,
+            )
+
+            self.push_screen(
+                FirstRunSetupWizard(self, rerun=True),
+                self.handle_first_run_wizard_result,
+            )
+        except Exception as exc:
+            self.notify(f"Failed to open setup wizard: {exc}", severity="error")
 
     def hide_inactive_windows(self) -> None:
         """Hides all windows that are not the current active tab."""
@@ -13373,19 +13884,12 @@ class TldwCli(
     def _schedule_deferred_startup_work(self) -> None:
         """Start nonessential services after the first interactive UI frame."""
 
-        # task-21106: Actor Pack crash recovery moved here from __init__ —
-        # synchronous SQLite has no place on the construction path. A thread
-        # worker (not a coroutine) because recovery does blocking DB I/O; the
-        # coordinator's own once-guard makes every later surface-side call
-        # (Personas mount, create_persona) a cached no-op.
-        self.run_worker(
-            self.ensure_actor_pack_recovery,
-            name="deferred_actor_pack_recovery",
-            group="actor_pack_recovery",
-            thread=True,
-            exclusive=True,
-            exit_on_error=False,
-        )
+        # TASK-22215: the boot-time thread fleet starts here, under the
+        # explicit order/concurrency policy in `Utils/boot_worker_policy.py`,
+        # rather than all at once (and rather than partly from `on_mount`,
+        # ahead of first paint, which is where the two FTS backfills used to
+        # start).
+        self._start_staggered_boot_workers()
         self.set_timer(
             DEFERRED_DB_SIZE_UPDATE_DELAY_SECONDS,
             self._schedule_footer_status_updates,
@@ -13424,6 +13928,252 @@ class TldwCli(
                 name="deferred_legacy_citation_migration",
             )
         self._schedule_launch_wake()
+
+    # ------------------------------------------------------------------
+    # TASK-22215: the staggered boot-worker fleet
+    # ------------------------------------------------------------------
+
+    def boot_worker_starters(self) -> dict[str, Callable[[], Optional[Worker]]]:
+        """The start callables for every staggered boot worker, by policy key.
+
+        One table, so the policy (``Utils/boot_worker_policy.py``) and the
+        code that starts the fleet cannot drift apart: a key with no starter
+        -- or a starter with no key -- is a test failure, not a worker that
+        silently never runs.
+
+        Returns:
+            Policy key -> zero-argument callable returning the started
+            ``Worker`` (or ``None`` when there was nothing to start).
+        """
+
+        def start_actor_pack_recovery() -> Worker:
+            # task-21106: Actor Pack crash recovery, moved out of __init__ --
+            # synchronous SQLite has no place on the construction path. A
+            # thread worker (not a coroutine) because recovery does blocking
+            # DB I/O; the coordinator's own once-guard makes every later
+            # surface-side call (Personas mount, create_persona) a cached
+            # no-op -- which is also why this may be staggered at all.
+            return self.run_worker(
+                self.ensure_actor_pack_recovery,
+                name="deferred_actor_pack_recovery",
+                group="actor_pack_recovery",
+                thread=True,
+                exclusive=True,
+                exit_on_error=False,
+            )
+
+        def start_actor_pack_staging_sweep() -> Worker:
+            # task-22216: the Actor Pack staging crash-sweep, moved out of
+            # ActorPackImportService.__init__ (synchronous filesystem I/O on
+            # the construction path). The service's once-gate also fires at
+            # the entry of inspect_archive, so whichever comes first sweeps
+            # and the other is a cached no-op.
+            return self.run_worker(
+                self.ensure_actor_pack_staging_sweep,
+                name="deferred_actor_pack_staging_sweep",
+                group="actor_pack_staging_sweep",
+                thread=True,
+                exclusive=True,
+                exit_on_error=False,
+            )
+
+        def start_chachanotes_fts_backfill() -> Worker:
+            # task-21100: reinsert the messages the v45->v46 FTS reset no
+            # longer indexes inline, so an upgraded profile's chat history
+            # becomes fully searchable again. thread=True: blocking sqlite.
+            # The name is explicit so the (name, group) identity the boot
+            # census pins cannot drift with a method rename.
+            return self.run_worker(
+                self._backfill_chachanotes_messages_fts,
+                name="_backfill_chachanotes_messages_fts",
+                group="chachanotes-fts-backfill",
+                thread=True,
+                exclusive=True,
+            )
+
+        def start_subscriptions_fts_backfill() -> Worker:
+            # task-688: index subscription_items rows scraped before the FTS5
+            # index existed, so search covers a user's whole back catalogue
+            # without any action on their part.
+            return self.run_worker(
+                self._backfill_subscription_items_fts,
+                name="_backfill_subscription_items_fts",
+                group="subscriptions-fts-backfill",
+                thread=True,
+                exclusive=True,
+            )
+
+        return {
+            "actor_pack_recovery": start_actor_pack_recovery,
+            "actor_pack_staging_sweep": start_actor_pack_staging_sweep,
+            "chachanotes_fts_backfill": start_chachanotes_fts_backfill,
+            "subscriptions_fts_backfill": start_subscriptions_fts_backfill,
+        }
+
+    def _start_boot_worker(self, key: str) -> Optional[Worker]:
+        """Start one staggered boot worker.
+
+        Args:
+            key: A key from ``STAGGERED_BOOT_WORKER_KEYS``.
+
+        Returns:
+            The started worker, or None if the key has no starter (which is a
+            wiring bug the policy test catches, not a runtime failure).
+        """
+        starter = self.boot_worker_starters().get(key)
+        if starter is None:
+            self.loguru_logger.warning(
+                f"No starter registered for staggered boot worker {key!r}"
+            )
+            return None
+        return starter()
+
+    def _start_staggered_boot_workers(self) -> None:
+        """Open the admission gate for the post-readiness boot fleet.
+
+        Called once, from ``_schedule_deferred_startup_work`` (the last
+        statement of ``_post_mount_setup``, i.e. after ``_ui_ready``).
+        """
+        if getattr(self, "_shutting_down", False):
+            return
+        self._boot_worker_gate = StaggeredBootWorkerGate(
+            STAGGERED_BOOT_WORKER_KEYS,
+            MAX_CONCURRENT_STAGGERED_BOOT_WORKERS,
+        )
+        self._boot_worker_handles = {}
+        self._admit_staggered_boot_workers()
+
+    def _admit_staggered_boot_workers(self) -> None:
+        """Start whatever the gate admits, then arm the reconcile timer.
+
+        Loops because a starter that raises (or declines to start anything)
+        frees its slot immediately -- the queue must advance past it in the
+        same pass rather than waiting for a completion that will never come.
+        """
+        gate = getattr(self, "_boot_worker_gate", None)
+        if gate is None:
+            return
+        if getattr(self, "_shutting_down", False):
+            self._close_boot_worker_gate("shutdown")
+            return
+        while True:
+            admitted = gate.admit()
+            if not admitted:
+                break
+            for key in admitted:
+                worker: Optional[Worker] = None
+                try:
+                    worker = self._start_boot_worker(key)
+                except Exception:
+                    self.loguru_logger.opt(exception=True).warning(
+                        f"Staggered boot worker {key!r} failed to start"
+                    )
+                if worker is None:
+                    # Nothing is in flight for this key, so no terminal
+                    # transition will ever arrive: release the slot now.
+                    gate.complete(key)
+                    continue
+                self._boot_worker_handles[key] = worker
+        self._arm_boot_worker_reconcile()
+
+    def _release_boot_worker_slot(self, worker: Any) -> None:
+        """Free the slot a finished boot worker held and admit the next.
+
+        Args:
+            worker: The worker whose state just went terminal. Anything that
+                is not a policy member is ignored, so this is safe to call
+                from the app-wide ``Worker.StateChanged`` hook.
+        """
+        gate = getattr(self, "_boot_worker_gate", None)
+        if gate is None:
+            return
+        key = BOOT_WORKER_KEY_BY_IDENTITY.get(
+            (getattr(worker, "name", ""), getattr(worker, "group", ""))
+        )
+        if key is None or not gate.complete(key):
+            return
+        self._boot_worker_handles.pop(key, None)
+        self._admit_staggered_boot_workers()
+
+    def _arm_boot_worker_reconcile(self) -> None:
+        """Keep a slow reconcile running while the fleet is outstanding.
+
+        The gate advances on ``Worker.StateChanged``. This is the backstop
+        for the one thing that hook cannot cover: a terminal transition that
+        never reaches the handler (a worker whose message is dropped during a
+        screen swap, a duck-typed worker). Without it a lost event would
+        strand every remaining member of the fleet for the whole session --
+        the failure mode a stagger policy must not introduce. It stops itself
+        as soon as the gate is drained.
+        """
+        if getattr(self, "_boot_worker_reconcile_timer", None) is not None:
+            return
+        gate = getattr(self, "_boot_worker_gate", None)
+        if gate is None or gate.is_drained or gate.is_closed:
+            return
+        try:
+            self._boot_worker_reconcile_timer = self.set_interval(
+                BOOT_WORKER_RECONCILE_INTERVAL_SECONDS,
+                self._reconcile_boot_worker_slots,
+            )
+        except Exception:  # noqa: BLE001 -- boot never dies on a backstop
+            self.loguru_logger.opt(exception=True).debug(
+                "Could not arm the staggered boot worker reconcile"
+            )
+
+    def _reconcile_boot_worker_slots(self) -> None:
+        """Release slots held by workers that already finished, then advance."""
+        gate = getattr(self, "_boot_worker_gate", None)
+        if gate is None:
+            self._stop_boot_worker_reconcile()
+            return
+        released = False
+        for key, worker in list(self._boot_worker_handles.items()):
+            finished = bool(getattr(worker, "is_finished", False)) or bool(
+                getattr(worker, "is_cancelled", False)
+            )
+            if not finished:
+                continue
+            self._boot_worker_handles.pop(key, None)
+            released = gate.complete(key) or released
+        if released:
+            self._admit_staggered_boot_workers()
+        if gate.is_drained or gate.is_closed:
+            self._stop_boot_worker_reconcile()
+
+    def _stop_boot_worker_reconcile(self) -> None:
+        """Stop the reconcile timer if one is running."""
+        timer = getattr(self, "_boot_worker_reconcile_timer", None)
+        if timer is None:
+            return
+        self._boot_worker_reconcile_timer = None
+        try:
+            timer.stop()
+        except Exception:  # noqa: BLE001 -- teardown must not raise
+            pass
+
+    def _close_boot_worker_gate(self, reason: str) -> None:
+        """Stop admitting staggered boot workers (quit/shutdown).
+
+        Whatever never started is not lost: each staggered member is either
+        re-run by the surface that gates on it (the actor-pack pair) or
+        resumes from a frontier in its own database on the next boot (both
+        FTS backfills). Workers already in flight are cancelled by the normal
+        shutdown path, not here.
+
+        Args:
+            reason: Logged, so a quit-time drop is explainable.
+        """
+        self._stop_boot_worker_reconcile()
+        gate = getattr(self, "_boot_worker_gate", None)
+        if gate is None or gate.is_closed:
+            return
+        dropped = gate.close()
+        if dropped:
+            self.loguru_logger.debug(
+                f"Staggered boot workers not started before {reason}: "
+                f"{', '.join(dropped)} (each resumes or re-runs on demand)"
+            )
 
     def _schedule_launch_wake(self) -> None:
         """Deliver a supervisor wake this install already owed at launch.
@@ -13823,9 +14573,21 @@ class TldwCli(
         ``SCREEN_PREIMPORT_NAVIGATION_PARK_LIMIT_SECONDS`` and abandoned
         immediately on ``_shutting_down`` so neither a wedged navigation nor
         a quit can leave this thread sleeping in a loop.
+
+        The gap sleep itself is sliced into navigation-poll-sized steps with
+        a ``_shutting_down`` check between slices (TASK-22214, the 22200
+        ``_interruptible_sleep`` precedent): with the caps at 2.0 s / 6.0 s
+        a single ``time.sleep(gap)`` would leave a quit waiting out the
+        whole gap before ``_preimport_screens``'s own shutdown check could
+        run. Sliced, the thread notices a quit within one 0.05 s slice.
         """
-        if gap_seconds > 0:
-            time.sleep(gap_seconds)
+        remaining = gap_seconds
+        while remaining > 0:
+            if getattr(self, "_shutting_down", False):
+                return
+            step = min(SCREEN_PREIMPORT_NAVIGATION_POLL_SECONDS, remaining)
+            time.sleep(step)
+            remaining -= step
         # Counted, not accumulated: summing 0.05 a hundred times lands either
         # side of 5.0 depending on float rounding, which would make the bound
         # off by one at random.
@@ -13930,8 +14692,9 @@ class TldwCli(
             name="tldw-initial-screen-preimport",
             daemon=True,
         )
+        if not self._start_preimport_thread(thread):
+            return
         self._initial_screen_preimport_thread = thread
-        thread.start()
 
     def _schedule_screen_preimport(self) -> None:
         """Start the background screen-module pre-importer, at most once."""
@@ -13946,8 +14709,41 @@ class TldwCli(
             name="tldw-screen-preimport",
             daemon=True,
         )
+        if not self._start_preimport_thread(thread):
+            return
         self._screen_preimport_thread = thread
-        thread.start()
+
+    def _start_preimport_thread(self, thread: threading.Thread) -> bool:
+        """Start a pre-import thread; report whether it is running.
+
+        Args:
+            thread: The unstarted daemon thread to run.
+
+        Returns:
+            ``True`` when the thread started. ``False`` when the interpreter
+            refused to spawn it -- thread exhaustion, or a start during
+            interpreter shutdown -- in which case the caller must NOT record a
+            handle.
+
+        Both callers run from the splash-path timer/deferred-startup callback,
+        not a request/response path, so a ``RuntimeError`` out of ``start()``
+        would surface as an unhandled exception in a Textual timer task during
+        boot. Losing a speculative warm-up is the correct outcome there: every
+        module this would have pre-imported is still imported normally on
+        first navigation. Recording the handle only after a successful start
+        also keeps the once-guard honest -- a failed attempt leaves ``None``,
+        so a later call can try again.
+        """
+        try:
+            thread.start()
+        except RuntimeError as exc:
+            self.loguru_logger.debug(
+                "Screen pre-import thread could not start (name={}, error_type={})",
+                thread.name,
+                type(exc).__name__,
+            )
+            return False
+        return True
 
     def _schedule_tts_initialization(self) -> None:
         if self._tts_handler is not None:
@@ -14044,6 +14840,11 @@ class TldwCli(
 
         # Set shutdown flag to prevent new operations
         self._shutting_down = True
+
+        # TASK-22215: stop admitting staggered boot workers before cancelling
+        # the live ones, so a completion arriving mid-teardown cannot start a
+        # fresh thread worker behind the cancel sweep.
+        self._close_boot_worker_gate("shutdown request")
 
         # Cancel all active workers first
         await self._cancel_and_settle_workers("shutdown request")
@@ -14486,8 +15287,9 @@ class TldwCli(
         #   1. `_ingest_shutdown = True` + executor/pool references detached
         #      (synchronous, inside `_shutdown_ingest_parse_pool`) -- their
         #      callbacks short-circuit before marshaling from this point on.
-        #   2. Executor close, then `pool.terminate()` + `pool.join()`, on one
-        #      detached daemon thread, NEVER this (loop) thread -- terminating
+        #   2. Executor close, then a bounded `pool.terminate()` +
+        #      `pool.join()` wait on detached daemon threads, NEVER this (loop)
+        #      thread -- terminating
         #      inline here could deadlock against a result-handler thread
         #      parked inside `call_from_thread` (see that method's docstring).
         #      `terminate()` kills every in-flight light parse worker process
@@ -14877,6 +15679,24 @@ class TldwCli(
             f"(Group: {worker_group}, State: {event.state})"
         )
 
+        # TASK-22215. The same "one hook sees every transition" property the
+        # diagnostics below rely on is what advances the staggered boot fleet:
+        # a terminal state frees that worker's admission slot and lets the next
+        # member start. Non-members return immediately (one dict lookup), and
+        # the whole thing is best-effort -- a boot stagger must never be able
+        # to break the app-wide worker hook.
+        if event.state in (
+            WorkerState.SUCCESS,
+            WorkerState.ERROR,
+            WorkerState.CANCELLED,
+        ):
+            try:
+                self._release_boot_worker_slot(event.worker)
+            except Exception:
+                self.loguru_logger.opt(exception=True).debug(
+                    "Staggered boot worker slot release failed"
+                )
+
         # TASK-1240. One hook already sees every worker transition, so failures
         # are recorded without touching any of the 398 run_worker call sites.
         # Only ERROR persists: a start or success event here would emit a line
@@ -15194,6 +16014,10 @@ class TldwCli(
             return
 
         self._shutting_down = True
+        # TASK-22215: the user has approved the quit -- nothing further from
+        # the staggered boot fleet may start (idempotent with the same call in
+        # `on_shutdown_request`, which the quit path reaches later).
+        self._close_boot_worker_gate("quit")
         await self._run_approved_quit_cleanup()
 
     async def _run_approved_quit_cleanup(self) -> None:

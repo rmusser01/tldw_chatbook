@@ -293,18 +293,24 @@ otherwise, task-2708).
 editing and deeper visual preview." **Global visual defaults** holds **Theme**,
 **Palette limit (themes)**, **Web font size (px)**, and **Density**; **Motion
 and scrolling** holds **Animations** and **Smooth scrolling**, each a button
-whose label is its state (Enabled / Disabled). **Library Media layout**
-remembers whether the Library and Items panes are open, uses fixed 28/40-column
-targets by default, and can opt into bounded custom widths (Library 24–48,
-Items 32–72); **Reset layout** restores both panes open and fixed defaults.
-Narrow-terminal responsive collapses are temporary and are never saved.
+whose label is its state (Enabled / Disabled). **Shared Library rail**
+remembers whether the rail and destination Items panes are open. **Automatic
+width** follows the 3:13 Library-to-canvas proportion, bounded to 24–34 cells.
+**Custom width** enables explicit preferences (Library 24–48, Items 32–72);
+ordinary layouts may temporarily shrink the rail to preserve 40 content cells,
+and adaptive readers may collapse or prioritize panes. **Reset layout** restores
+both panes open, automatic width, a 31-cell dormant Library preference, and
+40-cell Items preferences. Below 64 columns, ordinary routes show either the
+rail or canvas and provide **‹ Library** (or **< Library** with ASCII glyphs)
+to return. Responsive compression, collapse, resizing, and mode changes are
+temporary and never saved.
 **Preview and boundary**
 summarises what a save will touch. **Preview** applies runtime-safe values for
 this session only and persists nothing ("Appearance preview applied for this
 session only.") — it is the only way to see *this pane's* theme selection
 without restarting.
 Some launch-only fields are less immediate than they look (see
-[Quirks](#quirks--troubleshooting)); Media layout changes refresh mounted
+[Quirks](#quirks--troubleshooting)); Library layout changes refresh mounted
 Library readers after a successful save.
 
 ### Interface — Theme

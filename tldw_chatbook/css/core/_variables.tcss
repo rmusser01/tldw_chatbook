@@ -83,6 +83,8 @@ $ds-chat-assistant-accent-light: #704000;
    distinguishable without changing the transcript's structural grammar. */
 $ds-chat-rp-speech-dark: #8bd5ff;
 $ds-chat-rp-speech-light: #004d6d;
+$ds-chat-rp-thought-dark: #2dd4bf;
+$ds-chat-rp-thought-light: #0b5d4a;
 $ds-chat-rp-action-dark: #d7b2ff;
 $ds-chat-rp-action-light: #5e3578;
 $ds-chat-rp-strong-dark: #fff0a6;

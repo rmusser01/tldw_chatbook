@@ -4,6 +4,7 @@ Runs on the REAL app CSS stack (screen css + bundle): geometry measured
 without the bundle is not measured (task-15110's lesson).
 """
 import time
+from threading import Event
 from pathlib import Path
 
 import pytest
@@ -141,6 +142,30 @@ class _Host(ConsolidatedCSSApp):
         )
 
 
+class _UndoCaptureHost(ConsolidatedCSSApp):
+    """Card host that records direct Undo All requests without handling them."""
+
+    CSS_PATH = [str(_SELF), str(_CSS_DIR / "tldw_cli_modular.tcss"), str(_SCOPED)]
+
+    def __init__(self, provider) -> None:
+        super().__init__()
+        self._provider = provider
+        self.undo_requests: list[ConsoleTurnFileCard.UndoAllRequested] = []
+
+    def compose(self) -> ComposeResult:
+        yield ConsoleTurnFileCard(
+            MARKER,
+            "run-1",
+            lambda: self._provider,
+            id="card-under-test",
+        )
+
+    @on(ConsoleTurnFileCard.UndoAllRequested)
+    def capture_undo(self, event: ConsoleTurnFileCard.UndoAllRequested) -> None:
+        event.stop()
+        self.undo_requests.append(event)
+
+
 async def _settled_card(pilot):
     card = pilot.app.query_one("#card-under-test", ConsoleTurnFileCard)
     for _ in range(60):
@@ -148,6 +173,87 @@ async def _settled_card(pilot):
             break
         await pilot.pause(0.02)
     return card
+
+
+async def _undo_ready_card(pilot):
+    """Wait until row loading has made the destructive action available."""
+    card = await _settled_card(pilot)
+    undo = card.query_one(".console-turn-file-undo-all-btn", Button)
+    for _ in range(60):
+        if not undo.disabled:
+            break
+        await pilot.pause(0.02)
+    assert undo.disabled is False
+    return card
+
+
+@pytest.mark.asyncio
+async def test_undo_all_is_visible_disabled_while_loading_then_enabled():
+    """The destructive action cannot fire before exact snapshot rows resolve."""
+
+    release = Event()
+
+    class _BlockingProvider(_FakeProvider):
+        def turn_for_run(self, run_id):
+            assert run_id == "run-1"
+            release.wait(timeout=3)
+            return self._turn
+
+    provider = _BlockingProvider()
+    app = _UndoCaptureHost(provider)
+    async with app.run_test(size=(120, 40)) as pilot:
+        card = pilot.app.query_one("#card-under-test", ConsoleTurnFileCard)
+        undo = card.query_one(".console-turn-file-undo-all-btn", Button)
+        review = card.query_one(".console-turn-file-review-btn", Button)
+        assert str(undo.label) == "Undo All"
+        assert undo.disabled is True
+        assert review.disabled is False
+
+        release.set()
+        card = await _undo_ready_card(pilot)
+        for _ in range(60):
+            if not undo.disabled:
+                break
+            await pilot.pause(0.02)
+        assert undo.disabled is False
+
+
+@pytest.mark.asyncio
+async def test_undo_all_press_posts_once_and_enters_busy_state():
+    """A double press cannot dispatch two destructive operations."""
+
+    app = _UndoCaptureHost(_FakeProvider())
+    async with app.run_test(size=(120, 40)) as pilot:
+        card = await _undo_ready_card(pilot)
+        undo = card.query_one(".console-turn-file-undo-all-btn", Button)
+        undo.focus()
+        await pilot.press("enter")
+        await pilot.press("enter")
+        await pilot.pause()
+
+        assert len(app.undo_requests) == 1
+        assert app.undo_requests[0].run_id == "run-1"
+        assert app.undo_requests[0].card is card
+        assert undo.disabled is True
+        assert str(undo.label) == "Undoing…"
+
+
+@pytest.mark.asyncio
+async def test_undo_completion_keeps_history_and_review_reachable():
+    """Undo marks state; it never erases the historical changed-file card."""
+
+    app = _UndoCaptureHost(_FakeProvider())
+    async with app.run_test(size=(120, 40)) as pilot:
+        card = await _undo_ready_card(pilot)
+        undo = card.query_one(".console-turn-file-undo-all-btn", Button)
+        await card.begin_undo_all()
+        card.finish_undo_all(success=True)
+        await pilot.pause()
+
+        assert str(undo.label) == "Undone"
+        assert undo.disabled is True
+        assert len(card.query(".console-turn-file-row")) == 2
+        assert card.query_one(".console-turn-file-review-btn", Button).disabled is False
 
 
 @pytest.mark.asyncio
@@ -873,30 +979,3 @@ async def test_narrow_card_elides_a_long_path_but_tooltip_keeps_it_whole():
         assert row.tooltip == long_path, (
             "the FULL path must still be reachable via the row's tooltip"
         )
-
-
-@pytest.mark.asyncio
-async def test_no_destructive_control_exists_anywhere_on_the_card():
-    """AC#4 guard: no button on the card matches a revert/undo label or
-    class -- revert stays exclusively on the Review screen behind its own
-    confirm (the TASK-1845/TASK-1972 precedent). Checked against the FULL
-    button surface (header + expanded per-hunk note/delete buttons), not
-    just the header, by expanding every row first.
-    """
-    async with _Host().run_test(size=(120, 40)) as pilot:
-        card = await _settled_card(pilot)
-        await _toggle_all_and_wait_expanded(pilot, card)
-
-        forbidden = ("revert", "undo")
-        buttons = list(card.query(Button))
-        assert buttons, "expected at least the header + row buttons to exist"
-        for button in buttons:
-            label_text = str(button.render()).lower()
-            classes_text = " ".join(button.classes).lower()
-            for word in forbidden:
-                assert word not in label_text, (
-                    f"destructive-looking label on {button!r}: {label_text!r}"
-                )
-                assert word not in classes_text, (
-                    f"destructive-looking class on {button!r}: {classes_text!r}"
-                )

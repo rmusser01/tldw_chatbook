@@ -19,7 +19,6 @@ from Tests.UI.test_product_maturity_gate1_core_loop_screen_adaptation import (
     ConsoleHarness,
 )
 from tldw_chatbook.Chat.console_display_state import (
-    ConversationFileEntry,
     ConsoleDisplayRow,
 )
 from tldw_chatbook.Chat.console_live_work import ConsoleLiveWorkLaunch
@@ -37,10 +36,6 @@ from tldw_chatbook.Widgets.Console.console_workspace_tree import (
     WorkspaceTreeExpansionChanged,
     WorkspaceTreeFocusRecoveryRequested,
     WorkspaceTreeStarRequested,
-)
-from tldw_chatbook.Widgets.Console.console_changed_files_section import (
-    ConsoleChangedFilesSection,
-    ConsoleChangedFilesState,
 )
 from tldw_chatbook.Widgets.Console.console_run_inspector import ConsoleRunInspector
 from tldw_chatbook.Widgets.Console.console_settings_summary import (
@@ -231,7 +226,9 @@ class _RailHarness(App[None]):
             agent_drilldown_active=False,
             agent_full_log_available=False,
             show_character_section=self.show_character,
-            character_avatar_widget_builder=lambda _box=None: Static("avatar"),
+            character_avatar_widget_builder=(
+                lambda _box=None, **_kwargs: Static("avatar")
+            ),
             character_avatar_name="Samira",
         )
 
@@ -1895,21 +1892,7 @@ async def test_focus_and_pointer_activation_are_transient_and_open_close_falls_b
         assert rail._active_section_id == "conversations"
 
 
-def _reconcile_probe_file() -> ConversationFileEntry:
-    return ConversationFileEntry(
-        root="/tmp/project",
-        path="owner-probe.py",
-        label="owner-probe.py",
-        status="M",
-        adds=2,
-        dels=1,
-        run_id="run-owner-probe",
-        snapshot_id=71,
-        note_count=0,
-    )
-
-
-@pytest.mark.parametrize("owner_name", ("sources", "changed-files", "settings", "run"))
+@pytest.mark.parametrize("owner_name", ("sources", "settings", "run"))
 @pytest.mark.asyncio
 async def test_inspector_descendant_owners_reconcile_local_then_outer(
     monkeypatch: pytest.MonkeyPatch,
@@ -1930,7 +1913,6 @@ async def test_inspector_descendant_owners_reconcile_local_then_outer(
         events: list[str] = []
         target_section = {
             "sources": "sources",
-            "changed-files": "changed-files",
             "settings": "session-settings",
             "run": "chat-dictionaries",
         }[owner_name]
@@ -1961,14 +1943,6 @@ async def test_inspector_descendant_owners_reconcile_local_then_outer(
                     summary="Sources owner probe",
                     rows=(ConsoleDisplayRow("Source", "ready"),),
                 )
-            )
-        elif owner_name == "changed-files":
-            owner = screen.query_one(
-                "#console-changed-files-section", ConsoleChangedFilesSection
-            )
-            owner._on_reconcile = observe_outer
-            owner.update_state(
-                ConsoleChangedFilesState(entries=(_reconcile_probe_file(),))
             )
         elif owner_name == "settings":
             owner = screen.query_one(
@@ -2021,8 +1995,6 @@ async def test_inspector_descendant_owners_reconcile_local_then_outer(
                 )
                 == "Sources owner probe"
             )
-        elif owner_name == "changed-files":
-            assert rail.query_one("#console-changed-files-row-0", Button)
         elif owner_name == "settings":
             assert (
                 str(rail.query_one("#console-settings-model-row", Static).renderable)
@@ -2035,7 +2007,7 @@ async def test_inspector_descendant_owners_reconcile_local_then_outer(
 
 
 @pytest.mark.parametrize(
-    "mutation_path", ("sources", "changed-files", "settings", "run")
+    "mutation_path", ("sources", "settings", "run")
 )
 @pytest.mark.asyncio
 async def test_chat_screen_inspector_mutation_paths_delegate_one_owner_request(
@@ -2056,7 +2028,6 @@ async def test_chat_screen_inspector_mutation_paths_delegate_one_owner_request(
         rail = screen.query_one("#console-right-rail", ConsoleInspectorRail)
         target_section = {
             "sources": "sources",
-            "changed-files": "changed-files",
             "settings": "session-settings",
             "run": "chat-dictionaries",
         }[mutation_path]
@@ -2086,14 +2057,6 @@ async def test_chat_screen_inspector_mutation_paths_delegate_one_owner_request(
                 source="owner-path", title="Sources ChatScreen probe"
             )
             screen._sync_console_staged_context_tray()
-        elif mutation_path == "changed-files":
-            owner = screen.query_one(
-                "#console-changed-files-section", ConsoleChangedFilesSection
-            )
-            owner._on_reconcile = observe_outer
-            screen._console_changed_files_summary = (_reconcile_probe_file(),)
-            screen._console_changed_files_pruned_rows = 0
-            screen._sync_console_changed_files_section()
         elif mutation_path == "settings":
             owner = screen.query_one(
                 "#console-settings-summary", ConsoleSettingsSummary

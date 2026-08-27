@@ -46,6 +46,7 @@ import re
 from collections.abc import Callable
 from dataclasses import dataclass
 
+from loguru import logger
 from textual.app import ComposeResult
 from textual.containers import Horizontal, Vertical, VerticalScroll
 from textual.css.query import NoMatches, QueryError
@@ -96,8 +97,13 @@ from .rail_section_layout import (
 OUTER_SECTION_SCROLL_HINT = "▼ more sections — scroll"
 
 CharacterAvatarBox = tuple[int, int]
-CharacterAvatarWidgetBuilder = Callable[[CharacterAvatarBox | None], Widget]
+CharacterAvatarWidgetBuilder = Callable[..., Widget]
 CharacterAvatarFitBox = Callable[[int, int], CharacterAvatarBox | None]
+#: Loop-side factory returning a thread-safe zero-arg render job for a box
+#: (TASK-22221). ``None`` from either call means "nothing to prerender".
+CharacterAvatarPrerenderJob = Callable[
+    [CharacterAvatarBox], Callable[[], object] | None
+]
 
 
 @dataclass(frozen=True, slots=True)
@@ -173,8 +179,17 @@ class _ContextBoundedSection(ConsoleBoundedSection):
         )
 
     def _run_scheduled_reconcile(self) -> None:
+        scoped = self._reconcile_scoped
         previous_demand = self.desired_content_lines
         super()._run_scheduled_reconcile()
+        if scoped:
+            # TASK-22203: a scoped pass owns only this section's local
+            # geometry (the workspace action row's one-row display flip); its
+            # demand delta is self-absorbed within the current allocation and
+            # must not fan the cursor move out into the rail-wide allocation
+            # pipeline. Any unscoped request coalescing into the same pass
+            # already demoted ``_reconcile_scoped`` before this ran.
+            return
         if self.desired_content_lines != previous_demand:
             self._allocation_owner.request_allocation_reconcile()
 
@@ -237,6 +252,7 @@ class ConsoleLeftRail(Vertical):
         character_avatar_widget_builder: CharacterAvatarWidgetBuilder | None,
         character_avatar_name: str,
         character_avatar_fit_box: CharacterAvatarFitBox | None = None,
+        character_avatar_prerender_job: CharacterAvatarPrerenderJob | None = None,
         workspace_tree_expanded_ids: frozenset[str] | None = None,
         workspace_tree_expansion_preferences_changed: (
             Callable[[frozenset[str]], None] | None
@@ -317,6 +333,13 @@ class ConsoleLeftRail(Vertical):
                 It receives the mounted body's measured image budget and returns
                 the scale-down-only cell box, ``(0, 0)`` when no image rows
                 remain, or ``None`` when no valid image is available.
+            character_avatar_prerender_job: Late-binding loop-side factory
+                (TASK-22221). Given the target box it returns a thread-safe
+                zero-arg job that renders the avatar's pixels, or ``None``
+                when this box has no pixel leg worth moving off the loop.
+                The rail runs that job in a worker thread and hands the
+                result to the widget builder, which uses it only if it still
+                matches.
             manual_reaction_label: Active session-local manual reaction label,
                 or ``None`` while operational reactions remain automatic.
             kwargs: Forwarded to ``Vertical``.
@@ -343,6 +366,7 @@ class ConsoleLeftRail(Vertical):
         self._character_avatar_widget_builder = character_avatar_widget_builder
         self._character_avatar_name = character_avatar_name
         self._character_avatar_fit_box = character_avatar_fit_box
+        self._character_avatar_prerender_job = character_avatar_prerender_job
         self._character_avatar_box: CharacterAvatarBox | None = None
         self._character_avatar_fit_generation = 0
         self._character_avatar_geometry_epoch = 0
@@ -366,6 +390,8 @@ class ConsoleLeftRail(Vertical):
         ) = None
         self._outer_hint_exists = False
         self._outer_hint_text = ""
+        self._workspace_tree_reflow_check_scheduled = False
+        self._workspace_tree_reflow_state: tuple[object, ...] | None = None
         self._section_focus_history: dict[str, tuple[Widget, tuple[Widget, ...]]] = {}
         self._pending_focus_recoveries: dict[str, _ContextFocusRecoveryIncident] = {}
         self._pointer_activation_pending: str | None = None
@@ -559,7 +585,19 @@ class ConsoleLeftRail(Vertical):
         return bounded.section_id
 
     def _focusable_body_controls(self, section_id: str) -> tuple[Widget, ...]:
-        """Return enabled body descendants in the same order as Textual Tab."""
+        """Return enabled body descendants in the same order as Textual Tab.
+
+        TASK-22228 (item 3): the subtree walk is ``walk_children(Widget)``,
+        not ``query("*")``. Textual builds a ``query`` from exactly that
+        walk and then runs the parsed universal selector through ``match()``
+        for every node it visited (``DOMQuery.nodes``), so the selector
+        round-trip is pure overhead for a filter that admits everything --
+        measured at 74.1 us against 2.2 us for the same 16-node Model body
+        on the mounted Console. This runs once or twice per focus change in
+        the rail, so the walk is the whole cost of that path; the resulting
+        list is identical (same nodes, same depth-first order) by
+        construction.
+        """
 
         try:
             bounded = self.query_one(
@@ -569,8 +607,8 @@ class ConsoleLeftRail(Vertical):
             return ()
         controls = tuple(
             widget
-            for widget in bounded.viewport.query("*")
-            if isinstance(widget, Widget) and self._is_enabled_focus_target(widget)
+            for widget in bounded.viewport.walk_children(Widget)
+            if self._is_enabled_focus_target(widget)
         )
         if bounded.native_scroll_owner is not None and self._is_enabled_focus_target(
             bounded.viewport
@@ -1109,8 +1147,16 @@ class ConsoleLeftRail(Vertical):
                 generation == self._character_avatar_fit_generation and self.is_mounted
             )
 
+        # The pixels are rendered off the loop, so the viewport can move
+        # again while we are suspended here. No fence is needed at this line:
+        # `replace_character_avatar_widget` re-checks `is_current()` as the
+        # FIRST thing it does inside the mount lock, before it unmounts
+        # anything -- so a superseded pass neither paints a stale-size avatar
+        # nor blanks the live one. Both properties are pinned by
+        # Tests/UI/test_console_avatar_geometry_offloop.py.
+        prerendered = await self._prerender_character_avatar(generation, target_box)
         replaced = await self.replace_character_avatar_widget(
-            lambda: builder(target_box),
+            lambda: builder(target_box, prerendered=prerendered),
             is_current=is_current,
         )
         if not replaced:
@@ -1126,6 +1172,50 @@ class ConsoleLeftRail(Vertical):
             return
         bounded.request_reconcile()
         self.request_allocation_reconcile()
+
+    async def _prerender_character_avatar(
+        self,
+        generation: int,
+        target_box: CharacterAvatarBox | None,
+    ) -> object | None:
+        """Render this box's avatar pixels in a worker thread (TASK-22221).
+
+        The pixel leg is the expensive half of a viewport change (measured
+        6.29 ms median for a 1024px card, 187.2 ms across a 37-step resize
+        drag) and it is pure -- no DOM, no shared state -- so it belongs off
+        the event loop. The loop-side factory snapshots the live spec and
+        colour mode BEFORE the hop; only immutable values cross the boundary.
+
+        Args:
+            generation: The fit generation this replacement belongs to.
+            target_box: The cell box being fitted, if any.
+
+        Returns:
+            An opaque prerender token for the widget builder, or ``None``
+            when there is nothing to prerender or the render failed. Staleness
+            is the CALLER's check, not this one's -- see
+            ``_replace_character_avatar_for_geometry``. Never raises: this runs
+            inside a Textual worker whose default ``exit_on_error`` would take
+            the app down with it.
+        """
+
+        factory = self._character_avatar_prerender_job
+        if factory is None or not target_box or target_box == (0, 0):
+            return None
+        try:
+            job = factory(target_box)
+        except Exception:
+            logger.opt(exception=True).debug("avatar: prerender job build failed")
+            return None
+        if job is None:
+            return None
+        try:
+            prerendered = await asyncio.to_thread(job)
+        except Exception:
+            # Fail soft: the builder rebuilds inline, exactly as before.
+            logger.opt(exception=True).debug("avatar: off-loop prerender failed")
+            return None
+        return prerendered
 
     async def replace_character_avatar_widget(
         self,
@@ -1214,12 +1304,62 @@ class ConsoleLeftRail(Vertical):
         self._update_outer_hint()
 
     def _refresh_workspace_tree_after_reflow(self) -> None:
-        """Clear stale hover identity and recompute truncation after rail motion."""
+        """Schedule one settled check for whether the reflow moved tree rows.
 
+        Deferred, not immediate: this is called from the END of an allocation
+        pass, whose own style writes have not been laid out yet, so reading
+        the tree's geometry here would compare the PREVIOUS layout against
+        itself and miss the move this very pass causes. Coalesced, so the
+        several legs that reach it in one frame settle once.
+        """
+
+        if self._workspace_tree_reflow_check_scheduled or not self.is_mounted:
+            return
+        self._workspace_tree_reflow_check_scheduled = True
+        self.call_after_refresh(self._settle_workspace_tree_after_reflow)
+
+    @staticmethod
+    def _workspace_tree_reflow_signature(
+        tree: ConsoleWorkspaceTree,
+    ) -> tuple[object, ...] | None:
+        """Return the cheap on-screen geometry identity of the tree's rows.
+
+        Hover is pointer-anchored: it is stale exactly when the row under a
+        stationary pointer changed, which for a rail reflow means the tree
+        moved, resized, or scrolled. Content changes are NOT this leg's
+        business -- ``sync_projection`` re-checks hover identity itself, and
+        local scrolling is caught by ``watch_scroll_y``.
+
+        Args:
+            tree: The mounted workspace tree.
+
+        Returns:
+            A comparable signature, or ``None`` when the geometry cannot be
+            read (the tree is not in the compositor yet), which is treated as
+            "assume it moved" so the leg fails toward clearing.
+        """
+
+        try:
+            return (tree.region, tree.scroll_offset)
+        except Exception:
+            return None
+
+    def _settle_workspace_tree_after_reflow(self) -> None:
+        """Clear stale hover + recompute truncation only if the tree moved."""
+
+        self._workspace_tree_reflow_check_scheduled = False
         try:
             tree = self.query_one("#console-workspace-tree", ConsoleWorkspaceTree)
         except (NoMatches, QueryError):
+            self._workspace_tree_reflow_state = None
             return
+        signature = self._workspace_tree_reflow_signature(tree)
+        if signature is not None and signature == self._workspace_tree_reflow_state:
+            # The reconcile settled the rail back to the same geometry: the
+            # row under the pointer is the row that was under it before, so
+            # the hover highlight and its tooltip are still correct.
+            return
+        self._workspace_tree_reflow_state = signature
         if tree.hover_line >= 0:
             tree.hover_line = -1
         tree._update_tooltip()

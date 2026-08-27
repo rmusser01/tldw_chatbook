@@ -125,6 +125,23 @@ class SyncStateRepository(BaseDB):
         ``_initialize_schema`` must use this directly: it runs inside
         ``_ensure_schema``'s lock, and going through ``_get_connection``
         there would deadlock on the non-reentrant lock.
+
+        task-22224 EXCEPTION -- both branches deliberately keep the legacy
+        default isolation level instead of ``isolation_level = None`` (the
+        held-connection rule in ``Library_Ingest_Jobs_DB.py``'s module
+        docstring, the store template). Every write path here relies on
+        implicit transactions: ``transaction()`` is a bare ``with conn:``
+        and several write bodies are multi-statement spans ended by a
+        trailing ``conn.commit()`` (``record_identity_mapping``'s mapping
+        INSERT plus its per-conflict-type report INSERTs;
+        ``clear_server_profile_state``'s eight DELETEs;
+        ``mark_sync_v2_outbox_push_results``' paired UPDATEs). Flipping to
+        autocommit would silently strip their atomicity. The degradation
+        risk is bounded: nothing issues an explicit BEGIN on these
+        connections, and only the ``:memory:`` branch HOLDS one (the
+        file-backed branch opens per call). Converting this store means
+        adding an explicit-BEGIN manager and auditing every commit span --
+        its own task; do NOT copy this pattern into new stores.
         """
         if getattr(self, "is_memory_db", False):
             if self._memory_conn is None:

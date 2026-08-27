@@ -33,6 +33,7 @@ from .library_media_reader_shell import (
 from .library_media_trash_canvas import LibraryMediaTrashCanvas
 from .library_media_viewer import LibraryMediaViewer
 from .library_note_import_canvas import LibraryNoteImportCanvas
+from .library_note_work_pane import LibraryNoteWorkPane
 from .library_notes_add_from_files_canvas import LibraryNotesAddFromFilesCanvas
 from .library_notes_canvas import LibraryNotesCanvas
 from .library_notes_sync_roots_canvas import LibraryNotesSyncRootsCanvas
@@ -42,6 +43,7 @@ from .library_prompts_canvas import (
     PROMPT_DISCARD_TOOLTIP_DIRTY,
     LibraryPromptsListCanvas,
 )
+from .library_prompt_work_pane import LibraryPromptWorkPane
 from .library_rail import (
     LIBRARY_RAIL_ROW_PREFIX,
     LibraryNavigationRailHandle,
@@ -116,12 +118,14 @@ __all__ = [
     "LibraryMediaTrashCanvas",
     "LibraryMediaViewer",
     "LibraryNoteImportCanvas",
+    "LibraryNoteWorkPane",
     "LibraryNotesAddFromFilesCanvas",
     "LibraryNotesCanvas",
     "LibraryNotesSyncRootsCanvas",
     "LibraryNavigationRailHandle",
     "PaneToggleRequested",
     "LibraryPromptsListCanvas",
+    "LibraryPromptWorkPane",
     "LibraryRail",
     "LibrarySearchRagPanel",
     "LibraryStudyHandoffCanvas",

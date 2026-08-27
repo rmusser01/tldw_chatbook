@@ -24,6 +24,7 @@ from contextlib import asynccontextmanager
 from collections import Counter
 from datetime import datetime, timedelta, timezone
 import threading
+from unittest.mock import AsyncMock
 
 import pytest
 from textual.containers import VerticalScroll
@@ -32,11 +33,12 @@ from textual.css.query import NoMatches
 from textual.widgets import Button, DataTable, ListView
 
 from Tests.UI.app_factory import _build_test_app
-from Tests.UI.test_destination_shells import DestinationHarness
+from Tests.UI.test_destination_shells import DestinationHarness, _static_text
 from tldw_chatbook.Subscriptions.item_persist import persist_subscription_item
 from tldw_chatbook.Subscriptions.briefing_cast import dump_roster
 from tldw_chatbook.UI.Screens.watchlists_collections_screen import (
     ManualLayoutRollback,
+    ResponsivePriorityLease,
     WatchlistsCollectionsScreen,
 )
 from tldw_chatbook.UI.Watchlists_Modules.article_list import ArticleListPane
@@ -182,6 +184,19 @@ async def _settle(pilot, host) -> None:
     await pilot.pause()
     await host.workers.wait_for_complete()
     await pilot.pause()
+
+
+async def _mount_failed_reader_return(screen, pilot, host, scope):
+    """Commit a management scope, then mount its failed Reader retry state."""
+    original_list_page = screen._controller.list_reader_items_page
+    screen.active_section = "sources"
+    await _settle(pilot, host)
+    screen._request_tree_scope(scope)
+    failed_list_page = AsyncMock(side_effect=RuntimeError("offline"))
+    screen._controller.list_reader_items_page = failed_list_page
+    screen.active_section = "items"
+    await _settle(pilot, host)
+    return original_list_page, failed_list_page
 
 
 # --------------------------------------------------------------------------
@@ -1076,6 +1091,135 @@ async def test_resize_derives_effective_layout_without_persisting_preference(
         assert writes == []
 
 
+async def test_resize_hysteresis_suppresses_sub_band_layout_requests(
+    monkeypatch,
+) -> None:
+    app = _build_test_app()
+    async with _open(app) as (screen, pilot, host):
+        await pilot.resize_terminal(144, 50)
+        await _settle(pilot, host)
+
+        workbench = screen.query_one(WatchlistsWorkbench)
+        assert screen._responsive_region_layout is not None
+        assert screen._responsive_region_layout.is_collapsed(Region.RIGHT_RAIL)
+        grip = screen.query_one("#wl-grip-right_rail", WatchlistsPaneGrip)
+        focused = screen.query_one("#items-table", ListView)
+        focused.focus()
+        await pilot.pause()
+        assert screen.focused is focused
+
+        requests: list[tuple[int, RegionLayout]] = []
+        real_request = workbench.request_region_layout
+
+        def record_request(layout: RegionLayout, *, token: int) -> None:
+            requests.append((token, layout))
+            real_request(layout, token=token)
+
+        monkeypatch.setattr(workbench, "request_region_layout", record_request)
+
+        for width in (145, 146, 147, 148, 147, 148, 147, 148):
+            await pilot.resize_terminal(width, 50)
+            await _settle(pilot, host)
+            assert screen._responsive_region_layout.is_collapsed(
+                Region.RIGHT_RAIL
+            )
+            assert screen.query_one(
+                "#wl-grip-right_rail", WatchlistsPaneGrip
+            ) is grip
+            assert screen.focused is focused
+
+        assert requests == []
+
+        await pilot.resize_terminal(149, 50)
+        await _settle(pilot, host)
+        assert len(requests) == 1
+        assert not screen._responsive_region_layout.is_collapsed(
+            Region.RIGHT_RAIL
+        )
+        right_rail_body = screen.query_one("#wl-region-right_rail")
+        assert screen.query_one(
+            "#wl-grip-right_rail", WatchlistsPaneGrip
+        ) is grip
+        assert screen.focused is focused
+
+        await pilot.resize_terminal(145, 50)
+        await _settle(pilot, host)
+        assert len(requests) == 1
+        assert not screen._responsive_region_layout.is_collapsed(
+            Region.RIGHT_RAIL
+        )
+        assert screen.query_one("#wl-region-right_rail") is right_rail_body
+        assert screen.focused is focused
+
+        await pilot.resize_terminal(144, 50)
+        await _settle(pilot, host)
+        assert len(requests) == 2
+        assert screen._responsive_region_layout.is_collapsed(Region.RIGHT_RAIL)
+        assert not screen.query("#wl-region-right_rail")
+        assert screen.query_one(
+            "#wl-grip-right_rail", WatchlistsPaneGrip
+        ) is grip
+        assert screen.focused is focused
+
+
+async def test_zero_width_never_seeds_or_replaces_responsive_history(
+    monkeypatch,
+) -> None:
+    app = _build_test_app()
+    async with _open(app) as (screen, pilot, host):
+        workbench = screen.query_one(WatchlistsWorkbench)
+        requests: list[tuple[int, RegionLayout]] = []
+        real_request = workbench.request_region_layout
+
+        def record_request(layout: RegionLayout, *, token: int) -> None:
+            requests.append((token, layout))
+            real_request(layout, token=token)
+
+        monkeypatch.setattr(workbench, "request_region_layout", record_request)
+        monkeypatch.setattr(screen, "_available_layout_width", lambda: None)
+        screen._responsive_region_layout = None
+        before_zero = (
+            screen._effective_region_layout,
+            screen._current_layout_request_token,
+            screen._layout_request_generation,
+        )
+
+        screen.on_resize(None)
+        await _settle(pilot, host)
+
+        assert screen._responsive_region_layout is None
+        assert (
+            screen._effective_region_layout,
+            screen._current_layout_request_token,
+            screen._layout_request_generation,
+        ) == before_zero
+        assert requests == []
+
+        monkeypatch.setattr(screen, "_available_layout_width", lambda: 144)
+        screen.on_resize(None)
+        await _settle(pilot, host)
+        baseline = screen._responsive_region_layout
+        assert baseline is not None
+        positive_state = (
+            screen._effective_region_layout,
+            screen._current_layout_request_token,
+            screen._layout_request_generation,
+        )
+        positive_request_count = len(requests)
+
+        monkeypatch.setattr(screen, "_available_layout_width", lambda: None)
+        screen.on_resize(None)
+        await _settle(pilot, host)
+
+        assert screen._responsive_region_layout == baseline
+        assert (
+            screen._effective_region_layout,
+            screen._current_layout_request_token,
+            screen._layout_request_generation,
+        ) == positive_state
+        assert len(requests) == positive_request_count
+
+
 async def test_article_focus_is_transient_and_restores_exact_preference() -> None:
     app = _build_test_app()
     async with _open(app) as (screen, pilot, host):
@@ -1122,7 +1266,9 @@ async def test_responsive_grip_open_protects_preferred_open_pane(
     )
     app = _build_test_app()
     async with _open(app) as (screen, pilot, host):
-        await pilot.resize_terminal(114, 50)
+        await pilot.resize_terminal(144, 50)
+        await _settle(pilot, host)
+        await pilot.resize_terminal(145, 50)
         await _settle(pilot, host)
         assert screen._effective_region_layout.is_collapsed(Region.RIGHT_RAIL)
         assert not screen.region_layout.is_collapsed(Region.RIGHT_RAIL)
@@ -1131,10 +1277,140 @@ async def test_responsive_grip_open_protects_preferred_open_pane(
         screen.query_one("#wl-grip-right_rail", Button).press()
         await _settle(pilot, host)
 
-        assert screen._responsive_priority_target is Region.RIGHT_RAIL
+        expected_lease = ResponsivePriorityLease(
+            Region.RIGHT_RAIL, read_mode=True
+        )
+        assert screen._responsive_priority_lease == expected_lease
         assert not screen.region_layout.is_collapsed(Region.RIGHT_RAIL)
         assert not screen._effective_region_layout.is_collapsed(Region.RIGHT_RAIL)
         assert writes == []
+
+        screen.on_resize(None)
+        await _settle(pilot, host)
+
+        assert screen._responsive_priority_lease == expected_lease
+        assert not screen._effective_region_layout.is_collapsed(Region.RIGHT_RAIL)
+
+
+async def test_article_focus_preserves_priority_lease_and_hidden_baseline(
+    monkeypatch,
+) -> None:
+    app = _build_test_app()
+    async with _open(app) as (screen, pilot, host):
+        await pilot.resize_terminal(144, 50)
+        await _settle(pilot, host)
+        await pilot.resize_terminal(145, 50)
+        await _settle(pilot, host)
+        screen.query_one("#wl-grip-right_rail", Button).press()
+        await _settle(pilot, host)
+
+        lease = screen._responsive_priority_lease
+        responsive_before_focus = screen._responsive_region_layout
+        screen.action_article_focus()
+        await _settle(pilot, host)
+
+        assert screen._article_focus_active is True
+        assert screen._responsive_priority_lease == lease
+        assert screen._responsive_region_layout == responsive_before_focus
+        assert screen._effective_region_layout.collapsed == frozenset(
+            {Region.LEFT_RAIL, Region.ITEMS, Region.RIGHT_RAIL}
+        )
+
+        workbench = screen.query_one(WatchlistsWorkbench)
+        requests: list[tuple[int, RegionLayout]] = []
+        real_request = workbench.request_region_layout
+
+        def record_request(layout: RegionLayout, *, token: int) -> None:
+            requests.append((token, layout))
+            real_request(layout, token=token)
+
+        monkeypatch.setattr(workbench, "request_region_layout", record_request)
+        await pilot.resize_terminal(90, 50)
+        await _settle(pilot, host)
+
+        hidden_baseline = screen._responsive_region_layout
+        assert hidden_baseline != responsive_before_focus
+        assert screen._responsive_priority_lease == lease
+        assert screen._effective_region_layout.collapsed == frozenset(
+            {Region.LEFT_RAIL, Region.ITEMS, Region.RIGHT_RAIL}
+        )
+        assert requests == []
+
+        await pilot.resize_terminal(180, 50)
+        await _settle(pilot, host)
+
+        hidden_baseline = screen._responsive_region_layout
+        assert hidden_baseline == RegionLayout()
+        assert screen._responsive_priority_lease == lease
+        assert screen._effective_region_layout.collapsed == frozenset(
+            {Region.LEFT_RAIL, Region.ITEMS, Region.RIGHT_RAIL}
+        )
+        assert requests == []
+
+        screen.action_article_focus()
+        await _settle(pilot, host)
+
+        assert screen._article_focus_active is False
+        assert screen._responsive_priority_lease == lease
+        assert screen._effective_region_layout == hidden_baseline
+
+
+async def test_priority_lease_parks_across_management_and_replaces_in_read() -> None:
+    app = _build_test_app()
+    async with _open(app) as (screen, pilot, host):
+        await pilot.resize_terminal(144, 50)
+        await _settle(pilot, host)
+        await pilot.resize_terminal(145, 50)
+        await _settle(pilot, host)
+        screen.query_one("#wl-grip-right_rail", Button).press()
+        await _settle(pilot, host)
+        read_lease = screen._responsive_priority_lease
+
+        screen.active_section = "sources"
+        await _settle(pilot, host)
+        assert screen._responsive_priority_lease == read_lease
+
+        await pilot.resize_terminal(180, 50)
+        await _settle(pilot, host)
+        assert screen._responsive_priority_lease == read_lease
+
+        screen.active_section = "items"
+        await _settle(pilot, host)
+        assert screen._responsive_priority_lease == read_lease
+
+        await pilot.resize_terminal(90, 50)
+        await _settle(pilot, host)
+        screen.query_one("#wl-grip-left_rail", Button).press()
+        await _settle(pilot, host)
+
+        left_lease = ResponsivePriorityLease(Region.LEFT_RAIL, read_mode=True)
+        assert screen._responsive_priority_lease == left_lease
+        assert not screen._effective_region_layout.is_collapsed(Region.LEFT_RAIL)
+
+        screen.query_one("#wl-grip-left_rail", Button).press()
+        await _settle(pilot, host)
+        assert screen._responsive_priority_lease is None
+
+
+async def test_priority_lease_clears_only_after_origin_mode_fits_past_dead_band() -> None:
+    app = _build_test_app()
+    async with _open(app) as (screen, pilot, host):
+        await pilot.resize_terminal(144, 50)
+        await _settle(pilot, host)
+        await pilot.resize_terminal(145, 50)
+        await _settle(pilot, host)
+        screen.query_one("#wl-grip-right_rail", Button).press()
+        await _settle(pilot, host)
+        lease = screen._responsive_priority_lease
+
+        for width in (145, 146, 147, 148, 147, 148):
+            await pilot.resize_terminal(width, 50)
+            await _settle(pilot, host)
+            assert screen._responsive_priority_lease == lease
+
+        await pilot.resize_terminal(149, 50)
+        await _settle(pilot, host)
+        assert screen._responsive_priority_lease is None
 
 
 async def test_manual_grip_during_article_focus_exits_before_opening() -> None:
@@ -1494,8 +1770,10 @@ async def test_layout_acknowledgements_ignore_stale_tokens_and_clear_current_noo
             attempted_layout=layout,
             attempted_preferred=screen.region_layout,
             preferred_before=screen.region_layout,
+            effective_before=screen._effective_region_layout,
+            responsive_before=screen._responsive_region_layout,
             article_focus_before=screen._article_focus_active,
-            priority_before=screen._responsive_priority_target,
+            priority_lease_before=screen._responsive_priority_lease,
         )
         screen._manual_layout_rollback = rollback
 
@@ -1539,17 +1817,34 @@ async def test_stale_failure_cannot_rollback_rekeyed_manual_intent(
     async with _open(app) as (screen, pilot, host):
         preferred = screen.region_layout
         effective = screen._effective_region_layout
+        lease_before = ResponsivePriorityLease(
+            Region.RIGHT_RAIL, read_mode=False
+        )
+        effective_before = effective.toggle_preferred(Region.RIGHT_RAIL)
+        responsive_before = effective.toggle_preferred(Region.LEFT_RAIL)
         token1 = screen._next_layout_request_token()
         screen._manual_layout_rollback = ManualLayoutRollback(
             token=token1,
             attempted_layout=effective,
             attempted_preferred=preferred,
             preferred_before=preferred.toggle_preferred(Region.LEFT_RAIL),
+            effective_before=effective_before,
+            responsive_before=responsive_before,
             article_focus_before=screen._article_focus_active,
-            priority_before=screen._responsive_priority_target,
+            priority_lease_before=lease_before,
         )
 
         token2 = screen._next_layout_request_token()
+        assert screen._manual_layout_rollback is not None
+        assert (
+            screen._manual_layout_rollback.priority_lease_before
+            == lease_before
+        )
+        assert screen._manual_layout_rollback.effective_before == effective_before
+        assert (
+            screen._manual_layout_rollback.responsive_before
+            == responsive_before
+        )
         screen.post_message(
             RegionLayoutApplyFailed(
                 token=token1,
@@ -1577,7 +1872,130 @@ async def test_stale_failure_cannot_rollback_rekeyed_manual_intent(
         assert screen._manual_layout_rollback is None
 
 
-async def test_failed_expansion_rolls_back_screen_and_persisted_preference(
+async def test_suppressed_manual_preference_change_does_not_reuse_stale_token(
+    monkeypatch,
+) -> None:
+    """A no-DOM preference change must not belong to an older request."""
+    persisted: list[RegionLayout] = []
+    monkeypatch.setattr(
+        "tldw_chatbook.UI.Screens.watchlists_collections_screen.save_region_layout",
+        lambda layout: persisted.append(layout) or True,
+    )
+    app = _build_test_app()
+    async with _open(app) as (screen, pilot, host):
+        if not screen.region_layout.is_collapsed(Region.RIGHT_RAIL):
+            screen.action_toggle_right_rail()
+            await _settle(pilot, host)
+        assert screen.region_layout.is_collapsed(Region.RIGHT_RAIL)
+
+        await pilot.resize_terminal(60, 50)
+        await _settle(pilot, host)
+        workbench = screen.query_one(WatchlistsWorkbench)
+        stale_token = screen._current_layout_request_token
+        effective_before = screen._effective_region_layout
+        assert stale_token > 0
+        assert effective_before.is_collapsed(Region.RIGHT_RAIL)
+        persisted.clear()
+
+        screen.query_one("#wl-grip-right_rail", Button).press()
+        await _settle(pilot, host)
+
+        preferred = screen.region_layout
+        assert not preferred.is_collapsed(Region.RIGHT_RAIL)
+        assert screen._effective_region_layout == effective_before
+        assert screen._current_layout_request_token == stale_token
+        assert screen._manual_layout_rollback is None
+        assert screen._responsive_priority_lease == ResponsivePriorityLease(
+            Region.RIGHT_RAIL, read_mode=True
+        )
+        assert persisted == [preferred]
+
+        workbench.post_message(
+            RegionLayoutApplyFailed(
+                token=stale_token,
+                attempted=effective_before,
+                fallback=effective_before,
+            )
+        )
+        await _settle(pilot, host)
+
+        assert screen.region_layout == preferred
+        assert persisted == [preferred]
+
+
+async def test_failed_responsive_inspector_open_restores_layout_snapshots(
+    monkeypatch,
+) -> None:
+    """A failed dead-band reopen keeps controller and DOM fallbacks aligned."""
+    persisted: list[RegionLayout] = []
+    monkeypatch.setattr(
+        "tldw_chatbook.UI.Screens.watchlists_collections_screen.save_region_layout",
+        lambda layout: persisted.append(layout) or True,
+    )
+    app = _build_test_app()
+    async with _open(app) as (screen, pilot, host):
+        await pilot.resize_terminal(144, 50)
+        await _settle(pilot, host)
+        await pilot.resize_terminal(145, 50)
+        await _settle(pilot, host)
+
+        workbench = screen.query_one(WatchlistsWorkbench)
+        preferred_before = screen.region_layout
+        effective_before = screen._effective_region_layout
+        responsive_before = screen._responsive_region_layout
+        focus_before = screen._article_focus_active
+        parked_lease = ResponsivePriorityLease(
+            Region.LEFT_RAIL, read_mode=False
+        )
+        screen._responsive_priority_lease = parked_lease
+
+        assert not preferred_before.is_collapsed(Region.RIGHT_RAIL)
+        assert effective_before.is_collapsed(Region.RIGHT_RAIL)
+        assert responsive_before == effective_before
+        assert workbench.region_layout == effective_before
+
+        requests: list[tuple[int, RegionLayout]] = []
+        real_request = workbench.request_region_layout
+
+        def record_request(layout: RegionLayout, *, token: int) -> None:
+            requests.append((token, layout))
+            real_request(layout, token=token)
+
+        monkeypatch.setattr(workbench, "request_region_layout", record_request)
+        original_factory = workbench._content[Region.RIGHT_RAIL]
+
+        def fail_inspector_factory():
+            raise RuntimeError("inspector failed")
+
+        workbench._content[Region.RIGHT_RAIL] = fail_inspector_factory
+        persisted.clear()
+        screen.query_one("#wl-grip-right_rail", Button).press()
+        await _settle(pilot, host)
+
+        assert len(requests) == 1
+        assert not requests[0][1].is_collapsed(Region.RIGHT_RAIL)
+        assert workbench.region_layout == effective_before
+        assert screen._effective_region_layout == effective_before
+        assert screen._responsive_region_layout == responsive_before
+        assert screen.region_layout == preferred_before
+        assert screen._article_focus_active is focus_before
+        assert screen._responsive_priority_lease == parked_lease
+        assert screen._manual_layout_rollback is None
+        assert persisted == []
+
+        requests.clear()
+        screen.on_resize(None)
+        await _settle(pilot, host)
+
+        assert requests == []
+        assert workbench.region_layout == effective_before
+        assert screen._effective_region_layout == effective_before
+        assert screen._responsive_region_layout == responsive_before
+        assert screen._responsive_priority_lease == parked_lease
+        workbench._content[Region.RIGHT_RAIL] = original_factory
+
+
+async def test_failed_manual_expansion_rolls_back_full_layout_intent(
     monkeypatch,
 ) -> None:
     """A real screen owns the same fallback that the workbench still renders."""
@@ -1600,6 +2018,12 @@ async def test_failed_expansion_rolls_back_screen_and_persisted_preference(
         fallback = screen.region_layout
         persisted.clear()
 
+        parked_lease = ResponsivePriorityLease(
+            Region.RIGHT_RAIL, read_mode=False
+        )
+        screen._responsive_priority_lease = parked_lease
+        screen._article_focus_active = True
+
         workbench = screen.query_one(WatchlistsWorkbench)
         grip = screen.query_one("#wl-grip-left_rail", Button)
         original_factory = workbench._content[Region.LEFT_RAIL]
@@ -1615,6 +2039,8 @@ async def test_failed_expansion_rolls_back_screen_and_persisted_preference(
         await _settle(pilot, host)
 
         assert screen.region_layout == fallback
+        assert screen._article_focus_active is True
+        assert screen._responsive_priority_lease == parked_lease
         assert workbench.region_layout == screen._effective_region_layout
         assert getattr(grip, "expanded") is False
         assert not screen.query("#wl-region-left_rail")
@@ -1670,7 +2096,7 @@ async def test_failed_manual_expansion_survives_resize_request_supersession(
             nonlocal failures
             failures += 1
             if failures == 1:
-                screen._recompute_effective_layout()
+                screen._recompute_effective_layout(cause="resize")
             if failures <= 2:
                 raise RuntimeError("navigation failed after resize")
             return original_factory()
@@ -1727,7 +2153,7 @@ async def test_items_anchor_is_abandoned_once_when_query_context_changes(
 
         screen._items_search_query = "definitely-not-a-story"
         screen._reset_items_paging_for_context(loading=True)
-        await screen._load_items(target_page_index=0)
+        await screen._replace_items_snapshot(reason="search")
 
         scheduled: list[float] = []
         original_set_timer = screen.set_timer
@@ -1742,6 +2168,182 @@ async def test_items_anchor_is_abandoned_once_when_query_context_changes(
 
         assert screen._items_view_anchor_id is None
         assert 0.01 not in scheduled
+
+
+async def test_management_scope_invalidates_reader_return_to_read_failure_is_honest():
+    """A failed return never relabels rows parked under the prior scope."""
+    app = _build_test_app()
+    watchlist_id = _seed(app, items=2)
+    async with _open(app, watchlist_id) as (screen, pilot, host):
+        await _settle(pilot, host)
+        assert screen._loaded_items
+        open_item = screen._loaded_items[0]
+        screen._selected_content_item = open_item
+        content = screen.query_one("#watchlists-content-pane", ContentPane)
+        content.item = open_item
+
+        screen.active_section = "sources"
+        await _settle(pilot, host)
+        committed = TreeScope(kind="unassigned")
+        screen._request_tree_scope(committed)
+
+        assert screen.tree_scope == committed
+        assert screen._items_snapshot is None
+        assert screen._loaded_items == []
+        assert screen._selected_content_item is None
+
+        screen._controller.list_reader_items_page = AsyncMock(
+            side_effect=RuntimeError("offline")
+        )
+        screen.active_section = "items"
+        await _settle(pilot, host)
+
+        pane = screen.query_one("#watchlists-items-pane", ArticleListPane)
+        assert screen.tree_scope == committed
+        assert screen._items_snapshot is None
+        assert screen._loaded_items == []
+        assert screen._items_snapshot_count == 0
+        assert screen._items_pending_arrivals == 0
+        assert screen._selected_content_item is None
+        assert pane.items == []
+        assert pane.new_items_note == ""
+        assert pane.page_loading is False
+        assert pane.display is False
+        assert _static_text(
+            screen.query_one("#watchlists-items-retry-state")
+        ) == "Couldn't load Unassigned. Retry to load Feed Items."
+        retry = screen.query_one("#watchlists-items-retry-button", Button)
+        assert str(retry.label) == "Retry"
+        assert retry.disabled is False
+        assert "No matching items" not in host.export_screenshot()
+        assert screen.query_one("#watchlists-content-pane", ContentPane).item is None
+
+
+async def test_reader_retry_copy_renders_hostile_scope_label_literally():
+    app = _build_test_app()
+    watchlist_id = _seed(app)
+    hostile_label = "[bold]Unbalanced watchlist"
+    app.watchlist_bundle_service.rename(watchlist_id, hostile_label)
+
+    async with _open(app, watchlist_id) as (screen, pilot, host):
+        await _settle(pilot, host)
+        scope = TreeScope(kind="watchlist", watchlist_id=watchlist_id)
+        await _mount_failed_reader_return(screen, pilot, host, scope)
+
+        state = screen.query_one("#watchlists-items-retry-state")
+        expected = f"Couldn't load {hostile_label}. Retry to load Feed Items."
+        assert _static_text(state) == expected
+        rendered = state.render()
+        assert getattr(rendered, "plain", str(rendered)) == expected
+
+
+async def test_reader_retry_click_successfully_publishes_committed_scope():
+    app = _build_test_app()
+    watchlist_id = _seed(app)
+    async with _open(app, watchlist_id) as (screen, pilot, host):
+        await _settle(pilot, host)
+        original, _failed = await _mount_failed_reader_return(
+            screen, pilot, host, TreeScope(kind="all")
+        )
+        successful_retry = AsyncMock(side_effect=original)
+        screen._controller.list_reader_items_page = successful_retry
+
+        screen.query_one("#watchlists-items-retry-button", Button).press()
+        await _settle(pilot, host)
+
+        successful_retry.assert_awaited_once()
+        assert screen._items_snapshot is not None
+        assert screen._loaded_items
+        assert screen.query_one("#watchlists-items-pane", ArticleListPane).display
+        with pytest.raises(NoMatches):
+            screen.query_one("#watchlists-items-retry-state")
+
+
+async def test_reader_retry_repeated_failure_retains_scoped_retry_authority():
+    app = _build_test_app()
+    watchlist_id = _seed(app)
+    async with _open(app, watchlist_id) as (screen, pilot, host):
+        await _settle(pilot, host)
+        _original, failed = await _mount_failed_reader_return(
+            screen, pilot, host, TreeScope(kind="unassigned")
+        )
+
+        screen.query_one("#watchlists-items-retry-button", Button).press()
+        await _settle(pilot, host)
+
+        assert failed.await_count == 2
+        assert _static_text(
+            screen.query_one("#watchlists-items-retry-state")
+        ) == "Couldn't load Unassigned. Retry to load Feed Items."
+        assert screen.query_one(
+            "#watchlists-items-retry-button", Button
+        ).disabled is False
+
+
+async def test_reader_retry_rapid_presses_coalesce_around_one_producer():
+    app = _build_test_app()
+    watchlist_id = _seed(app)
+    async with _open(app, watchlist_id) as (screen, pilot, host):
+        await _settle(pilot, host)
+        original, _failed = await _mount_failed_reader_return(
+            screen, pilot, host, TreeScope(kind="all")
+        )
+        started = asyncio.Event()
+        release = asyncio.Event()
+
+        async def controlled_retry(**kwargs):
+            started.set()
+            await release.wait()
+            return await original(**kwargs)
+
+        retry_loader = AsyncMock(side_effect=controlled_retry)
+        screen._controller.list_reader_items_page = retry_loader
+        retry = screen.query_one("#watchlists-items-retry-button", Button)
+
+        retry.press()
+        retry.press()
+        await asyncio.wait_for(started.wait(), timeout=2)
+        await pilot.pause()
+
+        assert retry_loader.await_count == 1
+        assert screen._items_retry_message is not None
+        assert screen.query_one(
+            "#watchlists-items-retry-button", Button
+        ).disabled is True
+
+        release.set()
+        await _settle(pilot, host)
+        assert retry_loader.await_count == 1
+        assert screen._items_snapshot is not None
+        with pytest.raises(NoMatches):
+            screen.query_one("#watchlists-items-retry-state")
+
+
+async def test_reader_retry_scheduling_failure_keeps_retry_available(monkeypatch):
+    app = _build_test_app()
+    watchlist_id = _seed(app)
+    async with _open(app, watchlist_id) as (screen, pilot, host):
+        await _settle(pilot, host)
+        await _mount_failed_reader_return(
+            screen, pilot, host, TreeScope(kind="unassigned")
+        )
+
+        monkeypatch.setattr(
+            screen,
+            "run_worker",
+            lambda *args, **kwargs: (_ for _ in ()).throw(
+                RuntimeError("worker scheduling failed")
+            ),
+        )
+        screen.query_one("#watchlists-items-retry-button", Button).press()
+        await pilot.pause()
+
+        assert _static_text(
+            screen.query_one("#watchlists-items-retry-state")
+        ) == "Couldn't load Unassigned. Retry to load Feed Items."
+        assert screen.query_one(
+            "#watchlists-items-retry-button", Button
+        ).disabled is False
 
 
 async def test_layout_persist_scheduler_and_thread_handoff_failures_are_retryable(
@@ -1861,10 +2463,26 @@ async def test_section_factory_failure_rolls_back_mode_and_can_retry(
     app = _build_test_app()
     watchlist_id = _seed(app)
     async with _open(app, watchlist_id) as (screen, pilot, host):
+        await pilot.resize_terminal(144, 50)
+        await _settle(pilot, host)
+        await pilot.resize_terminal(145, 50)
+        await _settle(pilot, host)
+        screen.query_one("#wl-grip-right_rail", Button).press()
+        await _settle(pilot, host)
+        parked_lease = screen._responsive_priority_lease
+        assert parked_lease == ResponsivePriorityLease(
+            Region.RIGHT_RAIL, read_mode=True
+        )
+        await pilot.resize_terminal(90, 50)
+        await _settle(pilot, host)
+
         workbench = screen.query_one(WatchlistsWorkbench)
         reader = screen.query_one("#watchlists-content-pane", ContentPane)
-        items = screen.query_one("#watchlists-items-pane")
+        items_grip = screen.query_one("#wl-grip-items", WatchlistsPaneGrip)
         before_layout = screen._effective_region_layout
+        assert before_layout.collapsed == frozenset(
+            {Region.LEFT_RAIL, Region.ITEMS}
+        )
         original_factory = screen._build_detail_pane
         fail = True
 
@@ -1885,8 +2503,21 @@ async def test_section_factory_failure_rolls_back_mode_and_can_retry(
         assert workbench.read_mode is True
         assert workbench.region_layout == before_layout
         assert screen.query_one("#watchlists-content-pane", ContentPane) is reader
-        assert screen.query_one("#watchlists-items-pane") is items
+        assert screen.query_one(
+            "#wl-grip-items", WatchlistsPaneGrip
+        ) is items_grip
+        assert screen._responsive_priority_lease == parked_lease
+        assert screen._responsive_region_layout == before_layout
         assert persisted == []
+
+        screen.action_article_focus()
+        await _settle(pilot, host)
+        screen.action_article_focus()
+        await _settle(pilot, host)
+
+        assert screen._effective_region_layout == before_layout
+        assert screen._responsive_region_layout == before_layout
+        assert screen._responsive_priority_lease == parked_lease
 
         fail = False
         screen.active_section = "sources"
@@ -1895,4 +2526,5 @@ async def test_section_factory_failure_rolls_back_mode_and_can_retry(
         assert screen.active_section == "sources"
         assert workbench.read_mode is False
         assert not screen.query("#watchlists-content-pane")
+        assert screen._responsive_priority_lease == parked_lease
         assert persisted == []

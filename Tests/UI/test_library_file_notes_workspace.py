@@ -16,6 +16,7 @@ from unittest.mock import AsyncMock, patch
 import pytest
 from rich.cells import cell_len
 from textual.app import App, ComposeResult
+from textual.screen import ModalScreen, Screen
 
 # Harness apps load the consolidated widget CSS the real app loads
 # (TASK-15450); without it the widgets under test mount unstyled.
@@ -5875,3 +5876,98 @@ async def test_large_file_uses_labeled_excerpt_and_exports_exact_disk_bytes(
             "exact export did not create the destination",
         )
         assert (root / "exact-copy.md").read_bytes() == source.read_bytes()
+
+
+class _PollCoverModal(ModalScreen[None]):
+    """Modal cover for the TASK-22219 visibility-gate probes."""
+
+
+class _PollCoverScreen(Screen[None]):
+    """Plain pushed-screen cover for the TASK-22219 visibility-gate probes."""
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("cover_factory", (_PollCoverModal, _PollCoverScreen))
+async def test_poll_reconcile_pauses_while_covered_and_resumes_on_return(
+    tmp_path: Path,
+    cover_factory: type,
+) -> None:
+    """TASK-22219: the poll must not walk the notes root while covered.
+
+    Covers both cover shapes the live app stacks over Library: a pushed
+    ``ModalScreen`` (dialogs, command palette) and a pushed plain ``Screen``
+    (help panels). Textual 8.2.8's ``Screen.is_active`` is
+    ``app.screen is self`` -- true only for the top of the stack -- so both
+    covers must gate the timer fire, and popping the cover must let the very
+    next tick reconcile again (the resume path IS the still-ticking timer;
+    nothing needs re-arming).
+    """
+    root = tmp_path / "notes"
+    root.mkdir()
+    (root / "open.md").write_text("body", encoding="utf-8")
+    workspace = LibraryFileNotesWorkspace(
+        root=root,
+        replica=None,
+        poll_interval=0.05,
+    )
+
+    reconcile_times: list[float] = []
+    real_reconcile = FileNotesService.reconcile
+
+    def counting_reconcile(service: FileNotesService, *args, **kwargs):
+        reconcile_times.append(perf_counter())
+        return real_reconcile(service, *args, **kwargs)
+
+    def poll_settled() -> bool:
+        worker = workspace._poll_worker
+        return worker is None or worker.is_finished
+
+    with patch.object(FileNotesService, "reconcile", counting_reconcile):
+        async with _WorkspaceHarness(workspace).run_test(size=(120, 40)) as pilot:
+            await _wait_until(
+                pilot,
+                lambda: workspace.initialized,
+                "scan did not finish",
+            )
+            visible_baseline = len(reconcile_times)
+            await _wait_until(
+                pilot,
+                lambda: len(reconcile_times) > visible_baseline,
+                "poll did not reconcile while the screen was active",
+            )
+
+            pilot.app.push_screen(cover_factory())
+            await pilot.pause()
+            assert not workspace.screen.is_active
+            # Let a fire admitted before the push settle, so the covered
+            # window below counts only timer fires made while covered.
+            await _wait_until(
+                pilot,
+                poll_settled,
+                "in-flight poll never settled after the cover was pushed",
+            )
+            await pilot.pause(0.1)
+
+            covered_baseline = len(reconcile_times)
+            await pilot.pause(0.6)  # 12 poll intervals under the cover
+            covered_fires = len(reconcile_times) - covered_baseline
+            assert covered_fires == 0, (
+                f"reconcile fired {covered_fires}x while covered by "
+                f"{cover_factory.__name__}"
+            )
+
+            resume_baseline = len(reconcile_times)
+            pilot.app.pop_screen()
+            resumed_at = perf_counter()
+            await pilot.pause()
+            assert workspace.screen.is_active
+            await _wait_until(
+                pilot,
+                lambda: len(reconcile_times) > resume_baseline,
+                "poll did not resume after the cover was popped",
+            )
+            resume_delay = reconcile_times[resume_baseline] - resumed_at
+            # The contract is "the next tick reconciles" (one 0.05s interval);
+            # the bound is generous only for CI scheduling slack.
+            assert resume_delay < 2.0, f"resume took {resume_delay:.3f}s"
+    await workspace.shutdown()

@@ -625,6 +625,24 @@ cannot run repository code before checkout succeeds.
 
 ---
 
+## Rebase the feature commit, not a stale local dev ancestry
+
+**What happened.** TASK-22305 started from a clean local dev checkout, but
+`origin/dev` was later rewritten while the feature was in progress. A plain
+`git rebase origin/dev` replayed nine old local dev commits in addition to the
+feature commit. The branch looked successfully updated but now reintroduced
+tasks and plans that current dev had intentionally removed. Comparing
+`git log origin/dev..HEAD` exposed the unrelated ancestry before handoff.
+
+**What to do.** Before rebasing long-running work, inspect both
+`git log --oneline origin/dev..HEAD` and the merge base. If the range contains
+local dev history that is not part of the feature, replay only the feature
+range with `git rebase --onto origin/dev <feature-parent>` (or an equivalent
+cherry-pick onto a fresh branch). Afterward, require `origin/dev` to be an
+ancestor and review the exact commit count and branch-range diff.
+
+---
+
 ## Related
 
 - `lessons-testing-evidence.md`

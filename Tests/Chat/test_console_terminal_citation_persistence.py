@@ -54,6 +54,7 @@ from tldw_chatbook.Chat.console_chat_models import (
 from tldw_chatbook.Chat.console_session_settings import ConsoleSessionSettings
 from tldw_chatbook.Chat.console_chat_store import ConsoleChatSession, ConsoleChatStore
 from tldw_chatbook.DB.ChaChaNotes_DB import CharactersRAGDB
+from Tests.console_provider_doubles import provider_resolution
 
 
 _MISSING = object()
@@ -219,13 +220,7 @@ class _RealDirectGateway:
         self.chunks = chunks
 
     async def resolve_for_send(self, _selection: object) -> SimpleNamespace:
-        return SimpleNamespace(
-            ready=True,
-            visible_copy="",
-            provider="llama_cpp",
-            model="test-model",
-            max_tokens=128,
-        )
+        return provider_resolution(max_tokens=128)
 
     async def stream_chat(
         self,
@@ -281,9 +276,14 @@ def real_citation_stack_factory(tmp_path: Path):
         session = store.ensure_session(
             settings=ConsoleSessionSettings(provider="llama_cpp")
         )
-        session.persisted_conversation_id = persistence.create_conversation(
-            runtime_backend="local"
-        )
+        # Deliberately NOT pre-created. `create_conversation` writes the
+        # conversation row but no `console_conversation_library_policy` row,
+        # and `commit_durable_turn` then takes its "conversation already
+        # exists" branch, finds `policy_row is None`, and refuses the turn
+        # with "Durable Console Library policy no longer matches acceptance."
+        # -- so the send produced a USER row and nothing else. Letting the
+        # first turn create the conversation writes the row and its policy in
+        # the same transaction, which is what production does.
         stack = _RealCitationStack(
             db_path=db_path,
             client_id=client_id,
@@ -470,11 +470,22 @@ def _real_controller(
 
 
 def _real_assistant(store: ConsoleChatStore):
-    return next(
-        message
-        for message in store.messages_for_session(store.active_session_id)
-        if message.role is ConsoleMessageRole.ASSISTANT
+    """Return the session's assistant row, naming the failure when there is none.
+
+    A bare `next(...)` here raised StopIteration out of the calling coroutine,
+    which Python re-raises as `RuntimeError: coroutine raised StopIteration` --
+    a message that names neither the store, the session, nor the fact that the
+    send produced no assistant row at all.
+    """
+    messages = list(store.messages_for_session(store.active_session_id))
+    assistant = next(
+        (m for m in messages if m.role is ConsoleMessageRole.ASSISTANT), None
     )
+    assert assistant is not None, (
+        "the send produced no ASSISTANT row; the session holds "
+        f"{[(m.role.value, m.content[:24]) for m in messages]}"
+    )
+    return assistant
 
 
 def _citation_row_counts(db: CharactersRAGDB) -> dict[str, int]:
@@ -1297,6 +1308,74 @@ def test_terminal_selected_answer_citations_survive_restart(
 
 
 @pytest.mark.integration
+@pytest.mark.asyncio
+async def test_real_durable_fail_closed_finalizer_persists_the_body_once(
+    real_citation_stack_factory,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """TASK-22302 review: a finalizer that fails closed must not lose the answer.
+
+    `finalize()` returns None when the builder cannot seal -- a real, logged
+    outcome ("attempt_or_seal_failure"), and the supported way to fall back to
+    an ordinary message. On a DURABLE turn that combination is delicate, because
+    the dispatch checkpoint has already written the assistant row with EMPTY
+    content:
+
+    * the final body must still be flushed, or the durable row keeps '' while
+      the in-memory message reads complete; and
+    * the flush must be an UPDATE, because `create_message`'s existing-row
+      handling lives inside its `prepared_citation is not None` branch -- with
+      no citation it falls through to `add_message` and inserts against an id
+      that already exists.
+
+    So: one row, carrying the body, and no citation rows.
+    """
+    stack = real_citation_stack_factory("real-fail-closed")
+    builder, prompt_id = _real_captured_builder(stack.repository)
+
+    def unsealable(*_args: object, **_kwargs: object) -> None:
+        raise RuntimeError("seal-sentinel")
+
+    monkeypatch.setattr(CitationTraceBuilder, "seal", unsealable, raising=False)
+    controller = _real_controller(stack, builder, prompt_id)
+
+    log_stream, handler_id = _capture_logs()
+    try:
+        result = await controller.submit_draft("question")
+    finally:
+        logger.remove(handler_id)
+
+    assistant = _real_assistant(stack.store)
+    assert result.accepted is True
+    assert assistant.content == _BODY_SENTINEL
+
+    persisted = stack.db.get_message_by_id(assistant.id)
+    assert persisted is not None
+    assert persisted["content"] == _BODY_SENTINEL, (
+        "the durable row kept the checkpoint's empty content -- the answer was "
+        f"lost on the fail-closed path: {persisted['content']!r}"
+    )
+
+    duplicates = stack.db.get_connection().execute(
+        "SELECT count(*) FROM messages WHERE id = ?", (assistant.id,)
+    ).fetchone()[0]
+    assert duplicates == 1, f"the terminal write duplicated the row ({duplicates})"
+
+    # Fail CLOSED: an ordinary message, with no citation provenance at all.
+    assert _citation_row_counts(stack.db)["rag_citation_traces"] == 0
+
+    # ...and the terminal write must COMPLETE, not be abandoned. Without the
+    # citation guard this path calls `create_message` against an id that already
+    # exists, which raises `ConflictError: Unique constraint violation` -- and
+    # `mark_message_complete` swallows it into this one log line. The body still
+    # looks right (the UPDATE above already landed), so nothing else here would
+    # notice.
+    assert "terminal_citation_persistence_abandoned" not in log_stream.getvalue(), (
+        "the terminal write was abandoned -- an exception was swallowed on the "
+        "fail-closed path"
+    )
+
+
 @pytest.mark.asyncio
 async def test_real_rollback_deterministic_unavailable_falls_back_without_trace_rows(
     real_citation_stack_factory,

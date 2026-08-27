@@ -32,11 +32,16 @@ from tldw_chatbook.Chat.Chat_Deps import (
 from tldw_chatbook.Chat.console_chat_models import ConsoleProviderSelection
 from tldw_chatbook.Chat.console_dispatch_checkpoint import ConsoleResolvedDestination
 from tldw_chatbook.Chat.console_exchange_capture import (
+    CaptureBudget,
+    CaptureDetail,
     ExchangeCapture,
     build_request_capture,
-    stub_binary_strings,
+    sanitize_capture_value,
 )
-from tldw_chatbook.Chat.console_project_instructions import EPHEMERAL_ORIGIN_KEY
+from tldw_chatbook.Chat.console_project_instructions import (
+    EPHEMERAL_ORIGIN_KEY,
+    canonical_provider_endpoint_identity,
+)
 from tldw_chatbook.Chat.console_library_destination import resolve_console_destination
 from tldw_chatbook.Chat.console_provider_endpoints import (
     effective_provider_endpoint,
@@ -264,6 +269,7 @@ class ConsoleProviderStreamSignals:
     # finding I1: the two bare-construction sites used to inherit `True`
     # and capture unconditionally, for output nobody ever reads).
     exchange_capture_enabled: bool = False
+    capture_detail: CaptureDetail = field(default=CaptureDetail.SAFE, repr=False)
     completed_exchanges: list["ExchangeCapture"] = field(default_factory=list, repr=False)
     _active_exchanges: dict[object, dict[str, Any]] = field(
         default_factory=dict, init=False, repr=False)
@@ -288,7 +294,12 @@ class ConsoleProviderStreamSignals:
             with self._exchange_lock:
                 flight = self._active_exchanges.get(token)
                 if flight is not None:
-                    flight[key].extend(items)
+                    retained = flight[key]
+                    for item in sanitize_capture_value(items):
+                        if flight["capture_budget"].retain(item):
+                            retained.append(item)
+                        elif key not in flight["response_truncation_inventory"]:
+                            flight["response_truncation_inventory"].append(key)
         except Exception as exc:
             logger.warning(f"exchange_capture_mutate_failed: {type(exc).__name__}")
 
@@ -378,6 +389,11 @@ class ConsoleProviderCallSignals:
         """
         return self._aggregate.exchange_capture_enabled
 
+    @property
+    def capture_detail(self) -> CaptureDetail:
+        """Return the admission-frozen detail shared by this run."""
+        return self._aggregate.capture_detail
+
     def mark_synthetic_fallback(self) -> None:
         """Mark synthetic fallback usage on the aggregate signal, and flag
         this call's NEXT recorded content chunk as synthetic (review
@@ -430,8 +446,16 @@ class ConsoleProviderCallSignals:
                 dict(self._usage_payload) if self._usage_payload is not None else None
             )
 
-    def begin_exchange(self, *, provider: str, model: str, endpoint: str | None,
-                       request: dict, omitted_keys: tuple[str, ...]) -> None:
+    def begin_exchange(
+        self,
+        *,
+        provider: str,
+        model: str,
+        endpoint: str | None,
+        request: dict,
+        omitted_keys: tuple[str, ...],
+        capture_budget: CaptureBudget | None = None,
+    ) -> None:
         """Open this call's capture. ONE stream_chat invocation == one
         exchange; close_exchange in stream_chat's finally is the close site.
 
@@ -441,10 +465,18 @@ class ConsoleProviderCallSignals:
         """
         if not self._aggregate.exchange_capture_enabled:
             return
+        if endpoint is not None:
+            try:
+                endpoint = canonical_provider_endpoint_identity(endpoint)
+            except ValueError:
+                endpoint = "[invalid endpoint]"
         self._aggregate._begin_scoped_exchange(self._token, {
             "provider": provider, "model": model, "endpoint": endpoint,
             "request": request, "omitted_keys": omitted_keys,
             "content": [], "tool_calls": [], "synthetic_fallback": False,
+            "response_truncation_inventory": [],
+            "capture_detail": self.capture_detail,
+            "capture_budget": capture_budget or CaptureBudget(),
             "created_at": datetime.now(timezone.utc).isoformat(),
         })
 
@@ -529,11 +561,19 @@ def _flight_capture(run_tag: str, seq: int, flight: dict[str, Any],
         run_tag=run_tag, seq=seq, created_at=flight["created_at"],
         provider=flight["provider"], model=flight["model"],
         endpoint=flight["endpoint"], request=flight["request"],
-        response={"content": "".join(flight["content"]),
-                  "tool_calls": list(flight["tool_calls"]),
-                  "synthetic_fallback": bool(flight.get("synthetic_fallback", False))},
+        response={
+            # Sanitize once more after aggregation: individually harmless
+            # sub-threshold chunks can form one data URI/base64 body.
+            "content": sanitize_capture_value("".join(flight["content"])),
+            "tool_calls": sanitize_capture_value(deepcopy(flight["tool_calls"])),
+            "synthetic_fallback": bool(flight.get("synthetic_fallback", False)),
+            "truncation_inventory": tuple(
+                flight.get("response_truncation_inventory", ())
+            ),
+        },
         status=status, usage_json=usage_json,
         omitted_keys=flight["omitted_keys"],
+        capture_detail=flight["capture_detail"],
     )
 
 
@@ -2549,6 +2589,52 @@ class ConsoleProviderGateway:
             )
             if resolution.provider in {"llama_cpp", "local_llamacpp"}:
                 wire_messages = [thaw_json(item) for item in prepared.messages]
+
+                def capture_wire_payload(
+                    raw_wire: Mapping[str, Any], detail: CaptureDetail
+                ) -> Any:
+                    captured = deepcopy(raw_wire)
+                    if detail is not CaptureDetail.SAFE:
+                        return sanitize_capture_value(captured)
+                    captured_messages = captured.get("messages")
+                    if not isinstance(captured_messages, list):
+                        return sanitize_capture_value(captured)
+                    semantic_messages = [
+                        thaw_json(item)
+                        for item in prepared.semantic.flattened_messages()
+                    ]
+                    if prepared.wire_style == "single_preamble":
+                        system_parts: list[str] = []
+                        for row in semantic_messages:
+                            if row.get("role") != "system":
+                                break
+                            content = str(row.get("content") or "").strip()
+                            if (
+                                row.get(EPHEMERAL_ORIGIN_KEY)
+                                == "project_instructions"
+                            ):
+                                content = (
+                                    "[project instruction body omitted by "
+                                    f"capture policy -- {len(content)} chars]"
+                                )
+                            if content:
+                                system_parts.append(content)
+                        if captured_messages and system_parts:
+                            captured_messages[0]["content"] = "\n\n".join(system_parts)
+                    else:
+                        for index, source in enumerate(semantic_messages):
+                            if (
+                                index < len(captured_messages)
+                                and source.get(EPHEMERAL_ORIGIN_KEY)
+                                == "project_instructions"
+                            ):
+                                content = str(source.get("content") or "")
+                                captured_messages[index]["content"] = (
+                                    "[project instruction body omitted by "
+                                    f"capture policy -- {len(content)} chars]"
+                                )
+                    return sanitize_capture_value(captured)
+
                 # This branch builds its own HTTP body -- the one place
                 # capture IS the literal wire payload (spec Non-goals).
                 # `api_key` never enters `build_llamacpp_chat_payload`'s
@@ -2557,6 +2643,7 @@ class ConsoleProviderGateway:
                 # chat`/`complete_llamacpp_chat`'s kwargs as auth headers.
                 if call_signals is not None and call_signals.exchange_capture_enabled:
                     try:
+                        budget = CaptureBudget()
                         wire = build_llamacpp_chat_payload(
                             model=resolution.model,
                             messages=wire_messages,
@@ -2570,17 +2657,30 @@ class ConsoleProviderGateway:
                             thinking_budget_tokens=resolution.thinking_budget_tokens,
                         )
                         capture_request, omitted = build_request_capture(
-                            {"model": resolution.model}
+                            {"model": resolution.model},
+                            capture_detail=call_signals.capture_detail,
+                            budget=budget,
                         )
-                        capture_request["wire_payload"] = stub_binary_strings(wire)
+                        sanitized_wire = capture_wire_payload(
+                            wire, call_signals.capture_detail
+                        )
+                        capture_request["wire_payload"] = (
+                            sanitized_wire
+                            if budget.retain(sanitized_wire)
+                            else {"truncated": True}
+                        )
                         call_signals.begin_exchange(
                             provider=str(resolution.provider or ""),
                             model=str(resolution.model or ""),
                             endpoint=normalize_llamacpp_base_url(resolution.base_url),
-                            request=capture_request, omitted_keys=omitted,
+                            request=capture_request,
+                            omitted_keys=omitted,
+                            capture_budget=budget,
                         )
-                    except Exception:
-                        logger.opt(exception=True).warning("exchange_capture_begin_failed")
+                    except Exception as exc:
+                        logger.warning(
+                            "exchange_capture_begin_failed: {}", type(exc).__name__
+                        )
                 if not resolution.streaming:
                     # M1: an HTTP failure here must close the exchange as
                     # "error" -- left to the outer `finally` below, it would
@@ -2630,11 +2730,19 @@ class ConsoleProviderGateway:
                     ):
                         return
                     retry_signals = signals.new_usage_call()
+                    budget = CaptureBudget()
                     capture_request, omitted = build_request_capture(
-                        {"model": resolution.model}
+                        {"model": resolution.model},
+                        capture_detail=retry_signals.capture_detail,
+                        budget=budget,
                     )
-                    capture_request["wire_payload"] = stub_binary_strings(
-                        wire_payload
+                    sanitized_wire = capture_wire_payload(
+                        wire_payload, retry_signals.capture_detail
+                    )
+                    capture_request["wire_payload"] = (
+                        sanitized_wire
+                        if budget.retain(sanitized_wire)
+                        else {"truncated": True}
                     )
                     capture_request["retry_of"] = (
                         "llama.cpp stream produced no content; "
@@ -2646,6 +2754,7 @@ class ConsoleProviderGateway:
                         endpoint=normalize_llamacpp_base_url(resolution.base_url),
                         request=capture_request,
                         omitted_keys=omitted,
+                        capture_budget=budget,
                     )
                     if text:
                         retry_signals.record_exchange_content(text)
@@ -2757,15 +2866,61 @@ class ConsoleProviderGateway:
                 kwargs = self._chat_api_kwargs_from_prepared(resolution, request)
                 if signals is not None and signals.exchange_capture_enabled:
                     try:
-                        capture_request, omitted = build_request_capture(kwargs)
+                        budget = CaptureBudget()
+                        capture_kwargs = dict(kwargs)
+                        semantic_messages = [
+                            thaw_json(item)
+                            for item in request.semantic.flattened_messages()
+                        ]
+                        has_project_instructions = any(
+                            row.get(EPHEMERAL_ORIGIN_KEY)
+                            == "project_instructions"
+                            for row in semantic_messages
+                        )
+                        if (
+                            has_project_instructions
+                            and signals.capture_detail is CaptureDetail.SAFE
+                        ):
+                            capture_kwargs["messages_payload"] = semantic_messages
+                        if (
+                            has_project_instructions
+                            and signals.capture_detail is CaptureDetail.SAFE
+                        ):
+                            system_parts: list[str] = []
+                            for row in semantic_messages:
+                                if row.get("role") != "system":
+                                    break
+                                content = str(row.get("content") or "").strip()
+                                if (
+                                    row.get(EPHEMERAL_ORIGIN_KEY)
+                                    == "project_instructions"
+                                ):
+                                    content = (
+                                        "[project instruction body omitted by "
+                                        f"capture policy -- {len(content)} chars]"
+                                    )
+                                if content:
+                                    system_parts.append(content)
+                            capture_kwargs["system_message"] = "\n\n".join(
+                                system_parts
+                            ) or None
+                        capture_request, omitted = build_request_capture(
+                            capture_kwargs,
+                            capture_detail=signals.capture_detail,
+                            budget=budget,
+                        )
                         signals.begin_exchange(
                             provider=str(resolution.provider or ""),
                             model=str(resolution.model or ""),
                             endpoint=getattr(resolution, "base_url", None),
-                            request=capture_request, omitted_keys=omitted,
+                            request=capture_request,
+                            omitted_keys=omitted,
+                            capture_budget=budget,
                         )
-                    except Exception:
-                        logger.opt(exception=True).warning("exchange_capture_begin_failed")
+                    except Exception as exc:
+                        logger.warning(
+                            "exchange_capture_begin_failed: {}", type(exc).__name__
+                        )
                 response = self._chat_api_call(**kwargs)
                 provider_response = response
                 accumulator = _ToolCallAccumulator() if request.tools else None

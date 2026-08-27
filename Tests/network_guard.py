@@ -111,6 +111,17 @@ _blocked_attempts: list[tuple[str, str]] = []
 #: "something older did it".
 _blocked_attempt_threads: list[str] = []
 
+#: Held across BOTH appends in ``_deny`` and across every read/drain of the two
+#: lists. Each ``list.append`` is individually atomic under the GIL, but the
+#: pair is not: two threads denying at once could interleave as
+#: append(attempt A) / append(attempt B) / append(thread B) / append(thread A),
+#: leaving the provenance record positionally swapped -- and provenance is the
+#: whole point of the second list (TASK-21592). Worker-thread egress is the
+#: case it was added for, so concurrent ``_deny`` is the expected operating
+#: condition, not an exotic one. The drains take it too, so a teardown cannot
+#: snapshot one list either side of a concurrent append.
+_blocked_attempt_lock = threading.Lock()
+
 #: Egress is denied unless a test explicitly selects a narrower or wider mode.
 _mode = NetworkMode.BLOCKED
 
@@ -172,7 +183,8 @@ def set_allowed(allowed: bool) -> None:
 
 def blocked_attempts() -> tuple[tuple[str, str], ...]:
     """Return the blocked egress attempts recorded so far."""
-    return tuple(_blocked_attempts)
+    with _blocked_attempt_lock:
+        return tuple(_blocked_attempts)
 
 
 def drain_blocked_attempts() -> tuple[tuple[str, str], ...]:
@@ -182,9 +194,10 @@ def drain_blocked_attempts() -> tuple[tuple[str, str], ...]:
     ``drain_blocked_attempt_threads`` must be called *before* this if both are
     wanted for the same batch.
     """
-    recorded = tuple(_blocked_attempts)
-    _blocked_attempts.clear()
-    _blocked_attempt_threads.clear()
+    with _blocked_attempt_lock:
+        recorded = tuple(_blocked_attempts)
+        _blocked_attempts.clear()
+        _blocked_attempt_threads.clear()
     return recorded
 
 
@@ -235,8 +248,9 @@ def drain_blocked_attempt_threads() -> tuple[str, ...]:
     Returns:
         One thread name per currently recorded attempt.
     """
-    recorded = tuple(_blocked_attempt_threads)
-    _blocked_attempt_threads.clear()
+    with _blocked_attempt_lock:
+        recorded = tuple(_blocked_attempt_threads)
+        _blocked_attempt_threads.clear()
     return recorded
 
 
@@ -258,8 +272,9 @@ def _deny(call: str, address: Any) -> BlockedNetworkAccess:
         The ``BlockedNetworkAccess`` the caller should raise.
     """
     described = _describe(address)
-    _blocked_attempts.append((call, described))
-    _blocked_attempt_threads.append(threading.current_thread().name)
+    with _blocked_attempt_lock:
+        _blocked_attempts.append((call, described))
+        _blocked_attempt_threads.append(threading.current_thread().name)
     return BlockedNetworkAccess(
         f"network access blocked in tests: {call}({described}). "
         "Tests must not touch a live endpoint — stub the client seam, use "

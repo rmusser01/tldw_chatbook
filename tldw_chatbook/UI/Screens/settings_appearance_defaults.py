@@ -12,14 +12,16 @@ from tldw_chatbook.Chat.console_roleplay_identity import (
     ConsoleTranscriptStyle,
     normalize_console_transcript_style,
 )
-from tldw_chatbook.Library.library_adaptive_reader_state import (
+from tldw_chatbook.Utils.adaptive_reader_state import (
     ITEMS_MAX_WIDTH,
     ITEMS_MIN_WIDTH,
     ITEMS_TARGET_WIDTH,
-    LIBRARY_MAX_WIDTH,
-    LIBRARY_MIN_WIDTH,
-    LIBRARY_TARGET_WIDTH,
     normalize_adaptive_reader_preferences,
+)
+from tldw_chatbook.Utils.library_rail_width import (
+    LIBRARY_CUSTOM_MAX_WIDTH,
+    LIBRARY_MIN_WIDTH,
+    LIBRARY_REFERENCE_WIDTH,
 )
 
 from .settings_config_models import SettingsValidationResult
@@ -62,7 +64,7 @@ class SettingsAppearanceDefaults:
     console_transcript_style: str = DEFAULT_CONSOLE_TRANSCRIPT_STYLE_VALUE
     library_reader_library_open: bool = True
     library_reader_custom_widths_enabled: bool = False
-    library_reader_library_width: int = LIBRARY_TARGET_WIDTH
+    library_reader_library_width: int = LIBRARY_REFERENCE_WIDTH
     library_media_items_open: bool = True
     library_media_items_width: int = ITEMS_TARGET_WIDTH
     library_conversations_items_open: bool = True
@@ -215,9 +217,7 @@ def load_appearance_defaults(
             )
         ).value,
         library_reader_library_open=shared_reader.library_open,
-        library_reader_custom_widths_enabled=(
-            shared_reader.custom_widths_enabled
-        ),
+        library_reader_custom_widths_enabled=(shared_reader.custom_widths_enabled),
         library_reader_library_width=shared_width,
         library_media_items_open=destination_readers["media"].items_open,
         library_media_items_width=destination_readers["media"].items_width,
@@ -312,11 +312,12 @@ def validate_appearance_defaults(
     library_width = _strict_int(values.library_reader_library_width)
     if (
         library_width is None
-        or not LIBRARY_MIN_WIDTH <= library_width <= LIBRARY_MAX_WIDTH
+        or not LIBRARY_MIN_WIDTH <= library_width <= LIBRARY_CUSTOM_MAX_WIDTH
     ):
         return SettingsValidationResult(
             False,
-            f"Library width must be between {LIBRARY_MIN_WIDTH} and {LIBRARY_MAX_WIDTH}.",
+            "Library width must be between "
+            f"{LIBRARY_MIN_WIDTH} and {LIBRARY_CUSTOM_MAX_WIDTH}.",
         )
     for label, open_value, width_value in (
         (
@@ -350,10 +351,7 @@ def validate_appearance_defaults(
                 False, f"{label} pane preference must be open or collapsed."
             )
         items_width = _strict_int(width_value)
-        if (
-            items_width is None
-            or not ITEMS_MIN_WIDTH <= items_width <= ITEMS_MAX_WIDTH
-        ):
+        if items_width is None or not ITEMS_MIN_WIDTH <= items_width <= ITEMS_MAX_WIDTH:
             return SettingsValidationResult(
                 False,
                 f"{label} width must be between {ITEMS_MIN_WIDTH} and {ITEMS_MAX_WIDTH}.",
@@ -400,18 +398,14 @@ def build_appearance_save_sections(
     reader.update(
         {
             "library_open": bool(values.library_reader_library_open),
-            "custom_widths_enabled": bool(
-                values.library_reader_custom_widths_enabled
-            ),
+            "custom_widths_enabled": bool(values.library_reader_custom_widths_enabled),
             "library_width": int(values.library_reader_library_width),
         }
     )
     library["reader"] = reader
     for destination in ("media", "conversations", "notes", "prompts", "skills"):
         section_name = f"{destination}_reader"
-        destination_reader = dict(
-            deepcopy(_mapping_child(library, section_name))
-        )
+        destination_reader = dict(deepcopy(_mapping_child(library, section_name)))
         destination_reader.update(
             {
                 "items_open": bool(

@@ -769,6 +769,14 @@ class MessageAttachment:
     position: int
 
 
+@dataclass(frozen=True, slots=True)
+class ConsoleNextSendHistoryProjection:
+    """Text-only canonical history used to estimate the next Console send."""
+
+    rows: tuple[tuple[str, str], ...] = ()
+    historical_media_count: int = 0
+
+
 @dataclass(frozen=True)
 class GenerationVariantMeta:
     """Per-variant image-generation metadata (mirrors a ``message_generation_metadata`` row).

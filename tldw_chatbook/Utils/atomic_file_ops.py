@@ -45,6 +45,8 @@ def atomic_write_text(
     encoding: str = "utf-8",
     mode: int = 0o644,
     preserve_existing_mode: bool = False,
+    privacy_safe_log: bool = False,
+    overwrite: bool = True,
 ) -> None:
     """
     Write text content to a file atomically.
@@ -64,6 +66,12 @@ def atomic_write_text(
             ``mode``. Use this for secrets-bearing files (e.g. the app config)
             so a rewrite never widens permissions a user has tightened.
             Defaults to False to keep existing callers' behavior unchanged.
+        privacy_safe_log: Emit only a stable category and exception class at
+            this disclosure boundary. Defaults to False for existing callers.
+        overwrite: Replace an existing destination when True. When False,
+            publish the completed temporary file with an atomic no-clobber
+            link and raise ``FileExistsError`` if another writer created the
+            destination first.
 
     Raises:
         OSError: If the write or rename operation fails
@@ -97,11 +105,22 @@ def atomic_write_text(
         # Set file permissions
         os.chmod(temp_path, target_mode)
 
-        # Atomic rename (on POSIX) or replace (cross-platform)
-        # os.replace is atomic on POSIX and does best-effort on Windows
-        os.replace(temp_path, str(file_path))
+        if overwrite:
+            # Atomic rename (on POSIX) or replace (cross-platform).
+            os.replace(temp_path, str(file_path))
+        else:
+            # A same-directory hard link atomically publishes the fully
+            # fsynced inode only if the destination is still absent. Unlike
+            # an exists()+replace sequence, no competing file can be lost in
+            # the check/write gap.
+            os.link(temp_path, file_path)
+            os.unlink(temp_path)
+        temp_path = None
 
-        logger.debug(f"Atomically wrote {len(content)} chars to {file_path}")
+        if privacy_safe_log:
+            logger.debug("atomic_write_succeeded")
+        else:
+            logger.debug(f"Atomically wrote {len(content)} chars to {file_path}")
 
     except Exception as e:
         # Clean up temp file if it exists
@@ -110,7 +129,10 @@ def atomic_write_text(
                 os.unlink(temp_path)
             except Exception:
                 pass
-        logger.error(f"Failed to atomically write to {file_path}: {e}")
+        if privacy_safe_log:
+            logger.error(f"atomic_write_failed: {type(e).__name__}")
+        else:
+            logger.error(f"Failed to atomically write to {file_path}: {e}")
         raise
 
 

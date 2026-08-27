@@ -82,6 +82,6 @@ def test_transient_child_resolves_nearest_persisted_parent_for_durable_commit():
 
     assert assistant.persisted_message_id is not None
     assert (
-        store.nearest_persisted_ancestor_id(transient.id)
+        store.durable_parent_for_message(transient.id)
         == assistant.persisted_message_id
     )

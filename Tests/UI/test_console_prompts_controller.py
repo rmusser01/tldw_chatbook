@@ -47,6 +47,8 @@ from tldw_chatbook.UI.Console_Modules.prompts import ConsolePromptsController
 from tldw_chatbook.UI.Screens.chat_screen import ChatScreen
 from tldw_chatbook.Widgets.Console import ConsoleComposerBar, ConsolePromptsModal
 from tldw_chatbook.Widgets.Console.console_prompts_modal import ConsolePromptsResult
+from Tests.console_provider_doubles import with_destination
+from Tests.UI.app_factory import attach_chachanotes_db
 
 
 class ConsoleHarness(ConsolidatedCSSApp):
@@ -174,6 +176,7 @@ async def test_prompts_modal_open_persists_the_reviewed_system_selection() -> No
     """Drive `_open_console_prompts_modal` for real, then apply through the
     modal's own host coordinator and assert the store PERSISTED it."""
     app = _build_test_app()
+    attach_chachanotes_db(app)
     _configure_native_ready_console(app)
     app.prompt_scope_service = _PromptScopeService()
     host = ConsoleHarness(app)
@@ -217,6 +220,7 @@ async def test_prompts_modal_apply_refuses_when_the_system_prompt_moved() -> Non
     """The opening fingerprint is the guard: a System prompt changed behind
     the modal must make the apply stale rather than clobber it."""
     app = _build_test_app()
+    attach_chachanotes_db(app)
     _configure_native_ready_console(app)
     app.prompt_scope_service = _PromptScopeService()
     host = ConsoleHarness(app)
@@ -255,6 +259,7 @@ async def test_prompts_modal_reads_provider_recovery_off_the_screen_at_open() ->
     """The Configure-provider seam is resolved when the modal is BUILT, so a
     screen-level replacement made beforehand must reach the modal."""
     app = _build_test_app()
+    attach_chachanotes_db(app)
     _configure_native_ready_console(app)
     app.prompt_scope_service = _PromptScopeService()
     host = ConsoleHarness(app)
@@ -338,7 +343,7 @@ class _CountingResolutionGateway:
 
     async def resolve_for_send(self, selection):
         self.resolve_calls += 1
-        return ConsoleProviderResolution(
+        return with_destination(ConsoleProviderResolution(
             provider="llama_cpp",
             base_url=selection.base_url or "http://127.0.0.1:9099",
             model=(
@@ -347,7 +352,7 @@ class _CountingResolutionGateway:
             ready=True,
             readiness_key="llama_cpp",
             execution_key="llama_cpp",
-        )
+        ))
 
 
 async def _open_prompts_modal(host, pilot, console) -> ConsolePromptsModal:
@@ -363,6 +368,7 @@ async def test_prompt_source_callables_forward_the_exact_service_contract() -> N
     """Page size, search limit and the `source`-to-`mode` rename are the
     contract the Prompt Library modal is built against."""
     app = _build_test_app()
+    attach_chachanotes_db(app)
     _configure_native_ready_console(app)
     service = _RecordingPromptScopeService()
     app.prompt_scope_service = service
@@ -402,6 +408,7 @@ async def test_prompt_source_callables_name_the_source_they_cannot_reach() -> No
     """A scope service missing a method is a user-visible refusal, per
     callable and per source -- never an AttributeError."""
     app = _build_test_app()
+    attach_chachanotes_db(app)
     _configure_native_ready_console(app)
     app.prompt_scope_service = SimpleNamespace()
     host = ConsoleHarness(app)
@@ -427,6 +434,7 @@ async def test_prompt_source_callables_name_the_source_they_cannot_reach() -> No
 @pytest.mark.asyncio
 async def test_prompts_modal_dismissal_restores_composer_focus() -> None:
     app = _build_test_app()
+    attach_chachanotes_db(app)
     _configure_native_ready_console(app)
     app.prompt_scope_service = _PromptScopeService()
     host = ConsoleHarness(app)
@@ -452,6 +460,7 @@ async def test_improvement_target_is_pinned_once_and_shared_across_callbacks() -
     """`activate` pins the disclosed target; the model-free manual path must
     reuse that same pin rather than resolve a second, possibly different one."""
     app = _build_test_app()
+    attach_chachanotes_db(app)
     _configure_native_ready_console(app)
     app.prompt_scope_service = _PromptScopeService()
     gateway = _CountingResolutionGateway()
@@ -481,6 +490,7 @@ async def test_improvement_target_is_pinned_once_and_shared_across_callbacks() -
 @pytest.mark.asyncio
 async def test_improvement_activation_refuses_a_moved_system_prompt() -> None:
     app = _build_test_app()
+    attach_chachanotes_db(app)
     _configure_native_ready_console(app)
     app.prompt_scope_service = _PromptScopeService()
     app.console_provider_gateway_factory = lambda: _CountingResolutionGateway()
@@ -504,6 +514,7 @@ async def test_improvement_snapshot_refuses_an_unpinned_provider_target() -> Non
     """No disclosure, no request: the snapshot builder must not fall back to
     resolving a target the user was never shown."""
     app = _build_test_app()
+    attach_chachanotes_db(app)
     _configure_native_ready_console(app)
     app.prompt_scope_service = _PromptScopeService()
     app.console_provider_gateway_factory = lambda: _CountingResolutionGateway()
@@ -526,6 +537,7 @@ async def test_improvement_validation_prefers_the_captured_snapshot() -> None:
     """The reviewed working copy is validated against the snapshot the request
     captured; a captured object without one falls back to the opening draft."""
     app = _build_test_app()
+    attach_chachanotes_db(app)
     _configure_native_ready_console(app)
     app.prompt_scope_service = _PromptScopeService()
     host = ConsoleHarness(app)
@@ -560,6 +572,7 @@ async def test_improvement_validation_prefers_the_captured_snapshot() -> None:
 @pytest.mark.asyncio
 async def test_prompt_command_replaces_the_draft_with_the_resolved_body() -> None:
     app = _build_test_app()
+    attach_chachanotes_db(app)
     _configure_native_ready_console(app)
     app.prompt_scope_service = _PromptScopeService(_prompt_record(system_prompt=""))
     host = ConsoleHarness(app)
@@ -581,6 +594,7 @@ async def test_prompt_application_replaces_complete_snapshot_and_persists_draft(
     None
 ):
     app = _build_test_app()
+    attach_chachanotes_db(app)
     _configure_native_ready_console(app)
     host = ConsoleHarness(app)
 
@@ -631,6 +645,7 @@ async def test_prompt_application_refuses_stale_draft_system_session_and_expiry(
     None
 ):
     app = _build_test_app()
+    attach_chachanotes_db(app)
     _configure_native_ready_console(app)
     host = ConsoleHarness(app)
 
@@ -731,6 +746,7 @@ async def test_prompt_application_rolls_back_draft_when_system_mutation_raises(
     monkeypatch,
 ) -> None:
     app = _build_test_app()
+    attach_chachanotes_db(app)
     _configure_native_ready_console(app)
     host = ConsoleHarness(app)
 
@@ -786,6 +802,7 @@ async def test_prompt_application_reports_durable_system_failure_separately(
     monkeypatch,
 ) -> None:
     app = _build_test_app()
+    attach_chachanotes_db(app)
     _configure_native_ready_console(app)
     host = ConsoleHarness(app)
 
@@ -865,6 +882,8 @@ async def test_prompt_application_keeps_durable_system_when_surface_sync_fails(
             return True
 
     app = _build_test_app()
+
+    attach_chachanotes_db(app)
     _configure_native_ready_console(app)
     host = ConsoleHarness(app)
 
@@ -930,6 +949,7 @@ async def test_system_only_empty_apply_settles_prior_prompt_undo(
     expected_undo: bool,
 ) -> None:
     app = _build_test_app()
+    attach_chachanotes_db(app)
     _configure_native_ready_console(app)
     host = ConsoleHarness(app)
 
@@ -982,6 +1002,7 @@ async def test_prompt_application_handles_composer_failure_without_secondary_err
     monkeypatch,
 ) -> None:
     app = _build_test_app()
+    attach_chachanotes_db(app)
     _configure_native_ready_console(app)
     host = ConsoleHarness(app)
 
@@ -1021,6 +1042,7 @@ async def test_prompt_application_handles_composer_failure_without_secondary_err
 @pytest.mark.asyncio
 async def test_system_command_applies_and_persists_the_resolved_system_part() -> None:
     app = _build_test_app()
+    attach_chachanotes_db(app)
     _configure_native_ready_console(app)
     app.prompt_scope_service = _PromptScopeService()
     host = ConsoleHarness(app)
@@ -1044,6 +1066,7 @@ async def test_system_command_applies_and_persists_the_resolved_system_part() ->
 @pytest.mark.asyncio
 async def test_prompt_search_filters_recipes_and_uses_a_prefix_fts_query() -> None:
     app = _build_test_app()
+    attach_chachanotes_db(app)
     _configure_native_ready_console(app)
     service = _PromptScopeService(_prompt_record(artifact_type="recipe"))
     app.prompt_scope_service = service
@@ -1080,6 +1103,7 @@ def test_prompt_prefix_fts_query_escapes_embedded_quotes() -> None:
 @pytest.mark.asyncio
 async def test_system_prompt_save_to_library_reports_create_and_collision() -> None:
     app = _build_test_app()
+    attach_chachanotes_db(app)
     _configure_native_ready_console(app)
     service = _PromptScopeService()
     app.prompt_scope_service = service
@@ -1116,6 +1140,7 @@ async def test_system_prompt_save_to_library_reports_create_and_collision() -> N
 @pytest.mark.asyncio
 async def test_prompt_history_store_is_lazy_shared_and_factory_seamed() -> None:
     app = _build_test_app()
+    attach_chachanotes_db(app)
     _configure_native_ready_console(app)
     sentinel = object()
     app.console_prompt_history_factory = lambda: sentinel
@@ -1132,6 +1157,8 @@ async def test_library_prompt_insert_handoff_appends_onto_the_live_draft() -> No
     from tldw_chatbook.UI.Navigation.pending_handoff_store import HandoffChannel
 
     app = _build_test_app()
+
+    attach_chachanotes_db(app)
     _configure_native_ready_console(app)
     app.prompt_scope_service = _PromptScopeService()
     host = ConsoleHarness(app)
@@ -1165,6 +1192,8 @@ async def test_library_prompt_insert_handoff_is_blocked_before_setup_completes()
     from tldw_chatbook.UI.Navigation.pending_handoff_store import HandoffChannel
 
     app = _build_test_app()
+
+    attach_chachanotes_db(app)
     _configure_native_ready_console(app)
     app.prompt_scope_service = _PromptScopeService()
     host = ConsoleHarness(app)
@@ -1201,6 +1230,7 @@ async def test_library_prompt_insert_handoff_is_blocked_before_setup_completes()
 
 def test_prompts_controller_is_wired_in_chat_screen_init() -> None:
     app = _build_test_app()
+    attach_chachanotes_db(app)
     _configure_native_ready_console(app)
 
     screen = ChatScreen(app)

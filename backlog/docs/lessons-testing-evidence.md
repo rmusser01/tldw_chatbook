@@ -732,6 +732,19 @@ rendered region after refresh, not just its value. For dynamic Button labels,
 request a layout refresh and assert that `region.width` can contain the visible
 label; a correct reactive value does not prove that layout was recomputed.
 
+**Recurred, TASK-22304, 2026-08-26.** A screenshot exported in the same turn as
+the Console Send label changed to `Send | $` appeared to clip the dollar suffix,
+even though the production callback requested a layout refresh. After one Pilot
+pause, the button's settled region matched its declared width and the full label
+painted at both 80x24 and 160x40. The first tooltip probe also appeared blank
+because Textual's `run_test` disables tooltips unless `tooltips=True` is passed.
+
+**What to do.** For dynamic-label and tooltip evidence, let the Pilot reach a
+settled layout before capturing the frame. Enable tooltips explicitly in the test
+host, hover the production control, and assert both the control geometry and the
+mounted `#textual-tooltip` render. An immediate frame and a default-disabled
+framework feature can manufacture two different false UI regressions.
+
 ---
 
 ## Test embedded panes at their allocated width, not the terminal width
@@ -1326,6 +1339,29 @@ and use *its* magnitude as the acceptance bound; attribute individual flips
 only via isolation reruns under both configurations. Directionality alone
 (12-vs-0) is not attribution: later runs on a loading machine flip
 asymmetrically toward failure.
+
+---
+
+## The A/A control also tells you WHICH metric to report, not just how big a diff must be
+
+**TASK-22215, 2026-08-26.** Measuring input latency during the first 5 s after mount
+(before/after the boot-worker stagger, simulated post-upgrade profile, n=8 per arm,
+interleaved in both orders), the headline that jumped out was the median keypress:
+**before 90.5-92.6 ms, after 71.9-72.8 ms in three of four runs** — a tidy -22%. The A/A
+control (identical tree, two labels, same shape) killed it: its four runs measured 72.7,
+89.5, 77.8, 72.0 ms. The metric is **bimodal**, and both modes appear with the code held
+constant, so any single pair of runs can "show" a 20 ms median win or none at all.
+
+What survived on the same data was the metric whose RANGES separated: worst single
+keypress **625-876 ms before vs 395-467 ms after**, with the A/A control's 426-476 ms
+sitting inside the after range, and mean 111-124 vs 99-109 ms. p95, loop-heartbeat excess
+and time-to-ready were washes, and the warm-boot shape was a wash on everything.
+
+**What to do.** Run the A/A control with the SAME repeat count as the arms, and read its
+per-run spread, not only its aggregate: a metric whose A/A runs are multi-modal cannot
+carry a claim at that n no matter how clean the A/B looks, while a metric whose A/A range
+is narrow and disjoint from one arm can. Report the ones that separate, say "wash" for
+the rest, and never quote a median that the control also produced.
 
 ---
 
@@ -8073,6 +8109,78 @@ raising. Deliberately breaking the guard proved it — the memory-backed test
 went red with a zero count, not an error. Before wrapping any DB call in
 `to_thread`, check what that owner's connection factory does with
 `:memory:`, and keep a memory-backed test in the set.
+---
+
+## The stats-free planner is not a quirk of one query — sweep the whole database, and the fix may not be an index (TASK-21593, 2026-08-25)
+
+**What happened.** TASK-21126 left an open question: it proved the no-stats
+planner mis-chooses for *one* query, and nobody had looked at the rest. The
+sweep — 39 production-exact statements against a 20,000-media / 200,000-chunk
+/ 278 MB corpus built with **no `ANALYZE`** — found the same pathology
+everywhere and two things worth generalising.
+
+**1. The worst finding was not an index problem at all.** The Media search's
+`must_have_keywords` filter measured **12.3 seconds**. `Keywords.keyword` is
+already `UNIQUE COLLATE NOCASE`, but the predicate was
+`LOWER(k.keyword) IN (?)` — and wrapping a column in a function makes it
+non-sargable, so SQLite could not use the unique index and walked *every live
+keyword for every candidate media row*. Deleting the redundant `LOWER()` —
+one word — took it to 18.7 ms, **671×**, with no new index. It is reachable
+from the chat scope picker per debounced keystroke. Before designing an index
+for a slow query, read the WHERE clause for a function wrapped around the
+column you were about to index.
+
+**2. Shipping "the one obvious index" would have made three surfaces
+slower.** `(deleted, is_trash, last_modified DESC, id DESC)` fixes nine list
+queries by 10–1000×. It also *regresses* sort-by-date, sort-by-title and the
+type facet by ~38% each — the planner switches to the new index because a
+two-column equality beats a one-column one, then still sorts, and loses the
+rowid-order locality it had. Three more indexes (each leading with the same
+equality pair, differing only in the trailing sort key) take those to
+0.08–2.5 ms instead. **A single-index A/B is not enough evidence: measure
+every query the new index could be chosen for, not just the one you wrote it
+for.** The mirror-image trap is real too — a narrow `(deleted, is_trash)`
+index repairs the residual regressions and was *rejected* because the planner
+then steals it for the ordered queries (sort=date_desc 0.46 → 26.05 ms, 57×
+worse).
+
+**3. `CROSS JOIN` is the only join-order instruction SQLite obeys.** The FTS
+`COUNT` half of the same search had its join order inverted — Media outside,
+one FTS probe per live row, 276 ms — while the ROWS half got it right because
+its `ORDER BY fts.rank` forced the issue. Rewriting `FROM media_fts fts JOIN
+Media m` as a plain `JOIN` changes nothing (266 ms; the planner reorders
+straight back). `CROSS JOIN` gives 29 ms. But it removes the planner's freedom
+permanently, so check the variants: with a five-id allowlist Media really is
+the cheap side and the pin costs 0.10 → 1.92 ms. The fix is conditional.
+
+**4. Mutation-test the DDL, and be honest about what the plan cannot see.**
+Thirteen mutants, all caught — but two of them (dropping the partial `WHERE`,
+reversing `DESC` to `ASC`) were caught *only* by the DDL-text assertion, never
+by a plan assertion, because SQLite scans an ASC index backwards and a partial
+index plans identically to a full one. Say which properties are pinned by
+plan and which by text; a reader who assumes all thirteen were plan-caught has
+been misled.
+
+**What to do.** The convention is now mechanical:
+`scripts/check_index_plan_pins.py` runs in `preflight.sh` and the required CI
+job, and fails until every `CREATE INDEX` under `DB/` has a row in
+`scripts/index_plan_pin_census.tsv` marked `plan-pinned` (a test naming it
+alongside `EXPLAIN QUERY PLAN` *and* a `sqlite_stat1`-absence assertion) or
+`pre-convention`. `Tests/DB/test_media_db_schema_v9.py` is the worked example,
+including a negative control that keeps proving the rejected shape is still
+never chosen.
+
+**And the `ANALYZE` question, answered with a number so it stops being
+re-asked.** On the fixed corpus `ANALYZE` costs 261 ms and buys almost
+nothing the indexes have not already bought — but it is not free either: it
+takes `get_deletion_candidates` from 1.9 ms to 13.9 ms. Its real wins
+(`fetch_keywords_for_media_batch` 24.6 → 0.08 ms) are join-order fixes that
+belong to whichever task owns those queries and can pin their plans. Running
+`ANALYZE` globally re-plans every statement in the database at once, and every
+plan assertion in the suite was captured without it. Do not add it as a
+side effect of an unrelated change.
+---
+
 ## A subsystem can have several migration entry points, and the product may not use the one you were pointed at (TASK-21130, 2026-08-23)
 
 **What happened.** The finding cited `TTS/profile_schema.py:1439,1468` —
@@ -8707,3 +8815,292 @@ changed; **the latency it implicitly depended on did.**
    and two live tmux arms all passed the version that had to be withdrawn; the
    only thing that caught it was 506 unrelated navigation tests, and it cost
    5 minutes to run.
+
+## A mutation can escape every integration gate whose geometry structurally cannot reach the mutated leg (TASK-22203, 2026-08-25)
+
+The TASK-22203 fix scoped the workspace action-row flip so a Tree cursor
+boundary crossing no longer fans out into the rail-wide allocation pipeline.
+It has two halves: the direct `request_allocation_reconcile()` call was
+removed, and `_ContextBoundedSection`'s demand-change escalation was taught
+to skip a scoped pass. Mutation-testing the second half — deleting the
+scoped skip outright — left BOTH mounted-console boundary gates green: in
+every mounted geometry (the real console at 160×44, the rail harness at
+60×30, even a widened 90-col rail), the workspaces tray sits at its 12-row
+`max_height` cap with `overflow_y: hidden`, so the action-row flip changes
+`desired_content_lines` by exactly zero and the escalation leg the mutant
+deleted never runs. A debug snapshot proved it: `fixed=12` before and after
+the flip in every configuration tried. The dev test that seemed to pin a
+`hidden_demand + 1` delta for the same flip was actually measuring a
+coincident tree-expansion delta the flip's reconcile recorded late.
+
+The follow-on trap: the first replacement gate mutated a real child's
+`styles.height` to create a demand delta — and the scoped pass STILL
+escalated, because the style change resized widgets in the same frame and
+their `on_resize` handlers issued plain requests that legitimately demoted
+the scoped pass (the demotion rule working as designed, masking the skip
+under test). The gate that finally killed the mutant stubs the measurement
+seam (`section._measure_content_lines = lambda v: value`) so the demand
+delta arrives with no DOM churn at all.
+
+Two rules. **After a mutation survives, prove which branch the gate's
+geometry actually executes before writing a stronger assertion** — a
+surviving mutant is evidence about the gate's reach, not only its strength.
+And **when the guarded leg is unreachable in production-shaped geometry,
+gate the mechanism directly at a stubbed seam** and say so in the test's
+docstring; an integration test that cannot reach the leg is the wrong tool
+no matter how production-faithful it looks.
+
+## Interleaved A/B pairs carry a positional bias — run the A/A control and the reversed order before believing the delta (TASK-22213, 2026-08-25)
+
+Ten interleaved boot-to-`_ui_ready` pairs (base first, branch second, the
+obvious loop shape) showed the branch faster in 8/10 with a median of about
+−250 ms — a suspiciously large win for a ~30-module import diet. An A/A
+control (base vs base, same loop shape) exposed the mechanism: the
+SECOND-position run in a pair is systematically faster (warmer FS cache, load
+settling), and the A/A spread alone was ±400 ms on that loaded machine. Five
+pairs with the ORDER REVERSED (branch first) collapsed the "win" to a wash
+(median −19 ms, mean +85 ms).
+
+Interleaving controls for load DRIFT between pairs; it does not control for
+position WITHIN a pair. Before reporting any interleaved delta: (1) run an
+A/A control with the identical loop shape to measure the noise floor and the
+positional offset; (2) run at least a few pairs in reversed order; (3) if the
+effect survives neither, report the wash and lean on the deterministic axes
+instead — module censuses and closure diffs don't have a noise floor (here:
+−32 modules on the bare chat_screen leg, −5 at warm `_ui_ready`, both exactly
+reproducible while the wall-clock delta evaporated).
+
+---
+
+## A function-scope import is not lazy if the function runs at module import
+
+**TASK-22223, 2026-08-25.** `config.py`'s `_load_settings_uncached` imported
+`Library.library_adaptive_reader_state` under a comment stating "Lazy import
+avoids pulling the Library package through config's module initialization
+path" — but `load_settings()` is called at config **module scope**, so the
+"lazy" import fired on every `import tldw_chatbook.config`. The Library
+package `__init__` dragged 66 feature modules (collections/tool services →
+Sync_Interop → Chat → Skills_Interop → runtime_policy) into every config
+import, and closed a live cycle: any module importing
+`runtime_policy.bootstrap` before config (e.g.
+`Character_Chat/server_character_persona_service.py`) died with
+`ImportError ... partially initialized module`, so
+`Tests/Character_Chat/test_character_persona_scope_service.py` could not even
+be collected when run solo — while passing in full-suite order, where an
+earlier module always imported config first. The comment was reviewed and
+merged; the claim was never probed.
+
+**What to do.** A deferral claim is an assertion about *when code runs*, and
+the evidence is a `sys.modules` probe in a fresh interpreter, not the comment
+or the indentation. Before writing (or believing) "lazy import", trace the
+enclosing function to its callers and ask whether any of them execute at
+import time — `load_settings()`-style module-scope initialization defeats
+every function-scope import above it. Encode the claim as a
+subprocess-isolated closure guard (`Tests/Packaging/test_config_import_closure.py`
+is the shape: import the module bare, assert the deferred packages absent,
+plus an anti-vacuity check that the replacement seam is present). And when a
+test module fails collection only when run solo, suspect an import cycle whose
+direction depends on who imports first — full-suite green is not evidence the
+import graph is acyclic.
+
+---
+
+## A green suite cannot certify a SQLite isolation-mode flip — only a per-idiom write census can
+
+**TASK-22224, 2026-08-25.** Flipping held-connection stores to
+`isolation_level = None` (autocommit) so the explicit-BEGIN transaction
+managers stop being degraded by leaked implicit transactions. Empirical probes
+on the shipped pair (Python 3.12.11 / SQLite 3.49.1) showed the change is
+invisible to any test that only exercises success paths, while three idioms
+silently change meaning: a multi-statement `with conn:` body loses atomicity
+(the context manager only commits/rolls back, it never BEGINs — the statements
+each self-commit, and an exception mid-body keeps the earlier writes);
+`conn.commit()`/`rollback()` outside an explicit BEGIN become no-ops; and
+`executemany` stops being all-or-nothing on a mid-batch error. Every one of
+those degradations produces a suite that stays green — the data only diverges
+on a failure injected *between* statements. Two stores (`Evals_DB`, with a
+deliberately NESTED `with conn:` pair that explicit BEGIN cannot express, and
+`sync_state_repository`, with an eight-DELETE commit span) were left on legacy
+isolation with the exception documented at the opener, because converting them
+is a write-path refactor, not a connection flag. A second trap found in the
+same pass: ChaChaNotes' `vacuum()` "temporarily" set `isolation_level = None`
+and *restored* `""` — after the store-level flip, that restore would have
+silently returned the held connection to legacy mode for the rest of its life
+(`Prompts_DB`/`Client_Media_DB_v2` still carry the same toggle and must fix it
+when they flip).
+
+**What to do.** Before flipping any store to autocommit, census every
+`commit()`, `rollback()`, `with conn:` block, `executemany`, and
+`executescript` in the store AND its out-of-module consumers, and classify
+each span as single-statement (safe), manager-owned explicit BEGIN (safe), or
+multi-statement implicit (NOT safe — convert or keep legacy and document).
+Treat a green run as evidence of nothing here; the evidence is the census plus
+guards that assert the transaction statements SQLite actually ran
+(`set_trace_callback`), pinned red-first against both failure modes (loud
+"cannot start a transaction within a transaction" and ChaChaNotes' silent
+borrow, which surfaces only as an EMPTY trace).
+---
+
+## A cap silently turns a proportional control back into the flat constant it replaced — and formula tests stay green through it (TASK-22214, 2026-08-25)
+
+TASK-21113 replaced a flat inter-route sleep in the screen pre-importer with a
+proportional one, `min(previous_import_cost * ratio, cap)`, cap 0.10 s, and
+pinned it with 18 tests. Two months of payload growth later every route the
+pacing existed for was asking for a 150-600 ms gap and getting 0.10 s: the
+control had degenerated back into exactly the flat sleep it was written to
+replace, at ~66% GIL duty. **All 18 tests stayed green**, because they assert
+the arithmetic (`min(cost*ratio, cap)` computes correctly) and the arithmetic
+was never wrong. What had changed was the *regime*: which term of the `min()`
+wins in production.
+
+The evidence that settled it was not a duty number but the requested-gap
+series itself, logged from the real thread: before `[0.0, 0.1, 0.1, 0.002,
+0.003, 0.1]` — clipped flat on exactly the expensive routes, the cheap ones
+untouched — after `[0.0, 0.529, 0.245, 0.003, 0.113, 0.303]`. One printed
+list makes "the cap has eaten the mechanism" unarguable in a way an aggregate
+percentage does not.
+
+**What to do.** When you ship a bounded proportional control (a cap, a floor,
+a clamp, a max-backoff, a LIMIT), the tests that prove the formula are not
+tests that the bound is still in the intended regime. Add one assertion that
+pins the *relationship* between the bound and the measured quantity it bounds
+— here, `cap >= 1.0 s` documented as "above the heaviest measured single-route
+cost", which reds if anyone restores a sub-second cap — and, where the
+quantity can grow on its own (payload, row counts, file sizes), a budget guard
+on that quantity so the growth itself lands in review. Log the per-step
+requested values, not just the aggregate: a clipped series is visible at a
+glance, a 66%-vs-48% duty average is not.
+
+Related trap from the same task: **a mutation that adds an already-resident
+import is not a payload regression and a good guard SHOULD stay green on it.**
+Importing `Chunking.Chunk_Lib` into a screen module left the census unmoved
+(an earlier route already had it) and looked at first like a surviving mutant;
+the real-growth mutant (a genuinely new 40k-LOC module on that route) was
+caught and named the route. Before recording a survivor as a gap, check that
+the mutation actually changes the quantity under test.
+
+## A `query_one("#id")` is not a DOM walk in Textual 8.2.8 — a `query("*")` is (TASK-22228, 2026-08-26)
+
+Three findings in the same small-residue batch were written as "an uncached
+DOM query on a hot path". Measured on the mounted Console (475 widgets), two
+of them were noise and the third was 33x worse than its own brief said:
+
+* `screen.query_one("#console-native-composer")` per mouse-up: **0.3 us**
+  warm, 5.2 us cold. Textual 8.2.8's `DOMNode.query_one` takes an id-selector
+  fast path — `walk_breadth_search_id` plus a per-node `_query_one_cache`
+  keyed on `_nodes._updates` — so a settled DOM answers from a dict.
+* the left rail's two id lookups + `max_scroll_y` per scroll frame: **2.7 us**
+  warm, 10.4 us cold, against a frame that repaints the rail.
+* `bounded.viewport.query("*")` over a **16-node** subtree: **74.1 us**, versus
+  **2.2 us** for the identical `walk_children(Widget)`. `DOMQuery.nodes` builds
+  its candidate list from exactly that walk and then runs the parsed selector
+  through `match()` for every node — for the universal selector, a filter that
+  admits everything, that round-trip IS the whole cost.
+
+The trap has a second half: the "fix" the brief prescribed for the first item
+— route it through the screen's memoized composer accessor — measured SLOWER
+than what it replaced (0.7 us vs 0.3 us), because the memo revalidates by
+building `ancestors_with_self` on every hit. Implementing the prescription
+would have been a pessimization defended by a green test.
+
+**What to do.** Before converting any "uncached query" finding, time the call
+as it actually runs (warm AND with `node._query_one_cache.clear()` for the
+cold arm). Attribute cost to the SELECTOR ENGINE, not to the walk: `query_one`
+with a literal `#id` is cheap and cached; `query(...)` with any selector — most
+of all `"*"` — pays `match()` per node and caches nothing. When the filter
+admits every widget, `walk_children(Widget)` is the same list in the same
+order for a thirtieth of the price, and an equivalence assertion against the
+`query("*")` result is what makes swapping it safe.
+
+## A queued-then-killed CI run renders as `fail`, and a conflicting PR gets no runs at all (2026-08-26)
+
+Landing 29 tasks across 12 PRs in one day, two CI states cost real time before they were
+understood, and both look identical to "my change is broken" from the outside.
+
+**`gh pr checks` printed `fail` for runs that were never executed.** The required
+`Derived artifacts reproduce from their sources` job showed `fail` with a 1h14m duration;
+`gh run view <id> --json conclusion` said **`cancelled`** with zero steps completed — the run
+sat in the queue behind another session's jobs until the concurrency group killed it. Reading
+the check column alone would have sent someone hunting a content bug that did not exist. The
+fix is a fresh push (`git commit --amend --no-edit && git push --force-with-lease`), which
+creates a new run; `gh run rerun` loses the concurrency group and often does nothing.
+
+**A PR with a merge conflict gets NO runs created at all.** PR #2081 sat with an empty check
+list for over an hour and one apparent "no runs" diagnosis; `gh pr view --json
+mergeStateStatus` said `DIRTY`. GitHub builds the merge ref before scheduling, so a conflict
+means nothing is ever queued. **"No runs" is a conflict signal, not an outage signal** — check
+`mergeStateStatus` before re-triggering anything. On this repo the conflict is almost always
+`Docs/security/production-diagnostic-inventory.json` or an append-only `lessons-*.md`, both of
+which churn several times a day.
+
+**What to do.** Before diagnosing any red or missing gate: (1) `gh pr view --json
+mergeStateStatus` — `DIRTY` means rebase, not retry; (2) `gh run view <id> --json
+conclusion,jobs` — `cancelled` with no completed steps means contention, so re-push; only a
+genuine `failure` is yours. A merge-on-green watcher that encodes exactly this
+(pass → merge, cancelled → re-push, failure → stop) landed all 12 PRs without further
+intervention. Auto-merge is disabled on this repository, so the watcher is not optional.
+
+## The batch-PR assembly recipe, and the two ways it silently loses content (2026-08-26)
+
+Six batch PRs (the #2070 precedent) carried 21 of the 29 burn-down tasks through a saturated
+gate queue. The recipe that worked, unchanged, six times: merge each verified branch into a
+fresh branch off dev; resolve `production-diagnostic-inventory.json` by taking **dev's** copy
+and regenerating **once** at the end (after reading the rows); resolve append-only
+`lessons-*.md` by taking dev's copy and re-appending only the batch's own entries.
+
+Two failure modes bit, both silent:
+
+1. **Extracting a lesson entry with a `+`-diff of the branch tip re-appends foreign content.**
+   If the branch had itself merged dev, the extraction pulls dev's entries too — a batch ended
+   up with another task's lesson duplicated twice. The check that catches it is a diff of the
+   assembled file against `origin/dev` filtered to `^\+## ` headers: it must list exactly the
+   batch's own entries and nothing else.
+2. **`grep` here is aliased to ugrep**, whose regex dialect rejects `^+++` and `\b`. The
+   extraction pipeline returned **zero lines with exit 0**, and the append silently wrote
+   nothing. Use `command grep`, and assert the extraction's line count before using it.
+
+Also: `for f in $CONF` does not word-split in zsh (a conflicted-file loop saw one glued token
+and reported everything as unhandled) — iterate with `while read`. And a rebase-conflict loop
+that exits on error leaves a **detached HEAD**; `git push` then reports "Everything
+up-to-date" while pushing nothing. Check `git symbolic-ref -q HEAD` before trusting any push.
+
+---
+
+## A logical concurrency cap does not bound a long-lived process pool's resident memory
+
+**TASK-22508, 2026-08-26.** A first fix limited EPUB admission to one job at
+a time inside the existing three-process Library parse pool. The coordinator
+test passed, yet the same three-EPUB queue-to-SQLite reproduction still peaked
+at about 750 MiB. Per-process sampling exposed why: the pool assigned the
+sequential books to different workers, and all three retained their parser
+high-water heaps, about 410 MiB combined, after the batch. Isolating the batch
+in one physical worker and retiring that generation reduced the measured peak
+to about 496 MiB on the final dev-based branch and left no parse worker resident.
+
+**What to do.** For memory-heavy multiprocessing work, measure the whole
+process tree and record RSS by PID after each logical task; an admission count
+only proves how many functions run at once. If workers retain high-water heaps,
+bound the number of physical processes that can own that resource class and
+retire or recycle those owners at a verified idle boundary. A green scheduler
+fake cannot prove this property because it has neither OS worker selection nor
+allocator retention.
+
+---
+
+## Stream-chunk sanitation needs an aggregate-owner regression (TASK-22507.1, 2026-08-26)
+
+The Console provider gateway sanitized each streamed response chunk, and the
+existing binary canaries were green, but every test supplied the data URI or
+base64 value in one chunk. Final whole-branch review split those values across
+multiple sub-4096-byte chunks. Each fragment was individually harmless, while
+the later join reconstructed the raw binary encoding before immutable capture,
+SQLite persistence, and Full export.
+
+The production correction sanitizes once more at the final accumulated owner
+without re-consuming the shared serialization budget. The regression that
+proved it does not stop at the sanitizer helper: it sends split fragments
+through the real gateway, store, SQLite query, and Full exporter and asserts
+absolute exclusion in every decoded owner. For any streaming exclusion rule,
+test both fragment-level handling and an adversarial split at the final
+aggregate/storage owner; per-chunk green cannot prove a property of the joined
+value.

@@ -36,7 +36,6 @@ from textual.widgets import Button, Static
 from tldw_chatbook.Chat.console_chat_models import ConsoleMessageRole
 from tldw_chatbook.Chat.console_display_state import (
     CONSOLE_INSPECTOR_SAVE_CHATBOOK_ID,
-    ConversationFileEntry,
     ConsoleDisplayRow,
     ConsoleInspectorAction,
     ConsoleInspectorState,
@@ -44,10 +43,6 @@ from tldw_chatbook.Chat.console_display_state import (
 )
 from tldw_chatbook.Widgets.Console.console_bounded_section import (
     ConsoleBoundedSection,
-)
-from tldw_chatbook.Widgets.Console.console_changed_files_section import (
-    ConsoleChangedFilesState,
-    ConsoleChangedFilesSection,
 )
 from tldw_chatbook.Chat.console_project_instructions import (
     ProjectInstructionControlState,
@@ -131,7 +126,6 @@ _EXPECTED_BOUNDARY_ANCHORS = (
     ("console-send-authority-summary", "Next send authority"),
     ("console-staged-context-tray", "Sources"),
     ("console-retrieval-scope-row", "Scope"),
-    ("console-changed-files-section", "Changed Files"),
     ("console-inspector-run-heading", "Run"),
     ("console-inspector-source-readiness-heading", "Source Readiness"),
     ("console-inspector-tools-heading", "Tools"),
@@ -202,13 +196,12 @@ def _mounted_boundary_ids(rail) -> tuple[str, ...]:
     """Read semantic boundaries from the mounted production hierarchy."""
     body = rail.query_one("#console-inspector-rail-body")
     direct_children = tuple(child.id for child in body.children)
-    assert direct_children[:4] == (
+    assert direct_children[:3] == (
         "console-staged-context-tray",
         "console-retrieval-scope-row",
-        "console-changed-files-section",
         "console-run-inspector",
     )
-    assert len(direct_children) == 5
+    assert len(direct_children) == 4
     assert direct_children[-1] == "console-live-work-section"
 
     run_wrapper = rail.query_one("#console-run-inspector")
@@ -237,7 +230,7 @@ def _mounted_boundary_ids(rail) -> tuple[str, ...]:
     return (
         "console-project-instruction-status",
         "console-send-authority-summary",
-        *direct_children[:3],
+        *direct_children[:2],
         *inspector_boundaries,
         run_wrapper_children[-1],
         next(card_id for card_id in _LIVE_WORK_IDS if list(rail.query(f"#{card_id}"))),
@@ -252,7 +245,6 @@ def test_inspector_boundary_inventory_has_approved_order_and_specialized_owners(
         "Next send authority",
         "Sources",
         "Scope",
-        "Changed Files",
         "Run",
         "Source Readiness",
         "Tools",
@@ -267,14 +259,13 @@ def test_inspector_boundary_inventory_has_approved_order_and_specialized_owners(
         "Session Settings",
         "Live Work",
     )
-    assert dict(_EXPECTED_BOUNDARY_ANCHORS[:5]) | {
+    assert dict(_EXPECTED_BOUNDARY_ANCHORS[:4]) | {
         "console-settings-summary": "Session Settings",
     } | {live_id: "Live Work" for live_id in _LIVE_WORK_IDS} == {
         "console-project-instruction-status": "Project Instructions",
         "console-send-authority-summary": "Next send authority",
         "console-staged-context-tray": "Sources",
         "console-retrieval-scope-row": "Scope",
-        "console-changed-files-section": "Changed Files",
         "console-settings-summary": "Session Settings",
         "console-pending-launch-card": "Live Work",
         "console-live-work-source-readiness": "Live Work",
@@ -353,21 +344,6 @@ async def test_mounted_inspector_semantic_census_matches_actual_right_rail_order
         await pilot.pause()
         rail = pilot.app.screen.query_one("#console-right-rail")
         rail._inspector_state = exhaustive_state
-        rail._changed_files_state = ConsoleChangedFilesState(
-            entries=(
-                ConversationFileEntry(
-                    root="/tmp/project",
-                    path="changed.py",
-                    label="changed.py",
-                    status="M",
-                    adds=1,
-                    dels=0,
-                    run_id="run-1",
-                    snapshot_id=1,
-                    note_count=0,
-                ),
-            )
-        )
         await rail.recompose()
         await pilot.pause()
 
@@ -389,7 +365,6 @@ async def test_mounted_inspector_semantic_census_matches_actual_right_rail_order
 
         specialized = (
             ("#console-staged-context-tray", "sources"),
-            ("#console-changed-files-section", "changed-files"),
             ("#console-settings-summary", "session-settings"),
             ("#console-live-work-section", "live-work"),
         )
@@ -397,12 +372,6 @@ async def test_mounted_inspector_semantic_census_matches_actual_right_rail_order
             root = rail.query_one(root_selector)
             bodies = list(root.query(ConsoleBoundedSection))
             assert [body.section_id for body in bodies] == [section_id]
-
-        changed = rail.query_one(
-            "#console-changed-files-section", ConsoleChangedFilesSection
-        )
-        assert changed.MAX_VISIBLE_ROWS == 12
-
 
 @pytest.mark.asyncio
 async def test_new_specialized_sibling_fails_mounted_production_census():

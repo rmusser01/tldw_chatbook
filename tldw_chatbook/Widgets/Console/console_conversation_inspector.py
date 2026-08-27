@@ -66,7 +66,7 @@ from __future__ import annotations
 import copy
 import json
 from collections.abc import Awaitable, Callable, Sequence
-from dataclasses import asdict, dataclass
+from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
 from typing import Any
@@ -106,6 +106,13 @@ from tldw_chatbook.Utils.token_counter import estimate_tokens
 from tldw_chatbook.Widgets.modal_dismissal import SafeModalDismissMixin
 from tldw_chatbook.Widgets.Console.console_project_instructions import (
     ConsoleProjectInstructionContextPanel,
+)
+from tldw_chatbook.Widgets.Console.console_capture_policy_dialog import (
+    CapturePolicyBindings,
+    ConsoleCapturePolicyDialog,
+)
+from tldw_chatbook.Widgets.Console.console_exchange_export_dialog import (
+    ConsoleExchangeExportDialog,
 )
 
 MODAL_ID = "console-inspector-modal"
@@ -171,8 +178,7 @@ _EXCHANGE_TURN_ID_PREFIX = "console-inspector-exchange-turn-"
 _EXCHANGE_CALL_ID_PREFIX = "console-inspector-exchange-call-"
 _EXCHANGE_SECTION_ID_PREFIX = "console-inspector-exchange-section-"
 _EXCHANGE_MESSAGE_ID_PREFIX = "console-inspector-exchange-message-"
-_EXCHANGE_COPY_BUTTON_PREFIX = "console-inspector-exchange-copy-"
-_EXCHANGE_SAVE_BUTTON_PREFIX = "console-inspector-exchange-save-"
+_EXCHANGE_EXPORT_BUTTON_PREFIX = "console-inspector-exchange-export-"
 
 # Section keys, in render order. "toolcalls" (the response's own tool
 # calls) is built separately -- and OMITTED entirely when empty -- rather
@@ -246,11 +252,13 @@ class ConsoleConversationInspector(SafeModalDismissMixin, ModalScreen[None]):
         border: tall gray; padding: 1 2;
     }
     #console-inspector-header { height: auto; }
+    #console-inspector-policy-status { height: auto; color: $text-muted; }
     #console-inspector-tabs { height: 1fr; margin-top: 1; }
     #console-inspector-costs-rows { height: 1fr; }
     .console-inspector-cost-row { height: auto; }
     #console-inspector-costs-totals { height: auto; margin-top: 1; text-style: bold; }
     #console-inspector-exchange-caveat { height: auto; color: gray; margin-bottom: 1; }
+    #console-inspector-capture-status { height: auto; color: yellow; }
     #console-inspector-exchange-turns { height: 1fr; }
     .console-inspector-exchange-turn { height: auto; }
     .console-inspector-exchange-call { height: auto; }
@@ -284,6 +292,7 @@ class ConsoleConversationInspector(SafeModalDismissMixin, ModalScreen[None]):
     BINDINGS = [
         ("escape", "request_safe_cancel", "Close"),
         ("r", "refresh", "Refresh"),
+        ("c", "capture_policy", "Capture"),
     ]
     SAFE_MODAL_CONTENT = f"#{MODAL_ID}"
 
@@ -351,6 +360,10 @@ class ConsoleConversationInspector(SafeModalDismissMixin, ModalScreen[None]):
             [str | None, str], Awaitable[ConsoleProjectInstructionState | None]
         ]
         | None = None,
+        target_session_id: str | None = None,
+        target_conversation_id: str | None = None,
+        capture_revision_provider: Callable[[], int | None] | None = None,
+        capture_policy_bindings: CapturePolicyBindings | None = None,
         initial_tab: str = TAB_COSTS,
     ) -> None:
         """Initialize the inspector.
@@ -397,6 +410,12 @@ class ConsoleConversationInspector(SafeModalDismissMixin, ModalScreen[None]):
                 recovery decision (enable / choose folder / disable),
                 returning the refreshed display state or ``None`` when the
                 captured session or action is no longer valid.
+            target_session_id: Immutable session identity captured when the
+                Inspector opens.
+            target_conversation_id: Immutable persisted-conversation identity
+                captured when the Inspector opens.
+            capture_revision_provider: Optional process-local revision reader
+                used to fail closed when cached captures become stale.
             initial_tab: Which tab id starts active -- ``"inspector-costs"``
                 from the cost chip, ``"inspector-next-send"`` from Ctrl+Shift+P.
         """
@@ -440,6 +459,18 @@ class ConsoleConversationInspector(SafeModalDismissMixin, ModalScreen[None]):
         self._project_instruction_state_factory = project_instruction_state_factory
         self._project_instruction_session_id = project_instruction_session_id
         self._project_instruction_recovery = project_instruction_recovery
+        self._target_session_id = target_session_id
+        self._target_conversation_id = target_conversation_id
+        self._capture_revision_provider = capture_revision_provider
+        self._capture_policy_bindings = capture_policy_bindings
+        try:
+            self._capture_revision_at_open = (
+                capture_revision_provider()
+                if capture_revision_provider is not None
+                else None
+            )
+        except Exception:
+            self._capture_revision_at_open = None
         self._initial_tab = initial_tab or TAB_COSTS
         self._loaded_row_indices: set[int] = set()
 
@@ -460,11 +491,68 @@ class ConsoleConversationInspector(SafeModalDismissMixin, ModalScreen[None]):
         self._exchange_message_by_id: dict[str, Any] = {}
         self._save_blocked_reason = blocked_reason("save-context", ephemeral=ephemeral)
 
+    def _capture_revision_is_current(self) -> bool:
+        """Return whether cached captures still belong to the open revision."""
+        provider = self._capture_revision_provider
+        if provider is None:
+            return True
+        try:
+            current = provider()
+        except Exception:
+            current = None
+        if current is None:
+            self._invalidate_stale_captures()
+            return False
+        if self._capture_revision_at_open is None:
+            # An Inspector may open while purge owns the quiescence lease. It
+            # must fail closed during that interval, then adopt the first real
+            # post-lease revision before it has loaded any capture bodies.
+            self._capture_revision_at_open = current
+            return True
+        if current == self._capture_revision_at_open:
+            return True
+        self._invalidate_stale_captures()
+        return False
+
+    def _invalidate_stale_captures(self) -> None:
+        """Drop decoded and mounted capture bodies after revision change."""
+        self._loaded_row_indices.clear()
+        self._loaded_exchange_turn_indices.clear()
+        self._loaded_exchange_call_keys.clear()
+        self._loaded_exchange_section_ids.clear()
+        self._loaded_exchange_message_ids.clear()
+        self._exchange_capture_by_call_key.clear()
+        self._exchange_message_by_id.clear()
+        try:
+            exchange_turns = self.query_one("#console-inspector-exchange-turns")
+        except NoMatches:
+            exchange_turns = None
+        if exchange_turns is not None:
+            for text_area in exchange_turns.query(TextArea):
+                text_area.load_text("")
+        try:
+            self.query_one("#console-inspector-capture-status", Static).update(
+                "Stored captures changed · Refresh required"
+            )
+        except NoMatches:
+            pass
+
+    async def _invalidate_stale_exchange_mounts(self) -> None:
+        """Remove call nodes that may have mounted across a revision change."""
+        self._invalidate_stale_captures()
+        for call in list(self.query(".console-inspector-exchange-call")):
+            await call.remove()
+
     def compose(self) -> ComposeResult:
         """Build the header, tabbed body, and shared Close action."""
         with Vertical(id=MODAL_ID):
             yield Static(
                 "Conversation Inspector", id="console-inspector-header", markup=False
+            )
+            yield Static(
+                self._capture_policy_text(),
+                id="console-inspector-policy-status",
+                markup=False,
             )
             with TabbedContent(id="console-inspector-tabs", initial=self._initial_tab):
                 with TabPane("Costs", id=TAB_COSTS):
@@ -476,6 +564,9 @@ class ConsoleConversationInspector(SafeModalDismissMixin, ModalScreen[None]):
                         markup=False,
                     )
                 with TabPane("Exchange", id=TAB_EXCHANGE):
+                    yield Static(
+                        "", id="console-inspector-capture-status", markup=False
+                    )
                     yield Static(
                         _EXCHANGE_ADAPTER_BOUNDARY_CAVEAT,
                         id="console-inspector-exchange-caveat",
@@ -568,6 +659,45 @@ class ConsoleConversationInspector(SafeModalDismissMixin, ModalScreen[None]):
             name="load_snapshot",
         )
         self.call_after_refresh(self._focus_initial_control)
+
+    def _capture_policy_text(self) -> str:
+        bindings = self._capture_policy_bindings
+        if bindings is None:
+            return "Future exchange capture: unavailable"
+        try:
+            snapshot = bindings.read()
+        except Exception:
+            return "Future exchange capture: unavailable"
+        future = (
+            "Off" if not snapshot.enabled else snapshot.effective.detail.value.title()
+        )
+        if snapshot.active_run_detail is not None:
+            run_state = (
+                f"Active run frozen at {snapshot.active_run_detail.value.title()}"
+            )
+        elif snapshot.next_detail is not None:
+            run_state = (
+                "Next eligible send: "
+                f"{snapshot.next_detail.value.title()} (armed)"
+            )
+        else:
+            run_state = "No active run is frozen"
+        return (
+            f"“{snapshot.conversation_title}” · Future capture: {future} · c Change…\n"
+            f"{run_state}"
+        )
+
+    def check_action(self, action: str, parameters: tuple[object, ...]) -> bool | None:
+        """Hide the contextual capture binding when no live target exists."""
+        if action == "capture_policy":
+            return self._capture_policy_bindings is not None
+        return True
+
+    def action_capture_policy(self) -> None:
+        """Open policy controls for the immutable Inspector target."""
+        if self._capture_policy_bindings is None:
+            return
+        self.app.push_screen(ConsoleCapturePolicyDialog(self._capture_policy_bindings))
 
     def _focus_initial_control(self) -> None:
         """Focus the most relevant available Next Send action (task-18300,
@@ -775,6 +905,8 @@ class ConsoleConversationInspector(SafeModalDismissMixin, ModalScreen[None]):
 
     @on(Collapsible.Toggled)
     def _on_row_toggled(self, event: Collapsible.Toggled) -> None:
+        if not self._capture_revision_is_current():
+            return
         collapsible = event.collapsible
         collapsible_id = collapsible.id or ""
         if not collapsible_id.startswith(_COST_ROW_ID_PREFIX):
@@ -812,6 +944,9 @@ class ConsoleConversationInspector(SafeModalDismissMixin, ModalScreen[None]):
         and un-marks the row as loaded so collapsing/re-expanding tries
         again.
         """
+        if not self._capture_revision_is_current():
+            self._loaded_row_indices.discard(turn.index)
+            return
         load_failed = False
         try:
             pairs = await self._exchanges_loader(turn.native_message_id)
@@ -831,6 +966,10 @@ class ConsoleConversationInspector(SafeModalDismissMixin, ModalScreen[None]):
             )
             pairs = []
             load_failed = True
+
+        if not self._capture_revision_is_current():
+            self._loaded_row_indices.discard(turn.index)
+            return
 
         # Both mount-state checks precede the query/mount below -- querying
         # or mounting into a Collapsible (or its Contents) that has already
@@ -898,7 +1037,8 @@ class ConsoleConversationInspector(SafeModalDismissMixin, ModalScreen[None]):
     def _exchange_call_title(self, capture: ExchangeCapture, abandoned: bool) -> str:
         text = (
             f"call {capture.seq} [{capture.status}] {capture.model} -- "
-            f"{self._call_cost_line(capture)}"
+            f"{self._call_cost_line(capture)} · "
+            f"capture: {capture.capture_detail.value.title()}"
         )
         if abandoned:
             text += " [abandoned regeneration]"
@@ -1043,6 +1183,8 @@ class ConsoleConversationInspector(SafeModalDismissMixin, ModalScreen[None]):
         un-loaded, so collapsing/re-expanding it tries again instead of
         staying permanently empty.
         """
+        if not self._capture_revision_is_current():
+            return
         collapsible = event.collapsible
         collapsible_id = collapsible.id or ""
         if collapsible.collapsed:
@@ -1099,6 +1241,9 @@ class ConsoleConversationInspector(SafeModalDismissMixin, ModalScreen[None]):
         every deeper level (sections, messages, Copy/Save) can build
         synchronously off already-fetched data.
         """
+        if not self._capture_revision_is_current():
+            self._loaded_exchange_turn_indices.discard(turn.index)
+            return
         load_failed = False
         try:
             pairs = await self._exchanges_loader(turn.native_message_id)
@@ -1116,6 +1261,10 @@ class ConsoleConversationInspector(SafeModalDismissMixin, ModalScreen[None]):
             pairs = []
             load_failed = True
 
+        if not self._capture_revision_is_current():
+            self._loaded_exchange_turn_indices.discard(turn.index)
+            return
+
         if not collapsible.is_mounted:
             return
         try:
@@ -1127,11 +1276,23 @@ class ConsoleConversationInspector(SafeModalDismissMixin, ModalScreen[None]):
 
         if load_failed:
             self._loaded_exchange_turn_indices.discard(turn.index)
+            if not self._capture_revision_is_current():
+                await self._invalidate_stale_exchange_mounts()
+                return
             await contents.mount(Static(_LOAD_FAILURE_MESSAGE, markup=False))
+            if not self._capture_revision_is_current():
+                await self._invalidate_stale_exchange_mounts()
             return
 
         if not pairs:
+            if not self._capture_revision_is_current():
+                await self._invalidate_stale_exchange_mounts()
+                self._loaded_exchange_turn_indices.discard(turn.index)
+                return
             await contents.mount(Static(_NO_CAPTURES_MESSAGE, markup=False))
+            if not self._capture_revision_is_current():
+                await self._invalidate_stale_exchange_mounts()
+                self._loaded_exchange_turn_indices.discard(turn.index)
             return
 
         ordered = sorted(pairs, key=lambda pair: (pair[0].created_at, pair[0].seq))
@@ -1139,6 +1300,10 @@ class ConsoleConversationInspector(SafeModalDismissMixin, ModalScreen[None]):
             self._exchange_turn_title(turn, call_count=len(ordered)), markup=False
         )
         for call_ordinal, (capture, abandoned) in enumerate(ordered):
+            if not self._capture_revision_is_current():
+                await self._invalidate_stale_exchange_mounts()
+                self._loaded_exchange_turn_indices.discard(turn.index)
+                return
             call_key = f"{turn.index}-{call_ordinal}"
             self._exchange_capture_by_call_key[call_key] = capture
             await contents.mount(
@@ -1151,6 +1316,10 @@ class ConsoleConversationInspector(SafeModalDismissMixin, ModalScreen[None]):
                     classes="console-inspector-exchange-call",
                 )
             )
+            if not self._capture_revision_is_current():
+                await self._invalidate_stale_exchange_mounts()
+                self._loaded_exchange_turn_indices.discard(turn.index)
+                return
 
     def _mount_exchange_call_body(
         self, collapsible: Collapsible, call_key: str
@@ -1166,6 +1335,8 @@ class ConsoleConversationInspector(SafeModalDismissMixin, ModalScreen[None]):
         caller NOT to mark this call as loaded, so a later re-expand
         retries instead of leaving a permanently empty node (review
         finding 5)."""
+        if not self._capture_revision_is_current():
+            return False
         capture = self._exchange_capture_by_call_key.get(call_key)
         if capture is None:
             return False
@@ -1186,17 +1357,12 @@ class ConsoleConversationInspector(SafeModalDismissMixin, ModalScreen[None]):
         if usage is not None:
             contents.mount(Static(self._reported_usage_line(usage), markup=False))
 
-        save_button = Button(
-            "Save to File",
-            id=f"{_EXCHANGE_SAVE_BUTTON_PREFIX}{call_key}",
-            disabled=self._save_blocked_reason is not None,
-        )
-        if self._save_blocked_reason is not None:
-            save_button.tooltip = self._save_blocked_reason
         contents.mount(
             Horizontal(
-                Button("Copy JSON", id=f"{_EXCHANGE_COPY_BUTTON_PREFIX}{call_key}"),
-                save_button,
+                Button(
+                    "Export…",
+                    id=f"{_EXCHANGE_EXPORT_BUTTON_PREFIX}{call_key}",
+                ),
                 classes="console-inspector-exchange-call-actions",
             )
         )
@@ -1218,6 +1384,8 @@ class ConsoleConversationInspector(SafeModalDismissMixin, ModalScreen[None]):
         ``False`` leaves the section un-loaded so a later re-expand
         retries (review finding 5), same contract as
         ``_mount_exchange_call_body``."""
+        if not self._capture_revision_is_current():
+            return False
         capture = self._exchange_capture_by_call_key.get(call_key)
         if capture is None:
             return False
@@ -1292,6 +1460,8 @@ class ConsoleConversationInspector(SafeModalDismissMixin, ModalScreen[None]):
     def _mount_exchange_message_body(self, collapsible: Collapsible) -> bool:
         """Same success/failure contract as the call/section levels above
         (review finding 5)."""
+        if not self._capture_revision_is_current():
+            return False
         message = self._exchange_message_by_id.get(collapsible.id or "")
         if message is None:
             return False
@@ -1305,48 +1475,40 @@ class ConsoleConversationInspector(SafeModalDismissMixin, ModalScreen[None]):
     @on(Button.Pressed)
     def _on_exchange_call_button(self, event: Button.Pressed) -> None:
         button_id = event.button.id or ""
-        if button_id.startswith(_EXCHANGE_COPY_BUTTON_PREFIX):
+        if button_id.startswith(_EXCHANGE_EXPORT_BUTTON_PREFIX):
             event.stop()
-            call_key = button_id[len(_EXCHANGE_COPY_BUTTON_PREFIX) :]
-            self._copy_exchange_capture(call_key)
-        elif button_id.startswith(_EXCHANGE_SAVE_BUTTON_PREFIX):
-            event.stop()
-            call_key = button_id[len(_EXCHANGE_SAVE_BUTTON_PREFIX) :]
-            self._save_exchange_capture(call_key)
+            call_key = button_id[len(_EXCHANGE_EXPORT_BUTTON_PREFIX) :]
+            self._open_exchange_export(call_key)
 
-    def _copy_exchange_capture(self, call_key: str) -> None:
-        """Verbatim idiom from the retired standalone context modal's own
-        ``_copy_json`` (that sibling interpolated ``exc``'s own message
-        text into its log line; this copy does NOT -- ``pyperclip.copy(text)``
-        failing (e.g. a codec error while encoding ``text``) can embed a
-        fragment of the very payload ``text`` was built from inside
-        ``str(exc)``, and this is the one call in this file review
-        finding 1's "no capture content, no exception message body" rule
-        would otherwise miss), applied to one call's ``ExchangeCapture``
-        instead of the whole snapshot."""
+    def _open_exchange_export(self, call_key: str) -> bool:
+        """Open the governor for the exact loaded call and capture revision."""
+        if not self._capture_revision_is_current():
+            return False
         capture = self._exchange_capture_by_call_key.get(call_key)
         if capture is None:
-            return
-        text = json.dumps(asdict(capture), indent=2, default=str)
-        try:
-            import pyperclip
+            return False
+        expected = self._capture_revision_at_open
+        provider = self._capture_revision_provider
+        if expected is None or provider is None:
+            expected = 0
 
-            pyperclip.copy(text)
-            self.notify("JSON copied to clipboard.")
-        except Exception as exc:
-            logger.warning(
-                f"Failed to copy exchange capture JSON to clipboard: "
-                f"{type(exc).__name__}"
+            def provider() -> int:
+                return 0
+        self.app.push_screen(
+            ConsoleExchangeExportDialog(
+                capture,
+                expected_capture_revision=expected,
+                capture_revision_provider=provider,
             )
-            self.notify("Copy failed: pyperclip unavailable.", severity="warning")
+        )
+        return True
 
     def _validated_export_destination(self, path: Path) -> Path | None:
         """Validate a Downloads-bound export path through the repo's
         centralized ``path_validation`` module before any write.
 
-        Both Save-to-file actions in this modal (``_save_json`` for the
-        Next Send tab, ``_save_exchange_capture`` for the Exchange tab)
-        build ``Path.home() / "Downloads" / filename`` themselves; this
+        The Next Send tab's ``_save_json`` action builds
+        ``Path.home() / "Downloads" / filename`` itself; this
         confirms that resolved destination actually stays inside Downloads
         (Qodo PR #1883 finding 2 -- repo rule: file paths go through
         ``path_validation.py``) before ``mkdir``/``write_text`` run.
@@ -1391,62 +1553,6 @@ class ConsoleConversationInspector(SafeModalDismissMixin, ModalScreen[None]):
                 f"Save failed ({type(exc).__name__}): {path}", severity="error"
             )
             return None
-
-    def _save_exchange_capture(self, call_key: str) -> None:
-        """Verbatim idiom from the retired standalone context modal's own
-        ``_save_json``, applied to one call's ``ExchangeCapture``.
-
-        Review finding M7: the Save button's own ``disabled=`` state (set
-        in ``_mount_exchange_call_body``) was previously the ONLY
-        enforcement of ``self._save_blocked_reason`` -- a direct call here
-        (e.g. a future caller that bypasses the button) still wrote to
-        disk. Re-checked here as defense in depth on a privacy contract."""
-        if self._save_blocked_reason is not None:
-            return
-        capture = self._exchange_capture_by_call_key.get(call_key)
-        if capture is None:
-            return
-        text = json.dumps(asdict(capture), indent=2, default=str)
-        filename = f"chatbook_exchange_{datetime.now().strftime('%Y%m%d_%H%M%S')}.json"
-        path = Path.home() / "Downloads" / filename
-        validated_path = self._validated_export_destination(path)
-        if validated_path is None:
-            return
-        path = validated_path
-        try:
-            path.parent.mkdir(parents=True, exist_ok=True)
-            path.write_text(text, encoding="utf-8")
-            self.notify(f"Saved to {path}")
-        except OSError as exc:
-            # No exception text, no traceback: this frame's locals include
-            # `text` -- the FULL capture payload (system prompt, messages,
-            # tool schemas, response) -- and loguru's diagnose formatter
-            # would otherwise annotate the failing source line's names
-            # (including `text`) with their values. type(exc).__name__ is
-            # enough to diagnose an OSError (permissions, disk full, path
-            # too long) without echoing content; an OSError's own str() can
-            # also embed the offending path/filename, which is fine, but we
-            # skip it here for the same reason app.py's own file-write
-            # error handlers do (see app.py's three "No traceback" comments).
-            logger.error(
-                f"Failed to save exchange capture to {path}: {type(exc).__name__}"
-            )
-            # Class name + path, not the raw exception body (task-10
-            # review finding 4 -- brought to the same standard as the
-            # sibling Next Send tab's own ``_save_json`` below; an
-            # OSError's str() can echo the payload-adjacent path, but
-            # nothing about the capture content itself).
-            self.notify(
-                f"Save failed ({type(exc).__name__}): {path}", severity="error"
-            )
-        except Exception as exc:
-            logger.error(
-                f"Unexpected error saving exchange capture to {path}: "
-                f"{type(exc).__name__}"
-            )
-            self.notify(
-                f"Save failed ({type(exc).__name__}): {path}", severity="error"
-            )
 
     # -- Next Send tab (task-10, ported from the retired context modal) -
 
@@ -1786,8 +1892,7 @@ class ConsoleConversationInspector(SafeModalDismissMixin, ModalScreen[None]):
             # (hard constraint 2/3 -- the retired standalone context
             # modal's own ``_copy_json`` interpolated ``exc`` itself into
             # the log line; this is the same fix already applied to this
-            # file's own ``_copy_exchange_capture``, carried to its
-            # sibling).
+            # retired raw Exchange disclosure path).
             logger.warning(
                 f"Failed to copy context JSON to clipboard: {type(exc).__name__}"
             )
@@ -1797,8 +1902,8 @@ class ConsoleConversationInspector(SafeModalDismissMixin, ModalScreen[None]):
     def _save_json(self, event: Button.Pressed) -> None:
         event.stop()
         # M5: re-check here as defense in depth on a privacy contract, same
-        # rationale as this file's own ``_save_exchange_capture`` (Exchange
-        # tab review finding M7) -- this button's own ``disabled=`` state
+        # rationale as the retired raw Exchange save path -- this button's
+        # own ``disabled=`` state
         # (set from ``self._save_blocked_reason`` in ``compose``) was
         # previously the ONLY enforcement of the ephemeral save-block for
         # THIS tab; a direct call bypassing the button (e.g. a future
@@ -1821,7 +1926,7 @@ class ConsoleConversationInspector(SafeModalDismissMixin, ModalScreen[None]):
             self.notify(f"Saved to {path}")
         except OSError as exc:
             # No exception text, no traceback -- same rationale as this
-            # file's ``_save_exchange_capture``: ``text`` in this frame is
+            # retired Exchange save path: ``text`` in this frame is
             # the export-scrubbed next-send payload, and an OSError's own
             # str() can also embed the offending path. type(exc).__name__
             # plus the path we attempted is enough to diagnose (permissions,

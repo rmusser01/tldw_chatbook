@@ -139,6 +139,23 @@ class _ThreadOffloadedBackend:
     def __init__(self, backend: Any) -> None:
         self._backend = backend
 
+    def offloads(self, name: str) -> bool:
+        """Report whether ``name`` will be dispatched to the backend thread.
+
+        A pass-through (already-async) attribute runs its body wherever the
+        caller awaits it -- for an async *generator* over a synchronous
+        backend, that is the event loop. Callers that can choose between two
+        equivalent backend readers use this to prefer the offloaded one.
+
+        Args:
+            name: Backend attribute name to classify.
+
+        Returns:
+            True when calling ``name`` runs on the shared backend thread.
+        """
+        attribute = getattr(self._backend, name, None)
+        return callable(attribute) and not _is_async_callable(attribute)
+
     def __getattr__(self, name: str) -> Any:
         attribute = getattr(self._backend, name)
         if not callable(attribute) or _is_async_callable(attribute):
@@ -693,11 +710,32 @@ class ResearchScopeService:
         normalized_mode = self._normalize_mode(mode)
         self._enforce_policy(self._action_id("runs", "observe", normalized_mode))
         service = self._service_for_mode(normalized_mode)
-        method = getattr(service, "stream_run_events", None)
-        if method is None:
-            method = getattr(service, "observe_run_events", None)
-        if method is None:
+        # TASK-21127 left this one path on the loop. `_ThreadOffloadedBackend`
+        # passes async generators through unwrapped -- correct for the server
+        # backend, but `LocalResearchService.stream_run_events` is an
+        # `async def ... yield` whose whole body is
+        # `for event in self.list_run_events(...)`, a blocking SQLite read. So
+        # iterating the LOCAL stream executed the read on the event loop
+        # (measured: `research-backend_0` for `observe_run_events` vs
+        # `MainThread` here), on the Research window's 2 s refresh poll.
+        #
+        # A backend that exposes a SYNCHRONOUS `list_run_events` has no real
+        # streaming to offer -- its generator is a snapshot loop over exactly
+        # that call -- so take the offloaded reader instead and yield the same
+        # items. This adds no thread and no transaction: it selects a method
+        # the wrapper already dispatches to the one backend thread, which is
+        # what `observe_run_events` above has always done for this backend.
+        # A backend whose reader is async (the server) is untouched.
+        if isinstance(service, _ThreadOffloadedBackend) and service.offloads(
+            "list_run_events"
+        ):
             method = getattr(service, "list_run_events")
+        else:
+            method = getattr(service, "stream_run_events", None)
+            if method is None:
+                method = getattr(service, "observe_run_events", None)
+            if method is None:
+                method = getattr(service, "list_run_events")
         result = method(run_id, after_id=after_id)
         if inspect.isasyncgen(result):
             async for item in result:

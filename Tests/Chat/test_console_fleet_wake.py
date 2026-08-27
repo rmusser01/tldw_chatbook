@@ -39,7 +39,6 @@ from __future__ import annotations
 import asyncio
 import threading
 import time
-from dataclasses import replace
 from types import SimpleNamespace
 
 import pytest
@@ -51,9 +50,10 @@ from Tests.Chat.test_console_agent_bridge import (
     _run,
 )
 from Tests.Chat.test_fleet_attention import _AppStub
+from Tests.console_provider_doubles import provider_resolution
+from tldw_chatbook.Chat.chat_persistence_service import ChatPersistenceService
 from tldw_chatbook.Chat import console_fleet_wake
 from tldw_chatbook.Chat.console_agent_bridge import (
-    ConsoleAgentBridge,
     FleetDrained,
     SettledChild,
 )
@@ -66,8 +66,6 @@ from tldw_chatbook.Chat.console_chat_models import (
 )
 from tldw_chatbook.Chat.console_chat_store import ConsoleChatStore
 from tldw_chatbook.Chat.console_fleet_attention import register_fleet_attention
-from tldw_chatbook.Chat.console_library_destination import resolve_console_destination
-from tldw_chatbook.Chat.console_provider_gateway import ConsoleProviderResolution
 from tldw_chatbook.Chat.console_fleet_wake import (
     WAKE_NOTICE_DISCLAIMER,
     WAKE_NOTICE_HEADER,
@@ -125,17 +123,7 @@ class _RecordingWakeGateway:
         self.on_stream: object | None = None
 
     async def resolve_for_send(self, selection):
-        resolution = ConsoleProviderResolution(
-            ready=self.ready,
-            provider=selection.provider,
-            model=selection.explicit_model or selection.configured_model or "",
-            base_url=selection.base_url or "",
-            visible_copy="" if self.ready else "WIP: provider warming up",
-        )
-        return replace(
-            resolution,
-            resolved_destination=resolve_console_destination(resolution),
-        )
+        return provider_resolution(ready=self.ready)
 
     async def stream_chat(self, resolution, messages, **kwargs):
         self.payloads.append([dict(m) for m in messages])
@@ -216,7 +204,14 @@ def _controller_rig(tmp_path, *, session_title="Research"):
     chacha = CharactersRAGDB(str(tmp_path / "chacha.sqlite"), client_id="t")
     app = _AppStub(chacha)
     runs_db = AgentRunsDB(tmp_path / "runs.db", client_id="t")
-    store = ConsoleChatStore()
+    # Wire the real ChaChaNotes DB this rig already opens into the store, as
+    # production does (`ConsoleRuntime.ensure_chat_store`). A bare store has
+    # `persistence is None`, and since `a26cdafd8` a MANUAL or QUEUED send on a
+    # non-ephemeral session is refused with "Durable turn acceptance is
+    # unavailable". Wake turns are exempt (`durable_turn` covers only MANUAL and
+    # QUEUED), which is why this file's own tests never noticed -- but
+    # `test_console_viewless_hooks` imports this rig and does MANUAL sends.
+    store = ConsoleChatStore(persistence=ChatPersistenceService(chacha))
     session = store.ensure_session(title=session_title)
     gateway = _RecordingWakeGateway()
     bridge = _FakeWakeBridge(runs_db)
