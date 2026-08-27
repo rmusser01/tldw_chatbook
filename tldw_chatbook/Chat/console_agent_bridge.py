@@ -20,7 +20,7 @@ import time
 from collections import deque
 from concurrent.futures import TimeoutError as FuturesTimeoutError
 from collections.abc import Mapping, Set as AbstractSet
-from dataclasses import dataclass, replace as dataclass_replace
+from dataclasses import dataclass, field, replace as dataclass_replace
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Callable, ContextManager, Sequence
 from uuid import uuid4
@@ -1667,6 +1667,16 @@ class AgentLiveSnapshot:
 
 
 @dataclass
+class _ChildChangeState:
+    """Attributed WRITE intent shared across one spawning turn's children."""
+
+    owner_key: str
+    run_ids: set[str] = field(default_factory=set)
+    touched_paths: set[str] = field(default_factory=set)
+    live_scopes: int = 0
+
+
+@dataclass
 class _PostTurnChangeWindow:
     """One conversation's open "what did the survivors do" change window.
 
@@ -1681,6 +1691,7 @@ class _PostTurnChangeWindow:
         session_id: Session the transcript row is appended to.
         handle: The pre-satisfied follow-on handle (see
             ``ChangeTurnTracker.continuation``).
+        child_states: Mutable WRITE-path states retained by this window.
         successor: The NEXT turn's ``TurnHandle``, once one has started.
             Its baseline shas become this window's end, whoever closes it
             and whenever -- because from the instant that baseline is
@@ -1693,6 +1704,7 @@ class _PostTurnChangeWindow:
     run_id: str
     session_id: str
     handle: Any
+    child_states: tuple[_ChildChangeState, ...] = ()
     successor: Any = None
 
 
@@ -3550,6 +3562,14 @@ class ConsoleAgentBridge:
         # that turn's BASELINE shas, so the two windows share a boundary
         # and nothing can land between them).
         self._post_turn_change_windows: dict[str, "_PostTurnChangeWindow"] = {}
+        # TASK-15671 Task 3: attributed child WRITE intent that must remain
+        # available across the spawning turn's E snapshot. Keyed first by
+        # conversation, then by the spawning turn's opaque owner key. The
+        # mutable state objects are also retained directly by survivor
+        # windows, so settle-time map cleanup cannot erase a window's paths.
+        self._child_change_states: dict[
+            str, dict[str, "_ChildChangeState"]
+        ] = {}
         # Live sub-agent count per conversation, incremented/decremented by
         # `_child_run_scope` on the CHILD's own thread. Deliberately not
         # read off the coordinator: `fleet.finish()` runs AFTER the child's
@@ -4285,6 +4305,10 @@ class ConsoleAgentBridge:
         # one key, so an earlier turn's surviving child -- which writes
         # under its OWN run id -- can never land in it.
         primary_live_key = uuid4().hex
+        child_change_state = _ChildChangeState(owner_key=primary_live_key)
+        child_path_root = (
+            scratch_root.expanduser().resolve() if scratch_root is not None else None
+        )
         live_steps = _LiveStepFeed()
         subagents: list[SubAgentSummary] = []
         #: run key -> that run's own live step feed. The primary's entry is
@@ -4331,6 +4355,22 @@ class ConsoleAgentBridge:
                 # regresses for a step that cannot be attributed.
                 else (run_id or primary_live_key)
             )
+            if agent_kind != AGENT_KIND_PRIMARY and run_id:
+                touched_paths = ChangeTurnTracker.tool_touched_paths((step,))
+                normalized_paths: list[str] = []
+                for raw_path in touched_paths:
+                    path = Path(raw_path)
+                    if path.is_absolute():
+                        normalized_paths.append(str(path))
+                    elif child_path_root is not None:
+                        normalized_paths.append(
+                            str((child_path_root / path).resolve())
+                        )
+                    else:
+                        normalized_paths.append(raw_path)
+                with self._change_window_lock:
+                    child_change_state.run_ids.add(run_id)
+                    child_change_state.touched_paths.update(normalized_paths)
             buddy_run_id = run_id or live_key
             buddy_sink = self._buddy_sink
             if buddy_sink is not None:
@@ -4573,6 +4613,30 @@ class ConsoleAgentBridge:
                 ),
             )
 
+        def on_child_settled(run_id: str | None, status: str) -> None:
+            try:
+                if not service.live_subagent_handles():
+                    with self._change_window_lock:
+                        states = self._child_change_states.get(conversation_id)
+                        if (
+                            states is not None
+                            and states.get(child_change_state.owner_key)
+                            is child_change_state
+                        ):
+                            states.pop(child_change_state.owner_key, None)
+                            if not states:
+                                self._child_change_states.pop(
+                                    conversation_id, None
+                                )
+            finally:
+                self._on_fleet_child_settled(
+                    conversation_id,
+                    session_id,
+                    assistant_message_id,
+                    run_id,
+                    status,
+                )
+
         service = AgentService(
             self._db,
             registry,
@@ -4606,22 +4670,18 @@ class ConsoleAgentBridge:
             # in the bridge knows it (the coordinator marks a handle
             # terminal only AFTER this scope exits).
             child_model_scope=functools.partial(
-                self._child_run_scope, conversation_id, adapter
-            ),
-            # PR3a-2 Task 2: the settle half of the same seam. This turn's
-            # IDENTITY -- session + originating assistant message -- is
-            # bound here by partial (per turn, correctly: a drain can mix
-            # an earlier turn's survivor with this turn's child, and each
-            # settle record must carry its own turn's identity); the run
-            # id arrives per call from `run_child`'s finally, where it is
-            # first knowable. The fan-out REGISTRY this feeds is bridge-
-            # lifetime and is deliberately not touched here.
-            on_child_settled=functools.partial(
-                self._on_fleet_child_settled,
+                self._child_run_scope,
                 conversation_id,
-                session_id,
-                assistant_message_id,
+                adapter,
+                child_change_state,
             ),
+            # PR3a-2 Task 2: the settle half of the same seam. The wrapper
+            # above binds this turn's IDENTITY -- session + originating
+            # assistant message -- and removes Task 3's live WRITE state
+            # only after this service's final handle settles, then forwards
+            # to the existing fan-out path. The run id arrives per call from
+            # `run_child`'s finally, where it is first knowable.
+            on_child_settled=on_child_settled,
             # PR3a-1 Task 6a: this CONVERSATION's coordinator, not this
             # turn's -- the only thing that makes `[agents]
             # max_live_subagents` a bound on the fleet rather than on one
@@ -4821,13 +4881,52 @@ class ConsoleAgentBridge:
                     # never on both cards.
                     self._close_post_turn_change_window(conversation_id)
                     _steps = outcome.steps if "outcome" in locals() else []
-                    # Read before E: a child still running when the end
-                    # snapshot is taken is a child whose later writes this
-                    # turn's record cannot contain.
-                    _had_live_children = self._live_child_count(conversation_id) > 0
+                    _current_state_pending = bool(service.live_subagent_handles())
+                    with self._change_window_lock:
+                        if _current_state_pending:
+                            self._child_change_states.setdefault(
+                                conversation_id, {}
+                            )[child_change_state.owner_key] = child_change_state
+                        _child_states_before_e = tuple(
+                            self._child_change_states.get(
+                                conversation_id, {}
+                            ).values()
+                        )
+                        _child_paths_before_e = sorted(
+                            {
+                                path
+                                for state in _child_states_before_e
+                                for path in state.touched_paths
+                            }
+                        )
+                    # A handle can settle between the parent-visible query
+                    # and registration. Keep the captured reference for E,
+                    # but do not strand a dead state in the live map after
+                    # its one settle callback already ran.
+                    if (
+                        _current_state_pending
+                        and not service.live_subagent_handles()
+                    ):
+                        with self._change_window_lock:
+                            states = self._child_change_states.get(conversation_id)
+                            if (
+                                states is not None
+                                and states.get(child_change_state.owner_key)
+                                is child_change_state
+                                and child_change_state.live_scopes == 0
+                            ):
+                                states.pop(child_change_state.owner_key, None)
+                                if not states:
+                                    self._child_change_states.pop(
+                                        conversation_id, None
+                                    )
+                    _primary_paths = ChangeTurnTracker.tool_touched_paths(_steps)
+                    _touched_paths = list(
+                        dict.fromkeys((*_primary_paths, *_child_paths_before_e))
+                    )
                     _records = self._change_tracker.end_turn(
                         change_handle,
-                        touched_paths=ChangeTurnTracker.tool_touched_paths(_steps),
+                        touched_paths=_touched_paths,
                     )
                     if "run_id" in locals():
                         self._record_change_snapshots(
@@ -4849,12 +4948,13 @@ class ConsoleAgentBridge:
                                 else CHANGE_KIND_TURN
                             ),
                         )
-                        if _had_live_children:
+                        if _child_states_before_e:
                             self._open_post_turn_change_window(
                                 conversation_id,
                                 run_id=run_id,
                                 session_id=session_id,
                                 handle=change_handle,
+                                child_states=_child_states_before_e,
                             )
                     elif _records:
                         logger.warning(
@@ -5058,7 +5158,12 @@ class ConsoleAgentBridge:
                     retained.append(service)
 
     @contextlib.contextmanager
-    def _child_run_scope(self, conversation_id: str, adapter: Any):
+    def _child_run_scope(
+        self,
+        conversation_id: str,
+        adapter: Any,
+        child_change_state: _ChildChangeState,
+    ):
         """One fleet child's whole life, as seen by this bridge (Task 6c).
 
         Wraps the per-child model-call lifeline PR3a-1 Task 1 introduced
@@ -5080,8 +5185,13 @@ class ConsoleAgentBridge:
         Args:
             conversation_id: The conversation this child belongs to.
             adapter: The turn's ``_StreamingModelAdapter``.
+            child_change_state: Shared WRITE-path state for the spawning turn.
         """
         with self._change_window_lock:
+            self._child_change_states.setdefault(conversation_id, {})[
+                child_change_state.owner_key
+            ] = child_change_state
+            child_change_state.live_scopes += 1
             self._live_child_counts[conversation_id] = (
                 self._live_child_counts.get(conversation_id, 0) + 1
             )
@@ -5099,6 +5209,7 @@ class ConsoleAgentBridge:
                 yield
         finally:
             with self._change_window_lock:
+                child_change_state.live_scopes -= 1
                 remaining = self._live_child_counts.get(conversation_id, 1) - 1
                 if remaining > 0:
                     self._live_child_counts[conversation_id] = remaining
@@ -5183,11 +5294,11 @@ class ConsoleAgentBridge:
         """One fleet child fully settled -- record it; fire on the drain.
 
         The ``on_child_settled`` hook `run_reply` hands `AgentService`,
-        with this turn's identity bound by partial (the scope partial
-        cannot carry run identity -- no run row exists when the scope is
-        entered, and the scope exits before the row is terminal). Runs on
-        the child's own thread, once per child, strictly after that
-        child's row went terminal (`run_child`'s finally ordering).
+        with this turn's identity bound by its child-state wrapper (the
+        scope partial cannot carry run identity -- no run row exists when
+        the scope is entered, and the scope exits before the row is
+        terminal). Runs on the child's own thread, once per child, strictly
+        after that child's row went terminal (`run_child`'s finally ordering).
 
         When the last unsettled child of the conversation settles, pops
         the accumulated ``SettledChild`` records and fires the fan-out --
@@ -5237,6 +5348,7 @@ class ConsoleAgentBridge:
         run_id: str,
         session_id: str,
         handle: Any,
+        child_states: Sequence[_ChildChangeState] = (),
     ) -> None:
         """Start tracking what this turn's survivors do from here on.
 
@@ -5256,6 +5368,7 @@ class ConsoleAgentBridge:
             run_id: The turn whose survivors this window covers.
             session_id: Session for the transcript row.
             handle: The turn's own (already ended) ``TurnHandle``.
+            child_states: Mutable child WRITE states retained by this window.
         """
         if self._change_tracker is None:
             return
@@ -5264,7 +5377,10 @@ class ConsoleAgentBridge:
             if follow_on is None:
                 return
             window = _PostTurnChangeWindow(
-                run_id=run_id, session_id=session_id, handle=follow_on
+                run_id=run_id,
+                session_id=session_id,
+                handle=follow_on,
+                child_states=tuple(child_states),
             )
             # A previous window for this conversation should already be
             # closed (this turn closed it at its own baseline), so this is
@@ -5276,7 +5392,11 @@ class ConsoleAgentBridge:
             self._close_post_turn_change_window(conversation_id)
             with self._change_window_lock:
                 self._post_turn_change_windows[conversation_id] = window
-                still_live = self._live_child_counts.get(conversation_id, 0) > 0
+                live_states = self._child_change_states.get(conversation_id, {})
+                still_live = any(
+                    live_states.get(state.owner_key) is state
+                    for state in window.child_states
+                )
             if not still_live:
                 self._close_post_turn_change_window(conversation_id)
         except Exception:  # noqa: BLE001 -- tracking never breaks a reply
@@ -5328,6 +5448,17 @@ class ConsoleAgentBridge:
         """
         with self._change_window_lock:
             window = self._post_turn_change_windows.pop(conversation_id, None)
+            touched_paths = (
+                sorted(
+                    {
+                        path
+                        for state in window.child_states
+                        for path in state.touched_paths
+                    }
+                )
+                if window is not None
+                else []
+            )
         if window is None or self._change_tracker is None:
             return
         try:
@@ -5338,7 +5469,11 @@ class ConsoleAgentBridge:
                 # running well before the successor turn ends.
                 window.successor.await_baseline()
                 end_shas = dict(window.successor.baselines)
-            records = self._change_tracker.end_turn(window.handle, end_shas=end_shas)
+            records = self._change_tracker.end_turn(
+                window.handle,
+                touched_paths=touched_paths,
+                end_shas=end_shas,
+            )
             if not records:
                 return
             self._record_change_snapshots(

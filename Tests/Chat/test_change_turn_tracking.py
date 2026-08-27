@@ -2195,6 +2195,193 @@ def test_post_turn_real_write_file_surfaces_a_new_ignored_path(
     )
 
 
+def test_pending_child_before_scope_entry_keeps_ignored_write_reviewable(
+    tmp_path, root, tracker, monkeypatch
+):
+    import tldw_chatbook.config as config_module
+
+    monkeypatch.setattr(
+        config_module,
+        "get_cli_setting",
+        lambda section, key=None, default=None: (
+            True if section == "tools" and key == "write_file_enabled" else default
+        ),
+    )
+
+    target = root / "pending-child-output.txt"
+    sentinel = "written after delayed child scope entry\n"
+    (root / ".gitignore").write_text(f"{target.name}\n")
+    child_write_gate = threading.Event()
+    scope_waiting = threading.Event()
+    enter_scope = threading.Event()
+    gateway = _FleetSurvivorGateway(
+        parent_scripts=[[_spawn_fence("write delayed output")], ["parent done"]],
+        gate=child_write_gate,
+        # Relative tool input exercises scratch-root normalization before
+        # the path crosses parent E.
+        child_scripts=[[_write_fence(Path(target.name), sentinel)], ["child done"]],
+    )
+    bridge, db, store, session, aid = _bridge_with(tmp_path, gateway, tracker)
+    original_scope = bridge._child_run_scope
+
+    @contextlib.contextmanager
+    def delayed_scope(*args, **kwargs):
+        scope_waiting.set()
+        assert enter_scope.wait(5), "test barrier timed out before child scope entry"
+        with original_scope(*args, **kwargs):
+            yield
+
+    monkeypatch.setattr(bridge, "_child_run_scope", delayed_scope)
+    try:
+        run_id, outcome = _run(
+            bridge,
+            session,
+            aid,
+            root,
+            builtin_gate=_FakeBuiltinGateForRegistry(refuse=False),
+            scratch_root=root,
+            scratch_lease=lambda: contextlib.nullcontext(root),
+        )
+        assert outcome.status == "done"
+        assert scope_waiting.wait(5), "child never reached the pre-scope barrier"
+        assert not target.exists(), "child wrote before its parent returned"
+        enter_scope.set()
+        assert gateway.child_started.wait(5), "child never entered its real scope"
+        child_write_gate.set()
+        _join_fleet_threads()
+    finally:
+        enter_scope.set()
+        child_write_gate.set()
+        _join_fleet_threads()
+
+    assert target.read_text() == sentinel
+    assert bridge._child_change_states == {}
+    child_runs = [
+        row for row in db.list_runs("conv-1") if row["agent_kind"] == "subagent"
+    ]
+    assert len(child_runs) == 1, child_runs
+    successful_writes = [
+        step
+        for step in child_runs[0]["steps"]
+        if step["kind"] == STEP_TOOL_RESULT
+        and step.get("tool_name") == "write_file"
+        and step.get("tool_outcome") == TOOL_OUTCOME_SUCCESS
+    ]
+    assert len(successful_writes) == 1, child_runs[0]["steps"]
+
+    repo = tracker.service.repo_for_root(root)
+    rows = db.change_snapshots_for_run(run_id)
+    survivor_rows = [row for row in rows if row["kind"] == "subagent_post_turn"]
+    assert len(survivor_rows) == 1, (
+        "the pending child's ignored WRITE path was omitted from survivor close: "
+        f"{rows}"
+    )
+    changed = repo.changed_files(
+        survivor_rows[0]["baseline_sha"], survivor_rows[0]["end_sha"]
+    )
+    assert [item.path for item in changed] == [target.name], changed
+    assert (
+        repo.file_bytes(survivor_rows[0]["end_sha"], target.name)
+        == sentinel.encode()
+    )
+
+
+def test_child_write_during_blocked_parent_e_is_retried_by_immediate_close(
+    tmp_path, root, tracker, monkeypatch
+):
+    import tldw_chatbook.config as config_module
+
+    monkeypatch.setattr(
+        config_module,
+        "get_cli_setting",
+        lambda section, key=None, default=None: (
+            True if section == "tools" and key == "write_file_enabled" else default
+        ),
+    )
+
+    target = root / "blocked-parent-e-output.txt"
+    sentinel = "written while parent E was blocked\n"
+    (root / ".gitignore").write_text(f"{target.name}\n")
+    child_write_gate = threading.Event()
+    end_started = threading.Event()
+    release_end = threading.Event()
+    gateway = _FleetSurvivorGateway(
+        parent_scripts=[[_spawn_fence("write during parent E")], ["parent done"]],
+        gate=child_write_gate,
+        child_scripts=[[_write_fence(target, sentinel)], ["child done"]],
+    )
+    bridge, db, store, session, aid = _bridge_with(tmp_path, gateway, tracker)
+    repo = tracker.service.repo_for_root(root)
+    original_snapshot = repo.snapshot
+    original_repo_for_root = tracker.service.repo_for_root
+
+    def instrumented_repo_for_root(candidate):
+        if Path(candidate).expanduser().resolve() == root.resolve():
+            return repo
+        return original_repo_for_root(candidate)
+
+    def blocked_snapshot(message, *args, **kwargs):
+        if message == "turn end":
+            end_started.set()
+            assert release_end.wait(5), "test barrier timed out inside parent E"
+        return original_snapshot(message, *args, **kwargs)
+
+    monkeypatch.setattr(tracker.service, "repo_for_root", instrumented_repo_for_root)
+    monkeypatch.setattr(repo, "snapshot", blocked_snapshot)
+    result: dict[str, object] = {}
+
+    def run_parent() -> None:
+        try:
+            result["value"] = _run(
+                bridge,
+                session,
+                aid,
+                root,
+                builtin_gate=_FakeBuiltinGateForRegistry(refuse=False),
+                scratch_root=root,
+                scratch_lease=lambda: contextlib.nullcontext(root),
+            )
+        except BaseException as exc:  # noqa: BLE001 -- re-raised on test thread
+            result["error"] = exc
+
+    parent = threading.Thread(target=run_parent, name="blocked-parent-e")
+    parent.start()
+    try:
+        assert end_started.wait(5), "parent never reached its E snapshot"
+        assert gateway.child_started.wait(5), "child never reached its WRITE gate"
+        child_write_gate.set()
+        _join_fleet_threads()
+        assert target.read_text() == sentinel
+        assert parent.is_alive(), "parent E was not held by the test barrier"
+    finally:
+        child_write_gate.set()
+        release_end.set()
+        parent.join(10)
+        _join_fleet_threads()
+
+    assert not parent.is_alive(), "parent did not leave E after barrier release"
+    if "error" in result:
+        raise result["error"]  # type: ignore[misc]
+    run_id, outcome = result["value"]  # type: ignore[misc]
+    assert outcome.status == "done"
+    assert bridge._child_change_states == {}
+
+    rows = db.change_snapshots_for_run(run_id)
+    survivor_rows = [row for row in rows if row["kind"] == "subagent_post_turn"]
+    assert len(survivor_rows) == 1, (
+        "the child's ignored WRITE path published during E was omitted from "
+        f"immediate survivor close: {rows}"
+    )
+    changed = repo.changed_files(
+        survivor_rows[0]["baseline_sha"], survivor_rows[0]["end_sha"]
+    )
+    assert [item.path for item in changed] == [target.name], changed
+    assert (
+        repo.file_bytes(survivor_rows[0]["end_sha"], target.name)
+        == sentinel.encode()
+    )
+
+
 def test_a_survivors_write_after_its_turn_lands_in_a_change_record(
     tmp_path, root, tracker
 ):
