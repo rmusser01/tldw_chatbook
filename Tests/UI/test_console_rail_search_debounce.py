@@ -191,7 +191,10 @@ async def test_the_debounced_pass_still_does_that_work():
             )
             await pilot.pause(0.35)
             assert counter.context_syncs > 0
-            assert counter.registry_calls > 0
+            # The debounced pass now consumes the mounted/cache-backed browser
+            # projection; it must still synchronize without reopening the
+            # workspace registry on the UI path.
+            assert counter.registry_calls == 0
 
 
 @pytest.mark.asyncio

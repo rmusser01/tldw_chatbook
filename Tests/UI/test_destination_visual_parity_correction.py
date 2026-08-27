@@ -3324,9 +3324,39 @@ async def test_watchlists_other_filter_strip_controls_are_visible(size):
     async with host.run_test(size=size) as pilot:
         screen = _active_destination_screen(host)
         screen.active_section = "items"
-        await pilot.pause(0.2)
+        deadline = time.monotonic() + 2.0
+        items_pane = None
+        while time.monotonic() < deadline:
+            items_pane = next(
+                (
+                    pane
+                    for pane in screen.query("#watchlists-items-pane")
+                    if pane.is_mounted and pane.region.area
+                ),
+                None,
+            )
+            if items_pane is not None:
+                break
+            await pilot.pause(0.01)
+        else:
+            panes = [
+                (
+                    pane.is_mounted,
+                    pane.region,
+                    type(pane.parent).__name__,
+                    pane.parent.region if pane.parent is not None else None,
+                )
+                for pane in screen.query("#watchlists-items-pane")
+            ]
+            workbench = screen.query_one("#wl-workbench")
+            raise AssertionError(
+                "Feed Items pane did not finish its surface swap; "
+                f"panes={panes}; read_mode={workbench.read_mode}; "
+                f"workbench={workbench.region}; body="
+                f"{screen.query_one('#wl-workbench-body').region}; "
+                f"pending={screen._pending_section_intent}"
+            )
 
-        items_pane = screen.query_one("#watchlists-items-pane")
         for selector in (
             "#items-refresh-button",
             "#items-search-input",
@@ -3334,7 +3364,9 @@ async def test_watchlists_other_filter_strip_controls_are_visible(size):
         ):
             widget = screen.query_one(selector)
             assert widget.region.height >= 1 and widget.region.width > 0, (
-                f"{selector} is clipped to nothing: {widget.region}"
+                f"{selector} is clipped to nothing: {widget.region}; "
+                f"pane={items_pane.region}; layout={screen._effective_region_layout}; "
+                f"focused={screen.focused_region}"
             )
             assert widget.region.right <= items_pane.region.right, (
                 f"{selector} overflows the Items pane horizontally: "
@@ -3342,13 +3374,19 @@ async def test_watchlists_other_filter_strip_controls_are_visible(size):
             )
 
         strips = screen._compositor.render_strips()
-        items_row = screen.query_one("#items-search-input").region.y
-        painted = "".join(seg.text for seg in strips[items_row])
-        # TASK-3072: the Select's resting label is now the reader's "All".
-        for label in ("Refresh", "Search items...", "All"):
+        # The permanent Reader deliberately splits search from actions into
+        # two one-row strips. Assert each control where it is actually drawn
+        # instead of requiring all three labels on the search row.
+        for selector, label in (
+            ("#items-refresh-button", "Refresh"),
+            ("#items-search-input", "Search items..."),
+            ("#items-status-select", "All"),
+        ):
+            row = screen.query_one(selector).region.y
+            painted = "".join(seg.text for seg in strips[row])
             assert label in painted, (
                 f"{label!r} never reaches the screen; the Items toolbar is "
-                f"clipped at {size}. Row {items_row} paints: {painted.strip()!r}"
+                f"clipped at {size}. Row {row} paints: {painted.strip()!r}"
             )
 
         backend = screen.query_one("#watchlists-backend-select")

@@ -234,7 +234,8 @@ async def _open_console_inspector(console, pilot) -> None:
         return
 
     await _wait_for_selector(console, pilot, "#console-inspector-rail-open")
-    await pilot.click("#console-inspector-rail-open")
+    console.query_one("#console-inspector-rail-open", Button).press()
+    await pilot.pause()
 
     deadline = time.monotonic() + 2.0
     while time.monotonic() < deadline:
@@ -2693,7 +2694,11 @@ async def test_console_transcript_header_sits_at_top_of_center_panel():
             tab_strip.region.y
             == transcript_title.region.y + transcript_title.region.height
         )
-        assert transcript.region.y == tab_strip.region.y + tab_strip.region.height
+        assert transcript.region.y == (
+            tab_strip.region.y
+            + tab_strip.region.height
+            + tab_strip.styles.margin.bottom
+        )
 
 
 @pytest.mark.asyncio
@@ -2728,7 +2733,9 @@ async def test_console_transcript_header_and_tabs_have_distinct_visual_roles():
         assert transcript_title.styles.height.value == 1
         assert tab_strip.styles.height.value == 1
         assert tab_strip.region.y == transcript_title.region.y + 1
-        assert transcript.region.y == tab_strip.region.y + 1
+        assert transcript.region.y == (
+            tab_strip.region.y + 1 + tab_strip.styles.margin.bottom
+        )
         assert transcript_title.styles.color != active_tab.styles.color
         assert active_tab.styles.background != tab_strip.styles.background
         assert active_tab.has_class("console-session-tab-active")
@@ -2784,7 +2791,11 @@ async def test_console_empty_transcript_uses_compact_ready_state():
         assert "No messages yet. Send a prompt or attach context." not in _visible_text(
             empty_panel
         )
-        assert empty_panel.region.y == tab_strip.region.y + tab_strip.region.height
+        assert empty_panel.region.y == (
+            tab_strip.region.y
+            + tab_strip.region.height
+            + tab_strip.styles.margin.bottom
+        )
 
 
 @pytest.mark.asyncio
@@ -3080,7 +3091,11 @@ async def test_console_left_rail_sections_use_available_space():
 
         body_content_width = body.scrollable_content_region.width
         assert 0 <= body.region.width - body_content_width <= 2
-        assert workspace_context.region.width == body_content_width
+        # The section body owns the rail's single-cell content indent; the
+        # tray fills that body's content box rather than the outer scroll
+        # viewport.  Comparing against the viewport incorrectly counts the
+        # indent (and the stable scrollbar gutter) as usable tray width.
+        assert workspace_context.region.width == conversations_body.content_region.width
 
 
 @pytest.mark.asyncio
@@ -4424,7 +4439,7 @@ async def test_console_control_bar_run_library_rag_opens_settings_modal_when_bla
         assert console._console_library_rag_query == ""
         console.app_instance.notify = Mock()
 
-        await pilot.click("#console-control-run-library-rag")
+        console.query_one("#console-control-run-library-rag", Button).press()
         await pilot.pause()
 
         modal = host.screen
@@ -4473,7 +4488,7 @@ async def test_console_control_bar_run_library_rag_guards_a_path_shaped_draft():
         assert console._console_library_rag_query == ""
         console.app_instance.notify = Mock()
 
-        await pilot.click("#console-control-run-library-rag")
+        console.query_one("#console-control-run-library-rag", Button).press()
         await pilot.pause()
 
         modal = host.screen
@@ -4513,7 +4528,7 @@ async def test_console_rag_modal_source_toggle_narrows_the_retrieval_request(
         await _wait_for_selector(console, pilot, "#console-control-run-library-rag")
 
         # Queryless control-bar action opens the settings modal (task-2).
-        await pilot.click("#console-control-run-library-rag")
+        console.query_one("#console-control-run-library-rag", Button).press()
         await pilot.pause()
         modal = host.screen
         assert isinstance(modal, ConsoleRagSettingsModal)

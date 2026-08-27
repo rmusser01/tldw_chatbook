@@ -25,6 +25,7 @@ from typing import Any
 
 import pytest
 from loguru import logger
+from textual.widgets import Button
 
 from Tests.UI.test_console_dictation import _mounted_console, _ready_host
 from Tests.UI.test_console_dictation_streaming import (
@@ -1339,7 +1340,7 @@ async def test_mic_button_exits_the_loop_and_opens_no_second_microphone(monkeypa
         console = await _mounted_console(host, pilot)
         session = await _enter_live_realtime(console, pilot, rig)
 
-        await pilot.click("#console-dictation")
+        console.query_one("#console-dictation", Button).press()
         await _wait_for(lambda: console._console_realtime is None, pilot)
         await pilot.pause(0.2)
 
@@ -2291,7 +2292,7 @@ async def test_adopted_capture_sends_its_transcript_as_a_text_turn(monkeypatch):
             "#console-native-composer", chat_screen_module.ConsoleComposerBar
         )
 
-        await pilot.click("#console-dictation")
+        console.query_one("#console-dictation", Button).press()
         await _wait_for(lambda: console._console_dictation_state == "recording", pilot)
         service.emit_final("what is the capital of france")
         await pilot.pause()

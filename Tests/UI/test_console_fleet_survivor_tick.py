@@ -90,6 +90,13 @@ class _SurvivorBridge:
     def has_unsettled_children(self, conversation_id: str) -> bool:
         return self.unsettled
 
+    def subagent_counts(self, conversation_ids):
+        return {
+            conversation_id: 1
+            for conversation_id in conversation_ids
+            if conversation_id == self.conversation_id
+        }
+
     def subagent_run(self, run_id: str):
         return None
 

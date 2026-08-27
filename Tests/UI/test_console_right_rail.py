@@ -23,6 +23,7 @@ and byte-identical afterwards (task-4 brief, global constraint 3).
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from contextlib import asynccontextmanager
 from dataclasses import replace
 import importlib
@@ -109,7 +110,7 @@ async def _wait_for_right_rail_condition(
     pilot,
     predicate,
     *,
-    description: str,
+    description: str | Callable[[], str],
     attempts: int = 30,
 ) -> None:
     """Bound asynchronous rail reconciliation by observable state."""
@@ -118,7 +119,8 @@ async def _wait_for_right_rail_condition(
         if predicate():
             return
         await pilot.pause()
-    pytest.fail(f"Timed out waiting for {description}")
+    detail = description() if callable(description) else description
+    pytest.fail(f"Timed out waiting for {detail}")
 
 
 _EXPECTED_BOUNDARY_ANCHORS = (
@@ -434,8 +436,8 @@ async def test_sources_use_exact_twenty_line_content_ceiling():
         "after_demand",
     ),
     (
-        ("pending-to-readiness", 190, 14, "not_configured", 20, 21),
-        ("readiness-to-pending", 202, 15, "running", 20, 21),
+        ("pending-to-readiness", 250, 9, "not_configured", 20, 21),
+        ("readiness-to-pending", 250, 9, "not_configured", 21, 20),
     ),
 )
 @pytest.mark.asyncio
@@ -450,6 +452,7 @@ async def test_live_work_widget_swaps_cover_real_twenty_twenty_one_geometry(
 ):
     async with make_console_pilot(size=(terminal_width, 52)) as pilot:
         await pilot.click("#console-inspector-rail-open")
+        await pilot.pause(0.2)
         screen = pilot.app.screen
         rail = screen.query_one("#console-right-rail")
         live_root = rail.query_one("#console-live-work-section")
@@ -482,21 +485,36 @@ async def test_live_work_widget_swaps_cover_real_twenty_twenty_one_geometry(
                 not bounded._reconcile_scheduled
                 and not rail._outer_reconcile_scheduled
                 and bounded.desired_content_lines == before_demand
-                and bounded.viewport.content_region.height == 20
-                and bounded.hint.display is False
+                and bounded.viewport.content_region.height
+                == min(before_demand, bounded.max_content_lines)
+                and bounded.hint.display is (before_demand > bounded.max_content_lines)
             )
 
         await _wait_for_right_rail_condition(
             pilot,
             initial_geometry_is_stable,
-            description="initial Live Work widget geometry",
+            description=lambda: (
+                "initial Live Work widget geometry: "
+                f"demand={bounded.desired_content_lines}, "
+                f"width={viewport.content_region.width}, "
+                f"viewport={viewport.content_region.height}, "
+                f"hint={bounded.hint.display}"
+            ),
         )
         await pilot.pause()
-        assert initial_geometry_is_stable()
+        assert initial_geometry_is_stable(), (
+            bounded.desired_content_lines,
+            viewport.content_region.width,
+            viewport.content_region.height,
+            bounded.hint.display,
+            rail._outer_reconcile_scheduled,
+        )
 
         assert bounded.desired_content_lines == before_demand
-        assert bounded.viewport.content_region.height == 20
-        assert bounded.hint.display is False
+        assert bounded.viewport.content_region.height == min(
+            before_demand, bounded.max_content_lines
+        )
+        assert bounded.hint.display is (before_demand > bounded.max_content_lines)
 
         order = []
         original_local = bounded.request_reconcile
@@ -521,12 +539,14 @@ async def test_live_work_widget_swaps_cover_real_twenty_twenty_one_geometry(
 
         def swapped_geometry_is_stable() -> bool:
             return (
-                order == ["local", "outer"]
+                order[:2] == ["local", "outer"]
+                and order.count("outer") == 1
                 and not bounded._reconcile_scheduled
                 and not rail._outer_reconcile_scheduled
                 and bounded.desired_content_lines == after_demand
-                and bounded.viewport.content_region.height == 20
-                and bounded.hint.display is True
+                and bounded.viewport.content_region.height
+                == min(after_demand, bounded.max_content_lines)
+                and bounded.hint.display is (after_demand > bounded.max_content_lines)
                 and rail.query_one("#console-live-work-section") is live_root
                 and rail.query_one("#console-live-work-header") is header
                 and rail.query_one("#console-bounded-section-live-work") is bounded
@@ -537,12 +557,19 @@ async def test_live_work_widget_swaps_cover_real_twenty_twenty_one_geometry(
         await _wait_for_right_rail_condition(
             pilot,
             swapped_geometry_is_stable,
-            description="swapped Live Work widget geometry",
+            description=lambda: (
+                "swapped Live Work widget geometry: "
+                f"demand={bounded.desired_content_lines}, "
+                f"width={viewport.content_region.width}, "
+                f"viewport={viewport.content_region.height}, "
+                f"hint={bounded.hint.display}, order={order}"
+            ),
         )
         await pilot.pause()
         assert swapped_geometry_is_stable()
 
-        assert order == ["local", "outer"]
+        assert order[:2] == ["local", "outer"]
+        assert order.count("outer") == 1
         assert rail.query_one("#console-live-work-section") is live_root
         assert rail.query_one("#console-live-work-header") is header
         assert rail.query_one("#console-live-work-status-badge") is pending_header
@@ -554,9 +581,13 @@ async def test_live_work_widget_swaps_cover_real_twenty_twenty_one_geometry(
         assert bounded.viewport is viewport
         assert bounded.hint is hint
         assert bounded.desired_content_lines == after_demand
-        assert bounded.viewport.content_region.height == 20
-        assert bounded.hint.display is True
-        assert bounded.hint.region.height == 1
+        assert bounded.viewport.content_region.height == min(
+            after_demand, bounded.max_content_lines
+        )
+        assert bounded.hint.display is (after_demand > bounded.max_content_lines)
+        assert bounded.hint.region.height == int(
+            after_demand > bounded.max_content_lines
+        )
         assert bounded._reconcile_scheduled is False
         assert rail._outer_owner_reconcile_count == baseline + 1
         assert rail._outer_reconcile_scheduled is False

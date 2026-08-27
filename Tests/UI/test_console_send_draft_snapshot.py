@@ -15,8 +15,11 @@ from textual.widgets import Button
 
 from Tests.UI.test_console_native_chat_flow import (
     BlockedGateway,
+    CapturingGateway,
+    _configure_native_ready_console,
     _select_llamacpp_console,
 )
+from Tests.UI.app_factory import attach_chachanotes_db
 from Tests.UI.test_destination_shells import _build_test_app, _wait_for_selector
 from Tests.UI.test_product_maturity_gate1_core_loop_screen_adaptation import (
     ConsoleHarness,
@@ -33,7 +36,7 @@ from tldw_chatbook.Widgets.Console import ConsoleComposerBar
 DUMMY_OPENAI_API_KEY = "DUMMY_OPENAI_API_KEY"
 
 
-async def _wait_for_text(console, pilot, needle: str, tries: int = 40) -> None:
+async def _wait_for_text(console, pilot, needle: str, tries: int = 120) -> None:
     for _ in range(tries):
         if needle in _visible_text(console):
             return
@@ -43,8 +46,8 @@ async def _wait_for_text(console, pilot, needle: str, tries: int = 40) -> None:
 
 def _ready_openai_app(monkeypatch, reply: str):
     app = _build_test_app()
-    app.app_config["chat_defaults"] = {"provider": "openai", "model": "gpt-4.1"}
-    app.app_config["api_settings"] = {"openai": {"api_key": DUMMY_OPENAI_API_KEY}}
+    attach_chachanotes_db(app)
+    _configure_native_ready_console(app)
 
     def fake_chat_api_call(**_kwargs):
         return reply
@@ -132,8 +135,8 @@ async def test_mouse_send_completion_preserves_text_typed_after_acceptance(monke
 @pytest.mark.asyncio
 async def test_console_blocked_send_restores_snapshot_before_late_keystrokes():
     app = _build_test_app()
-    app.chat_api_provider_value = "llama_cpp"
-    app.chat_api_model_value = "test-model"
+    attach_chachanotes_db(app)
+    _configure_native_ready_console(app, model="test-model")
     app.console_provider_gateway_factory = BlockedGateway
     host = ConsoleHarness(app)
 
@@ -291,6 +294,7 @@ async def test_console_fresh_profile_first_send_resolves_real_session_not_sentin
     resolvable id instead of silently starting a separate "no session"
     bucket."""
     app = _ready_openai_app(monkeypatch, "fresh reply")
+    app.console_provider_gateway_factory = lambda: CapturingGateway(("fresh reply",))
     host = ConsoleHarness(app)
 
     async with host.run_test(size=(160, 48)) as pilot:

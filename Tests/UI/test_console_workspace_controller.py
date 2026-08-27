@@ -70,8 +70,9 @@ class _NoMountScreen:
     def call_after_refresh(self, callback) -> None:
         self.after_refresh.append(callback)
 
-    def run_worker(self, coroutine, **kwargs) -> None:
-        self.workers.append((coroutine, kwargs))
+    def run_worker(self, work, **kwargs) -> None:
+        self.workers.append((work, kwargs))
+        coroutine = work() if callable(work) else work
         coroutine.close()
 
 

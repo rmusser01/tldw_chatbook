@@ -337,9 +337,10 @@ async def test_bare_slash_skill_name_no_longer_auto_runs_shows_unknown_command_h
         available_skills=[_skill("code-review", "Reviews a diff.")]
     )
     app.skills_scope_service = skills
+    host = ConsoleHarness(app)
 
-    async with app.run_test(size=(160, 48)) as pilot:
-        console = await _wait_for_production_chat_screen(app, pilot)
+    async with host.run_test(size=(160, 48)) as pilot:
+        console = host.screen_stack[-1]
         await _wait_for_selector(console, pilot, "#console-native-composer")
         composer = console.query_one("#console-native-composer", ConsoleComposerBar)
         composer.load_draft("/code-review fix it")

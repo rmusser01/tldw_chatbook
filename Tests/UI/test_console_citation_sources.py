@@ -974,10 +974,12 @@ async def test_zero_result_is_cached_and_not_requeried_on_unrelated_changes() ->
     transcript = ConsoleTranscript()
     transcript.set_messages(messages)
     transcript.set_citation_counts(screen._console_citation_counts)
+    rows = transcript._transcript_rows()
     citation_row_ids = {
-        row.message.id
-        for row in transcript._transcript_rows()
-        if row.kind == "citations" and row.message is not None
+        nested.message.id
+        for row in rows
+        for nested in ((row,) + row.nested_rows)
+        if nested.kind == "citations" and nested.message is not None
     }
     assert citation_row_ids == {"assistant-2", "assistant-3"}
 

@@ -7,7 +7,6 @@ the defect fails on the mechanism rather than on a symptom.
 
 from __future__ import annotations
 
-import asyncio
 from unittest.mock import patch
 
 import pytest
@@ -214,15 +213,7 @@ async def test_canvas_sync_suppresses_its_screen_fallback_inside_a_projection() 
 
 @pytest.mark.asyncio
 async def test_slow_canvas_swap_is_not_raced_by_the_media_browse_sync() -> None:
-    """A media browse landing mid-swap must not recompose or duplicate the canvas.
-
-    The delay is injected INSIDE the guarded region (the host's
-    ``remove_children`` await) because that is where the real race lives:
-    `_exit_library_media_viewer` kicks the list reload one line before
-    scheduling the swap, so a reload slower than the swap resolves while
-    the canvas is detached. The shipped tests missed it because their
-    in-memory service always won the race.
-    """
+    """Reader Back keeps the retained canvas mounted and avoids recomposition."""
     host = _media_app_host()
     async with host.run_test(size=LIBRARY_TEST_SIZE) as pilot:
         screen = await _boot_media_library(host, pilot)
@@ -230,32 +221,24 @@ async def test_slow_canvas_swap_is_not_raced_by_the_media_browse_sync() -> None:
         await _wait_for_selector(screen, pilot, "#library-media-content-search")
 
         canvas_host = screen.query_one("#library-canvas")
+        removals: list[tuple[object, ...]] = []
         original_remove = canvas_host.remove_children
-        fired: list[str] = []
 
-        async def slow_remove(*args, **kwargs):
-            result = await original_remove(*args, **kwargs)
-            # Mid-window: the browse projection lands here in production.
-            screen._sync_library_media_browse_state(None)
-            fired.append("browse-sync")
-            await asyncio.sleep(0.02)
-            return result
+        def record_remove(*args, **kwargs):
+            removals.append(args)
+            return original_remove(*args, **kwargs)
 
-        canvas_host.remove_children = slow_remove
-        try:
-            calls, spy = _screen_recompose_spy()
-            with patch.object(BaseAppScreen, "refresh", spy):
-                screen.query_one("#library-media-back", Button).press()
-                await _wait_for_selector(screen, pilot, "#library-media-row-0")
-                for _ in range(15):
-                    await pilot.pause(0.02)
-        finally:
-            canvas_host.remove_children = original_remove
+        canvas_host.remove_children = record_remove
+        calls, spy = _screen_recompose_spy()
+        with patch.object(BaseAppScreen, "refresh", spy):
+            screen.query_one("#library-media-back", Button).press()
+            await _wait_for_selector(screen, pilot, "#library-media-row-0")
+            for _ in range(15):
+                await pilot.pause(0.02)
 
-        assert fired, "the mid-swap browse sync never ran -- window not hit"
+        assert removals == [], "Reader Back tore down the retained canvas"
         assert calls == [], (
-            "a whole-screen recompose fired during the targeted swap -- the "
-            "canvas-sync fallback raced the projection"
+            "a whole-screen recompose fired while returning to retained Items"
         )
         # Exactly one canvas, i.e. no duplicate-id collision survived.
         assert len(screen.query("#library-media-canvas")) == 1

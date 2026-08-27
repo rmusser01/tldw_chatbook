@@ -458,7 +458,7 @@ async def test_a_launch_built_controller_is_not_sticky_when_console_opens(tmp_pa
         # `configured_model` is derived from `[api_settings.<provider>]`,
         # not `[chat_defaults]` -- the first draft changed the wrong key and
         # the test's own vacuity guard caught it.
-        app.app_config["api_settings"]["llama_cpp"]["model"] = "mounted-model"
+        _configure_native_ready_console(app, "mounted-model")
         chat = await _navigate(app, pilot, "chat", expect="ChatScreen")
         assert isinstance(chat, ChatScreen)
         await pilot.pause()

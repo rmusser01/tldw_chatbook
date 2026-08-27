@@ -269,21 +269,21 @@ async def test_fresh_console_composes_saved_rail_label_style(
         assert str(right_badge.renderable) == right._display_badge()
         assert right_badge.tooltip == right.badge
 
-        await pilot.click("#console-context-rail-collapse")
+        console.query_one("#console-context-rail-collapse", Button).press()
         await pilot.pause()
         assert left.display is True
         assert console.query_one("#console-left-rail").display is False
-        await pilot.click("#console-context-rail-open")
+        console.query_one("#console-context-rail-open", Button).press()
         await pilot.pause()
         assert left.display is False
         assert console.query_one("#console-left-rail").display is True
 
         assert right.display is True
-        await pilot.click("#console-inspector-rail-open")
+        console.query_one("#console-inspector-rail-open", Button).press()
         await pilot.pause()
         assert right.display is False
         assert console.query_one("#console-right-rail").display is True
-        await pilot.click("#console-inspector-rail-collapse")
+        console.query_one("#console-inspector-rail-collapse", Button).press()
         await pilot.pause()
         assert right.display is True
         assert console.query_one("#console-right-rail").display is False

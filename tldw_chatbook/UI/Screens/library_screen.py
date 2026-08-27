@@ -6420,14 +6420,16 @@ class LibraryScreen(BaseAppScreen):
         elif (
             layout.items_open
             and self._library_pending_list_entry_focus
-            and self._library_pending_list_entry_media_return is not None
         ):
-            # A retained Media return may restore before this post-compose
-            # geometry pass. Reapply its semantic row and exact scroll only
-            # after Items has its final width, otherwise Textual's ensuing
-            # layout correction can replace the stored offset.
-            self._focus_library_list_entry_if_current(
-                self._library_list_entry_focus_generation
+            # Fresh entry and retained Media return can both restore before
+            # this post-compose geometry pass. Reapply the guarded semantic
+            # row after Items receives its final width; before this callback
+            # newly recomposed rows still report a 0x0 region and Textual
+            # rejects focus.
+            generation = self._library_list_entry_focus_generation
+            self.call_after_refresh(
+                self._focus_library_list_entry_if_current,
+                generation,
             )
 
     def _mirror_library_media_reader_preference(
@@ -7748,7 +7750,11 @@ class LibraryScreen(BaseAppScreen):
             and self._library_notes_source == LIBRARY_NOTES_SOURCE_DATABASE
             and self._library_notes_view == "list"
         ):
-            _sync_library_canvas(self, "notes")
+            # Mount/resume can settle while a pending deep-link projection has
+            # temporarily detached the Notes canvas. This reconciliation is
+            # advisory; the projection already builds from current state, so
+            # a missing target must not fall back to a whole-screen recompose.
+            _sync_library_canvas(self, "notes", allow_screen_fallback=False)
 
     def on_screen_resume(self) -> None:
         """Refresh lasting-sync availability whenever Library becomes current."""
@@ -8991,11 +8997,12 @@ class LibraryScreen(BaseAppScreen):
                 ),
                 target,
             )
-        if media_return is None:
-            target.focus()
-        else:
+        if row_class == "library-media-row":
+            # Initial entry focus is system-owned just like a viewer return;
+            # it must not be mistaken for user row selection by
+            # ``on_descendant_focus`` and activate the Reader before Enter.
             self._library_notes_programmatic_focus_target = target
-            self.set_focus(target, scroll_visible=False)
+        self.set_focus(target, scroll_visible=False)
         if row_class == "library-media-row" and media_return is not None:
             _media_id, scroll_offset = media_return
             if scroll_offset is not None:
@@ -9858,7 +9865,7 @@ class LibraryScreen(BaseAppScreen):
                 self._library_entry_focus_capture = None
             return False
         if target is not None and not getattr(target, "disabled", False):
-            target.focus()
+            self.set_focus(target, scroll_visible=False)
         if identity.scroll_offset is not None and hasattr(owner, "scroll_to"):
             owner.scroll_to(
                 x=identity.scroll_offset[0],
@@ -12770,26 +12777,16 @@ class LibraryScreen(BaseAppScreen):
                 id="library-rail",
                 classes="destination-workbench-pane",
             )
-            if not self._library_loaded and not self._library_lookup_error:
-                items_child: Widget = Static(
-                    "Loading local Library sources…",
-                    id="library-canvas-loading",
-                    classes="destination-purpose",
-                    markup=False,
-                )
-            elif self._library_lookup_error:
-                items_child = Static(
-                    self._library_lookup_error,
-                    id="library-canvas-error",
-                    classes="destination-purpose",
-                    markup=False,
-                )
-            else:
-                items_child = LibraryPromptsListCanvas(
-                    **self._library_prompts_list_canvas_kwargs(),
-                    id="library-prompts-canvas",
-                )
-                items_child.styles.min_width = 0
+            # Prompt browsing owns its dedicated PromptScopeService and does
+            # not depend on the broad conversations/notes snapshot. Gating
+            # this retained Items pane on `_library_loaded` left it stuck on
+            # the generic loading row when the prompt request won the startup
+            # race: the controller had a ready result but no canvas to sync.
+            items_child = LibraryPromptsListCanvas(
+                **self._library_prompts_list_canvas_kwargs(),
+                id="library-prompts-canvas",
+            )
+            items_child.styles.min_width = 0
             items_host = Vertical(
                 items_child,
                 id="library-canvas",
@@ -14559,14 +14556,13 @@ class LibraryScreen(BaseAppScreen):
             "library-media-retry",
             "library-media-type-filter",
         }
-        semantic_return_generation = (
+        entry_focus_generation = (
             self._library_list_entry_focus_generation
             if self._library_pending_list_entry_focus
-            and self._library_pending_list_entry_media_return is not None
             else None
         )
         if (
-            semantic_return_generation is None
+            entry_focus_generation is None
             and isinstance(focused_id, str)
             and focused_id
             and any(widget.id == "library-media-canvas" for widget in focused.ancestors)
@@ -14581,17 +14577,17 @@ class LibraryScreen(BaseAppScreen):
             )
         ):
             focus_identity = f"#{focused_id}"
-        if semantic_return_generation is not None:
+        if entry_focus_generation is not None:
 
-            def focus_semantic_return() -> None:
+            def focus_pending_entry() -> None:
                 try:
                     self._focus_library_list_entry_if_current(
-                        semantic_return_generation
+                        entry_focus_generation
                     )
                 finally:
                     self._library_notes_restoring_focus = False
 
-            then = focus_semantic_return
+            then = focus_pending_entry
         elif focus_identity in {
             "#library-media-previous",
             "#library-media-next",
@@ -14608,7 +14604,7 @@ class LibraryScreen(BaseAppScreen):
                 if focus_identity
                 else None
             )
-        if semantic_return_generation is not None:
+        if entry_focus_generation is not None:
             # Canvas recompose temporarily drops DOM focus outside Media.
             # Treat that automatic fallback as part of this guarded restore;
             # keyboard and mouse input disarm the generation before callback.
@@ -16428,12 +16424,23 @@ class LibraryScreen(BaseAppScreen):
                     detail=detail,
                 )
         elif request_generation is not None and not external_detail:
+            # Preserve the long-standing open-on-deleted contract after the
+            # permanent Reader conversion: a stale Search/RAG result or a
+            # record deleted between selection and fetch must not leave the
+            # Reader showing an older item's detail under the missing id.
+            self._library_media_detail = None
+            self._library_media_highlights = []
             self._library_media_reader_session = settle_failure(
                 self._library_media_reader_session,
                 request_generation,
                 requested_id,
                 "Media item is unavailable.",
             )
+            notify = getattr(self.app_instance, "notify", None)
+            if callable(notify):
+                notify("Media item is unavailable.", severity="warning")
+            self._library_media_view = "list"
+            self._load_library_media_list_if_needed()
         # LIB-13: default the content view per item, from the just-fetched
         # detail's own is_markdown -- computed here (once, at load) rather
         # than on every recompose, so a later Rendered<->Raw toggle press
@@ -22393,6 +22400,10 @@ class LibraryScreen(BaseAppScreen):
         backing_id = self._library_media_backing_id(media_id)
         if type(backing_id) is int:
             return f"local:media:{backing_id}", backing_id
+        if isinstance(backing_id, str) and backing_id.isdecimal():
+            numeric_id = int(backing_id)
+            if numeric_id > 0:
+                return f"local:media:{numeric_id}", numeric_id
         if media_id.startswith("media-") and media_id[6:].isdecimal():
             backing_id = int(media_id[6:])
             if backing_id > 0:

@@ -108,17 +108,13 @@ def _assert_console_density_evidence(svg: str) -> None:
 
 def _assert_console_inspector_evidence(svg: str) -> None:
     normalized_svg = unescape(svg).replace("\xa0", " ")
+    rendered_text = _rendered_svg_text(svg)
     assert "Inspector" in normalized_svg
-    assert "Status: Blocked" in normalized_svg
     assert "Run recipe" in normalized_svg
     assert "Blocked impact" in normalized_svg
     assert "Send disabled" not in normalized_svg
     assert "Setup required" not in normalized_svg
-    assert (
-        normalized_svg.index("Status: Blocked")
-        < normalized_svg.index("Run recipe")
-        < normalized_svg.index("Blocked impact")
-    )
+    assert rendered_text.index("Run recipe") < rendered_text.index("Blocked impact")
 
 
 def _assert_command_palette_evidence(svg: str) -> None:

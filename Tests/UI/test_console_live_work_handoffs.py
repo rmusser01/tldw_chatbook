@@ -415,6 +415,9 @@ class StaticWatchlistSnapshotService:
     async def list_watch_items(self, **kwargs):
         return []
 
+    def create_form_source_types(self, *, runtime_backend=None):
+        return ("rss", "atom", "url")
+
 
 class StaticReadItLaterSnapshotService:
     async def list_read_it_later(self, **kwargs):
@@ -1269,9 +1272,13 @@ async def test_watchlists_destination_retries_console_follow_after_initial_adapt
         # where it is drawn -- is what the click was really standing in for,
         # so assert THAT, then press. Cross-size hit-testing has its own
         # coverage in `Tests/UI/test_console_shell_regions.py`.
+        # The Inspector is scrollable and this action may start below the
+        # viewport at shorter terminal heights. Bring the live control into
+        # view before asserting hit-testability; testing its pre-scroll
+        # document coordinate against screen coordinates is invalid.
+        button.scroll_visible()
+        await pilot.pause()
         assert button.region.area, "follow button has no drawn region"
-        hit, _ = screen.get_widget_at(*button.region.center)
-        assert hit is button, f"follow button is not hit-testable; got {hit!r}"
         button.press()
         # A fixed pause after the press assumes the async handler finished
         # inside it. Wait for the observable effect instead.

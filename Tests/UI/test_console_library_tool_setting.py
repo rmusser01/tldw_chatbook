@@ -146,7 +146,7 @@ def test_factory_wires_the_policy_enforcer_into_the_chunk_tool_service(monkeypat
     app, screen = _build_screen()
     app.local_media_reading_service = SimpleNamespace(marker="media")
 
-    provider = screen._console_library_provider_factory()
+    provider = screen._console_library_provider_factory(_turn_context(direct=True))
 
     assert isinstance(provider, LibraryToolProvider)
     chunk_service = provider._service._media_chunk

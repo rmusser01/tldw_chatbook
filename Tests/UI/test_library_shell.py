@@ -3036,8 +3036,11 @@ async def test_library_onboarding_persistence_failure_keeps_session_and_warns(
     ("row_id", "canvas_selector"),
     (
         (LIBRARY_ROW_INGEST_MEDIA, "#library-ingest-canvas"),
-        (LIBRARY_ROW_CREATE_NOTE, "#library-notes-canvas"),
-        (LIBRARY_ROW_BROWSE_CONVERSATIONS, "#library-conversations-canvas"),
+        (LIBRARY_ROW_CREATE_NOTE, "#library-notes-reader-shell"),
+        (
+            LIBRARY_ROW_BROWSE_CONVERSATIONS,
+            "#library-conversations-reader-shell",
+        ),
     ),
 )
 async def test_library_persistence_warning_is_screen_owned_on_non_landing_routes(
@@ -3608,9 +3611,20 @@ async def _wait_for_selector(screen, pilot, selector, *, attempts=120, timeout=3
     polls = 0
     while True:
         matches = list(screen.query(selector))
-        if matches:
+        # Adaptive surface swaps can briefly leave the retired allocation in
+        # the query set with a zero-sized region. `query_one()` returns that
+        # first node too, so declaring success on mere DOM membership sends
+        # the next press to a detached surface. Wait until the first match—the
+        # one callers will subsequently retrieve—is mounted and laid out.
+        first = matches[0] if matches else None
+        if (
+            first is not None
+            and first.is_mounted
+            and first.display
+            and first.region.area
+        ):
             await pilot.pause()
-            return matches[0]
+            return first
         if time.monotonic() >= deadline:
             break
         await pilot.pause(0.02)
@@ -6991,10 +7005,23 @@ async def test_library_shell_browse_conversations_renders_canvas():
         first_label = str(rows[0].label)
         assert first_label.startswith("▸")
 
-        preview = str(
-            screen.query_one("#library-conversation-preview-lines").renderable
+        await _wait_for_selector(screen, pilot, "#library-conversation-reader-info")
+        screen.query_one("#library-conversation-reader-info").press()
+        await _wait_for_condition(
+            pilot,
+            lambda: "Messages: 8"
+            in str(
+                screen.query_one(
+                    "#library-conversation-reader-info-body", Static
+                ).renderable
+            ),
+            message=lambda: (
+                "Conversation Reader did not settle the selected transcript: "
+                f"{screen._library_conversation_reader_state!r}; "
+                "info="
+                f"{screen.query_one('#library-conversation-reader-info-body', Static).renderable!s}"
+            ),
         )
-        assert "Messages:" in preview
         assert screen.query_one("#library-conversation-open-console")
 
 
@@ -9211,9 +9238,9 @@ async def test_library_shell_media_row_switches_selection():
 async def test_library_shell_media_row_opens_full_viewer_with_content():
     """Pressing a media row switches to the in-canvas viewer.
 
-    The viewer must show the title, Type/Author metadata lines, and the
-    full stored content text (not just a 3-line preview stub), replacing
-    the list (``#library-media-list`` no longer present).
+    The retained Reader must show the title, Type/Author metadata lines, and
+    the full stored content text (not just a 3-line preview stub). Items stay
+    mounted beside the Reader, and metadata lives under its explicit Info mode.
     """
     app = _build_test_app()
     _seed_conversations(app, _two_conversations(), media=_two_media_items())
@@ -9230,18 +9257,22 @@ async def test_library_shell_media_row_opens_full_viewer_with_content():
         await _wait_for_selector(screen, pilot, "#library-media-viewer-title")
 
         assert screen._library_media_view == "viewer"
-        assert not screen.query("#library-media-list")
+        # The adaptive Reader retains Items beside the full viewer so users
+        # can move between rows without tearing down the list.
+        assert screen.query("#library-media-list")
 
         title = str(screen.query_one("#library-media-viewer-title").renderable)
         assert title == "Interview Recording"
 
-        meta = str(screen.query_one("#library-media-viewer-meta").renderable)
-        assert "Type: audio" in meta
-        assert "Author: Jordan Lee" in meta
-
         content_container = screen.query_one("#library-media-viewer-content")
         content_text = str(content_container.query_one(Static).renderable)
         assert "Full transcript: the interview recording" in content_text
+
+        screen.query_one("#library-media-reader-select-info").press()
+        await _wait_for_selector(screen, pilot, "#library-media-viewer-meta")
+        meta = str(screen.query_one("#library-media-viewer-meta").renderable)
+        assert "Type: audio" in meta
+        assert "Author: Jordan Lee" in meta
 
 
 @pytest.mark.asyncio
@@ -9402,7 +9433,8 @@ async def test_library_shell_media_back_returns_to_list():
 
         assert screen._library_media_view == "list"
         assert screen.query_one("#library-media-list")
-        assert not screen.query("#library-media-viewer-title")
+        # The adaptive shell retains the last-read detail beside Items.
+        assert screen.query_one("#library-media-viewer-title")
 
 
 @pytest.mark.asyncio
@@ -9533,6 +9565,16 @@ async def test_library_shell_media_viewer_open_posts_navigate_to_screen():
     assert seen[-1] == "media"
 
 
+async def _enter_library_media_edit(screen, pilot) -> None:
+    """Reveal the Reader's secondary actions and enter metadata edit mode."""
+
+    await _wait_for_selector(screen, pilot, "#library-media-reader-more")
+    screen.query_one("#library-media-reader-more").press()
+    await _wait_for_selector(screen, pilot, "#library-media-edit")
+    screen.query_one("#library-media-edit").press()
+    await _wait_for_selector(screen, pilot, "#library-media-edit-title")
+
+
 @pytest.mark.asyncio
 async def test_library_shell_media_edit_shows_prefilled_form():
     """Pressing ``Edit`` swaps the metadata block for prefilled edit inputs."""
@@ -9547,10 +9589,7 @@ async def test_library_shell_media_edit_shows_prefilled_form():
         screen.query_one("#library-row-browse-media").press()
         await _wait_for_selector(screen, pilot, "#library-media-row-1")
         screen.query_one("#library-media-row-1").press()
-        await _wait_for_selector(screen, pilot, "#library-media-edit")
-
-        screen.query_one("#library-media-edit").press()
-        await _wait_for_selector(screen, pilot, "#library-media-edit-title")
+        await _enter_library_media_edit(screen, pilot)
 
         assert screen._library_media_editing is True
         assert (
@@ -9583,10 +9622,7 @@ async def test_library_shell_media_edit_save_persists_and_exits_edit_mode():
         screen.query_one("#library-row-browse-media").press()
         await _wait_for_selector(screen, pilot, "#library-media-row-1")
         screen.query_one("#library-media-row-1").press()
-        await _wait_for_selector(screen, pilot, "#library-media-edit")
-
-        screen.query_one("#library-media-edit").press()
-        await _wait_for_selector(screen, pilot, "#library-media-edit-title")
+        await _enter_library_media_edit(screen, pilot)
 
         screen.query_one(
             "#library-media-edit-title", Input
@@ -9641,9 +9677,7 @@ async def test_library_media_edit_save_stays_gated_through_detail_refresh() -> N
             screen.query_one("#library-row-browse-media").press()
             await _wait_for_selector(screen, pilot, "#library-media-row-1")
             screen.query_one("#library-media-row-1").press()
-            await _wait_for_selector(screen, pilot, "#library-media-edit")
-            screen.query_one("#library-media-edit").press()
-            await _wait_for_selector(screen, pilot, "#library-media-edit-save")
+            await _enter_library_media_edit(screen, pilot)
             initial_searches = len(service.search_calls)
             initial_facets = len(service.type_calls)
 
@@ -9688,10 +9722,7 @@ async def _open_media_edit_and_save_title(screen, pilot, new_title):
     screen.query_one("#library-row-browse-media").press()
     await _wait_for_selector(screen, pilot, "#library-media-row-1")
     screen.query_one("#library-media-row-1").press()
-    await _wait_for_selector(screen, pilot, "#library-media-edit")
-
-    screen.query_one("#library-media-edit").press()
-    await _wait_for_selector(screen, pilot, "#library-media-edit-title")
+    await _enter_library_media_edit(screen, pilot)
     screen.query_one("#library-media-edit-title", Input).value = new_title
     screen.query_one("#library-media-edit-save").press()
 
@@ -9932,10 +9963,7 @@ async def test_library_shell_media_edit_cancel_discards():
         screen.query_one("#library-row-browse-media").press()
         await _wait_for_selector(screen, pilot, "#library-media-row-1")
         screen.query_one("#library-media-row-1").press()
-        await _wait_for_selector(screen, pilot, "#library-media-edit")
-
-        screen.query_one("#library-media-edit").press()
-        await _wait_for_selector(screen, pilot, "#library-media-edit-title")
+        await _enter_library_media_edit(screen, pilot)
 
         screen.query_one(
             "#library-media-edit-title", Input
@@ -10108,6 +10136,10 @@ async def test_library_shell_media_viewer_renders_seeded_highlight():
         screen.query_one("#library-row-browse-media").press()
         await _wait_for_selector(screen, pilot, "#library-media-row-1")
         screen.query_one("#library-media-row-1").press()
+        await _wait_for_selector(
+            screen, pilot, "#library-media-reader-select-highlights"
+        )
+        screen.query_one("#library-media-reader-select-highlights").press()
         await _wait_for_selector(screen, pilot, "#library-media-highlight-0")
 
         visible = _visible_text(screen)
@@ -10230,6 +10262,10 @@ async def test_library_shell_media_highlight_delete_removes_it():
         screen.query_one("#library-row-browse-media").press()
         await _wait_for_selector(screen, pilot, "#library-media-row-1")
         screen.query_one("#library-media-row-1").press()
+        await _wait_for_selector(
+            screen, pilot, "#library-media-reader-select-highlights"
+        )
+        screen.query_one("#library-media-reader-select-highlights").press()
         await _wait_for_selector(screen, pilot, "#library-media-highlight-delete-0")
 
         screen.query_one("#library-media-highlight-delete-0").press()
@@ -10269,7 +10305,7 @@ async def test_library_shell_media_read_later_saves_and_flips_button_label():
 
         assert (
             str(screen.query_one("#library-media-read-later", Button).label)
-            == "Read it later"
+            == "Read later"
         )
 
         screen.query_one("#library-media-read-later").press()
@@ -10293,7 +10329,7 @@ async def test_library_shell_media_read_later_saves_and_flips_button_label():
         assert screen._library_media_detail["is_read_it_later"] is True
         assert (
             str(screen.query_one("#library-media-read-later", Button).label)
-            == "Remove from read-it-later"
+            == "Remove later"
         )
 
 
@@ -10317,7 +10353,7 @@ async def test_library_shell_media_read_later_removes_when_already_saved():
 
         assert (
             str(screen.query_one("#library-media-read-later", Button).label)
-            == "Remove from read-it-later"
+            == "Remove later"
         )
 
         screen.query_one("#library-media-read-later").press()
@@ -10341,7 +10377,7 @@ async def test_library_shell_media_read_later_removes_when_already_saved():
         assert "is_read_it_later" not in screen._library_media_detail
         assert (
             str(screen.query_one("#library-media-read-later", Button).label)
-            == "Read it later"
+            == "Read later"
         )
 
 
@@ -10369,6 +10405,8 @@ async def test_library_shell_media_viewer_shows_analysis_from_latest_version():
         screen.query_one("#library-row-browse-media").press()
         await _wait_for_selector(screen, pilot, "#library-media-row-1")
         screen.query_one("#library-media-row-1").press()
+        await _wait_for_selector(screen, pilot, "#library-media-reader-select-analysis")
+        screen.query_one("#library-media-reader-select-analysis").press()
         await _wait_for_selector(screen, pilot, "#library-media-viewer-analysis-text")
 
         analysis_text = str(
@@ -13207,6 +13245,7 @@ async def test_library_conversation_broad_initial_snapshot_is_never_page_authori
 @pytest.mark.asyncio
 async def test_library_conversation_default_scope_entry_starts_validated_loading():
     app = _build_test_app()
+    _seed_conversations(app, [])
 
     class GatedInitialPage(StaticLibraryConversationScopeService):
         def __init__(self) -> None:
@@ -15199,7 +15238,7 @@ async def test_library_shell_shows_loading_state_before_snapshot_loads(monkeypat
 
 @pytest.mark.asyncio
 async def test_library_shell_shows_lookup_error_in_canvas(monkeypatch):
-    """A dedicated Conversation lookup error stays in its recoverable canvas."""
+    """A broad source lookup error owns the route-level recovery canvas."""
     app = _build_test_app()
     _seed_conversations(app, [])
 
@@ -15227,18 +15266,9 @@ async def test_library_shell_shows_lookup_error_in_canvas(monkeypatch):
             message="Dedicated Conversation failure never reached retry state.",
         )
 
-        assert active_screen.query_one("#library-conversations-canvas")
-        status = str(
-            active_screen.query_one("#library-conversations-status").renderable
-        ).lower()
-        assert "load" in status
-        assert "try again" in status
-        assert active_screen.query_one("#library-conversations-filter", Input)
-        assert active_screen.query_one(
-            "#library-conversations-previous", Button
-        ).disabled
-        assert active_screen.query_one("#library-conversations-next", Button).disabled
-        assert not active_screen.query("#library-canvas-error")
+        assert not active_screen.query("#library-conversations-canvas")
+        status = str(active_screen.query_one("#library-canvas-error").renderable)
+        assert status == "Library sources are unavailable right now."
         assert not active_screen.query("#library-canvas-loading")
 
 
@@ -16117,9 +16147,9 @@ async def test_library_open_source_context_defers_before_mount_and_opens_once(
 async def test_library_conversation_id_context_opens_off_page_conversation() -> None:
     """Persona's legacy route opens the target's deterministic owning page."""
     app = _build_test_app()
-    conversations = _conversation_records(45)
+    conversations = _conversation_records(250)
     _seed_conversations(app, conversations)
-    target = conversations[24]
+    target = conversations[124]
     screen = LibraryScreen(app)
     screen.apply_navigation_context(
         {
@@ -16160,8 +16190,13 @@ async def test_library_conversation_id_context_opens_off_page_conversation() -> 
         )
         assert locator_call["conversation_id"] == target["conversation_id"]
         assert locator_call["limit"] == 20
-        assert "Conversation 025" in str(
-            screen.query_one("#library-conversation-preview-lines").renderable
+        assert (
+            screen._library_conversation_reader_state.selected_id
+            == target["conversation_id"]
+        )
+        assert (
+            screen._library_conversation_reader_selected_metadata.get("title")
+            == "Conversation 025"
         )
 
 
@@ -16213,6 +16248,7 @@ async def test_library_conversation_real_memory_scope_load_and_locator_stay_on_o
 async def test_library_conversation_locator_retry_reuses_failed_target():
     app = _build_test_app()
     conversations = _conversation_records(45)
+    _seed_conversations(app, conversations)
     target = conversations[24]
     notifications = []
     app.notify = lambda message, **kwargs: notifications.append((message, kwargs))
@@ -16418,6 +16454,9 @@ async def test_library_conversation_non_entry_locator_is_fenced_by_rail_navigati
     async with host.run_test(size=LIBRARY_TEST_SIZE) as pilot:
         screen = _active_library_screen(host)
         await _wait_for_library_shell(screen, pilot)
+        # Runtime startup may replace the fixture's source facade; keep this
+        # test's gated paginator as the active authority.
+        app.chat_conversation_scope_service = service
         if warm_page:
             await pilot.click("#library-row-browse-conversations")
             await _wait_for_condition(
@@ -16429,7 +16468,7 @@ async def test_library_conversation_non_entry_locator_is_fenced_by_rail_navigati
                 ),
                 message="Initial Conversation page never settled.",
             )
-            await pilot.click("#library-conversations-next")
+            screen._start_library_conversation_page_request(2, "")
             await _wait_for_condition(
                 pilot,
                 lambda: (
@@ -23679,8 +23718,13 @@ async def test_library_shell_search_result_open_conversation_locates_owning_page
             str(screen.query_one("#library-conversations-page-status").renderable)
             == "21-40 of 45 · Page 2 of 3"
         )
-        assert "Conversation 025" in str(
-            screen.query_one("#library-conversation-preview-lines").renderable
+        assert (
+            screen._library_conversation_reader_state.selected_id
+            == target["conversation_id"]
+        )
+        assert (
+            screen._library_conversation_reader_selected_metadata.get("title")
+            == "Conversation 025"
         )
         locator_call = next(
             call
@@ -24962,8 +25006,14 @@ async def test_library_shell_ingest_canvas_registry_listener_removed_on_unmount(
         screen = harness.screen_stack[-1]
         await _wait_for_library_shell(screen, pilot)
         assert screen in harness.screen_stack
-        assert len(harness.library_ingest_jobs._listeners) == 1
-        assert len(harness.library_ingest_jobs._progress_listeners) == 1
+        assert any(
+            getattr(listener, "__self__", None) is screen
+            for listener in harness.library_ingest_jobs._listeners
+        )
+        assert any(
+            getattr(listener, "__self__", None) is screen
+            for listener in harness.library_ingest_jobs._progress_listeners
+        )
 
         await harness.switch_screen(_DummyReplacementScreen())
         await pilot.pause()
@@ -24976,8 +25026,14 @@ async def test_library_shell_ingest_canvas_registry_listener_removed_on_unmount(
         # to actually call ``.remove()``: not installed + not present in
         # any screen stack).
         assert screen not in harness.screen_stack
-        assert len(harness.library_ingest_jobs._listeners) == 0
-        assert len(harness.library_ingest_jobs._progress_listeners) == 0
+        assert not any(
+            getattr(listener, "__self__", None) is screen
+            for listener in harness.library_ingest_jobs._listeners
+        )
+        assert not any(
+            getattr(listener, "__self__", None) is screen
+            for listener in harness.library_ingest_jobs._progress_listeners
+        )
 
         # Textual's ``is_mounted`` remains true after removal; a stale direct
         # callback must still reject the detached screen before any UI path.
@@ -25610,6 +25666,9 @@ async def test_library_landing_attention_tracks_failed_import_and_opens_review()
             message="Review did not open the existing Import recovery surface.",
         )
         assert screen.query("#library-ingest-canvas")
+        # Let the ingest canvas' Select children finish mounting before the
+        # harness tears the route down.
+        await pilot.pause(0.5)
 
 
 @pytest.mark.asyncio
@@ -26611,7 +26670,11 @@ async def test_library_media_list_focuses_first_row_and_arrow_keys_move_it():
 
         screen.query_one(f"#library-row-{LIBRARY_ROW_BROWSE_MEDIA}").press()
         await _wait_for_selector(screen, pilot, "#library-media-row-0")
-        await pilot.pause()
+        await _wait_for_condition(
+            pilot,
+            lambda: screen.query_one("#library-media-row-0", Button).has_focus,
+            message="Media entry focus did not settle on the first row.",
+        )
 
         first_row = screen.query_one("#library-media-row-0", Button)
         second_row = screen.query_one("#library-media-row-1", Button)
@@ -26665,8 +26728,11 @@ async def test_library_media_escape_returns_to_list_then_focuses_rail():
         await pilot.pause()
         assert screen._library_media_view == "list"
         await _wait_for_selector(screen, pilot, "#library-media-row-0")
-        await pilot.pause()
-        assert screen.query_one("#library-media-row-0", Button).has_focus
+        await _wait_for_condition(
+            pilot,
+            lambda: screen.query_one("#library-media-row-0", Button).has_focus,
+            message="Initial Media entry focus did not settle.",
+        )
 
         await pilot.press("escape")
         await pilot.pause()
@@ -26738,10 +26804,12 @@ async def test_library_media_entry_focus_survives_three_chained_recomposes():
 
         for hop in range(3):
             screen.refresh(recompose=True)
-            await pilot.pause()
-            await pilot.pause()
-            assert screen.query_one("#library-media-row-0", Button).has_focus, (
-                f"focus lost after chained recompose #{hop + 1}"
+            await _wait_for_condition(
+                pilot,
+                lambda: screen.query_one("#library-media-row-0", Button).has_focus,
+                message=(
+                    f"focus lost after chained recompose #{hop + 1}"
+                ),
             )
 
 
