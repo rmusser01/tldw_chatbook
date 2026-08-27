@@ -474,6 +474,101 @@ async def test_failed_raw_cli_lock_save_keeps_saved_authority_and_draft(monkeypa
 
 
 @pytest.mark.asyncio
+async def test_successful_raw_cli_write_with_snapshot_failure_fails_closed(
+    monkeypatch,
+):
+    app = _build_test_app(config_overrides={"console": {"raw_cli_permitted": True}})
+    assert app.raw_cli_runtime.arm().armed is True
+    host = StyledSettingsDestinationHarness(app, "settings")
+
+    async with host.run_test(size=(120, 35)) as pilot:
+        screen = await _open_privacy(pilot)
+        checkbox = screen.query_one("#settings-raw-cli-permitted", Checkbox)
+        checkbox.value = False
+        await pilot.pause()
+        writes: list[dict] = []
+
+        class SuccessfulAdapter:
+            def save_sections(self, section_values):
+                writes.append(section_values)
+                return True
+
+        def failed_snapshot(**_kwargs):
+            raise RuntimeError("post-write snapshot failed")
+
+        monkeypatch.setattr(
+            settings_screen_module,
+            "SettingsConfigAdapter",
+            SuccessfulAdapter,
+        )
+        monkeypatch.setattr(
+            settings_screen_module,
+            "get_runtime_config_snapshot",
+            failed_snapshot,
+        )
+        screen.action_settings_save_category()
+        await _wait_for_save(pilot)
+
+        assert writes == [{"console": {"raw_cli_permitted": False}}]
+        assert app.app_config["console"]["raw_cli_permitted"] is False
+        assert app.raw_cli_runtime.armed is False
+        assert SettingsCategoryId.PRIVACY_SECURITY not in screen._settings_drafts
+        assert checkbox.value is False
+        assert screen._raw_cli_save_pending is False
+
+
+@pytest.mark.asyncio
+async def test_unstable_raw_cli_generation_uses_exact_bounded_attempts_and_disarms(
+    monkeypatch,
+):
+    app = _build_test_app(config_overrides={"console": {"raw_cli_permitted": True}})
+    assert app.raw_cli_runtime.arm().armed is True
+    host = StyledSettingsDestinationHarness(app, "settings")
+
+    async with host.run_test(size=(120, 35)) as pilot:
+        screen = await _open_privacy(pilot)
+        checkbox = screen.query_one("#settings-raw-cli-permitted", Checkbox)
+        checkbox.value = False
+        await pilot.pause()
+        snapshot_calls: list[int] = []
+        guarded_generations: list[int] = []
+
+        def changing_snapshot(**_kwargs) -> RuntimeConfigSnapshot:
+            generation = 101 + len(snapshot_calls)
+            snapshot_calls.append(generation)
+            values = dict(app.app_config)
+            values["console"] = dict(app.app_config["console"])
+            values["console"]["raw_cli_permitted"] = True
+            return RuntimeConfigSnapshot(generation, values)
+
+        def refuse_generation(expected_generation: int, _action) -> bool:
+            guarded_generations.append(expected_generation)
+            return False
+
+        monkeypatch.setattr(
+            settings_screen_module,
+            "get_runtime_config_snapshot",
+            changing_snapshot,
+        )
+        monkeypatch.setattr(
+            settings_screen_module,
+            "run_if_runtime_config_generation_current",
+            refuse_generation,
+        )
+        screen._raw_cli_save_pending = True
+        screen._apply_raw_cli_save_result(True, None, False)
+        await pilot.pause()
+
+        assert snapshot_calls == [101, 102, 103]
+        assert guarded_generations == [101, 102, 103]
+        assert app.app_config["console"]["raw_cli_permitted"] is False
+        assert app.raw_cli_runtime.armed is False
+        assert SettingsCategoryId.PRIVACY_SECURITY not in screen._settings_drafts
+        assert checkbox.value is False
+        assert screen._raw_cli_save_pending is False
+
+
+@pytest.mark.asyncio
 async def test_pending_raw_cli_save_preserves_a_newer_clean_draft(monkeypatch):
     app = _build_test_app(config_overrides={"console": {"raw_cli_permitted": False}})
     loaded_config = dict(app.app_config)

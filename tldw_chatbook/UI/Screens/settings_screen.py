@@ -21735,14 +21735,20 @@ class SettingsScreen(BaseAppScreen):
             saved = adapter.save_sections(
                 {"console": {"raw_cli_permitted": bool(value)}}
             )
-            if not saved:
-                return False, None
+        except Exception:
+            logger.exception("Failed to persist raw CLI unlock")
+            return False, None
+        if not saved:
+            return False, None
+        try:
             snapshot = get_runtime_config_snapshot(force_reload=True)
         except Exception:
-            logger.exception("Failed to persist and reload raw CLI unlock")
-            return False, None
+            logger.exception(
+                "Saved raw CLI unlock but failed to observe runtime config"
+            )
+            return True, None
         if not isinstance(snapshot, RuntimeConfigSnapshot):
-            return False, None
+            return True, None
         return True, snapshot
 
     @staticmethod
@@ -21771,28 +21777,35 @@ class SettingsScreen(BaseAppScreen):
         candidate = published_snapshot
         for _attempt in range(RAW_CLI_CONFIG_RECONCILE_ATTEMPTS):
             parsed = self._raw_cli_snapshot_authority(candidate)
-            if parsed is not None:
-                generation, authority = parsed
-
-                def _publish_authority() -> bool:
-                    self._console_settings()["raw_cli_permitted"] = authority
-                    return True
-
+            if parsed is None:
                 try:
-                    if run_if_runtime_config_generation_current(
-                        generation,
-                        _publish_authority,
-                    ):
-                        return authority, True
+                    candidate = get_runtime_config_snapshot()
                 except Exception:
                     logger.exception(
-                        "Failed to guard raw CLI runtime config reconciliation"
+                        "Failed to refresh raw CLI runtime config snapshot"
                     )
+                    break
+                parsed = self._raw_cli_snapshot_authority(candidate)
+                if parsed is None:
+                    candidate = None
+                    continue
+            generation, authority = parsed
+
+            def _publish_authority() -> bool:
+                self._console_settings()["raw_cli_permitted"] = authority
+                return True
+
             try:
-                candidate = get_runtime_config_snapshot()
+                if run_if_runtime_config_generation_current(
+                    generation,
+                    _publish_authority,
+                ):
+                    return authority, True
             except Exception:
-                logger.exception("Failed to refresh raw CLI runtime config snapshot")
-                break
+                logger.exception(
+                    "Failed to guard raw CLI runtime config reconciliation"
+                )
+            candidate = None
 
         logger.warning(
             "Raw CLI runtime config generation did not stabilize; failing closed"
@@ -21808,8 +21821,7 @@ class SettingsScreen(BaseAppScreen):
     ) -> None:
         category = SettingsCategoryId.PRIVACY_SECURITY
         self._raw_cli_save_pending = False
-        published = self._raw_cli_snapshot_authority(published_snapshot)
-        if not saved or published is None:
+        if not saved:
             self._update_draft_status_widgets(category)
             self._refresh_raw_cli_state()
             self.app.notify("Failed to save the raw CLI unlock.", severity="error")
