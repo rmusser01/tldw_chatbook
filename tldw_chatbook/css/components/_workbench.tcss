@@ -56,6 +56,27 @@
     color: $ds-status-blocked;
 }
 
+/* Resume is briefly disabled while Roleplay dispatches ID-only navigation.
+   Neutralize the generic opacity stack and keep the busy label readable while
+   the raised surface and dim treatment still distinguish the disabled state. */
+#personas-conversation-resume:disabled {
+    opacity: 100%;
+    text-opacity: 100%;
+    background: $ds-surface-raised;
+    color: $ds-text-primary;
+    text-style: none;
+}
+
+/* App-tier console-action classes are one-line by default. The preview's
+   explicit three-row control stack needs three-line hit targets. */
+#personas-conversation-resume,
+#personas-conversation-continue-console,
+#personas-conversation-back,
+#personas-conversation-open-library {
+    height: 3;
+    min-height: 3;
+}
+
 .workbench-command-strip,
 .workbench-mode-strip {
     height: 1;

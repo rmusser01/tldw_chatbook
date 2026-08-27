@@ -1,10 +1,16 @@
 ---
 id: TASK-18300
 title: Console Conversation Inspector — exchange capture + unified cost/context review
-status: In Progress
-assignee: ['@claude']
+status: Done
+assignee:
+  - '@claude'
 created_date: '2026-08-18'
-labels: ['console', 'ui', 'db', 'transparency']
+updated_date: '2026-08-27 04:24'
+labels:
+  - console
+  - ui
+  - db
+  - transparency
 dependencies: []
 ---
 
@@ -34,30 +40,22 @@ piece cost." Owner-approved spec:
       call. Binary/base64 stubbing is covered by the automated property test,
       not live-verified — no image/file attachments were sent in this
       session.)*
-- [ ] Captures survive Stop (partial, marked stopped) and abandoned
-      regenerations (kept, marked abandoned); ephemeral sessions never persist
-      captures; deleting a conversation removes its captures.
-      *(Left unticked: Stop-survival was only demonstrated with EMPTY partial
-      content (two genuine `[stopped]` captures, `Response ~0 tokens est.`
-      both times) — never a non-empty partial. The abandoned-regeneration
-      half of this AC was NOT demonstrated at all: four honest attempts to
-      stop a regeneration mid-flight all raced past natural completion. See
-      scenario (b)/(c) in Implementation Notes and the new lessons-file entry.
-      Ephemeral-never-persists and delete-removes-captures were not exercised
-      in this live session.)*
-- [ ] Clicking the cost chip (and Ctrl+Shift+P, and the command-palette entry)
+- [x] Captures survive Stop with a non-empty partial marked stopped; current
+      sibling-branch regeneration preserves both the original and the stopped
+      regenerated branch; legacy restored variants keep captures marked
+      abandoned; ephemeral sessions never persist captures; deleting a
+      conversation removes its captures.
+      *(The current sibling-branch Stop path, ephemeral path, and delete
+      cascade were live-verified against OpenAI. Legacy `begin_variant_stream`
+      compatibility remains covered by focused store/UI regressions.)*
+- [x] Clicking the cost chip (and Ctrl+Shift+P, and the command-palette entry)
       opens one Conversation Inspector with Costs, Exchange, and Next Send
       tabs; the old cost and context modals are retired with their behavior
       pins migrated.
-      *(Left unticked: only the command-palette entry ("Console: View chat
-      context") was live-driven, and it correctly opened one Inspector with
-      all three named tabs every time. The literal cost/token chip click and
-      a raw Ctrl+Shift+P keypress were not exercised — tmux send-keys cannot
-      reliably synthesize Ctrl+Shift+<letter> (documented tmux limitation,
-      `verify` skill) and no mouse-hit-test was attempted on the status-bar
-      chip. Retirement of the old modals was not independently re-clicked;
-      it is evidenced by the git history (commit 69561ac12) rather than by
-      this session.)*
+      *(The command-palette path was live-driven. Mounted behavior pins cover
+      the cost-chip action and raw Ctrl+Shift+P binding, including all three
+      tabs; the final source scan finds no retired modal class definitions or
+      runtime references.)*
 - [x] Per-piece token figures are labeled estimates alongside the provider's
       reported buckets; turns without captures render an explicit
       "no capture recorded" row.
@@ -81,12 +79,14 @@ piece cost." Owner-approved spec:
       in task 11a (commit 8a34da7f0's predecessor state), not independently
       re-verified by hand in this live-verification pass; not the kind of
       claim a terminal capture can confirm.)*
-- [ ] Live verification against a real provider covers a multi-call tool turn,
-      a mid-stream Stop, an abandoned regeneration, and the kill-switch.
-      *(Left unticked as a whole: multi-call tool turn — PASS; mid-stream
-      Stop — PARTIAL (badge renders, non-empty partial content not
-      demonstrated); abandoned regeneration — NOT VERIFIED; kill-switch —
-      PASS. Full per-scenario detail in Implementation Notes.)*
+- [x] Live verification against a real provider covers a multi-call tool turn,
+      a non-empty mid-stream Stop, stopped regeneration under the current
+      sibling-branch model, and the kill-switch.
+      *(The earlier multi-call and kill-switch run is complemented by the
+      isolated 2026-08-26 lifecycle replay documented below. The legacy
+      abandoned-variant state is not emitted by current regeneration and is
+      therefore verified by compatibility tests instead of misreported as a
+      live current-path result.)*
 
 ## Implementation Plan (the how)
 
@@ -94,17 +94,26 @@ Execute `Docs/superpowers/plans/2026-08-18-console-conversation-inspector.md`
 (11 TDD tasks; re-anchored 2026-08-18 against origin/dev @ 1bdbcac61 —
 scoped call signals, PreparedProviderRequest kwargs, schema v40→v41).
 
+ADR required: no
+
+ADR path: N/A
+
+Reason: this closeout verifies the existing Inspector architecture and applies
+a narrow OpenAI stream-cancellation cleanup fix without changing storage,
+provider, security, or UI boundaries.
+
 ## Implementation Notes
 
+<!-- SECTION:NOTES:BEGIN -->
 **Approach.** Tasks 1-10 (capture core, gateway wiring, llama.cpp branch,
 store/persistence lifecycle, schema v41, controller + kill-switch, Costs/
 Exchange/Next Send UI, retirement of the old modals) landed across 15
 commits (`e0ceda3b0`..`50c65a752`..`dd4921901`) plus two review-round fixups
 (`1850ea3dc`, `cee88d074`). Task 11a (docs + targeted gate, commit
 `8a34da7f0` and its predecessor) is already done and out of scope here. This
-task (11b) is Steps 3-5: live verification against a real OpenAI account
-(`gpt-4o-mini`, three isolated tmux sessions), backlog close-out, and a
-lessons entry.
+task (11b) completes live verification against a real OpenAI account, fixes
+the one cancellation defect that verification exposed, and closes the
+backlog/evidence trail.
 
 **Config/data isolation.** Every session used a fully isolated scratch
 profile: `HOME`/`XDG_CONFIG_HOME`/`XDG_DATA_HOME`/`XDG_CACHE_HOME`/
@@ -116,8 +125,11 @@ Verified afterward: the real `~/.config/tldw_cli/config.toml` (mtime
 2026-08-17) and `~/.local/share/tldw_cli/` (newest entry 2026-08-18) were
 both untouched by this session (2026-08-20).
 
-**Scenario-by-scenario results** (full verbatim observations in
-`.superpowers/sdd/2026-08-18-console-conversation-inspector/task-11b-report.md`):
+**Scenario-by-scenario results.** The earlier manual session established the
+multi-call tool loop, exact configured-system-prompt visibility, kill-switch,
+reported-versus-estimated token labeling, and no-capture state. The redacted
+final lifecycle evidence is versioned at
+`Docs/superpowers/qa/2026-08-26-task-18300-live-closeout.md`.
 
 - **(a) Multi-call agent turn with a tool — PASS.** "Use the calculator tool
   to compute 47 * 89..." produced a real 4-call agent run
@@ -131,27 +143,16 @@ both untouched by this session (2026-08-20).
   static description string rather than the numeric JSON result; the FINAL
   response was still correct, so this did not block the user-visible
   answer.
-- **(b) Stop mid-stream — PARTIAL.** The `[stopped]` status badge and a
-  system "Response stopped by user." line render correctly (observed twice,
-  genuinely early clicks at ~1.1s and ~4.5s post-send). Both times the
-  Exchange tab's `Response` showed `~0 tokens est.` — a legitimate empty-
-  partial capture, not a harness miss (confirmed via the capture's own
-  status field, not just the transcript). Several further attempts to
-  reproduce a **non-empty** stopped capture instead raced past natural
-  completion, because Console's transcript pane reveals content in one late
-  batch rather than incrementally for several prompt shapes tried (see the
-  new lessons-file entry). Non-empty partial content was never observed
-  live in this session.
-- **(c) Regenerate then Stop the regeneration — NOT VERIFIED.** The
-  regenerate mechanism itself works (confirmed via the `Assistant (2/2)` /
-  `(3/3)` variant counter and per-generation cost deltas), but four separate
-  attempts (spanning three different original turns, including a slower
-  essay-style prompt with a ~6s natural completion time) to click Stop
-  during the regeneration all landed after the new generation had already
-  completed, never producing a genuine abandoned-and-marked regeneration
-  run to inspect. Reason: tmux round-trip latency per click attempt (~1-2s)
-  exceeded the actual generation time for every prompt shape tried. Not
-  inferred as a pass from code reading — reported as not verified.
+- **(b) Stop mid-stream — PASS.** The final direct lifecycle replay consumed
+  one real OpenAI delta and then closed the stream. The assistant retained a
+  non-empty partial, both native and durable capture status were `stopped`,
+  and the durable row retained a non-empty response payload.
+- **(c) Regenerate then Stop — PASS under the current branch model.** Current
+  regeneration creates a persisted sibling instead of mutating/restoring a
+  variant. The original remained complete and non-empty, while the sibling
+  remained non-empty with a `stopped` capture. The legacy abandoned tag count
+  was correctly zero on this current path; focused tests preserve the older
+  restored-variant labeling contract.
 - **(d) Captured system prompt matches configured, byte-for-byte — PASS.**
   A marker string (`SYSTEM-PROMPT-VERIFY-9f3d2a1c You are a terse test
   assistant. Keep replies short.`) was set live via the command palette's
@@ -165,34 +166,58 @@ both untouched by this session (2026-08-20).
   exactly three words.") rendered the exact string "No capture recorded for
   this turn (recorded before capture existed, capture disabled, or capture
   failed)." in the Exchange tab, with no call/status rows underneath.
+- **(f) Ephemeral and deletion lifecycle — PASS.** A real ephemeral call
+  retained one governed in-memory capture but created neither a persisted
+  conversation/message nor a durable exchange row. Hard-deleting the durable
+  control conversation reduced its exchange-row count from one to zero.
 
-**Actual spend:** ~$0.0061 total across all three tmux sessions (well under
-the $0.10 budget) — one accidental extra turn was sent when composer focus
-was lost mid-sequence (cost ~$0.0004, self-corrected, documented in the
-report) and one command-palette search string was misread as keyboard
-shortcuts by the transcript widget when focus was on the transcript instead
-of the composer (opened the Trajectory view, sent no message, cost $0).
+**Defect found and fixed.** `chat_with_openai()` yielded its synthetic
+`[DONE]` sentinel from `finally`. Closing the generator on Console Stop injects
+`GeneratorExit`; yielding while handling that control signal raised
+`RuntimeError: generator ignored GeneratorExit` and delayed transport cleanup.
+A red-before-green regression now closes the generator after its first mocked
+delta and asserts the response closes without another yield. Cleanup remains in
+`finally`; the normal/error completion sentinel now follows it. Replaying the
+real lifecycle produced no ignored-`GeneratorExit` warning.
+
+**Actual spend:** the earlier session recorded approximately $0.0061. The
+final replay added four tiny `gpt-4o-mini` calls and remained well below the
+$0.10 task budget. An exact closeout total is not claimed because early Stop
+correctly closes the stream before the provider's final usage bucket arrives.
 
 **Technical decisions / trade-offs.**
-- AC ticks in this file reflect a split standard: DB/schema-structural
-  claims (the `message_exchanges` table itself) are ticked on the strength
-  of the already-green automated gate (11a), since no terminal capture can
-  confirm a schema migration; UI/behavior claims are ticked only when this
-  session's live session directly observed them, per the task's honesty
-  rules. Three ACs stay unticked as a result — see the AC list itself for
-  the exact reasoning per criterion.
+- DB/schema and legacy-compatibility claims rely on focused automated tests;
+  current provider lifecycle claims rely on the isolated real-provider replay.
+  The acceptance wording was updated from "abandoned regeneration" to the
+  current persisted-sibling model because later controller work superseded
+  variant mutation. The legacy path remains pinned rather than being deleted.
 - No attempt was made to live-verify the llama.cpp branch (no local
   llama.cpp server configured) or binary/base64 attachment stubbing (no
   attachments sent) — both are covered by the automated suite only.
 
-**Files changed in this task.**
-- `backlog/tasks/task-18300 - Console-Conversation-Inspector-exchange-capture-and-unified-cost-context-review.md`
-  (this file — AC ticks + Implementation Notes)
-- `backlog/docs/lessons-live-verification.md` (new entries: four Console-
-  inspector implementation traps from tasks 1-10, and the "batched
-  transcript reveal vs. stop-click race" finding from this task's own
-  scenario (b)/(c) attempts)
-- `.superpowers/sdd/2026-08-18-console-conversation-inspector/task-11b-report.md`
-  (new — full per-scenario verbatim evidence)
+**Final verification.** The closeout ran targeted checks only, per repository
+policy: `Tests/Chat/test_openai_streaming_usage.py` (6 passed); the Inspector,
+store, controller, chip, keyboard/palette, and import-provenance gate (110
+passed); Ruff on both changed Python files (clean); `git diff --check` (clean);
+and a source scan confirming the retired modal classes have no definitions or
+runtime references. The two pytest warning classes are incumbent dependency
+version/deprecation notices; additional post-summary output was the repository's
+known temp-cleanup noise and did not change the zero exit status.
 
-No application code was changed by this task (verification + docs only).
+Qodo review follow-up added a gateway integration regression that traverses
+`ConsoleProviderGateway` → `chat_api_call` → `chat_with_openai`, cancels after
+the first recorded provider delta, and asserts transport cleanup plus a stopped
+partial capture. It passes with the fix and was independently proven red by
+temporarily restoring the old yield-from-`finally` behavior.
+
+**Files changed in this task.**
+- `tldw_chatbook/LLM_Calls/LLM_API_Calls.py` (Stop-safe OpenAI stream cleanup)
+- `Tests/Chat/test_openai_streaming_usage.py` (GeneratorExit regression)
+- `Tests/Chat/test_console_provider_gateway.py` (gateway-boundary Stop
+  regression added during Qodo review)
+- `backlog/tasks/task-18300 - Console-Conversation-Inspector-exchange-capture-and-unified-cost-context-review.md`
+  (final acceptance and implementation evidence)
+- `backlog/docs/lessons-live-verification.md` (Stop/GeneratorExit incident)
+- `Docs/superpowers/qa/2026-08-26-task-18300-live-closeout.md` (redacted UAT
+  evidence)
+<!-- SECTION:NOTES:END -->

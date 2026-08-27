@@ -26704,11 +26704,14 @@ async def test_library_media_list_focuses_first_row_and_arrow_keys_move_it():
 
 @pytest.mark.asyncio
 async def test_library_media_escape_returns_to_list_then_focuses_rail():
-    """task-2856 AC2/AC5: Escape in the media viewer returns to the list
-    AND re-focuses its first row (AC1's "on return" half -- previously
-    Up/Down did not move the selection even directly after Back, per the
-    2026-08-06 UAT); a second Escape, now on the plain list, moves focus
-    to the rail search box -- the SAME target `/` and F6 already use."""
+    """Escape graduates Reader -> Items -> Library -> list -> rail.
+
+    The permanent adaptive Reader added the three-pane outward hierarchy
+    after task-2856's original two-step contract. This mounted journey pins
+    both contracts together: the first three Escapes cross the visible panes
+    and return to the list, the restored row owns focus, and the next Escape
+    moves focus to the rail search box shared with `/` and F6.
+    """
     app = _build_test_app()
     _seed_conversations(app, _two_conversations(), media=_two_media_items())
     host = LibraryHarness(app)
@@ -26723,6 +26726,16 @@ async def test_library_media_escape_returns_to_list_then_focuses_rail():
         screen.query_one("#library-media-row-0", Button).press()
         await _wait_for_selector(screen, pilot, "#library-media-back")
         assert screen._library_media_view == "viewer"
+
+        reader_control = screen.query_one("#library-media-reader-more", Button)
+        reader_control.focus()
+        await pilot.press("escape")
+        await pilot.pause()
+        assert screen.query_one("#library-media-filter").has_focus
+
+        await pilot.press("escape")
+        await pilot.pause()
+        assert screen.query_one("#library-search-input", Input).has_focus
 
         await pilot.press("escape")
         await pilot.pause()

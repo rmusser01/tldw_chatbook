@@ -1648,13 +1648,20 @@ class ConsoleComposerBar(Horizontal):
             # (app.action_run_setup_wizard); appending a separate "Open
             # setup" label instead blew the strip's width budget and
             # squeezed the command card (SEND_REASON_MAX_WIDTH is sized
-            # for the longest reason + the 2-cell chevron). `reason` is
-            # always one of build_console_disabled_reason's fixed literals
-            # (no user text, no markup metacharacters).
+            # for the longest reason + the 2-cell chevron).
+            #
+            # TASK-21150 item (d): `reason` goes in as a TEMPLATE VARIABLE,
+            # never f-string interpolation. Today every reason is a fixed
+            # literal from build_console_disabled_reason, so interpolating
+            # was safe by invariant — i.e. by comment. Substitution makes it
+            # safe by construction: the value is inserted as text and is
+            # never re-parsed as markup, so a future reason carrying "[...]"
+            # cannot smuggle in styling or a second action.
             if self.has_class("console-composer-setup-blocked"):
                 strip.update(
                     Content.from_markup(
-                        f"[@click=app.run_setup_wizard]{reason} ›[/]"
+                        "[@click=app.run_setup_wizard]$reason ›[/]",
+                        reason=reason,
                     )
                 )
             else:

@@ -88,6 +88,7 @@ from .library_skills_canvas import (
     skill_trust_unlock_tooltip,
     skill_user_invocable_label,
 )
+from .library_skill_work_pane import LibrarySkillWorkPane
 
 __all__ = [
     "LIBRARY_RAIL_ROW_PREFIX",
@@ -131,6 +132,7 @@ __all__ = [
     "LibraryStudyHandoffCanvas",
     "LibraryStudyHandoffCanvasState",
     "LibrarySkillsListCanvas",
+    "LibrarySkillWorkPane",
     "SKILL_MODEL_HINT_COPY",
     "next_skill_context",
     "skill_context_toggle_label",

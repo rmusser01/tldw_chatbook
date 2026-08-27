@@ -30,8 +30,15 @@ from textual.widgets import Input
 
 from tldw_chatbook.Chat.console_chat_models import (
     CONSOLE_RUN_MARKER_GLYPHS,
+    ConsoleMessageRole,
     ConsoleRunMarker,
+    ConsoleWorkspaceContext,
 )
+from tldw_chatbook.Constants import (
+    CONSOLE_NAV_CONTEXT_RESUME_LOCAL_CONVERSATION_ID,
+)
+from tldw_chatbook.Chat.console_chat_store import ConsoleChatStore
+from tldw_chatbook.Chat.console_session_settings import ConsoleSessionSettings
 from Tests.UI.background_signals import (
     await_background_task,
     wait_for_background_signal,
@@ -43,11 +50,13 @@ from Tests.UI.test_product_maturity_gate1_core_loop_screen_adaptation import (
     ConsoleHarness,
 )
 from tldw_chatbook.UI.Console_Modules.workspace import ConsoleWorkspaceController
+from tldw_chatbook.UI.Screens.chat_screen import ChatScreen
 from tldw_chatbook.Widgets.glyph_fallback import resolve_glyph
 from tldw_chatbook.Workspaces import (
     CONSOLE_CONVERSATION_BROWSER_RESULT_LIMIT,
     DEFAULT_WORKSPACE_ID,
     ConsoleConversationBrowserInputRow,
+    ConsoleConversationBrowserRow,
     WorkspaceRecord,
 )
 from tldw_chatbook.Workspaces.display_state import (
@@ -107,7 +116,6 @@ def _workspace_controller(
         refresh_effective_scope_and_sync=_noop,
         messages_from_conversation_tree_accessor=_noop,
         session_settings_for_resume_accessor=_noop,
-        resolve_resumed_character_name=_noop,
         inject_resume_agent_markers_accessor=_noop,
         resolve_effective_scope_state=_noop,
         sync_retrieval_scope_row=_noop,
@@ -3161,6 +3169,631 @@ async def test_resume_workspace_conversation_missing_record_returns_false():
         await pilot.pause()
 
         assert resumed is False
+
+
+RESUME_FAILURE_COPY = (
+    "Couldn't resume this saved conversation: it was deleted or couldn't be read.\n"
+    "Your previous Console chat is still active."
+)
+
+
+def _atomic_resume_controller(
+    *,
+    failure_boundary: str | None = None,
+    failure: BaseException | None = None,
+):
+    class DurableObserver:
+        def __init__(self) -> None:
+            self.mutations: list[tuple[str, str]] = []
+
+        def delete_conversation(self, conversation_id: str) -> None:
+            self.mutations.append(("delete", conversation_id))
+
+        def update_conversation(self, conversation_id: str) -> None:
+            self.mutations.append(("update", conversation_id))
+
+    durable = DurableObserver()
+    store = ConsoleChatStore(persistence=durable)
+    prior_settings = ConsoleSessionSettings(provider="openai", model="prior")
+    prior = store.create_session(title="Prior", settings=prior_settings)
+    store.set_session_draft(prior.id, "draft stays exact")
+    notifications: list[tuple[str, str, dict]] = []
+    app = SimpleNamespace(
+        chachanotes_db=SimpleNamespace(
+            get_conversation_active_leaf=lambda _target: None,
+        ),
+        chat_conversation_scope_service=SimpleNamespace(
+            get_conversation_tree=lambda conversation_id, **_kwargs: (
+                _conversation_tree_payload(conversation_id)
+            )
+        ),
+        notify=lambda message, severity="information", **kwargs: notifications.append(
+            (message, severity, kwargs)
+        ),
+    )
+    sync_calls = 0
+
+    def inject_markers(messages, _conversation_id):
+        if failure_boundary == "marker":
+            raise failure  # type: ignore[misc]
+        return messages
+
+    async def resolve_scope(_session):
+        if failure_boundary == "scope":
+            raise failure  # type: ignore[misc]
+
+    async def sync_ui():
+        nonlocal sync_calls
+        sync_calls += 1
+        if failure_boundary == "ui" and sync_calls == 1:
+            raise failure  # type: ignore[misc]
+
+    async def refresh_browser():
+        if failure_boundary == "browser":
+            raise failure  # type: ignore[misc]
+
+    chat_controller = SimpleNamespace(
+        store=store,
+        switch_session=store.switch_session,
+        activity_for=lambda _session_id: SimpleNamespace(queued_count=0),
+    )
+    controller = _workspace_controller(
+        app_instance=app,
+        chat_store_accessor=lambda: store,
+        current_chat_store_accessor=lambda: store,
+        native_session_rows_accessor=lambda state: state,
+        current_chat_controller_accessor=lambda: chat_controller,
+        ensure_chat_controller=lambda: chat_controller,
+        session_settings_for_resume_accessor=lambda _conversation: prior_settings,
+        inject_resume_agent_markers_accessor=inject_markers,
+        resolve_effective_scope_state=resolve_scope,
+        sync_native_console_chat_ui=sync_ui,
+    )
+    controller._refresh_console_conversation_browser_after_selection = (
+        refresh_browser
+    )
+    return controller, store, prior, prior_settings, durable, notifications
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "failure_boundary", ("marker", "scope", "ui", "browser")
+)
+async def test_open_saved_conversation_atomic_rollback_on_presentation_failure(
+    failure_boundary,
+):
+    from loguru import logger as loguru_logger
+
+    controller, store, prior, prior_settings, durable, notifications = (
+        _atomic_resume_controller(
+            failure_boundary=failure_boundary,
+            failure=RuntimeError(f"failed {failure_boundary}"),
+        )
+    )
+    private_target = "resume-target-private"
+    warnings: list[str] = []
+    sink_id = loguru_logger.add(
+        lambda message: warnings.append(message.record["message"]), level="WARNING"
+    )
+
+    try:
+        result = await controller.open_console_workspace_conversation(private_target)
+    finally:
+        loguru_logger.remove(sink_id)
+
+    assert result is None
+    assert store.active_session_id == prior.id
+    assert store.sessions() == [prior]
+    assert prior.settings is prior_settings
+    assert prior.draft == "draft stays exact"
+    assert durable.mutations == []
+    assert notifications == [(RESUME_FAILURE_COPY, "error", {"timeout": 15})]
+    assert "Unable to present Console saved conversation" in warnings
+    assert all(private_target not in warning for warning in warnings)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "failure_boundary", ("marker", "scope", "ui", "browser")
+)
+async def test_open_saved_conversation_cancellation_rolls_back_and_propagates(
+    failure_boundary,
+):
+    controller, store, prior, prior_settings, durable, notifications = (
+        _atomic_resume_controller(
+            failure_boundary=failure_boundary,
+            failure=asyncio.CancelledError(),
+        )
+    )
+
+    with pytest.raises(asyncio.CancelledError):
+        await controller.open_console_workspace_conversation("resume-target")
+
+    assert store.active_session_id == prior.id
+    assert store.sessions() == [prior]
+    assert prior.settings is prior_settings
+    assert prior.draft == "draft stays exact"
+    assert durable.mutations == []
+    assert notifications == []
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("failure", "propagates"),
+    ((RuntimeError("sync failed"), False), (asyncio.CancelledError(), True)),
+    ids=("ordinary", "cancellation"),
+)
+async def test_open_already_live_session_sync_failure_is_atomic(
+    failure,
+    propagates,
+):
+    controller, store, prior, prior_settings, durable, notifications = (
+        _atomic_resume_controller()
+    )
+    target_settings = ConsoleSessionSettings(provider="openai", model="target")
+    target = store.create_session(title="Already live", settings=target_settings)
+    target.persisted_conversation_id = "resume-target"
+    store.set_session_draft(target.id, "target draft")
+    store.switch_session(prior.id)
+    sync_calls = 0
+
+    async def fail_once_then_sync():
+        nonlocal sync_calls
+        sync_calls += 1
+        if sync_calls == 1:
+            raise failure
+
+    controller._sync_native_console_chat_ui_fn = fail_once_then_sync
+
+    if propagates:
+        with pytest.raises(asyncio.CancelledError):
+            await controller.open_console_workspace_conversation("resume-target")
+    else:
+        result = await controller.open_console_workspace_conversation("resume-target")
+        assert result is None
+
+    assert store.active_session_id == prior.id
+    assert store.sessions() == [prior, target]
+    assert prior.settings is prior_settings
+    assert prior.draft == "draft stays exact"
+    assert target.settings is target_settings
+    assert target.draft == "target draft"
+    assert durable.mutations == []
+    assert notifications == (
+        []
+        if propagates
+        else [(RESUME_FAILURE_COPY, "error", {"timeout": 15})]
+    )
+
+
+def test_resume_match_prefers_active_then_creation_order():
+    store = ConsoleChatStore()
+    first = store.create_session(title="First match")
+    first.persisted_conversation_id = "shared-conversation"
+    second = store.create_session(title="Second match")
+    second.persisted_conversation_id = "shared-conversation"
+    other = store.create_session(title="Other")
+    controller = _workspace_controller(
+        chat_store_accessor=lambda: store,
+        current_chat_store_accessor=lambda: store,
+    )
+
+    assert (
+        controller._console_session_id_for_workspace_conversation(
+            "shared-conversation"
+        )
+        == first.id
+    )
+
+    store.switch_session(second.id)
+    assert (
+        controller._console_session_id_for_workspace_conversation(
+            "shared-conversation"
+        )
+        == second.id
+    )
+    assert other in store.sessions()
+
+
+@pytest.mark.asyncio
+async def test_id_only_public_opener_keeps_active_matching_duplicate():
+    """ID-only navigation must not inherit grouped-browser dedupe order."""
+    controller, store, _prior, _settings, _durable, _notifications = (
+        _atomic_resume_controller()
+    )
+    first = store.create_session(title="First matching session")
+    first.persisted_conversation_id = "shared-conversation"
+    store.set_session_draft(first.id, "first draft")
+    active = store.create_session(title="Active matching session")
+    active.persisted_conversation_id = "shared-conversation"
+    store.set_session_draft(active.id, "active draft")
+    deduped_first_row = ConsoleConversationBrowserRow(
+        row_key="shared-conversation",
+        conversation_id="shared-conversation",
+        native_session_id=first.id,
+        title="First matching session",
+        scope_type="global",
+        workspace_id=None,
+        workspace_label="Global",
+        status="open session",
+        updated_label="now",
+    )
+    controller._find_console_browser_row = (
+        lambda *_args, **_kwargs: deduped_first_row
+    )
+    controller._session_id_for_browser_row_fn = (
+        lambda row: row.native_session_id
+    )
+
+    result = await controller.open_console_workspace_conversation(
+        "shared-conversation"
+    )
+
+    assert result is True
+    assert store.active_session_id == active.id
+    assert first.draft == "first draft"
+    assert active.draft == "active draft"
+
+
+@pytest.mark.asyncio
+async def test_fresh_screen_already_active_resume_performs_final_presentation_sync():
+    """Ordered mount still paints an already-active matching target."""
+    from Tests.UI.test_console_native_chat_flow import (
+        _configure_native_ready_console,
+    )
+
+    app = _build_test_app()
+    _configure_native_ready_console(app)
+    store = app.console_runtime.ensure_chat_store()
+    target = store.create_session(title="Already active saved chat")
+    target.persisted_conversation_id = "already-active"
+    message = store.append_message(
+        target.id,
+        role=ConsoleMessageRole.USER,
+        content="Already-active transcript",
+    )
+    screen = ChatScreen(app)
+    screen.apply_navigation_context(
+        {
+            CONSOLE_NAV_CONTEXT_RESUME_LOCAL_CONVERSATION_ID: (
+                target.persisted_conversation_id
+            )
+        }
+    )
+    final_focus = asyncio.Event()
+    original_focus = screen._workspace._focus_composer_if_needed_fn
+
+    def record_final_focus(*, force: bool = False) -> None:
+        original_focus(force=force)
+        final_focus.set()
+
+    screen._workspace._focus_composer_if_needed_fn = record_final_focus
+
+    async with app.run_test(size=(160, 48)) as pilot:
+        await app.push_screen(screen)
+        app._initial_screen_pushed = True
+        await wait_for_signal(
+            final_focus,
+            what="the already-active resume's final presentation",
+        )
+        await pilot.pause()
+
+        assert store.active_session_id == target.id
+        assert screen.query_one(f"#console-message-{message.id}")
+        assert app.focused is screen.query_one("#console-native-composer")
+
+
+@pytest.mark.asyncio
+async def test_resume_missing_returns_false_with_id_only_copy():
+    controller, store, prior, prior_settings, durable, notifications = (
+        _atomic_resume_controller()
+    )
+    controller.app_instance.chat_conversation_scope_service = SimpleNamespace(
+        get_conversation_tree=lambda *_args, **_kwargs: {}
+    )
+    broken: list[str] = []
+    controller._mark_conversation_row_broken_fn = broken.append
+
+    result = await controller.open_console_workspace_conversation("missing-target")
+
+    assert result is False
+    assert store.active_session_id == prior.id
+    assert store.sessions() == [prior]
+    assert prior.settings is prior_settings
+    assert prior.draft == "draft stays exact"
+    assert durable.mutations == []
+    assert broken == ["missing-target"]
+    assert notifications == [(RESUME_FAILURE_COPY, "warning", {"timeout": 15})]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("failure_boundary", "expected_outcome", "expected_severity"),
+    (
+        ("missing", False, "warning"),
+        ("load", None, "error"),
+        ("post_sync", None, "error"),
+    ),
+)
+async def test_mounted_failed_open_repaints_prior_and_forces_composer(
+    failure_boundary,
+    expected_outcome,
+    expected_severity,
+):
+    """Every terminal/transient open failure restores the mounted prior chat."""
+    from Tests.UI.test_console_native_chat_flow import (
+        _configure_native_ready_console,
+    )
+
+    app = _build_test_app()
+    _configure_native_ready_console(app)
+    host = ConsoleHarness(app)
+
+    async with host.run_test(size=(160, 48)) as pilot:
+        console = host.screen_stack[-1]
+        await _wait_for_selector(console, pilot, "#console-native-transcript")
+        store = console._ensure_console_chat_store()
+        prior = store.ensure_session()
+        prior_message = store.append_message(
+            prior.id,
+            role=ConsoleMessageRole.USER,
+            content="Exact prior transcript",
+        )
+        await console._sync_native_console_chat_ui()
+        await _wait_for_selector(
+            console, pilot, f"#console-message-{prior_message.id}"
+        )
+        console._stop_console_transcript_sync_timer()
+        transcript = console.query_one("#console-native-transcript")
+        transcript.focus()
+        await pilot.pause()
+        assert host.focused is transcript
+        repaint_session_ids = []
+        original_sync = console._workspace._sync_native_console_chat_ui_fn
+
+        async def observe_sync():
+            repaint_session_ids.append(store.active_session_id)
+            await original_sync()
+
+        console._workspace._sync_native_console_chat_ui_fn = observe_sync
+
+        if failure_boundary == "missing":
+            app.chat_conversation_scope_service = SimpleNamespace(
+                get_conversation_tree=lambda *_args, **_kwargs: {}
+            )
+        elif failure_boundary == "load":
+
+            def fail_load(*_args, **_kwargs):
+                raise RuntimeError("unreadable destination")
+
+            app.chat_conversation_scope_service = SimpleNamespace(
+                get_conversation_tree=fail_load
+            )
+        else:
+            app.chat_conversation_scope_service = SimpleNamespace(
+                get_conversation_tree=lambda conversation_id, **_kwargs: (
+                    _conversation_tree_payload(conversation_id)
+                )
+            )
+
+            async def fail_after_target_sync() -> None:
+                raise RuntimeError("post-sync presentation failed")
+
+            console._workspace._refresh_console_conversation_browser_after_selection = (
+                fail_after_target_sync
+            )
+
+        notifications: list[tuple[str, str, dict]] = []
+        app.notify = (
+            lambda message, severity="information", **kwargs: notifications.append(
+                (message, severity, kwargs)
+            )
+        )
+
+        outcome = await console._workspace.open_console_workspace_conversation(
+            "failed-target"
+        )
+        await pilot.pause()
+
+        assert outcome is expected_outcome
+        assert store.active_session_id == prior.id
+        assert store.sessions() == [prior]
+        assert repaint_session_ids[-1] == prior.id
+        assert console.query_one(f"#console-message-{prior_message.id}")
+        assert host.focused is console.query_one("#console-native-composer")
+        assert notifications == [
+            (RESUME_FAILURE_COPY, expected_severity, {"timeout": 15})
+        ]
+
+
+class _AtomicWorkspaceRegistry:
+    def __init__(self) -> None:
+        self._records = {
+            "workspace-prior": SimpleNamespace(
+                workspace_id="workspace-prior", name="Prior workspace"
+            ),
+            "workspace-target": SimpleNamespace(
+                workspace_id="workspace-target", name="Target workspace"
+            ),
+        }
+        self._active = self._records["workspace-prior"]
+        self.mutation_generation = 0
+
+    def get_active_workspace(self):
+        return self._active
+
+    def set_active_workspace(self, workspace_id: str) -> None:
+        self._active = self._records[workspace_id]
+        self.mutation_generation += 1
+
+
+def _cross_workspace_browser_row() -> ConsoleConversationBrowserRow:
+    return ConsoleConversationBrowserRow(
+        row_key="workspace:workspace-target:resume-target",
+        conversation_id="resume-target",
+        native_session_id=None,
+        title="Target chat",
+        scope_type="workspace",
+        workspace_id="workspace-target",
+        workspace_label="Target workspace",
+        status="saved chat",
+        updated_label="now",
+    )
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("load_failure", ("missing", "transient"))
+async def test_browser_row_resume_failure_preserves_prior_workspace_context(
+    load_failure,
+):
+    controller, store, prior, prior_settings, durable, notifications = (
+        _atomic_resume_controller()
+    )
+    registry = _AtomicWorkspaceRegistry()
+    controller.app_instance.workspace_registry_service = registry
+    prior_context = ConsoleWorkspaceContext(
+        active_workspace_id="workspace-prior"
+    )
+    store.set_workspace_context(prior_context)
+    row = _cross_workspace_browser_row()
+    controller._find_console_browser_row = lambda *_args, **_kwargs: row
+
+    if load_failure == "missing":
+        controller.app_instance.chat_conversation_scope_service = SimpleNamespace(
+            get_conversation_tree=lambda *_args, **_kwargs: {}
+        )
+    else:
+        def fail_load(*_args, **_kwargs):
+            raise RuntimeError("service failed")
+
+        controller.app_instance.chat_conversation_scope_service = SimpleNamespace(
+            get_conversation_tree=fail_load
+        )
+
+    result = await controller.open_console_workspace_conversation(
+        "resume-target", row_key=row.row_key
+    )
+
+    assert result is (False if load_failure == "missing" else None)
+    assert registry.get_active_workspace().workspace_id == "workspace-prior"
+    assert store.workspace_context is prior_context
+    assert store.active_session_id == prior.id
+    assert prior.settings is prior_settings
+    assert durable.mutations == []
+    assert notifications == (
+        [(RESUME_FAILURE_COPY, "warning", {"timeout": 15})]
+        if load_failure == "missing"
+        else [(RESUME_FAILURE_COPY, "error", {"timeout": 15})]
+    )
+
+
+@pytest.mark.asyncio
+async def test_resume_loading_teardown_failure_cannot_replace_success():
+    controller, store, prior, _settings, _durable, _notifications = (
+        _atomic_resume_controller()
+    )
+
+    def set_loading(_conversation_id: str, loading: bool) -> None:
+        if not loading:
+            raise RuntimeError("teardown failed")
+
+    controller._set_conversation_row_loading_fn = set_loading
+
+    result = await controller.open_console_workspace_conversation("resume-target")
+
+    assert result is True
+    assert store.active_session_id != prior.id
+    assert len(store.sessions()) == 2
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("resume_outcome", (False, None))
+async def test_resume_loading_teardown_failure_cannot_replace_tristate_failure(
+    resume_outcome,
+):
+    controller, _store, _prior, _settings, _durable, notifications = (
+        _atomic_resume_controller()
+    )
+
+    async def resume(*_args, **_kwargs):
+        return resume_outcome
+
+    def set_loading(_conversation_id: str, loading: bool) -> None:
+        if not loading:
+            raise RuntimeError("teardown failed")
+
+    controller._resume_console_workspace_conversation = resume
+    controller._set_conversation_row_loading_fn = set_loading
+
+    result = await controller.open_console_workspace_conversation("resume-target")
+
+    assert result is resume_outcome
+    assert notifications == (
+        [(RESUME_FAILURE_COPY, "warning", {"timeout": 15})]
+        if resume_outcome is False
+        else []
+    )
+
+
+@pytest.mark.asyncio
+async def test_resume_loading_teardown_failure_cannot_replace_cancellation():
+    controller, store, prior, _settings, _durable, notifications = (
+        _atomic_resume_controller(
+            failure_boundary="marker", failure=asyncio.CancelledError()
+        )
+    )
+
+    def set_loading(_conversation_id: str, loading: bool) -> None:
+        if not loading:
+            raise RuntimeError("teardown failed")
+
+    controller._set_conversation_row_loading_fn = set_loading
+
+    with pytest.raises(asyncio.CancelledError):
+        await controller.open_console_workspace_conversation("resume-target")
+
+    assert store.active_session_id == prior.id
+    assert store.sessions() == [prior]
+    assert notifications == []
+
+
+@pytest.mark.asyncio
+async def test_resume_composer_focus_failure_rolls_back_without_scheduling_retry():
+    controller, store, prior, _settings, _durable, notifications = (
+        _atomic_resume_controller()
+    )
+    retry_calls: list[str] = []
+    controller._wake_retry_poke_fn = lambda: retry_calls.append("retry")
+
+    def fail_focus(*, force: bool) -> None:
+        raise RuntimeError(f"focus failed: {force}")
+
+    controller._focus_composer_if_needed_fn = fail_focus
+
+    result = await controller.open_console_workspace_conversation("resume-target")
+
+    assert result is None
+    assert store.active_session_id == prior.id
+    assert store.sessions() == [prior]
+    assert retry_calls == []
+    assert notifications == [(RESUME_FAILURE_COPY, "error", {"timeout": 15})]
+
+
+@pytest.mark.asyncio
+async def test_resume_retry_is_scheduled_only_after_successful_composer_focus():
+    controller, _store, _prior, _settings, _durable, _notifications = (
+        _atomic_resume_controller()
+    )
+    events: list[str] = []
+    controller._focus_composer_if_needed_fn = (
+        lambda *, force: events.append(f"focus:{force}")
+    )
+    controller._wake_retry_poke_fn = lambda: events.append("retry")
+
+    result = await controller.open_console_workspace_conversation("resume-target")
+
+    assert result is True
+    assert events == ["focus:True", "retry"]
 
 
 @pytest.mark.asyncio

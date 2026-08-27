@@ -120,7 +120,12 @@ class GlobalFullCaptureConfirmation(SafeModalDismissMixin, ModalScreen[bool]):
     SAFE_MODAL_CONTENT = "#global-full-confirmation"
     message = GLOBAL_FULL_CAPTURE_WARNING
     BINDINGS = [Binding("escape", "request_safe_cancel", "Cancel", show=False)]
-    DEFAULT_CSS = """
+    #: TASK-22858 follow-on: BUNDLED_CSS, not DEFAULT_CSS — build_css.py
+    #: lifts this into the app bundle. A class-level DEFAULT_CSS registers
+    #: another stylesheet source against Textual's 64-entry parse cache
+    #: (see Tests/UI/test_widget_css_consolidation.py); same fix and same
+    #: ModalScreen shape as ProjectSkillsImportModal.
+    BUNDLED_CSS = """
     GlobalFullCaptureConfirmation { align: center middle; }
     #global-full-confirmation {
         width: 72; max-width: 96%; height: 18; max-height: 96%;

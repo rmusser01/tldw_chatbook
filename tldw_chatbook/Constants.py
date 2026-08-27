@@ -54,6 +54,11 @@ LIBRARY_NAV_CONTEXT_OPEN_SOURCE_ID = "open_source_id"
 LIBRARY_NAV_CONTEXT_INGEST = "ingest_media"
 LIBRARY_MODE_CONVERSATIONS = "conversations"
 
+# Console navigation-context contract keys.
+CONSOLE_NAV_CONTEXT_RESUME_LOCAL_CONVERSATION_ID = (
+    "resume_local_conversation_id"
+)
+
 # Watchlists navigation-context contract keys and values.
 WATCHLISTS_NAV_CONTEXT_SECTION = "section"
 WATCHLISTS_NAV_CONTEXT_BACKEND = "backend"
@@ -1907,6 +1912,13 @@ options:
 [bold]--chat-template-args CHAT_TEMPLATE_ARGS[/]
     A JSON formatted string of arguments for the tokenizer's apply_chat_template, e.g. '{"enable_thinking":false}'
 """
+
+#: Worker group for the provider model-catalog refresh. One constant so the
+#: dispatch sites and the worker-handler's acknowledgement set cannot drift
+#: apart through a spelling change — exclusivity and event routing both key
+#: off this exact string (Qodo review of PR #2131).
+MODEL_CATALOG_REFRESH_WORKER_GROUP = "model-catalog-refresh"
+
 
 # End of Constants.py
 ########################################################################################################################

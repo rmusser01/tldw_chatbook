@@ -36,11 +36,12 @@ from tldw_chatbook.Chat.console_context_repository import (
 )
 from tldw_chatbook.Chat.trajectory import derive_trajectory
 from tldw_chatbook.DB.ChaChaNotes_DB import CharactersRAGDB, TrajectoryRowWrite
-from tldw_chatbook.UI.Screens.chat_screen import (
-    CONSOLE_WORKBENCH_SHORTCUTS,
-    ChatScreen,
+from tldw_chatbook.UI.Console_Modules.review_selection import (
+    ConsoleReviewSelectionController,
     _build_trajectory_snapshot,
 )
+from tldw_chatbook.UI.Console_Modules.wiring import _present_console_trajectory
+from tldw_chatbook.UI.Screens.chat_screen import CONSOLE_WORKBENCH_SHORTCUTS, ChatScreen
 from tldw_chatbook.UI.Screens.trajectory_screen import TrajectoryScreen
 
 # ---------------------------------------------------------------------------
@@ -655,6 +656,25 @@ async def test_trajectory_launch_action_presents_screen():
         # Console view and require every decomposed controller.
         instance._console_runtime_ref = SimpleNamespace(chat_store=_Store())
         instance.notify = lambda *args, **kwargs: None  # not under test
+        instance._review_selection = ConsoleReviewSelectionController(
+            store_accessor=lambda: instance._console_runtime_ref.chat_store,
+            agent_conversation_id_accessor=lambda: None,
+            change_review_provider_accessor=lambda _conversation_id: None,
+            run_active_accessor=lambda: False,
+            run_active_for_root=lambda _root: False,
+            workspace_roots_accessor=lambda: None,
+            agent_runs_db_accessor=lambda: None,
+            capture_policy_bindings_accessor=lambda _session_id, _conv_id: None,
+            native_messages_accessor=lambda: [],
+            run_worker=lambda *args, **kwargs: instance.run_worker(*args, **kwargs),
+            show_feedback_comment=lambda _action, _quote: None,  # type: ignore[arg-type]
+            dispatch_prompt=lambda _text: None,  # type: ignore[arg-type]
+            marshal_to_ui=lambda callback, *args: app.call_from_thread(callback, *args),
+            present_trajectory=lambda launch: _present_console_trajectory(
+                instance, launch
+            ),
+            notify=instance.notify,
+        )
 
         ChatScreen.action_open_trajectory_view(instance)
         # build() runs on a real worker thread; present() is marshaled back

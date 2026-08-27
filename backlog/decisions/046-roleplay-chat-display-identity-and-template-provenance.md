@@ -70,6 +70,22 @@ their operational meaning would otherwise be obscured. A successful
 Appearance save publishes a generation signal and mounted Console transcripts
 re-resolve their presentation without an application restart.
 
+### 2026-08-26 amendment: durable historical character-name snapshots
+
+`console_roleplay_context` v2 adds an optional `character_name_snapshot`. New
+writes use v2; readers accept v1 and v2; versions greater than v2 remain
+fail-closed and block merge writes. The snapshot is the character name that
+owned the resolved prompt/template projection when the conversation was saved.
+
+A v1 conversation has no historical-name authority. Resume must not fetch or
+backfill the current character-card name. Saved resolved `system_prompt`
+remains authoritative when provenance or the historical name is absent. The
+data remains in the existing merge-safe metadata object; no schema migration
+is introduced.
+
+This amendment supports [TASK-22988](../tasks/task-22988%20-%20Resume-prior-character-chats-from-Roleplay.md)
+and the approved [Roleplay Resume Prior Character Chat Design](../../Docs/superpowers/specs/2026-08-26-roleplay-resume-prior-character-chat-design.md).
+
 ## Context
 
 The native Console session already persists character identity, including

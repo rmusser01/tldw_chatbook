@@ -125,6 +125,40 @@ _SHADOWED_BUILTIN_NAMES = frozenset(
 )
 
 SkillEditorMode = Literal["basic", "advanced"]
+SkillReaderMode = Literal["overview", "edit", "trust", "files"]
+
+
+def coerce_skill_reader_mode(value: Any) -> SkillReaderMode:
+    """Return a supported Skills work-pane mode, defaulting to Overview.
+
+    Args:
+        value: Candidate reader-mode value.
+
+    Returns:
+        The supported mode, or ``"overview"`` for an unsupported value.
+    """
+    if value in {"edit", "trust", "files"}:
+        return value
+    return "overview"
+
+
+def skill_review_identity_line(active_review: Mapping[str, Any] | None) -> str:
+    """Identify the exact trust-service snapshot currently under review.
+
+    Args:
+        active_review: Trust-service review snapshot, when one is active.
+
+    Returns:
+        The review generation and digest label, or an empty string when the
+        snapshot has no valid identity.
+    """
+    if not isinstance(active_review, Mapping):
+        return ""
+    generation = active_review.get("manifest_generation")
+    digest = active_review.get("current_digest")
+    if not isinstance(generation, int) or not isinstance(digest, str) or not digest:
+        return ""
+    return f"Reviewed files · trust generation {generation} · sha256:{digest}"
 
 
 def coerce_skill_editor_mode(value: Any) -> SkillEditorMode:
@@ -196,12 +230,14 @@ class SkillListRow:
             trust review.
         blocked: Whether the skill is currently trust-blocked
             (``trust_blocked``) -- unusable until reviewed/re-trusted.
+        selected: Whether this row owns the retained Work pane.
     """
 
     name: str
     secondary: str
     trust_glyph: str
     blocked: bool
+    selected: bool = False
 
 
 @dataclass(frozen=True)
@@ -435,7 +471,9 @@ def _matches_query(record: Mapping[str, Any], query_lower: str) -> bool:
     return query_lower in _text(record.get("description")).lower()
 
 
-def _row(record: Mapping[str, Any], *, default_blocked: bool) -> SkillListRow | None:
+def _row(
+    record: Mapping[str, Any], *, default_blocked: bool, selected_name: str
+) -> SkillListRow | None:
     if not isinstance(record, Mapping):
         return None
     name = _text(record.get("name"))
@@ -450,7 +488,11 @@ def _row(record: Mapping[str, Any], *, default_blocked: bool) -> SkillListRow | 
     description = _text(record.get("description"))
     secondary = " · ".join(part for part in (flags, description) if part)
     return SkillListRow(
-        name=name, secondary=secondary, trust_glyph=trust_glyph, blocked=blocked
+        name=name,
+        secondary=secondary,
+        trust_glyph=trust_glyph,
+        blocked=blocked,
+        selected=name == selected_name,
     )
 
 
@@ -459,6 +501,7 @@ def build_skills_list_state(
     *,
     query: str,
     sort: str,
+    selected_name: str = "",
 ) -> SkillsListState:
     """Build the Library Skills canvas's list-view display state.
 
@@ -479,6 +522,7 @@ def build_skills_list_state(
             alphabetically by name within each group. Any other value
             (including ``"name"``) sorts purely alphabetically
             case-insensitively.
+        selected_name: Skill currently projected in the retained Work pane.
 
     Returns:
         The list view's display state.
@@ -491,12 +535,20 @@ def build_skills_list_state(
     rows: list[SkillListRow] = []
     for record in available:
         if isinstance(record, Mapping) and _matches_query(record, query_lower):
-            row = _row(record, default_blocked=False)
+            row = _row(
+                record,
+                default_blocked=False,
+                selected_name=selected_name,
+            )
             if row is not None:
                 rows.append(row)
     for record in blocked:
         if isinstance(record, Mapping) and _matches_query(record, query_lower):
-            row = _row(record, default_blocked=True)
+            row = _row(
+                record,
+                default_blocked=True,
+                selected_name=selected_name,
+            )
             if row is not None:
                 rows.append(row)
 

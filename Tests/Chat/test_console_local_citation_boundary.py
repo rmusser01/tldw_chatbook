@@ -2949,21 +2949,6 @@ async def test_citation_repair_late_chunk_privacy_sentinels(
 
 
 @pytest.mark.asyncio
-@pytest.mark.xfail(
-    strict=False,
-    raises=RuntimeError,
-    reason=(
-        "TASK-22690: closing a chat during an in-flight durable postcommit "
-        "raises 'Durable continuation owner changed.' -- a fourth raise site "
-        "of the class TASK-22587 fixed. TASK-22587 predicted these two tests "
-        "would reach a durable-path failure once their sessions stopped being "
-        "ephemeral. NARROWED to RuntimeError (Qodo review of #2128): an "
-        "unconditional xfail would also swallow failures in privacy cleanup, "
-        "session removal, message resurrection and cancellation -- everything "
-        "else these tests assert. Not skipped: it still runs and reports if it "
-        "starts passing."
-    ),
-)
 async def test_citation_repair_session_close_privacy_sentinels(
     caplog: pytest.LogCaptureFixture,
 ) -> None:
@@ -3386,21 +3371,6 @@ async def test_citation_repair_shutdown_during_collection_privacy_has_no_user_st
 
 
 @pytest.mark.asyncio
-@pytest.mark.xfail(
-    strict=False,
-    raises=RuntimeError,
-    reason=(
-        "TASK-22690: closing a chat during an in-flight durable postcommit "
-        "raises 'Durable continuation owner changed.' -- a fourth raise site "
-        "of the class TASK-22587 fixed. TASK-22587 predicted these two tests "
-        "would reach a durable-path failure once their sessions stopped being "
-        "ephemeral. NARROWED to RuntimeError (Qodo review of #2128): an "
-        "unconditional xfail would also swallow failures in privacy cleanup, "
-        "session removal, message resurrection and cancellation -- everything "
-        "else these tests assert. Not skipped: it still runs and reports if it "
-        "starts passing."
-    ),
-)
 async def test_citation_repair_close_during_collection_never_resurrects_session_or_message():
     persistence = _ReadyCitationPersistence()
     controller, store, gateway, _bridge, _initial_body, _repaired_body = (

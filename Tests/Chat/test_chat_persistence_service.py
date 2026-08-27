@@ -2462,12 +2462,15 @@ def test_update_roleplay_context_retries_once_and_preserves_concurrent_sibling()
         conversation_id="conv-1",
         user_name_override="Rowan",
         character_system_template="Speak to {{user}}.",
+        character_name_snapshot="Alraune",
     ) is True
 
     assert db.update_attempts == 2
     saved = json.loads(db.row["metadata"])
     assert saved["concurrent_sibling"] == {"kept": True}
+    assert saved["console_roleplay_context"]["version"] == 2
     assert saved["console_roleplay_context"]["user_name_override"] == "Rowan"
+    assert saved["console_roleplay_context"]["character_name_snapshot"] == "Alraune"
 
 
 def test_update_roleplay_context_propagates_second_conflict():
@@ -2479,6 +2482,7 @@ def test_update_roleplay_context_propagates_second_conflict():
             conversation_id="conv-1",
             user_name_override="Rowan",
             character_system_template="Speak to {{user}}.",
+            character_name_snapshot="Alraune",
         )
 
     assert db.update_attempts == 2

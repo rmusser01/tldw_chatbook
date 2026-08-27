@@ -57,6 +57,9 @@ from tldw_chatbook.Widgets.Library.library_skills_canvas import (
     skill_trust_state_line,
     skill_user_invocable_label,
 )
+from tldw_chatbook.Widgets.Library.library_skill_work_pane import (
+    LibrarySkillWorkPane,
+)
 
 from Tests.UI.test_destination_shells import (
     StaticLibraryConversationScopeService,
@@ -980,6 +983,7 @@ def test_build_library_skills_state_reads_local_source_records():
         },
         _library_skills_filter="",
         _library_skills_sort="name",
+        _selected_skill_name="",
     )
     state = LibraryScreen._build_library_skills_state(fake)
     assert state.count == 2
@@ -991,6 +995,7 @@ def test_build_library_skills_state_tolerates_missing_entry():
         _local_source_records={},
         _library_skills_filter="",
         _library_skills_sort="name",
+        _selected_skill_name="",
     )
     state = LibraryScreen._build_library_skills_state(fake)
     assert state.rows == ()
@@ -1325,6 +1330,8 @@ async def test_opening_skill_editor_does_not_break_tab_bar_click_activation(tmp_
             await pilot.pause(0.02)
         await pilot.pause()
         assert screen._library_skills_view == "editor"
+        screen.query_one("#library-skill-mode-edit", Button).press()
+        await pilot.pause()
 
         # Simulate a user starting a click/selection gesture in the
         # Description Input -- MouseDown captures the mouse -- whose
@@ -1440,6 +1447,8 @@ async def _open_real_skill_editor(host, pilot, skill_name: str) -> LibraryScreen
         await pilot.pause(0.02)
     await pilot.pause()
     assert screen._library_skills_view == "editor"
+    screen.query_one("#library-skill-mode-edit", Button).press()
+    await pilot.pause()
     return screen
 
 
@@ -1473,15 +1482,15 @@ async def test_missing_trust_service_snapshot_preserves_open_skill_draft(
         server_service=None,
         policy_enforcer=None,
     )
-    app.local_skill_trust_service = None
+    # TldwCli lazily constructs this service when the attribute is None;
+    # a non-service sentinel represents an unavailable posture seam.
+    app.local_skill_trust_service = object()
     host = LibraryHarness(app)
 
     async with host.run_test(size=LIBRARY_TEST_SIZE) as pilot:
         screen = await _open_real_skill_editor(host, pilot, "draft-demo")
         await screen.workers.wait_for_complete()
-        canvas = screen.query_one(
-            "#library-skills-canvas", LibrarySkillsListCanvas
-        )
+        canvas = screen.query_one("#library-skill-work-pane", LibrarySkillWorkPane)
         description = canvas.query_one("#library-skill-description", Input)
         description.value = "Unsaved draft"
         description.focus()
@@ -1546,9 +1555,7 @@ async def test_library_skill_mode_switch_is_targeted_and_remembered(
     host = LibraryHarness(app)
     async with host.run_test(size=(100, 30)) as pilot:
         screen = await _open_real_skill_editor(host, pilot, "mode-demo")
-        canvas = screen.query_one(
-            "#library-skills-canvas", LibrarySkillsListCanvas
-        )
+        canvas = screen.query_one("#library-skill-work-pane", LibrarySkillWorkPane)
         body = canvas.query_one("#library-skill-body", TextArea)
         assert canvas.query_one("#library-skill-basic-fields").display is True
 
@@ -1699,6 +1706,8 @@ async def test_revoke_button_enabled_for_a_granted_skill_and_pressing_it_revokes
 
     async with host.run_test(size=LIBRARY_TEST_SIZE) as pilot:
         screen = await _open_real_skill_editor(host, pilot, "demo-skill")
+        screen.query_one("#library-skill-mode-trust", Button).press()
+        await pilot.pause()
         revoke_button = await _wait_for_revoke_button_disabled(
             screen, pilot, expected=False
         )
@@ -1758,6 +1767,8 @@ async def test_revoke_button_disabled_when_the_skill_has_no_grant(tmp_path):
 
     async with host.run_test(size=LIBRARY_TEST_SIZE) as pilot:
         screen = await _open_real_skill_editor(host, pilot, "demo-skill")
+        screen.query_one("#library-skill-mode-trust", Button).press()
+        await pilot.pause()
         for _ in range(150):
             if trust_service.granted_calls:
                 break
@@ -2250,6 +2261,8 @@ async def test_render_trust_panel_patches_review_content_in_place():
         screen.refresh(recompose=True)
         await pilot.pause()
         await pilot.pause()
+        screen.query_one("#library-skill-mode-trust", Button).press()
+        await pilot.pause()
 
         screen._library_skill_active_review = {
             "review_id": "r1",
@@ -2309,6 +2322,11 @@ async def test_approve_failure_discards_stale_review():
         _library_skills_view="editor",
         _library_skill_active_review={"review_id": "r1"},
         _selected_skill_name="code-review",
+        _library_skill_detail_generation=3,
+        _library_skill_detail_request_is_current=(
+            lambda *, skill_name, generation: skill_name == "code-review"
+            and generation == 3
+        ),
         _request_library_skill_trust_passphrase=AsyncMock(return_value="pw"),
         _call_library_skill_trust_service=_call,
         _render_library_skill_trust_panel=lambda: render_calls.append(True),
@@ -2399,7 +2417,8 @@ async def test_handle_library_skill_delete_confirm_kicks_delete_worker():
         _library_skill_confirming_delete=True,
         _library_skill_mutation_in_flight=False,
         _delete_library_skill=lambda name: None,
-        _run_library_skill_delete=lambda name: None,
+        _run_library_skill_delete=lambda name, generation: None,
+        _library_skill_detail_generation=3,
         _sync_library_skill_lifecycle_actions=lambda: None,
         run_worker=lambda coro, **kwargs: worker_calls.append(kwargs),
         refresh=lambda recompose=False: None,
@@ -2500,9 +2519,12 @@ async def test_create_save_success_consumes_scroll_receipt_after_recompose():
         await pilot.pause()
 
         assert screen._library_skill_scroll_pending is False
-        assert screen.query_one("#library-skill-trust-panel")
+        assert screen.query_one("#library-skill-work-pane")
         assert screen.query_one("#library-skill-back").display is True
         assert screen.query_one("#library-skill-more-actions").display is True
+        screen.query_one("#library-skill-mode-trust", Button).press()
+        await pilot.pause()
+        assert screen.query_one("#library-skill-trust-panel")
 
 
 @pytest.mark.asyncio
@@ -2886,6 +2908,7 @@ def test_reset_skill_editor_state_clears_import_row():
     fake._reset_library_skills_import_state = (
         lambda: LibraryScreen._reset_library_skills_import_state(fake)
     )
+    fake._invalidate_library_skill_detail_generation = lambda: None
     LibraryScreen._reset_library_skill_editor_state(fake)
     assert fake._library_skills_import_open is False
     assert fake._library_skills_import_path == ""
@@ -2920,6 +2943,7 @@ def test_reset_skill_editor_state_clears_trust_reset_confirm_flag():
     fake._reset_library_skills_import_state = (
         lambda: LibraryScreen._reset_library_skills_import_state(fake)
     )
+    fake._invalidate_library_skill_detail_generation = lambda: None
     LibraryScreen._reset_library_skill_editor_state(fake)
     assert fake._library_skill_trust_confirming_reset is False
 
@@ -3099,6 +3123,8 @@ async def test_action_library_skill_back_honors_dirty_guard():
             # completing later can re-request the focus after ITS OWN
             # recompose too; see ``_apply_local_source_snapshot``).
             _library_pending_list_entry_focus=False,
+            _library_pending_list_entry_media_return=None,
+            _library_list_entry_focus_generation=0,
             _focus_library_list_entry=lambda: None,
             call_after_refresh=lambda callback: focus_calls.append(callback),
             # ``_arm_library_list_entry_focus`` also arms a settle-window

@@ -566,6 +566,121 @@ def skill_supporting_files_text(
             lines.append(f"{file.name} — {file.size} bytes (binary)")
     return "\n".join(lines)
 
+
+class LibrarySkillsTrustHeader(Vertical):
+    """Recompose the asynchronous trust header without replacing list rows."""
+
+    def __init__(
+        self,
+        *,
+        has_skills: bool,
+        blocked_count: int,
+        trust_posture: str,
+        confirming_reset: bool,
+        **kwargs: Any,
+    ) -> None:
+        """Initialize the retained Skills trust header.
+
+        Args:
+            has_skills: Whether any Skills are available.
+            blocked_count: Number of Skills currently blocked by trust policy.
+            trust_posture: Aggregate trust-store posture.
+            confirming_reset: Whether to show the destructive reset confirmation.
+            **kwargs: Additional arguments forwarded to ``Vertical``.
+        """
+        super().__init__(**kwargs)
+        self.has_skills = has_skills
+        self.blocked_count = blocked_count
+        self.trust_posture = trust_posture
+        self.confirming_reset = confirming_reset
+        self.styles.height = "auto"
+
+    def compose(self) -> ComposeResult:
+        """Render only the posture-dependent header controls.
+
+        Returns:
+            The trust summary, action, and optional reset controls.
+        """
+        if not self.has_skills:
+            return
+        header = skill_trust_header_line(self.trust_posture, self.blocked_count)
+        if header is None:
+            return
+        copy, action_id = header
+        yield Static(copy, id="library-skills-trust-header", markup=False)
+        if action_id:
+            button = Button(
+                _TRUST_HEADER_ACTION_LABELS[action_id],
+                id="library-skills-trust-action",
+                classes="library-canvas-action",
+                compact=True,
+            )
+            button.trust_action = action_id
+            yield button
+        if self.trust_posture in _TRUST_POSTURES_WITH_RESET:
+            yield Button(
+                _RESET_TRUST_BUTTON_LABEL,
+                id="library-skills-trust-reset",
+                classes="library-canvas-action library-media-action-danger",
+                compact=True,
+            )
+            if self.confirming_reset:
+                yield Static(
+                    _TRUST_RESET_CONFIRM_COPY,
+                    id="library-skills-trust-reset-confirm-copy",
+                    markup=False,
+                )
+                toolbar = Horizontal(classes="ds-toolbar")
+                toolbar.styles.height = "auto"
+                with toolbar:
+                    yield Button(
+                        "Reset",
+                        id="library-skills-trust-reset-confirm",
+                        classes=(
+                            "library-canvas-action library-media-action-danger"
+                        ),
+                        compact=True,
+                    )
+                    yield Button(
+                        "Cancel",
+                        id="library-skills-trust-reset-cancel",
+                        classes="library-canvas-action",
+                        compact=True,
+                    )
+
+    def sync_state(
+        self,
+        *,
+        has_skills: bool,
+        blocked_count: int,
+        trust_posture: str,
+        confirming_reset: bool,
+    ) -> None:
+        """Apply a posture result while leaving sibling Skill rows mounted.
+
+        Args:
+            has_skills: Whether any Skills are available.
+            blocked_count: Number of Skills currently blocked by trust policy.
+            trust_posture: Aggregate trust-store posture.
+            confirming_reset: Whether to show the destructive reset confirmation.
+        """
+        values = (has_skills, blocked_count, trust_posture, confirming_reset)
+        if values == (
+            self.has_skills,
+            self.blocked_count,
+            self.trust_posture,
+            self.confirming_reset,
+        ):
+            return
+        (
+            self.has_skills,
+            self.blocked_count,
+            self.trust_posture,
+            self.confirming_reset,
+        ) = values
+        self.refresh(recompose=True)
+
+
 class LibrarySkillsListCanvas(PostRecomposeCallback, VerticalScroll):
     """Render the Library skills canvas: the list view, or the skill editor.
 
@@ -665,6 +780,10 @@ class LibrarySkillsListCanvas(PostRecomposeCallback, VerticalScroll):
         more_actions_open: bool = False,
         trust_details_open: bool = False,
         script_access_granted: bool = False,
+        show_editor_trust: bool = True,
+        show_editor_files: bool = True,
+        detail_notice: str = "",
+        detail_retryable: bool = False,
         **kwargs: Any,
     ) -> None:
         super().__init__(**kwargs)
@@ -696,6 +815,10 @@ class LibrarySkillsListCanvas(PostRecomposeCallback, VerticalScroll):
         self.more_actions_open = more_actions_open
         self.trust_details_open = trust_details_open
         self.script_access_granted = script_access_granted
+        self.show_editor_trust = show_editor_trust
+        self.show_editor_files = show_editor_files
+        self.detail_notice = detail_notice
+        self.detail_retryable = detail_retryable
         self.rebuilding_tool_picker = False
         self.styles.width = "1fr"
         self.styles.min_width = 40
@@ -703,11 +826,18 @@ class LibrarySkillsListCanvas(PostRecomposeCallback, VerticalScroll):
     def compose(self) -> ComposeResult:
         if self.mode == "loading":
             yield Static(
-                "Loading skill…",
+                self.detail_notice or "Loading skill…",
                 id="library-skill-loading",
                 classes="destination-purpose",
                 markup=False,
             )
+            if self.detail_retryable:
+                yield Button(
+                    "Retry",
+                    id="library-skill-detail-retry",
+                    classes="library-canvas-action",
+                    compact=True,
+                )
             return
         if self.mode == "editor":
             yield from self._compose_editor()
@@ -745,6 +875,8 @@ class LibrarySkillsListCanvas(PostRecomposeCallback, VerticalScroll):
         more_actions_open: bool = False,
         trust_details_open: bool = False,
         script_access_granted: bool = False,
+        detail_notice: str = "",
+        detail_retryable: bool = False,
     ) -> None:
         """Apply a complete skills snapshot within the mounted canvas.
 
@@ -771,6 +903,17 @@ class LibrarySkillsListCanvas(PostRecomposeCallback, VerticalScroll):
             import_review_name: Skill awaiting post-import trust review.
             sort_choices_visible: Whether the sort chooser is expanded.
         """
+        header_only = bool(
+            self.mode == mode == "list"
+            and self.state == state
+            and self.sort_mode == sort_mode
+            and self.filter_value == filter_value
+            and self.import_open == import_open
+            and self.import_path == import_path
+            and self.import_status == import_status
+            and self.import_review_name == import_review_name
+            and self.sort_choices_visible == sort_choices_visible
+        )
         self.state = state
         self.sort_mode = sort_mode
         self.filter_value = filter_value
@@ -799,6 +942,22 @@ class LibrarySkillsListCanvas(PostRecomposeCallback, VerticalScroll):
         self.more_actions_open = more_actions_open
         self.trust_details_open = trust_details_open
         self.script_access_granted = script_access_granted
+        self.detail_notice = detail_notice
+        self.detail_retryable = detail_retryable
+        if header_only:
+            rows = state.rows if state is not None else ()
+            try:
+                self.query_one(
+                    "#library-skills-trust-region", LibrarySkillsTrustHeader
+                ).sync_state(
+                    has_skills=bool(rows),
+                    blocked_count=sum(1 for row in rows if row.blocked),
+                    trust_posture=trust_posture,
+                    confirming_reset=confirming_reset,
+                )
+                return
+            except (NoMatches, QueryError):
+                pass
         self.refresh(recompose=True)
         self._schedule_scroll_to_actions()
 
@@ -1000,45 +1159,16 @@ class LibrarySkillsListCanvas(PostRecomposeCallback, VerticalScroll):
             classes="destination-section",
             markup=False,
         )
-        # Task 4: adaptive trust header -- posture-driven copy plus an
-        # optional single inline action, computed from THIS state's own
-        # blocked-row count (not a screen-supplied total) so it always
-        # matches what's actually rendered below. Spec's "don't nag" rule:
-        # with zero skills installed there is nothing to review/trust yet,
-        # so the header (and its escape-hatch reset button) stays hidden
-        # entirely rather than greeting an empty list with a trust prompt.
-        if state.rows:
-            blocked_count = sum(
-                1 for row in state.rows if getattr(row, "blocked", False)
-            )
-            header = skill_trust_header_line(self.trust_posture, blocked_count)
-            if header is not None:
-                copy, action_id = header
-                yield Static(copy, id="library-skills-trust-header", markup=False)
-                if action_id:
-                    button = Button(
-                        _TRUST_HEADER_ACTION_LABELS[action_id],
-                        id="library-skills-trust-action",
-                        classes="library-canvas-action",
-                        compact=True,
-                    )
-                    button.trust_action = action_id  # read by the screen handler
-                    yield button
-                # Task 5: a SEPARATE, always-destructive escape hatch for the
-                # two postures where the header's own action button doesn't
-                # cover "start over from nothing" -- "resetup" already
-                # reset-then-bootstraps behind a NEW passphrase, and "unlock"
-                # assumes you still remember the OLD one. Neither is a way
-                # out if the manifest itself is the problem.
-                if self.trust_posture in _TRUST_POSTURES_WITH_RESET:
-                    yield Button(
-                        _RESET_TRUST_BUTTON_LABEL,
-                        id="library-skills-trust-reset",
-                        classes="library-canvas-action library-media-action-danger",
-                        compact=True,
-                    )
-                    if self.confirming_reset:
-                        yield from self._compose_trust_reset_confirm_row()
+        # The posture read may settle after rows become interactive. Keep it
+        # in its own retained region so that update cannot invalidate a row's
+        # already-posted Button.Pressed event.
+        yield LibrarySkillsTrustHeader(
+            has_skills=bool(state.rows),
+            blocked_count=sum(1 for row in state.rows if row.blocked),
+            trust_posture=self.trust_posture,
+            confirming_reset=self.confirming_reset,
+            id="library-skills-trust-region",
+        )
         yield Input(
             placeholder="Filter skills… (Enter)",
             id="library-skills-filter",
@@ -1101,8 +1231,10 @@ class LibrarySkillsListCanvas(PostRecomposeCallback, VerticalScroll):
                 classes = "library-skill-row"
                 if row.blocked:
                     classes = f"{classes} library-skill-row-blocked"
+                if row.selected:
+                    classes = f"{classes} is-selected"
                 button = Button(
-                    f"{row.trust_glyph} {name}",
+                    f"{'› ' if row.selected else ''}{row.trust_glyph} {name}",
                     id=f"library-skill-row-{row.name}",
                     classes=classes,
                     compact=True,
@@ -1386,16 +1518,17 @@ class LibrarySkillsListCanvas(PostRecomposeCallback, VerticalScroll):
                     classes="library-prompt-field-hint",
                     markup=False,
                 )
-            yield Static(
-                "Supporting files",
-                classes="library-prompt-field-label",
-                markup=False,
-            )
-            yield Static(
-                skill_supporting_files_text(editor_state.supporting_files),
-                id="library-skill-supporting",
-                markup=False,
-            )
+            if self.show_editor_files:
+                yield Static(
+                    "Supporting files",
+                    classes="library-prompt-field-label",
+                    markup=False,
+                )
+                yield Static(
+                    skill_supporting_files_text(editor_state.supporting_files),
+                    id="library-skill-supporting",
+                    markup=False,
+                )
             yield Static(self.warnings, id="library-skill-warnings", markup=False)
         conflict_copy = Static(
             "This skill changed elsewhere — Reload discards your edit and refetches it.",
@@ -1415,7 +1548,7 @@ class LibrarySkillsListCanvas(PostRecomposeCallback, VerticalScroll):
         # ("Trust: trusted") with dead buttons. The post-create snapshot
         # refresh recomposes with is_create=False, which renders the real
         # panel for the just-saved skill.
-        if not self.is_create:
+        if not self.is_create and self.show_editor_trust:
             yield from self._compose_trust_panel(editor_state)
         # task-415: inline two-step delete, mirroring the notes/media
         # confirming-delete pattern. The confirm copy is a full-width
@@ -1629,7 +1762,7 @@ class LibrarySkillsListCanvas(PostRecomposeCallback, VerticalScroll):
                 id="library-skill-script-grant-revoke",
                 classes="library-canvas-action",
                 compact=True,
-                disabled=True,
+                disabled=not self.script_access_granted,
             )
             if editor_state.trust_status == "quarantined_manifest_error":
                 # Task 5: the manifest itself can't be verified, so nothing

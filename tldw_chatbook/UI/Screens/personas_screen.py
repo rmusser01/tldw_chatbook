@@ -913,7 +913,11 @@ class PersonasScreen(BaseAppScreen):
         ),
         WorkbenchPaneTarget(
             "personas-work-area",
-            ("personas-preview-input", "personas-preview-toggle"),
+            (
+                "personas-conversation-resume",
+                "personas-preview-input",
+                "personas-preview-toggle",
+            ),
         ),
         WorkbenchPaneTarget(
             "personas-inspector-pane",
@@ -1058,16 +1062,26 @@ class PersonasScreen(BaseAppScreen):
     }
 
     #personas-conversation-actions {
-        height: 3;
-        min-height: 3;
+        height: 9;
+        min-height: 9;
         width: 100%;
     }
 
     #personas-conversation-actions Button {
-        width: auto;
         min-width: 0;
         height: 3;
-        margin-right: 1;
+        margin: 0;
+    }
+
+    #personas-conversation-resume,
+    #personas-conversation-continue-console,
+    #personas-conversation-navigation-actions {
+        width: 100%;
+        height: 3;
+    }
+
+    #personas-conversation-navigation-actions Button {
+        width: 1fr;
     }
 
     /* The character dictionaries + world-books sections sit alongside the
@@ -1354,21 +1368,33 @@ class PersonasScreen(BaseAppScreen):
                             yield PersonasCharacterDictionariesWidget()
                             yield PersonasCharacterWorldBooksWidget()
                         yield PersonaProfileCardWidget()
-                        with Horizontal(id="personas-conversation-actions"):
+                        with Vertical(id="personas-conversation-actions"):
                             yield Button(
-                                "Back to card", id="personas-conversation-back"
+                                "Resume chat",
+                                id="personas-conversation-resume",
+                                classes="console-action-primary",
                             )
                             yield Button(
                                 # task-2232: the one secondary CTA verbatim -
                                 # continue_in_console stages the transcript as
                                 # a draft handoff (no auto-send).
-                                "Send to Console draft",
+                                "Send transcript to Console draft",
                                 id="personas-conversation-continue-console",
+                                classes="console-action-secondary",
                             )
-                            yield Button(
-                                "Open in Library",
-                                id="personas-conversation-open-library",
-                            )
+                            with Horizontal(
+                                id="personas-conversation-navigation-actions"
+                            ):
+                                yield Button(
+                                    "Back to card",
+                                    id="personas-conversation-back",
+                                    classes="console-action-subdued",
+                                )
+                                yield Button(
+                                    "Open in Library",
+                                    id="personas-conversation-open-library",
+                                    classes="console-action-subdued",
+                                )
                         yield PersonasConversationTranscriptWidget()
                         yield Static(
                             self._mode_placeholder_text("prompts"),
@@ -4596,6 +4622,7 @@ class PersonasScreen(BaseAppScreen):
     async def _select_character(
         self, entity_id: str, entity_name: str, *, restore_preview: dict | None = None
     ) -> None:
+        self.conversations.close_conversation_preview()
         session_generation = self._advance_persona_buddy_session()
         server_record: dict | None = None
         if self.state.runtime_source == "server":
@@ -6319,6 +6346,7 @@ class PersonasScreen(BaseAppScreen):
     @on(Button.Pressed, "#personas-conversation-back")
     def _handle_conversation_back(self, event: Button.Pressed) -> None:
         event.stop()
+        self.conversations.close_conversation_preview()
         self._show_center("#ccp-character-card-view")
         self._sync_title_and_console_actions()
         self._focus_conversations_list()
@@ -6327,6 +6355,11 @@ class PersonasScreen(BaseAppScreen):
     def _handle_conversation_open_library(self, event: Button.Pressed) -> None:
         event.stop()
         self.conversations.open_in_library()
+
+    @on(Button.Pressed, "#personas-conversation-resume")
+    def _handle_conversation_resume(self, event: Button.Pressed) -> None:
+        event.stop()
+        self.conversations.resume_in_console()
 
     @on(Button.Pressed, "#personas-conversation-continue-console")
     def _handle_conversation_continue_console(self, event: Button.Pressed) -> None:
@@ -6394,10 +6427,18 @@ class PersonasScreen(BaseAppScreen):
     def _console_action_allowed(self) -> bool:
         """True when a saved character/persona profile selection is attachable."""
         return bool(
-            self.state.selected_entity_id
+            not self._conversation_preview_is_open()
+            and self.state.selected_entity_id
             and self.state.selected_entity_kind in ("character", "persona")
             and not self.state.has_unsaved_changes
         )
+
+    def _conversation_preview_is_open(self) -> bool:
+        """Return whether the read-only saved-conversation preview is visible."""
+        try:
+            return bool(self.query_one(_CONVERSATION_VIEW_ID).display)
+        except QueryError:
+            return False
 
     def _console_action_block_reason(self) -> str:
         """Return a readable reason for a blocked screen-owned Console action.
@@ -14834,6 +14875,12 @@ class PersonasScreen(BaseAppScreen):
             # All center views are ds-native widgets without `.hidden`-class
             # styling; plain display toggling is the whole mechanism.
             widget.display = selector == visible_id
+        try:
+            self.query_one(PersonasInspectorPane).set_card_actions_visible(
+                visible_id != _CONVERSATION_VIEW_ID
+            )
+        except QueryError:
+            pass
         # The character dictionaries panel (Roleplay P1f) is chrome shown
         # alongside the character card/editor, not one of the exclusive
         # _CENTER_VIEW_IDS pages - it must still be hidden outside a
@@ -15055,6 +15102,7 @@ class PersonasScreen(BaseAppScreen):
             transcript = None
         if transcript is not None and transcript.display:
             # Same path as the "Back to card" button.
+            self.conversations.close_conversation_preview()
             self._show_center("#ccp-character-card-view")
             self._sync_title_and_console_actions()
             self._focus_conversations_list()

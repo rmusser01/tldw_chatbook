@@ -1454,6 +1454,10 @@
 
 
 
+
+
+
+
     /* The character dictionaries + world-books sections sit alongside the
        character card view (both visible when a character is selected), not
        swapped by _show_center like the other detail-stack children. The
@@ -1679,6 +1683,17 @@
         width: 100%;
         height: 100%;
     }
+
+
+/* ===== WIDGET: GlobalFullCaptureConfirmation (Widgets/Console/console_capture_policy_dialog.py) ===== */
+
+    GlobalFullCaptureConfirmation { align: center middle; }
+
+
+
+
+
+
 
 
 /* ===== WIDGET: ConsoleConversationInspector (Widgets/Console/console_conversation_inspector.py) ===== */
@@ -2050,6 +2065,15 @@
     }
     ConsoleTurnFileCard .console-turn-file-note-input {
         width: 100%;
+    }
+
+
+/* ===== WIDGET: LibraryEmergencyReturn (Widgets/Library/library_emergency_return.py) ===== */
+
+    LibraryEmergencyReturn {
+        width: 100%;
+        height: 1;
+        border: none;
     }
 
 
@@ -2789,6 +2813,10 @@
 
     PersonasConversationTranscriptWidget #personas-transcript-scroll {
         height: 1fr;
+    }
+
+    PersonasConversationTranscriptWidget #personas-transcript-preview-note {
+        height: auto;
     }
 
     PersonasConversationTranscriptWidget .personas-transcript-line {

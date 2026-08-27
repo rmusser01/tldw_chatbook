@@ -50,6 +50,7 @@ from typing import Any, TYPE_CHECKING
 
 from textual.css.query import QueryError
 
+from tldw_chatbook.Chat.console_chat_models import FEEDBACK_ACTIVE_RUN_STATUSES
 from tldw_chatbook.Chat.console_fleet_attention import (
     FLEET_UNSEEN_REVISION_ATTR,
     clear_fleet_unseen_completion,
@@ -62,6 +63,9 @@ from tldw_chatbook.Widgets.Console.console_auto_speak_consent import (
 from tldw_chatbook.Widgets.Console.console_control_bar import ConsoleControlBar
 from tldw_chatbook.Widgets.Console.console_speech_controls import (
     ConsoleSpeechControls,
+)
+from tldw_chatbook.Widgets.Console.console_feedback_comment_modal import (
+    ConsoleFeedbackCommentModal,
 )
 
 from .agent import ConsoleAgentController
@@ -78,6 +82,11 @@ from .prompt_queue import (
 from .prompts import ConsolePromptsController
 from .reaction_preview import get_console_reaction_preview_coordinator
 from .realtime import ConsoleRealtimeController
+from .review_selection import (
+    ConsoleReviewSelectionController,
+    ConsoleTrajectoryLaunch,
+)
+from .capture_policy_bindings import build_capture_policy_bindings
 from .retrieval import ConsoleRetrievalController
 from .send_price import ConsoleSendPriceController
 from .session import ConsoleSessionController
@@ -187,6 +196,82 @@ def _query_console_owner(
         return screen.query_one(selector)
     except QueryError:
         return fallback
+
+
+def _review_selection_agent_conversation_id(screen: Any) -> str | None:
+    """Resolve the active run-store conversation identity."""
+    controller = screen._console_chat_controller
+    if controller is None:
+        return None
+    active = controller.store.active_session_id
+    return controller._agent_conversation_id(active) if active else None
+
+
+def _review_selection_workspace_roots(screen: Any) -> tuple[str, ...] | None:
+    """Resolve the active turn's current workspace roots."""
+    controller = screen._console_chat_controller
+    if controller is None:
+        return None
+    active = controller.store.active_session_id
+    if not active:
+        return None
+    return controller.resolve_turn_execution_context(active).workspace_roots
+
+
+def _review_selection_run_active(screen: Any) -> bool:
+    """Return whether the Console agent run is currently active."""
+    controller = screen._console_chat_controller
+    return bool(
+        controller is not None
+        and controller.run_state.status in FEEDBACK_ACTIVE_RUN_STATUSES
+    )
+
+
+def _review_selection_agent_runs_db(screen: Any) -> Any | None:
+    """Resolve the optional public AgentRunsDB read seam."""
+    if getattr(screen, "_agent", None) is None:
+        return None
+    bridge = screen._ensure_console_agent_bridge()
+    return getattr(bridge, "runs_db", None)
+
+
+def _review_selection_capture_policy_bindings(
+    screen: Any, session_id: str, conversation_id: str
+) -> Any | None:
+    """Build trajectory capture-policy bindings when the runtime supports them."""
+    runtime = screen._console_runtime()
+    if not hasattr(runtime, "chat_controller"):
+        return None
+    return build_capture_policy_bindings(
+        screen._ensure_console_chat_controller(),
+        session_id,
+        conversation_id,
+    )
+
+
+async def _show_console_feedback_comment(
+    screen: Any, action: str, quote: str
+) -> str | None:
+    """Present the selection-feedback comment modal."""
+    return await screen.app.push_screen_wait(
+        ConsoleFeedbackCommentModal(action=action, quote=quote)
+    )
+
+
+def _present_console_trajectory(screen: Any, launch: ConsoleTrajectoryLaunch) -> None:
+    """Present a trajectory view while preserving its lazy import boundary."""
+    from tldw_chatbook.UI.Screens.trajectory_screen import TrajectoryScreen
+
+    screen.app.push_screen(
+        TrajectoryScreen(
+            launch.snapshot,
+            screen_title=launch.screen_title,
+            conversation_id=launch.conversation_id,
+            revision_provider=launch.revision_provider,
+            snapshot_builder=launch.snapshot_builder,
+            capture_policy_bindings=launch.capture_policy_bindings,
+        )
+    )
 
 
 def build_console_controllers(
@@ -403,9 +488,6 @@ def build_console_controllers(
             lambda conversation: screen._session._console_session_settings_for_resume(
                 conversation
             )
-        ),
-        resolve_resumed_character_name=(
-            lambda character_id: screen._resolve_resumed_character_name(character_id)
         ),
         # Agent <-> workspace seam, same shape as the message seam above:
         # the resume flow's TOOL-marker re-derivation moved to
@@ -1390,6 +1472,45 @@ def build_console_controllers(
             )
         ),
         sync_ui=lambda: screen._sync_native_console_chat_ui(),
+    )
+    screen._review_selection = ConsoleReviewSelectionController(
+        store_accessor=lambda: screen._ensure_console_chat_store(),
+        agent_conversation_id_accessor=(
+            lambda: _review_selection_agent_conversation_id(screen)
+        ),
+        change_review_provider_accessor=(
+            lambda conversation_id: (
+                screen._ensure_console_agent_bridge().change_review_provider(
+                    conversation_id
+                )
+            )
+        ),
+        run_active_accessor=lambda: _review_selection_run_active(screen),
+        run_active_for_root=(
+            lambda root: (
+                screen._ensure_console_chat_controller().run_active_for_workspace(root)
+            )
+        ),
+        workspace_roots_accessor=lambda: _review_selection_workspace_roots(screen),
+        agent_runs_db_accessor=lambda: _review_selection_agent_runs_db(screen),
+        capture_policy_bindings_accessor=(
+            lambda session_id, conversation_id: (
+                _review_selection_capture_policy_bindings(
+                    screen, session_id, conversation_id
+                )
+            )
+        ),
+        native_messages_accessor=lambda: screen._native_console_messages(),
+        run_worker=lambda *args, **kwargs: screen.run_worker(*args, **kwargs),
+        show_feedback_comment=(
+            lambda action, quote: _show_console_feedback_comment(screen, action, quote)
+        ),
+        dispatch_prompt=lambda text: screen._prompt_queue.dispatch(text),
+        marshal_to_ui=(
+            lambda callback, *args: screen.app.call_from_thread(callback, *args)
+        ),
+        present_trajectory=lambda launch: _present_console_trajectory(screen, launch),
+        notify=lambda *args, **kwargs: screen.notify(*args, **kwargs),
     )
     screen._send_price = ConsoleSendPriceController(
         settings_accessor=(

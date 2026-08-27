@@ -7297,6 +7297,18 @@ class SummaryStep(SetupStep):
         ok = await self.wizard.commit_config({"model_catalog": section})
         if not ok:
             return False, "Saving the model-list preference failed."
+        if allowed:
+            # TASK-21150 item (a): match the Console modal's allow path,
+            # which refreshes immediately. Recording consent alone left the
+            # first session on stale lists with no modal left to trigger
+            # the fetch. Failure here is non-fatal: the answer is already
+            # saved and the next launch refreshes on schedule.
+            try:
+                self.wizard.request_model_catalog_refresh()
+            except Exception:
+                logger.debug(
+                    "Model catalog refresh request skipped", exc_info=True
+                )
         return True, ""
 
     def get_step_data(self) -> Dict[str, Any]:
@@ -9110,6 +9122,18 @@ class SetupWizardContainer(WizardContainer):
                 self.advance_programmatically()
 
         self.app.push_screen(dialog, _resolve)
+
+    def request_model_catalog_refresh(self) -> None:
+        """Ask the app to refresh provider model catalogs now (TASK-21150).
+
+        Mirrors ``_handle_model_catalog_consent``'s allow path so a Summary
+        "yes" and a Console-modal "yes" have the same effect. Silent when
+        the app exposes no refresher (bare test hosts).
+        """
+        app_instance = getattr(self, "app_instance", None)
+        refresh = getattr(app_instance, "refresh_model_catalogs_now", None)
+        if callable(refresh):
+            refresh()
 
     def provider_probe_failure(self) -> str:
         """The Model step's classified probe failure for the live identity.

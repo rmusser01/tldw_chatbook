@@ -10,6 +10,8 @@ categories, including:
 from typing import Optional
 from textual.worker import Worker, WorkerState
 
+from tldw_chatbook.Constants import MODEL_CATALOG_REFRESH_WORKER_GROUP
+
 from .base_handler import BaseWorkerHandler
 
 
@@ -27,7 +29,7 @@ class MiscWorkerHandler(BaseWorkerHandler):
         # screen-navigation (TASK-1230), several at startup for the others.
         "screen-navigation",
         "scheduling",
-        "model-catalog-refresh",
+        MODEL_CATALOG_REFRESH_WORKER_GROUP,
         "subscriptions-fts-backfill",
     }
 

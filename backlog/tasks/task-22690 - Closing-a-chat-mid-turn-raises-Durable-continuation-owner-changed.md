@@ -1,9 +1,11 @@
 ---
 id: TASK-22690
 title: Closing a chat mid-turn raises Durable continuation owner changed
-status: To Do
-assignee: []
+status: Done
+assignee:
+  - '@claude'
 created_date: '2026-08-26 23:51'
+updated_date: '2026-08-27 06:12'
 labels:
   - console
   - durable-turns
@@ -29,33 +31,7 @@ The retirement tombstone TASK-22587 introduced already makes the two cases decid
 
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
-- [ ] #1 Closing a chat during an in-flight durable postcommit does not raise Durable continuation owner changed
-- [ ] #2 A continuation whose owner genuinely CHANGED still raises (negative control, mutation-proven)
-- [ ] #3 The two xfail markers in test_console_local_citation_boundary are removed and the tests pass
+- [x] #1 Closing a chat during an in-flight durable postcommit does not raise Durable continuation owner changed
+- [x] #2 A continuation whose owner genuinely CHANGED still raises (negative control, mutation-proven)
+- [x] #3 The two xfail markers in test_console_local_citation_boundary are removed and the tests pass
 <!-- AC:END -->
-
-## Numbering provenance
-
-`backlog task create` assigned task-22618 from a stale local view; a sweep of
-all remotes and worktrees showed the real maximum was 22660 AND that 22618 was
-already taken. Renumbered to 22690 (max+30) under the leapfrog rule before the
-file was ever committed.
-
-## Blocked on #2128 (recorded 2026-08-26)
-
-Attempted on a clean `dev` base and could NOT be reproduced there. Two findings
-worth keeping so the next attempt does not repeat them:
-
-- Dropping the continuation on its own does not reach this raise.
-  `resume_durable_postcommit` returns "Committed turn continuation is
-  unavailable." early when the continuation is missing at ENTRY. The tail check
-  only fires when the continuation was present at entry and is gone by the end.
-- The two tests that do reach it only take the durable path with #2128's
-  ephemeral-to-durable conversion, which is not merged yet. On `dev` those
-  sessions are still ephemeral and never get near it.
-
-So this needs #2128 merged first. A candidate mechanism to check then: a close
-that goes through `discard_uncommitted_durable_preparation` rather than
-`retire_durable_acceptance` leaves NO tombstone, so `_durable_retired_locked`
-returns False and TASK-22587's benign-retirement path is never taken -- the
-generic RuntimeError is raised instead. Verify that before assuming it.

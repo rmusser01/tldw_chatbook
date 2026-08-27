@@ -1,6 +1,6 @@
 ---
 id: TASK-22720
-title: Agent bridge run_reply failure is swallowed, leaving an empty assistant row
+title: Agent bridge placeholder-replacement test trips the unresolved-recovery guard
 status: To Do
 labels:
   - console
@@ -39,3 +39,39 @@ secondary and may well be a stale expectation in the test's own bridge double
       assistant row -- it is either surfaced or logged with its exception type
 - [ ] The xfail marker in `test_console_local_citation_boundary.py` is removed
       and the test passes
+
+
+## Correction 2026-08-27 — the filed premise was wrong on both counts
+
+Measured by instrumenting the controller's `except Exception` arm, not inferred.
+
+**1. The controller does NOT swallow the failure.** That handler builds
+`"Agent run failed: {describe_stream_failure(exc)}"`, calls
+`mark_message_failed`, appends a failure system row, and sets run state FAILED.
+The failure is surfaced, not lost. The title of this task is inaccurate.
+
+**2. What `run_reply` raises, and why:**
+
+    RuntimeError: Unresolved temporary dispatch recovery cannot be replaced.
+
+Raised from `ConsoleChatStore.restore_state` (console_chat_store.py:5046). The
+guard refuses to replace an UNRESOLVED dispatch recovery unless the restored
+message set still contains the recovery's own USER and ASSISTANT rows. The
+test's `_ReplacingBridge` deliberately builds `retained` with the assistant row
+EXCLUDED -- that is how it simulates "the placeholder went missing" -- so it
+trips the guard by construction.
+
+The guard looks correct: silently replacing an unresolved recovery whose
+assistant row has vanished would discard recovery state. So this is a stale TEST
+TECHNIQUE, not a product defect: the double simulates a missing placeholder in a
+way the store now forbids.
+
+**Open question for whoever picks this up** (do not guess it):
+what SHOULD happen when an agent replaces a placeholder that is gone? Either
+  (a) the test clears/resolves the dispatch recovery before `restore_state`, so
+      the simulation stops violating a real invariant; or
+  (b) the expectation changes to the surfaced "Agent run failed: ..." outcome,
+      if tripping the guard is the honest result of that scenario.
+
+Pre-existing either way: this was one of the original 40 failures in
+`test_console_local_citation_boundary.py`, failing before TASK-22301 touched it.
