@@ -18,3 +18,15 @@ round inference at RED (`3 failed, 34 deselected`). Added mandatory stable
 presentation tests passed. Task 2 must reuse an installed variant ID, frozen live
 generation-attempt fact, or durable restored generation identity; the later activity
 producer must stamp exact round ordinals and leave post-run rows unowned.
+
+Task 1 review fix round 2 (supersedes round 1's `generation_id` caller contract):
+reproduced same-owner capture collision and caller-manufactured presentation identity
+at RED (`2 failed`). `ThinkingCapture` now allocates one capture-scoped UUID namespace
+and persists it inside every new block ID; the presentation projection hashes that
+stored block ID alone, so activity identity remains literal-equal from live unpersisted
+capture through variant finalization, first message persistence, variant switch-back,
+and fresh-store durable hydration. A second same-Assistant capture differs, existing
+durable IDs remain unchanged, and raw imported IDs stay hidden by UUID5. GREEN: 2 new
+identity tests, 208 foundation/capture/presentation/grouping tests, and 6 nearest real
+store/variant lifecycle tests passed. The explicit `activity_round_ordinal` producer
+contract from round 1 remains in force; Task 2 no longer supplies any generation ID.

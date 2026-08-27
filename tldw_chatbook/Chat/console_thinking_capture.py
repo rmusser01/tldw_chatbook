@@ -5,6 +5,7 @@ from __future__ import annotations
 import hashlib
 from dataclasses import dataclass, field, replace
 from typing import Literal
+from uuid import uuid4
 
 from tldw_chatbook.Chat.console_provider_gateway import (
     ProviderProprietaryThinkingEvidence,
@@ -43,6 +44,7 @@ class ThinkingCapture:
         self._owner_digest = hashlib.sha256(
             assistant_owner_id.encode("utf-8")
         ).hexdigest()[:20]
+        self._capture_namespace = uuid4().hex
         self._blocks: tuple[ThinkingBlock, ...] = ()
         self._round_ordinal = 0
         self._sequence = 0
@@ -193,7 +195,8 @@ class ThinkingCapture:
 
     def _next_block_id(self) -> str:
         block_id = (
-            f"thinking-{self._owner_digest}-{self._round_ordinal}-{self._sequence}"
+            f"thinking-{self._owner_digest}-{self._capture_namespace}-"
+            f"{self._round_ordinal}-{self._sequence}"
         )
         self._sequence += 1
         return block_id

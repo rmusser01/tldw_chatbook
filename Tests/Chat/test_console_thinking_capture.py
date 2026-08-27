@@ -12,6 +12,7 @@ from tldw_chatbook.Chat.console_provider_gateway import (
 )
 from tldw_chatbook.Chat.console_thinking_capture import ThinkingCapture
 from tldw_chatbook.Chat.thinking_blocks import (
+    MAX_THINKING_BLOCK_ID_CHARS,
     MAX_THINKING_TEXT_BYTES,
     DisplayableThinkingBlock,
     ProprietaryThinkingBlock,
@@ -184,7 +185,7 @@ def test_capture_rejects_block_overflow() -> None:
         capture.observe(_proprietary())
 
 
-def test_stable_ids_depend_on_trusted_owner_and_round_not_provider_text() -> None:
+def test_block_ids_are_capture_unique_bounded_and_provider_text_free() -> None:
     first = ThinkingCapture(assistant_owner_id="assistant-1")
     second = ThinkingCapture(assistant_owner_id="assistant-1")
     other = ThinkingCapture(assistant_owner_id="assistant-2")
@@ -193,8 +194,10 @@ def test_stable_ids_depend_on_trusted_owner_and_round_not_provider_text() -> Non
     second_id = second.observe(_delta()).changed_block_id
     other_id = other.observe(_delta()).changed_block_id
 
-    assert first_id == second_id
-    assert first_id != other_id
+    assert len({first_id, second_id, other_id}) == 3
+    assert first_id is not None
+    assert first_id.isascii()
+    assert len(first_id) <= MAX_THINKING_BLOCK_ID_CHARS
     assert "llama_cpp" not in str(first_id)
 
 

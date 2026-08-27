@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import json
 from dataclasses import dataclass
 from typing import Iterable, Iterator
 from uuid import NAMESPACE_URL, uuid5
@@ -27,27 +26,14 @@ _THINKING_STATUS: dict[str, ConsoleActivityStatus] = {
 }
 
 
-def thinking_activity_id(
-    *,
-    session_id: str,
-    assistant_message_id: str,
-    generation_id: str,
-    block_id: str,
-) -> str:
-    """Return a deterministic UI-safe identity without exposing owner input."""
-    identity = json.dumps(
-        (session_id, assistant_message_id, generation_id, block_id),
-        ensure_ascii=False,
-        separators=(",", ":"),
-    )
-    return f"thinking-{uuid5(NAMESPACE_URL, identity).hex}"
+def thinking_activity_id(*, block_id: str) -> str:
+    """Return a deterministic UI-safe identity for one durable block."""
+    return f"thinking-{uuid5(NAMESPACE_URL, block_id).hex}"
 
 
 def project_thinking_activities(
     *,
-    session_id: str,
     assistant: ConsoleChatMessage,
-    generation_id: str,
     live_block_id: str | None = None,
 ) -> tuple[ConsoleThinkingActivityRef, ...]:
     """Project only supported envelope evidence into trusted activity refs."""
@@ -72,9 +58,6 @@ def project_thinking_activities(
         refs.append(
             ConsoleThinkingActivityRef(
                 activity_id=thinking_activity_id(
-                    session_id=session_id,
-                    assistant_message_id=assistant.id,
-                    generation_id=generation_id,
                     block_id=block.block_id,
                 ),
                 assistant_message_id=assistant.id,
@@ -140,8 +123,6 @@ class ConsoleTranscriptUnit:
 def ordered_assistant_activities(
     turn: ConsoleAssistantTurn,
     *,
-    session_id: str,
-    generation_id: str,
     live_block_id: str | None = None,
 ) -> tuple[ConsoleChatMessage | ConsoleThinkingActivityRef, ...]:
     """Merge thinking refs using only explicit model-round ownership.
@@ -151,9 +132,7 @@ def ordered_assistant_activities(
     before trailing unowned rows after the last explicitly owned round.
     """
     refs = project_thinking_activities(
-        session_id=session_id,
         assistant=turn.assistant,
-        generation_id=generation_id,
         live_block_id=live_block_id,
     )
     if not refs:

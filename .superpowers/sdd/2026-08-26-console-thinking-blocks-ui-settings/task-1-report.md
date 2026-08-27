@@ -11,6 +11,11 @@ Review fix round 1 hardened that projection in two places: activity identity now
 includes an explicit stable generation fact, and visual ordering now consumes explicit
 model-round ownership instead of inferring rounds from TOOL-marker position or kind.
 
+Review fix round 2 moved generation identity to the durable capture evidence itself.
+Each `ThinkingCapture` now allocates one capture-scoped namespace and embeds it in every
+block ID it creates. Presentation hashes that stored block ID alone, so no render caller
+can re-key an activity when a local Assistant later receives its persisted message ID.
+
 ## TDD evidence
 
 RED:
@@ -60,15 +65,57 @@ PYTHONPATH=. ../../.venv/bin/python -m pytest \
 38 passed
 ```
 
-Nearest pure presentation regression:
+Review fix round 2 RED (against `8ed3eac927`):
 
 ```text
 PYTHONPATH=. ../../.venv/bin/python -m pytest \
+  Tests/Chat/test_console_thinking_capture.py::test_block_ids_are_capture_unique_bounded_and_provider_text_free \
+  Tests/Chat/test_console_chat_store.py::test_thinking_activity_identity_survives_variant_and_durable_lifecycle -q
+
+2 failed:
+- fresh same-owner captures produced the same block ID
+- the projection still required caller-manufactured session/generation identity
+```
+
+Review fix round 2 GREEN drives a real `CharactersRAGDB`/
+`ChatPersistenceService`/`ConsoleChatStore` lifecycle. The literal activity ID remains
+equal while live and unpersisted, after variant finalization, after the message gains a
+persisted ID, after switching away and back, and after a fresh store hydrates the
+selected generation; a second capture for the same Assistant differs:
+
+```text
+PYTHONPATH=. ../../.venv/bin/python -m pytest \
+  Tests/Chat/test_console_thinking_capture.py::test_block_ids_are_capture_unique_bounded_and_provider_text_free \
+  Tests/Chat/test_console_chat_store.py::test_thinking_activity_identity_survives_variant_and_durable_lifecycle -q
+
+2 passed
+```
+
+Nearest foundation and presentation regression:
+
+```text
+PYTHONPATH=. ../../.venv/bin/python -m pytest \
+  Tests/Chat/test_thinking_blocks.py \
+  Tests/Chat/test_console_thinking_capture.py \
   Tests/Chat/test_console_thinking_presentation.py \
   Tests/Chat/test_console_turn_grouping.py \
   Tests/Chat/test_console_activity_presentation.py -q
 
-175 passed
+208 passed
+```
+
+Nearest store/variant lifecycle regression:
+
+```text
+PYTHONPATH=. ../../.venv/bin/python -m pytest \
+  Tests/Chat/test_console_chat_store.py::test_message_completed_subscription_emits_each_successful_regeneration \
+  Tests/Chat/test_console_chat_store.py::test_completion_generation_remains_monotonic_across_same_id_restore \
+  Tests/Chat/test_console_chat_store.py::test_message_completed_subscription_add_variant_emits_but_selection_does_not \
+  Tests/Chat/test_console_chat_store.py::test_store_adds_regenerated_variant_and_selects_it \
+  Tests/Chat/test_console_chat_store.py::test_collapsed_buffer_variant_stream_finalizes_full_content \
+  Tests/Chat/test_console_chat_store.py::test_thinking_activity_identity_survives_variant_and_durable_lifecycle -q
+
+6 passed
 ```
 
 Static checks:
@@ -88,16 +135,16 @@ test result.
 
 ## Decisions
 
-- UUID5 activity IDs hash a JSON tuple of session, Assistant owner, explicit stable
-  generation identity, and stable block ID. Fresh captures for the same Assistant
-  therefore cannot leak selection/expansion state across attempts, while rerendering
-  or restoring the same generation remains stable. Raw/imported identity text cannot
-  enter a Textual identity, and delimiter-bearing hostile components cannot alias.
-- `generation_id` is mandatory so a caller cannot silently fall back to an unsafe
-  Assistant/block-only namespace. The caller must reuse an existing generation fact:
-  `ConsoleVariant.id` for an installed current variant, a frozen existing generation
-  attempt token identity during live replacement, or a durable persisted-message
-  generation identity after restoration. It must never be minted during rerender.
+- One standard-library `uuid4().hex` namespace is allocated once in each
+  `ThinkingCapture` and embedded in its block IDs alongside the existing trusted owner
+  digest, round, and sequence. IDs remain ASCII, under the existing 128-character
+  schema bound, provider-text-free, and are persisted by the incumbent V1 envelope;
+  existing durable block IDs are read unchanged and require no migration.
+- UUID5 activity IDs hash the stored block ID alone. This is the only identity fact
+  proven unchanged across live capture, variant installation and switching, first
+  persistence, and durable hydration. It also keeps raw/hostile imported block IDs out
+  of Textual identity strings. Presentation callers no longer mint or choose a
+  generation namespace.
 - `live_block_id` is an explicit process-local input. Durable terminal status alone
   never implies a live disclosure.
 - Proprietary evidence always projects `Thinking` plus `unavailable`; the body remains
@@ -114,9 +161,6 @@ test result.
 - Task 1 is pure presentation state, so no Textual widget/CSS or visual inspection was
   applicable. Disclosure lifecycle, lazy bodies, and painted status layout remain
   owned by later UI tasks.
-- Task 2 must supply the stable `generation_id` described above when it calls the pure
-  projection. In particular, it must freeze the existing live generation-attempt fact
-  for the attempt lifetime rather than generate identity from a render pass.
 - The later agent-activity producer must stamp every model-round-owned TOOL/Planning
   row with that round's exact `activity_round_ordinal`; trailing post-run summaries
   stay `None`. Until producers adopt this contract, the fail-closed no-anchor layout

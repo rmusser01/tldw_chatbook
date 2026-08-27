@@ -333,8 +333,6 @@ def test_ordered_activities_place_each_block_before_first_activity_in_round() ->
             assistant,
             (planning_0, tool_0, planning_1, tool_1),
         ),
-        session_id="session-1",
-        generation_id="generation-1",
     )
 
     assert [
@@ -366,8 +364,6 @@ def test_ordered_activities_never_infer_rounds_from_activity_positions() -> None
 
     ordered = ordered_assistant_activities(
         ConsoleAssistantTurn(assistant, (legacy_marker, tool)),
-        session_id="session-1",
-        generation_id="generation-1",
     )
 
     assert [
@@ -389,8 +385,6 @@ def test_ordered_activities_without_evidence_preserve_tool_identity_and_order() 
 
     ordered = ordered_assistant_activities(
         ConsoleAssistantTurn(assistant, (first, second)),
-        session_id="session-1",
-        generation_id="generation-1",
     )
 
     assert ordered == (first, second)
@@ -427,8 +421,6 @@ def test_explicit_round_ownership_handles_multirow_skips_and_trailing_rows() -> 
                 post_run,
             ),
         ),
-        session_id="session-1",
-        generation_id="generation-1",
     )
 
     assert [

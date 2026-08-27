@@ -13,6 +13,9 @@ from tldw_chatbook.Chat.console_chat_models import (
     ConsoleWorkspaceContext,
 )
 from tldw_chatbook.Chat.console_chat_store import ConsoleChatSession, ConsoleChatStore
+from tldw_chatbook.Chat.console_provider_gateway import ProviderThinkingDelta
+from tldw_chatbook.Chat.console_thinking_capture import ThinkingCapture
+from tldw_chatbook.Chat.console_turn_grouping import project_thinking_activities
 from tldw_chatbook.Chat.console_library_policy import (
     AUTOMATIC_LIBRARY_SOURCE_TYPES,
     ConsoleAssistantLibraryAccess,
@@ -4275,6 +4278,118 @@ def test_collapsed_buffer_variant_stream_finalizes_full_content():
         "original",
         "regenerated",
     ]
+
+
+def test_thinking_activity_identity_survives_variant_and_durable_lifecycle(
+    tmp_path,
+) -> None:
+    db = CharactersRAGDB(tmp_path / "thinking-activity-identity.db", "thinking-id")
+    try:
+        persistence = ChatPersistenceService(db)
+        store = ConsoleChatStore(persistence=persistence)
+        session = store.create_session(title="Thinking identity")
+        assistant = store.append_message(
+            session.id,
+            role=ConsoleMessageRole.ASSISTANT,
+            content="original",
+        )
+        assert assistant.persisted_message_id is None
+        assert session.persisted_conversation_id is None
+
+        store.begin_variant_stream(assistant.id)
+        first_capture = ThinkingCapture(assistant_owner_id=assistant.id)
+        live = first_capture.observe(
+            ProviderThinkingDelta(
+                text="first reasoning",
+                provider="llama_cpp",
+                model="reasoner",
+                protocol="chat_completions",
+                source_format="start_anchored_think",
+            )
+        )
+        assert live.envelope is not None
+        store.replace_message_thinking(assistant.id, live.envelope)
+        live_activity_id = project_thinking_activities(
+            assistant=store.get_message(assistant.id)
+        )[0].activity_id
+
+        store.append_stream_chunk(assistant.id, "regenerated")
+        settled = first_capture.settle("complete")
+        assert settled.envelope is not None
+        store.replace_message_thinking(assistant.id, settled.envelope)
+        finalized = store.finalize_variant_stream(assistant.id)
+        assert finalized.persisted_message_id is None
+        finalized_activity_id = project_thinking_activities(assistant=finalized)[
+            0
+        ].activity_id
+
+        persisted = store.persist_message_if_needed(assistant.id)
+        assert persisted.persisted_message_id is not None
+        assert session.persisted_conversation_id is not None
+        persisted_activity_id = project_thinking_activities(assistant=persisted)[
+            0
+        ].activity_id
+
+        store.select_variant(assistant.id, 0)
+        switched_back = store.select_variant(assistant.id, 1)
+        switched_back_activity_id = project_thinking_activities(
+            assistant=switched_back
+        )[0].activity_id
+
+        rows = db.get_messages_for_conversation(
+            session.persisted_conversation_id, limit=100
+        )
+        nodes = [
+            ConsoleChatMessage(
+                id=str(row["id"]),
+                role=ConsoleMessageRole(str(row["role"])),
+                content=str(row.get("content") or ""),
+                persisted_message_id=str(row["id"]),
+                parent_message_id=row.get("parent_message_id"),
+            )
+            for row in rows
+        ]
+        restored_store = ConsoleChatStore(persistence=ChatPersistenceService(db))
+        restored_session = restored_store.restore_persisted_session(
+            title="Thinking identity restored",
+            workspace_id=None,
+            persisted_conversation_id=session.persisted_conversation_id,
+            all_nodes=nodes,
+            active_leaf_persisted_id=persisted.persisted_message_id,
+        )
+        restored = restored_store.get_message(persisted.persisted_message_id)
+        restored_activity_id = project_thinking_activities(assistant=restored)[
+            0
+        ].activity_id
+
+        store.begin_variant_stream(assistant.id)
+        second_capture = ThinkingCapture(assistant_owner_id=assistant.id)
+        second = second_capture.observe(
+            ProviderThinkingDelta(
+                text="second reasoning",
+                provider="llama_cpp",
+                model="reasoner",
+                protocol="chat_completions",
+                source_format="start_anchored_think",
+            )
+        )
+        assert second.envelope is not None
+        store.replace_message_thinking(assistant.id, second.envelope)
+        second_activity_id = project_thinking_activities(
+            assistant=store.get_message(assistant.id)
+        )[0].activity_id
+
+        assert restored_session.id != session.id
+        assert {
+            live_activity_id,
+            finalized_activity_id,
+            persisted_activity_id,
+            switched_back_activity_id,
+            restored_activity_id,
+        } == {live_activity_id}
+        assert second_activity_id != live_activity_id
+    finally:
+        db.close_connection()
 
 
 def test_one_shot_prefill_accessors_round_trip():
