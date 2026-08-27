@@ -40,3 +40,22 @@ The retirement tombstone TASK-22587 introduced already makes the two cases decid
 all remotes and worktrees showed the real maximum was 22660 AND that 22618 was
 already taken. Renumbered to 22690 (max+30) under the leapfrog rule before the
 file was ever committed.
+
+## Blocked on #2128 (recorded 2026-08-26)
+
+Attempted on a clean `dev` base and could NOT be reproduced there. Two findings
+worth keeping so the next attempt does not repeat them:
+
+- Dropping the continuation on its own does not reach this raise.
+  `resume_durable_postcommit` returns "Committed turn continuation is
+  unavailable." early when the continuation is missing at ENTRY. The tail check
+  only fires when the continuation was present at entry and is gone by the end.
+- The two tests that do reach it only take the durable path with #2128's
+  ephemeral-to-durable conversion, which is not merged yet. On `dev` those
+  sessions are still ephemeral and never get near it.
+
+So this needs #2128 merged first. A candidate mechanism to check then: a close
+that goes through `discard_uncommitted_durable_preparation` rather than
+`retire_durable_acceptance` leaves NO tombstone, so `_durable_retired_locked`
+returns False and TASK-22587's benign-retirement path is never taken -- the
+generic RuntimeError is raised instead. Verify that before assuming it.
