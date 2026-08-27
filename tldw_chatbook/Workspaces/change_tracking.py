@@ -100,6 +100,8 @@ _LOCK_RETRY_SECONDS = 0.05
 
 _GIT_TIMEOUT_SECONDS = 120.0
 
+_FORCE_REMOVE_ARGV_BUDGET_BYTES = 64 * 1024
+
 
 class ChangeTrackingError(Exception):
     """A shadow-repo operation failed. Callers treat this as degradation,
@@ -445,6 +447,43 @@ class ShadowRepo:
             ancestor = ancestor.parent
         return None
 
+    def _force_remove_exact_paths(self, paths: Sequence[str]) -> None:
+        """Remove exact index paths in conservatively bounded argv chunks."""
+        if not paths:
+            return
+        args = ("update-index", "--force-remove", "--")
+        command_bytes = sum(
+            len(os.fsencode(arg)) + 1
+            for arg in (
+                self._git,
+                "--git-dir",
+                str(self.git_dir),
+                "--work-tree",
+                str(self.root),
+                *args,
+            )
+        )
+        chunk: list[str] = []
+        chunk_bytes = command_bytes
+        for path in paths:
+            path_bytes = len(os.fsencode(path)) + 1
+            if (
+                chunk
+                and chunk_bytes + path_bytes
+                > _FORCE_REMOVE_ARGV_BUDGET_BYTES
+            ):
+                self._run(*args, *chunk)
+                chunk = []
+                chunk_bytes = command_bytes
+            chunk.append(path)
+            chunk_bytes += path_bytes
+            if chunk_bytes > _FORCE_REMOVE_ARGV_BUDGET_BYTES:
+                self._run(*args, *chunk)
+                chunk = []
+                chunk_bytes = command_bytes
+        if chunk:
+            self._run(*args, *chunk)
+
     def _validate_new_index_paths(
         self,
     ) -> tuple[tuple[str, ...], tuple[str, ...]]:
@@ -515,7 +554,7 @@ class ShadowRepo:
         )
         unsafe = tuple(rel for rel, _object_id, _mode in unsafe_entries)
         if unsafe:
-            self._run("update-index", "--force-remove", "--", *unsafe)
+            self._force_remove_exact_paths(unsafe)
         nested = tuple(
             dict.fromkeys(
                 owner
@@ -559,7 +598,7 @@ class ShadowRepo:
             if rel in safe and sizes.get(object_id, 0) > cap
         )
         if oversized:
-            self._run("update-index", "--force-remove", "--", *oversized)
+            self._force_remove_exact_paths(oversized)
         included = safe.difference(oversized)
         self.last_oversize_excluded = tuple(
             rel

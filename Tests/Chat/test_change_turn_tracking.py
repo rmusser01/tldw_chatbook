@@ -268,6 +268,51 @@ def test_snapshot_removes_tip_entries_when_directory_becomes_nested_repo(
     assert str(repo._run("ls-files", "--", child.name).stdout).strip() == ""
 
 
+def test_final_index_validation_chunks_exact_force_removals(
+    tracker, root, monkeypatch
+):
+    import os as _os
+
+    repo = tracker.service.repo_for_root(root)
+    paths = tuple(
+        f"nested/dir-{index:05d}/{'x' * 180}-{index:05d}.txt"
+        for index in range(20_000)
+    )
+    object_id = "a" * 40
+    stage_entries = tuple(
+        f"100644 {object_id} 0\t{path}" for path in paths
+    )
+    calls: list[tuple[str, ...]] = []
+
+    def fake_z_tokens(*args):
+        if args[:4] == ("ls-tree", "-r", "-z", "--name-only"):
+            return list(paths)
+        if args == ("ls-files", "--stage", "-z"):
+            return list(stage_entries)
+        raise AssertionError(f"unexpected git token request: {args!r}")
+
+    def record_run(*args, **_kwargs):
+        calls.append(args)
+
+    monkeypatch.setattr(repo, "tip", lambda: "tip")
+    monkeypatch.setattr(repo, "_z_tokens", fake_z_tokens)
+    monkeypatch.setattr(repo, "_nested_owner", lambda _path: "nested")
+    monkeypatch.setattr(repo, "_run", record_run)
+
+    repo._validate_new_index_paths()
+
+    assert len(calls) > 1
+    assert all(
+        call[:3] == ("update-index", "--force-remove", "--")
+        for call in calls
+    )
+    assert all(
+        sum(len(_os.fsencode(arg)) + 1 for arg in call) <= 64 * 1024
+        for call in calls
+    )
+    assert tuple(path for call in calls for path in call[3:]) == paths
+
+
 def test_force_add_rejects_root_and_directory_paths(tracker, root, monkeypatch):
     monkeypatch.setenv("TLDW_CHANGE_REVIEW_MAX_FILE_BYTES", "100")
     ignored = root / "ignored"
