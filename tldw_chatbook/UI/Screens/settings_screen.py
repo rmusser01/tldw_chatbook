@@ -1348,6 +1348,11 @@ def _rag_field_search_label(field_id: str) -> str:
 #: on a 23-category screen (critique r4 P1). Labels mirror the visible
 #: row labels; Enter focuses the matched field.
 FIELD_SEARCH_INDEX: dict["SettingsCategoryId", tuple[tuple[str, str], ...]] = {}
+FIELD_SEARCH_DISABLED_FOCUS_FALLBACKS = {
+    "settings-appearance-library-notes-files-tree-width": (
+        "settings-appearance-library-media-custom-widths"
+    ),
+}
 
 
 def _build_field_search_index() -> None:
@@ -6350,7 +6355,17 @@ class SettingsScreen(BaseAppScreen):
 
                 def _focus_matched_field() -> None:
                     try:
-                        self.query_one(f"#{field_id}").focus()
+                        target = self.query_one(f"#{field_id}")
+                    except QueryError:
+                        return
+                    if not getattr(target, "disabled", False):
+                        target.focus()
+                        return
+                    fallback_id = FIELD_SEARCH_DISABLED_FOCUS_FALLBACKS.get(field_id)
+                    if fallback_id is None:
+                        return
+                    try:
+                        self.query_one(f"#{fallback_id}").focus()
                     except QueryError:
                         pass
 
@@ -11935,7 +11950,6 @@ class SettingsScreen(BaseAppScreen):
             )
         if field_id in {
             "settings-appearance-library-media-library-open",
-            "settings-appearance-library-media-custom-widths",
             "settings-appearance-library-media-library-width",
         }:
             return (
@@ -11949,6 +11963,16 @@ class SettingsScreen(BaseAppScreen):
                     "Validation",
                     "Library width 24–48",
                 ),
+            )
+        if field_id == "settings-appearance-library-media-custom-widths":
+            return (
+                ("Focused setting", "Shared Library reader widths"),
+                (
+                    "Purpose",
+                    "Enable shared Library reader widths to edit Folder Files tree width.",
+                ),
+                ("Saved as", "library.reader.custom_widths_enabled"),
+                ("Validation", "toggle enabled or disabled"),
             )
         if field_id and field_id.startswith("settings-appearance-library-"):
             if field_id.startswith("settings-appearance-library-notes-files-tree-"):

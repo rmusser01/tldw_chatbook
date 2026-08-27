@@ -3601,6 +3601,32 @@ async def test_probe_settings_endpoint_counts_models_and_normalizes_path():
 
 
 @pytest.mark.asyncio
+async def test_field_search_folder_files_tree_width_guides_to_custom_widths_when_disabled():
+    """A disabled Folder Files width search lands on its enabling control."""
+    app = _build_test_app()
+    host = DestinationHarness(app, "settings")
+    async with host.run_test(size=(190, 55)) as pilot:
+        await _settle_settings_mount_storm(pilot)
+        screen = _active_destination_screen(host)
+
+        screen._submit_category_search("Folder Files tree width")
+        for _ in range(8):
+            await pilot.pause()
+
+        assert screen.active_category == SettingsCategoryId.APPEARANCE.value
+        focused = host.focused
+        assert focused is not None and focused.id == (
+            "settings-appearance-library-media-custom-widths"
+        ), f"focused={focused!r}"
+        assert screen._active_settings_field_id == (
+            "settings-appearance-library-media-custom-widths"
+        )
+        assert "Enable shared Library reader widths to edit Folder Files tree width." in (
+            _visible_text(screen)
+        )
+
+
+@pytest.mark.asyncio
 @pytest.mark.parametrize(
     ("failure", "expected_summary"),
     (
