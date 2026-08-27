@@ -42,6 +42,14 @@ def _assert_inside(inner, outer) -> None:
     assert inner.region.bottom <= outer.content_region.bottom
 
 
+def _painted_button_label(modal, button: Button) -> str:
+    strips = modal._compositor.render_strips()
+    visible_rows = strips[button.region.y : button.region.bottom]
+    return "\n".join(
+        row.text[button.region.x : button.region.right] for row in visible_rows
+    )
+
+
 @pytest.mark.asyncio
 @pytest.mark.parametrize("size", [(120, 35), (100, 30), (80, 24)])
 async def test_fork_modal_editing_summary_and_layout_fit(size):
@@ -74,6 +82,10 @@ async def test_fork_modal_editing_summary_and_layout_fit(size):
         assert "video will appear as unavailable" in copy
         assert panel.region.x >= 0 and panel.region.y >= 0
         assert panel.region.right <= size[0] and panel.region.bottom <= size[1]
+        cancel = modal.query_one("#console-fork-chat-cancel", Button)
+        confirm = modal.query_one("#console-fork-chat-confirm", Button)
+        assert cancel.label.plain in _painted_button_label(modal, cancel)
+        assert confirm.label.plain in _painted_button_label(modal, confirm)
 
         for selector in (
             "#console-fork-chat-title",

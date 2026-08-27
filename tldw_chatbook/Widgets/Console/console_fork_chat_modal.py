@@ -161,6 +161,7 @@ class ConsoleForkChatModal(SafeModalDismissMixin, ModalScreen[None]):
     }
 
     #console-fork-chat-actions {
+        dock: bottom;
         width: 100%;
         height: 3;
         margin-top: 1;
@@ -397,6 +398,7 @@ class ConsoleForkChatModal(SafeModalDismissMixin, ModalScreen[None]):
     def show_validating(self) -> None:
         self.state = "validating"
         self._set_status("Checking fork…")
+        self.query_one("#console-fork-chat-title", Input).disabled = True
         self.query_one("#console-fork-chat-confirm", Button).disabled = True
 
     def show_committing(self) -> None:

@@ -855,6 +855,60 @@ async def test_cancelled_fork_validation_generation_cannot_publish_late_result()
 
 
 @pytest.mark.asyncio
+async def test_fork_validation_freezes_the_accepted_title_until_retry():
+    app = _build_test_app()
+    host = ConsoleHarness(app)
+    validation_started = asyncio.Event()
+    release_validation = asyncio.Event()
+
+    async with host.run_test(size=(100, 30)) as pilot:
+        console = host.screen_stack[-1]
+        await _wait_for_selector(console, pilot, "#console-native-transcript")
+        store = console._ensure_console_chat_store()
+        source = store.create_session(
+            title="Source",
+            settings=console._session._default_console_session_settings(),
+            ephemeral=True,
+        )
+        boundary = store.append_message(
+            source.id,
+            role=ConsoleMessageRole.USER,
+            content="fork boundary",
+        )
+
+        async def barrier(_generation: int) -> None:
+            validation_started.set()
+            await release_validation.wait()
+
+        console._session._fork_validation_barrier = barrier
+        register = Mock(wraps=store.register_fork_snapshot)
+        store.register_fork_snapshot = register
+
+        console._session.request_console_chat_fork(boundary.id)
+        await pilot.pause()
+        modal = host.screen_stack[-1]
+        assert isinstance(modal, ConsoleForkChatModal)
+        title = modal.query_one("#console-fork-chat-title")
+        accepted_title = title.value
+
+        await pilot.press("enter")
+        await asyncio.wait_for(validation_started.wait(), timeout=2)
+
+        assert modal.state == "validating"
+        assert title.disabled
+        await pilot.press("x", "y", "z")
+        assert title.value == accepted_title
+
+        release_validation.set()
+        for _ in range(200):
+            if register.called:
+                break
+            await pilot.pause(0.01)
+        register.assert_called_once()
+        assert register.call_args.args[0].title == accepted_title
+
+
+@pytest.mark.asyncio
 async def test_durable_fork_orders_commit_projection_registration_and_activation(
     tmp_path,
 ):
