@@ -7106,17 +7106,22 @@ class ConsoleChatController:
                     # TASK-22617: deliberately None, established by test rather
                     # than assumption -- `continuation.terminal_citation_
                     # finalizer` IS in scope here, and this is not the
-                    # TASK-22302 data-loss class. The recovery gate above makes
-                    # this publish reachable only BEFORE `durable_owner_
-                    # publication` (that effect registers the dispatch
-                    # recovery), so no finalizer has ever been armed when this
-                    # runs; the continuation survives the failure, and the
-                    # resume's owner publication forwards its finalizer, so the
-                    # trace still persists on retry. Forwarding it HERE would
-                    # arm a deferred finalizer on a turn whose delivery is
-                    # unknown -- provenance worse than absent. Pinned by the
-                    # TASK-22617 tests in
-                    # test_console_terminal_citation_persistence.py.
+                    # TASK-22302 data-loss class. Two facts carry it, one per
+                    # failure ordering. (1) At effect granularity this publish
+                    # only runs BEFORE `durable_owner_publication` -- that
+                    # effect registers the dispatch recovery the gate above
+                    # checks -- and there nothing was ever armed; the resume's
+                    # owner publication forwards the continuation's finalizer,
+                    # so the trace persists on retry. (2) INSIDE owner
+                    # publication there is a window (arming happens before the
+                    # checkpoint call registers the recovery) where this DOES
+                    # run with a finalizer armed; there the store's
+                    # non-clearing contract is load-bearing -- a None publish
+                    # never clears armed state, only declines to arm.
+                    # Forwarding the finalizer here instead would arm it on a
+                    # turn whose delivery is unknown -- provenance worse than
+                    # absent. All three orderings pinned by the TASK-22617
+                    # tests in test_console_terminal_citation_persistence.py.
                     terminal_citation_finalizer=None,
                     defer_terminal_persistence=(
                         continuation.citation_repair_session is not None
