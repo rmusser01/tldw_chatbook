@@ -300,9 +300,15 @@ def test_auto_shell_resolution_uses_platform_fallback_order(
 
 
 def test_relative_posix_shell_lookup_is_made_absolute_at_lookup_time(
-    raw_cli, tmp_path, monkeypatch
+    raw_cli, monkeypatch
 ):
-    monkeypatch.chdir(tmp_path)
+    expanded = "/resolved/tools/bash"
+    expanded_paths = []
+    monkeypatch.setattr(
+        raw_cli.posixpath,
+        "abspath",
+        lambda path: expanded_paths.append(path) or expanded,
+    )
 
     argv = _required(raw_cli, "resolve_shell_argv")(
         "bash",
@@ -311,8 +317,8 @@ def test_relative_posix_shell_lookup_is_made_absolute_at_lookup_time(
         platform_name="posix",
     )
 
-    assert argv[0] == str(tmp_path / "tools" / "bash")
-    assert Path(argv[0]).is_absolute()
+    assert expanded_paths == ["tools/bash"]
+    assert argv[0] == expanded
 
 
 def test_relative_windows_shell_lookup_uses_windows_path_semantics(
