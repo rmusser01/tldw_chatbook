@@ -36,7 +36,7 @@ Let a user create multiple sources, create a collection, and update collection m
 - [ ] #4 `watchlists_create_collection` implements explicit `conflict`, `return_existing`, and `auto_suffix` policies; returning an existing collection never mutates it.
 - [ ] #5 New collection creation and up to 100 validated memberships commit atomically and do not implicitly schedule, check, or generate a briefing.
 - [ ] #6 `watchlists_update_collection_sources` rejects overlapping add/remove sets and missing/ambiguous IDs, then applies all validated membership changes or none.
-- [ ] #7 All three commands are Console-only, carry mutation approval effects/tags, reject server mode before storage access, and have concurrency/rollback/redaction/provider-schema coverage.
+- [ ] #7 All three commands are Console-only, carry mutation approval effects/tags and definitive-after-start execution ownership, reject server mode before storage access, and have concurrency/rollback/redaction/provider-schema/runtime coverage; after approved execution begins, timeout or cancellation cannot return while a mutation can still commit.
 <!-- AC:END -->
 
 ## Implementation Plan
@@ -44,8 +44,8 @@ Let a user create multiple sources, create a collection, and update collection m
 <!-- SECTION:PLAN:BEGIN -->
 1. Add race and validation RED tests, then implement one BEGIN IMMEDIATE database-owner exact-source batch used by Console, direct UI, and OPML.
 2. Add collision-policy and atomic-membership RED tests, then implement explicit conflict/return-existing/auto-suffix creation and all-or-nothing membership updates.
-3. Build the synchronous WatchlistsCommandService with exact schemas, direct Console-worker calls into application-owned synchronous mutation seams, definitive commit/rollback outcomes, redaction, server-mode refusal, and no implicit follow-on work.
-4. Register the three mutation descriptors as Console-only with code-owned mutation effects/tags and sanitized destination presentation; prove read-only bindings and external MCP omit them.
+3. Build the synchronous WatchlistsCommandService with exact schemas, direct Console-worker calls into application-owned synchronous mutation seams, in-transaction result materialization, definitive commit/rollback outcomes, redaction, server-mode refusal, and no implicit follow-on work.
+4. Register the three mutation descriptors as Console-only with code-owned mutation effects/tags, definitive-after-start execution ownership, and sanitized destination presentation; carry the policy through the catalog/runtime without name lists, prove pre-start cancellation remains interruptible, and prove read-only bindings, external MCP, and ordinary bounded tools retain their respective contracts.
 5. Run complete task-targeted tests, Ruff, diff checks, self-review, and independent review.
 
 ADR required: yes

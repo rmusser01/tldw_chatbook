@@ -298,6 +298,44 @@ async def test_import_memoizes_unicode_casefold_equivalent_folders(tmp_path):
     assert result["assignments"] == 2
 
 
+@pytest.mark.asyncio
+async def test_import_reuses_existing_unicode_casefold_equivalent_folder(tmp_path):
+    from tldw_chatbook.DB.Subscriptions_DB import SubscriptionsDB
+    from tldw_chatbook.Subscriptions.local_watchlists_service import (
+        LocalWatchlistsService,
+    )
+    from tldw_chatbook.Subscriptions.watchlist_bundle_service import (
+        WatchlistBundleService,
+    )
+    from tldw_chatbook.Subscriptions.watchlist_scope_service import (
+        WatchlistBackend,
+        WatchlistScopeService,
+    )
+
+    xml = (
+        '<?xml version="1.0"?><opml version="2.0"><body>'
+        '<outline text="Straße"><outline text="One" type="rss" '
+        'xmlUrl="https://example.com/one"/></outline>'
+        "</body></opml>"
+    )
+    db = SubscriptionsDB(str(tmp_path / "subs.db"), client_id="test")
+    bundle = WatchlistBundleService(db)
+    existing = bundle.create("STRASSE")
+    scope = WatchlistScopeService(
+        local_service=LocalWatchlistsService(db_factory=lambda: db),
+        server_service=None,
+    )
+
+    result = await scope.import_opml(
+        runtime_backend=WatchlistBackend.LOCAL, xml_text=xml
+    )
+
+    assert bundle.list_watchlists() == [existing]
+    assert result["watchlists_created"] == []
+    assert result["watchlists_reused"] == ["STRASSE"]
+    assert len(bundle.list_source_rows(existing["id"])) == 1
+
+
 # --- TASK-3604 plan task 4: export nests watchlists as folders (ADR-043 rule 5) -
 
 

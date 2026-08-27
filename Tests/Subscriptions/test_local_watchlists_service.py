@@ -1736,6 +1736,35 @@ def test_create_sources_exact_batch_sync_uses_database_owner_directly(tmp_path):
     assert results[0]["source"]["source_id"] == results[1]["source"]["source_id"]
 
 
+def test_create_sources_exact_batch_rolls_back_when_materialization_fails(
+    tmp_path, monkeypatch
+):
+    db = SubscriptionsDB(tmp_path / "subscriptions.db", "test")
+    service = LocalWatchlistsService(db_factory=lambda: db)
+
+    def fail_materialization(_row):
+        raise RuntimeError("materialization failed")
+
+    monkeypatch.setattr(
+        local_watchlists_service,
+        "normalize_local_subscription_row",
+        fail_materialization,
+    )
+
+    with pytest.raises(RuntimeError, match="materialization failed"):
+        service.create_sources_exact_batch_sync(
+            [
+                {
+                    "name": "One",
+                    "source_type": "rss",
+                    "url": "https://example.com/feed",
+                }
+            ]
+        )
+
+    assert db.conn.execute("SELECT COUNT(*) FROM subscriptions").fetchone()[0] == 0
+
+
 @pytest.mark.asyncio
 async def test_create_source_uses_exact_batch_and_reuses_existing(tmp_path):
     db = SubscriptionsDB(tmp_path / "subscriptions.db", "test")

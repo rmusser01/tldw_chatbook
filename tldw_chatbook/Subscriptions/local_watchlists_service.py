@@ -771,14 +771,14 @@ class LocalWatchlistsService:
     def _create_source_rows_exact_batch(
         db: SubscriptionsDB, rows: Sequence[Mapping[str, Any]]
     ) -> list[dict[str, Any]]:
-        outcomes = db.create_sources_exact_batch(rows)
+        outcomes = db.create_sources_exact_batch(
+            rows, materialize=normalize_local_subscription_row
+        )
         return [
             {
                 "input_index": int(outcome["input_index"]),
                 "outcome": str(outcome["outcome"]),
-                "source": normalize_local_subscription_row(
-                    db.get_subscription(int(outcome["source_id"]))
-                ),
+                "source": outcome["source"],
             }
             for outcome in outcomes
         ]
@@ -1103,10 +1103,14 @@ class LocalWatchlistsService:
         wanted = str(name).strip()
         if not wanted:
             raise ValueError("watchlist name cannot be empty or whitespace-only")
-        watchlist = bundle.get_watchlist_by_name_ci(wanted)
-        if watchlist is not None:
-            return watchlist, False
-        return bundle.create(wanted), True
+        result = bundle.create_with_sources(
+            wanted,
+            description=None,
+            tags=None,
+            source_ids=(),
+            if_exists="return_existing",
+        )
+        return result["watchlist"], result["outcome"] == "created"
 
     async def add_source_to_watchlist(self, *, watchlist_id: Any, source_id: Any) -> None:
         """Add a source to a watchlist (idempotent), via the bundle service.

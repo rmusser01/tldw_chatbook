@@ -43,12 +43,15 @@ another scheduler or calendar model.
 - Modify: `tldw_chatbook/Subscriptions/watchlist_bundle_service.py`
 - Modify: `tldw_chatbook/Subscriptions/watchlist_opml_service.py`
 - Modify: `tldw_chatbook/Agents/local_tool_provider.py`
+- Modify: `tldw_chatbook/Agents/tool_catalog.py`
+- Modify: `tldw_chatbook/Agents/agent_service.py`
 - Modify: `tldw_chatbook/Chat/console_chat_controller.py`
 - Modify: `Tests/DB/test_subscriptions_db_watchlists.py`
 - Modify: `Tests/Subscriptions/test_local_watchlists_service.py`
 - Modify: `Tests/Subscriptions/test_watchlist_bundle_service.py`
 - Modify: `Tests/Subscriptions/test_watchlist_opml_service.py`
 - Modify: `Tests/Agents/test_local_tool_provider.py`
+- Modify: `Tests/Agents/test_agent_service.py`
 - Modify: `Tests/Chat/test_console_local_review_hook.py`
 
 ### Step 1: Pin exact source identity under concurrent writers
@@ -166,17 +169,28 @@ Each carries `("mutates",)` plus `MUTATES_LOCAL`; source creation also reports
 the destinations' sanitized hosts in approval presentation. Read-only project
 bindings must omit all three.
 
+Give all three descriptors the code-owned `definitive_after_start` execution
+policy and carry that property through the provider/catalog owner seam. The
+catalog fails closed to the existing bounded, abandonable policy for unknown
+tools/providers, invalid policy values, and descriptors that do not opt in.
+`AgentService._make_invoke_tool` keeps approval/pre-start cancellation
+interruptible, but after approved execution starts it invokes a definitive tool
+directly and waits for its single result instead of abandoning a timeout worker.
+Do not change the timeout behavior of ordinary read or network tools. The
+existing mutation approval card remains pending until the definitive result;
+the execution policy does not authorize a call or change its exposure.
+
 Run:
 
 ```bash
-pytest -q Tests/Agents/test_local_tool_provider.py Tests/Chat/test_console_local_review_hook.py Tests/MCP/test_local_server_tools.py -k "watchlists and (create or update or external or read_only)"
+pytest -q Tests/Agents/test_agent_service.py Tests/Agents/test_local_tool_provider.py Tests/Chat/test_console_local_review_hook.py Tests/MCP/test_local_server_tools.py -k "watchlists and (create or update or external or read_only or definitive)"
 ```
 
 ### Step 5: Verify and commit TASK-22862
 
 ```bash
-pytest -q Tests/Tools/test_watchlists_command_service.py Tests/Subscriptions/test_local_watchlists_service.py Tests/Subscriptions/test_watchlist_bundle_service.py Tests/Subscriptions/test_watchlist_opml_service.py
-ruff check tldw_chatbook/Tools/watchlists_command_service.py tldw_chatbook/DB/Subscriptions_DB.py tldw_chatbook/Subscriptions/local_watchlists_service.py tldw_chatbook/Subscriptions/watchlist_bundle_service.py tldw_chatbook/Subscriptions/watchlist_opml_service.py tldw_chatbook/Agents/local_tool_provider.py tldw_chatbook/Chat/console_chat_controller.py
+pytest -q Tests/Tools/test_watchlists_command_service.py Tests/Subscriptions/test_local_watchlists_service.py Tests/Subscriptions/test_watchlist_bundle_service.py Tests/Subscriptions/test_watchlist_opml_service.py Tests/Agents/test_agent_service.py Tests/Agents/test_local_tool_provider.py
+ruff check tldw_chatbook/Tools/watchlists_command_service.py tldw_chatbook/DB/Subscriptions_DB.py tldw_chatbook/Subscriptions/local_watchlists_service.py tldw_chatbook/Subscriptions/watchlist_bundle_service.py tldw_chatbook/Subscriptions/watchlist_opml_service.py tldw_chatbook/Agents/local_tool_provider.py tldw_chatbook/Agents/tool_catalog.py tldw_chatbook/Agents/agent_service.py tldw_chatbook/Chat/console_chat_controller.py Tests/Agents/test_agent_service.py Tests/Agents/test_local_tool_provider.py
 git diff --check
 ```
 

@@ -2889,6 +2889,136 @@ def test_make_invoke_tool_wraps_slow_custom_tool_in_timeout(db, monkeypatch):
     assert "timed out" in result.error and "calculator" in result.error
 
 
+def test_make_invoke_tool_waits_for_definitive_watchlists_mutation(
+    db, tmp_path
+):
+    """Once an approved definitive mutation starts, neither a tiny runtime
+    budget nor cancellation may return before its transaction outcome."""
+    from tldw_chatbook.Agents.agent_models import ToolCall
+    from tldw_chatbook.Agents.local_tool_provider import LocalToolProvider
+    from tldw_chatbook.DB.Subscriptions_DB import SubscriptionsDB
+    from tldw_chatbook.MCP.permission_store import EffectiveToolState
+    from tldw_chatbook.Subscriptions.watchlist_bundle_service import (
+        WatchlistBundleService,
+    )
+    from tldw_chatbook.Tools.watchlists_command_service import (
+        WatchlistsCommandService,
+    )
+
+    subscriptions = SubscriptionsDB(tmp_path / "subscriptions.db", "test")
+    bundles = WatchlistBundleService(subscriptions)
+    entered = threading.Event()
+    release = threading.Event()
+    cancelled = threading.Event()
+
+    def delayed_create(**kwargs):
+        entered.set()
+        if not release.wait(2):
+            raise AssertionError("mutation gate was never released")
+        return bundles.create_with_sources(**kwargs)
+
+    def unavailable(*_args, **_kwargs):
+        return None
+    commands = WatchlistsCommandService(
+        runtime_source_loader=lambda: "local",
+        create_sources_batch=unavailable,
+        create_collection=delayed_create,
+        update_collection_sources=unavailable,
+    )
+    registry = ToolCatalogRegistry()
+    registry.register_provider(
+        LocalToolProvider(
+            workspace_root=tmp_path,
+            watchlists_command_service=commands,
+            resolve_state=lambda _tool: EffectiveToolState(
+                state="allow", origin="tool_override"
+            ),
+        )
+    )
+    service = AgentService(
+        db=db,
+        registry=registry,
+        chat_call=lambda **_kwargs: provider_reply("unused"),
+    )
+    config = AgentConfig(
+        model="test-model",
+        system_prompt="s",
+        allowed_tools=("watchlists_create_collection",),
+        budget=RunBudget(max_tool_call_seconds=0.02),
+    )
+    invoke_tool = service._make_invoke_tool(
+        config,
+        disclosed_names={"watchlists_create_collection"},
+        should_cancel=cancelled.is_set,
+        run_id="run-definitive",
+    )
+    result_box: dict[str, ToolResult] = {}
+
+    worker = threading.Thread(
+        target=lambda: result_box.setdefault(
+            "result",
+            invoke_tool(
+                ToolCall(
+                    name="watchlists_create_collection",
+                    args={"name": "Threat intel", "if_exists": "auto_suffix"},
+                )
+            ),
+        )
+    )
+    worker.start()
+    assert entered.wait(2), "mutation never started"
+    cancelled.set()
+    time.sleep(0.1)
+    still_waiting = worker.is_alive()
+    before_release = bundles.list_watchlists()
+    release.set()
+    worker.join(2)
+
+    assert still_waiting, "the runtime returned while the mutation could still commit"
+    assert before_release == []
+    assert not worker.is_alive()
+    result = result_box["result"]
+    assert result.ok is True
+    assert json.loads(result.content)["status"] == "ok"
+    assert [row["name"] for row in bundles.list_watchlists()] == ["Threat intel"]
+
+
+def test_make_invoke_tool_cancels_definitive_call_before_start(db, monkeypatch):
+    from tldw_chatbook.Agents.agent_models import ToolCall
+    from tldw_chatbook.Agents.tool_catalog import ToolExecutionPolicy
+
+    service = _service_with_chat(db, lambda **_kwargs: provider_reply("unused"))
+    invoked: list[str] = []
+    monkeypatch.setattr(
+        service.registry,
+        "execution_policy_for",
+        lambda _name: ToolExecutionPolicy.DEFINITIVE_AFTER_START,
+    )
+    monkeypatch.setattr(
+        service.registry,
+        "invoke_by_name",
+        lambda name, _args: invoked.append(name) or ToolResult(ok=True, content="late"),
+    )
+    config = AgentConfig(
+        model="test-model",
+        system_prompt="s",
+        allowed_tools=("calculator",),
+        budget=RunBudget(max_tool_call_seconds=0.02),
+    )
+    invoke_tool = service._make_invoke_tool(
+        config,
+        disclosed_names={"calculator"},
+        should_cancel=lambda: True,
+        run_id="run-cancel-before-start",
+    )
+
+    result = invoke_tool(ToolCall(name="calculator", args={"expression": "2+2"}))
+
+    assert result.ok is False
+    assert result.outcome == "cancelled"
+    assert invoked == []
+
+
 def test_registry_timeout_for_reports_a_tools_own_ceiling():
     from tldw_chatbook.Tools.tool_executor import Tool
 

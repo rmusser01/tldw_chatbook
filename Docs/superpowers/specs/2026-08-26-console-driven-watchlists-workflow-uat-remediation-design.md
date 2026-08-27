@@ -164,8 +164,11 @@ The components are:
    mutations. Short database-local mutations run synchronously on the Console
    tool worker against application-owned domain/database owners; their tool
    result follows definitive commit or rollback, never a non-cancellable
-   timeout. Long work is accepted only after its existing durable run/briefing
-   receipt exists, then proceeds asynchronously on the application's event loop.
+   timeout. A code-owned catalog execution policy makes the agent runtime wait
+   after an approved mutation starts, while ordinary read/network tools retain
+   their bounded timeout behavior. Long work is accepted only after its existing
+   durable run/briefing receipt exists, then proceeds asynchronously on the
+   application's event loop.
 3. `LocalToolSpec` exposure and approval-effect metadata: one code-derived
    declaration states whether a tool is available to Console and external MCP
    or Console only, plus whether it reads private data, mutates local state,
@@ -206,6 +209,16 @@ repository's code-derived inventory requirement.
 Exposure fails closed. There is no permissive default: every incumbent and new
 descriptor is classified explicitly, and an unclassified descriptor is
 rejected during provider construction rather than exposed accidentally.
+
+Execution ownership is a second code-owned descriptor property. Its default
+and fail-closed value is `bounded_abandonable`; missing/unknown provider
+capabilities and invalid returned values retain the agent runtime's existing
+timeout behavior. The three short Watchlists authoring mutations explicitly use
+`definitive_after_start`. Permission denial and cancellation before handler
+start remain interruptible. Once an approved definitive handler begins, budget
+expiry or Stop does not return control while its side effects may continue; the
+existing tool card stays pending until commit or rollback produces one result.
+This property neither authorizes the call nor changes external exposure.
 
 Exposure is separate from authorization:
 
@@ -860,6 +873,10 @@ Detailed implementation plans:
   Watchlists command regardless of stored permission state.
 - Fresh/missing permissions ask; deny, timeout, kill switch, gate error,
   session allow, and definition-hash changes retain ADR-032 behavior.
+- Catalog execution-policy tests pin the three authoring mutations as
+  definitive-after-start, prove pre-start cancellation remains interruptible,
+  prove timeout/cancellation cannot precede a later commit, and prove ordinary
+  tools retain bounded timeout behavior.
 - Server Watchlists mode returns structured unsupported outcomes before
   resolving the local database or scheduling work.
 

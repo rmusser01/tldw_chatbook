@@ -57,7 +57,7 @@ from .session_todo_store import (
 if TYPE_CHECKING:
     from tldw_chatbook.Tools.watchlists_command_service import WatchlistsCommandService
     from tldw_chatbook.Tools.watchlists_tool_service import WatchlistsToolService
-from .tool_catalog import ToolPathTarget, redact_root_locator
+from .tool_catalog import ToolExecutionPolicy, ToolPathTarget, redact_root_locator
 
 # Module-level (not the function-local imports the other `_default_specs`
 # tool modules use) SPECIFICALLY so tests can patch this one name via
@@ -239,6 +239,7 @@ class LocalToolSpec:
     handler: Callable[[dict], str]
     exposure: LocalToolExposure
     approval_effects: tuple[LocalApprovalEffect, ...]
+    execution_policy: ToolExecutionPolicy = ToolExecutionPolicy.BOUNDED_ABANDONABLE
     tags: tuple[str, ...] = ()
     approval_arguments: Callable[[Mapping[str, Any]], Mapping[str, Any]] | None = None
 
@@ -260,6 +261,10 @@ class LocalToolSpec:
             self.approval_arguments
         ):
             raise ValueError("LocalToolSpec approval_arguments must be callable")
+        if not isinstance(self.execution_policy, ToolExecutionPolicy):
+            raise ValueError(
+                "LocalToolSpec execution_policy must be a ToolExecutionPolicy"
+            )
 
 
 def _fit_result(text: str) -> str:
@@ -551,6 +556,14 @@ class LocalToolProvider:
         """Return the code-owned effects for one registered local tool."""
         name = tool_id.split(":", 1)[1] if ":" in tool_id else tool_id
         return self._specs[name].approval_effects
+
+    def execution_policy_for(self, tool_id: str) -> ToolExecutionPolicy:
+        """Return explicit execution ownership, bounded for unknown tools."""
+        name = tool_id.split(":", 1)[1] if ":" in tool_id else tool_id
+        spec = self._specs.get(name)
+        if spec is None:
+            return ToolExecutionPolicy.BOUNDED_ABANDONABLE
+        return spec.execution_policy
 
     def path_targets(
         self, tool_id: str, args: Mapping[str, Any]
@@ -2048,6 +2061,7 @@ def _default_specs(
             handler=watchlists_command_service.create_sources,
             exposure=LocalToolExposure.CONSOLE_ONLY,
             approval_effects=(LocalApprovalEffect.MUTATES_LOCAL,),
+            execution_policy=ToolExecutionPolicy.DEFINITIVE_AFTER_START,
             tags=("mutates",),
             approval_arguments=watchlists_command_service.approval_source_destinations,
         ),
@@ -2089,6 +2103,7 @@ def _default_specs(
             handler=watchlists_command_service.create_collection,
             exposure=LocalToolExposure.CONSOLE_ONLY,
             approval_effects=(LocalApprovalEffect.MUTATES_LOCAL,),
+            execution_policy=ToolExecutionPolicy.DEFINITIVE_AFTER_START,
             tags=("mutates",),
         ),
         LocalToolSpec(
@@ -2136,6 +2151,7 @@ def _default_specs(
             handler=watchlists_command_service.update_collection_sources,
             exposure=LocalToolExposure.CONSOLE_ONLY,
             approval_effects=(LocalApprovalEffect.MUTATES_LOCAL,),
+            execution_policy=ToolExecutionPolicy.DEFINITIVE_AFTER_START,
             tags=("mutates",),
         ),
     ]

@@ -158,6 +158,7 @@ from .tool_catalog import (
     SPAWN_TOOL_SCHEMA,
     WAIT_AGENTS_SCHEMA,
     ToolCatalogRegistry,
+    ToolExecutionPolicy,
     build_spawn_schema,
     initial_disclosure,
 )
@@ -2282,14 +2283,26 @@ class AgentService:
                 or call.name not in disclosed_names
             ):
                 return ToolResult.blocked(f"Tool not permitted: {call.name}")
-            timeout = self.registry.timeout_for(call.name) or (
-                config.budget.max_tool_call_seconds
-            )
 
             def _invoke() -> ToolResult:
                 with use_run_actor(actor), use_tool_call_id(call.call_id):
                     return self.registry.invoke_by_name(call.name, call.args)
 
+            if (
+                self.registry.execution_policy_for(call.name)
+                is ToolExecutionPolicy.DEFINITIVE_AFTER_START
+            ):
+                if should_cancel():
+                    return ToolResult(
+                        ok=False,
+                        error=f"tool call cancelled before start: {call.name}",
+                        outcome=TOOL_OUTCOME_CANCELLED,
+                    )
+                return _invoke()
+
+            timeout = self.registry.timeout_for(call.name) or (
+                config.budget.max_tool_call_seconds
+            )
             if timeout and timeout > 0:
                 return _call_with_timeout(
                     _invoke,

@@ -424,6 +424,13 @@ def test_local_tool_spec_rejects_missing_or_unknown_exposure_and_effect():
             exposure=LocalToolExposure.CONSOLE_ONLY,
             approval_effects=("unbounded",),
         )
+    with pytest.raises(ValueError, match="execution_policy"):
+        LocalToolSpec(
+            **kwargs,
+            exposure=LocalToolExposure.CONSOLE_ONLY,
+            approval_effects=(LocalApprovalEffect.PRIVATE_READ,),
+            execution_policy="unknown",
+        )
 
 
 def test_catalog_exposure_and_effects_are_explicit_and_queryable(tmp_path):
@@ -624,6 +631,10 @@ def test_watchlists_authoring_specs_are_console_only_mutations_with_safe_approva
         )
         assert provider.hub_tool_for(name).tags == ("mutates",)
         assert provider.load_schema(name).parameters["additionalProperties"] is False
+        assert provider.execution_policy_for(name) == "definitive_after_start"
+
+    assert provider.execution_policy_for("fs_write") == "bounded_abandonable"
+    assert provider.execution_policy_for("not_registered") == "bounded_abandonable"
 
     gate = provider.pending_gate_for(
         "watchlists_create_sources",

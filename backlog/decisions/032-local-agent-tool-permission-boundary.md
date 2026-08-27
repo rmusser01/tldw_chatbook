@@ -212,6 +212,19 @@ create an unintended duplicate (notably under `auto_suffix`). The app loop is
 reserved here for durable, accepted long-running work with an observable
 receipt; short authoring responses are definitive outcomes.
 
+The agent catalog carries this distinction as a code-owned execution policy,
+separate from permission effects and model arguments. Unknown providers,
+missing policies, invalid values, and ordinary read/network tools use the
+existing bounded, abandonable runtime policy. Only an explicit
+`definitive_after_start` descriptor opts a tool out of the agent runtime's
+timeout/cancellation wrapper; all three TASK-22862 authoring descriptors carry
+that policy. Permission review remains interruptible before approval and an
+already-cancelled run does not start the handler. After approved execution
+begins, Stop or budget expiry cannot emit a cancellation/timeout while the
+mutation can still commit: the tool card remains pending until one definitive
+result arrives. This policy grants no permission, changes no risk tag, and
+adds no external MCP exposure.
+
 Completed briefings preserve immutable, ordered evidence snapshots rather than
 depending on mutable live source/item joins. The focused Subscriptions schema
 migration records selected and cited order, sanitized source/item identity,

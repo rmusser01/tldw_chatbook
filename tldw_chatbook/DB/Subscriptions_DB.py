@@ -31,7 +31,7 @@ from contextlib import closing, contextmanager
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import List, Dict, Any, Mapping, Optional, Sequence, TYPE_CHECKING, Union
+from typing import Callable, List, Dict, Any, Mapping, Optional, Sequence, TYPE_CHECKING, Union
 from urllib.parse import urlparse, urlunparse
 from urllib.parse import urlsplit, urlunsplit
 
@@ -2065,7 +2065,10 @@ class SubscriptionsDB(BaseDB):
         return None if row is None else int(row[0])
 
     def create_sources_exact_batch(
-        self, rows: Sequence[Mapping[str, Any]]
+        self,
+        rows: Sequence[Mapping[str, Any]],
+        *,
+        materialize: Callable[[Mapping[str, Any]], Any] | None = None,
     ) -> List[Dict[str, Any]]:
         """Create an ordered exact-identity source batch under one write lock.
 
@@ -2076,6 +2079,8 @@ class SubscriptionsDB(BaseDB):
         Args:
             rows: Validated subscription mappings accepted by
                 :meth:`add_subscription`.
+            materialize: Optional pure result mapper run against the stored row
+                before commit. A mapper failure rolls back the whole batch.
 
         Returns:
             One ordered outcome mapping per input row.
@@ -2091,13 +2096,19 @@ class SubscriptionsDB(BaseDB):
                 else:
                     source_id = self.add_subscription(source=source, **row)
                     outcome = "created"
-                results.append(
-                    {
-                        "input_index": input_index,
-                        "outcome": outcome,
-                        "source_id": source_id,
-                    }
-                )
+                result = {
+                    "input_index": input_index,
+                    "outcome": outcome,
+                    "source_id": source_id,
+                }
+                if materialize is not None:
+                    stored = conn.execute(
+                        "SELECT * FROM subscriptions WHERE id = ?", (source_id,)
+                    ).fetchone()
+                    if stored is None:
+                        raise RuntimeError("source result materialization failed")
+                    result["source"] = materialize(dict(stored))
+                results.append(result)
         return results
 
     def add_subscription(
