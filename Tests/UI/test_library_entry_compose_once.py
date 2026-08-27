@@ -932,6 +932,10 @@ async def test_automatic_entry_worker_composes_screen_once_and_routes_in_place(
             # The compact permanent Reader prioritizes transcript progress;
             # its title metadata is intentionally outside the visible slice.
             painted_copy = "3 of 3 messages"
+        if case.name == "skills" and size == (60, 20):
+            # The compact Skills Reader exposes Work first; the populated
+            # Items owner remains mounted behind its reachable pane grip.
+            painted_copy = "Select a skill to inspect it here."
         await _wait_for_condition(
             pilot,
             lambda: _entry_worker_terminal(case, active_screen),

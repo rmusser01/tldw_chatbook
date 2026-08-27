@@ -13007,26 +13007,17 @@ class LibraryScreen(BaseAppScreen):
                 id="library-rail",
                 classes="destination-workbench-pane",
             )
-            if not self._library_loaded and not self._library_lookup_error:
-                items_child: Widget = Static(
-                    "Loading local Library sources…",
-                    id="library-canvas-loading",
-                    classes="destination-purpose",
-                    markup=False,
-                )
-            elif self._library_lookup_error:
-                items_child = Static(
-                    self._library_lookup_error,
-                    id="library-canvas-error",
-                    classes="destination-purpose",
-                    markup=False,
-                )
-            else:
-                items_child = LibrarySkillsListCanvas(
-                    **self._library_skills_list_canvas_kwargs(),
-                    id="library-skills-canvas",
-                )
-                items_child.styles.min_width = 0
+            # Skills owns a retained Items pane and independent trust worker.
+            # Gating it on the broad Library snapshot lets that worker settle
+            # before a Skills canvas exists, leaving a restored Skills route
+            # permanently on the generic loading row. Mount the owner from
+            # current state immediately; the normal snapshot/trust syncs patch
+            # it in place when their results arrive.
+            items_child = LibrarySkillsListCanvas(
+                **self._library_skills_list_canvas_kwargs(),
+                id="library-skills-canvas",
+            )
+            items_child.styles.min_width = 0
             items_host = Vertical(
                 items_child,
                 id="library-canvas",
