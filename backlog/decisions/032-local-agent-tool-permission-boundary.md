@@ -6,6 +6,12 @@ Related Tasks:
 
 - [TASK-2819 - Local agent tools phase 1: plumbing + fs_list pilot](../tasks/task-2819%20-%20Local-agent-tools-phase-1-plumbing-fs_list-pilot.md)
 - [TASK-16222 - Expose local Watchlists search tools to Console and MCP](../tasks/task-16222%20-%20Expose-local-Watchlists-search-tools-to-Console-and-MCP.md)
+- [TASK-22859 - Define Watchlists Console tool exposure and approval effects](../tasks/task-22859%20-%20Define-Watchlists-Console-tool-exposure-and-approval-effects.md)
+- [TASK-22860 - Migrate durable briefing provenance and atomic Watchlists claims](../tasks/task-22860%20-%20Migrate-durable-briefing-provenance-and-atomic-Watchlists-claims.md)
+- [TASK-22861 - Expose bounded Watchlists receipts and briefing query tools](../tasks/task-22861%20-%20Expose-bounded-Watchlists-receipts-and-briefing-query-tools.md)
+- [TASK-22862 - Add transactional Console Watchlists authoring commands](../tasks/task-22862%20-%20Add-transactional-Console-Watchlists-authoring-commands.md)
+- [TASK-22863 - Coordinate durable Watchlists check and briefing operations](../tasks/task-22863%20-%20Coordinate-durable-Watchlists-check-and-briefing-operations.md)
+- [TASK-22864 - Make every-24-hours briefing schedules immediately observable](../tasks/task-22864%20-%20Make-every-24-hours-briefing-schedules-immediately-observable.md)
 Supersedes: N/A
 
 ## Decision
@@ -155,6 +161,66 @@ feature unavailable until the normal application owns initialization. No
 Watchlists domain mutation, server-data access, semantic index, or threat score
 is authorized by this addendum.
 
+**Addendum (TASK-22859 through TASK-22864, 2026-08-27): descriptor exposure,
+approval effects, and briefing privacy are explicit and fail closed.** Every
+`LocalToolSpec` declares one exposure value with no permissive default:
+`console_and_external_mcp` or `console_only`. Provider construction rejects a
+missing or unknown value. External MCP derives its published inventory from
+that descriptor field; it does not use a parallel tool-name allowlist or
+denylist, and a persisted permission-store Allow cannot make a Console-only
+descriptor externally visible or callable.
+
+Approval presentation is derived from code-owned descriptor effects, separate
+from model-supplied arguments and separate from permission-enforced risk tags.
+The defined effects are `private_read`, `mutates_local`, `network`, and
+`llm_spend`. The existing `mutates` risk tag and permission resolver remain the
+authorization controls; effect labels explain an approved call but never grant
+it. A read-only project binding or a provider composed with
+`allow_write=False` omits every descriptor carrying `mutates_local`, including
+Watchlists mutations rather than only filesystem writes.
+
+The shared Console/external-MCP Watchlists reads are
+`watchlists_list_sources`, `watchlists_list_collections`,
+`watchlists_list_briefings`, `watchlists_get_operations_status`, and
+`watchlists_get_operation_status`. They return only bounded, field-allowlisted
+metadata and durable operation or briefing receipts. This addendum narrows
+TASK-16222's optional external publication: `watchlists_search_items` and
+`watchlists_get_item` remain available in Console but are `console_only`, so
+external MCP receives neither article snippets nor article bodies. Full
+generated briefing Markdown and its ordered selected or cited provenance are
+also private Console context and are available only through the Console-only
+`watchlists_get_briefing` descriptor.
+
+The Console-only mutation/network inventory is
+`watchlists_create_sources`, `watchlists_create_collection`,
+`watchlists_update_collection_sources`, `watchlists_check_sources`,
+`watchlists_generate_briefing`, and `watchlists_set_briefing_schedule`.
+These are domain operations rather than SQL or widget controls. Long-running
+checks and briefing generation commit or resolve an exact durable receipt
+before returning and then execute under an application-owned coordinator;
+model timeout, Console navigation, and screen reconstruction do not own or
+silently cancel accepted work. Receipt queries are the cross-surface status
+contract.
+
+Completed briefings preserve immutable, ordered evidence snapshots rather than
+depending on mutable live source/item joins. The focused Subscriptions schema
+migration records selected and cited order, sanitized source/item identity,
+dates, URLs, featured state, and a provenance format marker before a briefing
+is published complete. Nullable live links may supplement that snapshot but
+cannot erase it when a source or item changes or is deleted. Legacy junction
+rows migrate as `legacy_best_effort` and do not invent order. Partial unique
+indexes and owner-level accept/transition methods enforce one active source
+check per source and one generating briefing per collection across threads and
+processes; uniqueness losers resolve to the winning durable receipt.
+
+External MCP remains a read-only projection over an already initialized local
+database. It cannot receive article snippets/bodies, generated briefing bodies,
+or ordered provenance; cannot invoke Watchlists commands; cannot cause schema
+migration; and cannot gain those capabilities through an Allow decision.
+Server Watchlists mode does not fall back to the local database for these
+tools. Missing or old read-only storage returns a structured unavailable
+outcome so normal application startup remains the sole migration owner.
+
 All path-taking tools confine to a configurable `[console] workspace_root`
 (default: the app cwd at startup), coerced and templated following the
 `collapse_large_pastes` precedent in `config.py`. Hidden path components are
@@ -228,7 +294,16 @@ root confinement with hidden components explicitly allowed under it.
 - [TASK-2819](../tasks/task-2819%20-%20Local-agent-tools-phase-1-plumbing-fs_list-pilot.md)
 - [TASK-1354](../tasks/task-1354%20-%20Complete-web_search-and-web_fetch-Console-and-MCP-exposure.md)
 - [TASK-16222](../tasks/task-16222%20-%20Expose-local-Watchlists-search-tools-to-Console-and-MCP.md)
+- [TASK-22859](../tasks/task-22859%20-%20Define-Watchlists-Console-tool-exposure-and-approval-effects.md)
+- [TASK-22860](../tasks/task-22860%20-%20Migrate-durable-briefing-provenance-and-atomic-Watchlists-claims.md)
+- [TASK-22861](../tasks/task-22861%20-%20Expose-bounded-Watchlists-receipts-and-briefing-query-tools.md)
+- [TASK-22862](../tasks/task-22862%20-%20Add-transactional-Console-Watchlists-authoring-commands.md)
+- [TASK-22863](../tasks/task-22863%20-%20Coordinate-durable-Watchlists-check-and-briefing-operations.md)
+- [TASK-22864](../tasks/task-22864%20-%20Make-every-24-hours-briefing-schedules-immediately-observable.md)
 - [Design specification](../../Docs/superpowers/specs/2026-08-04-local-agent-tools-design.md)
 - [Watchlists agent search tools design](../../Docs/superpowers/specs/2026-08-14-watchlists-agent-search-tools-design.md)
+- [Console-driven Watchlists workflow remediation design](../../Docs/superpowers/specs/2026-08-26-console-driven-watchlists-workflow-uat-remediation-design.md)
 - [Implementation plan](../../Docs/superpowers/plans/2026-08-04-local-agent-tools-phase1.md)
+- [Watchlists agent boundary and provenance plan](../../Docs/superpowers/plans/2026-08-27-watchlists-agent-boundary-and-provenance.md)
+- [Console Watchlists commands and operations plan](../../Docs/superpowers/plans/2026-08-27-console-watchlists-commands-and-operations.md)
 - [ADR-030: Direct Local Library Tool Boundary for Console and MCP](030-local-library-agent-tool-boundary.md)

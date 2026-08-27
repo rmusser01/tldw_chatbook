@@ -5,12 +5,15 @@ title: >-
 status: To Do
 assignee: []
 created_date: '2026-07-24 14:10'
-updated_date: '2026-07-24 14:10'
+updated_date: '2026-08-27 04:17'
 labels:
   - skills
   - library
   - bug
 dependencies: []
+references:
+  - Docs/superpowers/specs/2026-08-26-console-driven-watchlists-workflow-uat-remediation-design.md
+  - Docs/superpowers/plans/2026-08-27-library-skill-import-framework-classification.md
 priority: medium
 ---
 
