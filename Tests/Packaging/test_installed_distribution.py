@@ -1380,6 +1380,16 @@ def _wheel_member_text(path: Path, member: str) -> str:
         return archive.read(member).decode("utf-8")
 
 
+def _weaken_tiktoken_requirement(metadata_text: str) -> bytes:
+    weakened, replacements = re.subn(
+        r"(?m)^Requires-Dist: tiktoken[^\r\n]*$",
+        "Requires-Dist: tiktoken>=0.14.0",
+        metadata_text,
+    )
+    assert replacements == 1
+    return weakened.encode("utf-8")
+
+
 def _link_or_copy(source: Path, destination: Path) -> None:
     """Hard link an unmodified archive, falling back to a copy across devices."""
     try:
@@ -2083,6 +2093,45 @@ def test_release_checker_rejects_unexpected_tiktoken_asset(
 
 
 @pytest.mark.parametrize("archive_kind", ["wheel", "sdist"])
+def test_release_checker_rejects_unexpected_tiktoken_symlink(
+    built_distributions: BuiltDistributions,
+    tmp_path: Path,
+    archive_kind: str,
+) -> None:
+    dist_dir = tmp_path / "dist"
+    shutil.copytree(built_distributions.dist_dir, dist_dir)
+    unexpected = f"{TIKTOKEN_CACHE_PREFIX}unexpected-link"
+    if archive_kind == "wheel":
+        added = zipfile.ZipInfo(unexpected)
+        added.create_system = 3
+        added.external_attr = (stat.S_IFLNK | 0o777) << 16
+        with zipfile.ZipFile(next(dist_dir.glob("*.whl")), "a") as archive:
+            archive.writestr(added, "manifest.json")
+    else:
+        sdist = next(dist_dir.glob("*.tar.gz"))
+        rewritten = sdist.with_name(f"{sdist.name}.rewritten")
+        with (
+            tarfile.open(sdist, "r:gz") as source,
+            tarfile.open(rewritten, "w:gz") as destination,
+        ):
+            members = source.getmembers()
+            for member in members:
+                stream = source.extractfile(member) if member.isfile() else None
+                destination.addfile(member, stream)
+            root = members[0].name.split("/", 1)[0]
+            added = tarfile.TarInfo(f"{root}/{unexpected}")
+            added.type = tarfile.SYMTYPE
+            added.linkname = "manifest.json"
+            destination.addfile(added)
+        rewritten.replace(sdist)
+
+    result = _run_manifest_checker(built_distributions, dist_dir, tmp_path)
+
+    assert result.returncode == 1
+    assert unexpected in result.stdout + result.stderr
+
+
+@pytest.mark.parametrize("archive_kind", ["wheel", "sdist"])
 def test_release_checker_rejects_nonexact_tiktoken_requirement(
     built_distributions: BuiltDistributions,
     tmp_path: Path,
@@ -2090,15 +2139,6 @@ def test_release_checker_rejects_nonexact_tiktoken_requirement(
 ) -> None:
     dist_dir = tmp_path / "dist"
     shutil.copytree(built_distributions.dist_dir, dist_dir)
-
-    def weaken_requirement(metadata_text: str) -> bytes:
-        weakened, replacements = re.subn(
-            r"(?m)^Requires-Dist: tiktoken[^\r\n]*$",
-            "Requires-Dist: tiktoken>=0.14.0",
-            metadata_text,
-        )
-        assert replacements == 1
-        return weakened.encode("utf-8")
 
     if archive_kind == "wheel":
         wheel = next(dist_dir.glob("*.whl"))
@@ -2110,7 +2150,7 @@ def test_release_checker_rejects_nonexact_tiktoken_requirement(
             for member in source.infolist():
                 payload = source.read(member.filename)
                 if member.filename.endswith(".dist-info/METADATA"):
-                    payload = weaken_requirement(payload.decode("utf-8"))
+                    payload = _weaken_tiktoken_requirement(payload.decode("utf-8"))
                 destination.writestr(member, payload)
         rewritten.replace(wheel)
     else:
@@ -2125,13 +2165,58 @@ def test_release_checker_rejects_nonexact_tiktoken_requirement(
                 payload = stream.read() if stream is not None else None
                 if member.isfile() and member.name.endswith("/PKG-INFO"):
                     assert payload is not None
-                    payload = weaken_requirement(payload.decode("utf-8"))
+                    payload = _weaken_tiktoken_requirement(payload.decode("utf-8"))
                     member.size = len(payload)
                 destination.addfile(
                     member,
                     BytesIO(payload) if payload is not None else None,
                 )
         rewritten.replace(sdist)
+
+    result = _run_manifest_checker(built_distributions, dist_dir, tmp_path)
+
+    assert result.returncode == 1
+    assert TIKTOKEN_REQUIREMENT in result.stdout + result.stderr
+
+
+def test_release_checker_reads_root_pkg_info_not_nested_decoy(
+    built_distributions: BuiltDistributions,
+    tmp_path: Path,
+) -> None:
+    dist_dir = tmp_path / "dist"
+    shutil.copytree(built_distributions.dist_dir, dist_dir)
+    sdist = next(dist_dir.glob("*.tar.gz"))
+    rewritten = sdist.with_name(f"{sdist.name}.rewritten")
+    with (
+        tarfile.open(sdist, "r:gz") as source,
+        tarfile.open(rewritten, "w:gz") as destination,
+    ):
+        members = source.getmembers()
+        root = members[0].name.split("/", 1)[0]
+        root_pkg_info = next(
+            member
+            for member in members
+            if member.isfile() and member.name.split("/", 1)[-1] == "PKG-INFO"
+        )
+        root_stream = source.extractfile(root_pkg_info)
+        assert root_stream is not None
+        decoy_payload = root_stream.read()
+        decoy = tarfile.TarInfo(f"{root}/nested/PKG-INFO")
+        decoy.size = len(decoy_payload)
+        destination.addfile(decoy, BytesIO(decoy_payload))
+
+        for member in members:
+            stream = source.extractfile(member) if member.isfile() else None
+            payload = stream.read() if stream is not None else None
+            if member is root_pkg_info:
+                assert payload is not None
+                payload = _weaken_tiktoken_requirement(payload.decode("utf-8"))
+                member.size = len(payload)
+            destination.addfile(
+                member,
+                BytesIO(payload) if payload is not None else None,
+            )
+    rewritten.replace(sdist)
 
     result = _run_manifest_checker(built_distributions, dist_dir, tmp_path)
 

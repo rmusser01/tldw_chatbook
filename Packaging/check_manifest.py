@@ -229,6 +229,25 @@ def _sdist_members(path: Path) -> tuple[set[str], list[str]]:
     return members, errors
 
 
+def _sdist_tiktoken_members(path: Path) -> tuple[set[str], list[str]]:
+    """Return every non-directory cache entry and reject non-regular types."""
+    members: set[str] = set()
+    errors: list[str] = []
+    with tarfile.open(path, "r:gz") as archive:
+        for member in archive.getmembers():
+            if "/" not in member.name or member.isdir():
+                continue
+            relative = member.name.split("/", 1)[1]
+            if not relative.startswith(TIKTOKEN_CACHE_PREFIX):
+                continue
+            members.add(relative)
+            if not member.isfile():
+                errors.append(
+                    f"sdist: tiktoken cache entry is not a regular file: {relative}"
+                )
+    return members, errors
+
+
 def _wheel_members(path: Path) -> set[str]:
     with zipfile.ZipFile(path) as archive:
         return {name for name in archive.namelist() if not name.endswith("/")}
@@ -294,6 +313,7 @@ def _validate_content(
     required_paths: set[str],
     required_globs: set[str],
     forbidden_paths: set[str] | None = None,
+    tiktoken_members: set[str] | None = None,
 ) -> list[str]:
     errors: list[str] = []
     for path in sorted(required_paths - members):
@@ -329,9 +349,10 @@ def _validate_content(
             f"unexpected={sorted(samira_members - SAMIRA_RESOURCE_PATHS)}"
         )
 
-    tiktoken_members = {
-        name for name in members if name.startswith(TIKTOKEN_CACHE_PREFIX)
-    }
+    if tiktoken_members is None:
+        tiktoken_members = {
+            name for name in members if name.startswith(TIKTOKEN_CACHE_PREFIX)
+        }
     if tiktoken_members != TIKTOKEN_RESOURCE_PATHS:
         errors.append(
             f"{label}: tiktoken cache resources differ; "
@@ -388,17 +409,11 @@ def _validate_metadata(
             archive.read(wheel_entry_point_names[0]).decode("utf-8")
         )
 
-    with tarfile.open(sdist, "r:gz") as archive:
-        member = next(
-            item
-            for item in archive.getmembers()
-            if item.isfile() and item.name.endswith("/PKG-INFO")
-        )
-        stream = archive.extractfile(member)
-        if stream is None:
-            errors.append("sdist PKG-INFO: could not read metadata")
-            return errors
-        sdist_metadata = Parser().parsestr(stream.read().decode("utf-8"))
+    sdist_metadata_text = _sdist_member_text(sdist, sdist_metadata_names[0])
+    if sdist_metadata_text is None:
+        errors.append("sdist PKG-INFO: could not read metadata")
+        return errors
+    sdist_metadata = Parser().parsestr(sdist_metadata_text)
 
     for label, metadata in (
         ("wheel METADATA", wheel_metadata),
@@ -467,6 +482,8 @@ def check_distribution(dist_dir: Path = Path("dist")) -> bool:
     sdist_members, sdist_errors = _sdist_members(sdist)
     wheel_members = _wheel_members(wheel)
     errors.extend(sdist_errors)
+    sdist_tiktoken_members, sdist_tiktoken_errors = _sdist_tiktoken_members(sdist)
+    errors.extend(sdist_tiktoken_errors)
 
     # Migration requirements are derived, not listed (task-19860): the source
     # tree states what the artifacts owe, and each artifact's own schema
@@ -492,6 +509,7 @@ def check_distribution(dist_dir: Path = Path("dist")) -> bool:
             sdist_members,
             required_paths=REQUIRED_SDIST_PATHS | source_migrations | sdist_migrations,
             required_globs=REQUIRED_SDIST_GLOBS,
+            tiktoken_members=sdist_tiktoken_members,
         )
     )
     errors.extend(
