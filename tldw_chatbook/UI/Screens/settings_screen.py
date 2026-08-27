@@ -685,11 +685,16 @@ MODEL_CATALOG_FIELD_IDS = frozenset(
 
 RAW_CLI_PERMITTED_DRAFT_KEY = "console.raw_cli_permitted"
 RAW_CLI_DISCLOSURE_LINES = (
-    "Raw CLI commands run with full OS-user file, process, and network authority.",
-    "Even when environment variables are scrubbed, credential-file access remains "
-    "possible despite environment scrubbing.",
+    "Commands run with the same OS permissions as Chatbook.",
+    "Commands can read, modify, or delete any accessible file, including Chatbook's "
+    "config and permission store.",
+    "Commands can access the network, invoke credentialed clients, launch background "
+    "processes, and exhaust machine resources.",
+    "The environment is scrubbed, but commands can still read credential files and "
+    "other user data.",
+    "Cancellation attempts to terminate the owned process group/job; deliberately "
+    "detached descendants may survive.",
     "Command text and bounded output may persist in local run logs.",
-    "Cancellation is best-effort; detached descendants may survive cleanup.",
     "This is not a sandbox and is not limited to your workspace.",
 )
 

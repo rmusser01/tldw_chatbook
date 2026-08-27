@@ -23,10 +23,16 @@ from tldw_chatbook.Widgets.confirmation_dialog import ConfirmationDialog
 
 
 RAW_CLI_DISCLOSURE = (
-    "full OS-user file, process, and network authority",
-    "credential-file access remains possible despite environment scrubbing",
-    "Command text and bounded output may persist in local run logs",
-    "detached descendants may survive cleanup",
+    "Commands run with the same OS permissions as Chatbook.",
+    "Commands can read, modify, or delete any accessible file, including Chatbook's "
+    "config and permission store.",
+    "Commands can access the network, invoke credentialed clients, launch background "
+    "processes, and exhaust machine resources.",
+    "The environment is scrubbed, but commands can still read credential files and "
+    "other user data.",
+    "Cancellation attempts to terminate the owned process group/job; deliberately "
+    "detached descendants may survive.",
+    "Command text and bounded output may persist in local run logs.",
     "This is not a sandbox and is not limited to your workspace.",
 )
 
@@ -162,6 +168,7 @@ async def test_raw_cli_unlock_and_arm_are_separate_confirmed_gates():
         await _wait_until(pilot, lambda: isinstance(host.screen, ConfirmationDialog))
         unlock_dialog = host.screen
         assert unlock_dialog.title == "Unlock raw CLI host access"
+        assert unlock_dialog.message == "\n\n".join(RAW_CLI_DISCLOSURE)
         await _wait_until(
             pilot,
             lambda: getattr(host.focused, "id", None) == "cancel-button",
@@ -201,6 +208,7 @@ async def test_raw_cli_unlock_and_arm_are_separate_confirmed_gates():
         await _wait_until(pilot, lambda: isinstance(host.screen, ConfirmationDialog))
         arm_dialog = host.screen
         assert arm_dialog.title == "Arm raw CLI for this launch"
+        assert arm_dialog.message == "\n\n".join(RAW_CLI_DISCLOSURE)
         await _wait_until(
             pilot,
             lambda: getattr(host.focused, "id", None) == "cancel-button",
