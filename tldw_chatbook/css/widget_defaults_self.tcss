@@ -1681,6 +1681,17 @@
     }
 
 
+/* ===== WIDGET: GlobalFullCaptureConfirmation (Widgets/Console/console_capture_policy_dialog.py) ===== */
+
+    GlobalFullCaptureConfirmation { align: center middle; }
+
+
+
+
+
+
+
+
 /* ===== WIDGET: ConsoleConversationInspector (Widgets/Console/console_conversation_inspector.py) ===== */
 
     ConsoleConversationInspector { align: center middle; }
@@ -2050,6 +2061,15 @@
     }
     ConsoleTurnFileCard .console-turn-file-note-input {
         width: 100%;
+    }
+
+
+/* ===== WIDGET: LibraryEmergencyReturn (Widgets/Library/library_emergency_return.py) ===== */
+
+    LibraryEmergencyReturn {
+        width: 100%;
+        height: 1;
+        border: none;
     }
 
 

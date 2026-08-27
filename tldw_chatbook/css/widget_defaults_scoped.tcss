@@ -2085,6 +2085,20 @@
     }
 
 
+/* ===== WIDGET: GlobalFullCaptureConfirmation (Widgets/Console/console_capture_policy_dialog.py) ===== */
+
+
+    GlobalFullCaptureConfirmation #global-full-confirmation {
+        width: 72; max-width: 96%; height: 18; max-height: 96%;
+        border: thick $error; background: $surface; padding: 1 2;
+    }
+    GlobalFullCaptureConfirmation #global-full-title { text-style: bold; text-align: center; }
+    GlobalFullCaptureConfirmation #global-full-body { height: 1fr; scrollbar-gutter: stable; }
+    GlobalFullCaptureConfirmation #global-full-message, GlobalFullCaptureConfirmation #global-full-ack { height: auto; margin-top: 1; }
+    GlobalFullCaptureConfirmation #global-full-actions { height: 3; min-height: 3; align-horizontal: right; }
+    GlobalFullCaptureConfirmation #global-full-actions Button { min-width: 14; margin-left: 1; }
+
+
 /* ===== WIDGET: ConsoleConversationInspector (Widgets/Console/console_conversation_inspector.py) ===== */
 
 

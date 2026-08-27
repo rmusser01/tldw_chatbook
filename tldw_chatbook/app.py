@@ -142,6 +142,7 @@ from tldw_chatbook.Utils.instance_lock import (
     acquire_profile_instance_lock,
 )
 from tldw_chatbook.Constants import (
+    MODEL_CATALOG_REFRESH_WORKER_GROUP,
     ALL_TABS,
     TAB_CCP,
     TAB_CHAT,
@@ -12966,7 +12967,7 @@ class TldwCli(
         self.run_worker(
             self._refresh_model_catalogs,
             exclusive=True,
-            group="model-catalog-refresh",
+            group=MODEL_CATALOG_REFRESH_WORKER_GROUP,
         )
         return True
 
@@ -13023,7 +13024,7 @@ class TldwCli(
             self.run_worker(
                 self._refresh_model_catalogs,
                 exclusive=True,
-                group="model-catalog-refresh",
+                group=MODEL_CATALOG_REFRESH_WORKER_GROUP,
             )
         else:
             self.notify(
@@ -13501,6 +13502,21 @@ class TldwCli(
         ``_push_first_run_wizard`` with this same handler).
         """
         self._handle_first_run_wizard_result(result)
+
+    def refresh_model_catalogs_now(self) -> None:
+        """Run the provider catalog refresh immediately (TASK-21150).
+
+        The public seam behind the wizard Summary's model-list consent, so
+        answering "yes" there refreshes this session exactly as answering
+        "yes" to the Console consent modal does — same worker, same
+        exclusive group, so the two paths can never run concurrently.
+        """
+        self._startup_model_catalog_refresh_scheduled = True
+        self.run_worker(
+            self._refresh_model_catalogs,
+            exclusive=True,
+            group=MODEL_CATALOG_REFRESH_WORKER_GROUP,
+        )
 
     def action_run_setup_wizard(self) -> None:
         """Open the setup wizard for a re-run (TASK-21145, UAT H-3).

@@ -1908,5 +1908,12 @@ options:
     A JSON formatted string of arguments for the tokenizer's apply_chat_template, e.g. '{"enable_thinking":false}'
 """
 
+#: Worker group for the provider model-catalog refresh. One constant so the
+#: dispatch sites and the worker-handler's acknowledgement set cannot drift
+#: apart through a spelling change — exclusivity and event routing both key
+#: off this exact string (Qodo review of PR #2131).
+MODEL_CATALOG_REFRESH_WORKER_GROUP = "model-catalog-refresh"
+
+
 # End of Constants.py
 ########################################################################################################################

@@ -1,9 +1,10 @@
 ---
 id: TASK-22858
 title: Library emergency-return widget trips the class-level CSS guard on dev
-status: To Do
+status: Done
 assignee: []
 created_date: '2026-08-27 02:14'
+updated_date: '2026-08-27 04:23'
 labels:
   - ci
   - css
@@ -23,3 +24,9 @@ Upstream commit 6161bd1fe ('feat(library): add narrow emergency return path', 20
 - [ ] #1 test_class_level_css_stays_within_the_allowlist passes on dev
 - [ ] #2 LibraryEmergencyReturn CSS either rides the bundle as BUNDLED_CSS (regenerated sheets committed) or is added to the allowlist with a recorded reason
 <!-- AC:END -->
+
+## Implementation Notes
+
+<!-- SECTION:NOTES:BEGIN -->
+Fixed in the TASK-21150 follow-up branch: LibraryEmergencyReturn.DEFAULT_CSS -> BUNDLED_CSS (a plain string literal, so the default sanctioned route applied cleanly) with build_css.py rerun and the regenerated widget_defaults_self.tcss / bundle committed. Tests/UI/test_widget_css_consolidation.py is green again (33 passed); the widget's own behavior tests still pass, and preflight's CSS bundle-sync check confirms the sheets reproduce from source.
+<!-- SECTION:NOTES:END -->
