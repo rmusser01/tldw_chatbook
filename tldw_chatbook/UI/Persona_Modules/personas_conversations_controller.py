@@ -80,16 +80,37 @@ class PersonasConversationsController:
         self._conversation_list_attempt: object | None = None
 
     def reset(self) -> None:
+        try:
+            self.screen.query_one(
+                PersonasInspectorPane
+            ).invalidate_conversation_render()
+        except QueryError:
+            pass
         self._reset_conversation_browse()
         self.close_conversation_preview()
         self._resume_in_flight_attempts = {}
 
     # ===== Listing =====
 
-    def load_conversations(self, character_id: str) -> None:
+    async def load_conversations(self, character_id: str) -> None:
         """Reset browsing for ``character_id`` and schedule its first page."""
         self._reset_conversation_browse(str(character_id))
-        self._start_conversation_page(initial=True)
+        attempt = self._claim_conversation_page(initial=True)
+        if attempt is None:
+            return
+        rendered = False
+        try:
+            rendered = await self.screen.query_one(
+                PersonasInspectorPane
+            ).show_conversations_loading(attempt)
+        except Exception:
+            logger.opt(exception=True).warning(
+                "Could not render the conversations loading state."
+            )
+        if rendered and self._owns_conversation_page(
+            str(character_id), None, attempt
+        ):
+            self._schedule_conversation_page(initial=True, attempt=attempt)
 
     async def request_older_conversations(self) -> None:
         """Handle the actionable Load/Retry tail without starting duplicates."""
@@ -108,17 +129,24 @@ class PersonasConversationsController:
         attempt = self._claim_conversation_page(initial=initial)
         if attempt is None:
             return
+        character_id = self._list_character_id
+        cursor = self._next_conversation_cursor
+        if character_id is None:
+            return
+        rendered = False
         try:
             inspector = self.screen.query_one(PersonasInspectorPane)
             if initial:
-                await inspector.show_conversations_loading()
+                rendered = await inspector.show_conversations_loading(attempt)
             else:
-                await inspector.show_older_conversations_loading()
+                rendered = await inspector.show_older_conversations_loading(attempt)
         except Exception:
             logger.opt(exception=True).warning(
                 "Could not render the conversations loading state."
             )
-        if self._conversation_list_attempt is attempt:
+        if rendered and self._owns_conversation_page(
+            character_id, cursor, attempt
+        ):
             self._schedule_conversation_page(initial=initial, attempt=attempt)
 
     def _reset_conversation_browse(self, character_id: str | None = None) -> None:
@@ -130,11 +158,6 @@ class PersonasConversationsController:
         self._next_conversation_cursor = None
         self._has_more_conversations = False
         self._conversation_list_phase = None
-
-    def _start_conversation_page(self, *, initial: bool) -> None:
-        attempt = self._claim_conversation_page(initial=initial)
-        if attempt is not None:
-            self._schedule_conversation_page(initial=initial, attempt=attempt)
 
     def _claim_conversation_page(self, *, initial: bool) -> object | None:
         character_id = self._list_character_id
@@ -242,7 +265,7 @@ class PersonasConversationsController:
         try:
             await self.screen.query_one(
                 PersonasInspectorPane
-            ).show_conversations_failure(initial=initial)
+            ).show_conversations_failure(initial=initial, render_attempt=attempt)
         except Exception:
             logger.opt(exception=True).warning(
                 "Could not render the conversations retry state."
@@ -318,9 +341,12 @@ class PersonasConversationsController:
                     rows,
                     empty_copy="No saved conversations.",
                     has_more=has_more,
+                    render_attempt=attempt,
                 )
             else:
-                await inspector.append_conversations(rows, has_more=has_more)
+                await inspector.append_conversations(
+                    rows, has_more=has_more, render_attempt=attempt
+                )
         except Exception:
             logger.opt(exception=True).warning(
                 "Could not render the conversations panel."

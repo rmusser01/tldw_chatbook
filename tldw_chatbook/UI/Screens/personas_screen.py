@@ -4668,8 +4668,7 @@ class PersonasScreen(BaseAppScreen):
                 group="inspector-avatar",
                 exclusive=True,
             )
-            await inspector.show_conversations_loading()
-            self.conversations.load_conversations(entity_id)
+            await self.conversations.load_conversations(entity_id)
         else:
             inspector.set_avatar_thumbnail(None)
             # F-036: a server character with no saved conversations gets the

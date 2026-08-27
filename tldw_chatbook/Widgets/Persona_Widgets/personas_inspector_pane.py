@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import re
 
 from textual import on
@@ -166,6 +167,8 @@ class PersonasInspectorPane(VerticalScroll):
         self._conversation_tail: ListItem | None = None
         self._conversation_tail_actionable = False
         self._conversation_tail_loading = False
+        self._conversation_render_attempt: object | None = None
+        self._conversation_render_lock = asyncio.Lock()
         self._tts_export_available = False
         self._buddy_source: str | None = None
         self._buddy_persona_id: str | None = None
@@ -510,11 +513,45 @@ class PersonasInspectorPane(VerticalScroll):
             "Validation: editing..."
         )
 
-    async def show_conversations_loading(self) -> None:
+    async def show_conversations_loading(
+        self, render_attempt: object | None = None
+    ) -> bool:
         """Show a loading placeholder while the listing worker runs."""
-        await self._show_conversations_placeholder(
-            "Loading conversations...", actionable=False, disabled=True
-        )
+        token = self._claim_conversation_render(render_attempt)
+        async with self._conversation_render_lock:
+            return await self._show_conversations_placeholder(
+                "Loading conversations...",
+                actionable=False,
+                disabled=True,
+                render_attempt=token,
+            )
+
+    def invalidate_conversation_render(
+        self, render_attempt: object | None = None
+    ) -> None:
+        """Invalidate the matching list render, or the current one."""
+        if (
+            render_attempt is None
+            or self._conversation_render_attempt is render_attempt
+        ):
+            self._conversation_render_attempt = None
+
+    def _claim_conversation_render(self, render_attempt: object | None) -> object:
+        """Claim list rendering for an explicit or fresh opaque token."""
+        token = render_attempt if render_attempt is not None else object()
+        self._conversation_render_attempt = token
+        return token
+
+    def _standalone_or_existing_conversation_render(
+        self, render_attempt: object | None
+    ) -> object:
+        """Use an explicit owner, or claim a fresh owner for legacy calls."""
+        if render_attempt is not None:
+            return render_attempt
+        return self._claim_conversation_render(None)
+
+    def _conversation_render_is_current(self, render_attempt: object) -> bool:
+        return self._conversation_render_attempt is render_attempt
 
     async def _show_conversations_placeholder(
         self,
@@ -522,10 +559,15 @@ class PersonasInspectorPane(VerticalScroll):
         *,
         actionable: bool = False,
         disabled: bool = True,
-    ) -> None:
+        render_attempt: object,
+    ) -> bool:
         """Replace the rows with one conversation status or action line."""
+        if not self._conversation_render_is_current(render_attempt):
+            return False
         list_view = self.query_one("#personas-conversations-list", ListView)
         await list_view.clear()
+        if not self._conversation_render_is_current(render_attempt):
+            return False
         self._conversation_lookup = {}
         self._conversation_tail = None
         self._conversation_tail_actionable = False
@@ -534,6 +576,7 @@ class PersonasInspectorPane(VerticalScroll):
             text, actionable=actionable, disabled=disabled
         )
         await list_view.append(tail)
+        return self._conversation_render_is_current(render_attempt)
 
     def _make_conversation_tail(
         self,
@@ -587,8 +630,11 @@ class PersonasInspectorPane(VerticalScroll):
         actionable: bool,
         disabled: bool,
         loading: bool = False,
-    ) -> None:
+        render_attempt: object,
+    ) -> bool:
         """Replace only the current tail, retaining durable row widgets."""
+        if not self._conversation_render_is_current(render_attempt):
+            return False
         list_view = self.query_one("#personas-conversations-list", ListView)
         old_tail = self._conversation_tail
         if old_tail is not None and old_tail.is_mounted:
@@ -597,7 +643,7 @@ class PersonasInspectorPane(VerticalScroll):
             self._conversation_tail_actionable = actionable
             self._conversation_tail_loading = loading
             old_tail.refresh(layout=True)
-            return
+            return self._conversation_render_is_current(render_attempt)
         tail = self._make_conversation_tail(
             text,
             actionable=actionable,
@@ -605,6 +651,7 @@ class PersonasInspectorPane(VerticalScroll):
             loading=loading,
         )
         await list_view.append(tail)
+        return self._conversation_render_is_current(render_attempt)
 
     async def show_conversations(
         self,
@@ -612,7 +659,8 @@ class PersonasInspectorPane(VerticalScroll):
         *,
         empty_copy: str | None = None,
         has_more: bool | None = None,
-    ) -> None:
+        render_attempt: object | None = None,
+    ) -> bool:
         """Render (conversation_id, title) rows.
 
         An empty ``rows`` tuple clears the panel silently unless
@@ -620,121 +668,156 @@ class PersonasInspectorPane(VerticalScroll):
         disabled placeholder (the library empty-state idiom). Supplying
         ``has_more`` opts into explicit empty/load/exhausted tail states.
         """
-        list_view = self.query_one("#personas-conversations-list", ListView)
-        await list_view.clear()
-        self._conversation_lookup = {}
-        self._conversation_tail = None
-        self._conversation_tail_actionable = False
-        self._conversation_tail_loading = False
-        if has_more is None and not rows and empty_copy:
-            tail = self._make_conversation_tail(
-                empty_copy, actionable=False, disabled=True
-            )
-            await list_view.append(tail)
-            return
-        items = self._build_conversation_rows(rows)
-        if has_more is not None:
-            if not rows:
-                tail_copy = empty_copy or "No saved conversations."
-                actionable = False
-                disabled = True
-            elif has_more:
-                tail_copy = "Load 20 older conversations"
-                actionable = True
-                disabled = False
-            else:
-                tail_copy = "All conversations shown."
-                actionable = False
-                disabled = False
-            items.append(
-                self._make_conversation_tail(
-                    tail_copy, actionable=actionable, disabled=disabled
+        token = self._standalone_or_existing_conversation_render(render_attempt)
+        async with self._conversation_render_lock:
+            if not self._conversation_render_is_current(token):
+                return False
+            list_view = self.query_one("#personas-conversations-list", ListView)
+            await list_view.clear()
+            if not self._conversation_render_is_current(token):
+                return False
+            self._conversation_lookup = {}
+            self._conversation_tail = None
+            self._conversation_tail_actionable = False
+            self._conversation_tail_loading = False
+            if has_more is None and not rows and empty_copy:
+                tail = self._make_conversation_tail(
+                    empty_copy, actionable=False, disabled=True
                 )
-            )
-        if items:
-            await list_view.extend(items)
+                await list_view.append(tail)
+                return self._conversation_render_is_current(token)
+            items = self._build_conversation_rows(rows)
+            if has_more is not None:
+                if not rows:
+                    tail_copy = empty_copy or "No saved conversations."
+                    actionable = False
+                    disabled = True
+                elif has_more:
+                    tail_copy = "Load 20 older conversations"
+                    actionable = True
+                    disabled = False
+                else:
+                    tail_copy = "All conversations shown."
+                    actionable = False
+                    disabled = False
+                items.append(
+                    self._make_conversation_tail(
+                        tail_copy, actionable=actionable, disabled=disabled
+                    )
+                )
+            if items:
+                await list_view.extend(items)
+            return self._conversation_render_is_current(token)
 
-    async def show_older_conversations_loading(self) -> None:
+    async def show_older_conversations_loading(
+        self, render_attempt: object | None = None
+    ) -> bool:
         """Keep durable rows while replacing the action tail with busy copy."""
-        list_view = self.query_one("#personas-conversations-list", ListView)
-        old_tail = self._conversation_tail
-        clear_unfocused_tail = bool(
-            old_tail is not None
-            and not list_view.has_focus
-            and list_view.highlighted_child is old_tail
-        )
-        await self._replace_conversation_tail(
-            "Loading older conversations...",
-            actionable=False,
-            disabled=False,
-            loading=True,
-        )
-        if clear_unfocused_tail:
-            list_view.index = None
+        token = self._claim_conversation_render(render_attempt)
+        async with self._conversation_render_lock:
+            if not self._conversation_render_is_current(token):
+                return False
+            list_view = self.query_one("#personas-conversations-list", ListView)
+            old_tail = self._conversation_tail
+            clear_unfocused_tail = bool(
+                old_tail is not None
+                and not list_view.has_focus
+                and list_view.highlighted_child is old_tail
+            )
+            rendered = await self._replace_conversation_tail(
+                "Loading older conversations...",
+                actionable=False,
+                disabled=False,
+                loading=True,
+                render_attempt=token,
+            )
+            if rendered and clear_unfocused_tail:
+                list_view.index = None
+            return rendered
 
-    async def show_conversations_failure(self, *, initial: bool) -> None:
+    async def show_conversations_failure(
+        self, *, initial: bool, render_attempt: object | None = None
+    ) -> bool:
         """Show an actionable initial or append retry state."""
-        if initial:
-            await self._show_conversations_placeholder(
-                "Load failed.\nRetry conversations",
+        token = self._standalone_or_existing_conversation_render(render_attempt)
+        async with self._conversation_render_lock:
+            if initial:
+                return await self._show_conversations_placeholder(
+                    "Load failed.\nRetry conversations",
+                    actionable=True,
+                    disabled=False,
+                    render_attempt=token,
+                )
+            return await self._replace_conversation_tail(
+                "Load failed.\nRetry older conversations",
                 actionable=True,
                 disabled=False,
+                render_attempt=token,
             )
-            return
-        await self._replace_conversation_tail(
-            "Load failed.\nRetry older conversations",
-            actionable=True,
-            disabled=False,
-        )
 
     async def append_conversations(
         self,
         rows: tuple[tuple[str, str], ...],
         *,
         has_more: bool,
-    ) -> None:
+        render_attempt: object | None = None,
+    ) -> bool:
         """Append ordinary rows and replace only the pagination tail."""
-        list_view = self.query_one("#personas-conversations-list", ListView)
-        old_tail = self._conversation_tail
-        highlighted_before = list_view.highlighted_child
-        index_before = list_view.index
-        may_advance_from_loading_tail = bool(
-            self._conversation_tail_loading
-            and old_tail is not None
-            and list_view.has_focus
-            and highlighted_before is old_tail
-        )
-        new_items = self._build_conversation_rows(rows)
-        first_new_index = len(list_view.children) - (
-            1 if old_tail is not None and old_tail.is_mounted else 0
-        )
-        if new_items:
-            if old_tail is not None and old_tail.is_mounted:
-                await list_view.mount(*new_items, before=old_tail)
-            else:
-                await list_view.extend(new_items)
-        await self._replace_conversation_tail(
-            "Load 20 older conversations" if has_more else "All conversations shown.",
-            actionable=has_more,
-            disabled=False,
-        )
-        if highlighted_before is old_tail and old_tail is not None:
-            tail_index = list_view.children.index(old_tail)
-            index_changed = list_view.index != index_before
-            advance_from_loading_tail = bool(
-                may_advance_from_loading_tail
-                and new_items
+        token = self._standalone_or_existing_conversation_render(render_attempt)
+        async with self._conversation_render_lock:
+            if not self._conversation_render_is_current(token):
+                return False
+            list_view = self.query_one("#personas-conversations-list", ListView)
+            old_tail = self._conversation_tail
+            highlighted_before = list_view.highlighted_child
+            index_before = list_view.index
+            may_advance_from_loading_tail = bool(
+                self._conversation_tail_loading
+                and old_tail is not None
                 and list_view.has_focus
-                and not index_changed
+                and highlighted_before is old_tail
             )
-            target_index = (
-                first_new_index
-                if advance_from_loading_tail
-                else list_view.index if index_changed else tail_index
+            new_items = self._build_conversation_rows(rows)
+            first_new_index = len(list_view.children) - (
+                1 if old_tail is not None and old_tail.is_mounted else 0
             )
-            list_view.index = tail_index
-            if target_index != tail_index:
-                list_view.index = target_index
+            if new_items:
+                if old_tail is not None and old_tail.is_mounted:
+                    await list_view.mount(*new_items, before=old_tail)
+                else:
+                    await list_view.extend(new_items)
+                if not self._conversation_render_is_current(token):
+                    return False
+            rendered = await self._replace_conversation_tail(
+                (
+                    "Load 20 older conversations"
+                    if has_more
+                    else "All conversations shown."
+                ),
+                actionable=has_more,
+                disabled=False,
+                render_attempt=token,
+            )
+            if not rendered:
+                return False
+            if highlighted_before is old_tail and old_tail is not None:
+                tail_index = list_view.children.index(old_tail)
+                index_changed = list_view.index != index_before
+                advance_from_loading_tail = bool(
+                    may_advance_from_loading_tail
+                    and new_items
+                    and list_view.has_focus
+                    and not index_changed
+                )
+                target_index = (
+                    first_new_index
+                    if advance_from_loading_tail
+                    else list_view.index if index_changed else tail_index
+                )
+                list_view.index = tail_index
+                if target_index != tail_index:
+                    list_view.index = target_index
+            return self._conversation_render_is_current(token)
 
     def on_mount(self) -> None:
         """Replay any state pushed before the composed children existed.

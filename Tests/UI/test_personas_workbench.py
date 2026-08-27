@@ -4147,6 +4147,73 @@ class TestConversationsPanel:
         finally:
             release.set()
 
+    async def test_mode_switch_wins_after_stale_initial_rows_enter_dom_mount(
+        self,
+        mock_app_instance,
+        stub_characters,
+        stub_conversations,
+        stub_scope_service,
+        monkeypatch,
+    ):
+        """A reset during the inspector's mount await owns the final list."""
+        stale_page = [_conversation_record(90, title="Stale DOM row")]
+        initial_mount_started = asyncio.Event()
+        render_invalidated = asyncio.Event()
+        release_initial_mount = asyncio.Event()
+        app = PersonasTestApp(mock_app_instance)
+
+        async with app.run_test(size=(160, 50)) as pilot:
+            screen = await _mounted(pilot)
+            await pilot.app.workers.wait_for_complete()
+            stub_conversations.replace_pages(stale_page)
+            inspector = screen.query_one(PersonasInspectorPane)
+            conversation_list = screen.query_one(
+                "#personas-conversations-list", ListView
+            )
+            real_extend = conversation_list.extend
+
+            async def gated_extend(items):
+                items = tuple(items)
+                if any(
+                    item.id == "personas-conversation-row-conv-90" for item in items
+                ):
+                    initial_mount_started.set()
+                    await release_initial_mount.wait()
+                return await real_extend(items)
+
+            monkeypatch.setattr(conversation_list, "extend", gated_extend)
+            real_invalidate = inspector.invalidate_conversation_render
+
+            def observed_invalidate(*args, **kwargs):
+                real_invalidate(*args, **kwargs)
+                render_invalidated.set()
+                release_initial_mount.set()
+
+            monkeypatch.setattr(
+                inspector, "invalidate_conversation_render", observed_invalidate
+            )
+
+            await pilot.click("#personas-library-row-character-2")
+            await wait_for_signal(
+                initial_mount_started, what="the stale initial-row DOM mount"
+            )
+
+            mode_switch = asyncio.create_task(screen._apply_mode("personas"))
+            try:
+                await wait_for_signal(
+                    render_invalidated, what="the synchronous list-render invalidation"
+                )
+                await mode_switch
+                await pilot.app.workers.wait_for_complete()
+                await pilot.pause()
+
+                assert screen.state.active_mode == "personas"
+                assert list(screen.query(".personas-conversation-row")) == []
+            finally:
+                release_initial_mount.set()
+                if not mode_switch.done():
+                    await mode_switch
+
     async def test_append_completion_preserves_other_focus_and_highlight(
         self, mock_app_instance, stub_characters, stub_conversations
     ):
@@ -5501,11 +5568,11 @@ class TestConsoleActions:
             observed_enabled: list[bool] = []
             original_loading = inspector.show_conversations_loading
 
-            async def assert_gate_synced_before_loading():
+            async def assert_gate_synced_before_loading(render_attempt=None):
                 observed_enabled.append(
                     not screen.query_one("#personas-attach-to-console", Button).disabled
                 )
-                return await original_loading()
+                return await original_loading(render_attempt)
 
             monkeypatch.setattr(
                 inspector,
