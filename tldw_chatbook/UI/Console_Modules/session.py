@@ -296,6 +296,19 @@ def _console_fork_excerpt(content: str, *, max_cells: int = 104) -> str:
     return rendered.plain
 
 
+def _console_fork_copy_failure(error: ValueError) -> str:
+    """Name safe content classes without exposing exception details."""
+
+    lowered = str(error).lower()
+    for content_class in ("image", "attachment", "citation", "video"):
+        if content_class in lowered:
+            return (
+                f"The fork's {content_class} could not be copied safely. "
+                f"Review the {content_class} and retry."
+            )
+    return "This fork cannot be copied safely. Close and review the source."
+
+
 def _has_selected_text(value: Any) -> bool:
     """Return whether a provider/model value is meaningfully selected.
 
@@ -1926,9 +1939,8 @@ class ConsoleSessionController:
         """Build bounded presentation facts from one already-captured fence."""
 
         boundary = fence.lineage[-1]
-        role_count = sum(item.role is boundary.role for item in fence.lineage)
         role_label = "User" if boundary.role is ConsoleMessageRole.USER else "Assistant"
-        boundary_label = f"Through {role_label} {role_count}"
+        boundary_label = f"Through {role_label} {len(fence.lineage)}"
         if boundary.role is ConsoleMessageRole.USER:
             boundary_label += " · No reply will be generated"
         elif boundary.status == "stopped":
@@ -2177,9 +2189,15 @@ class ConsoleSessionController:
                     persistence.resolve_console_fork_commit,
                     snapshot,
                 )
-            except Exception:  # noqa: BLE001 -- conflict/collision fails closed
+            except Exception as exc:  # noqa: BLE001 -- collision fails closed
+                collision = "collision" in str(exc).lower()
                 request.modal.show_precommit_error(
-                    "Fork could not be verified. Close this dialog and try again."
+                    (
+                        "Fork identity conflict. Close this dialog and choose Fork again."
+                        if collision
+                        else "Fork could not be verified. Close this dialog and try again."
+                    ),
+                    retryable=not collision,
                 )
                 return False
             if result is None:
@@ -2258,9 +2276,7 @@ class ConsoleSessionController:
                 if "source changed" in str(exc).lower():
                     request.modal.show_stale_source()
                 else:
-                    request.modal.show_precommit_error(
-                        "This fork cannot be copied safely. Close and review the source."
-                    )
+                    request.modal.show_precommit_error(_console_fork_copy_failure(exc))
                 return
         if not self._fork_request_is_current(request, generation):
             return

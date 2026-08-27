@@ -5,6 +5,7 @@ from __future__ import annotations
 from unittest.mock import Mock
 
 import pytest
+from textual.events import Key
 from textual.widgets import Button, Input, Static
 
 from Tests.UI.consolidated_css import ConsolidatedCSSApp
@@ -32,6 +33,13 @@ def _summary(*, temporary: bool = False) -> ConsoleForkDialogSummary:
         includes_citations=not temporary,
         contains_video=True,
     )
+
+
+def _assert_inside(inner, outer) -> None:
+    assert inner.region.x >= outer.content_region.x
+    assert inner.region.y >= outer.content_region.y
+    assert inner.region.right <= outer.content_region.right
+    assert inner.region.bottom <= outer.content_region.bottom
 
 
 @pytest.mark.asyncio
@@ -67,6 +75,18 @@ async def test_fork_modal_editing_summary_and_layout_fit(size):
         assert panel.region.x >= 0 and panel.region.y >= 0
         assert panel.region.right <= size[0] and panel.region.bottom <= size[1]
 
+        for selector in (
+            "#console-fork-chat-title",
+            "#console-fork-chat-disclosure",
+            "#console-fork-chat-cancel",
+            "#console-fork-chat-confirm",
+        ):
+            child = modal.query_one(selector)
+            child.focus()
+            child.scroll_visible()
+            await pilot.pause()
+            _assert_inside(child, panel)
+
 
 @pytest.mark.asyncio
 async def test_fork_modal_temporary_disclosure_is_truthful():
@@ -84,8 +104,28 @@ async def test_fork_modal_temporary_disclosure_is_truthful():
         )
         assert "Temporary chat · Save later to keep it" in visible
         assert "Saving this fork will not save the original chat" in visible
+        assert "Includes sent attachments" in visible
         assert "Citation markers remain" in visible
         assert "source inspector details are not copied" in visible
+
+
+@pytest.mark.asyncio
+async def test_fork_modal_swallows_keys_queued_before_mount():
+    app = ConsolidatedCSSApp()
+    modal = ConsoleForkChatModal(_summary(), on_submit=lambda _: None)
+
+    async with app.run_test(size=(100, 30)) as pilot:
+        app.push_screen(modal)
+        await pilot.pause()
+        title = modal.query_one("#console-fork-chat-title", Input)
+
+        stale = Key(key="f", character="f")
+        stale.time = 0.0
+        title.post_message(stale)
+        await pilot.pause()
+        await pilot.pause()
+
+        assert title.value == "Forked from Research notes"
 
 
 @pytest.mark.asyncio
@@ -149,7 +189,8 @@ async def test_fork_modal_state_contract_and_escape_semantics():
         await pilot.pause()
         assert modal.state == "committing"
         assert modal.query_one("#console-fork-chat-title", Input).disabled
-        assert modal.query_one("#console-fork-chat-cancel", Button).disabled
+        assert modal.query_one("#console-fork-chat-confirm", Button).label.plain == "Forking…"
+        assert all(button.disabled for button in modal.query(Button))
         await modal.action_request_safe_cancel()
         assert app.screen is modal
         assert "finishing and can no longer be cancelled" in str(
@@ -181,6 +222,86 @@ async def test_fork_modal_state_contract_and_escape_semantics():
             modal.query_one("#console-fork-chat-status", Static).render()
         )
         assert modal.query_one("#console-fork-chat-open", Button).display
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("state", ["editing", "validating"])
+async def test_fork_modal_backdrop_cancels_even_when_disclosure_is_open(state):
+    app = ConsolidatedCSSApp()
+    cancellations: list[str] = []
+    modal = ConsoleForkChatModal(
+        _summary(),
+        on_submit=lambda _: None,
+        on_cancel=lambda: cancellations.append("cancelled"),
+    )
+
+    async with app.run_test(size=(100, 30)) as pilot:
+        app.push_screen(modal)
+        await pilot.pause()
+        modal.query_one("#console-fork-chat-disclosure", Button).press()
+        await pilot.pause()
+        if state == "validating":
+            modal.query_one("#console-fork-chat-title", Input).focus()
+            await pilot.press("enter")
+            assert modal.state == "validating"
+
+        await pilot.click(offset=(0, 0))
+        await pilot.pause()
+
+        assert app.screen is not modal
+        assert cancellations == ["cancelled"]
+
+
+@pytest.mark.asyncio
+async def test_fork_modal_escape_closes_disclosure_before_cancelling():
+    app = ConsolidatedCSSApp()
+    cancellations: list[str] = []
+    modal = ConsoleForkChatModal(
+        _summary(),
+        on_submit=lambda _: None,
+        on_cancel=lambda: cancellations.append("cancelled"),
+    )
+
+    async with app.run_test(size=(100, 30)) as pilot:
+        app.push_screen(modal)
+        await pilot.pause()
+        modal.query_one("#console-fork-chat-disclosure", Button).press()
+        await pilot.pause()
+
+        await modal.request_safe_cancel(source="escape")
+        await pilot.pause()
+
+        assert app.screen is modal
+        assert cancellations == []
+        assert modal.query_one("#console-fork-chat-exclusions", Static).display is False
+
+
+@pytest.mark.asyncio
+async def test_fork_modal_committing_backdrop_explains_with_disclosure_open():
+    app = ConsolidatedCSSApp()
+    cancellations: list[str] = []
+    modal = ConsoleForkChatModal(
+        _summary(),
+        on_submit=lambda _: None,
+        on_cancel=lambda: cancellations.append("cancelled"),
+    )
+
+    async with app.run_test(size=(100, 30)) as pilot:
+        app.push_screen(modal)
+        await pilot.pause()
+        modal.query_one("#console-fork-chat-disclosure", Button).press()
+        await pilot.pause()
+        modal.show_committing()
+
+        await pilot.click(offset=(0, 0))
+        await pilot.pause()
+
+        assert app.screen is modal
+        assert cancellations == []
+        assert modal.query_one("#console-fork-chat-exclusions", Static).display
+        assert "finishing and can no longer be cancelled" in str(
+            modal.query_one("#console-fork-chat-status", Static).render()
+        )
 
 
 @pytest.mark.asyncio

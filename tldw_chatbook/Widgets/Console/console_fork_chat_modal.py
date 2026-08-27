@@ -57,6 +57,19 @@ class _ConsoleForkStatus(Static):
     can_focus = True
 
 
+class _ConsoleForkTitleInput(Input):
+    """Ignore keys queued before this modal was visible."""
+
+    opened_at: float | None = None
+
+    async def _on_key(self, event: events.Key) -> None:
+        if self.opened_at is not None and event.time < self.opened_at:
+            event.stop()
+            event.prevent_default()
+            return
+        await super()._on_key(event)
+
+
 class ConsoleForkChatModal(SafeModalDismissMixin, ModalScreen[None]):
     """Render fork facts and state while a controller owns all side effects."""
 
@@ -74,6 +87,7 @@ class ConsoleForkChatModal(SafeModalDismissMixin, ModalScreen[None]):
         border: round $primary;
         background: $panel;
         padding: 1 2;
+        overflow-y: auto;
     }
 
     #console-fork-chat-heading {
@@ -214,6 +228,12 @@ class ConsoleForkChatModal(SafeModalDismissMixin, ModalScreen[None]):
                     classes="console-fork-chat-summary",
                     markup=False,
                 )
+                if summary.includes_attachments:
+                    yield Static(
+                        "Includes sent attachments.",
+                        classes="console-fork-chat-summary",
+                        markup=False,
+                    )
                 yield Static(
                     "Citation markers remain in the message text; source inspector "
                     "details are not copied.",
@@ -257,7 +277,7 @@ class ConsoleForkChatModal(SafeModalDismissMixin, ModalScreen[None]):
                 markup=False,
             )
             yield Static("Name", id="console-fork-chat-name-label", markup=False)
-            yield Input(
+            yield _ConsoleForkTitleInput(
                 value=summary.default_title,
                 max_length=CONSOLE_FORK_TITLE_MAX_LENGTH,
                 id="console-fork-chat-title",
@@ -283,7 +303,9 @@ class ConsoleForkChatModal(SafeModalDismissMixin, ModalScreen[None]):
 
     def on_mount(self, event: events.Mount) -> None:  # type: ignore[override]
         super().on_mount()
-        title = self.query_one("#console-fork-chat-title", Input)
+        self._opened_at = event.time
+        title = self.query_one("#console-fork-chat-title", _ConsoleForkTitleInput)
+        title.opened_at = event.time
         title.focus()
         title.action_select_all()
 
@@ -347,8 +369,7 @@ class ConsoleForkChatModal(SafeModalDismissMixin, ModalScreen[None]):
         )
 
     async def _perform_safe_cancel(self, *, source: str) -> None:
-        del source
-        if self._disclosure_open:
+        if source == "escape" and self._disclosure_open:
             disclosure = self.query_one("#console-fork-chat-disclosure", Button)
             self._disclosure_open = False
             self.query_one("#console-fork-chat-exclusions", Static).display = False
@@ -368,6 +389,9 @@ class ConsoleForkChatModal(SafeModalDismissMixin, ModalScreen[None]):
                     await result
 
             await self.run_cancel_effect_once(cancel_once)
+        panel = self.query_one(self.SAFE_MODAL_CONTENT)
+        if panel.is_attached:
+            await panel.remove()
         self.dismiss_safe_once(None)
 
     def show_validating(self) -> None:
@@ -379,21 +403,29 @@ class ConsoleForkChatModal(SafeModalDismissMixin, ModalScreen[None]):
         self.state = "committing"
         self._set_status("Forking…")
         self.query_one("#console-fork-chat-title", Input).disabled = True
-        self.query_one("#console-fork-chat-cancel", Button).disabled = True
-        self.query_one("#console-fork-chat-confirm", Button).disabled = True
+        confirm = self.query_one("#console-fork-chat-confirm", Button)
+        confirm.label = "Forking…"
+        for button in self.query(Button):
+            button.disabled = True
         self.query_one("#console-fork-chat-status", Static).focus()
 
-    def show_precommit_error(self, error: str) -> None:
+    def show_precommit_error(self, error: str, *, retryable: bool = True) -> None:
         self.state = "precommit_error"
         self._set_status(error)
         title = self.query_one("#console-fork-chat-title", Input)
         confirm = self.query_one("#console-fork-chat-confirm", Button)
-        title.disabled = False
-        self.query_one("#console-fork-chat-cancel", Button).disabled = False
-        confirm.disabled = False
-        confirm.display = True
-        confirm.label = "Retry"
-        confirm.focus()
+        close = self.query_one("#console-fork-chat-cancel", Button)
+        self.query_one("#console-fork-chat-disclosure", Button).disabled = False
+        title.disabled = not retryable
+        close.disabled = False
+        close.label = "Cancel" if retryable else "Close"
+        confirm.disabled = not retryable
+        confirm.display = retryable
+        if retryable:
+            confirm.label = "Retry"
+            confirm.focus()
+        else:
+            close.focus()
 
     def show_stale_source(self) -> None:
         self.state = "stale_source"
