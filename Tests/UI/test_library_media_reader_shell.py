@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import threading
+from unittest.mock import Mock
 
 import pytest
 from textual.containers import Horizontal
@@ -72,7 +73,9 @@ def _build_media_test_app():
     return app
 
 
-async def _open_media_shell(host, pilot) -> tuple[LibraryScreen, LibraryMediaReaderShell]:
+async def _open_media_shell(
+    host, pilot
+) -> tuple[LibraryScreen, LibraryMediaReaderShell]:
     screen = _active_library_screen(host)
     await _wait_for_library_shell(screen, pilot)
     screen.query_one("#library-row-browse-media", Button).press()
@@ -209,8 +212,10 @@ async def test_compact_reader_keeps_every_toolbar_action_inside_reader():
         shell.items.query_one("#library-media-row-0", Button).press()
         await _wait_for_condition(
             pilot,
-            lambda: screen._library_media_reader_session.pending_request is None
-            and screen._library_media_reader_session.loaded_id is not None,
+            lambda: (
+                screen._library_media_reader_session.pending_request is None
+                and screen._library_media_reader_session.loaded_id is not None
+            ),
             message="Compact Reader detail never settled.",
         )
         await pilot.pause()
@@ -260,9 +265,10 @@ async def test_row_activation_keeps_items_mounted_and_loads_permanent_reader():
         assert shell.query_one("#library-media-canvas") is items
         assert service.detail_calls
         assert session.selected_id == session.loaded_id == "local:media:2"
-        assert str(
-            shell.query_one("#library-media-viewer-title").renderable
-        ) == "Product Demo Video"
+        assert (
+            str(shell.query_one("#library-media-viewer-title").renderable)
+            == "Product Demo Video"
+        )
 
 
 @pytest.mark.asyncio
@@ -273,9 +279,7 @@ async def test_non_media_library_routes_keep_the_existing_shell():
         screen = _active_library_screen(host)
         await _wait_for_library_shell(screen, pilot)
 
-        assert screen.query_one(
-            "#library-rail-handle", LibraryNavigationRailHandle
-        )
+        assert screen.query_one("#library-rail-handle", LibraryNavigationRailHandle)
         assert screen.query_one("#library-canvas")
         assert not screen.query("#library-media-reader-shell")
         assert not screen.query(".library-media-pane-grip")
@@ -307,10 +311,13 @@ async def test_media_shell_resize_uses_resolver_without_reads_or_recompose(size)
         await pilot.resize_terminal(*size)
         await _wait_for_condition(
             pilot,
-            lambda: shell.effective_layout == resolve_media_reader_layout(
-                shell.region.width,
-                screen._library_media_reader_preferences,
-                previous=shell.effective_layout,
+            lambda: (
+                shell.effective_layout
+                == resolve_media_reader_layout(
+                    shell.region.width,
+                    screen._library_media_reader_preferences,
+                    previous=shell.effective_layout,
+                )
             ),
             message=f"Media shell did not settle at {size}",
         )
@@ -380,9 +387,10 @@ async def test_two_grips_leave_fifty_columns_for_reader_at_sixty_shell_columns()
         assert shell.region.width == 60
         assert reader.region.width == 50
         assert reader.region.right <= shell.region.right
-        assert sum(
-            grip.region.width for grip in shell.query(".library-media-pane-grip")
-        ) == 10
+        assert (
+            sum(grip.region.width for grip in shell.query(".library-media-pane-grip"))
+            == 10
+        )
 
 
 @pytest.mark.asyncio
@@ -402,7 +410,7 @@ async def test_manual_grip_persists_preference_but_responsive_collapse_does_not(
             "items_open": True,
             "items_width": 40,
             "future_media": "keep",
-        }
+        },
     }
     writes = []
 
@@ -584,8 +592,7 @@ async def test_failed_manual_grip_persistence_restores_previous_preference(
         assert screen._library_media_reader_preferences.library_open is False
         assert app.app_config["library"]["reader"]["library_open"] is False
         assert (
-            app.app_config["library"]["media_reader"]["library_open"]
-            == "legacy-keep"
+            app.app_config["library"]["media_reader"]["library_open"] == "legacy-keep"
         )
         assert shell.effective_layout.library_open is False
         assert notices[-1][1]["severity"] == "warning"
@@ -636,8 +643,7 @@ async def test_rapid_manual_grip_changes_persist_in_order(monkeypatch):
         ]
         assert app.app_config["library"]["reader"]["library_open"] is False
         assert (
-            app.app_config["library"]["media_reader"]["library_open"]
-            == "legacy-keep"
+            app.app_config["library"]["media_reader"]["library_open"] == "legacy-keep"
         )
 
 
@@ -738,8 +744,7 @@ async def test_shared_library_pane_double_failure_restores_durable_choice(
             media.library_grip.press()
             await _wait_for_condition(
                 pilot,
-                lambda: screen._library_reader_persistence_generations["library"]
-                == 2,
+                lambda: screen._library_reader_persistence_generations["library"] == 2,
                 message="Newer shared Library-pane intent was not claimed.",
             )
         finally:
@@ -1009,6 +1014,7 @@ async def test_delayed_settings_refresh_repairs_exited_stale_grip_write(monkeypa
         release_grip.set()
         await screen.workers.wait_for_complete()
         assert disk["library_open"] is False
+        assert "library" in screen._library_reader_dirty_persistence_authorities
 
         screen.request_library_reader_layout_refresh(
             screen._library_reader_layout_refresh_generation + 1
@@ -1029,17 +1035,15 @@ async def test_delayed_settings_refresh_repairs_exited_stale_grip_write(monkeypa
 
 
 @pytest.mark.asyncio
-async def test_failed_settings_reconciliation_reads_matching_disk_truth(monkeypatch):
+async def test_clean_first_mounted_settings_refresh_starts_no_repair(monkeypatch):
     app = _build_media_test_app()
     disk = {"library_open": True}
-    library_attempts = 0
+    save_attempts = []
     snapshot_reads = 0
 
-    def save_setting(_section, key, _value):
-        nonlocal library_attempts
-        if key == "library_open":
-            library_attempts += 1
-        return key != "library_open"
+    def save_setting(section, key, value):
+        save_attempts.append((section, key, value))
+        return False
 
     def read_snapshot():
         nonlocal snapshot_reads
@@ -1058,6 +1062,8 @@ async def test_failed_settings_reconciliation_reads_matching_disk_truth(monkeypa
 
     async with host.run_test(size=(170, 48)) as pilot:
         screen, shell = await _open_media_shell(host, pilot)
+        workers = Mock(wraps=screen.run_worker)
+        monkeypatch.setattr(screen, "run_worker", workers)
         app.app_config["library"]["reader"]["library_open"] = True
         screen.request_library_reader_layout_refresh(
             screen._library_reader_layout_refresh_generation + 1
@@ -1065,8 +1071,9 @@ async def test_failed_settings_reconciliation_reads_matching_disk_truth(monkeypa
         await screen.workers.wait_for_complete()
         await pilot.pause()
 
-        assert library_attempts == 1
-        assert snapshot_reads == 1
+        assert save_attempts == []
+        assert workers.call_count == 0
+        assert snapshot_reads == 0
         assert disk["library_open"] is True
         assert screen._library_reader_durable_preferences["library"] is True
         assert screen._library_media_reader_preferences.library_open
@@ -1076,14 +1083,100 @@ async def test_failed_settings_reconciliation_reads_matching_disk_truth(monkeypa
 
 
 @pytest.mark.asyncio
+async def test_completed_manual_write_yields_to_later_settings_without_repair(
+    monkeypatch,
+):
+    app = _build_media_test_app()
+    writes = []
+
+    def save_setting(section, key, value):
+        writes.append((section, key, value))
+        return True
+
+    monkeypatch.setattr(
+        library_screen_module, "save_setting_to_cli_config", save_setting
+    )
+    host = LibraryProductionCSSHarness(app)
+
+    async with host.run_test(size=(170, 48)) as pilot:
+        screen, shell = await _open_media_shell(host, pilot)
+        shell.library_grip.press()
+        await screen.workers.wait_for_complete()
+        await pilot.pause()
+        assert writes == [("library.reader", "library_open", False)]
+
+        workers = Mock(wraps=screen.run_worker)
+        monkeypatch.setattr(screen, "run_worker", workers)
+        app.app_config["library"]["reader"]["library_open"] = True
+        screen.request_library_reader_layout_refresh(
+            screen._library_reader_layout_refresh_generation + 1
+        )
+        await screen.workers.wait_for_complete()
+        await pilot.pause()
+
+        assert writes == [("library.reader", "library_open", False)]
+        assert workers.call_count == 0
+        assert screen._library_media_reader_preferences.library_open
+        assert shell.effective_layout.library_open
+
+
+@pytest.mark.asyncio
+async def test_failed_manual_write_gets_one_bounded_settings_repair(monkeypatch):
+    app = _build_media_test_app()
+    writes = []
+
+    def save_setting(section, key, value):
+        writes.append((section, key, value))
+        return len(writes) > 1
+
+    monkeypatch.setattr(
+        library_screen_module, "save_setting_to_cli_config", save_setting
+    )
+    host = LibraryProductionCSSHarness(app)
+
+    async with host.run_test(size=(170, 48)) as pilot:
+        screen, shell = await _open_media_shell(host, pilot)
+        shell.library_grip.press()
+        await screen.workers.wait_for_complete()
+        await pilot.pause()
+        assert writes == [("library.reader", "library_open", False)]
+        assert screen._library_media_reader_preferences.library_open
+
+        workers = Mock(wraps=screen.run_worker)
+        monkeypatch.setattr(screen, "run_worker", workers)
+        screen.request_library_reader_layout_refresh(
+            screen._library_reader_layout_refresh_generation + 1
+        )
+        await screen.workers.wait_for_complete()
+        await pilot.pause()
+
+        assert writes == [
+            ("library.reader", "library_open", False),
+            ("library.reader", "library_open", True),
+        ]
+        assert workers.call_count == 1
+        assert shell.effective_layout.library_open
+
+        workers.reset_mock()
+        screen.request_library_reader_layout_refresh(
+            screen._library_reader_layout_refresh_generation + 1
+        )
+        await screen.workers.wait_for_complete()
+        assert len(writes) == 2
+        assert workers.call_count == 0
+
+
+@pytest.mark.asyncio
 async def test_failed_settings_reconciliation_does_not_project_cached_guess(
     monkeypatch,
 ):
     app = _build_media_test_app()
     cache_reads = 0
+    save_attempts = []
 
-    def save_setting(_section, key, _value):
-        return key != "library_open"
+    def save_setting(section, key, value):
+        save_attempts.append((section, key, value))
+        return False
 
     def fail_snapshot():
         raise ValueError("physical config unavailable")
@@ -1106,7 +1199,11 @@ async def test_failed_settings_reconciliation_does_not_project_cached_guess(
         monkeypatch.setattr(
             library_screen_module, "get_cli_setting", read_cached_setting
         )
-        app.app_config["library"]["reader"]["library_open"] = True
+        shell.library_grip.press()
+        await screen.workers.wait_for_complete()
+        await pilot.pause()
+        assert save_attempts == [("library.reader", "library_open", False)]
+
         screen.request_library_reader_layout_refresh(
             screen._library_reader_layout_refresh_generation + 1
         )
@@ -1114,6 +1211,11 @@ async def test_failed_settings_reconciliation_does_not_project_cached_guess(
         await pilot.pause()
 
         assert cache_reads == 0
+        assert save_attempts == [
+            ("library.reader", "library_open", False),
+            ("library.reader", "library_open", True),
+        ]
+        assert "library" in screen._library_reader_dirty_persistence_authorities
         assert screen._library_reader_durable_preferences["library"] is True
         assert screen._library_media_reader_preferences.library_open
         assert screen._library_conversation_reader_preferences.library_open
@@ -1311,11 +1413,7 @@ async def test_settings_refresh_reconciles_panes_without_media_reads(
         assert not shell.effective_layout.library_open
         assert not shell.effective_layout.items_open
         assert (len(service.search_calls), len(service.detail_calls)) == reads
-        assert set(writes) == {
-            ("library.reader", "library_open", False),
-            ("library.media_reader", "items_open", False),
-            ("library.conversations_reader", "items_open", True),
-        }
+        assert writes == []
 
         app.app_config["library"]["media_reader"]["items_open"] = True
         screen.request_library_media_layout_refresh(2)
@@ -1323,6 +1421,4 @@ async def test_settings_refresh_reconciles_panes_without_media_reads(
         await pilot.pause()
         assert shell.effective_layout.items_open
         assert (len(service.search_calls), len(service.detail_calls)) == reads
-        assert writes.count(("library.reader", "library_open", False)) == 2
-        assert writes.count(("library.media_reader", "items_open", True)) == 1
-        assert writes.count(("library.conversations_reader", "items_open", True)) == 2
+        assert writes == []

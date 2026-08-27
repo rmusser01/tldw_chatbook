@@ -311,10 +311,16 @@ navigation keys live in the [guide index](../index.md).
 
 ## Related settings & docs
 
-- Appearance settings remember the preferred Library/Items pane states and,
-  when explicitly enabled, custom widths (Library 24–48 columns; Items 32–72).
-  **Reset layout** restores both panes open and fixed 28/40-column targets.
-  Responsive collapse is session-only and never overwrites these preferences.
+- Appearance settings remember the preferred Library/Items pane states.
+  Automatic Library-rail width follows 3:13, bounded to 24–34 cells. When
+  explicitly enabled, custom widths remain Library 24–48 and Items 32–72;
+  ordinary layouts may temporarily compress the rail to preserve 40 content
+  cells, while these adaptive readers may collapse or prioritize panes.
+  **Reset layout** restores both panes open, automatic width, a dormant
+  31-cell Library preference, and 40-cell Items preferences. Below 64 columns,
+  ordinary Library routes switch between full-width rail and canvas stages via
+  **‹ Library** (or **< Library** with ASCII glyphs). Responsive changes never
+  overwrite saved preferences.
 - Media arrives via
   [import & export](import-and-export.md) (Import media, including the
   "Analyze after import" and chunking options that shape what the viewer

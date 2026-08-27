@@ -1,0 +1,59 @@
+Detached tmux PTY capture — 170-cell Search/RAG ordinary route
+Session: tldw22301-170
+Pane/stty: 170x52
+CWD: /Users/macbook-dev/Documents/GitHub/tldw_chatbook/.worktrees/library-rail-bounded-width
+Command: python3.12 (/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/bin/python -m tldw_chatbook.app)
+Observed geometry: grid=166; Library=31; canvas=135
+Activation: Ctrl+P Library, / focus rail search, Tab x8, Enter
+                     ╭────────────╮
+ ⌃1 Home  ⌃2 Console │ ⌃3 Library │ F10 Research  ⌃4 Artifacts  ⌃5 Roleplay  ⌃6 Watchlists  ⌃7 Schedules  ⌃8 Workflows  ⌃9 MCP  ⌃0 ACP  F7 Lab  F8 Logs  F9 Settings
+──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+ Library | Local
+┌────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┐
+│ ┌─────────────────────────────┐┌─────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┐ │
+│ │ Navigation     Collapse     ││ Search / RAG                                                                                                                        │ │
+│ │     Import…                 ││   mode: ✓ Search ⇄ RAG Answer                                                                                                       │ │
+│ │ ▊▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▎ ││                                                                                                                                     │ │
+│ │ ▊ Collections             ▎ ││                                                                                                                                     │ │
+│ │ ▊▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▎ ││ ┌────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┐  │ │
+│ │                             ││ │  Collections                                                                                                                   │  │ │
+│ │ ─────────────────────────── ││ └────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┘  │ │
+│ │  Browse                ▾    ││                                                                                                                                     │ │
+│ │    Media (0) — your files   ││                                                                                                                                     │ │
+│ │    Conversations (0)        ││                                                                                                                                     │ │
+│ │    Notes (0)                ││        Run                                                                                                                          │ │
+│ │    Prompts (0) — reuse      ││                                                                                                                                     │ │
+│ │    Skills (0) — AI add-ons  ││                                                                                                                                     │ │
+│ │    Collections              ││ Sources                                                                                                                             │ │
+│ │  ▸ Search / RAG — find all  ││  Scope: all local sources                                                                                                           │ │
+│ │ ─────────────────────────── ││   ○ Notes (0)                                                                                                                       │ │
+│ │  Create                ▾    ││                                                                                                                                     │ │
+│ │    New note                 ││                                                                                                                                     │ │
+│ │    New prompt               ││   ○ Media (0)                                                                                                                       │ │
+│ │    New skill                ││                                                                                                                                     │ │
+│ │ ─────────────────────────── ││                                                                                                                                     │ │
+│ │  Study                 ▾    ││   ○ Conversations (0)                                                                                                               │ │
+│ │    Study decks (0)          ││                                                                                                                                     │ │
+│ │      see what carries over  ││                                                                                                                                     │ │
+│ │    Flashcards due: 0        ││   ○ Prompts (0)                                                                                                                     │ │
+│ │      see what carries over  ││                                                                                                                                     │ │
+│ │    Quizzes (0)              ││                                                                                                                                     │ │
+│ │      see what carries over  ││  No Library sources yet — import media or create notes, then search.                                                                │ │
+│ │ ─────────────────────────── ││                                                                                                                                     │ │
+│ │  Import / Export       ▾    ││      Open Import media                                                                                                              │ │
+│ │    Import…                  ││                                                                                                                                     │ │
+│ │    Export                   ││ Evidence · top 15 per source                                                                                                        │ │
+│ │ ─────────────────────────── ││                                                                                                                                     │ │
+│ │  Details               ▸    ││                                                                                                                                     │ │
+│ │  Back to Get started        ││                                                                                                                                     │ │
+│ │                             ││                                                                                                                                     │ │
+│ │                             ││                                                                                                                                     │ │
+│ │                             ││                                                                                                                                   ▂ │ │
+│ │                             ││                                                                                                                                     │ │
+│ │                             ││                                                                                                                                     │ │
+│ │                             ││ ▊▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▎  │ │
+│ │                             ││ ▊  ▼ Recent searches                                                                                                             ▎  │ │
+│ │                             ││ ▊                                                                                                                                ▎  │ │
+│ └─────────────────────────────┘└─────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┘ │
+└────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┘
+  u use Library context in Console | enter select evidence | o open evidence | / focus search | F6 next pane | F1 help · Ctrl+P palette · Ctrl+Q quit

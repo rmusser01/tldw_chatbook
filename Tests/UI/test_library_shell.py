@@ -16,8 +16,11 @@ from unittest.mock import AsyncMock, Mock
 
 import pytest
 from rich.cells import cell_len
+from textual import events
 from textual.app import App, ComposeResult
 from textual.css.query import NoMatches, QueryError
+from textual.css.styles import StylesBase
+from textual.errors import NoWidget
 
 # Harness apps load the consolidated widget CSS the real app loads
 # (TASK-15450); without it the widgets under test mount unstyled.
@@ -71,7 +74,14 @@ from tldw_chatbook.Library.library_content_evidence import (
     LibraryContentEvidence,
     LibraryEvidenceStatus,
 )
-from tldw_chatbook.Library.library_rail_state import LibraryLifecycle
+from tldw_chatbook.Library.library_rail_state import (
+    LibraryLifecycle,
+    LibraryRailPreferences,
+)
+from tldw_chatbook.Utils.library_rail_width import OrdinaryRailStyleContract
+from tldw_chatbook.Library.library_collections_state import (
+    LibraryCollectionDeleteReceipt,
+)
 from tldw_chatbook.Library.library_rag_state import (
     LIBRARY_RAG_SCOPE_ALL_LOCAL_COPY,
     LibraryRagPanelState,
@@ -115,11 +125,14 @@ from tldw_chatbook.Library.library_shell_state import (
     LIBRARY_ROW_BROWSE_SEARCH,
     LIBRARY_ROW_BROWSE_SKILLS,
     LIBRARY_ROW_CREATE_NOTE,
+    LIBRARY_ROW_CREATE_FLASHCARDS,
     LIBRARY_ROW_CREATE_PROMPT,
+    LIBRARY_ROW_CREATE_QUIZZES,
     LIBRARY_ROW_CREATE_SKILL,
     LIBRARY_ROW_CREATE_STUDY,
     LIBRARY_ROW_INGEST_EXPORT,
     LIBRARY_ROW_INGEST_MEDIA,
+    LibraryShellState,
 )
 from tldw_chatbook.Media.local_media_reading_service import LocalMediaReadingService
 from tldw_chatbook.runtime_policy.types import RuntimeSourceState
@@ -150,7 +163,11 @@ from tldw_chatbook.Widgets.Library.library_media_content import (
 )
 from tldw_chatbook.Widgets.Library.library_media_canvas import LibraryMediaCanvas
 from tldw_chatbook.Widgets.Library.library_media_viewer import LibraryMediaViewer
+from tldw_chatbook.Widgets.Library.library_emergency_return import (
+    LibraryEmergencyReturn,
+)
 from tldw_chatbook.Widgets.Library.library_notes_canvas import LibraryNotesCanvas
+from tldw_chatbook.Widgets.Library import library_rail as library_rail_module
 from tldw_chatbook.Widgets.Library.library_rail import (
     LIBRARY_RAIL_ROW_PREFIX,
     LibraryRail,
@@ -195,6 +212,279 @@ def _build_test_app(
 
 LIBRARY_TEST_SIZE = (170, 48)
 CONVERSATION_PAGER_TEST_SIZES = ((100, 30), (170, 48))
+
+
+_RAIL_STYLE_TEST_SHELL = LibraryShellState(
+    header_line="",
+    sections=(),
+    details_lines=(),
+    selected_row_id="",
+    canvas_kind="empty",
+    canvas_target="",
+    canvas_empty_copy="",
+)
+_RAIL_STYLE_TEST_PREFERENCES = LibraryRailPreferences()
+
+
+class _LibraryRailStyleContractHarness(ConsolidatedCSSApp):
+    """Mount the production rail in the grid relationship it uses in Library."""
+
+    CSS = """
+    #rail-style-contract-host {
+        layout: grid;
+        grid-size: 2;
+        grid-columns: 3fr 13fr;
+        height: 1fr;
+    }
+
+    #rail-style-contract-canvas {
+        height: 1fr;
+    }
+    """
+
+    def compose(self) -> ComposeResult:
+        with Vertical(id="rail-style-contract-host"):
+            yield LibraryRail(
+                _RAIL_STYLE_TEST_SHELL,
+                _RAIL_STYLE_TEST_PREFERENCES,
+                id="library-rail",
+            )
+            yield Static("Canvas", id="rail-style-contract-canvas")
+
+
+def test_library_rail_initial_contract_uses_centralized_bounds(monkeypatch) -> None:
+    monkeypatch.setattr(library_rail_module, "LIBRARY_MIN_WIDTH", 25)
+    monkeypatch.setattr(library_rail_module, "LIBRARY_DEFAULT_MAX_WIDTH", 35)
+
+    rail = LibraryRail(_RAIL_STYLE_TEST_SHELL, _RAIL_STYLE_TEST_PREFERENCES)
+
+    assert rail._last_ordinary_width_contract == OrdinaryRailStyleContract(
+        True, "3fr", 25, 35
+    )
+
+
+@pytest.mark.asyncio
+async def test_library_rail_applies_reversible_ordinary_width_contracts() -> None:
+    """The rail restores exact ordinary declarations after every presentation."""
+    app = _LibraryRailStyleContractHarness()
+    default = OrdinaryRailStyleContract(True, "3fr", 24, 34)
+    rail_only = OrdinaryRailStyleContract(True, "1fr", 0, None)
+    hidden = OrdinaryRailStyleContract(False, None, None, None)
+
+    async with app.run_test(size=(160, 32)) as pilot:
+        rail = app.query_one("#library-rail", LibraryRail)
+        rail.apply_ordinary_width_contract(default)
+        await pilot.pause()
+
+        assert rail.display is True
+        assert str(rail.styles.width) == "3fr"
+        assert rail.styles.min_width.value == 24
+        assert rail.styles.max_width.value == 34
+        assert abs(rail.region.width - 30) <= 1
+
+        rail.apply_ordinary_width_contract(rail_only)
+        assert rail.display is True
+        assert str(rail.styles.width) == "1fr"
+        assert rail.styles.min_width.value == 0
+        assert rail.styles.max_width is None
+
+        rail.apply_ordinary_width_contract(hidden)
+        assert rail.display is False
+        assert not rail.styles.inline.has_rule("width")
+        assert not rail.styles.inline.has_rule("min_width")
+        assert not rail.styles.inline.has_rule("max_width")
+
+        rail.apply_ordinary_width_contract(default)
+        assert rail.display is True
+        assert str(rail.styles.width) == "3fr"
+        assert rail.styles.min_width.value == 24
+        assert rail.styles.max_width.value == 34
+
+        rail.styles.width = 42
+        rail.styles.min_width = 42
+        rail.styles.max_width = 42
+        rail.apply_ordinary_width_contract(default)
+        assert str(rail.styles.width) == "3fr"
+        assert rail.styles.min_width.value == 24
+        assert rail.styles.max_width.value == 34
+
+        rail.styles.width = 42
+        rail.styles.min_width = 42
+        rail.styles.max_width = 42
+        rail.invalidate_width_contract_owner()
+        rail.apply_ordinary_width_contract(default)
+        assert str(rail.styles.width) == "3fr"
+        assert rail.styles.min_width.value == 24
+        assert rail.styles.max_width.value == 34
+
+
+@pytest.mark.asyncio
+async def test_library_rail_skips_unchanged_matching_width_contract_writes(
+    monkeypatch,
+) -> None:
+    """A matching cached contract performs no inline declaration writes twice."""
+    app = _LibraryRailStyleContractHarness()
+    default = OrdinaryRailStyleContract(True, "3fr", 24, 34)
+
+    async with app.run_test(size=(160, 32)):
+        rail = app.query_one("#library-rail", LibraryRail)
+        rail.apply_ordinary_width_contract(default)
+        assignments: list[str] = []
+        original_setattr = StylesBase.__setattr__
+        original_clear_rule = StylesBase.clear_rule
+
+        def track_assignment(styles, name, value):
+            if styles is rail.styles and name in {
+                "display",
+                "width",
+                "min_width",
+                "max_width",
+            }:
+                assignments.append(name)
+            original_setattr(styles, name, value)
+
+        def track_clear_rule(styles, rule_name):
+            if styles is rail.styles and rule_name in {
+                "width",
+                "min_width",
+                "max_width",
+            }:
+                assignments.append(rule_name)
+            return original_clear_rule(styles, rule_name)
+
+        monkeypatch.setattr(StylesBase, "__setattr__", track_assignment)
+        monkeypatch.setattr(StylesBase, "clear_rule", track_clear_rule)
+        rail.apply_ordinary_width_contract(default)
+
+        assert assignments == []
+
+
+def test_library_reader_settings_generation_uses_one_read_only_snapshot(
+    monkeypatch,
+) -> None:
+    """One settings generation refreshes shared geometry once without writes."""
+    app = _build_test_app()
+    app.app_config.setdefault("library", {}).update(
+        {
+            "reader": {
+                "library_open": False,
+                "custom_widths_enabled": True,
+                "library_width": 35,
+            },
+            "media_reader": {"items_open": False, "items_width": 47},
+            "conversations_reader": {"items_open": True, "items_width": 39},
+            "notes_reader": {"items_open": False, "items_width": 38},
+        }
+    )
+    screen = LibraryScreen(app)
+    original = screen._load_library_reader_preference_snapshot
+    reads = 0
+
+    def counted_snapshot():
+        nonlocal reads
+        reads += 1
+        return original()
+
+    monkeypatch.setattr(
+        screen, "_load_library_reader_preference_snapshot", counted_snapshot
+    )
+    worker = Mock()
+    monkeypatch.setattr(screen, "run_worker", worker)
+    generation = screen._library_reader_layout_refresh_generation + 1
+
+    screen.request_library_reader_layout_refresh(generation)
+    screen.request_library_reader_layout_refresh(generation)
+
+    assert reads == 1
+    assert worker.call_count == 0
+    shared = {
+        (
+            preferences.library_open,
+            preferences.custom_widths_enabled,
+            preferences.library_width,
+        )
+        for preferences in (
+            screen._library_media_reader_preferences,
+            screen._library_conversation_reader_preferences,
+            screen._library_notes_reader_preferences,
+        )
+    }
+    assert shared == {(False, True, 35)}
+    assert screen._library_media_reader_preferences.items_open is False
+    assert screen._library_conversation_reader_preferences.items_open is True
+    assert screen._library_notes_reader_preferences.items_open is False
+
+
+@pytest.mark.asyncio
+async def test_mounted_reader_snapshot_reuses_routes_and_refreshes_once_per_generation(
+    monkeypatch,
+) -> None:
+    """Mounted ordinary/adaptive routes share one normalized settings snapshot."""
+    app = _build_test_app()
+    _seed_conversations(app, _two_conversations(), notes=_two_notes())
+    host = LibraryHarness(app)
+
+    async with host.run_test(size=LIBRARY_TEST_SIZE) as pilot:
+        screen = _active_library_screen(host)
+        await _wait_for_library_shell(screen, pilot)
+        snapshot_reads = Mock(wraps=screen._load_library_reader_preference_snapshot)
+        raw_reads = Mock(wraps=library_screen_module.read_cli_config_serialized)
+        cached_reads = Mock(wraps=library_screen_module.get_cli_setting)
+        writes = Mock(return_value=True)
+        batch_writes = Mock(return_value=True)
+        preference_persistence = AsyncMock(
+            wraps=screen._persist_library_reader_preference
+        )
+        monkeypatch.setattr(
+            screen, "_load_library_reader_preference_snapshot", snapshot_reads
+        )
+        monkeypatch.setattr(
+            screen, "_persist_library_reader_preference", preference_persistence
+        )
+        monkeypatch.setattr(
+            library_screen_module, "read_cli_config_serialized", raw_reads
+        )
+        monkeypatch.setattr(library_screen_module, "get_cli_setting", cached_reads)
+        monkeypatch.setattr(library_screen_module, "save_setting_to_cli_config", writes)
+        monkeypatch.setattr(
+            library_screen_module, "save_settings_to_cli_config", batch_writes
+        )
+
+        for row_id, selector in (
+            (LIBRARY_ROW_BROWSE_MEDIA, "#library-media-reader-shell"),
+            (LIBRARY_ROW_BROWSE_PROMPTS, "#library-prompts-canvas"),
+            (
+                LIBRARY_ROW_BROWSE_CONVERSATIONS,
+                "#library-conversations-reader-shell",
+            ),
+            (LIBRARY_ROW_BROWSE_PROMPTS, "#library-prompts-canvas"),
+        ):
+            await screen._select_library_rail_row(row_id)
+            await _wait_for_selector(screen, pilot, selector)
+        assert snapshot_reads.call_count == 0
+        raw_reads.reset_mock()
+        cached_reads.reset_mock()
+        writes.reset_mock()
+        batch_writes.reset_mock()
+        preference_persistence.reset_mock()
+
+        reader = app.app_config.setdefault("library", {}).setdefault("reader", {})
+        reader.update({"custom_widths_enabled": True, "library_width": 35})
+        generation = screen._library_reader_layout_refresh_generation + 1
+        screen.request_library_reader_layout_refresh(generation)
+        screen.request_library_reader_layout_refresh(generation)
+        assert snapshot_reads.call_count == 1
+
+        reader["library_width"] = 34
+        screen.request_library_reader_layout_refresh(generation + 1)
+        screen.request_library_reader_layout_refresh(generation + 1)
+        assert snapshot_reads.call_count == 2
+        assert screen._library_reader_shared_preferences.library_width == 34
+        assert raw_reads.call_count == 0
+        assert cached_reads.call_count == 0
+        assert writes.call_count == 0
+        assert batch_writes.call_count == 0
+        assert preference_persistence.call_count == 0
 
 
 _LegacyStaticLibraryMediaScopeService = StaticLibraryMediaScopeService
@@ -751,6 +1041,15 @@ class LibraryProductionCSSHarness(LibraryHarness):
     """Mount Library with the exact stylesheet sequence used by TldwCli."""
 
     CSS_PATH = TldwCli.CSS_PATH
+
+
+class LibraryGlobalKeyProductionCSSHarness(LibraryProductionCSSHarness):
+    """Exercise TldwCli's real global F6 binding and delegation seam."""
+
+    BINDINGS = tuple(binding for binding in TldwCli.BINDINGS if binding.key == "f6")
+
+    async def action_focus_next_workbench_pane(self) -> None:
+        await TldwCli.action_focus_next_workbench_pane(self)
 
 
 class _AsyncLibraryEvidenceGate:
@@ -3623,6 +3922,2168 @@ async def test_library_shell_renders_rail_sections_and_landing_canvas():
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("saved_width", (24, 34, 35, 48))
+async def test_ordinary_rail_restores_custom_owner_after_collapse_and_adaptive_route(
+    saved_width: int,
+):
+    """Every reader renders saved geometry and ordinary restores its owner."""
+    app = _build_test_app()
+    app.app_config.setdefault("library", {})["reader"] = {
+        "custom_widths_enabled": True,
+        "library_width": saved_width,
+    }
+    _seed_conversations(app, _two_conversations(), notes=_two_notes())
+    host = LibraryHarness(app)
+
+    async with host.run_test(size=LIBRARY_TEST_SIZE) as pilot:
+        screen = _active_library_screen(host)
+        await _wait_for_library_shell(screen, pilot)
+        rail = screen.query_one("#library-rail", LibraryRail)
+
+        assert rail.region.width == saved_width
+        assert str(rail.styles.width) == str(saved_width)
+        assert rail.styles.min_width.value == saved_width
+        assert rail.styles.max_width.value == saved_width
+
+        screen._set_library_rail_collapsed(True)
+        await pilot.pause()
+        assert rail.display is False
+        assert not rail.styles.inline.has_rule("width")
+
+        screen._set_library_rail_collapsed(False)
+        await pilot.pause()
+        assert rail.display is True
+        assert rail.region.width == saved_width
+
+        adaptive_routes = (
+            (LIBRARY_ROW_BROWSE_MEDIA, "#library-media-reader-shell"),
+            (
+                LIBRARY_ROW_BROWSE_CONVERSATIONS,
+                "#library-conversations-reader-shell",
+            ),
+            (LIBRARY_ROW_BROWSE_NOTES, "#library-notes-reader-shell"),
+        )
+        for row_id, selector in adaptive_routes:
+            await screen._select_library_rail_row(row_id)
+            shell = await _wait_for_selector(screen, pilot, selector)
+            await _wait_for_condition(
+                pilot,
+                lambda: shell.effective_layout.library_width == saved_width,
+                message=f"{row_id} did not restore its exact saved Library width",
+            )
+            assert shell.effective_layout.library_open
+            assert shell.library.display
+            assert shell.library.region.width == saved_width
+            assert shell.library.styles.width.value == saved_width
+            assert shell.library_grip.region.x == shell.library.region.right
+
+            await pilot.resize_terminal(115, 48)
+            await _wait_for_condition(
+                pilot,
+                lambda: (
+                    not (
+                        current := screen.query_one(selector)
+                    ).effective_layout.library_open
+                    and current.effective_layout.items_open
+                ),
+                message=lambda: (
+                    f"{row_id} collapse mismatch: "
+                    f"layout={screen.query_one(selector).effective_layout!r}, "
+                    f"library={screen.query_one(selector).library.region!r}, "
+                    f"items={screen.query_one(selector).items.region!r}"
+                ),
+            )
+            shell = screen.query_one(selector)
+            assert not shell.library.display
+            assert shell.library.styles.width.value == 0
+            assert shell.items.display
+            assert shell.library_grip.display
+            assert shell.library_grip.styles.width.value == 5
+            assert shell.items_grip.display
+            assert shell.items_grip.styles.width.value == 5
+
+            await pilot.resize_terminal(*LIBRARY_TEST_SIZE)
+            await _wait_for_condition(
+                pilot,
+                lambda: (
+                    (
+                        current := screen.query_one(selector)
+                    ).effective_layout.library_open
+                    and current.library.region.width == saved_width
+                ),
+                message=f"{row_id} did not restore its saved width after collapse",
+            )
+            shell = screen.query_one(selector)
+
+        await screen._select_library_rail_row(LIBRARY_ROW_BROWSE_PROMPTS)
+        await _wait_for_selector(screen, pilot, "#library-prompts-canvas")
+        restored = screen.query_one("#library-rail", LibraryRail)
+        await _wait_for_condition(
+            pilot,
+            lambda: restored.region.width == saved_width,
+            message="ordinary custom rail width did not restore",
+        )
+        assert str(restored.styles.width) == str(saved_width)
+
+        await pilot.resize_terminal(max(70, saved_width + 39), 48)
+        await _wait_for_condition(
+            pilot,
+            lambda: screen.query_one("#library-shell-grid").content_region.width >= 64,
+            message="ordinary compression width did not settle",
+        )
+        # Narrow terminals normally hand this route to the existing compact
+        # single-stage policy. Project the co-present ordinary presentation
+        # explicitly so this assertion isolates its canvas-preserving bound.
+        screen._library_notes_compact = False
+        screen._apply_library_notes_stage_visibility()
+        screen._sync_library_ordinary_rail_width_contract()
+        await pilot.pause()
+        content_width = screen.query_one("#library-shell-grid").content_region.width
+        effective_width = max(24, min(saved_width, content_width - 40))
+        await _wait_for_condition(
+            pilot,
+            lambda: restored.region.width == effective_width,
+            message="ordinary custom width did not use the canvas-preserving bound",
+        )
+        assert screen.query_one("#library-canvas").region.width >= 40
+        assert app.app_config["library"]["reader"]["library_width"] == saved_width
+        assert screen._library_reader_shared_preferences.library_width == saved_width
+
+        await pilot.resize_terminal(*LIBRARY_TEST_SIZE)
+        await _wait_for_condition(
+            pilot,
+            lambda: restored.region.width == saved_width,
+            message="ordinary rail did not restore the exact saved width",
+        )
+        initial_declarations = (
+            str(restored.styles.width),
+            restored.styles.min_width.value,
+            restored.styles.max_width.value,
+        )
+        await screen.recompose()
+        await _wait_for_condition(
+            pilot,
+            lambda: screen.query_one("#library-rail").region.width == saved_width,
+            message="route recompose did not converge on the settled contract",
+        )
+        recomposed = screen.query_one("#library-rail", LibraryRail)
+        assert recomposed.region.width == saved_width
+        assert (
+            str(recomposed.styles.width),
+            recomposed.styles.min_width.value,
+            recomposed.styles.max_width.value,
+        ) == initial_declarations
+
+
+@pytest.mark.asyncio
+async def test_notes_compact_takeovers_restore_the_ordinary_custom_contract() -> None:
+    """Notes pane takeovers yield to the restored ordinary custom owner."""
+    app = _build_test_app()
+    app.app_config.setdefault("library", {})["reader"] = {
+        "custom_widths_enabled": True,
+        "library_width": 35,
+    }
+    host = LibraryHarness(app)
+
+    async with host.run_test(size=(100, 48)) as pilot:
+        screen = _active_library_screen(host)
+        await _wait_for_library_shell(screen, pilot)
+        await _wait_for_library_notes_compact(screen, pilot, True)
+        await screen._select_library_rail_row(LIBRARY_ROW_BROWSE_NOTES)
+        shell = await _wait_for_selector(screen, pilot, "#library-notes-reader-shell")
+
+        screen._sync_library_notes_reader_layout_from_shell(priority="library")
+        await pilot.pause()
+        assert shell.effective_layout.library_open
+        assert not shell.effective_layout.items_open
+        assert shell.library.display
+        assert not shell.items.display
+        assert shell.library.region.width == 35
+        assert shell.library_grip.region.x == shell.library.region.right
+
+        screen._sync_library_notes_reader_layout_from_shell(priority="items")
+        await pilot.pause()
+        assert not shell.effective_layout.library_open
+        assert shell.effective_layout.items_open
+        assert not shell.library.display
+        assert shell.items.display
+        assert shell.items_grip.region.x == shell.items.region.right
+
+        await pilot.resize_terminal(*LIBRARY_TEST_SIZE)
+        await _wait_for_library_notes_compact(screen, pilot, False)
+        await screen._select_library_rail_row(LIBRARY_ROW_BROWSE_PROMPTS)
+        rail = await _wait_for_selector(screen, pilot, "#library-rail")
+        canvas = screen.query_one("#library-canvas")
+        await _wait_for_condition(
+            pilot,
+            lambda: rail.display and canvas.display and rail.region.width == 35,
+            message="wide Notes settlement did not restore the custom contract",
+        )
+        assert rail.styles.width.value == 35
+        assert rail.styles.min_width.value == 35
+        assert rail.styles.max_width.value == 35
+
+
+@pytest.mark.asyncio
+async def test_ordinary_same_contract_resizes_do_no_reader_or_destination_work(
+    monkeypatch,
+) -> None:
+    """Resize geometry does not recompose, reload, persist, or rewrite a match."""
+    app = _build_test_app()
+    app.app_config.setdefault("library", {})["reader"] = {
+        "custom_widths_enabled": True,
+        "library_width": 35,
+    }
+    _seed_conversations(app, _two_conversations())
+    host = LibraryHarness(app)
+
+    async with host.run_test(size=LIBRARY_TEST_SIZE) as pilot:
+        screen = _active_library_screen(host)
+        await _wait_for_library_shell(screen, pilot)
+        rail = screen.query_one("#library-rail", LibraryRail)
+        canvas = screen.query_one("#library-canvas")
+        await screen.workers.wait_for_complete()
+        await pilot.pause()
+        saved = screen._library_reader_shared_preferences
+        snapshot_reads = Mock(wraps=screen._load_library_reader_preference_snapshot)
+        worker_creations = Mock(wraps=screen.run_worker)
+        rail_refresh = Mock(wraps=rail.refresh)
+        canvas_refresh = Mock(wraps=canvas.refresh)
+        service_calls = AsyncMock(wraps=screen._run_library_service_call)
+        media_loads = Mock(wraps=screen._request_library_media_browse)
+        prompt_loads = Mock(wraps=screen._request_library_prompts_browse)
+        raw_reads = Mock(wraps=library_screen_module.read_cli_config_serialized)
+        cached_reads = Mock(wraps=library_screen_module.get_cli_setting)
+        writes = Mock(return_value=True)
+        batch_writes = Mock(return_value=True)
+        style_writes: list[str] = []
+        original_setattr = StylesBase.__setattr__
+        original_clear_rule = StylesBase.clear_rule
+
+        def track_assignment(styles, name, value):
+            if styles is rail.styles and name in {
+                "display",
+                "width",
+                "min_width",
+                "max_width",
+            }:
+                style_writes.append(name)
+            original_setattr(styles, name, value)
+
+        def track_clear_rule(styles, rule_name):
+            if styles is rail.styles and rule_name in {
+                "width",
+                "min_width",
+                "max_width",
+            }:
+                style_writes.append(rule_name)
+            return original_clear_rule(styles, rule_name)
+
+        monkeypatch.setattr(
+            screen,
+            "_load_library_reader_preference_snapshot",
+            snapshot_reads,
+        )
+        monkeypatch.setattr(screen, "run_worker", worker_creations)
+        monkeypatch.setattr(rail, "refresh", rail_refresh)
+        monkeypatch.setattr(canvas, "refresh", canvas_refresh)
+        monkeypatch.setattr(screen, "_run_library_service_call", service_calls)
+        monkeypatch.setattr(screen, "_request_library_media_browse", media_loads)
+        monkeypatch.setattr(screen, "_request_library_prompts_browse", prompt_loads)
+        monkeypatch.setattr(
+            library_screen_module, "read_cli_config_serialized", raw_reads
+        )
+        monkeypatch.setattr(library_screen_module, "get_cli_setting", cached_reads)
+        monkeypatch.setattr(
+            library_screen_module,
+            "save_setting_to_cli_config",
+            writes,
+        )
+        monkeypatch.setattr(
+            library_screen_module,
+            "save_settings_to_cli_config",
+            batch_writes,
+        )
+        monkeypatch.setattr(StylesBase, "__setattr__", track_assignment)
+        monkeypatch.setattr(StylesBase, "clear_rule", track_clear_rule)
+
+        await pilot.resize_terminal(169, 48)
+        await pilot.resize_terminal(170, 48)
+        await pilot.pause()
+
+        assert screen.query_one("#library-rail") is rail
+        assert screen.query_one("#library-canvas") is canvas
+        assert screen._library_reader_shared_preferences is saved
+        assert snapshot_reads.call_count == 0
+        assert worker_creations.call_count == 0
+        assert service_calls.call_count == 0
+        assert media_loads.call_count == 0
+        assert prompt_loads.call_count == 0
+        assert raw_reads.call_count == 0
+        assert cached_reads.call_count == 0
+        assert writes.call_count == 0
+        assert batch_writes.call_count == 0
+        assert not any(
+            call.kwargs.get("recompose") for call in rail_refresh.call_args_list
+        )
+        assert not any(
+            call.kwargs.get("recompose") for call in canvas_refresh.call_args_list
+        )
+        assert style_writes == []
+
+
+@pytest.mark.asyncio
+async def test_library_ordinary_emergency_retains_bar_and_route_host() -> None:
+    app = _build_test_app()
+    _seed_conversations(app, _two_conversations(), notes=_two_notes())
+    host = LibraryProductionCSSHarness(app)
+
+    async with host.run_test(size=(63, 24)) as pilot:
+        screen = _active_library_screen(host)
+        await _wait_for_library_shell(screen, pilot)
+        canvas = screen.query_one("#library-canvas", Vertical)
+        rail = screen.query_one("#library-rail", LibraryRail)
+        bar = canvas.query_one("#library-emergency-return", LibraryEmergencyReturn)
+        route_host = canvas.query_one("#library-canvas-route-content", Vertical)
+
+        assert tuple(canvas.children) == (bar, route_host)
+        assert rail.display is True
+        assert canvas.display is False
+
+        screen.query_one(f"#library-row-{LIBRARY_ROW_BROWSE_PROMPTS}").press()
+        await _wait_for_selector(screen, pilot, "#library-prompts-canvas")
+        assert screen.query_one("#library-emergency-return") is bar
+        assert screen._library_entry_canvas_owner().id == "library-prompts-canvas"
+        assert bar.display is True
+        assert rail.display is False
+        assert canvas.display is True
+        assert (
+            canvas.region.width
+            == screen.query_one("#library-shell-grid").content_region.width
+        )
+
+        screen.query_one(f"#library-row-{LIBRARY_ROW_BROWSE_SKILLS}").press()
+        await _wait_for_selector(screen, pilot, "#library-skills-canvas")
+        assert screen.query_one("#library-emergency-return") is bar
+        assert tuple(canvas.children) == (bar, route_host)
+
+        await pilot.click("#library-emergency-return")
+        await _wait_for_condition(
+            pilot,
+            lambda: rail.display and not canvas.display,
+            message="Emergency return did not restore the rail-only stage.",
+        )
+
+        await pilot.resize_terminal(64, 24)
+        await _wait_for_condition(
+            pilot,
+            lambda: rail.display and canvas.display,
+            message="Ordinary alongside geometry did not resume at 64 columns.",
+        )
+        assert bar.display is False
+        assert bar.region.height == 0
+
+
+@pytest.mark.asyncio
+async def test_library_ordinary_emergency_route_matrix_focus_and_return() -> None:
+    """Every ordinary rail destination enters one canvas stage and can recover."""
+    app = _build_test_app()
+    _seed_conversations(app, _two_conversations(), notes=_two_notes())
+    host = LibraryProductionCSSHarness(app)
+
+    ordinary_rows = (
+        LIBRARY_ROW_BROWSE_PROMPTS,
+        LIBRARY_ROW_BROWSE_SKILLS,
+        LIBRARY_ROW_BROWSE_COLLECTIONS,
+        LIBRARY_ROW_BROWSE_SEARCH,
+        LIBRARY_ROW_INGEST_MEDIA,
+        LIBRARY_ROW_INGEST_EXPORT,
+        LIBRARY_ROW_CREATE_STUDY,
+        LIBRARY_ROW_CREATE_FLASHCARDS,
+        LIBRARY_ROW_CREATE_QUIZZES,
+    )
+    async with host.run_test(size=(63, 30)) as pilot:
+        screen = _active_library_screen(host)
+        await _wait_for_library_shell(screen, pilot)
+        rail = screen.query_one("#library-rail", LibraryRail)
+        canvas = screen.query_one("#library-canvas", Vertical)
+        assert rail.display and not canvas.display
+
+        for row_id in ordinary_rows:
+            await screen._select_library_rail_row(row_id)
+            await _wait_for_condition(
+                pilot,
+                lambda: (
+                    screen._library_selected_row_id == row_id
+                    and screen.query_one("#library-canvas").display
+                    and not screen.query_one("#library-rail").display
+                    and screen.focused is not None
+                    and getattr(screen.focused, "id", None)
+                    not in {"library-search-input", f"library-row-{row_id}"}
+                ),
+                message=lambda: (
+                    f"{row_id} did not settle focused in canvas-only stage; "
+                    f"focused={getattr(screen.focused, 'id', None)!r}, "
+                    f"stage={screen._library_emergency_stage!r}, "
+                    f"canvas={screen.query_one('#library-canvas').display}, "
+                    f"rail={screen.query_one('#library-rail').display}"
+                ),
+            )
+            assert screen._library_emergency_return_eligibility().enabled
+            screen.action_library_emergency_return()
+            await _wait_for_condition(
+                pilot,
+                lambda: (
+                    screen.query_one("#library-rail").display
+                    and not screen.query_one("#library-canvas").display
+                ),
+                message=f"{row_id} did not return to rail-only stage",
+            )
+            await _wait_for_condition(
+                pilot,
+                lambda: (
+                    screen.focused is not None
+                    and any(
+                        getattr(ancestor, "id", None) == "library-rail"
+                        for ancestor in screen.focused.ancestors_with_self
+                    )
+                ),
+                message=f"{row_id} did not restore selected-row/fallback rail focus",
+            )
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("row_id", "specific_action"),
+    (
+        (LIBRARY_ROW_INGEST_MEDIA, "library_ingest_back"),
+        (LIBRARY_ROW_INGEST_EXPORT, "library_export_back"),
+        (LIBRARY_ROW_CREATE_STUDY, "library_handoff_back"),
+        (LIBRARY_ROW_CREATE_FLASHCARDS, "library_handoff_back"),
+        (LIBRARY_ROW_CREATE_QUIZZES, "library_handoff_back"),
+    ),
+)
+async def test_library_safe_emergency_escape_returns_without_leaving_route(
+    row_id: str, specific_action: str
+) -> None:
+    from tldw_chatbook.UI.Workbench.help import WorkbenchHelpPanel
+
+    app = _build_test_app()
+    _seed_conversations(app, _two_conversations(), notes=_two_notes())
+    host = LibraryProductionCSSHarness(app)
+    async with host.run_test(size=(63, 30)) as pilot:
+        screen = _active_library_screen(host)
+        await _wait_for_library_shell(screen, pilot)
+        await screen._select_library_rail_row(row_id)
+        await _wait_for_condition(
+            pilot,
+            lambda: screen._library_emergency_stage == "canvas-only",
+            message=f"{row_id} did not enter emergency canvas stage",
+        )
+        assert screen.check_action(specific_action, ()) is False
+        assert screen.check_action("library_emergency_return", ()) is True
+        assert (
+            dict(screen._library_footer_shortcuts_for_current_state())["esc"] == "rail"
+        )
+        assert (
+            "escape",
+            "Return to Library rail",
+        ) in screen._active_library_binding_shortcuts()
+
+        screen.action_show_workbench_help()
+        await pilot.pause()
+        panel = host.screen
+        assert isinstance(panel, WorkbenchHelpPanel)
+        assert dict(panel.state.shortcuts)["esc"] == "rail"
+        await pilot.press("escape")
+        await pilot.pause()
+        await pilot.press("escape")
+        await _wait_for_condition(
+            pilot,
+            lambda: screen._library_emergency_stage == "rail-only",
+            message=f"{row_id} Escape did not return to rail stage",
+        )
+        assert screen._library_selected_row_id == row_id
+        assert getattr(screen.focused, "row_id", None) == row_id
+
+
+def test_library_emergency_escape_binding_follows_specific_guards() -> None:
+    actions = [
+        binding[1]
+        for binding in LibraryScreen.BINDINGS
+        if isinstance(binding, tuple) and binding[0] == "escape"
+    ]
+    emergency = actions.index("library_emergency_return")
+    assert actions.index("library_ingest_back") < emergency
+    assert actions.index("library_export_back") < emergency
+    assert actions.index("library_handoff_back") < emergency
+    assert emergency < actions.index("library_list_focus_rail")
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("row_id", "shell_selector"),
+    (
+        (LIBRARY_ROW_BROWSE_MEDIA, "#library-media-reader-shell"),
+        (LIBRARY_ROW_BROWSE_CONVERSATIONS, "#library-conversations-reader-shell"),
+        (LIBRARY_ROW_BROWSE_NOTES, "#library-notes-reader-shell"),
+    ),
+)
+async def test_adaptive_routes_never_receive_ordinary_emergency_geometry(
+    row_id: str, shell_selector: str, monkeypatch
+) -> None:
+    from textual.css.styles import RenderStyles
+
+    app = _build_test_app()
+    _seed_conversations(app, _two_conversations(), notes=_two_notes())
+    host = LibraryProductionCSSHarness(app)
+    async with host.run_test(size=(63, 30)) as pilot:
+        screen = _active_library_screen(host)
+        await _wait_for_library_shell(screen, pilot)
+        await screen._select_library_rail_row(row_id)
+        shell = await _wait_for_selector(screen, pilot, shell_selector)
+        canvas = screen.query_one("#library-canvas", Vertical)
+        rail = screen.query_one("#library-rail", LibraryRail)
+        assert not screen.query_one("#library-rail-collapse", Button).display
+        await _wait_for_condition(
+            pilot,
+            lambda: canvas.styles.width.value == shell.effective_layout.items_width,
+            message=f"{row_id} adaptive items width did not settle",
+        )
+        writes: list[tuple[str, str]] = []
+        canvas_styles = canvas.styles
+        original_set_rule = RenderStyles.set_rule
+
+        def tracked_set_rule(styles, rule_name, value):
+            if styles is canvas_styles:
+                writes.append((rule_name, str(value)))
+            return original_set_rule(styles, rule_name, value)
+
+        monkeypatch.setattr(RenderStyles, "set_rule", tracked_set_rule)
+        await pilot.resize_terminal(62, 30)
+        await pilot.pause()
+        await pilot.resize_terminal(63, 30)
+        await pilot.pause()
+        layout = shell.effective_layout
+        assert screen._library_emergency_stage is None
+        assert canvas.display is layout.items_open
+        assert rail.display is layout.library_open
+        assert canvas.styles.width.value == layout.items_width
+        assert canvas.styles.min_width.value == layout.items_width
+        assert canvas.styles.max_width.value == layout.items_width
+        assert shell.library_grip.display and shell.items_grip.display
+        assert ("width", "13fr") not in writes
+        assert ("min_width", "40") not in writes
+
+        await screen._select_library_rail_row(LIBRARY_ROW_BROWSE_PROMPTS)
+        await _wait_for_condition(
+            pilot,
+            lambda: screen._library_emergency_stage == "canvas-only",
+            message="Ordinary route did not reclaim emergency geometry",
+        )
+        assert screen.query_one("#library-canvas").styles.width.value == 1
+
+
+@pytest.mark.asyncio
+async def test_library_emergency_projection_keeps_editor_back_authoritative() -> None:
+    """The bar, Escape gate, footer, and F1 binding filter share one guard."""
+    from tldw_chatbook.UI.Workbench.help import WorkbenchHelpPanel
+
+    app = _build_test_app()
+    _seed_conversations(app, _two_conversations(), notes=_two_notes())
+    host = LibraryProductionCSSHarness(app)
+
+    async with host.run_test(size=(63, 30)) as pilot:
+        screen = _active_library_screen(host)
+        await _wait_for_library_shell(screen, pilot)
+        await screen._select_library_rail_row(LIBRARY_ROW_CREATE_PROMPT)
+        editor = await _wait_for_selector(screen, pilot, "#library-prompt-name")
+        editor.focus()
+        await pilot.press("x")
+        await pilot.pause()
+        eligibility = screen._library_emergency_return_eligibility()
+        assert eligibility.visible and eligibility.guarded and not eligibility.enabled
+        assert screen.check_action("library_emergency_return", ()) is False
+        assert (
+            dict(screen._library_footer_shortcuts_for_current_state())["esc"]
+            == "back to list"
+        )
+        bar = screen.query_one("#library-emergency-return", LibraryEmergencyReturn)
+        assert bar.disabled is True
+        assert (
+            "escape",
+            "Return to Library rail",
+        ) not in screen._active_library_binding_shortcuts()
+
+        await pilot.click("#library-emergency-return")
+        await pilot.pause()
+        screen.action_show_workbench_help()
+        await pilot.pause()
+        panel = host.screen
+        assert isinstance(panel, WorkbenchHelpPanel)
+        assert dict(panel.state.shortcuts).get("esc") != "rail"
+        await pilot.press("escape")
+        await pilot.pause()
+
+        screen.action_library_emergency_return()
+        assert screen._library_emergency_stage == "canvas-only"
+        await pilot.press("escape")
+        await pilot.pause()
+        assert screen._library_prompts_view == "editor"
+        assert screen._library_emergency_stage == "canvas-only"
+
+
+@pytest.mark.asyncio
+async def test_library_emergency_restore_is_defeated_by_newer_return_interaction() -> (
+    None
+):
+    """Only an untouched emergency receipt may restore focus at 64 columns."""
+    app = _build_test_app()
+    _seed_conversations(app, _two_conversations(), notes=_two_notes())
+    host = LibraryProductionCSSHarness(app)
+
+    async with host.run_test(size=(80, 30)) as pilot:
+        screen = _active_library_screen(host)
+        await _wait_for_library_shell(screen, pilot)
+        await screen._select_library_rail_row(LIBRARY_ROW_BROWSE_SEARCH)
+        query = await _wait_for_selector(screen, pilot, "#library-rag-query-input")
+        query.focus()
+
+        await pilot.resize_terminal(63, 30)
+        await _wait_for_condition(
+            pilot,
+            lambda: screen._library_emergency_stage == "canvas-only",
+            message="Search focus did not enter canvas-only emergency geometry.",
+        )
+        captured_generation = screen._library_stage_interaction_generation
+        assert screen._library_emergency_restore_receipt is not None
+        assert (
+            screen._library_emergency_restore_receipt.generation == captured_generation
+        )
+
+        await pilot.resize_terminal(64, 30)
+        await _wait_for_condition(
+            pilot,
+            lambda: screen._library_emergency_stage is None,
+            message="Emergency geometry did not release at 64 columns.",
+        )
+        await _wait_for_condition(
+            pilot,
+            lambda: getattr(screen.focused, "id", None) == "library-rag-query-input",
+            message="Untouched emergency receipt did not restore Search focus.",
+        )
+
+        await pilot.resize_terminal(63, 30)
+        await _wait_for_condition(
+            pilot,
+            lambda: screen._library_emergency_stage == "canvas-only",
+            message="Second emergency entry did not settle.",
+        )
+        screen.action_library_emergency_return()
+        return_generation = screen._library_stage_interaction_generation
+        assert return_generation > captured_generation
+        await pilot.resize_terminal(64, 30)
+        await _wait_for_condition(
+            pilot,
+            lambda: screen._library_emergency_stage is None,
+            message="Second emergency geometry did not release.",
+        )
+        assert getattr(screen.focused, "id", None) != "library-rag-query-input"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("row_id", "scroll_id", "focus_id"),
+    (
+        (LIBRARY_ROW_INGEST_MEDIA, "library-ingest-canvas", "library-ingest-path"),
+        (LIBRARY_ROW_INGEST_EXPORT, "library-export-canvas", "library-export-name"),
+        (LIBRARY_ROW_BROWSE_SKILLS, "library-skills-canvas", "library-skills-filter"),
+    ),
+)
+async def test_library_emergency_restores_real_route_scroll_owner(
+    row_id: str, scroll_id: str, focus_id: str
+) -> None:
+    app = _build_test_app()
+    _seed_conversations(app, _two_conversations(), notes=_two_notes())
+    host = LibraryProductionCSSHarness(app)
+    async with host.run_test(size=(80, 12)) as pilot:
+        screen = _active_library_screen(host)
+        await _wait_for_library_shell(screen, pilot)
+        await screen._select_library_rail_row(row_id)
+        route_scroll = await _wait_for_selector(screen, pilot, f"#{scroll_id}")
+        if row_id == LIBRARY_ROW_BROWSE_SKILLS:
+            await route_scroll.mount(Static("scroll receipt\n" * 30))
+        focus = await _wait_for_selector(screen, pilot, f"#{focus_id}")
+        focus.focus()
+        await pilot.pause()
+        expected_y = min(3, int(route_scroll.max_scroll_y))
+        assert expected_y > 0
+        route_scroll.scroll_to(y=expected_y, animate=False, force=True)
+        await pilot.pause()
+        await pilot.resize_terminal(63, 12)
+        await _wait_for_condition(
+            pilot,
+            lambda: screen._library_emergency_stage == "canvas-only",
+            message=f"{row_id} did not enter emergency stage",
+        )
+        receipt = screen._library_emergency_restore_receipt
+        assert receipt is not None
+        assert receipt.owner_id == scroll_id
+        assert receipt.scroll_owner_id == scroll_id
+        assert receipt.focus.scroll_offset == (0, expected_y)
+        route_scroll.scroll_to(y=0, animate=False, force=True)
+        await pilot.pause()
+        await pilot.resize_terminal(64, 12)
+        await _wait_for_condition(
+            pilot,
+            lambda: int(route_scroll.scroll_y) == expected_y,
+            message=f"{row_id} scroll was not restored",
+        )
+        assert getattr(screen.focused, "id", None) == focus_id
+
+
+@pytest.mark.asyncio
+async def test_library_canvas_entry_defeats_an_older_emergency_receipt() -> None:
+    app = _build_test_app()
+    _seed_conversations(app, _two_conversations(), notes=_two_notes())
+    host = LibraryProductionCSSHarness(app)
+    async with host.run_test(size=(80, 30)) as pilot:
+        screen = _active_library_screen(host)
+        await _wait_for_library_shell(screen, pilot)
+        await screen._select_library_rail_row(LIBRARY_ROW_BROWSE_SEARCH)
+        search = await _wait_for_selector(screen, pilot, "#library-rag-query-input")
+        search.focus()
+        await pilot.resize_terminal(63, 30)
+        await _wait_for_condition(
+            pilot,
+            lambda: screen._library_emergency_restore_receipt is not None,
+            message="Search receipt was not captured",
+        )
+        stale = screen._library_emergency_restore_receipt
+        assert stale is not None
+        await screen._open_library_export_canvas(ExportScope(kind="everything"))
+        assert screen._library_stage_interaction_generation > stale.generation
+        await pilot.resize_terminal(64, 30)
+        await pilot.pause()
+        export_name = screen.query_one("#library-export-name", Input)
+        export_name.focus()
+        screen._restore_library_emergency_receipt(stale)
+        assert screen._library_selected_row_id == LIBRARY_ROW_INGEST_EXPORT
+        assert getattr(screen.focused, "id", None) != "library-rag-query-input"
+
+
+@pytest.mark.asyncio
+async def test_library_emergency_user_click_defeats_an_older_restore_receipt(
+    tmp_path,
+) -> None:
+    app = _build_test_app()
+    _seed_conversations(app, _two_conversations(), notes=_two_notes())
+    prompts_db = PromptsDatabase(
+        tmp_path / "emergency-focus-prompts.db",
+        client_id="emergency-focus-prompts",
+    )
+    prompts_db.add_prompt(
+        name="Focus receipt",
+        author="",
+        details="",
+        system_prompt="",
+        user_prompt="Keep newer focus",
+    )
+    app.prompt_scope_service = PromptScopeService(
+        local_service=LocalPromptService(prompts_db),
+        server_service=None,
+    )
+    host = LibraryProductionCSSHarness(app)
+    try:
+        async with host.run_test(size=(80, 60)) as pilot:
+            screen = _active_library_screen(host)
+            await _wait_for_library_shell(screen, pilot)
+            await screen._select_library_rail_row(LIBRARY_ROW_BROWSE_PROMPTS)
+            await _wait_for_selector(screen, pilot, "#library-prompts-filter")
+            first = await _wait_for_selector(screen, pilot, "#library-prompts-sort")
+            first.focus()
+            await pilot.pause()
+            await pilot.resize_terminal(63, 60)
+            await _wait_for_condition(
+                pilot,
+                lambda: screen._library_emergency_restore_receipt is not None,
+                message="Prompts receipt was not captured",
+            )
+            receipt = screen._library_emergency_restore_receipt
+            assert receipt is not None
+            await pilot.pause()
+            assert screen._library_stage_interaction_generation == receipt.generation
+
+            await pilot.click("#library-prompts-filter")
+            await pilot.pause()
+            later = screen.focused
+            assert getattr(later, "id", None) == "library-prompts-filter"
+            assert later is not first
+            assert screen._library_entry_canvas_owner() in later.ancestors_with_self
+            assert screen._library_stage_interaction_generation > receipt.generation
+
+            await pilot.resize_terminal(64, 60)
+            await pilot.pause()
+            assert getattr(screen.focused, "id", None) == "library-prompts-filter"
+    finally:
+        prompts_db.close_connection()
+
+
+@pytest.mark.asyncio
+async def test_library_emergency_programmatic_canvas_focus_keeps_restore_receipt() -> (
+    None
+):
+    """Programmatic focus changes alone are not user interaction."""
+    app = _build_test_app()
+    _seed_conversations(app, _two_conversations(), notes=_two_notes())
+    host = LibraryProductionCSSHarness(app)
+    async with host.run_test(size=(80, 30)) as pilot:
+        screen = _active_library_screen(host)
+        await _wait_for_library_shell(screen, pilot)
+        await screen._select_library_rail_row(LIBRARY_ROW_BROWSE_SEARCH)
+        query = await _wait_for_selector(screen, pilot, "#library-rag-query-input")
+        query.focus()
+        await pilot.resize_terminal(63, 30)
+        await _wait_for_condition(
+            pilot,
+            lambda: screen._library_emergency_restore_receipt is not None,
+            message="Search receipt was not captured",
+        )
+        receipt = screen._library_emergency_restore_receipt
+        assert receipt is not None
+        bar = screen.query_one("#library-emergency-return", LibraryEmergencyReturn)
+
+        bar.focus()
+        await pilot.pause()
+        query.focus()
+        await pilot.pause()
+
+        assert screen._library_stage_interaction_generation == receipt.generation
+
+
+@pytest.mark.asyncio
+async def test_library_emergency_tab_entry_uses_post_navigation_focus() -> None:
+    """A real Tab into the ordinary canvas defeats an older receipt."""
+    app = _build_test_app()
+    _seed_conversations(app, _two_conversations(), notes=_two_notes())
+    host = LibraryProductionCSSHarness(app)
+    async with host.run_test(size=(80, 30)) as pilot:
+        screen = _active_library_screen(host)
+        await _wait_for_library_shell(screen, pilot)
+        await screen._select_library_rail_row(LIBRARY_ROW_BROWSE_SEARCH)
+        query = await _wait_for_selector(screen, pilot, "#library-rag-query-input")
+        query.focus()
+        await pilot.resize_terminal(63, 30)
+        await _wait_for_condition(
+            pilot,
+            lambda: screen._library_emergency_restore_receipt is not None,
+            message="Search receipt was not captured",
+        )
+        receipt = screen._library_emergency_restore_receipt
+        assert receipt is not None
+        bar = screen.query_one("#library-emergency-return", LibraryEmergencyReturn)
+        bar.focus()
+        await pilot.pause()
+
+        await pilot.press("tab")
+        await pilot.pause()
+
+        assert (
+            screen._library_entry_canvas_owner() in screen.focused.ancestors_with_self
+        )
+        assert screen._library_stage_interaction_generation > receipt.generation
+
+
+@pytest.mark.asyncio
+async def test_library_emergency_import_keyboard_reaches_and_activates_return() -> None:
+    """Import's pinned return is reachable by pane cycle and reverse Tab."""
+    app = _build_test_app()
+    _seed_conversations(app, _two_conversations(), notes=_two_notes())
+    host = LibraryGlobalKeyProductionCSSHarness(app)
+    async with host.run_test(size=(60, 48)) as pilot:
+        screen = _active_library_screen(host)
+        await _wait_for_library_shell(screen, pilot)
+        await screen._select_library_rail_row(LIBRARY_ROW_INGEST_MEDIA)
+        path = await _wait_for_selector(screen, pilot, "#library-ingest-path")
+        bar = screen.query_one("#library-emergency-return", LibraryEmergencyReturn)
+        rail = screen.query_one("#library-rail", LibraryRail)
+        canvas = screen.query_one("#library-canvas")
+        await _wait_for_condition(
+            pilot,
+            lambda: bar.display and canvas.display and not rail.display,
+            message="Import did not enter its canvas-only emergency stage",
+        )
+        assert bar.can_focus and not bar.disabled
+        assert bar in screen.focus_chain, [
+            getattr(widget, "id", None) for widget in screen.focus_chain
+        ]
+
+        path.focus()
+        await pilot.pause()
+        await pilot.press("f6")
+        await pilot.pause()
+        assert bar.has_focus
+
+        path.focus()
+        await pilot.pause()
+        await pilot.press("shift+f6")
+        await pilot.pause()
+        assert bar.has_focus
+
+        path.focus()
+        await pilot.pause()
+        await pilot.press("shift+tab")
+        await pilot.pause()
+        assert bar.has_focus, (
+            getattr(screen.focused, "id", None),
+            [getattr(widget, "id", None) for widget in screen.focus_chain],
+        )
+
+        await pilot.press("enter")
+        await _wait_for_condition(
+            pilot,
+            lambda: rail.display and not canvas.display,
+            message="Pinned return did not activate from Enter",
+        )
+
+
+def test_library_keeps_f6_owned_by_the_app_global_binding() -> None:
+    """Library delegates F6 without shadowing the app-reserved shortcut."""
+    assert all(
+        (binding.key if hasattr(binding, "key") else binding[0]) != "f6"
+        for binding in LibraryScreen.BINDINGS
+    )
+
+
+@pytest.mark.asyncio
+async def test_library_emergency_stalled_tab_does_not_arm_later_focus(
+    monkeypatch,
+) -> None:
+    """A Tab that cannot navigate expires before later programmatic focus."""
+    app = _build_test_app()
+    _seed_conversations(app, _two_conversations(), notes=_two_notes())
+    host = LibraryProductionCSSHarness(app)
+    async with host.run_test(size=(80, 30)) as pilot:
+        screen = _active_library_screen(host)
+        await _wait_for_library_shell(screen, pilot)
+        await screen._select_library_rail_row(LIBRARY_ROW_BROWSE_SEARCH)
+        query = await _wait_for_selector(screen, pilot, "#library-rag-query-input")
+        query.focus()
+        await pilot.resize_terminal(63, 30)
+        await _wait_for_condition(
+            pilot,
+            lambda: screen._library_emergency_restore_receipt is not None,
+            message="Search receipt was not captured",
+        )
+        receipt = screen._library_emergency_restore_receipt
+        assert receipt is not None
+        bar = screen.query_one("#library-emergency-return", LibraryEmergencyReturn)
+        bar.focus()
+        await pilot.pause()
+        monkeypatch.setattr(screen, "focus_next", lambda: None)
+
+        await pilot.press("tab")
+        await pilot.pause()
+        assert screen.focused is bar
+        query.focus()
+        await pilot.pause()
+
+        assert screen._library_stage_interaction_generation == receipt.generation
+
+
+@pytest.mark.asyncio
+async def test_library_emergency_real_wheel_uses_widget_under_pointer() -> None:
+    """Wheel target, not unrelated keyboard focus, owns user intent."""
+    app = _build_test_app()
+    _seed_conversations(app, _two_conversations(), notes=_two_notes())
+    host = LibraryProductionCSSHarness(app)
+    async with host.run_test(size=(80, 30)) as pilot:
+        screen = _active_library_screen(host)
+        await _wait_for_library_shell(screen, pilot)
+        await screen._select_library_rail_row(LIBRARY_ROW_BROWSE_SEARCH)
+        query = await _wait_for_selector(screen, pilot, "#library-rag-query-input")
+        query.focus()
+        await pilot.resize_terminal(63, 30)
+        await _wait_for_condition(
+            pilot,
+            lambda: screen._library_emergency_restore_receipt is not None,
+            message="Search receipt was not captured",
+        )
+        receipt = screen._library_emergency_restore_receipt
+        assert receipt is not None
+        screen.query_one("#library-emergency-return").focus()
+        await pilot.pause()
+
+        screen.post_message(
+            events.MouseScrollDown(query, 0, 0, 0, 1, 0, False, False, False)
+        )
+        await pilot.pause()
+
+        assert screen._library_stage_interaction_generation > receipt.generation
+
+
+@pytest.mark.asyncio
+async def test_library_emergency_no_widget_pointer_does_not_invalidate(
+    monkeypatch,
+) -> None:
+    """A boundary pointer event with no widget is an inert user input."""
+    app = _build_test_app()
+    _seed_conversations(app, _two_conversations(), notes=_two_notes())
+    host = LibraryProductionCSSHarness(app)
+    async with host.run_test(size=(80, 30)) as pilot:
+        screen = _active_library_screen(host)
+        await _wait_for_library_shell(screen, pilot)
+        await screen._select_library_rail_row(LIBRARY_ROW_BROWSE_SEARCH)
+        query = await _wait_for_selector(screen, pilot, "#library-rag-query-input")
+        query.focus()
+        await pilot.resize_terminal(63, 30)
+        await _wait_for_condition(
+            pilot,
+            lambda: screen._library_emergency_restore_receipt is not None,
+            message="Search receipt was not captured",
+        )
+        receipt = screen._library_emergency_restore_receipt
+        assert receipt is not None
+        monkeypatch.setattr(screen, "get_widget_at", Mock(side_effect=NoWidget))
+
+        screen.post_message(
+            events.MouseDown(None, -1, -1, 0, 0, 1, False, False, False)
+        )
+        await pilot.pause()
+
+        assert screen._library_stage_interaction_generation == receipt.generation
+
+
+@pytest.mark.asyncio
+async def test_library_emergency_collection_mutation_syncs_return_truth() -> None:
+    app = _build_test_app()
+    _seed_conversations(app, _two_conversations(), notes=_two_notes())
+    host = LibraryProductionCSSHarness(app)
+    async with host.run_test(size=(63, 30)) as pilot:
+        screen = _active_library_screen(host)
+        await _wait_for_library_shell(screen, pilot)
+        await screen._select_library_rail_row(LIBRARY_ROW_BROWSE_COLLECTIONS)
+        bar = await _wait_for_selector(screen, pilot, "#library-emergency-return")
+        assert bar.disabled is False
+
+        assert screen._claim_library_collections_mutation() is True
+        assert bar.disabled is True
+        assert (
+            dict(screen._library_footer_shortcuts_for_current_state()).get("esc")
+            is None
+        )
+
+        screen._release_library_collections_mutation()
+        await pilot.pause()
+        assert bar.disabled is False
+        assert (
+            dict(screen._library_footer_shortcuts_for_current_state()).get("esc")
+            == "rail"
+        )
+
+
+@pytest.mark.asyncio
+async def test_library_emergency_real_collection_undo_releases_return_guard() -> None:
+    """The mounted Undo action immediately restores bar/footer/F1 truth."""
+
+    class RestoreService(StaticLibraryCollectionsService):
+        def restore_collection(self, collection_id: str) -> SimpleNamespace:
+            restored = SimpleNamespace(
+                collection_id=collection_id,
+                name="Restored Collection",
+                description="",
+                item_count=0,
+                source_authority="local",
+                sync_status="local-only",
+                created_at="2026-08-26T00:00:00Z",
+                updated_at="2026-08-26T00:00:00Z",
+            )
+            self.records = (*self.records, restored)
+            return restored
+
+    app = _build_test_app()
+    _seed_conversations(app, _two_conversations(), notes=_two_notes())
+    app.library_collections_service = RestoreService(())
+    host = LibraryProductionCSSHarness(app)
+    async with host.run_test(size=(63, 30)) as pilot:
+        screen = _active_library_screen(host)
+        await _wait_for_library_shell(screen, pilot)
+        await screen._select_library_rail_row(LIBRARY_ROW_BROWSE_COLLECTIONS)
+        await _wait_for_selector(screen, pilot, "#library-collections-panel")
+        screen._library_collection_delete_receipt = LibraryCollectionDeleteReceipt(
+            collection_id="restored-collection",
+            name="Restored Collection",
+        )
+        screen.refresh(recompose=True)
+        undo = await _wait_for_selector(
+            screen, pilot, "#library-collections-delete-undo"
+        )
+
+        undo.press()
+        await _wait_for_condition(
+            pilot,
+            lambda: screen._library_collection_delete_receipt is None,
+            message="Collection Undo did not complete",
+        )
+        await pilot.pause()
+
+        assert screen._library_collections_mutation_in_flight is False
+        assert (
+            screen.query_one(
+                "#library-emergency-return", LibraryEmergencyReturn
+            ).disabled
+            is False
+        )
+        assert (
+            dict(screen._library_footer_shortcuts_for_current_state()).get("esc")
+            == "rail"
+        )
+        assert screen.check_action("library_emergency_return", ()) is True
+
+
+@pytest.mark.asyncio
+async def test_library_emergency_selecting_another_collection_clears_return_guard() -> (
+    None
+):
+    """A real row selection cancels pending deletion and repaints recovery."""
+    records = (
+        {
+            "collection_id": "collection-1",
+            "name": "First",
+            "description": "",
+            "item_count": 0,
+            "source_authority": "local",
+            "sync_status": "local-only",
+            "updated_at": "2026-08-26T00:00:00Z",
+        },
+        {
+            "collection_id": "collection-2",
+            "name": "Second",
+            "description": "",
+            "item_count": 0,
+            "source_authority": "local",
+            "sync_status": "local-only",
+            "updated_at": "2026-08-26T00:00:00Z",
+        },
+    )
+    app = _build_test_app()
+    _seed_conversations(app, _two_conversations(), notes=_two_notes())
+    app.library_collections_service = StaticLibraryCollectionsService(records)
+    host = LibraryProductionCSSHarness(app)
+    async with host.run_test(size=(63, 30)) as pilot:
+        screen = _active_library_screen(host)
+        await _wait_for_library_shell(screen, pilot)
+        await screen._select_library_rail_row(LIBRARY_ROW_BROWSE_COLLECTIONS)
+        await _wait_for_selector(screen, pilot, "#library-delete-collection")
+        await pilot.click("#library-delete-collection")
+        await _wait_for_selector(screen, pilot, "#library-confirm-delete-collection")
+        bar = screen.query_one("#library-emergency-return", LibraryEmergencyReturn)
+        assert bar.disabled is True
+
+        screen.query_one("#library-collection-select-1", Button).press()
+        await _wait_for_condition(
+            pilot,
+            lambda: screen._library_collections_selected_id == "collection-2",
+            message="Second Collection row was not selected",
+        )
+        await pilot.pause()
+
+        assert screen._library_collection_pending_delete_id == ""
+        assert bar.disabled is False
+        assert (
+            dict(screen._library_footer_shortcuts_for_current_state()).get("esc")
+            == "rail"
+        )
+        assert screen.check_action("library_emergency_return", ()) is True
+
+
+@pytest.mark.asyncio
+async def test_library_emergency_ingest_consent_syncs_return_truth(
+    monkeypatch, tmp_path
+) -> None:
+    source = tmp_path / "warned.pdf"
+    source.write_text("%PDF-1.4 dummy")
+    preflight = PreflightResult(
+        type_groups={"pdf": [str(source)]},
+        warnings=[
+            {
+                "feature": "pdf_processing",
+                "label": "PDF processing",
+                "hint": "Install pdfplumber.",
+                "command": "pip install pdfplumber",
+            }
+        ],
+        errors=[],
+        total_size=0,
+        truncated=False,
+        total_files=1,
+    )
+    monkeypatch.setattr(
+        library_screen_module,
+        "analyze_path",
+        lambda path, scan_limit=1000, **_kwargs: preflight,
+    )
+    app = _build_test_app()
+    _seed_conversations(app, _two_conversations(), notes=_two_notes())
+    app.media_db = object()
+    host = LibraryProductionCSSHarness(app)
+    async with host.run_test(size=(63, 30)) as pilot:
+        screen = _active_library_screen(host)
+        await _wait_for_library_shell(screen, pilot)
+        await screen._select_library_rail_row(LIBRARY_ROW_INGEST_MEDIA)
+        path_input = await _wait_for_selector(screen, pilot, "#library-ingest-path")
+        path_input.value = str(source)
+        screen._trigger_library_ingest_preflight(str(source))
+        await _wait_for_condition(
+            pilot,
+            lambda: screen._library_ingest_form.preflight is preflight,
+            message="warned ingest pre-flight never landed",
+        )
+        await pilot.pause()
+        await pilot.pause()
+        path_input = await _wait_for_selector(screen, pilot, "#library-ingest-path")
+        assert isinstance(path_input, Input)
+        bar = screen.query_one("#library-emergency-return", LibraryEmergencyReturn)
+        assert bar.disabled is False
+
+        start = screen.query_one("#library-ingest-start", Button)
+        assert start.disabled is False, screen._build_library_ingest_state()
+        start.press()
+        await pilot.pause()
+        assert screen._library_ingest_start_consent is not None
+        assert bar.disabled is True
+        assert (
+            dict(screen._library_footer_shortcuts_for_current_state()).get("esc")
+            == "cancel"
+        )
+
+        await pilot.press("escape")
+        await pilot.pause()
+        assert screen._library_ingest_start_consent is None
+        assert bar.disabled is False
+        assert (
+            dict(screen._library_footer_shortcuts_for_current_state()).get("esc")
+            == "rail"
+        )
+
+
+@pytest.mark.asyncio
+async def test_library_notes_compact_interaction_defeats_an_older_receipt() -> None:
+    app = _build_test_app()
+    _seed_conversations(app, _two_conversations(), notes=_two_notes())
+    host = LibraryProductionCSSHarness(app)
+    async with host.run_test(size=(60, 20)) as pilot:
+        screen = _active_library_screen(host)
+        await _wait_for_library_shell(screen, pilot)
+        await _wait_for_library_notes_compact(screen, pilot, True)
+        await screen._select_library_rail_row(LIBRARY_ROW_BROWSE_NOTES)
+        notes_filter = await _wait_for_selector(screen, pilot, "#library-notes-filter")
+        notes_filter.focus()
+        stale = screen._capture_library_emergency_restore_receipt(
+            screen.query_one("#library-rail", LibraryRail),
+            screen.query_one("#library-canvas", Vertical),
+        )
+        await pilot.press("escape")
+        await _wait_for_condition(
+            pilot,
+            lambda: screen._library_notes_stage == "rail",
+            message="Compact Notes did not enter rail stage",
+        )
+        assert screen._library_stage_interaction_generation > stale.generation
+        focused = screen.focused
+        screen._restore_library_emergency_receipt(stale)
+        assert screen.focused is focused
+
+
+@pytest.mark.asyncio
+async def test_library_63_64_width_only_transition_does_no_non_layout_work(
+    monkeypatch,
+) -> None:
+    app = _build_test_app()
+    _seed_conversations(app, _two_conversations(), notes=_two_notes())
+    host = LibraryProductionCSSHarness(app)
+    async with host.run_test(size=(64, 30)) as pilot:
+        screen = _active_library_screen(host)
+        await _wait_for_library_shell(screen, pilot)
+        await screen._select_library_rail_row(LIBRARY_ROW_BROWSE_PROMPTS)
+        route = await _wait_for_selector(screen, pilot, "#library-prompts-canvas")
+        rail = screen.query_one("#library-rail", LibraryRail)
+        canvas = screen.query_one("#library-canvas", Vertical)
+        probes = {
+            "snapshot": Mock(wraps=screen._load_library_reader_preference_snapshot),
+            "raw": Mock(wraps=library_screen_module.read_cli_config_serialized),
+            "cached": Mock(wraps=library_screen_module.get_cli_setting),
+            "write": Mock(wraps=library_screen_module.save_setting_to_cli_config),
+            "batch": Mock(wraps=library_screen_module.save_settings_to_cli_config),
+            "persist": AsyncMock(wraps=screen._persist_library_reader_preference),
+            "service": AsyncMock(wraps=screen._run_library_service_call),
+            "worker": Mock(wraps=screen.run_worker),
+            "load": Mock(wraps=screen._request_library_prompts_browse),
+            "screen_refresh": Mock(wraps=screen.refresh),
+            "rail_refresh": Mock(wraps=rail.refresh),
+            "canvas_refresh": Mock(wraps=canvas.refresh),
+            "route_refresh": Mock(wraps=route.refresh),
+        }
+        for target, name, key in (
+            (screen, "_load_library_reader_preference_snapshot", "snapshot"),
+            (screen, "_persist_library_reader_preference", "persist"),
+            (screen, "_run_library_service_call", "service"),
+            (screen, "run_worker", "worker"),
+            (screen, "_request_library_prompts_browse", "load"),
+            (screen, "refresh", "screen_refresh"),
+            (rail, "refresh", "rail_refresh"),
+            (canvas, "refresh", "canvas_refresh"),
+            (route, "refresh", "route_refresh"),
+        ):
+            monkeypatch.setattr(target, name, probes[key])
+        for name, key in (
+            ("read_cli_config_serialized", "raw"),
+            ("get_cli_setting", "cached"),
+            ("save_setting_to_cli_config", "write"),
+            ("save_settings_to_cli_config", "batch"),
+        ):
+            monkeypatch.setattr(library_screen_module, name, probes[key])
+
+        await pilot.resize_terminal(63, 30)
+        await pilot.pause()
+        await pilot.resize_terminal(64, 30)
+        await pilot.pause()
+        for key in (
+            "snapshot",
+            "raw",
+            "cached",
+            "write",
+            "batch",
+            "persist",
+            "service",
+            "worker",
+            "load",
+        ):
+            assert probes[key].call_count == 0, key
+        for key in (
+            "screen_refresh",
+            "rail_refresh",
+            "canvas_refresh",
+            "route_refresh",
+        ):
+            recomposes = [
+                call
+                for call in probes[key].call_args_list
+                if call.kwargs.get("recompose") is True
+            ]
+            assert recomposes == [], key
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("guard_kind", ("cancel", "destructive", "conflict", "running"))
+async def test_library_emergency_real_guards_keep_specific_action_authoritative(
+    guard_kind: str, monkeypatch
+) -> None:
+    from tldw_chatbook.UI.Workbench.help import WorkbenchHelpPanel
+
+    app = _build_test_app()
+    _seed_conversations(app, _two_conversations(), notes=_two_notes())
+    host = LibraryProductionCSSHarness(app)
+    async with host.run_test(size=(63, 30)) as pilot:
+        screen = _active_library_screen(host)
+        await _wait_for_library_shell(screen, pilot)
+        if guard_kind in {"cancel", "running"}:
+            await screen._select_library_rail_row(LIBRARY_ROW_INGEST_EXPORT)
+            await _wait_for_selector(screen, pilot, "#library-export-name")
+            if guard_kind == "cancel":
+                screen.query_one("#library-export-quality", Button).press()
+                await _wait_for_selector(
+                    screen, pilot, "#library-export-quality-choices"
+                )
+            else:
+                monkeypatch.setattr(screen, "_start_library_export_worker", Mock())
+                screen._library_export_counts = {"notes": 1}
+                screen._library_export_form["destination"] = "/tmp/library-guard.zip"
+                screen.handle_library_export_submit(Button.Pressed(Button()))
+                await pilot.pause()
+        elif guard_kind == "destructive":
+            await screen._select_library_rail_row(LIBRARY_ROW_BROWSE_COLLECTIONS)
+            await _wait_for_selector(screen, pilot, "#library-collections-panel")
+            screen._library_collections_selected_id = "collection-guard"
+            await screen.arm_library_collection_delete(Button.Pressed(Button()))
+            guarded_focus = await _wait_for_selector(
+                screen, pilot, "#library-confirm-delete-collection"
+            )
+            guarded_focus.focus()
+            await pilot.pause()
+        else:
+            await screen._select_library_rail_row(LIBRARY_ROW_CREATE_PROMPT)
+            await _wait_for_selector(screen, pilot, "#library-prompt-name")
+            screen._enter_library_prompt_conflict(
+                name="Guarded",
+                author="",
+                details="",
+                system_prompt="",
+                user_prompt="",
+                keywords_text="",
+            )
+            await pilot.pause()
+
+        eligibility = screen._library_emergency_return_eligibility()
+        assert eligibility.visible and eligibility.guarded and not eligibility.enabled
+        assert screen.check_action("library_emergency_return", ()) is False
+        if guard_kind == "destructive":
+            assert screen.check_action("library_list_focus_rail", ()) is False
+        assert (
+            dict(screen._library_footer_shortcuts_for_current_state()).get("esc")
+            != "rail"
+        )
+        if guard_kind == "destructive":
+            assert (
+                dict(screen._library_footer_shortcuts_for_current_state()).get("esc")
+                is None
+            )
+        bar = screen.query_one("#library-emergency-return", LibraryEmergencyReturn)
+        assert bar.disabled is True
+        await pilot.click("#library-emergency-return")
+        await pilot.pause()
+        assert screen._library_emergency_stage == "canvas-only"
+        if guard_kind == "destructive":
+            screen.action_library_list_focus_rail()
+            await pilot.pause()
+            assert guarded_focus.has_focus
+
+        screen.action_show_workbench_help()
+        await pilot.pause()
+        panel = host.screen
+        assert isinstance(panel, WorkbenchHelpPanel)
+        assert dict(panel.state.shortcuts).get("esc") != "rail"
+        if guard_kind == "destructive":
+            assert dict(panel.state.shortcuts).get("esc") is None
+        await pilot.press("escape")
+        await pilot.pause()
+        if guard_kind == "destructive":
+            assert host.screen is screen
+            assert guarded_focus.has_focus
+        await pilot.press("escape")
+        await pilot.pause()
+        assert screen._library_emergency_stage == "canvas-only"
+        if guard_kind == "running":
+            assert screen._library_export_status == "Cancelling…"
+        elif guard_kind == "cancel":
+            assert screen._library_export_quality_choices_visible is False
+            assert bar.disabled is False
+            assert (
+                dict(screen._library_footer_shortcuts_for_current_state()).get("esc")
+                == "rail"
+            )
+        elif guard_kind == "destructive":
+            assert screen._library_collection_pending_delete_id == "collection-guard"
+            assert guarded_focus.display is True
+            assert guarded_focus.has_focus
+        else:
+            assert screen._library_prompt_conflict_snapshot is None
+
+
+@pytest.mark.asyncio
+async def test_library_emergency_modal_owns_escape_and_hides_rail_guidance() -> None:
+    app = _build_test_app()
+    _seed_conversations(app, _two_conversations(), notes=_two_notes())
+    host = LibraryProductionCSSHarness(app)
+    async with host.run_test(size=(63, 30)) as pilot:
+        screen = _active_library_screen(host)
+        await _wait_for_library_shell(screen, pilot)
+        await screen._select_library_rail_row(LIBRARY_ROW_INGEST_EXPORT)
+        await _wait_for_selector(screen, pilot, "#library-export-destination")
+
+        screen.query_one("#library-export-destination", Button).press()
+        await _wait_for_condition(
+            pilot,
+            lambda: isinstance(host.screen, FileSave),
+            message="Export destination dialog did not open",
+        )
+        dialog = host.screen
+        assert isinstance(dialog, FileSave)
+        eligibility = screen._library_emergency_return_eligibility()
+        assert eligibility.visible and eligibility.guarded and not eligibility.enabled
+        assert (
+            dict(screen._library_footer_shortcuts_for_current_state()).get("esc")
+            != "rail"
+        )
+        assert any(
+            binding.key == "escape" and binding.action == "request_safe_cancel"
+            for binding in dialog.BINDINGS
+        )
+
+        await pilot.press("escape")
+        await pilot.pause()
+        assert host.screen is screen
+        assert screen._library_emergency_stage == "canvas-only"
+        assert screen._library_selected_row_id == LIBRARY_ROW_INGEST_EXPORT
+
+
+@pytest.mark.asyncio
+async def test_library_route_matrix_keeps_default_ordinary_rail_edge_stable() -> None:
+    """Every ordinary destination uses one bounded declaration and rail edge."""
+    app = _build_test_app()
+    _seed_conversations(app, _two_conversations(), notes=_two_notes())
+    host = LibraryHarness(app)
+
+    async with host.run_test(size=LIBRARY_TEST_SIZE) as pilot:
+        screen = _active_library_screen(host)
+        await _wait_for_library_shell(screen, pilot)
+        landing_rail = screen.query_one("#library-rail")
+        landing_width = landing_rail.region.width
+        landing_edge = landing_rail.region.right
+        ordinary_rows = (
+            LIBRARY_ROW_BROWSE_PROMPTS,
+            LIBRARY_ROW_BROWSE_SKILLS,
+            LIBRARY_ROW_BROWSE_COLLECTIONS,
+            LIBRARY_ROW_BROWSE_SEARCH,
+            LIBRARY_ROW_INGEST_MEDIA,
+            LIBRARY_ROW_INGEST_EXPORT,
+            LIBRARY_ROW_CREATE_STUDY,
+            LIBRARY_ROW_CREATE_FLASHCARDS,
+            LIBRARY_ROW_CREATE_QUIZZES,
+        )
+        for row_id in ordinary_rows:
+            await screen._select_library_rail_row(row_id)
+            await pilot.pause()
+            await _wait_for_condition(
+                pilot,
+                lambda: screen.query_one("#library-rail").region.width > 0,
+                message=f"{row_id} did not settle as an ordinary route",
+            )
+            rail = screen.query_one("#library-rail", LibraryRail)
+            canvas = screen.query_one("#library-canvas")
+            assert str(rail.styles.width) == "3fr"
+            assert rail.styles.min_width.value == 24
+            assert rail.styles.max_width.value == 34
+            assert abs(rail.region.width - landing_width) <= 1
+            assert abs(rail.region.right - canvas.region.x) <= 1
+
+        for row_id, selector in (
+            (LIBRARY_ROW_BROWSE_MEDIA, "#library-media-reader-shell"),
+            (
+                LIBRARY_ROW_BROWSE_CONVERSATIONS,
+                "#library-conversations-reader-shell",
+            ),
+            (LIBRARY_ROW_BROWSE_NOTES, "#library-notes-reader-shell"),
+        ):
+            await screen._select_library_rail_row(row_id)
+            shell = await _wait_for_selector(screen, pilot, selector)
+            await _wait_for_condition(
+                pilot,
+                lambda: (
+                    shell.effective_layout.library_open
+                    and shell.library.region.width > 0
+                ),
+                message=f"{row_id} did not settle under its adaptive owner",
+            )
+            assert shell.library.display
+            assert abs(shell.library.region.width - landing_width) <= 1
+            assert abs(shell.library.region.right - landing_edge) <= 1
+            assert shell.library_grip.display
+            assert shell.library_grip.region.x == shell.library.region.right
+            assert shell.library_grip.region.right <= shell.region.right
+
+
+def _task6_regions_intersect(first, second) -> bool:
+    """Return whether two positive-area terminal regions overlap."""
+    return (
+        first.width > 0
+        and first.height > 0
+        and second.width > 0
+        and second.height > 0
+        and first.x < second.right
+        and second.x < first.right
+        and first.y < second.bottom
+        and second.y < first.bottom
+    )
+
+
+def _assert_task6_production_bounds(screen: LibraryScreen, *panes) -> None:
+    """Assert the production shell, panes, footer, and compositor stay bounded."""
+    shell = screen.query_one("#library-shell-grid")
+    footer = screen.query_one("#screen-footer-status")
+    visible = [pane for pane in panes if pane.display and pane.region.width > 0]
+
+    assert shell.region.right <= screen.region.right
+    assert footer.region.right <= screen.region.right
+    assert footer.region.bottom <= screen.region.bottom
+    assert not _task6_regions_intersect(shell.region, footer.region)
+    assert screen.query_one("#screen-content").virtual_size.width <= screen.region.width
+    assert shell.virtual_size.width <= shell.region.width
+    assert all(
+        strip.cell_length <= screen.region.width
+        for strip in screen._compositor.render_strips()
+    )
+    for pane in visible:
+        assert shell.content_region.contains_region(pane.region), (pane, pane.region)
+        assert pane.region.right <= screen.region.right
+        assert pane.region.bottom <= footer.region.y
+    for index, pane in enumerate(visible):
+        for sibling in visible[index + 1 :]:
+            assert not _task6_regions_intersect(pane.region, sibling.region), (
+                pane,
+                sibling,
+                pane.region,
+                sibling.region,
+            )
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("terminal_width", "expected_rail_width"),
+    ((100, 24), (80, 24), (60, None)),
+)
+async def test_library_production_width_matrix_graduated_startup_landing(
+    terminal_width: int,
+    expected_rail_width: int | None,
+) -> None:
+    """A restored full Library starts with the ordinary landing contract."""
+    app = _build_test_app()
+    app.app_config.setdefault("library", {}).setdefault("rail_state", {})[
+        "lifecycle"
+    ] = "graduated"
+    _seed_conversations(app, _two_conversations(), notes=_two_notes())
+    host = LibraryProductionCSSHarness(app)
+
+    async with host.run_test(size=(terminal_width, 48)) as pilot:
+        screen = _active_library_screen(host)
+        await _wait_for_library_shell(screen, pilot)
+        shell = screen.query_one("#library-shell-grid")
+        rail = screen.query_one("#library-rail", LibraryRail)
+        canvas = screen.query_one("#library-canvas")
+
+        assert screen._library_lifecycle is LibraryLifecycle.GRADUATED
+        assert screen._library_selected_row_id == ""
+        assert shell.content_region.width == terminal_width
+        if expected_rail_width is None:
+            assert rail.display and not canvas.display
+            assert rail.region.width == terminal_width
+        else:
+            assert rail.display and canvas.display
+            assert rail.region.width == expected_rail_width
+            assert canvas.region.width == terminal_width - expected_rail_width
+            if terminal_width == 80:
+                screen.query_one("#library-rail-collapse", Button).press()
+                await pilot.pause()
+                assert not rail.display and canvas.display
+                rail_open = screen.query_one("#library-rail-open", Button)
+                assert rail_open.display
+                rail_open.press()
+                await pilot.pause()
+                assert rail.display and canvas.display
+                assert rail.region.width == expected_rail_width
+        _assert_task6_production_bounds(screen, rail, canvas)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("terminal_width", "expected_content_width", "expected_rail_width"),
+    (
+        (235, 231, 34),
+        (170, 166, 31),
+        (120, 116, 24),
+        (100, 100, 24),
+        (80, 80, 24),
+        (60, 60, None),
+    ),
+)
+async def test_library_production_width_matrix_ordinary(
+    terminal_width: int,
+    expected_content_width: int,
+    expected_rail_width: int | None,
+) -> None:
+    """The ordinary rail follows the approved rendered production matrix."""
+    app = _build_test_app()
+    _seed_conversations(app, _two_conversations(), notes=_two_notes())
+    host = LibraryProductionCSSHarness(app)
+
+    async with host.run_test(size=(terminal_width, 48)) as pilot:
+        screen = _active_library_screen(host)
+        await _wait_for_library_shell(screen, pilot)
+        await screen._select_library_rail_row(LIBRARY_ROW_BROWSE_PROMPTS)
+        await _wait_for_selector(screen, pilot, "#library-prompts-canvas")
+        await pilot.pause()
+        shell = screen.query_one("#library-shell-grid")
+        rail = screen.query_one("#library-rail", LibraryRail)
+        canvas = screen.query_one("#library-canvas")
+
+        assert shell.content_region.width == expected_content_width
+        if terminal_width < 120:
+            assert shell.content_region == shell.region
+        if terminal_width < 64:
+            assert not rail.display
+            assert canvas.display
+            assert canvas.region.width == shell.content_region.width
+        else:
+            assert rail.display and canvas.display
+            assert rail.region.width == expected_rail_width
+        _assert_task6_production_bounds(screen, rail, canvas)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    (
+        "terminal_width",
+        "expected_content_width",
+        "expected_library_width",
+        "expected_library_open",
+        "expected_items_open",
+    ),
+    (
+        (235, 231, 34, True, True),
+        (170, 166, 31, True, True),
+        (120, 116, 0, False, True),
+        (100, 100, 0, False, True),
+        (80, 80, 0, False, False),
+        (60, 60, 0, False, False),
+    ),
+)
+async def test_library_production_width_matrix_adaptive_work_owned(
+    terminal_width: int,
+    expected_content_width: int,
+    expected_library_width: int,
+    expected_library_open: bool,
+    expected_items_open: bool,
+) -> None:
+    """A work-owned adaptive Notes reader follows the approved matrix."""
+    app = _build_test_app()
+    _seed_conversations(app, _two_conversations(), notes=_two_notes())
+    host = LibraryProductionCSSHarness(app)
+
+    async with host.run_test(size=(terminal_width, 48)) as pilot:
+        screen = _active_library_screen(host)
+        await _wait_for_library_shell(screen, pilot)
+        await _task10_open_note_editor_with_keyboard(screen, pilot)
+        await _wait_for_selector(screen, pilot, "#library-note-body")
+        screen._sync_library_notes_reader_layout_from_shell()
+        await pilot.pause()
+
+        outer = screen.query_one("#library-shell-grid")
+        reader = screen.query_one("#library-notes-reader-shell")
+        layout = reader.effective_layout
+        assert outer.content_region.width == expected_content_width
+        if terminal_width < 120:
+            assert outer.content_region == outer.region
+        assert layout.library_open is expected_library_open
+        assert layout.items_open is expected_items_open
+        assert layout.library_width == expected_library_width
+        assert reader.library.display is expected_library_open
+        assert reader.items.display is expected_items_open
+        assert reader.work.display is True
+        if expected_library_open:
+            assert reader.library.region.width == expected_library_width
+        _assert_task6_production_bounds(
+            screen,
+            reader.library,
+            reader.library_grip,
+            reader.items,
+            reader.items_grip,
+            reader.work,
+        )
+
+
+@pytest.mark.parametrize(
+    ("raw_width", "expected_width"),
+    ((1, 24), (99, 48), ("wide", 31), (None, 31)),
+)
+def test_library_production_width_matrix_normalizes_persisted_custom_widths(
+    raw_width: object,
+    expected_width: int,
+) -> None:
+    """The screen's real snapshot path clamps or defaults untrusted widths."""
+    app = _build_test_app()
+    reader: dict[str, object] = {"custom_widths_enabled": True}
+    if raw_width is not None:
+        reader["library_width"] = raw_width
+    app.app_config.setdefault("library", {})["reader"] = reader
+    screen = LibraryScreen(app)
+
+    shared, media, conversations, notes = (
+        screen._load_library_reader_preference_snapshot()
+    )
+
+    assert shared.library_width == expected_width
+    assert {
+        preferences.library_width for preferences in (media, conversations, notes)
+    } == {expected_width}
+    assert all(
+        preferences.custom_widths_enabled
+        for preferences in (shared, media, conversations, notes)
+    )
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    (
+        "terminal_width",
+        "expected_content_width",
+        "neutral_open",
+        "neutral_items_width",
+    ),
+    (
+        (235, 231, (True, True), 40),
+        (170, 166, (True, True), 40),
+        (120, 116, (False, True), 56),
+        (100, 100, (False, True), 42),
+        (80, 80, (False, False), 0),
+        (60, 60, (False, False), 0),
+    ),
+)
+@pytest.mark.parametrize("saved_width", (24, 34, 35, 48))
+async def test_library_production_width_matrix_custom_preferences(
+    terminal_width: int,
+    expected_content_width: int,
+    neutral_open: tuple[bool, bool],
+    neutral_items_width: int,
+    saved_width: int,
+    monkeypatch,
+) -> None:
+    """Each custom width has exact ordinary, neutral, and priority geometry."""
+    app = _build_test_app()
+    reader_config = {
+        "custom_widths_enabled": True,
+        "library_width": saved_width,
+    }
+    app.app_config.setdefault("library", {})["reader"] = reader_config
+    _seed_conversations(app, _two_conversations(), notes=_two_notes())
+    host = LibraryProductionCSSHarness(app)
+
+    async with host.run_test(size=(terminal_width, 48)) as pilot:
+        screen = _active_library_screen(host)
+        await _wait_for_library_shell(screen, pilot)
+        persistence = AsyncMock(wraps=screen._persist_library_reader_preference)
+        monkeypatch.setattr(screen, "_persist_library_reader_preference", persistence)
+        await screen._select_library_rail_row(LIBRARY_ROW_BROWSE_PROMPTS)
+        await _wait_for_selector(screen, pilot, "#library-prompts-canvas")
+        shell = screen.query_one("#library-shell-grid")
+        assert shell.content_region.width == expected_content_width
+
+        assert screen._library_reader_shared_preferences.library_width == saved_width
+        rail = screen.query_one("#library-rail", LibraryRail)
+        canvas = screen.query_one("#library-canvas")
+        if expected_content_width < 64:
+            assert not rail.display
+            assert canvas.display
+            assert canvas.region.width == expected_content_width
+        else:
+            expected = max(24, min(saved_width, expected_content_width - 40))
+            assert rail.region.width == expected
+            assert canvas.region.width >= 40
+
+        await screen._select_library_rail_row(LIBRARY_ROW_BROWSE_NOTES)
+        await _wait_for_selector(screen, pilot, "#library-notes-filter")
+        screen.query_one("#library-notes-row-0", Button).press()
+        await _wait_for_selector(screen, pilot, "#library-note-body")
+        adaptive = screen.query_one("#library-notes-reader-shell")
+        screen._library_notes_reader_layout = (
+            library_screen_module.resolve_adaptive_reader_layout(
+                0,
+                screen._library_notes_reader_preferences,
+                library_screen_module.LIBRARY_NOTES_READER_PROFILE,
+            )
+        )
+        screen._sync_library_notes_reader_layout_from_shell()
+        await pilot.pause()
+
+        expected_library_open, expected_items_open = neutral_open
+        expected_library_width = saved_width if expected_library_open else 0
+        expected_work_width = (
+            expected_content_width - 10 - expected_library_width - neutral_items_width
+        )
+        neutral = adaptive.effective_layout
+        assert (neutral.library_open, neutral.items_open) == neutral_open
+        assert neutral.library_width == expected_library_width
+        assert neutral.items_width == neutral_items_width
+        assert neutral.reader_width == expected_work_width
+        assert adaptive.library.display is expected_library_open
+        assert adaptive.items.display is expected_items_open
+        assert adaptive.work.display
+        if expected_library_open:
+            assert adaptive.library.region.width == expected_library_width
+        if expected_items_open:
+            assert adaptive.items.region.width == neutral_items_width
+        assert adaptive.work.region.width == expected_work_width
+
+        screen._sync_library_notes_reader_layout_from_shell(priority="library")
+        await pilot.pause()
+        priority = adaptive.effective_layout
+        if expected_content_width >= saved_width + 98:
+            priority_open = (True, True)
+            priority_library_width = saved_width
+            priority_items_width = 40
+            expected_priority = None
+        else:
+            priority_open = (True, False)
+            priority_library_width = (
+                saved_width if expected_content_width >= saved_width + 58 else 24
+            )
+            priority_items_width = 0
+            expected_priority = "library"
+        priority_work_width = (
+            expected_content_width - 10 - priority_library_width - priority_items_width
+        )
+        assert (priority.library_open, priority.items_open) == priority_open
+        assert priority.library_width == priority_library_width
+        assert priority.items_width == priority_items_width
+        assert priority.reader_width == priority_work_width
+        assert priority.priority_pane == expected_priority
+        assert adaptive.library.display
+        assert adaptive.library.region.width == priority_library_width
+        assert adaptive.items.display is priority_open[1]
+        if priority_open[1]:
+            assert adaptive.items.region.width == priority_items_width
+        assert adaptive.work.display
+        assert adaptive.work.region.width == priority_work_width
+        assert screen._library_reader_shared_preferences.library_width == saved_width
+        assert screen._library_notes_reader_preferences.library_width == saved_width
+        _assert_task6_production_bounds(
+            screen,
+            adaptive.library,
+            adaptive.library_grip,
+            adaptive.items,
+            adaptive.items_grip,
+            adaptive.work,
+        )
+
+        persistence.assert_not_called()
+
+
+def _task6_install_resize_probes(screen: LibraryScreen, patcher, load_name: str):
+    """Install zero-work resize probes after a route has fully settled."""
+    probes = {
+        "recompose": AsyncMock(wraps=screen.recompose),
+        "snapshot": Mock(wraps=screen._load_library_reader_preference_snapshot),
+        "raw": Mock(wraps=library_screen_module.read_cli_config_serialized),
+        "cached": Mock(wraps=library_screen_module.get_cli_setting),
+        "write": Mock(wraps=library_screen_module.save_setting_to_cli_config),
+        "batch": Mock(wraps=library_screen_module.save_settings_to_cli_config),
+        "persist": AsyncMock(wraps=screen._persist_library_reader_preference),
+        "service": AsyncMock(wraps=screen._run_library_service_call),
+        "worker": Mock(wraps=screen.run_worker),
+        "load": Mock(wraps=getattr(screen, load_name)),
+    }
+    for target, name, key in (
+        (screen, "recompose", "recompose"),
+        (screen, "_load_library_reader_preference_snapshot", "snapshot"),
+        (screen, "_persist_library_reader_preference", "persist"),
+        (screen, "_run_library_service_call", "service"),
+        (screen, "run_worker", "worker"),
+        (screen, load_name, "load"),
+        (library_screen_module, "read_cli_config_serialized", "raw"),
+        (library_screen_module, "get_cli_setting", "cached"),
+        (library_screen_module, "save_setting_to_cli_config", "write"),
+        (library_screen_module, "save_settings_to_cli_config", "batch"),
+    ):
+        patcher.setattr(target, name, probes[key])
+    return probes
+
+
+def _task6_assert_zero_resize_work(probes) -> None:
+    """Assert geometry-only resize never crossed a non-layout seam."""
+    for key, probe in probes.items():
+        assert probe.call_count == 0, key
+
+
+def _task6_track_style_writes(patcher, *widgets) -> list[str]:
+    """Record width/display style mutations for the supplied widgets."""
+    target_styles = {id(widget.styles) for widget in widgets}
+    writes: list[str] = []
+    original_setattr = StylesBase.__setattr__
+    original_clear_rule = StylesBase.clear_rule
+
+    def track_assignment(styles, name, value):
+        if id(styles) in target_styles and name in {
+            "display",
+            "width",
+            "min_width",
+            "max_width",
+        }:
+            writes.append(name)
+        original_setattr(styles, name, value)
+
+    def track_clear_rule(styles, rule_name):
+        if id(styles) in target_styles and rule_name in {
+            "width",
+            "min_width",
+            "max_width",
+        }:
+            writes.append(rule_name)
+        return original_clear_rule(styles, rule_name)
+
+    patcher.setattr(StylesBase, "__setattr__", track_assignment)
+    patcher.setattr(StylesBase, "clear_rule", track_clear_rule)
+    return writes
+
+
+@pytest.mark.parametrize(
+    "sync_name",
+    (
+        "_sync_library_media_reader_layout_from_shell",
+        "_sync_library_conversation_reader_layout_from_shell",
+        "_sync_library_notes_reader_layout_from_shell",
+    ),
+)
+def test_library_resize_geometry_rejects_transient_without_polling(
+    sync_name: str,
+    monkeypatch,
+) -> None:
+    """Every reader rejects a transient without scheduling a polling loop."""
+    screen = LibraryScreen(_build_test_app())
+    shell = SimpleNamespace(region=SimpleNamespace(width=96))
+    monkeypatch.setattr(screen, "query_one", Mock(return_value=shell))
+    monkeypatch.setattr(
+        screen,
+        "_library_adaptive_reader_allocation_is_current",
+        Mock(return_value=False),
+    )
+    retry = Mock()
+    monkeypatch.setattr(screen, "call_after_refresh", retry)
+
+    getattr(screen, sync_name)()
+
+    retry.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_library_resize_geometry_high_frequency_does_no_non_layout_work(
+    monkeypatch,
+) -> None:
+    """Ordinary custom and adaptive state transitions stay geometry-only."""
+    app = _build_test_app()
+    app.app_config.setdefault("library", {})["reader"] = {
+        "custom_widths_enabled": True,
+        "library_width": 48,
+    }
+    _seed_conversations(app, _two_conversations(), notes=_two_notes())
+    host = LibraryProductionCSSHarness(app)
+
+    async with host.run_test(size=(235, 48)) as pilot:
+        screen = _active_library_screen(host)
+        await _wait_for_library_shell(screen, pilot)
+        await screen._select_library_rail_row(LIBRARY_ROW_BROWSE_PROMPTS)
+        await _wait_for_selector(screen, pilot, "#library-prompts-canvas")
+        await screen.workers.wait_for_complete()
+        await pilot.pause()
+        rail = screen.query_one("#library-rail", LibraryRail)
+        canvas = screen.query_one("#library-canvas")
+        with monkeypatch.context() as resize_patches:
+            probes = _task6_install_resize_probes(
+                screen, resize_patches, "_request_library_prompts_browse"
+            )
+            for width, expected_rail in (
+                (88, 48),
+                (87, 47),
+                (80, 40),
+                (64, 24),
+                (63, None),
+                (60, None),
+                (64, 24),
+                (80, 40),
+                (88, 48),
+                (235, 48),
+            ):
+                await pilot.resize_terminal(width, 48)
+                await pilot.pause()
+                if expected_rail is None:
+                    assert rail.display is not canvas.display
+                    active_stage = rail if rail.display else canvas
+                    assert active_stage.region.width == width
+                else:
+                    assert rail.display and canvas.display
+                    assert rail.region.width == expected_rail
+            _task6_assert_zero_resize_work(probes)
+            style_writes = _task6_track_style_writes(resize_patches, rail)
+            screen._sync_library_ordinary_rail_width_contract()
+            screen._sync_library_ordinary_rail_width_contract()
+            assert style_writes == []
+        assert app.app_config["library"]["reader"]["library_width"] == 48
+
+    adaptive_app = _build_test_app()
+    adaptive_app.app_config.setdefault("library", {})["reader"] = {
+        "custom_widths_enabled": True,
+        "library_width": 48,
+    }
+    _seed_conversations(adaptive_app, _two_conversations(), notes=_two_notes())
+    adaptive_host = LibraryProductionCSSHarness(adaptive_app)
+
+    async with adaptive_host.run_test(size=(235, 48)) as pilot:
+        screen = _active_library_screen(adaptive_host)
+        await _wait_for_library_shell(screen, pilot)
+        await _task10_open_note_editor_with_keyboard(screen, pilot)
+        await _wait_for_selector(screen, pilot, "#library-note-body")
+        await screen.workers.wait_for_complete()
+        await pilot.pause()
+        reader = screen.query_one("#library-notes-reader-shell")
+        with monkeypatch.context() as transient:
+            transient.setattr(
+                screen,
+                "_library_adaptive_reader_allocation_is_current",
+                Mock(return_value=False),
+            )
+            retry = Mock()
+            transient.setattr(screen, "call_after_refresh", retry)
+            screen._sync_library_notes_reader_layout_from_shell()
+            retry.assert_not_called()
+        phases = (
+            (170, (True, True, 48, 40, 68)),
+            (149, (False, True, 0, 56, 79)),
+            (153, (False, True, 0, 56, 83)),
+            (154, (True, True, 48, 40, 52)),
+            (120, (False, True, 0, 56, 50)),
+            (100, (False, True, 0, 42, 48)),
+            (80, (False, False, 0, 0, 70)),
+            (60, (False, False, 0, 0, 50)),
+            (64, (False, False, 0, 0, 54)),
+            (101, (False, False, 0, 0, 91)),
+            (102, (False, True, 0, 44, 48)),
+            (153, (False, True, 0, 56, 83)),
+            (154, (True, True, 48, 40, 52)),
+            (170, (True, True, 48, 40, 68)),
+        )
+        with monkeypatch.context() as resize_patches:
+            probes = _task6_install_resize_probes(
+                screen, resize_patches, "_request_library_notes_tree_refresh"
+            )
+            for width, expected in phases:
+                await pilot.resize_terminal(width, 48)
+                await _wait_for_condition(
+                    pilot,
+                    lambda: (
+                        (
+                            (layout := reader.effective_layout).library_open,
+                            layout.items_open,
+                            layout.library_width,
+                            layout.items_width,
+                            layout.reader_width,
+                        )
+                        == expected
+                    ),
+                    message=lambda: (
+                        f"adaptive resize {width} did not settle: "
+                        f"{reader.effective_layout!r}"
+                    ),
+                )
+                layout = reader.effective_layout
+                assert (
+                    layout.library_open,
+                    layout.items_open,
+                    layout.library_width,
+                    layout.items_width,
+                    layout.reader_width,
+                ) == expected
+            _task6_assert_zero_resize_work(probes)
+            style_writes = _task6_track_style_writes(
+                resize_patches,
+                reader.library,
+                reader.items,
+                reader.work,
+            )
+            reader.sync_layout(reader.effective_layout)
+            reader.sync_layout(reader.effective_layout)
+            assert style_writes == []
+        assert adaptive_app.app_config["library"]["reader"]["library_width"] == 48
+
+
+@pytest.mark.asyncio
 async def test_landing_hub_shows_the_error_instead_of_false_zero_counts():
     """PR #1318 review: a failed snapshot must not render
     'Notes 0 · Media 0 · Conversations 0' in the hub -- false zeros read
@@ -4239,21 +6700,13 @@ async def test_rail_counts_never_clip_and_titles_shrink_first_at_100x30():
             for banned in ("Conversa...", "Flash...", "Collect..."):
                 assert banned not in first_line, (row.id, first_line)
 
-        # ...and the count survives on the longest-titled row. task-3315
-        # re-pin (pre-arc dev churn: task-2858's rail width fixes,
-        # a3591b503, merged 2026-08-07 in PR #1420 -- reproduced failing at
-        # dev base ebeae1440 with the ingest arc absent): the rail is now
-        # wide enough at 100x30 that the FULL "Conversations (2)" fits, so
-        # the short_title ("Chats") fallback this test used to pin never
-        # engages at this size. The durable invariants stay pinned: the
-        # count is intact, nothing ellipsizes, and the fit loop above
-        # still forbids any clipped row.
+        # ...and the count survives on the longest-titled row. The bounded
+        # fractional rail deliberately uses the semantic short title at this
+        # terminal width rather than widening the entire sidebar.
         conv = screen.query_one("#library-row-browse-conversations", Button)
         conv_line = conv.label.plain.split("\n")[0]
         assert conv_line.endswith("(2)"), f"count clipped: {conv_line!r}"
-        assert "Conversations" in conv_line, (
-            f"full title now fits at 100x30; got: {conv_line!r}"
-        )
+        assert "Chats" in conv_line, f"semantic short title missing: {conv_line!r}"
         assert "..." not in conv_line and "…" not in conv_line, (
             f"title fits outright -- no ellipsis allowed: {conv_line!r}"
         )
@@ -14816,7 +17269,18 @@ async def test_library_shell_prompts_rail_row_shows_exact_count():
         # TASK-19602: with the pager always composed (3aef9bcd1 pagination)
         # the service-failure copy renders in the pager status line -- the
         # legacy pager-None "#library-prompts-error" node no longer mounts.
-        error = await _wait_for_selector(screen, pilot, "#library-prompts-page-status")
+        await _wait_for_selector(screen, pilot, "#library-prompts-page-status")
+        await _wait_for_condition(
+            pilot,
+            lambda: (
+                "unavailable"
+                in str(
+                    screen.query_one("#library-prompts-page-status", Static).renderable
+                )
+            ),
+            message="Prompts service failure did not replace the loading status.",
+        )
+        error = screen.query_one("#library-prompts-page-status", Static)
 
         assert screen._library_selected_row_id == LIBRARY_ROW_BROWSE_PROMPTS
         assert screen.query_one("#library-prompts-canvas")
@@ -23228,7 +25692,7 @@ def test_library_landing_projection_and_retained_sync_add_no_source_io() -> None
 
 
 @pytest.mark.asyncio
-async def test_library_returning_landing_geometry_keyboard_and_compact_focus_transfer() -> (
+async def test_library_returning_landing_geometry_keyboard_and_compact_focus_stability() -> (
     None
 ):
     app = _build_test_app()
@@ -23320,13 +25784,12 @@ async def test_library_returning_landing_geometry_keyboard_and_compact_focus_tra
             pilot,
             lambda: (
                 screen._library_notes_compact
-                and screen.focused is not None
-                and screen.focused.id == f"library-row-{LIBRARY_ROW_BROWSE_MEDIA}"
+                and continue_button.has_focus
+                and screen.query_one("#library-rail").display
+                and screen.query_one("#library-canvas").display
             ),
-            message="Compact transition did not transfer Continue to Media rail.",
+            message="Compact landing did not retain its two-pane focus contract.",
         )
-        assert screen.query_one("#library-rail").display is True
-        assert screen.query_one("#library-canvas").display is False
         assert screen._library_continue_receipt == receipt
         assert screen._library_landing_attention_action() is not None
 

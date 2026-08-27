@@ -1102,6 +1102,29 @@ ConsoleRunLogModal {
     background: $ds-surface-panel;
 }
 
+/* Adaptive readers keep the ordinary narrow shell's edge-to-edge canvas
+   without inheriting the legacy library-notes-compact descendant rules. */
+#library-shell-grid.library-adaptive-compact {
+    padding: 0;
+    margin: 0;
+    border: none;
+}
+
+#library-shell-grid.library-adaptive-compact #library-canvas {
+    padding: 0;
+    margin: 0;
+    border: none;
+    overflow-x: hidden;
+    overflow-y: hidden;
+}
+
+#library-emergency-return {
+    width: 100%;
+    height: 1;
+    min-height: 1;
+    border: none;
+}
+
 .library-adaptive-reader-shell {
     width: 1fr;
     min-width: 0;

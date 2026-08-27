@@ -507,6 +507,24 @@ def test_console_inspector_handle_full_height_rule_reaches_generated_bundle() ->
         assert "background: $ds-surface-panel;" in inspector_handle
 
 
+def test_library_modular_css_compact_shell_and_emergency_return_reach_bundle() -> None:
+    """Production CSS owns the narrow box model and its visible return seam."""
+    source = _AGENTIC_SOURCE.read_text(encoding="utf-8")
+    bundle = _BUNDLED_STYLESHEET.read_text(encoding="utf-8")
+
+    for css in (source, bundle):
+        compact = _declarations(css, "#library-shell-grid.library-notes-compact")
+        assert compact["padding"] == "0"
+        assert compact["margin"] == "0"
+        assert compact["border"] == "none"
+
+        emergency_return = _declarations(css, "#library-emergency-return")
+        assert emergency_return["width"] == "100%"
+        assert emergency_return["height"] == "1"
+        assert emergency_return["min-height"] == "1"
+        assert emergency_return["border"] == "none"
+
+
 def test_console_edge_ownership_rules_reach_generated_bundle() -> None:
     """Source and bundle retain the edge-native Console shell contract."""
     source = _AGENTIC_SOURCE.read_text(encoding="utf-8")

@@ -32,6 +32,7 @@ from Tests.UI.test_destination_shells import (
     _wait_for_selector,
 )
 import tldw_chatbook.UI.Screens.settings_screen as settings_screen_module
+import tldw_chatbook.config as config_module
 from tldw_chatbook.Chat import provider_setup_persistence as provider_persistence_module
 from tldw_chatbook.config import ConfigMutationResult
 from tldw_chatbook.Utils import input_validation as input_validation_module
@@ -784,6 +785,7 @@ def test_settings_ownership_records_cover_categories_and_runtime_boundaries():
     assert records_by_category[
         SettingsCategoryId.CONSOLE_BEHAVIOR
     ].owns_config_sections == (
+        "console.rail_layout_scope",
         "console.stack_collapsed_rail_labels",
         "console.collapse_large_pastes",
         "console.paste_collapse_threshold",
@@ -1334,9 +1336,7 @@ async def test_settings_appearance_renders_guided_defaults_and_validates(monkeyp
         # Smooth scrolling renders as a label-cycling toggle Button (not a
         # Checkbox) — the label comes from _appearance_bool_label.
         assert (
-            str(
-                screen.query_one("#settings-appearance-smooth-scrolling", Button).label
-            )
+            str(screen.query_one("#settings-appearance-smooth-scrolling", Button).label)
             == "Enabled"
         )
         assert screen.query_one("#settings-save-category", Button).disabled is True
@@ -1382,6 +1382,74 @@ async def test_settings_appearance_renders_guided_defaults_and_validates(monkeyp
     assert saved[-1]["web_server"]["font_size"] == 14
     assert saved[-1]["appearance"]["density"] == "normal"
     assert saved[-1]["appearance"]["console_transcript_style"] == "immersive_rp"
+
+
+@pytest.mark.asyncio
+async def test_settings_appearance_reads_ascii_glyphs_from_fresh_config(
+    monkeypatch, tmp_path
+):
+    config_path = tmp_path / "config.toml"
+    original = "[appearance]\nascii_glyphs = true\n"
+    config_path.write_text(original, encoding="utf-8")
+    monkeypatch.setenv("TLDW_CONFIG_PATH", str(config_path))
+
+    app = _build_test_app()
+
+    assert config_module.get_cli_setting("appearance", "ascii_glyphs", False) is True
+    assert app.app_config.get("appearance", {}).get("ascii_glyphs") is True
+
+    host = StyledSettingsDestinationHarness(app, "settings")
+    async with host.run_test(size=(190, 55)) as pilot:
+        await _open_settings_category(pilot, "#settings-category-appearance")
+        screen = _active_destination_screen(host)
+        toggle = screen.query_one("#settings-appearance-ascii-glyphs", Button)
+
+        assert str(toggle.label) == "Enabled"
+        assert screen.query_one("#settings-save-category", Button).disabled is True
+        assert config_path.read_text(encoding="utf-8") == original
+
+        detail = screen.query_one("#settings-detail-pane-body", VerticalScroll)
+        detail.scroll_to_widget(toggle, animate=False)
+        await pilot.pause()
+        assert await pilot.click(toggle, offset=(toggle.region.width // 2, 0))
+        assert str(toggle.label) == "Disabled"
+
+        await pilot.click("#settings-save-category")
+        await _wait_for_settings_text(screen, pilot, "Appearance defaults saved.")
+
+    assert config_module.get_cli_setting("appearance", "ascii_glyphs", True) is False
+    assert (
+        config_module.load_settings(force_reload=True)["appearance"]["ascii_glyphs"]
+        is False
+    )
+
+
+@pytest.mark.asyncio
+async def test_settings_appearance_defaults_ascii_glyphs_off_in_fresh_config(
+    monkeypatch, tmp_path
+):
+    config_path = tmp_path / "config.toml"
+    original = ""
+    config_path.write_text(original, encoding="utf-8")
+    monkeypatch.setenv("TLDW_CONFIG_PATH", str(config_path))
+
+    app = _build_test_app()
+
+    assert config_module.get_cli_setting("appearance", "ascii_glyphs", True) is False
+    assert app.app_config["appearance"]["ascii_glyphs"] is False
+
+    host = StyledSettingsDestinationHarness(app, "settings")
+    async with host.run_test(size=(190, 55)) as pilot:
+        await _open_settings_category(pilot, "#settings-category-appearance")
+        screen = _active_destination_screen(host)
+
+        assert (
+            str(screen.query_one("#settings-appearance-ascii-glyphs", Button).label)
+            == "Disabled"
+        )
+        assert screen.query_one("#settings-save-category", Button).disabled is True
+
+    assert config_path.read_text(encoding="utf-8") == original
 
 
 @pytest.mark.asyncio
@@ -1475,7 +1543,7 @@ async def test_settings_appearance_library_reader_controls_round_trip_all_destin
                 "#settings-appearance-library-media-items-open", Button
             ).label
         )
-        assert "Custom widths" in str(
+        assert "Custom width" in str(
             screen.query_one(
                 "#settings-appearance-library-media-custom-widths", Button
             ).label
@@ -1514,9 +1582,26 @@ async def test_settings_appearance_library_reader_controls_round_trip_all_destin
             f"{label}: {value}"
             for label, value in screen._appearance_field_guidance_rows()
         )
-        assert "Shared Library reader geometry" in guide_text
+        assert "Shared Library rail" in guide_text
         assert "library.reader" in guide_text
         assert "library.<destination>_reader" in guide_text
+        visible = _visible_text(screen)
+        assert "Library rail" in visible
+        assert "Library pane" not in visible
+        search_labels = dict(
+            settings_screen_module.FIELD_SEARCH_INDEX[SettingsCategoryId.APPEARANCE]
+        )
+        assert (
+            search_labels["settings-appearance-library-media-library-open"]
+            == "Shared Library rail"
+        )
+        assert "Automatic: 3:13, bounded to 24–34 cells." in visible
+        assert "Custom: preferred 24–48 cells" in visible
+        assert "keep 40 content cells" in visible
+        assert "Adaptive readers may collapse panes" in visible
+        assert "below 64 columns" in visible
+        assert "‹ Library" in visible
+        assert "< Library" in visible
 
         await pilot.click("#settings-appearance-library-media-reset")
         await pilot.pause()
@@ -1526,7 +1611,7 @@ async def test_settings_appearance_library_reader_controls_round_trip_all_destin
                 "#settings-appearance-library-media-library-open", Button
             ).label
         )
-        assert "Fixed default widths" in str(
+        assert "Automatic width" in str(
             screen.query_one(
                 "#settings-appearance-library-media-custom-widths", Button
             ).label
@@ -1547,7 +1632,7 @@ async def test_settings_appearance_library_reader_controls_round_trip_all_destin
             "future_shared": "keep",
             "library_open": True,
             "custom_widths_enabled": False,
-            "library_width": 28,
+            "library_width": 31,
         },
         "media_reader": {
             "items_open": True,
@@ -1563,6 +1648,89 @@ async def test_settings_appearance_library_reader_controls_round_trip_all_destin
         },
     }
     assert app._library_reader_layout_refresh_generation == 1
+
+
+@pytest.mark.asyncio
+async def test_settings_keeps_dormant_library_width_through_resize_mode_and_generation(
+    monkeypatch,
+):
+    app = _build_test_app()
+    app.app_config["library"] = {
+        "reader": {
+            "library_open": True,
+            "custom_widths_enabled": False,
+            "library_width": 48,
+        }
+    }
+    saved = []
+
+    class FakeAdapter:
+        def save_sections(self, section_values):
+            saved.append(section_values)
+            return True
+
+    monkeypatch.setattr(settings_screen_module, "SettingsConfigAdapter", FakeAdapter)
+    host = StyledSettingsDestinationHarness(app, "settings")
+
+    async with host.run_test(size=(190, 55)) as pilot:
+        await _open_settings_category(pilot, "#settings-category-appearance")
+        screen = _active_destination_screen(host)
+        selector = "#settings-appearance-library-media-library-width"
+
+        field = screen.query_one(selector, Input)
+        assert field.value == "48"
+        assert field.disabled
+
+        toggle = screen.query_one(
+            "#settings-appearance-library-media-custom-widths", Button
+        )
+        detail = screen.query_one("#settings-detail-pane-body", VerticalScroll)
+        detail.scroll_to_widget(toggle, animate=False)
+        await pilot.pause()
+        assert detail.region.contains_region(toggle.region), (
+            detail.region,
+            toggle.region,
+        )
+        click_offset = (toggle.region.width // 2, 0)
+        assert await pilot.click(toggle, offset=click_offset)
+        await pilot.pause()
+        field = screen.query_one(selector, Input)
+        assert field.value == "48"
+        assert not field.disabled
+
+        await pilot.pause(0.1)
+        toggle = screen.query_one(
+            "#settings-appearance-library-media-custom-widths", Button
+        )
+        click_offset = (toggle.region.width // 2, 0)
+        assert await pilot.click(toggle, offset=click_offset)
+        await pilot.pause()
+        field = screen.query_one(selector, Input)
+        assert field.value == "48"
+        assert field.disabled
+
+        await pilot.resize_terminal(70, 40)
+        await pilot.resize_terminal(190, 55)
+        app._library_reader_layout_refresh_generation = (
+            int(getattr(app, "_library_reader_layout_refresh_generation", 0)) + 1
+        )
+        screen.refresh(layout=True)
+        await pilot.pause()
+
+        await _open_settings_category(pilot, "#settings-category-overview")
+        await _open_settings_category(pilot, "#settings-category-appearance")
+        screen = _active_destination_screen(host)
+        field = screen.query_one(selector, Input)
+
+        assert field.value == "48"
+        assert field.disabled
+
+    assert saved == []
+    assert app.app_config["library"]["reader"] == {
+        "library_open": True,
+        "custom_widths_enabled": False,
+        "library_width": 48,
+    }
 
 
 @pytest.mark.asyncio
@@ -2479,9 +2647,7 @@ async def test_settings_overview_renders_server_sync_workspace_contracts_in_diag
 
     async with host.run_test(size=(180, 50)) as pilot:
         screen = _active_destination_screen(host)
-        await _wait_for_settings_text(
-            screen, pilot, "Server connection: Main Server"
-        )
+        await _wait_for_settings_text(screen, pilot, "Server connection: Main Server")
         text = _visible_text(screen)
 
         assert "Advanced / Diagnostics" in text
@@ -2756,9 +2922,7 @@ async def test_settings_overview_renders_primary_user_tasks_before_diagnostics()
             "settings-overview-storage-privacy",
             "settings-overview-sync",
         ]
-        assert "handoff" not in " ".join(
-            str(row.renderable).lower() for row in rows
-        )
+        assert "handoff" not in " ".join(str(row.renderable).lower() for row in rows)
 
 
 @pytest.mark.asyncio
@@ -2910,8 +3074,12 @@ async def test_settings_provider_picker_saved_unknown_activation_is_exact_noop()
         assert endpoint.value == "https://draft.example/v1"
         assert api_key.value == "draft-provider-key"
         assert manual.value == "Exact_Custom-ID"
-        assert screen.query_one("#settings-provider-value", Select).value == "__manual__"
-        assert screen._provider_setting_values_mapping()["provider"] == "Exact_Custom-ID"
+        assert (
+            screen.query_one("#settings-provider-value", Select).value == "__manual__"
+        )
+        assert (
+            screen._provider_setting_values_mapping()["provider"] == "Exact_Custom-ID"
+        )
         assert screen._provider_setting_values_mapping()["model"] == "custom-model"
         assert model.value == "custom-model"
 
@@ -2933,15 +3101,17 @@ async def test_settings_provider_picker_filter_clear_restores_current_highlight(
 
         search.value = "anthropic"
         await pilot.pause()
-        assert getattr(
-            picker.get_option_at_index(picker.highlighted), "provider_id", None
-        ) == "anthropic"
+        assert (
+            getattr(picker.get_option_at_index(picker.highlighted), "provider_id", None)
+            == "anthropic"
+        )
 
         search.value = ""
         await pilot.pause()
-        assert getattr(
-            picker.get_option_at_index(picker.highlighted), "provider_id", None
-        ) == "openai"
+        assert (
+            getattr(picker.get_option_at_index(picker.highlighted), "provider_id", None)
+            == "openai"
+        )
 
 
 @pytest.mark.asyncio
@@ -2994,9 +3164,7 @@ async def test_settings_provider_picker_no_match_is_honest_with_manual_action():
 
         status = screen.query_one("#settings-provider-search-status", Static)
         assert "No catalog providers match" in str(status.renderable)
-        manual_index = _provider_picker_option_index(
-            picker, action="enter_provider_id"
-        )
+        manual_index = _provider_picker_option_index(picker, action="enter_provider_id")
         assert picker.get_option_at_index(manual_index).disabled is False
 
 
@@ -3108,8 +3276,7 @@ async def test_settings_provider_picker_supported_manual_alias_uses_catalog_life
 
         assert host._exception is None
         assert (
-            screen.query_one("#settings-provider-value", Select).value
-            == "local_ollama"
+            screen.query_one("#settings-provider-value", Select).value == "local_ollama"
         )
         assert screen._provider_setting_values_mapping()["provider"] == "local_ollama"
 
@@ -3142,8 +3309,7 @@ async def test_settings_provider_picker_persistence_alias_uses_catalog_lifecycle
             == canonical_provider
         )
         assert (
-            screen._provider_setting_values_mapping()["provider"]
-            == canonical_provider
+            screen._provider_setting_values_mapping()["provider"] == canonical_provider
         )
         assert manual.value == ""
         assert manual.disabled is True
@@ -3211,8 +3377,7 @@ async def test_settings_provider_picker_current_alias_preserves_connection_draft
         await pilot.pause()
 
         assert (
-            screen._provider_setting_values_mapping()["provider"]
-            == canonical_provider
+            screen._provider_setting_values_mapping()["provider"] == canonical_provider
         )
         assert endpoint.value == "https://draft.example/v1"
         assert api_key.value == "draft-provider-key"
@@ -4477,9 +4642,14 @@ async def test_settings_category_search_escape_clears_filter():
             if summary.category
             not in settings_screen_module.DOMAIN_SETTINGS_CATEGORY_IDS
         )
-        assert sum(
-            1 for button in screen.query(".settings-category-button") if button.display
-        ) == expected_visible
+        assert (
+            sum(
+                1
+                for button in screen.query(".settings-category-button")
+                if button.display
+            )
+            == expected_visible
+        )
 
 
 @pytest.mark.asyncio
@@ -4959,9 +5129,7 @@ async def test_settings_console_behavior_renders_global_default_controls():
         screen = _active_destination_screen(host)
 
         assert (
-            screen.query_one(
-                "#settings-console-default-user-display-name", Input
-            ).value
+            screen.query_one("#settings-console-default-user-display-name", Input).value
             == "Rowan"
         )
         assert (
@@ -4997,7 +5165,9 @@ async def test_settings_console_behavior_renders_global_default_controls():
             == "high"
         )
         assert (
-            screen.query_one("#settings-console-default-reasoning-summary", Select).value
+            screen.query_one(
+                "#settings-console-default-reasoning-summary", Select
+            ).value
             == "auto"
         )
         assert (
@@ -5562,9 +5732,7 @@ async def test_settings_console_behavior_saves_display_name_exactly(monkeypatch)
             broken_refresh,
             raising=False,
         )
-        field = screen.query_one(
-            "#settings-console-default-user-display-name", Input
-        )
+        field = screen.query_one("#settings-console-default-user-display-name", Input)
         field.value = "Captain Rowan"
         screen.handle_console_default_user_display_name_changed(
             Input.Changed(field, field.value)
@@ -5574,9 +5742,7 @@ async def test_settings_console_behavior_saves_display_name_exactly(monkeypatch)
         await _wait_for_settings_text(screen, pilot, "Console behavior settings saved.")
 
     assert saved == [{"chat_defaults": {"user_display_name": "Captain Rowan"}}]
-    assert app.app_config["chat_defaults"] == {
-        "user_display_name": "Captain Rowan"
-    }
+    assert app.app_config["chat_defaults"] == {"user_display_name": "Captain Rowan"}
     assert app._console_identity_refresh_generation == 1
     assert refresh_signals == [1]
 
@@ -5600,9 +5766,7 @@ async def test_settings_console_behavior_rejects_overwide_cjk_display_name_atomi
     async with host.run_test(size=(180, 50)) as pilot:
         await _open_settings_category(pilot, "#settings-category-console-behavior")
         screen = _active_destination_screen(host)
-        field = screen.query_one(
-            "#settings-console-default-user-display-name", Input
-        )
+        field = screen.query_one("#settings-console-default-user-display-name", Input)
         field.value = "界" * 25
         screen.handle_console_default_user_display_name_changed(
             Input.Changed(field, field.value)
@@ -5627,9 +5791,7 @@ async def test_settings_console_behavior_display_name_revert_restores_loaded_val
     async with host.run_test(size=(180, 50)) as pilot:
         await _open_settings_category(pilot, "#settings-category-console-behavior")
         screen = _active_destination_screen(host)
-        field = screen.query_one(
-            "#settings-console-default-user-display-name", Input
-        )
+        field = screen.query_one("#settings-console-default-user-display-name", Input)
         field.value = "Captain Rowan"
         screen.handle_console_default_user_display_name_changed(
             Input.Changed(field, field.value)
@@ -5641,9 +5803,7 @@ async def test_settings_console_behavior_display_name_revert_restores_loaded_val
         await pilot.pause()
 
         assert (
-            screen.query_one(
-                "#settings-console-default-user-display-name", Input
-            ).value
+            screen.query_one("#settings-console-default-user-display-name", Input).value
             == "Rowan"
         )
         assert screen.query_one("#settings-save-category", Button).disabled is True
@@ -6088,14 +6248,14 @@ async def test_settings_provider_navigation_context_uses_one_presentation_identi
         picker = screen.query_one("#settings-provider-picker", OptionList)
         highlighted = picker.get_option_at_index(picker.highlighted)
         assert getattr(highlighted, "provider_id", None) == "huggingface"
-        assert screen.query_one("#settings-provider-value", Select).value == "huggingface"
+        assert (
+            screen.query_one("#settings-provider-value", Select).value == "huggingface"
+        )
         assert screen.query_one("#settings-model-value", Input).value == (
             "meta-llama/test-model"
         )
         endpoint = screen.query_one("#settings-provider-endpoint-value", Input)
-        credential = screen.query_one(
-            "#settings-provider-credential-env-var", Input
-        )
+        credential = screen.query_one("#settings-provider-credential-env-var", Input)
         assert endpoint.value == "https://huggingface.example/v1"
         assert credential.value == "HUGGINGFACE_API_KEY"
         assert screen._provider_loaded_setting_values()["provider"] == "llama_cpp"
@@ -6813,20 +6973,14 @@ def test_settings_generation_controls_allow_openai_none_reasoning_effort():
     screen = SettingsScreen(_build_test_app())
 
     assert screen._normalise_model_profile_reasoning_effort("none") == "none"
-    assert (
-        "none"
-        in settings_screen_module.REASONING_EFFORT_SELECT_OPTIONS
-    )
+    assert "none" in settings_screen_module.REASONING_EFFORT_SELECT_OPTIONS
 
 
 def test_settings_generation_controls_allow_anthropic_max_thinking_effort():
     screen = SettingsScreen(_build_test_app())
 
     assert screen._normalise_model_profile_thinking_effort("max") == "max"
-    assert (
-        "max"
-        in settings_screen_module.THINKING_EFFORT_SELECT_OPTIONS
-    )
+    assert "max" in settings_screen_module.THINKING_EFFORT_SELECT_OPTIONS
 
 
 @pytest.mark.asyncio
@@ -6866,7 +7020,9 @@ async def test_settings_provider_category_saves_anthropic_thinking_profile(monke
         # task-189: gated groups collapse to one summary line; dead rows hide.
         assert "Reasoning controls: unavailable for Anthropic." in text
         assert (
-            screen.query_one("#settings-model-profile-reasoning-effort", Select).disabled
+            screen.query_one(
+                "#settings-model-profile-reasoning-effort", Select
+            ).disabled
             is True
         )
         assert (
@@ -7193,9 +7349,7 @@ async def test_settings_provider_category_saves_llamacpp_endpoint(monkeypatch):
 
     assert len(mutations) == 1
     sections, _deletes = mutations[0]
-    assert sections["api_settings.llama_cpp"]["api_url"] == (
-        "http://127.0.0.1:9099"
-    )
+    assert sections["api_settings.llama_cpp"]["api_url"] == ("http://127.0.0.1:9099")
     assert (
         app.app_config["api_settings"]["llama_cpp"]["api_url"]
         == "http://127.0.0.1:9099"
@@ -8349,7 +8503,6 @@ async def test_settings_storage_privacy_diagnostics_label_unsupported_mutations_
             assert not screen.query("#settings-revert-category")
 
 
-
 def _strip_sensitive_config_sections(app_config: dict) -> None:
     """Remove every already-configured secret leaf from ``app_config``.
 
@@ -8378,6 +8531,7 @@ def _strip_sensitive_config_sections(app_config: dict) -> None:
                 _scrub(value)
 
     _scrub(app_config)
+
 
 @pytest.mark.asyncio
 async def test_settings_privacy_security_renders_guided_redacted_posture(monkeypatch):
@@ -10119,6 +10273,7 @@ async def test_reassurance_short_line_off_overview():
         assert "Local-only: saves write your config file." in text
         assert "Manual sync yourself" not in text
 
+
 @pytest.mark.asyncio
 async def test_settings_overview_front_door_is_four_status_rows_with_open_affordances():
     """task-1369: the Overview landing card leads with at most four primary
@@ -10248,7 +10403,9 @@ async def test_settings_manual_sync_dialog_readable_fallback_when_counts_unloade
         assert "Loading" not in dialog.message
 
 
-def test_settings_screen_resume_skips_refresh_while_manual_sync_run_in_flight(monkeypatch):
+def test_settings_screen_resume_skips_refresh_while_manual_sync_run_in_flight(
+    monkeypatch,
+):
     """task-1369: popping the confirm dialog resumes the screen; while the
     run worker is in flight the resume must not overwrite the 'running' rows."""
     refresh_calls = 0
@@ -10296,7 +10453,10 @@ async def test_settings_overview_disclosures_stay_expanded_across_sync_row_recom
         # A sync-row state change (e.g. the confirm callback's "running" rows).
         screen.manual_sync_rows = (
             ("Manual sync status", "running"),
-            ("Manual sync result", "Manual Sync is running after explicit user request."),
+            (
+                "Manual sync result",
+                "Manual Sync is running after explicit user request.",
+            ),
             ("Pending outgoing", "Refreshing"),
         )
         await pilot.pause()
@@ -10372,9 +10532,7 @@ async def test_settings_advanced_config_backup_load_never_clobbers_unsaved_typin
         release.wait(10)
         return original_read(self)
 
-    monkeypatch.setattr(
-        SettingsScreen, "_read_advanced_backup_preview", gated_read
-    )
+    monkeypatch.setattr(SettingsScreen, "_read_advanced_backup_preview", gated_read)
 
     app = _build_test_app()
     host = DestinationHarness(app, "settings")
