@@ -116,6 +116,35 @@ from tldw_chatbook.Widgets.Library.library_file_notes_git_panel import (
     _middle_elide_cells,
 )
 
+
+class _FileNotesWorkspaceMessage(Message):
+    """Message whose control is the retained Folder Files workspace."""
+
+    @property
+    def control(self) -> "LibraryFileNotesWorkspace":
+        return cast("LibraryFileNotesWorkspace", self._sender)
+
+
+class FileNotesEditableOpened(_FileNotesWorkspaceMessage):
+    """Announce one admitted editable file identity."""
+
+    def __init__(self, identity: str) -> None:
+        super().__init__()
+        self.identity = identity
+
+
+class FileNotesIdentityCleared(_FileNotesWorkspaceMessage):
+    """Announce an explicit opened-file identity clear."""
+
+
+class FileNotesRootChanged(_FileNotesWorkspaceMessage):
+    """Announce one admitted current Folder Files root."""
+
+    def __init__(self, root: Path) -> None:
+        super().__init__()
+        self.root = root
+
+
 SaveState = Literal["idle", "dirty", "saving", "saved", "conflict", "error"]
 _SAVE_STATE_COPY: dict[SaveState, str] = {
     "idle": "Auto-save to local folder: idle",
@@ -1781,6 +1810,7 @@ class LibraryFileNotesWorkspace(Vertical):
         *,
         persist: bool,
     ) -> bool:
+        previous_root = self._root
         with self._runtime_lock:
             if (
                 self._shutdown
@@ -1848,7 +1878,9 @@ class LibraryFileNotesWorkspace(Vertical):
                 self._root = root
                 self._session_binding = binding
                 self._service = service
-                self._clear_open_document()
+                self._clear_open_document(
+                    announce_identity_cleared=previous_root == root
+                )
                 self._initialized = True
                 self._apply_scan(
                     result,
@@ -1862,6 +1894,8 @@ class LibraryFileNotesWorkspace(Vertical):
             # this reservation.
             with self._runtime_lock:
                 reservation.commit(publish)
+            if previous_root != self._root:
+                self.post_message(FileNotesRootChanged(root).set_sender(self))
             if cancellation is not None:
                 raise cancellation
             return True
@@ -4731,10 +4765,15 @@ class LibraryFileNotesWorkspace(Vertical):
                 or service is not self._service
             ):
                 return False
-            self._apply_opened_document(opened)
+            self._apply_opened_document(opened, announce_editable=True)
             return True
 
-    def _apply_opened_document(self, opened: OpenedFileNote) -> None:
+    def _apply_opened_document(
+        self,
+        opened: OpenedFileNote,
+        *,
+        announce_editable: bool = False,
+    ) -> None:
         if not self._active:
             return
         self._dismiss_reload_confirmation(focus_opener=False)
@@ -4764,8 +4803,18 @@ class LibraryFileNotesWorkspace(Vertical):
             if self._reader_shell_external:
                 self.post_message(AdaptiveReaderShellResized())
         self._update_controls()
+        if announce_editable and opened.editable:
+            self.post_message(
+                FileNotesEditableOpened(opened.relative_path).set_sender(self)
+            )
 
-    def _clear_open_document(self, *, keep_restore_path: bool = False) -> None:
+    def _clear_open_document(
+        self,
+        *,
+        keep_restore_path: bool = False,
+        announce_identity_cleared: bool = True,
+    ) -> None:
+        had_identity = self._opened is not None
         self._dismiss_reload_confirmation(focus_opener=False)
         self._opened = None
         self._current_path = ""
@@ -4788,6 +4837,8 @@ class LibraryFileNotesWorkspace(Vertical):
         self._set_delete_confirmation()
         self._set_save_state("idle")
         self._update_controls()
+        if had_identity and announce_identity_cleared:
+            self.post_message(FileNotesIdentityCleared().set_sender(self))
 
     def select_deleted(self, relative_path: str) -> bool:
         """Select one persistent tombstone for the Restore action."""
@@ -5144,7 +5195,7 @@ class LibraryFileNotesWorkspace(Vertical):
                 return
             if self._path_result_is_stale(service, generation):
                 return
-            self._apply_opened_document(opened)
+            self._apply_opened_document(opened, announce_editable=True)
 
     @on(TextArea.Changed, "#file-notes-editor")
     def _editor_changed(self, event: TextArea.Changed) -> None:

@@ -36,6 +36,9 @@ from tldw_chatbook.Library.library_shell_state import (  # noqa: E402
     LIBRARY_DISABLED_ACTION_MARKER,
     LIBRARY_ROW_BROWSE_MEDIA,
     LIBRARY_ROW_BROWSE_NOTES,
+    LIBRARY_ROW_BROWSE_SEARCH,
+    LIBRARY_ROW_CREATE_NOTE,
+    LIBRARY_ROW_INGEST_MEDIA,
 )
 from tldw_chatbook.Library.library_rail_state import LibraryLifecycle  # noqa: E402
 from tldw_chatbook.Notes.file_notes_replica import FileNotesReplica  # noqa: E402
@@ -53,6 +56,9 @@ from tldw_chatbook.Notes.file_notes_service import (  # noqa: E402
     ScanResult,
 )
 from tldw_chatbook.UI.Screens.library_screen import LibraryScreen  # noqa: E402
+from tldw_chatbook.UI.Library_Modules.library_notes_work_session import (  # noqa: E402
+    NotesWorkSessionPhase,
+)
 from tldw_chatbook.Widgets.Library.library_file_notes_workspace import (  # noqa: E402
     FileNotesConflictCompareDialog,
     LibraryFileNotesWorkspace,
@@ -69,7 +75,10 @@ from Tests.UI.test_library_shell import (  # noqa: E402
     LibraryHarness,
     _seed_conversations,
     _two_conversations,
+    _two_notes,
+    _wait_for_condition,
     _wait_for_library_shell,
+    _wait_for_selector,
 )
 from Tests.UI.app_factory import _build_test_app as _build_tldw_test_app  # noqa: E402
 
@@ -1478,6 +1487,20 @@ async def test_notes_authority_switch_restores_visible_focus_and_typing_owner(
             lambda: bool(screen.query("#library-note-body")),
             "Database editor did not mount",
         )
+        await _wait_for_condition(
+            pilot,
+            lambda: screen._library_note_editor_armed,
+            message="Database editor did not settle before retained editing",
+        )
+        if size[0] >= 120:
+            await _wait_for_condition(
+                pilot,
+                lambda: (
+                    screen._library_notes_work_session_phase
+                    is NotesWorkSessionPhase.ACTIVE
+                ),
+                message="Database work-first did not settle before retained editing",
+            )
         database_editor = screen.query_one("#library-note-body", TextArea)
         _replace_editor_text(database_editor, "database retained")
         database_editor.selection = database_editor.selection.__class__(
@@ -1676,6 +1699,502 @@ async def test_file_notes_field_labels_preserve_input_geometry_and_tab_access(
 def _replace_editor_text(editor: TextArea, text: str) -> None:
     editor.select_all()
     editor.replace(text, editor.selection.start, editor.selection.end)
+
+
+@pytest.mark.asyncio
+async def test_folder_files_emits_only_admitted_work_session_events(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    root = tmp_path / "notes"
+    root.mkdir()
+    (root / "first.md").write_text("first", encoding="utf-8")
+    (root / "second.md").write_text("second", encoding="utf-8")
+    next_root = tmp_path / "next-notes"
+    next_root.mkdir()
+    (next_root / "next.md").write_text("next", encoding="utf-8")
+    stale_root = tmp_path / "stale-notes"
+    stale_root.mkdir()
+    (stale_root / "stale.md").write_text("stale", encoding="utf-8")
+    workspace = LibraryFileNotesWorkspace(
+        root=root,
+        replica_path=tmp_path / "replica.sqlite",
+        poll_interval=10,
+        autosave_delay=30,
+    )
+    captured: list[object] = []
+
+    async with _WorkspaceHarness(workspace).run_test(size=(120, 30)) as pilot:
+        await _wait_until(
+            pilot,
+            lambda: workspace.initialized,
+            "Folder Files did not initialize",
+        )
+        message_types = (
+            workspace_module.FileNotesEditableOpened,
+            workspace_module.FileNotesIdentityCleared,
+            workspace_module.FileNotesRootChanged,
+        )
+        post_message = workspace.post_message
+
+        def capture(message):
+            if isinstance(message, message_types):
+                captured.append(message)
+            return post_message(message)
+
+        monkeypatch.setattr(workspace, "post_message", capture)
+
+        assert await workspace.open_path("missing.md") is False
+        assert captured == []
+
+        service = workspace._service
+        assert service is not None
+        original_open = service.open_file
+        stale_started = threading.Event()
+        release_stale = threading.Event()
+
+        def delayed_open(relative_path: str):
+            stale_started.set()
+            assert release_stale.wait(5)
+            return original_open(relative_path)
+
+        monkeypatch.setattr(service, "open_file", delayed_open)
+        stale_open = asyncio.create_task(workspace.open_path("first.md"))
+        assert await asyncio.to_thread(stale_started.wait, 5)
+        workspace._root_generation += 1
+        release_stale.set()
+        assert await stale_open is False
+        assert captured == []
+        monkeypatch.setattr(service, "open_file", original_open)
+
+        cancelled_started = threading.Event()
+        release_cancelled = threading.Event()
+
+        def cancelled_open(relative_path: str):
+            cancelled_started.set()
+            assert release_cancelled.wait(5)
+            return original_open(relative_path)
+
+        monkeypatch.setattr(service, "open_file", cancelled_open)
+        cancelled_task = asyncio.create_task(workspace.open_path("first.md"))
+        assert await asyncio.to_thread(cancelled_started.wait, 5)
+        cancelled_task.cancel()
+        release_cancelled.set()
+        with pytest.raises(asyncio.CancelledError):
+            await cancelled_task
+        assert captured == []
+        monkeypatch.setattr(service, "open_file", original_open)
+
+        assert await workspace.open_path("first.md") is True
+        await pilot.pause()
+        assert len(captured) == 1
+        assert isinstance(captured[0], workspace_module.FileNotesEditableOpened)
+        assert captured[0].identity == "first.md"
+
+        await pilot.resize_terminal(79, 30)
+        await _wait_until(
+            pilot,
+            lambda: workspace.narrow,
+            "Folder Files did not enter narrow navigation",
+        )
+        workspace.query_one("#file-notes-back", Button).press()
+        await pilot.pause()
+        assert workspace.current_path == "first.md"
+        assert len(captured) == 1
+
+        assert await workspace.set_root(root, persist=False) is True
+        await pilot.pause()
+        assert workspace.current_path == ""
+        assert [type(message) for message in captured] == [
+            workspace_module.FileNotesEditableOpened,
+            workspace_module.FileNotesIdentityCleared,
+        ]
+        assert await workspace.open_path("first.md") is True
+        await pilot.pause()
+        assert len(captured) == 3
+
+        rejected_root = tmp_path / "rejected-notes"
+        rejected_root.mkdir()
+        original_commit = workspace._commit_root_candidate
+
+        async def reject_root(*args, **kwargs) -> bool:
+            return False
+
+        monkeypatch.setattr(workspace, "_commit_root_candidate", reject_root)
+        assert await workspace.set_root(rejected_root, persist=False) is False
+        assert len(captured) == 3
+        monkeypatch.setattr(workspace, "_commit_root_candidate", original_commit)
+
+        original_scan = workspace_module.FileNotesService.scan
+        stale_started = threading.Event()
+        release_stale_root = threading.Event()
+
+        def delayed_root_scan(candidate: FileNotesService):
+            if candidate.root_key == str(stale_root.resolve()):
+                stale_started.set()
+                assert release_stale_root.wait(5)
+            return original_scan(candidate)
+
+        monkeypatch.setattr(
+            workspace_module.FileNotesService,
+            "scan",
+            delayed_root_scan,
+        )
+        stale_root_task = asyncio.create_task(
+            workspace.set_root(stale_root, persist=False)
+        )
+        assert await asyncio.to_thread(stale_started.wait, 5)
+        workspace._active = False
+        release_stale_root.set()
+        assert await stale_root_task is False
+        assert len(captured) == 3
+        workspace._active = True
+        monkeypatch.setattr(
+            workspace_module.FileNotesService,
+            "scan",
+            original_scan,
+        )
+
+        assert await workspace.set_root(next_root, persist=False) is True
+        await pilot.pause()
+        assert len(captured) == 4
+        assert isinstance(captured[3], workspace_module.FileNotesRootChanged)
+        assert captured[3].root == next_root.resolve()
+
+        assert await workspace.open_path("next.md") is True
+        workspace._clear_open_document()
+        await pilot.pause()
+        assert [type(message) for message in captured] == [
+            workspace_module.FileNotesEditableOpened,
+            workspace_module.FileNotesIdentityCleared,
+            workspace_module.FileNotesEditableOpened,
+            workspace_module.FileNotesRootChanged,
+            workspace_module.FileNotesEditableOpened,
+            workspace_module.FileNotesIdentityCleared,
+        ]
+
+    await workspace.shutdown()
+
+
+@pytest.mark.asyncio
+async def test_folder_notes_work_session_activates_once_and_resets_exactly(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    root = tmp_path / "notes"
+    root.mkdir()
+    (root / "first.md").write_text("first", encoding="utf-8")
+    (root / "second.md").write_text("second", encoding="utf-8")
+    next_root = tmp_path / "next-notes"
+    next_root.mkdir()
+    (next_root / "next.md").write_text("next", encoding="utf-8")
+    workspace = LibraryFileNotesWorkspace(
+        root=root,
+        replica_path=tmp_path / "replica.sqlite",
+        poll_interval=10,
+        autosave_delay=30,
+    )
+    app = _build_test_app()
+    app.app_config.setdefault("library", {}).setdefault("reader", {})[
+        "library_open"
+    ] = True
+    _seed_conversations(app, _two_conversations(), notes=[])
+    writes: list[tuple[str, str, bool]] = []
+    monkeypatch.setattr(
+        library_screen_module,
+        "save_setting_to_cli_config",
+        lambda section, key, value: (writes.append((section, key, value)), True)[1],
+    )
+    screen = LibraryScreen(app, file_notes_workspace_factory=lambda: workspace)
+
+    async with LibraryHarness(app, screen=screen).run_test(size=(160, 45)) as pilot:
+        await _wait_for_library_shell(screen, pilot)
+        await screen._select_library_rail_row(LIBRARY_ROW_BROWSE_NOTES)
+        await _wait_for_selector(screen, pilot, "#library-notes-source-files")
+        screen.query_one("#library-notes-source-files", Button).press()
+        await _wait_until(
+            pilot,
+            lambda: workspace.initialized and workspace.is_mounted,
+            "Folder Files did not mount",
+        )
+        shell = workspace.query_one(
+            "#library-file-notes-reader-shell", LibraryAdaptiveReaderShell
+        )
+
+        assert (
+            screen._library_notes_work_session_phase is NotesWorkSessionPhase.INACTIVE
+        )
+        assert shell.effective_layout.library_open is True
+        assert writes == []
+
+        assert await workspace.open_path("first.md")
+        await _wait_for_condition(
+            pilot,
+            lambda: (
+                screen._library_notes_work_session_phase is NotesWorkSessionPhase.ACTIVE
+                and not shell.effective_layout.library_open
+            ),
+            message="Folder editable open did not activate work-first layout",
+        )
+        assert screen._library_file_notes_reader_preferences.library_open is True
+        assert writes == []
+
+        shell.library_grip.press()
+        await _wait_for_condition(
+            pilot,
+            lambda: (
+                screen._library_notes_work_session_phase
+                is NotesWorkSessionPhase.MANUALLY_CANCELLED
+                and shell.effective_layout.library_open
+            ),
+            message="Saved-open Folder expansion did not cancel work-first",
+        )
+        assert writes == []
+        assert await workspace.open_path("second.md")
+        await pilot.pause()
+        assert (
+            screen._library_notes_work_session_phase
+            is NotesWorkSessionPhase.MANUALLY_CANCELLED
+        )
+
+        await pilot.resize_terminal(79, 30)
+        await _wait_until(
+            pilot,
+            lambda: workspace.narrow,
+            "Folder Files did not enter narrow navigation",
+        )
+        workspace.query_one("#file-notes-back", Button).press()
+        await pilot.pause()
+        assert workspace.current_path == "second.md"
+        assert (
+            screen._library_notes_work_session_phase
+            is NotesWorkSessionPhase.MANUALLY_CANCELLED
+        )
+        assert writes == []
+
+        workspace._clear_open_document()
+        await _wait_for_condition(
+            pilot,
+            lambda: (
+                screen._library_notes_work_session_phase
+                is NotesWorkSessionPhase.INACTIVE
+            ),
+            message="Explicit Folder identity clear did not reset work session",
+        )
+        await pilot.resize_terminal(160, 45)
+        await _wait_until(
+            pilot,
+            lambda: not workspace.narrow,
+            "Folder Files did not restore wide geometry",
+        )
+        assert await workspace.open_path("first.md")
+        await _wait_for_condition(
+            pilot,
+            lambda: (
+                screen._library_notes_work_session_phase is NotesWorkSessionPhase.ACTIVE
+            ),
+            message="Folder session did not reactivate after an exact clear",
+        )
+        assert writes == []
+
+        assert await workspace.set_root(next_root, persist=False)
+        await _wait_for_condition(
+            pilot,
+            lambda: (
+                screen._library_notes_work_session_phase
+                is NotesWorkSessionPhase.INACTIVE
+            ),
+            message="Admitted Folder root change did not reset work session",
+        )
+        shell.library_grip.press()
+        await _wait_for_condition(
+            pilot,
+            lambda: writes == [("library.reader", "library_open", False)],
+            message="Folder saved-closed request did not persist",
+        )
+        writes.clear()
+        assert await workspace.open_path("next.md")
+        await _wait_for_condition(
+            pilot,
+            lambda: (
+                screen._library_notes_work_session_phase is NotesWorkSessionPhase.ACTIVE
+            ),
+            message="Folder saved-closed work session did not activate",
+        )
+        assert writes == []
+        shell.library_grip.press()
+        await _wait_for_condition(
+            pilot,
+            lambda: writes == [("library.reader", "library_open", True)],
+            message="Folder saved-closed expansion did not persist once",
+        )
+        assert (
+            screen._library_notes_work_session_phase
+            is NotesWorkSessionPhase.MANUALLY_CANCELLED
+        )
+
+        writes.clear()
+        await screen._select_library_rail_row(LIBRARY_ROW_CREATE_NOTE)
+        await _wait_for_selector(screen, pilot, "#library-notes-create-blank")
+        assert screen._library_notes_source == "database"
+        assert (
+            screen._library_notes_work_session_phase is NotesWorkSessionPhase.INACTIVE
+        )
+        assert writes == []
+
+        screen.query_one("#library-notes-create-blank", Button).press()
+        await _wait_for_selector(screen, pilot, "#library-note-body")
+        await _wait_for_condition(
+            pilot,
+            lambda: (
+                screen._library_notes_work_session_phase is NotesWorkSessionPhase.ACTIVE
+            ),
+            message="Created Database note did not start a fresh work session",
+        )
+        assert writes == []
+
+        screen.apply_navigation_context({"ingest_media": True})
+        await _wait_for_condition(
+            pilot,
+            lambda: screen._library_selected_row_id == LIBRARY_ROW_INGEST_MEDIA,
+            message="Deep link did not leave Notes",
+        )
+        assert (
+            screen._library_notes_work_session_phase is NotesWorkSessionPhase.INACTIVE
+        )
+        assert writes == []
+
+    await workspace.shutdown()
+
+
+@pytest.mark.asyncio
+async def test_notes_authority_round_trip_resets_only_transient_work_session(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    root = tmp_path / "notes"
+    root.mkdir()
+    (root / "file.md").write_text("folder body", encoding="utf-8")
+    workspace = LibraryFileNotesWorkspace(
+        root=root,
+        replica_path=tmp_path / "replica.sqlite",
+        poll_interval=10,
+        autosave_delay=30,
+    )
+    app = _build_test_app()
+    app.app_config.setdefault("library", {}).setdefault("reader", {})[
+        "library_open"
+    ] = True
+    _seed_conversations(app, _two_conversations(), notes=[_two_notes()[0]])
+    writes: list[tuple[str, str, bool]] = []
+    monkeypatch.setattr(
+        library_screen_module,
+        "save_setting_to_cli_config",
+        lambda section, key, value: (writes.append((section, key, value)), True)[1],
+    )
+    screen = LibraryScreen(app, file_notes_workspace_factory=lambda: workspace)
+
+    async with LibraryHarness(app, screen=screen).run_test(size=(160, 45)) as pilot:
+        await _wait_for_library_shell(screen, pilot)
+        await screen._select_library_rail_row(LIBRARY_ROW_BROWSE_NOTES)
+        await _wait_for_selector(screen, pilot, "#library-notes-row-0")
+        screen.query_one("#library-notes-row-0", Button).press()
+        database_editor = await _wait_for_selector(screen, pilot, "#library-note-body")
+        await _wait_for_condition(
+            pilot,
+            lambda: (
+                screen._library_notes_work_session_phase is NotesWorkSessionPhase.ACTIVE
+            ),
+            message="Database work session did not activate",
+        )
+        database_id = screen._selected_note_id
+        database_preferences = screen._library_notes_reader_preferences
+        folder_preferences = screen._library_file_notes_reader_preferences
+
+        screen.query_one("#library-notes-source-files", Button).press()
+        await _wait_until(
+            pilot,
+            lambda: workspace.initialized and workspace.is_mounted,
+            "Folder Files did not mount",
+        )
+        assert (
+            screen._library_notes_work_session_phase is NotesWorkSessionPhase.INACTIVE
+        )
+        assert await workspace.open_path("file.md")
+        folder_editor = workspace.query_one("#file-notes-editor", TextArea)
+        await _wait_for_condition(
+            pilot,
+            lambda: (
+                screen._library_notes_work_session_phase is NotesWorkSessionPhase.ACTIVE
+            ),
+            message="Folder work session did not activate",
+        )
+
+        await pilot.click("#library-notes-task-return")
+        await _wait_for_condition(
+            pilot,
+            lambda: screen._library_notes_source == "database",
+            message="Database Notes did not return",
+        )
+        assert (
+            screen._library_notes_work_session_phase is NotesWorkSessionPhase.INACTIVE
+        )
+        assert screen._selected_note_id == database_id
+        assert screen.query_one("#library-note-body", TextArea) is database_editor
+        assert screen._library_notes_reader_preferences == database_preferences
+        assert screen._library_file_notes_reader_preferences == folder_preferences
+
+        screen.query_one("#library-notes-source-files", Button).press()
+        await _wait_for_condition(
+            pilot,
+            lambda: screen._library_notes_source == "files",
+            message="Folder Files did not return",
+        )
+        assert (
+            screen._library_notes_work_session_phase is NotesWorkSessionPhase.INACTIVE
+        )
+        assert workspace.current_path == "file.md"
+        assert workspace.query_one("#file-notes-editor", TextArea) is folder_editor
+        assert screen._library_notes_reader_preferences == database_preferences
+        assert screen._library_file_notes_reader_preferences == folder_preferences
+        assert writes == []
+
+        assert await workspace.open_path("file.md")
+        await _wait_for_condition(
+            pilot,
+            lambda: (
+                screen._library_notes_work_session_phase is NotesWorkSessionPhase.ACTIVE
+            ),
+            message="Folder work session did not reactivate before Search",
+        )
+        await screen._select_library_rail_row(LIBRARY_ROW_BROWSE_SEARCH)
+        await _wait_for_condition(
+            pilot,
+            lambda: screen._library_selected_row_id == LIBRARY_ROW_BROWSE_SEARCH,
+            message="Search destination did not open",
+        )
+        assert screen._library_notes_source == "files"
+        assert (
+            screen._library_notes_work_session_phase is NotesWorkSessionPhase.INACTIVE
+        )
+
+        await screen._open_library_item_by_id("notes", database_id)
+        await _wait_for_condition(
+            pilot,
+            lambda: (
+                screen._library_notes_source == "database"
+                and screen._selected_note_id == database_id
+                and screen._library_notes_work_session_phase
+                is NotesWorkSessionPhase.ACTIVE
+            ),
+            message="Search note open did not establish Database Notes authority",
+        )
+        assert workspace.current_path == "file.md"
+        assert screen._library_notes_reader_preferences == database_preferences
+        assert screen._library_file_notes_reader_preferences == folder_preferences
+        assert writes == []
+
+    await workspace.shutdown()
 
 
 def _visible_editor_action_ids(
