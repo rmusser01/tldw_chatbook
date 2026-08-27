@@ -9,15 +9,16 @@ import pytest
 from textual.app import App, ComposeResult
 
 from Tests.UI.consolidated_css import BUNDLED_STYLESHEET
-import tldw_chatbook.Widgets.Console.console_transcript as transcript_module
 from tldw_chatbook.Chat.console_chat_models import (
     PROPRIETARY_THINKING_NOTICE,
     ConsoleActivityPresentation,
     ConsoleChatMessage,
     ConsoleMessageRole,
-    ConsoleThinkingActivityRef,
 )
-from tldw_chatbook.Chat.console_turn_grouping import project_thinking_activities
+from tldw_chatbook.Chat.console_turn_grouping import (
+    group_console_transcript_messages,
+    project_thinking_activities,
+)
 from tldw_chatbook.Chat.provider_continuation import (
     ContinuationRound,
     ProviderContinuationCheckpoint,
@@ -504,9 +505,7 @@ def test_collapsed_inspector_resolves_full_thinking_without_changing_answer() ->
     assert transcript.display_message(assistant.id).content == "Public answer"
 
 
-def test_plain_transcript_omits_thinking_refs_but_keeps_planning_and_tools(
-    monkeypatch,
-) -> None:
+def test_plain_transcript_real_grouping_keeps_activities_but_omits_thinking() -> None:
     raw_continuation = "RAW-CONTINUATION-TRANSCRIPT-CANARY"
     transcript = ConsoleTranscript()
     assistant = _assistant(
@@ -550,21 +549,15 @@ def test_plain_transcript_omits_thinking_refs_but_keeps_planning_and_tools(
         id="tool-activity",
         activity_presentation=ConsoleActivityPresentation("tool", "fs_read", "success"),
     )
-    transcript.set_messages([assistant, planning, tool], session_id="session-a")
-    thinking_ref = project_thinking_activities(assistant=assistant)[0]
-    assert isinstance(thinking_ref, ConsoleThinkingActivityRef)
+    messages = [assistant, planning, tool]
+    transcript.set_messages(messages, session_id="session-a")
 
-    # Mutation control: exercise the plain exporter with the same merged
-    # activity projection the mounted disclosure path consumes.
-    turn = SimpleNamespace(
-        assistant=assistant,
-        activities=(planning, thinking_ref, tool),
-    )
-    monkeypatch.setattr(
-        transcript_module,
-        "group_console_transcript_messages",
-        lambda _messages: (SimpleNamespace(standalone=None, assistant_turn=turn),),
-    )
+    units = group_console_transcript_messages(messages)
+    assert len(units) == 1
+    turn = units[0].assistant_turn
+    assert turn is not None
+    assert turn.activities == (planning, tool)
+    assert all(isinstance(activity, ConsoleChatMessage) for activity in turn.activities)
 
     plain = transcript.to_plain_text()
 

@@ -90,25 +90,28 @@ ownerless contract. The final Task 1 plus policy suites passed 224/224 with only
 existing RequestsDependencyWarning. Scoped Ruff, production `py_compile`, and
 `git diff --check` passed.
 
-Task 2 implementation (2026-08-26): plain Console transcripts now skip typed thinking
-activity references while preserving answers, Planning, and tools. Trajectory V1's
-shared validator rejects the three thinking-reserved field names at top-level,
+Task 2 implementation (2026-08-26): plain Console transcripts preserve answers,
+Planning, and tools while the real grouping projection excludes thinking references
+by construction. Trajectory V1's shared validator rejects the three
+thinking-reserved field names at top-level,
 message, variant-set, and mapping variant-value locations without echoing values;
 unrelated ADR-067 additive fields remain accepted. Existing text, Markdown, document,
 FTS, title, summary, usage, speech, copy, log, and error projections were verified as
-visible/safe-data-only, so no broader production changes were made. RED was 14 failed
-and 1 passed plus a genuine transcript `AttributeError`; focused GREEN was 15 passed.
+visible/safe-data-only, so no broader production changes were made. The initial run
+was 14 failed and 1 passed: 13 failures were genuine trajectory validation RED, while
+the transcript `AttributeError` was later identified as a synthetic-harness artifact;
+focused GREEN was 15 passed.
 The new real-owner privacy inventory passed 5/5, and the required six-file gate passed
 99/99 with only the pre-existing RequestsDependencyWarning. See `task-2-report.md` for
 the decoded durable-owner matrix and ADR-090/063/067 self-review. No new ADR is
 required; Task 3 remains pending.
 
 Task 2 spec-review fix round 1 (2026-08-26): review identified evidence-fixture gaps,
-not product leaks, so production code remains unchanged. The transcript RED failed
+not product leaks, so production code remains unchanged. The transcript fixture failed
 because its assistant owner had no ADR-063 continuation; it now carries a canonical
-Moonshot checkpoint with a distinct raw canary and proves plain text retains answer,
-Planning, and tools while omitting displayable thinking, raw continuation, and the
-application notice. The diagnostic inventory RED was 6 passed/1 failed because the
+Moonshot checkpoint with a distinct raw canary. That round still used a synthetic
+monkeypatched grouping result; quality review round 2 replaced it with the real owner
+path. The diagnostic inventory RED was 6 passed/1 failed because the
 Chatbook malformed-error fixture lacked the exact notice; the new malformed export
 and import log cases already passed with displayable, raw, and notice canaries. After
 completing that fixture, focused GREEN was 7/7 plus the transcript 1/1. The required
@@ -116,3 +119,18 @@ six-file gate passed 101/101 with the pre-existing RequestsDependencyWarning; sc
 Ruff/format and diff checks are recorded in `task-2-report.md`. Coverage is stated as
 representative rather than falsely claiming every boundary carries all three canaries.
 No new ADR is required; Task 3 remains pending.
+
+Task 2 quality-review fix round 2 (2026-08-26): review proved the transcript's typed
+thinking guard unreachable because real `ConsoleAssistantTurn.activities` contains
+only tool-role `ConsoleChatMessage` instances; thinking refs belong to a separate
+interactive rendering/selection projection. The dead guard and synthetic monkeypatch
+were removed. A real `set_messages()`/grouping regression now owns displayable,
+proprietary, and ADR-063 continuation evidence, verifies the group contains only the
+Planning and tool rows, and proves plain text retains those rows and the answer while
+omitting all private canaries and the application notice. It passed immediately after
+the guard was removed, so this is safe-by-construction verification, not product RED.
+Existing testing-evidence lessons already cover fake call-site contracts and harness
+bypasses, so no duplicate lesson was added. Trajectory production behavior remains
+unchanged. Focused real-path verification passed 1/1, the required six-file gate
+passed 101/101, and the Task 1 selected-JSON/Chatbook exchange suites passed 46/46;
+scoped Ruff, format, `py_compile`, and diff checks passed. Task 3 remains pending.

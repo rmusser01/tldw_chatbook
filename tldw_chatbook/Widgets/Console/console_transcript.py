@@ -4886,8 +4886,6 @@ class ConsoleTranscript(VerticalScroll):
             lines.append(_speaker_label(message, presentation))
             if turn is not None:
                 for activity in turn.activities:
-                    if isinstance(activity, ConsoleThinkingActivityRef):
-                        continue
                     activity_presentation = activity.activity_presentation
                     if activity_presentation is None:
                         activity_header = "Activity · done"

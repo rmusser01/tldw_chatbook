@@ -3,11 +3,13 @@
 ## Outcome
 
 Task 2 keeps human-readable and answer-oriented derivatives answer-only by
-construction. `ConsoleTranscript.to_plain_text()` now ignores typed
-`ConsoleThinkingActivityRef` entries before activity rendering while retaining
-Planning activities, tools, assistant answers, selection guides, and the existing
-pruning/full-history projection. Explicit selected-Thinking Copy and Inspector remain
-unchanged.
+construction. Real `group_console_transcript_messages()` turns contain only the
+assistant answer and immediately following tool-role activities, including Planning;
+thinking references are introduced only by the separate interactive rendering and
+selection projection. `ConsoleTranscript.to_plain_text()` therefore retains Planning,
+tools, assistant answers, selection guides, and the existing pruning/full-history
+projection without ever receiving thinking references. Explicit selected-Thinking
+Copy and Inspector remain unchanged.
 
 Trajectory V1 remains a diagnostic, answer-only format. Its shared validator now
 rejects `_thinking`, `thinking_blocks`, and `thinking_blocks_json` at the top-level,
@@ -23,11 +25,12 @@ contract.
 
 ## RED and GREEN evidence
 
-- Initial focused RED: 14 failed, 1 passed. All 12 reserved trajectory mutations and
-  the shared import-validator mutation were accepted. The transcript regression,
-  after correcting its activity-order fixture, failed genuinely with
-  `AttributeError` when `to_plain_text()` reached a `ConsoleThinkingActivityRef`.
-  The unrelated additive-field compatibility control was already green.
+- Initial focused run: 14 failed, 1 passed. Thirteen failures were genuine product
+  RED: all 12 reserved trajectory mutations and the shared import-validator mutation
+  were accepted. The remaining transcript `AttributeError` was later found to be a
+  harness artifact: the test monkeypatched the grouping API with a synthetic object
+  that violated the real tool-only activity contract. It is not product RED. The
+  unrelated additive-field compatibility control was already green.
 - Minimal-fix focused GREEN: 15 passed, with one pre-existing dependency warning.
 - Privacy-inventory GREEN: 5 passed.
 - Required Task 2 gate:
@@ -40,8 +43,7 @@ contract.
   `Tests/UI/test_console_thinking_disclosures.py`
   completed with **99 passed** and one pre-existing `RequestsDependencyWarning`.
 - Scoped Ruff check, formatting checks for the newly formatted scoped files, and
-  `git diff --check` passed. The large transcript module retains its established
-  surrounding formatting so the production diff remains two intentional lines.
+  `git diff --check` passed.
 
 After the successful pytest result, pytest also reported ambient cleanup warnings for
 inaccessible pre-existing `garbage-*` temporary directories. The test command exited
@@ -51,13 +53,13 @@ zero; these paths and warnings are unrelated to Task 2.
 
 The review found two evidence-fixture gaps; neither reproduced a production leak.
 
-- Transcript RED: the strengthened test failed at
+- Transcript fixture RED: the strengthened test failed at
   `assistant.provider_continuation is not None`. The prior fixture had displayable and
   proprietary thinking blocks but no ADR-063 checkpoint, so its raw-continuation
   omission assertion could not prove ownership. Attaching a canonical complete
-  Moonshot checkpoint with a distinct raw canary made the same real
-  `ConsoleChatMessage`/`ConsoleTranscript.to_plain_text()` path pass while retaining
-  answer, Planning, and tool output.
+  Moonshot checkpoint with a distinct raw canary corrected that owner fixture. This
+  round still used a synthetic monkeypatched grouping result, which quality review
+  corrected in round 2 below.
 - Diagnostic RED: the expanded inventory ran 6 passed and 1 failed. The malformed
   export and import log checks were already content-free with all three canaries; the
   failing Chatbook mutation's input-presence assertion showed that fixture still
@@ -78,6 +80,34 @@ and `JSONDecodeError` context; and Chatbook graph validation receives all three 
 raises only its generic error. This is intentionally not a claim that every diagnostic
 boundary carries all three canaries; trajectory location tests retain their separate
 reserved-field value canary.
+
+### Quality-review fix round 2
+
+Quality review traced the transcript test through the production owner and found that
+the defensive `ConsoleThinkingActivityRef` branch was unreachable. A real
+`ConsoleAssistantTurn` accepts only tool-role `ConsoleChatMessage` activities, and
+thinking references enter only `ordered_assistant_activities()` for interactive
+rendering and selection. The artificial monkeypatch had bypassed that invariant.
+
+The dead guard was removed and the regression now uses real
+`ConsoleTranscript.set_messages()` plus `group_console_transcript_messages()`. It
+asserts the grouped activities are exactly the Planning and tool messages, then proves
+the plain transcript retains those activities and the answer while omitting the owned
+displayable-thinking canary, ADR-063 raw-continuation canary, and exact proprietary
+application notice. The focused test passed immediately with the guard removed, so
+this is safe-by-construction verification rather than new TDD product RED.
+
+- Focused real-path transcript verification: **1 passed**.
+- Required six-file gate: **101 passed** with one pre-existing
+  `RequestsDependencyWarning`.
+- Task 1 selected-JSON and Chatbook V2 exchange suites: **46 passed** with the same
+  pre-existing dependency warning.
+- Scoped Ruff lint and test-file format check passed; relevant production/test
+  `py_compile` and `git diff --check` passed.
+
+The repository already records the general lesson that fakes matching a call site and
+harnesses bypassing product entry paths do not establish reachability in
+`backlog/docs/lessons-testing-evidence.md`; no duplicate lesson was added.
 
 ## Privacy inventory
 
