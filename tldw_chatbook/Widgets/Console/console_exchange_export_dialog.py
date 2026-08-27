@@ -19,10 +19,17 @@ from tldw_chatbook.Chat.console_exchange_export import (
     ExchangeExportUnavailable,
     project_exchange_export,
 )
-from tldw_chatbook.Chat.trajectory_export import TraceExportProfile
+# This module is on the Chat first-paint leg at module scope
+# (console_conversation_inspector -> chat_screen), so the profile vocabulary
+# and its shared presentation come from the two light leaves -- NEVER from
+# `Chat.trajectory_export` (1,400+ LOC executed for one enum name) and NEVER
+# from `trace_export_dialog` (whose module scope imports that whole engine).
+# Both wrong imports were exactly the TASK-23020 regression (#2126); guard:
+# `Tests/Packaging/test_exchange_export_trajectory_deferral.py`.
+from tldw_chatbook.Chat.trace_export_profiles import TraceExportProfile
 from tldw_chatbook.Utils.atomic_file_ops import atomic_write_text
 from tldw_chatbook.Utils.path_validation import validate_path_simple
-from tldw_chatbook.Widgets.Console.trace_export_dialog import (
+from tldw_chatbook.Widgets.Console.trace_export_profile_ui import (
     TRACE_EXPORT_PROFILE_COPY,
     TRACE_EXPORT_PROFILE_LABELS,
     full_trace_confirmation,

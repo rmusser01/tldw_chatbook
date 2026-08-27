@@ -53,6 +53,18 @@ DEFERRED_PREFIXES = (
 #: legitimately imports it (snapshot dataclasses + `derive_trajectory` for
 #: the `y` action's off-thread build), and `agent_service` needs its
 #: redaction helpers on the same leg.
+#:
+#: KNOWN BREACH ROUTE (TASK-23020): ~24 h after 22213 shipped, #2126 put
+#: `trajectory_export` back on this leg through files the chat_screen
+#: comment did not name -- `console_conversation_inspector` ->
+#: `console_exchange_export_dialog` / `Chat/console_exchange_export.py`,
+#: each importing ONE name (`TraceExportProfile`), plus the dialog dragging
+#: `trace_export_dialog` (whose module scope imports the whole exporter).
+#: The vocabulary now lives in `Chat/trace_export_profiles.py` and the
+#: shared copy in `Widgets/Console/trace_export_profile_ui.py`; if THIS
+#: test reds on `trajectory_export` again, start at those four files --
+#: `Tests/Packaging/test_exchange_export_trajectory_deferral.py` checks
+#: each one individually and its failure names the offender.
 CHAT_LEG_DEFERRED_MODULES = (
     "tldw_chatbook.UI.Screens.trajectory_screen",
     "tldw_chatbook.Chat.trajectory_import",
@@ -212,6 +224,15 @@ from textual.screen import Screen
 from tldw_chatbook.UI.Screens.trajectory_screen import TrajectoryScreen
 
 assert issubclass(TrajectoryScreen, Screen)
+
+# ...and the exporter, now loaded on demand, shares ONE profile-enum object
+# with the leaf the chat leg imports (TASK-23020's split cannot drift).
+from tldw_chatbook.Chat import trace_export_profiles, trajectory_export
+
+assert (
+    trajectory_export.TraceExportProfile
+    is trace_export_profiles.TraceExportProfile
+), "trajectory_export's TraceExportProfile drifted from the trace_export_profiles leaf"
 print("CHAT_SCREEN_CLOSURE_OK")
 """.format(chat_leg=CHAT_LEG_DEFERRED_MODULES)
 

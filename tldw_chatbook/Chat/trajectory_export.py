@@ -32,11 +32,17 @@ import re
 import tempfile
 from collections.abc import Mapping, Sequence
 from datetime import datetime, timezone
-from enum import Enum
 from pathlib import Path
 from typing import Any
 
 from .assistant_generation_state import normalize_assistant_generation_state
+# One object, re-imported from the stdlib-only leaf (TASK-23020): Chat-leg
+# modules (console_exchange_export and the exchange export dialog) read the
+# profile vocabulary from `trace_export_profiles` so a single-name import
+# can never drag this 1,400+-LOC module onto the Chat first-paint window
+# again. The re-import keeps this module's public surface (and the deferred
+# trajectory family's import sites) unchanged, and makes drift impossible.
+from .trace_export_profiles import TraceExportProfile
 from .library_preparation import (
     LIBRARY_PREPARATION_EVENT_KIND,
     LibraryPreparationValidationError,
@@ -212,14 +218,8 @@ def _serialize_variant_set(variant_set: Any) -> dict:
 # ---------------------------------------------------------------------------
 # Trace v2 (pure snapshot -> privacy-governed collaboration bundle)
 # ---------------------------------------------------------------------------
-
-
-class TraceExportProfile(str, Enum):
-    """Privacy policy applied to a Trace v2 collaboration bundle."""
-
-    SAFE_SUMMARY = "safe_summary"
-    REDACTED_DIAGNOSTIC = "redacted_diagnostic"
-    FULL_TRACE = "full_trace"
+# `TraceExportProfile` lives in `trace_export_profiles.py` (TASK-23020) and is
+# re-imported above; see the import-site comment for why.
 
 
 @dataclasses.dataclass(frozen=True, slots=True)
