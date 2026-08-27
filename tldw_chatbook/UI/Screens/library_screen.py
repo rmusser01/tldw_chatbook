@@ -28,7 +28,7 @@ from rich.text import Text
 from textual import events, on, work
 from textual.app import ComposeResult
 from textual.binding import Binding
-from textual.containers import Horizontal, Vertical
+from textual.containers import Horizontal, Vertical, VerticalScroll
 from textual.events import DescendantFocus, Key
 from textual.css.query import NoMatches, QueryError
 from textual.errors import NoWidget
