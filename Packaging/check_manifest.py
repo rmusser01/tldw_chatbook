@@ -7,7 +7,7 @@ import argparse
 import configparser
 from email.parser import Parser
 import fnmatch
-from pathlib import Path, PurePosixPath
+from pathlib import Path, PurePosixPath, PureWindowsPath
 import re
 import stat
 import tarfile
@@ -220,15 +220,23 @@ def _archive_name_errors(label: str, names: list[str]) -> list[str]:
     errors: list[str] = []
     seen: set[str] = set()
     duplicates: set[str] = set()
+    extraction_names: dict[str, str] = {}
     for name in names:
         if name in seen:
             duplicates.add(name)
         seen.add(name)
         posix_path = PurePosixPath(name)
-        canonical = posix_path.as_posix() + ("/" if name.endswith("/") else "")
+        extraction_name = posix_path.as_posix()
+        previous = extraction_names.setdefault(extraction_name, name)
+        if previous != name:
+            errors.append(
+                f"{label}: duplicate archive path: {name} aliases {previous}"
+            )
+        canonical = extraction_name + ("/" if name.endswith("/") else "")
         if (
             "\\" in name
             or posix_path.is_absolute()
+            or PureWindowsPath(name).drive
             or posix_path == PurePosixPath(".")
             or ".." in posix_path.parts
             or name != canonical

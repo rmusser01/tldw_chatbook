@@ -2416,6 +2416,89 @@ def test_release_checker_rejects_unsafe_wheel_member_paths(
         assert name in output
 
 
+@pytest.mark.parametrize("archive_kind", ["sdist", "wheel"])
+def test_release_checker_rejects_trailing_slash_file_alias(
+    built_distributions: BuiltDistributions,
+    tmp_path: Path,
+    archive_kind: str,
+) -> None:
+    dist_dir = tmp_path / "dist"
+    shutil.copytree(built_distributions.dist_dir, dist_dir)
+    if archive_kind == "sdist":
+        sdist = next(dist_dir.glob("*.tar.gz"))
+        rewritten = sdist.with_name(f"{sdist.name}.rewritten")
+        with (
+            tarfile.open(sdist, "r:gz") as source,
+            tarfile.open(rewritten, "w:gz") as destination,
+        ):
+            members = source.getmembers()
+            target = next(
+                member.name
+                for member in members
+                if member.isfile() and member.name.split("/", 1)[-1] == "PKG-INFO"
+            )
+            for member in members:
+                stream = source.extractfile(member) if member.isfile() else None
+                destination.addfile(member, stream)
+            alias = f"{target}/"
+            added = tarfile.TarInfo(alias)
+            added.size = len(b"alias")
+            destination.addfile(added, BytesIO(b"alias"))
+        rewritten.replace(sdist)
+    else:
+        wheel = next(dist_dir.glob("*.whl"))
+        with zipfile.ZipFile(wheel, "a") as archive:
+            target = next(
+                name
+                for name in archive.namelist()
+                if name.endswith(".dist-info/METADATA")
+            )
+            alias = f"{target}/"
+            archive.writestr(alias, b"")
+
+    result = _run_manifest_checker(built_distributions, dist_dir, tmp_path)
+    output = result.stdout + result.stderr
+
+    assert result.returncode == 1
+    assert "duplicate archive path" in output
+    assert alias in output
+
+
+@pytest.mark.parametrize("archive_kind", ["sdist", "wheel"])
+def test_release_checker_rejects_drive_qualified_member_path(
+    built_distributions: BuiltDistributions,
+    tmp_path: Path,
+    archive_kind: str,
+) -> None:
+    dist_dir = tmp_path / "dist"
+    shutil.copytree(built_distributions.dist_dir, dist_dir)
+    unsafe = "C:/unsafe.txt"
+    if archive_kind == "sdist":
+        sdist = next(dist_dir.glob("*.tar.gz"))
+        rewritten = sdist.with_name(f"{sdist.name}.rewritten")
+        with (
+            tarfile.open(sdist, "r:gz") as source,
+            tarfile.open(rewritten, "w:gz") as destination,
+        ):
+            for member in source.getmembers():
+                stream = source.extractfile(member) if member.isfile() else None
+                destination.addfile(member, stream)
+            added = tarfile.TarInfo(unsafe)
+            added.size = len(b"unsafe")
+            destination.addfile(added, BytesIO(b"unsafe"))
+        rewritten.replace(sdist)
+    else:
+        with zipfile.ZipFile(next(dist_dir.glob("*.whl")), "a") as archive:
+            archive.writestr(unsafe, b"unsafe")
+
+    result = _run_manifest_checker(built_distributions, dist_dir, tmp_path)
+    output = result.stdout + result.stderr
+
+    assert result.returncode == 1
+    assert "non-canonical archive path" in output
+    assert unsafe in output
+
+
 def test_migration_expectations_are_derived_not_enumerated() -> None:
     """The expectations must come from reality, or they cannot catch drift."""
     assert SOURCE_MIGRATION_PATHS, "no migration scripts found in the checkout"
