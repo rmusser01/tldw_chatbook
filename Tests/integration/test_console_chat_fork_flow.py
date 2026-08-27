@@ -77,6 +77,7 @@ from tldw_chatbook.Chat.console_speech_preferences import ConsoleSpeechPreferenc
 from tldw_chatbook.Chat.console_session_settings import ConsoleSessionSettings
 from tldw_chatbook.Chat.rag_scope import RagScope, ScopeItem
 from tldw_chatbook.DB.ChaChaNotes_DB import CharactersRAGDB
+from tldw_chatbook.DB.Workspace_DB import WorkspaceDB
 from tldw_chatbook.Agents.local_tool_provider import LOCAL_SERVER_KEY
 from tldw_chatbook.Agents.mcp_tool_provider import MCPPendingCall
 from tldw_chatbook.MCP.permission_store import (
@@ -86,6 +87,7 @@ from tldw_chatbook.MCP.permission_store import (
 from tldw_chatbook.Video_Generation.video_metadata import VideoGenerationMetadata
 from tldw_chatbook.Widgets.Console.console_fork_chat_modal import ConsoleForkChatModal
 from tldw_chatbook.Widgets.Console.console_transcript import ConsoleTranscript
+from tldw_chatbook.Workspaces.registry_service import LocalWorkspaceRegistryService
 
 
 async def _settle(pilot, predicate, *, label: str, attempts: int = 400) -> None:
@@ -1132,6 +1134,31 @@ async def test_console_chat_fork_complete_provider_free_journey(
                     promoted_session.project_instruction_state.working_folder_binding_id
                     == binding.binding_id
                 )
+                assert (
+                    promoted_session.project_instruction_state.working_folder_locator_fingerprint
+                    == project_state.working_folder_locator_fingerprint
+                )
+                reloaded_workspace_db = WorkspaceDB(
+                    app.local_workspace_db.db_path,
+                    client_id=app.local_workspace_db.client_id,
+                )
+                try:
+                    reloaded_workspace_registry = LocalWorkspaceRegistryService(
+                        reloaded_workspace_db
+                    )
+                    promoted_binding = resolve_project_instruction_binding(
+                        promoted_session,
+                        reloaded_workspace_registry,
+                    )
+                    assert promoted_binding is not None
+                    assert promoted_binding.binding.binding_id == binding.binding_id
+                    assert promoted_binding.root == project_root.resolve()
+                    assert (
+                        promoted_binding.locator_fingerprint
+                        == project_state.working_folder_locator_fingerprint
+                    )
+                finally:
+                    reloaded_workspace_db.close()
 
                 for conversation_id, (_session, messages) in zip(
                     durable_ids, restored[1:3]

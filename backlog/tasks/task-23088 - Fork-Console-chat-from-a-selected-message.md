@@ -5,7 +5,7 @@ status: Done
 assignee:
   - '@codex'
 created_date: '2026-08-26 21:00'
-updated_date: '2026-08-27 14:54'
+updated_date: '2026-08-27 15:12'
 labels:
   - console
   - chat
@@ -81,6 +81,47 @@ canonical reload of the source, both durable forks, and the promoted temporary f
 Snapshots, notices, and captured logs are checked for the absence of approval arguments,
 permission grants, recovery/run state, resolved instruction bodies, scratch paths,
 attachment bytes, video paths, and provider secrets. No provider is called.
+
+The final evidence review also proves the promoted temporary fork's exact
+`working_folder_locator_fingerprint` survives reload alongside the enabled flag and
+binding ID while the one-shot notice remains cleared. The integration reopens the
+fixture's durable workspace database through fresh production `WorkspaceDB` and
+`LocalWorkspaceRegistryService` owners, then calls the incumbent
+`resolve_project_instruction_binding` seam and matches the binding ID, canonical root,
+and locator fingerprint exactly.
+
+Final evidence commands:
+
+```bash
+PYTHONPATH=. ../../.venv/bin/python -m pytest \
+  Tests/integration/test_console_chat_fork_flow.py -q --tb=short
+# 1 passed, 2 warnings in 15.37s
+
+PYTHONPATH=. ../../.venv/bin/python -m pytest \
+  Tests/Chat/test_console_project_instructions.py \
+  Tests/Chat/test_console_chat_store_project_instructions.py \
+  Tests/UI/test_console_project_instructions.py \
+  Tests/Chat/test_console_conversation_hydration.py -q --tb=short
+# 145 passed, 2 warnings in 21.27s
+
+PYTHONPATH=. ../../.venv/bin/python -m pytest \
+  Tests/Chat/test_console_agent_project_instructions.py \
+  -k 'sole_eligible_binding or binding_with_symlinked_ancestor or noncanonical_binding_locator or windows_reparse_component or zero_or_multiple_bindings or missing_or_failing_registry or stale_consent or removed_or_retargeted_binding or disabled_session_does_not_consult_registry' \
+  -q --tb=short
+# 9 passed, 21 deselected, 1 warning in 0.63s
+
+PYTHONPATH=. ../../.venv/bin/python -m pytest \
+  Tests/UI/test_console_session_controller.py \
+  -k 'promote_console_temporary_session' -q --tb=short
+# 3 passed, 35 deselected, 2 warnings in 6.44s
+```
+
+An exploratory whole-module run of
+`Tests/Chat/test_console_agent_project_instructions.py` reported three durable-send
+fixture failures and 27 passes. The same three failures reproduce in the untouched
+task baseline at `d35f291237`: those tests create a workspace-scoped durable session
+without the now-required workspace registry. This evidence-only correction did not
+change that pre-existing test fixture or any production code.
 
 Focused correction and integration commands:
 
@@ -197,8 +238,8 @@ was added: the live-found mixed-identity incident is already covered by the repo
 existing lesson that a safety-boundary normalizer must be proven canonical rather than
 merely plausible, so duplicating that lesson would add no new guidance.
 
-Immediately before closeout, the uniqueness sweep checked 900 local/remote refs and
-238 worktrees. It found one committed-ref occurrence and two worktree occurrences of
+Immediately before closeout, the uniqueness sweep checked 902 local/remote refs and
+239 worktrees. It found one committed-ref occurrence and two worktree occurrences of
 `id: TASK-23088` or the exact task title: the branch copy, this worktree, and the
 task-scoped baseline at `/private/tmp/tldw-chat-fork-task3-baseline`, all at the same
 canonical task path. There were zero competing ID claimants and zero same-title tasks at
