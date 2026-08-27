@@ -2499,6 +2499,110 @@ def test_release_checker_rejects_drive_qualified_member_path(
     assert unsafe in output
 
 
+@pytest.mark.parametrize("archive_kind", ["sdist", "wheel"])
+@pytest.mark.parametrize("target_kind", ["metadata", "tiktoken-cache"])
+def test_release_checker_rejects_casefolded_archive_path_alias(
+    built_distributions: BuiltDistributions,
+    tmp_path: Path,
+    archive_kind: str,
+    target_kind: str,
+) -> None:
+    dist_dir = tmp_path / "dist"
+    shutil.copytree(built_distributions.dist_dir, dist_dir)
+    if archive_kind == "sdist":
+        sdist = next(dist_dir.glob("*.tar.gz"))
+        rewritten = sdist.with_name(f"{sdist.name}.rewritten")
+        with (
+            tarfile.open(sdist, "r:gz") as source,
+            tarfile.open(rewritten, "w:gz") as destination,
+        ):
+            members = source.getmembers()
+            root = members[0].name.split("/", 1)[0]
+            if target_kind == "metadata":
+                target = f"{root}/PKG-INFO"
+                alias = f"{root}/pkg-info"
+            else:
+                target = f"{root}/{TIKTOKEN_CACHE_PREFIX}manifest.json"
+                alias = target.replace("/tiktoken_cache/", "/TIKTOKEN_CACHE/")
+            source_member = next(member for member in members if member.name == target)
+            source_stream = source.extractfile(source_member)
+            assert source_stream is not None
+            payload = source_stream.read()
+            for member in members:
+                stream = source.extractfile(member) if member.isfile() else None
+                destination.addfile(member, stream)
+            added = tarfile.TarInfo(alias)
+            added.size = len(payload)
+            destination.addfile(added, BytesIO(payload))
+        rewritten.replace(sdist)
+    else:
+        wheel = next(dist_dir.glob("*.whl"))
+        with zipfile.ZipFile(wheel, "a") as archive:
+            if target_kind == "metadata":
+                target = next(
+                    name
+                    for name in archive.namelist()
+                    if name.endswith(".dist-info/METADATA")
+                )
+                alias = target.removesuffix("METADATA") + "metadata"
+            else:
+                target = f"{TIKTOKEN_CACHE_PREFIX}manifest.json"
+                alias = target.replace("/tiktoken_cache/", "/TIKTOKEN_CACHE/")
+            archive.writestr(alias, archive.read(target))
+
+    result = _run_manifest_checker(built_distributions, dist_dir, tmp_path)
+    output = result.stdout + result.stderr
+
+    assert result.returncode == 1
+    assert "duplicate archive path" in output
+    assert alias in output
+
+
+@pytest.mark.parametrize(
+    "link_type",
+    [tarfile.SYMTYPE, tarfile.LNKTYPE],
+    ids=["symlink-redirect", "hardlink"],
+)
+def test_release_checker_rejects_sdist_links_globally(
+    built_distributions: BuiltDistributions,
+    tmp_path: Path,
+    link_type: bytes,
+) -> None:
+    dist_dir = tmp_path / "dist"
+    shutil.copytree(built_distributions.dist_dir, dist_dir)
+    sdist = next(dist_dir.glob("*.tar.gz"))
+    rewritten = sdist.with_name(f"{sdist.name}.rewritten")
+    with (
+        tarfile.open(sdist, "r:gz") as source,
+        tarfile.open(rewritten, "w:gz") as destination,
+    ):
+        members = source.getmembers()
+        for member in members:
+            stream = source.extractfile(member) if member.isfile() else None
+            destination.addfile(member, stream)
+        root = members[0].name.split("/", 1)[0]
+        link = f"{root}/tldw_chatbook/assets/cache-link"
+        added = tarfile.TarInfo(link)
+        added.type = link_type
+        if link_type == tarfile.SYMTYPE:
+            added.linkname = "tiktoken_cache"
+        else:
+            added.linkname = f"{root}/{TIKTOKEN_CACHE_PREFIX}manifest.json"
+        destination.addfile(added)
+        if link_type == tarfile.SYMTYPE:
+            redirected = tarfile.TarInfo(f"{link}/manifest.json")
+            redirected.size = len(b"corrupt redirect")
+            destination.addfile(redirected, BytesIO(b"corrupt redirect"))
+    rewritten.replace(sdist)
+
+    result = _run_manifest_checker(built_distributions, dist_dir, tmp_path)
+    output = result.stdout + result.stderr
+
+    assert result.returncode == 1
+    assert "not a regular file or directory" in output
+    assert link in output
+
+
 def test_migration_expectations_are_derived_not_enumerated() -> None:
     """The expectations must come from reality, or they cannot catch drift."""
     assert SOURCE_MIGRATION_PATHS, "no migration scripts found in the checkout"

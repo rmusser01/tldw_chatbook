@@ -227,7 +227,7 @@ def _archive_name_errors(label: str, names: list[str]) -> list[str]:
         seen.add(name)
         posix_path = PurePosixPath(name)
         extraction_name = posix_path.as_posix()
-        previous = extraction_names.setdefault(extraction_name, name)
+        previous = extraction_names.setdefault(extraction_name.casefold(), name)
         if previous != name:
             errors.append(
                 f"{label}: duplicate archive path: {name} aliases {previous}"
@@ -253,6 +253,12 @@ def _sdist_members(path: Path) -> tuple[set[str], list[str]]:
     errors = _archive_name_errors(
         "source distribution", [member.name for member in archive_members]
     )
+    for member in archive_members:
+        if not (member.isfile() or member.isdir()):
+            errors.append(
+                "source distribution: archive entry is not a regular file or "
+                f"directory: {member.name}"
+            )
     files = [member.name for member in archive_members if member.isfile()]
     roots = {name.split("/", 1)[0] for name in files}
     if len(roots) != 1:
