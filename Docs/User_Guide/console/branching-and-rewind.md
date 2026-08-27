@@ -107,7 +107,7 @@ Select one of **your** messages and press `e` (or click **Edit**) to open the
 **Edit Message** modal. Its explanation, verbatim:
 
 > Editing existing transcript message. Save keeps the edit in place; Edit &
-> resend forks a new branch and gets a fresh reply.
+> resend creates a new response branch in this chat and gets a fresh reply.
 
 - **Save** — fixes the text in place. No new reply is generated.
 - **Edit & resend** — creates a new branch: your edited prompt is sent and a

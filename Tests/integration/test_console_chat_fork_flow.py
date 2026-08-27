@@ -2,9 +2,10 @@
 
 from __future__ import annotations
 
+import asyncio
 import json
-from html import unescape
 from dataclasses import replace
+from html import unescape
 from io import BytesIO
 from pathlib import Path
 
@@ -40,8 +41,6 @@ from tldw_chatbook.Chat.console_chat_models import (
     ConsoleCitationNoticeCode,
     ConsoleCitationPhase,
     ConsoleCitationPresentation,
-    ConsoleDispatchRecoveryKind,
-    ConsoleDispatchRecoveryState,
     ConsoleMessageRole,
     GenerationVariantMeta,
     MessageAttachment,
@@ -53,12 +52,23 @@ from tldw_chatbook.Chat.console_context_policy import (
 )
 from tldw_chatbook.Chat.console_conversation_hydration import (
     apply_resume_settings_overrides,
-    console_messages_from_conversation_tree,
+    hydrate_console_session,
+)
+from tldw_chatbook.Chat.console_dispatch_checkpoint import (
+    ConsoleDispatchCheckpoint,
+    ConsoleDispatchCheckpointState,
+    ConsoleDispatchReconstructability,
+    ConsoleEgressClass,
+    ConsoleLibraryItemScopeSnapshot,
+    ConsoleProviderIntent,
+    ConsoleResolvedDestination,
+    ConsoleTurnLibraryAuthority,
 )
 from tldw_chatbook.Chat.console_library_policy import (
     ConsoleAssistantLibraryAccess,
     ConsoleAutoRetrieve,
     ConsoleLibraryPolicyCandidate,
+    ConsoleLibraryPolicySnapshot,
 )
 from tldw_chatbook.Chat.console_project_instructions import (
     ProjectInstructionControlState,
@@ -67,6 +77,12 @@ from tldw_chatbook.Chat.console_speech_preferences import ConsoleSpeechPreferenc
 from tldw_chatbook.Chat.console_session_settings import ConsoleSessionSettings
 from tldw_chatbook.Chat.rag_scope import RagScope, ScopeItem
 from tldw_chatbook.DB.ChaChaNotes_DB import CharactersRAGDB
+from tldw_chatbook.Agents.local_tool_provider import LOCAL_SERVER_KEY
+from tldw_chatbook.Agents.mcp_tool_provider import MCPPendingCall
+from tldw_chatbook.MCP.permission_store import (
+    BUILTIN_TOOL_SERVER_KEY,
+    resolve_effective_state_by_key,
+)
 from tldw_chatbook.Video_Generation.video_metadata import VideoGenerationMetadata
 from tldw_chatbook.Widgets.Console.console_fork_chat_modal import ConsoleForkChatModal
 from tldw_chatbook.Widgets.Console.console_transcript import ConsoleTranscript
@@ -110,11 +126,20 @@ def _png_bytes(color: tuple[int, int, int]) -> bytes:
     return output.getvalue()
 
 
+def _rows(
+    db: CharactersRAGDB,
+    sql: str,
+    params: tuple[object, ...],
+) -> tuple[dict[str, object], ...]:
+    return tuple(dict(row) for row in db.get_connection().execute(sql, params))
+
+
 def _source_rows(db: CharactersRAGDB, conversation_id: str) -> tuple[object, ...]:
     messages = tuple(
         dict(row) for row in db.get_messages_for_conversation(conversation_id, limit=50)
     )
     message_ids = tuple(str(row["id"]) for row in messages)
+    placeholders = ",".join("?" for _ in message_ids) or "NULL"
     return (
         dict(db.get_conversation_by_id(conversation_id)),
         messages,
@@ -122,18 +147,67 @@ def _source_rows(db: CharactersRAGDB, conversation_id: str) -> tuple[object, ...
         db.get_generation_metadata_for_messages(message_ids),
         db.get_conversation_console_project_context(conversation_id),
         db.get_conversation_active_leaf(conversation_id),
+        _rows(
+            db,
+            "SELECT * FROM console_conversation_context_policy "
+            "WHERE conversation_id = ?",
+            (conversation_id,),
+        ),
+        _rows(
+            db,
+            "SELECT * FROM console_conversation_library_policy "
+            "WHERE conversation_id = ?",
+            (conversation_id,),
+        ),
+        _rows(
+            db,
+            "SELECT message_id, message_revision, trace_id, state "
+            "FROM rag_message_trace_owners "
+            f"WHERE message_id IN ({placeholders}) ORDER BY message_id",
+            message_ids,
+        ),
+        _rows(
+            db,
+            "SELECT message_id, conversation_id, seq, event_kind, payload_json "
+            "FROM message_trajectory_metadata WHERE conversation_id = ? "
+            "ORDER BY seq",
+            (conversation_id,),
+        ),
     )
 
 
-def _source_live(store: ConsoleChatStore, session_id: str) -> tuple[object, ...]:
+def _source_live(
+    store: ConsoleChatStore,
+    controller: object,
+    scratch_spaces: object,
+    session_id: str,
+) -> tuple[object, ...]:
     session = next(item for item in store.sessions() if item.id == session_id)
+    scratch = scratch_spaces.snapshot(session_id)
     return (
         session.title,
         session.workspace_id,
         session.persisted_conversation_id,
         session.settings,
         session.context_policy_overrides,
+        store.session_library_policy_candidate(session_id),
+        session.rag_scope_holder.scope,
+        session.runtime_backend,
+        session.assistant_kind,
+        session.assistant_id,
+        session.assistant_authority_id,
+        session.persona_memory_mode,
+        session.character_id,
+        session.character_name,
+        session.user_display_name_override,
+        session.character_system_template,
+        session.speech_preferences,
         session.project_instruction_state,
+        controller.has_pending_approval_round(session_id),
+        controller.run_state_for(session_id),
+        store.dispatch_recovery_for_session(session_id),
+        scratch,
+        scratch_spaces.is_live(scratch),
         tuple(store.active_path_message_ids(session_id)),
         tuple(store.messages_for_session(session_id)),
         store.payload_revision(session_id),
@@ -151,28 +225,86 @@ def _conversation_count(db: CharactersRAGDB) -> int:
     )
 
 
-def _restore_conversation(
+async def _restore_conversation(
     store: ConsoleChatStore,
+    app: object,
     db: CharactersRAGDB,
     conversation_id: str,
 ) -> tuple[object, tuple[object, ...]]:
     row = db.get_conversation_by_id(conversation_id)
     tree = ChatConversationService(db).get_conversation_tree(conversation_id)
-    messages = tuple(console_messages_from_conversation_tree(tree, db=db))
     settings = apply_resume_settings_overrides(
         ConsoleSessionSettings(provider="openai", model="gpt-fork-fixture"),
         row,
     )
-    session = store.restore_persisted_session(
-        title=row["title"],
-        workspace_id=row["workspace_id"],
-        persisted_conversation_id=conversation_id,
-        all_nodes=messages,
-        active_leaf_persisted_id=db.get_conversation_active_leaf(conversation_id),
+    session = await hydrate_console_session(
+        app=app,
+        store=store,
+        conversation_id=conversation_id,
+        tree=tree,
         settings=settings,
-        activate=False,
     )
+    messages = tuple(store.messages_for_session(session.id))
     return session, messages
+
+
+def _checkpoint(
+    db: CharactersRAGDB,
+    *,
+    conversation_id: str,
+    user_message_id: str,
+    assistant_message_id: str,
+    attempt_id: str,
+) -> ConsoleDispatchCheckpoint:
+    user = db.get_message_by_id(user_message_id)
+    assistant = db.get_message_by_id(assistant_message_id)
+    policy = ConsoleLibraryPolicySnapshot(
+        auto_retrieve=ConsoleAutoRetrieve.NEVER,
+        assistant_access=ConsoleAssistantLibraryAccess.BLOCKED,
+        policy_revision=1,
+        source="durable",
+    )
+    return ConsoleDispatchCheckpoint(
+        assistant_message_id=assistant_message_id,
+        user_message_id=user_message_id,
+        conversation_id=conversation_id,
+        preparation_id=f"preparation-{attempt_id}",
+        attempt_id=attempt_id,
+        state=ConsoleDispatchCheckpointState.ACCEPTED,
+        checkpoint_revision=1,
+        user_message_version=int(user["version"]),
+        assistant_message_version=int(assistant["version"]),
+        origin="manual",
+        queue_entry_id=None,
+        frozen_authority=ConsoleTurnLibraryAuthority(
+            policy=policy,
+            direct_library_tools=False,
+            source_types=("notes",),
+            scope_snapshot=ConsoleLibraryItemScopeSnapshot(
+                note_ids=("fork-evidence",),
+                media_ids=(),
+                conversations_allowed=False,
+            ),
+            provider_intent=ConsoleProviderIntent(
+                provider="openai",
+                model="gpt-fork-fixture",
+                endpoint=None,
+            ),
+            attempt_id=attempt_id,
+        ),
+        resolved_destination=ConsoleResolvedDestination(
+            provider="openai",
+            model="gpt-fork-fixture",
+            endpoint_identity="fixture-endpoint",
+            egress_class=ConsoleEgressClass.UNKNOWN,
+        ),
+        reconstructability=ConsoleDispatchReconstructability(
+            attachments_reconstructable=True,
+            evidence_reconstructable=True,
+            prefill_reconstructable=True,
+            opaque_reference=None,
+        ),
+    )
 
 
 @pytest.mark.asyncio
@@ -199,9 +331,7 @@ async def test_console_chat_fork_complete_provider_free_journey(
     (project_root / "AGENTS.md").write_text(instruction_body, encoding="utf-8")
     attachment_sentinel = b"ATTACHMENT_BYTES_MUST_NOT_LEAK"
     attachment_bytes = _png_bytes((32, 64, 96)) + attachment_sentinel
-    approval_round = "source-approval-round"
-    permission_decision = "approve_session_SECRET_DECISION"
-    recovery_body = "Source-only recovery"
+    approval_secret = "APPROVAL_ARGUMENT_MUST_NOT_LEAK"
     run_body = "Source run active"
     provider_secret = "sk-provider-secret-must-not-leak"
 
@@ -215,6 +345,25 @@ async def test_console_chat_fork_complete_provider_free_journey(
     app = _build_test_app(config_overrides={"API": {"openai_api_key": provider_secret}})
     app.chachanotes_db = db
     app.citation_trace_repository = citation_repository
+    permission_service = app.unified_mcp_service
+    permission_store = permission_service.permission_store
+    assert permission_store is not None
+    permission_store.set_tool_state(LOCAL_SERVER_KEY, "fs_read", "ask")
+    permission_store.set_tool_state(BUILTIN_TOOL_SERVER_KEY, "calculator", "deny")
+    permission_service.approve_for_session(LOCAL_SERVER_KEY, "fs_read")
+    permission_owner_before = (
+        permission_store.load(),
+        permission_service.is_session_approved(LOCAL_SERVER_KEY, "fs_read"),
+        resolve_effective_state_by_key(
+            permission_store.load(), LOCAL_SERVER_KEY, "fs_read"
+        ),
+        resolve_effective_state_by_key(
+            permission_store.load(), BUILTIN_TOOL_SERVER_KEY, "calculator"
+        ),
+    )
+    assert permission_owner_before[1] is True
+    assert permission_owner_before[2].state == "ask"
+    assert permission_owner_before[3].state == "deny"
     workspace_id = "workspace-fork-flow"
     app.workspace_registry_service.create_workspace(
         workspace_id=workspace_id,
@@ -314,7 +463,20 @@ async def test_console_chat_fork_complete_provider_free_journey(
                         _png_bytes((255, 0, 0)),
                         "image/png",
                         GenerationVariantMeta(
-                            prompt="selected diagram",
+                            prompt="unselected default diagram",
+                            negative_prompt="",
+                            backend="openai",
+                            model="image-fixture",
+                            seed=6,
+                            style=None,
+                            params={"size": "small"},
+                        ),
+                    ),
+                    (
+                        _png_bytes((0, 255, 0)),
+                        "image/png",
+                        GenerationVariantMeta(
+                            prompt="selected non-default diagram",
                             negative_prompt="",
                             backend="openai",
                             model="image-fixture",
@@ -372,34 +534,72 @@ async def test_console_chat_fork_complete_provider_free_journey(
             )
 
             controller = console._ensure_console_chat_controller()
-            controller.add_pending_round(source.id, approval_round)
-            store._dispatch_recoveries_by_session[source.id] = (  # noqa: SLF001
-                ConsoleDispatchRecoveryState(
-                    kind=ConsoleDispatchRecoveryKind.QUARANTINED,
-                    assistant_message_id=later_video.id,
+            source_recovery = store.publish_durable_dispatch_checkpoint(
+                source.id,
+                _checkpoint(
+                    db,
                     conversation_id=source_conversation_id,
-                    visible_copy=recovery_body,
-                    actions=(),
-                )
+                    user_message_id=later_user.persisted_message_id,
+                    assistant_message_id=later_video.persisted_message_id,
+                    attempt_id="source-recovery",
+                ),
+                in_flight=True,
             )
-            source.scratch_authority = "source-only-scratch"  # type: ignore[attr-defined]
-            source.mcp_grants = {permission_decision}  # type: ignore[attr-defined]
-            source.local_tool_grants = {permission_decision}  # type: ignore[attr-defined]
+            store.mark_dispatch_recovery_needed(source.id, later_video.id)
+            source_recovery_after_mark = store.dispatch_recovery_for_session(source.id)
+            assert source_recovery_after_mark is not None
+            source_recovery_copy = source_recovery_after_mark.visible_copy
+            assert source_recovery.assistant_message_id == later_video.id
+            controller._set_run_state(  # noqa: SLF001
+                ConsoleRunState(ConsoleRunStatus.STREAMING, run_body),
+                session_id=source.id,
+            )
             runtime = console._console_runtime()
             source_scratch = runtime.scratch_spaces.snapshot(source.id)
-            with runtime.scratch_spaces.lease(source_scratch) as leased:
-                assert leased == source_scratch.root
+            source_lease = runtime.scratch_spaces.lease(source_scratch)
+            assert source_lease.__enter__() == source_scratch.root
 
             await console._sync_native_console_chat_ui()
-            source_db_before = _source_rows(db, source_conversation_id)
-            source_live_before = _source_live(store, source.id)
-
-            # Pointer-select the USER boundary, then exercise the selected-row
-            # keyboard action and edit the focused default title.
             await _click_visible(console, pilot, f"#console-message-{user_boundary.id}")
             transcript = console.query_one(
                 "#console-native-transcript", ConsoleTranscript
             )
+            assert transcript.selected_message_id == user_boundary.id
+
+            # ConsoleHarness mounts the production screen under the harness app;
+            # the production controller therefore marshals through that live
+            # Textual owner here, just as it marshals through TldwCli in-process.
+            controller.app = host
+            controller.mcp_approval_timeout_seconds = lambda: 30.0
+            approval_task = asyncio.create_task(
+                asyncio.to_thread(
+                    controller.request_mcp_approvals,
+                    [
+                        MCPPendingCall(
+                            llm_name="mcp__fixture__read",
+                            server_key=LOCAL_SERVER_KEY,
+                            tool_name="fs_read",
+                            server_label="Local tools",
+                            arguments={"opaque": approval_secret},
+                            reason=approval_secret,
+                        )
+                    ],
+                    session_id=source.id,
+                )
+            )
+            await _settle(
+                pilot,
+                lambda: controller.has_pending_approval_round(source.id),
+                label="real source approval round",
+            )
+
+            source_db_before = _source_rows(db, source_conversation_id)
+            source_live_before = _source_live(
+                store, controller, runtime.scratch_spaces, source.id
+            )
+
+            # Pointer-select the USER boundary, then exercise the selected-row
+            # keyboard action and edit the focused default title.
             assert transcript.selected_message_id == user_boundary.id
             await pilot.press("f")
             await _settle(
@@ -418,13 +618,13 @@ async def test_console_chat_fork_complete_provider_free_journey(
             user_fork_session_id = user_request.fork_session_id
             user_fork_conversation_id = user_request.fork_conversation_id
             assert user_fork_conversation_id is not None
-            user_modal.query_one(
-                "#console-fork-chat-title", Input
-            ).value = "Focused user-boundary fork"
-            controller._set_run_state(  # noqa: SLF001
-                ConsoleRunState(ConsoleRunStatus.STREAMING, run_body),
-                session_id=source.id,
-            )
+            title_input = user_modal.query_one("#console-fork-chat-title", Input)
+            assert title_input.has_focus
+            # The production modal selects the incumbent default on mount. Typing is
+            # therefore the real keyboard replacement path; no test-side value write.
+            assert title_input.selection == (0, len(title_input.value))
+            await pilot.press(*"Focused user-boundary fork")
+            assert title_input.value == "Focused user-boundary fork"
             await pilot.press("enter")
             await _settle(
                 pilot,
@@ -445,6 +645,21 @@ async def test_console_chat_fork_complete_provider_free_journey(
             assert fork_scratch.identity != source_scratch.identity
             with runtime.scratch_spaces.lease(fork_scratch) as leased:
                 assert leased == fork_scratch.root
+            assert (
+                _source_live(store, controller, runtime.scratch_spaces, source.id)
+                == source_live_before
+            )
+            assert _source_rows(db, source_conversation_id) == source_db_before
+            assert permission_owner_before == (
+                permission_store.load(),
+                permission_service.is_session_approved(LOCAL_SERVER_KEY, "fs_read"),
+                resolve_effective_state_by_key(
+                    permission_store.load(), LOCAL_SERVER_KEY, "fs_read"
+                ),
+                resolve_effective_state_by_key(
+                    permission_store.load(), BUILTIN_TOOL_SERVER_KEY, "calculator"
+                ),
+            )
             assert controller.has_pending_approval_round(source.id)
             assert not controller.has_pending_approval_round(user_fork.id)
             assert (
@@ -453,11 +668,12 @@ async def test_console_chat_fork_complete_provider_free_journey(
             assert (
                 controller.run_state_for(user_fork.id).status is ConsoleRunStatus.IDLE
             )
-            assert source.id in store._dispatch_recoveries_by_session  # noqa: SLF001
-            assert user_fork.id not in store._dispatch_recoveries_by_session  # noqa: SLF001
-            assert not hasattr(user_fork, "scratch_authority")
-            assert not hasattr(user_fork, "mcp_grants")
-            assert not hasattr(user_fork, "local_tool_grants")
+            assert store.dispatch_recovery_for_session(source.id) is not None
+            assert store.dispatch_recovery_for_session(user_fork.id) is None
+            assert (
+                user_fork.project_instruction_state.project_instruction_notice_key
+                is None
+            )
             assert (
                 resolve_project_instruction_binding(
                     user_fork, app.workspace_registry_service
@@ -473,10 +689,42 @@ async def test_console_chat_fork_complete_provider_free_journey(
                 lambda: store.active_session_id == source.id,
                 label="source tab activation",
             )
+            approval_payload = console._task_resume_state.pending_approval
+            assert approval_payload is not None
+            controller.resolve_pending_approval(
+                {"mcp__fixture__read": "deny"},
+                round_id=approval_payload["round_id"],
+            )
+            assert await asyncio.wait_for(approval_task, timeout=2.0) == {
+                "mcp__fixture__read": "deny"
+            }
+            source_lease.__exit__(None, None, None)
+            assert not controller.has_pending_approval_round(source.id)
+            source_live_after_approval = _source_live(
+                store, controller, runtime.scratch_spaces, source.id
+            )
             await _click_visible(
                 console, pilot, f"#console-message-{image_boundary.id}"
             )
             assert transcript.selected_message_id == image_boundary.id
+            await _wait_for_selector(
+                console,
+                pilot,
+                f"#console-message-action-variant-next-{image_boundary.id}",
+            )
+            variant_next = console.query_one(
+                f"#console-message-action-variant-next-{image_boundary.id}", Button
+            )
+            assert not variant_next.disabled
+            variant_next.press()
+            await pilot.pause()
+            await _settle(
+                pilot,
+                lambda: (
+                    console._console_generation_browse().get(image_boundary.id) == 1
+                ),
+                label="non-default generated-image selection",
+            )
             await _wait_for_selector(
                 console,
                 pilot,
@@ -512,7 +760,10 @@ async def test_console_chat_fork_complete_provider_free_journey(
             await _press_session_tab(console, pilot, source.id)
             await _press_session_tab(console, pilot, assistant_fork_session_id)
             assert _source_rows(db, source_conversation_id) == source_db_before
-            assert _source_live(store, source.id) == source_live_before
+            assert (
+                _source_live(store, controller, runtime.scratch_spaces, source.id)
+                == source_live_after_approval
+            )
 
             user_rows = db.get_messages_for_conversation(user_fork_conversation_id)
             assistant_rows = db.get_messages_for_conversation(
@@ -531,12 +782,18 @@ async def test_console_chat_fork_complete_provider_free_journey(
             ]
             assert user_rows[0]["image_data"] == attachment_bytes
             assert assistant_rows[0]["image_data"] == attachment_bytes
-            assert assistant_rows[-1]["image_data"] == _png_bytes((255, 0, 0))
+            assert assistant_rows[-1]["image_data"] == _png_bytes((0, 255, 0))
+            # A forked single image is canonical position zero (`image_data`),
+            # so there must be no stale extra-variant attachment sidecar.
+            assert db.get_attachments_for_messages((assistant_rows[-1]["id"],)) == {}
+            assert _png_bytes((255, 0, 0)) not in {
+                row["image_data"] for row in assistant_rows
+            }
             assistant_generation = db.get_generation_metadata_for_messages(
                 (assistant_rows[-1]["id"],)
             )[assistant_rows[-1]["id"]]
             assert [item["prompt"] for item in assistant_generation] == [
-                "selected diagram"
+                "selected non-default diagram"
             ]
             assert [item["seed"] for item in assistant_generation] == [7]
             assert all(
@@ -598,13 +855,40 @@ async def test_console_chat_fork_complete_provider_free_journey(
                     source_image_message_id=temporary_image.id,
                 ),
             )
+            source_checkpoint = source_recovery.checkpoint
+            assert source_checkpoint is not None
+            store.register_ephemeral_dispatch_recovery(
+                temporary.id,
+                user_message_id=temporary_user.id,
+                assistant_message_id=temporary_video.id,
+                preparation_id="preparation-temporary-recovery",
+                attempt_id="temporary-recovery",
+                checkpoint_state=ConsoleDispatchCheckpointState.ACCEPTED,
+                origin="manual",
+                queue_entry_id=None,
+                frozen_authority=source_checkpoint.frozen_authority,
+                resolved_destination=source_checkpoint.resolved_destination,
+                reconstructability=source_checkpoint.reconstructability,
+                runtime_active=True,
+            )
+            store.mark_dispatch_recovery_needed(temporary.id, temporary_video.id)
+            controller._set_run_state(  # noqa: SLF001
+                ConsoleRunState(ConsoleRunStatus.STREAMING, "Temporary source run"),
+                session_id=temporary.id,
+            )
+            temporary_scratch = runtime.scratch_spaces.snapshot(temporary.id)
+            temporary_lease = runtime.scratch_spaces.lease(temporary_scratch)
+            assert temporary_lease.__enter__() == temporary_scratch.root
             await console._session._activate_native_console_session(temporary.id)
             await console._sync_native_console_chat_ui()
-            durable_count_before = _conversation_count(db)
-            await _click_visible(
-                console, pilot, f"#console-message-{temporary_video.id}"
+            temporary_live_before = _source_live(
+                store, controller, runtime.scratch_spaces, temporary.id
             )
-            assert transcript.selected_message_id == temporary_video.id
+            durable_count_before = _conversation_count(db)
+            temporary_transcript = console.query_one(ConsoleTranscript)
+            temporary_transcript.select_message(temporary_video.id)
+            await pilot.pause()
+            assert temporary_transcript.selected_message_id == temporary_video.id
             await _wait_for_selector(
                 console,
                 pilot,
@@ -645,6 +929,18 @@ async def test_console_chat_fork_complete_provider_free_journey(
             assert temporary_fork.ephemeral
             assert temporary_fork.persisted_conversation_id is None
             assert temporary.persisted_conversation_id is None
+            assert (
+                _source_live(store, controller, runtime.scratch_spaces, temporary.id)
+                == temporary_live_before
+            )
+            assert store.dispatch_recovery_for_session(temporary_fork.id) is None
+            assert (
+                controller.run_state_for(temporary_fork.id).status
+                is ConsoleRunStatus.IDLE
+            )
+            temporary_fork_scratch = runtime.scratch_spaces.snapshot(temporary_fork.id)
+            assert temporary_fork_scratch.root != temporary_scratch.root
+            assert temporary_fork_scratch.token != temporary_scratch.token
             assert [
                 message.content
                 for message in store.messages_for_session(temporary_fork_session_id)
@@ -666,6 +962,15 @@ async def test_console_chat_fork_complete_provider_free_journey(
             assert promoted["parent_conversation_id"] is None
             assert promoted["forked_from_message_id"] is None
             assert temporary.persisted_conversation_id is None
+            assert (
+                _source_live(store, controller, runtime.scratch_spaces, temporary.id)
+                == temporary_live_before
+            )
+            assert (
+                temporary_fork.project_instruction_state.project_instruction_notice_key
+                is None
+            )
+            temporary_lease.__exit__(None, None, None)
 
             view_snapshot = json.dumps(
                 console._serialize_native_console_state(),
@@ -678,11 +983,15 @@ async def test_console_chat_fork_complete_provider_free_journey(
                 instruction_body,
                 str(project_root.resolve()),
                 str(source_scratch.root),
+                source_scratch.token,
+                str(temporary_scratch.root),
+                temporary_scratch.token,
+                str(permission_store.path),
                 attachment_sentinel.decode(),
-                approval_round,
-                permission_decision,
-                recovery_body,
+                approval_secret,
+                source_recovery_copy,
                 run_body,
+                "Temporary source run",
                 provider_secret,
             ):
                 assert private not in view_snapshot
@@ -711,12 +1020,20 @@ async def test_console_chat_fork_complete_provider_free_journey(
                     restarted_console, pilot, "#console-native-transcript"
                 )
                 restarted_store = restarted_console._ensure_console_chat_store()
-                restored = [
-                    _restore_conversation(
-                        restarted_store, restarted_db, conversation_id
+                restored = []
+                for conversation_id in (
+                    source_conversation_id,
+                    *durable_ids,
+                    temporary_promoted_id,
+                ):
+                    restored.append(
+                        await _restore_conversation(
+                            restarted_store,
+                            restarted_app,
+                            restarted_db,
+                            conversation_id,
+                        )
                     )
-                    for conversation_id in (*durable_ids, temporary_promoted_id)
-                ]
                 await restarted_console._sync_native_console_chat_ui()
                 for session, _messages in restored:
                     await _press_session_tab(restarted_console, pilot, session.id)
@@ -728,9 +1045,18 @@ async def test_console_chat_fork_complete_provider_free_journey(
                         label=f"reloaded tab {session.id}",
                     )
 
-                user_messages = restored[0][1]
-                assistant_messages = restored[1][1]
-                temporary_messages = restored[2][1]
+                source_messages = restored[0][1]
+                user_messages = restored[1][1]
+                assistant_messages = restored[2][1]
+                temporary_messages = restored[3][1]
+                assert [message.content for message in source_messages] == [
+                    "Question with an attachment",
+                    "Answer [S1].",
+                    "Middle user boundary",
+                    "[image] selected diagram",
+                    "Later turn excluded from both middle forks",
+                    later_video.content,
+                ]
                 assert [message.content for message in user_messages] == [
                     "Question with an attachment",
                     "Answer [S1].",
@@ -742,6 +1068,11 @@ async def test_console_chat_fork_complete_provider_free_journey(
                     "Middle user boundary",
                     "[image] selected diagram",
                 ]
+                assert assistant_messages[-1].image_data == _png_bytes((0, 255, 0))
+                assert len(assistant_messages[-1].attachments) == 1
+                assert [
+                    item.prompt for item in assistant_messages[-1].generation_metadata
+                ] == ["selected non-default diagram"]
                 assert temporary_messages[0].content == "Temporary citation marker [S1]"
                 assert temporary_messages[-1].video_metadata.is_unavailable_tombstone
                 assert not hasattr(temporary_messages[-1].video_metadata, "path")
@@ -749,8 +1080,61 @@ async def test_console_chat_fork_complete_provider_free_journey(
                     "forked-video-"
                 )
 
+                restored_source = restored[0][0]
+                assert restored_source.user_display_name_override == "Rowan"
+                assert restored_source.speech_preferences == ConsoleSpeechPreferences(
+                    auto_speak=True
+                )
+                source_identity_after_restart = ChatConversationService(
+                    restarted_db
+                ).get_conversation_metadata(source_conversation_id)
+                assert source_identity_after_restart is not None
+                assert source_identity_after_restart["assistant_kind"] is None
+                assert source_identity_after_restart["assistant_id"] == "console"
+                assert (
+                    restored_source.runtime_backend,
+                    restored_source.assistant_kind,
+                    restored_source.assistant_id,
+                    restored_source.assistant_authority_id,
+                    restored_source.persona_memory_mode,
+                    restored_source.character_id,
+                ) == ("local", None, None, None, None, None)
+                restored_user_boundary = next(
+                    message
+                    for message in source_messages
+                    if message.content == "Middle user boundary"
+                )
+                restored_source_eligibility = restarted_store.fork_eligibility(
+                    restored_user_boundary.id
+                )
+                assert restored_source_eligibility.eligible is True, (
+                    restored_source_eligibility.reason
+                )
+                assert restarted_store.session_library_policy_candidate(
+                    restored_source.id
+                ) == ConsoleLibraryPolicyCandidate(
+                    auto_retrieve=ConsoleAutoRetrieve.NEVER,
+                    assistant_access=ConsoleAssistantLibraryAccess.BLOCKED,
+                )
+                assert (
+                    _source_rows(restarted_db, source_conversation_id)
+                    == source_db_before
+                )
+
+                promoted_session = restored[3][0]
+                assert promoted_session.settings.pinned_prefill is None
+                assert (
+                    promoted_session.project_instruction_state.project_instruction_notice_key
+                    is None
+                )
+                assert promoted_session.project_instruction_state.project_instructions_enabled
+                assert (
+                    promoted_session.project_instruction_state.working_folder_binding_id
+                    == binding.binding_id
+                )
+
                 for conversation_id, (_session, messages) in zip(
-                    durable_ids, restored[:2]
+                    durable_ids, restored[1:3]
                 ):
                     owner_rows = (
                         restarted_db.get_connection()

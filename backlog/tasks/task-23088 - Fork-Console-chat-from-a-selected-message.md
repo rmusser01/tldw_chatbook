@@ -5,7 +5,7 @@ status: Done
 assignee:
   - '@codex'
 created_date: '2026-08-26 21:00'
-updated_date: '2026-08-27 13:56'
+updated_date: '2026-08-27 14:54'
 labels:
   - console
   - chat
@@ -55,37 +55,47 @@ Detailed TDD steps and commands: `Docs/superpowers/plans/2026-08-26-console-chat
 
 Implemented the ADR-092 fork projection and durable bundle, Console orchestration,
 stable direct action row and captured-target `More…` menu, six-state naming modal,
-temporary-fork promotion rules, citation/media handling, and authority recreation. The
-copy contract is an explicit allowlist with fresh mutable owners: it preserves supported
-declarative settings and sidecars while excluding live execution and authority state;
-no schema migration or new core dependency was needed.
+temporary-fork promotion, citation/media handling, and fresh authority ownership. The
+copy contract is an explicit allowlist: supported declarative settings and sidecars are
+copied into fresh owners while live execution and authority state remain source-only.
+No schema migration or new dependency was introduced.
 
-Task 7 added `Tests/integration/test_console_chat_fork_flow.py` and updated the Console
-chat-basics, branching-and-rewind, and design-specification documentation. The journey
-uses a pytest temporary directory as a fresh `HOME`, `XDG_CONFIG_HOME`,
-`XDG_DATA_HOME`, and `XDG_CACHE_HOME`; a file-backed SQLite database at
-`isolated-profile/data/chatbook.sqlite`; a temporary named Workspace and bound project
-with project instructions; the real citation repository; and the production
-`ChatScreen`/Console hierarchy with its consolidated stylesheet. It seeds saved
-branching, governed citations, attachments, a generated-image selection, generated
-video, Workspace/project, Library, RAG, approvals, recovery, and scratch state without
-calling a provider or reading developer data.
+### Production-shaped integration evidence
 
-At `120x35`, the journey pointer-selects a middle USER message, opens Fork with `f`,
-verifies a painted naming modal, replaces the selected default title, confirms with
-Enter, then switches through source/fork tabs and uses the pointer Fork button at a
-middle ASSISTANT generated-image boundary. At `80x24`, it renders and confirms a
-temporary video-boundary fork, verifies no durable write, preserves textual `[S1]`
-while omitting citation ownership, emits a path-free video tombstone, and promotes the
-fork as an independent durable root. A new production app/store then reopens the same
-database at `120x35` and switches through every restored fork. Assertions prove exact
-inclusive prefixes and ancestry, active leaves, generated-image/attachment/citation
-ownership, source durable and live immutability, fresh scratch identity and leases,
-fresh project-binding resolution, and absence of approvals, grants, recovery, runs,
-instruction bodies, raw paths, attachment bytes, and provider secrets from fork state,
-render snapshots, notifications, and captured logs.
+`Tests/integration/test_console_chat_fork_flow.py` uses a pytest-owned HOME/XDG profile,
+file SQLite, a named Workspace and bound project, the production Console screen/app
+hierarchy and stylesheet, the real citation repository, the real unified MCP permission
+store/effective resolver (including the local-tool hub), controller approval/run owners,
+durable and ephemeral recovery, and real scratch snapshots/leases. It seeds an active
+branch plus an off-path sibling, citations and textual `[S1]`, attachments, two generated
+image variants and selects the non-default green variant, video state, Library/RAG and
+project-instruction policy. The selected default name is replaced by keyboard input in
+the mounted modal; no `Input.value` assignment is used.
 
-The exact targeted regression command was:
+The test forks middle USER and ASSISTANT boundaries, a temporary citation/video source,
+and a non-ephemeral source without durable IDs. It proves exact prefixes and ancestry,
+selected-image inclusion and unselected-image exclusion, atomic sidecars/policies,
+source durable and expanded live-state equality, temporary-source equality before and
+after promotion, independent-root promotion with sanitized project controls, and
+canonical reload of the source, both durable forks, and the promoted temporary fork.
+Snapshots, notices, and captured logs are checked for the absence of approval arguments,
+permission grants, recovery/run state, resolved instruction bodies, scratch paths,
+attachment bytes, video paths, and provider secrets. No provider is called.
+
+Focused correction and integration commands:
+
+```bash
+PYTHONPATH=. ../../.venv/bin/python -m pytest \
+  Tests/Chat/test_console_conversation_hydration.py \
+  Tests/Chat/test_console_chat_fork.py -q --tb=short
+# 255 passed, 2 warnings in 29.99s
+
+PYTHONPATH=. ../../.venv/bin/python -m pytest \
+  Tests/integration/test_console_chat_fork_flow.py -q --tb=short
+# 1 passed, 2 warnings in 14.58s
+```
+
+The exact Task 7 regression command was:
 
 ```bash
 ../../.venv/bin/python -B -m pytest \
@@ -101,15 +111,81 @@ The exact targeted regression command was:
   Tests/UI/test_console_session_controller.py -q
 ```
 
-Result: `663 passed, 2 warnings in 206.79s`; the warnings were the existing requests
-dependency-version warning and Python's `audioop` deprecation through pydub. No full
-suite was run. Changed-file Ruff check/format and `git diff --check` passed; Ruff made
-three layout-only changes in the new fork region of
-`tldw_chatbook/UI/Console_Modules/session.py`, with no behavior change. Self-review
-against ADR-092 found no source mutation, shared mutable owner, authority transfer,
-non-atomic durable publication, duplicate retry, or narrow-layout regression. The
-five-digit task was marked Done by direct file edit because the Backlog CLI cannot
-reliably address it.
+Result: `663 passed, 2 warnings in 199.41s`. The two reported warnings are the existing
+requests dependency-version warning and Python's `audioop` deprecation through pydub;
+pytest also emitted existing macOS temporary-cleanup warnings after the passing summary.
+No full suite was run.
+
+### Genuine isolated PTY evidence
+
+The live fixture root was `/tmp/console-fork-live.HLlDNa`. Its `config/config.toml`
+disabled splash and model-catalog refresh, selected Console and an offline fixture model,
+and pointed every application database at `data/` under that root. Fresh `home/`,
+`config/`, `data/`, `cache/`, and `state/` directories isolated the run from developer
+data. `seed.py` used production `get_chachanotes_db_lazy`, `ChatPersistenceService`, and
+`ConsoleChatStore` to create source conversation
+`7a9d771e-253c-4ad5-9f77-88060a7c86ce` with persisted messages
+`3c970922…`, `96acdb6c…`, `b8c4eb27…`, `0d5c1e93…`, and `ae95ed54…`.
+
+The exact real-app launch shape was (first `-x 120 -y 35`, then after restart
+`-x 80 -y 24`):
+
+```bash
+env TMUX_TMPDIR=/tmp/console-fork-live.HLlDNa/tmux \
+  tmux -L fork23088-live new-session -d -x 120 -y 35 -s app \
+  'env HOME=/tmp/console-fork-live.HLlDNa/home \
+  XDG_CONFIG_HOME=/tmp/console-fork-live.HLlDNa/config \
+  XDG_DATA_HOME=/tmp/console-fork-live.HLlDNa/data \
+  XDG_CACHE_HOME=/tmp/console-fork-live.HLlDNa/cache \
+  XDG_STATE_HOME=/tmp/console-fork-live.HLlDNa/state \
+  TLDW_CONFIG_PATH=/tmp/console-fork-live.HLlDNa/config/config.toml \
+  TLDW_TEST_MODE=1 HF_HUB_OFFLINE=1 TRANSFORMERS_OFFLINE=1 \
+  HTTP_PROXY=http://127.0.0.1:9 HTTPS_PROXY=http://127.0.0.1:9 \
+  ALL_PROXY=http://127.0.0.1:9 NO_PROXY="" \
+  OPENAI_API_KEY=OFFLINE-NONSECRET-FIXTURE \
+  PYTHONPATH=/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.worktrees/console-chat-fork \
+  /Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/bin/python \
+  -m tldw_chatbook.app'
+```
+
+All interaction was sent to the real tmux PTY and evidence was read with
+`tmux capture-pane -p -t app:0.0`. At `120x35`, `Ctrl+K`, `Tab`, `Down`, `Enter`
+opened the source; `Esc`, `F6`, `F6`, `k`, `k`, `k` selected the middle USER row;
+`f` opened a painted `Through User 3` dialog; typing
+`Live renamed TASK-23088 fork` replaced the selected default; and Enter opened a
+three-message fork. Switching back showed `Live later excluded` still present in the
+source. The window was resized with `tmux resize-window -x 80 -y 24`; `Esc`, `F6`,
+`F6`, `k`, `k`, `f`, `Enter` exercised the quick-accept path at `Through Assistant 4`
+and opened the four-message default-titled fork. After `Ctrl+Q`, a fresh 80x24 process
+reopened the default fork, renamed fork, and original source through the real session
+switcher; captures showed the exact boundary prefixes and intact later source message.
+No composer send occurred. Offline catalog settings plus closed-loopback proxy variables
+prevented external access, and no provider was contacted.
+
+`assert_db.py` read the fixture SQLite directly after restart. It proved the source
+kept all five original message IDs and contents; the renamed fork had a fresh three-row
+chain, `parent_conversation_id`/`root_id` equal to the source and
+`forked_from_message_id=b8c4eb27…`; the quick fork had a fresh four-row chain and
+`forked_from_message_id=0d5c1e93…`. The source row retained null parent/fork fields.
+
+### Live-discovered correction, static checks, and review
+
+The first genuine app run exposed a production resume defect: the ordinary persisted
+identity `assistant_kind='generic', assistant_id='console'` was normalized by
+conversation metadata to kind `None` while retaining `assistant_id='console'`, so strict
+fork validation correctly disabled the action as an inconsistent unscoped identity.
+The new hydration regression first failed on that retained ID, then passed after
+`hydrate_console_session` canonically cleared assistant ID, authority, and persona memory
+when the kind is unscoped. Persona identity/memory round-trip assertions confirm scoped
+identity remains intact. Fork validation was not weakened.
+
+Changed-file Ruff check and format check plus `git diff --check` passed. Ruff formatting
+of `tldw_chatbook/UI/Console_Modules/session.py` remained a three-line mechanical layout
+change in the Task 6 fork region; the integration formatter was also mechanical.
+Self-review against ADR-092 found no source mutation, shared mutable owner, authority
+transfer, non-atomic durable publication, duplicate retry, or narrow-layout regression.
+User docs now describe Fork, the `More…` two-step Delete path, and Edit & resend as a
+response branch in the same chat.
 
 ADR required: yes
 
@@ -117,9 +193,14 @@ ADR path: `backlog/decisions/092-console-chat-fork-copy-and-authority-boundary.m
 
 Reason: ADR-092 is the governing copy, identity, authority, atomicity, and publication
 contract implemented by this task; no new decision was introduced. No lessons entry
-was added because the task did not surface a new reusable repository incident.
+was added: the live-found mixed-identity incident is already covered by the repository's
+existing lesson that a safety-boundary normalizer must be proven canonical rather than
+merely plausible, so duplicating that lesson would add no new guidance.
 
-Immediately before closeout, the uniqueness sweep checked 787 local/remote refs and
-233 worktrees. It found one committed-ref occurrence and two worktree occurrences of
-`id: TASK-23088`, all at this canonical task path, with zero competing ID claimants and
-zero same-title tasks at another path.
+Immediately before closeout, the uniqueness sweep checked 900 local/remote refs and
+238 worktrees. It found one committed-ref occurrence and two worktree occurrences of
+`id: TASK-23088` or the exact task title: the branch copy, this worktree, and the
+task-scoped baseline at `/private/tmp/tldw-chat-fork-task3-baseline`, all at the same
+canonical task path. There were zero competing ID claimants and zero same-title tasks at
+another path. The five-digit task was marked Done by direct file edit because the
+Backlog CLI cannot reliably address it.

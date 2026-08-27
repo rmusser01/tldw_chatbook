@@ -41,6 +41,7 @@ from tldw_chatbook.Chat.console_conversation_hydration import (
     hydrate_console_session,
     load_console_conversation_tree,
 )
+from tldw_chatbook.Chat.chat_conversation_service import ChatConversationService
 from tldw_chatbook.Chat.chat_persistence_service import ChatPersistenceService
 from tldw_chatbook.Chat.console_chat_models import ConsoleMessageRole
 from tldw_chatbook.Chat.console_chat_store import ConsoleChatStore
@@ -744,6 +745,61 @@ async def test_hydration_keeps_generic_sessions_without_character_identity(tmp_p
 
 
 @pytest.mark.asyncio
+async def test_canonical_hydration_makes_persisted_generic_console_forkable(tmp_path):
+    """Resume the ordinary saved Console identity as one unscoped identity."""
+    app = _fixture_app(tmp_path)
+    service = ChatPersistenceService(app.chachanotes_db)
+    source_store = ConsoleChatStore(persistence=service)
+    source = source_store.create_session(
+        title="Generic Console",
+        settings=default_console_session_settings(app.app_config),
+        assistant_kind="generic",
+        assistant_id="console",
+        assistant_authority_id=None,
+    )
+    source_message = source_store.append_message(
+        source.id,
+        role=ConsoleMessageRole.USER,
+        content="Persist the ordinary Console identity",
+        persist=True,
+    )
+    conversation_id = source.persisted_conversation_id
+    assert conversation_id is not None
+    persisted = app.chachanotes_db.get_conversation_by_id(conversation_id)
+    assert persisted["assistant_kind"] == "generic"
+    assert persisted["assistant_id"] == "console"
+    assert "assistant_authority_id" in persisted
+    assert persisted["assistant_authority_id"] is None
+
+    tree = ChatConversationService(app.chachanotes_db).get_conversation_tree(
+        conversation_id
+    )
+    assert tree["conversation"]["assistant_kind"] is None
+    assert tree["conversation"]["assistant_id"] == "console"
+    resumed_store = ConsoleChatStore(persistence=service)
+
+    resumed = await hydrate_console_session(
+        app=SimpleNamespace(chachanotes_db=app.chachanotes_db),
+        store=resumed_store,
+        conversation_id=conversation_id,
+        tree=tree,
+        settings=default_console_session_settings(app.app_config),
+    )
+
+    assert resumed.assistant_kind is None
+    assert resumed.assistant_id is None
+    assert resumed.assistant_authority_id is None
+    assert resumed.persona_memory_mode is None
+    resumed_message = next(
+        message
+        for message in resumed_store.messages_for_session(resumed.id)
+        if message.persisted_message_id == source_message.persisted_message_id
+    )
+    eligibility = resumed_store.fork_eligibility(resumed_message.id)
+    assert eligibility.eligible is True, eligibility.reason
+
+
+@pytest.mark.asyncio
 async def test_first_persist_and_canonical_hydration_round_trip_persona_memory_mode(
     tmp_path,
 ):
@@ -800,4 +856,7 @@ async def test_first_persist_and_canonical_hydration_round_trip_persona_memory_m
     )
 
     assert conversation["persona_memory_mode"] == "read_write"
+    assert resumed.assistant_kind == "persona"
+    assert resumed.assistant_id == "persona-1"
+    assert resumed.assistant_authority_id is None
     assert resumed.persona_memory_mode == "read_write"

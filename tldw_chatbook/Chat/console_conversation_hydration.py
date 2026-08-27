@@ -452,6 +452,13 @@ async def hydrate_console_session(
     persona_memory_mode = (
         raw_persona_memory_mode if type(raw_persona_memory_mode) is str else None
     )
+    if assistant_kind is None:
+        # Conversation metadata normalizes the legacy/default ``generic`` kind
+        # to the canonical unscoped form. Keep the rest of that identity in
+        # the same form instead of hydrating an impossible mixed identity.
+        assistant_id = None
+        assistant_authority_id = None
+        persona_memory_mode = None
     raw_character_id = conversation.get("character_id")
     character_id = (
         raw_character_id

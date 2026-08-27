@@ -304,9 +304,10 @@ also appears there when an original attempt can be shown safely.
 2. Click **Try** — the reply is retried in place.
 
 ### Delete a message and its follow-ups
-1. Select the message and click **🗑** once — "Press Delete again to remove
-   this message."
-2. Click **🗑** again. The message and everything beneath it are removed.
+1. Select the message, click **More…**, then choose **Delete** — "Press Delete
+   again to remove this message."
+2. Open **More…** and choose **Delete** again. The message and everything
+   beneath it are removed.
 
 ### Save a reply as a Note
 1. Select the assistant reply, click **More…**, then choose **Save as…**.

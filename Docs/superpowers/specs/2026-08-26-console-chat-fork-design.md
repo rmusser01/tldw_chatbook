@@ -762,16 +762,26 @@ for the clone boundary.
 
 ### Implementation verification (2026-08-27)
 
-The completed feature is covered by the provider-free production-shaped journey in
-`Tests/integration/test_console_chat_fork_flow.py`. It mounts the production Console
-screen and consolidated stylesheet against a fresh temporary HOME/XDG profile and
-file-backed SQLite database, renders the modal at `120x35` and `80x24`, exercises
-keyboard and pointer fork paths, renames a fork, switches among source and fork tabs,
-promotes a temporary fork, and restarts against the same database for durable reload.
-The journey proves exact USER and ASSISTANT prefixes, ancestry, source immutability,
-fresh authority, citation and attachment behavior, generated-image selection, video
-tombstones, and privacy-safe snapshots, notices, and diagnostics without contacting a
-provider. The complete Task 7 targeted regression set passed: 663 tests.
+The completed feature is covered by two provider-free journeys. The production-shaped
+integration in `Tests/integration/test_console_chat_fork_flow.py` mounts the production
+Console screen and consolidated stylesheet against a fresh temporary HOME/XDG profile
+and file-backed SQLite database. At `120x35` and `80x24` it exercises keyboard and
+pointer paths, selected-title replacement, quick acceptance, durable and temporary
+forks, promotion, tab switches, and canonical hydration reload. It proves exact USER
+and ASSISTANT prefixes, ancestry, source durable/live immutability, the selected
+non-default generated-image choice, fresh permission/approval, scratch/lease, run and
+recovery ownership, governed citations, attachments, video tombstones, sanitized
+project controls, and privacy-safe snapshots, notices, and diagnostics.
+
+A separate genuine PTY run launched `python -m tldw_chatbook.app` with fresh HOME/XDG
+directories, deterministic file-backed databases, offline model-catalog settings, and
+outbound proxies pinned to a closed loopback port. It drove the real `120x35` and
+`80x24` application hierarchy entirely by terminal input, renamed a USER-boundary
+fork, accepted the ASSISTANT-boundary default with Enter, switched back to the intact
+source, then restarted and reopened the source and both forks. Direct SQLite assertions
+confirmed the five-message source and exact three-/four-message fork prefixes and
+boundary ancestry. No message was sent and no provider was contacted. The complete
+Task 7 targeted regression set passed: 663 tests.
 
 ## Documentation and rollout
 
