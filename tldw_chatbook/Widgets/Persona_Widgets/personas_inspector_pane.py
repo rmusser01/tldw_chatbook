@@ -165,6 +165,7 @@ class PersonasInspectorPane(VerticalScroll):
         self._conversation_lookup: dict[str, str] = {}
         self._conversation_tail: ListItem | None = None
         self._conversation_tail_actionable = False
+        self._conversation_tail_loading = False
         self._tts_export_available = False
         self._buddy_source: str | None = None
         self._buddy_persona_id: str | None = None
@@ -526,6 +527,9 @@ class PersonasInspectorPane(VerticalScroll):
         list_view = self.query_one("#personas-conversations-list", ListView)
         await list_view.clear()
         self._conversation_lookup = {}
+        self._conversation_tail = None
+        self._conversation_tail_actionable = False
+        self._conversation_tail_loading = False
         tail = self._make_conversation_tail(
             text, actionable=actionable, disabled=disabled
         )
@@ -537,6 +541,7 @@ class PersonasInspectorPane(VerticalScroll):
         *,
         actionable: bool,
         disabled: bool,
+        loading: bool = False,
     ) -> ListItem:
         """Build and retain the exact trailing status/action row."""
         tail = ListItem(
@@ -546,6 +551,7 @@ class PersonasInspectorPane(VerticalScroll):
         )
         self._conversation_tail = tail
         self._conversation_tail_actionable = actionable
+        self._conversation_tail_loading = loading
         return tail
 
     def _build_conversation_rows(
@@ -580,6 +586,7 @@ class PersonasInspectorPane(VerticalScroll):
         *,
         actionable: bool,
         disabled: bool,
+        loading: bool = False,
     ) -> None:
         """Replace only the current tail, retaining durable row widgets."""
         list_view = self.query_one("#personas-conversations-list", ListView)
@@ -588,10 +595,14 @@ class PersonasInspectorPane(VerticalScroll):
             old_tail.query_one(Static).update(text)
             old_tail.disabled = disabled
             self._conversation_tail_actionable = actionable
+            self._conversation_tail_loading = loading
             old_tail.refresh(layout=True)
             return
         tail = self._make_conversation_tail(
-            text, actionable=actionable, disabled=disabled
+            text,
+            actionable=actionable,
+            disabled=disabled,
+            loading=loading,
         )
         await list_view.append(tail)
 
@@ -614,6 +625,7 @@ class PersonasInspectorPane(VerticalScroll):
         self._conversation_lookup = {}
         self._conversation_tail = None
         self._conversation_tail_actionable = False
+        self._conversation_tail_loading = False
         if has_more is None and not rows and empty_copy:
             tail = self._make_conversation_tail(
                 empty_copy, actionable=False, disabled=True
@@ -652,7 +664,10 @@ class PersonasInspectorPane(VerticalScroll):
             and list_view.highlighted_child is old_tail
         )
         await self._replace_conversation_tail(
-            "Loading older conversations...", actionable=False, disabled=False
+            "Loading older conversations...",
+            actionable=False,
+            disabled=False,
+            loading=True,
         )
         if clear_unfocused_tail:
             list_view.index = None
@@ -683,7 +698,7 @@ class PersonasInspectorPane(VerticalScroll):
         old_tail = self._conversation_tail
         highlighted_before = list_view.highlighted_child
         advance_from_loading_tail = bool(
-            rows
+            self._conversation_tail_loading
             and old_tail is not None
             and list_view.has_focus
             and highlighted_before is old_tail

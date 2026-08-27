@@ -1257,6 +1257,32 @@ async def test_append_highlights_first_new_row_only_from_focused_loading_tail():
         )
 
 
+@pytest.mark.parametrize("tail_state", ("load", "retry", "exhausted"))
+async def test_append_does_not_advance_from_a_non_loading_tail(tail_state: str):
+    app = InspectorApp()
+    async with app.run_test() as pilot:
+        pane = app.query_one(PersonasInspectorPane)
+        pane.show_selection(name="Detective Sam", kind="character")
+        await pane.show_conversations(
+            (("conv-1", "First case"),),
+            has_more=tail_state != "exhausted",
+        )
+        if tail_state == "retry":
+            await pane.show_conversations_failure(initial=False)
+        list_view = app.query_one("#personas-conversations-list", ListView)
+        list_view.focus()
+        list_view.index = len(list_view.children) - 1
+        await pilot.pause()
+        highlighted_tail = list_view.highlighted_child
+
+        await pane.append_conversations((("conv-2", "Cold trail"),), has_more=False)
+        await pilot.pause()
+
+        new_row = app.query_one("#personas-conversation-row-conv-2", ListItem)
+        assert list_view.highlighted_child is highlighted_tail
+        assert list_view.highlighted_child is not new_row
+
+
 async def test_append_does_not_steal_focus_or_highlight_a_new_row():
     app = InspectorApp()
     async with app.run_test() as pilot:
