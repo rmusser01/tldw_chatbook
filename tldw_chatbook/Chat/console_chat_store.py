@@ -4047,6 +4047,22 @@ class ConsoleChatStore:
                 continue
             self._durable_tombstones.pop(victim, None)
 
+    def durable_acceptance_retired(
+        self,
+        preparation_id: str,
+        fingerprint: ConsoleDurableAcceptanceFingerprint,
+    ) -> bool:
+        """True when THIS acceptance was retired, rather than mutated.
+
+        The public form of the tombstone check TASK-22587 introduced. Callers
+        outside the store need it to tell "the user closed the chat" from "the
+        owner changed underneath me", which are otherwise indistinguishable
+        once the live fingerprint is gone.
+        """
+
+        with self._preparation_lock:
+            return self._durable_retired_locked(preparation_id, fingerprint)
+
     def release_durable_postcommit_activity(self, preparation_id: str) -> None:
         """Allow this preparation's tombstone to be evicted again.
 

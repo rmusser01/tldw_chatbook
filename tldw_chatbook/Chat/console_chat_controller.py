@@ -6573,7 +6573,10 @@ class ConsoleChatController:
         return ConsoleSubmitResult(
             True,
             True,
-            "",
+            # TASK-22690: the generic copy every other close site uses. This
+            # returned "" when TASK-22587 added it, which reads to the caller
+            # as "no message" rather than "the session closed".
+            "Session closed.",
             session_id=session_id,
             user_message_id=commit.user_message_id,
             assistant_message_id=commit.assistant_message_id,
@@ -6968,6 +6971,21 @@ class ConsoleChatController:
         with self.store.durable_preparation_lock:
             current = self._durable_postcommit_continuations.get(preparation_id)
             if current is None or current.fingerprint != fingerprint:
+                if current is None and self.store.durable_acceptance_retired(
+                    preparation_id, fingerprint
+                ):
+                    # TASK-22690: the user closed the chat while this sequence
+                    # ran, so the close already dropped the continuation and
+                    # retired the preparation. The tombstone proves it is THIS
+                    # acceptance, which is what separates an ordinary close from
+                    # an owner that genuinely changed underneath us. A fourth
+                    # site of the conflation TASK-22587 removed.
+                    return self._postcommit_stopped_by_close(
+                        preparation_id=preparation_id,
+                        session_id=session_id,
+                        commit=commit,
+                        continuation=continuation,
+                    )
                 raise RuntimeError("Durable continuation owner changed.")
             self._durable_postcommit_continuations.pop(preparation_id, None)
             self._release_retired_prepared_evidence(current)
