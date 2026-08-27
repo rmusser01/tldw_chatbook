@@ -2907,7 +2907,6 @@ class ConsoleChatStore:
                 self._pending_trajectory_tool_rows.pop("__unanchored__", None)
 
         self._messages_by_session.pop(session_id, None)
-        self._drop_newest_change_review_memo(session_id)
         self._tool_markers_by_session.pop(session_id, None)
         self._nodes_by_session.pop(session_id, None)
         self._children_by_parent.pop(session_id, None)

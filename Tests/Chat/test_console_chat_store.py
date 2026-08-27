@@ -1642,7 +1642,6 @@ def _populate_native_owned_cleanup_state(
     store._deferred_project_instruction_state_session_ids.add(session.id)
     store._session_turn_ids[session.id] = "turn-restored"
     store._payload_revisions[session.id] = 11
-    store._newest_change_review_memo = (session.id, tuple(), 0, None)
 
 
 def _assert_native_owned_cleanup_state_absent(
@@ -1704,7 +1703,6 @@ def _assert_native_owned_cleanup_state_absent(
         store._deferred_project_instruction_state_session_ids,
     )
     assert all(session_id not in owner for owner in (*session_maps, *session_sets))
-    assert store._newest_change_review_memo is None
     assert all(
         owner != session_id for owner in store._message_session_index.values()
     )
