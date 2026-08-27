@@ -19841,11 +19841,6 @@ class LibraryScreen(BaseAppScreen):
         event.stop()
         if self._file_notes_active():
             await self._return_to_library_database_notes()
-            if (
-                self._library_notes_source == LIBRARY_NOTES_SOURCE_DATABASE
-                and self._library_notes_view == "editor"
-            ):
-                await self._exit_library_note_editor_guarded()
             return
         if (
             self._library_notes_workflow_active()
@@ -19913,7 +19908,12 @@ class LibraryScreen(BaseAppScreen):
                 self._library_notes_focus_intent_generation += 1
                 retained_switch = True
             receipt = self._library_notes_browse_return_receipt
-            if receipt is None:
+            if self._library_notes_view == "editor":
+                # The retained Database editor is already the authoritative
+                # return target. Restoring a list receipt here would focus the
+                # hidden browse surface and disturb the editor's scroll state.
+                pass
+            elif receipt is None:
                 # task-2856 AC1: this lands on the Notes LIST (never Files'
                 # own editor state), so re-focus its first row the same way
                 # every other "enter/return to a list" seam does.

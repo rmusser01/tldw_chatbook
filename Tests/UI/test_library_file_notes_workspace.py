@@ -678,7 +678,15 @@ async def test_notes_authority_round_trip_retains_both_workspaces(
         )
         database_id = screen._selected_note_id
         database_editor = screen.query_one("#library-note-body", TextArea)
-        _replace_editor_text(database_editor, "database draft")
+        _replace_editor_text(
+            database_editor,
+            "database draft\n" + "database scroll line\n" * 80,
+        )
+        database_editor.selection = database_editor.selection.__class__(
+            (1, 1),
+            (2, 8),
+        )
+        database_editor.scroll_to(y=10, animate=False, force=True, immediate=True)
         await pilot.pause()
         database_draft = database_editor.text
         database_receipt = screen._library_notes_browse_return_receipt
@@ -706,7 +714,25 @@ async def test_notes_authority_round_trip_retains_both_workspaces(
         folder_node.expand()
         workspace._push_phase = "needs_attention"
         workspace._render_session_git_label(2)
+        workspace._set_action_status("Retained recovery state")
+        folder_editor.scroll_to(y=1, animate=False, force=True, immediate=True)
         await pilot.pause()
+        database_session_state = (
+            screen._library_notes_view,
+            screen._selected_note_id,
+            screen._library_note_detail,
+            screen._library_note_editor_armed,
+            screen._library_note_autosave_state,
+            screen._library_notes_autosave_timer,
+            screen._library_note_session.snapshot,
+            database_editor.text,
+            database_editor.cursor_location,
+            database_editor.selection,
+            int(database_editor.scroll_y),
+            database_editor.history,
+            tuple(database_editor.history.undo_stack),
+            tuple(database_editor.history.redo_stack),
+        )
         folder_identities = tuple(
             map(
                 id,
@@ -725,18 +751,63 @@ async def test_notes_authority_round_trip_retains_both_workspaces(
             folder_editor.text,
             folder_editor.cursor_location,
             folder_editor.selection,
+            int(folder_editor.scroll_y),
+            tuple(folder_editor.history.undo_stack),
+            tuple(folder_editor.history.redo_stack),
             folder_search.value,
+            workspace._action_detail,
         )
 
         assert await workspace.flush_pending_work()
-        await screen._return_to_library_database_notes()
+        task_return = screen.query_one("#library-notes-task-return", Button)
+        assert task_return.display
+        await pilot.click("#library-notes-task-return")
         await _wait_until(
             pilot,
             lambda: screen._library_notes_source == "database",
             "Database Notes did not return",
         )
+        assert screen._library_notes_view == "editor"
+        assert screen.query_one("#library-note-body", TextArea) is database_editor
+        returned_database_session_state = (
+            screen._library_notes_view,
+            screen._selected_note_id,
+            screen._library_note_detail,
+            screen._library_note_editor_armed,
+            screen._library_note_autosave_state,
+            screen._library_notes_autosave_timer,
+            screen._library_note_session.snapshot,
+            database_editor.text,
+            database_editor.cursor_location,
+            database_editor.selection,
+            int(database_editor.scroll_y),
+            database_editor.history,
+            tuple(database_editor.history.undo_stack),
+            tuple(database_editor.history.redo_stack),
+        )
+        for field, actual, expected in zip(
+            (
+                "view",
+                "selected_id",
+                "detail",
+                "editor_armed",
+                "autosave_state",
+                "autosave_timer",
+                "session_snapshot",
+                "text",
+                "cursor",
+                "selection",
+                "scroll",
+                "history",
+                "undo_stack",
+                "redo_stack",
+            ),
+            returned_database_session_state,
+            database_session_state,
+        ):
+            assert actual == expected, (field, actual, expected)
         assert screen._selected_note_id == database_id
-        assert screen.query_one("#library-note-body", TextArea).text == database_draft
+        assert database_editor.text == database_draft
         assert screen._library_notes_browse_return_receipt is database_receipt
         assert int(screen.query_one("#library-notes-list").scroll_y) == database_scroll
 
@@ -773,7 +844,11 @@ async def test_notes_authority_round_trip_retains_both_workspaces(
             returned_editor.text,
             returned_editor.cursor_location,
             returned_editor.selection,
+            int(returned_editor.scroll_y),
+            tuple(returned_editor.history.undo_stack),
+            tuple(returned_editor.history.redo_stack),
             workspace.query_one("#file-notes-search", Input).value,
+            workspace._action_detail,
         ) == folder_state
         assert folder_node.is_expanded
         assert workspace.save_state == "saved"
@@ -1698,14 +1773,6 @@ async def test_wide_files_task_return_restores_database_browse_receipt() -> None
         await pilot.pause()
         before_list_scroll = int(notes_list.scroll_y)
         before_rail_scroll = int(rail.scroll_y)
-        row.press()
-        await _wait_until(
-            pilot,
-            lambda: bool(screen.query("#library-note-body")),
-            "Database note editor did not open.",
-        )
-        browse_receipt = screen._library_notes_browse_return_receipt
-        assert browse_receipt is not None
         await pilot.resize_terminal(100, 30)
         await _wait_until(
             pilot,
@@ -1719,6 +1786,8 @@ async def test_wide_files_task_return_restores_database_browse_receipt() -> None
             lambda: workspace.is_mounted,
             "Files workspace did not mount.",
         )
+        browse_receipt = screen._library_notes_browse_return_receipt
+        assert browse_receipt is not None
         assert screen._library_notes_browse_return_receipt is browse_receipt
         await pilot.resize_terminal(170, 24)
         await _wait_until(
