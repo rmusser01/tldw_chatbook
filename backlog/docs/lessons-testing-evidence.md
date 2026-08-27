@@ -9007,3 +9007,46 @@ absolute exclusion in every decoded owner. For any streaming exclusion rule,
 test both fragment-level handling and an adversarial split at the final
 aggregate/storage owner; per-chunk green cannot prove a property of the joined
 value.
+## A probe that cannot distinguish the mechanism it tests from the one it replaces proves nothing — and `CharactersRAGDB` does not accept URI filenames (TASK-22301, 2026-08-26)
+
+A reviewer asked why the citation-boundary tests used a file-backed SQLite
+database instead of `":memory:"`. The real constraint is that `CharactersRAGDB`
+opens a **thread-local** connection and TASK-22205 offloads durable DB calls to a
+worker thread — with `":memory:"` that worker gets its own empty database, so
+writes made there are invisible to assertions on the test thread. Measured
+symptom: citation traces wrote successfully and `rag_citation_traces` still read
+**0 rows**.
+
+The obvious escape hatch is a shared-cache in-memory URI —
+`"file:<name>?mode=memory&cache=shared"` — which is in-memory *and* visible
+across threads. I probed it: constructed the DB, read a table from a second
+thread, saw it succeed, and adopted it.
+
+**The probe was worthless.** `CharactersRAGDB` never passes `uri=True` to
+`sqlite3.connect`, so that string is not a URI at all — it is taken as a
+**literal filename**. The probe's cross-thread read succeeded because the
+"database" was an ordinary file on disk, which is exactly the mechanism the URI
+was supposed to replace. A passing probe was indistinguishable from the failure
+it was meant to rule out.
+
+Cost: ~200 files were created in the repo root with `?` and `:` in their names,
+`git add -A` committed 137 of them, and both `windows-latest` CI legs failed
+because those characters are illegal in Windows filenames. The CI failure named
+GGUF jobs and gave no hint that a citation test was responsible.
+
+**Two rules, both earned here:**
+
+1. **Design a probe so its success is only possible via the new mechanism.**
+   Here that meant checking `sqlite3.connect`'s call site for `uri=True` FIRST —
+   one grep, before any probe — or asserting that no file appeared on disk.
+   "It worked" is not evidence when the old path would also make it work.
+2. **Before `git add -A`, look at what it is about to stage.** `git status
+   --porcelain | head` would have shown 137 files named `file:...?mode=...`
+   immediately. A test that writes to the repo root is a bug regardless of
+   filename; the illegal characters merely made it visible on another OS.
+
+Corollary worth knowing on its own: **`:memory:` is unusable for any test whose
+writes happen on a worker thread**, and this repo has no shared-cache workaround
+available until `CharactersRAGDB` opts into `uri=True`. A temp-directory file
+plus explicit cleanup is the only option — measured at 0 directories leaked when
+an autouse fixture closes the connection and removes the directory.
