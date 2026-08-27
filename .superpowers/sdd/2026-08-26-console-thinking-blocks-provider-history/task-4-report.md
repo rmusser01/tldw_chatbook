@@ -72,6 +72,32 @@ recovery success; rejection of late thinking after retirement; preservation of n
 tokens; Stop-time retention followed by post-settlement retirement; and the shared raw
 owner prepare/dispatch path.
 
+## Review fix round 2
+
+Re-review found one remaining issuance-to-owner gap, corrected in `1ed4531730`
+(`fix: close generation token handoff gaps`). Round 1 retired at the normal terminal
+owners, but direct setup could fail before entering its stream `finally`, while agent
+preparation and `asyncio.to_thread` cancellation could exit before the bridge worker
+entered its retiring decorator.
+
+- Direct now puts every fallible variant/emote/prefill/run-state setup operation after
+  issuance under exact-token retirement. Setup error, `CancelledError`, and the
+  session-closed prefill return cannot leak authority; compare-and-pop preserves a
+  concurrently issued newer token.
+- Agent now performs provider/tool/refusal preparation before issuing a normal token.
+  A lock-protected handoff keeps an externally preissued recovery token controller-owned
+  across all earlier exits. Immediately before worker launch the controller records the
+  token; the bridge decorator atomically accepts it on worker entry. Cancellation wins
+  by closing local ownership and retiring the token, causing any later queued worker
+  entry to reject the handoff. Once acceptance wins, the existing bridge decorator and
+  detached Stop/late-evidence settlement remain the sole retirement owner.
+
+Round-2 RED reproduced five failures in the initial six-case slice: both direct setup
+error/cancellation and both agent pre-worker error/cancellation leaked one token; the
+pre-worker-start cancellation test also showed no explicit handoff. GREEN expanded to
+nine focused cases covering teardown-before-issuance, exact late-thinking rejection,
+preissued recovery tokens, atomic cancellation, and newer-token survival.
+
 ## Verification
 
 - RED: new history suite initially failed collection on the missing thinking-owner
@@ -96,6 +122,10 @@ owner prepare/dispatch path.
   (all changed files), and `git diff --check`: passed. The pre-existing whole-file
   formatter baseline in `test_console_agent_bridge.py` remains outside this narrow
   two-assertion change; changed lines are formatter-conformant.
+- Review fix round 2 focused lifecycle slice: **9 passed**.
+- Review fix round 2 controller/agent suite: **498 passed**.
+- Review fix round 2 history/prepared/provider suite: **378 passed, 2 skipped**
+  (expected loopback permission skips).
 
 No full repository suite was run, per repository and task instructions. The two
 expected skips were sandbox loopback-listener permission checks; the agent-bridge test
