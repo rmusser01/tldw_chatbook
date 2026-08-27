@@ -352,6 +352,22 @@ async def test_unread_filter_hides_read_items_but_pins_the_open_one():
         assert [item["item_id"] for item in pane.displayed_items()] == [1]
 
 
+async def test_contextual_unread_filter_is_visible_locked_and_explained():
+    app = ArticleListHarness()
+    async with app.run_test(size=(120, 40)) as pilot:
+        pane = app.query_one(ArticleListPane)
+        pane.status_filter = "unread"
+        pane.status_filter_disabled_reason = (
+            "All Unread always shows unread items."
+        )
+        await pilot.pause()
+
+        select = pane.query_one("#items-status-select", Select)
+        assert select.value == "unread"
+        assert select.disabled is True
+        assert select.tooltip == "All Unread always shows unread items."
+
+
 async def test_all_filter_shows_triage_statuses_but_not_ignored_or_error():
     app = ArticleListHarness()
     async with app.run_test(size=(120, 40)) as pilot:

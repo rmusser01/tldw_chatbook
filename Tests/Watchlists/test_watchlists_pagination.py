@@ -997,16 +997,86 @@ async def test_one_mutation_path_patches_every_cached_projection_without_query()
         assert controller.list_reader_items_page.await_count == 0
 
 
-def test_query_identity_uses_explicit_scope_and_omits_page_index():
+@pytest.mark.parametrize(
+    ("scope", "expected"),
+    (
+        (
+            TreeScope(kind="source", source_id=9, parent_context="all"),
+            {"source_id": 9},
+        ),
+        (
+            TreeScope(kind="source", source_id=9, parent_context="unassigned"),
+            {"source_id": 9, "unassigned_only": True},
+        ),
+        (
+            TreeScope(kind="source", source_id=9, parent_context="unread"),
+            {"source_id": 9, "status": "new"},
+        ),
+        (
+            TreeScope(
+                kind="source",
+                source_id=9,
+                watchlist_id=7,
+                parent_context="watchlist",
+            ),
+            {"source_id": 9, "watchlist_id": 7},
+        ),
+    ),
+)
+def test_contextual_source_scope_emits_its_exact_reader_predicates(
+    scope: TreeScope, expected: dict[str, object]
+) -> None:
+    screen = WatchlistsCollectionsScreen(Mock())
+
+    assert screen._items_scope_query(scope) == expected
+
+
+def test_query_identity_uses_explicit_contextual_scope_and_omits_page_index():
     screen = WatchlistsCollectionsScreen(Mock())
     screen.__dict__["_reactive_runtime_backend"] = "local"
-    scope = TreeScope(kind="watchlist", watchlist_id=7)
+    scope = TreeScope(
+        kind="source",
+        source_id=9,
+        watchlist_id=7,
+        parent_context="watchlist",
+    )
 
     first = screen._items_page_key(scope=scope, status="unread", search=" Needle ")
     second = screen._items_page_key(scope=scope, status="unread", search="needle")
 
     assert first == second
-    assert first == ("local", "watchlist", 7, None, "unread", "needle")
+    assert first == (
+        "local",
+        "source",
+        "watchlist",
+        7,
+        9,
+        "unread",
+        "needle",
+    )
+
+
+def test_same_source_under_different_parents_has_distinct_query_identity():
+    screen = WatchlistsCollectionsScreen(Mock())
+    screen.__dict__["_reactive_runtime_backend"] = "local"
+    scopes = (
+        TreeScope(kind="source", source_id=9, parent_context="all"),
+        TreeScope(kind="source", source_id=9, parent_context="unassigned"),
+        TreeScope(kind="source", source_id=9, parent_context="unread"),
+        TreeScope(
+            kind="source",
+            source_id=9,
+            watchlist_id=7,
+            parent_context="watchlist",
+        ),
+    )
+
+    keys = {
+        screen._items_page_key(scope=scope, status="all", search="")
+        for scope in scopes
+    }
+
+    assert len(keys) == len(scopes)
 
 
 def test_production_has_no_legacy_items_loader_or_offset_reader_calls():
@@ -1043,8 +1113,9 @@ async def test_atomic_scope_keeps_committed_reader_until_first_page_mounts(
         content.item = open_item
         content.position = "1 of 1"
         pane = screen.query_one("#watchlists-items-pane", ArticleListPane)
+        screen._items_status_filter = "all"
+        pane.status_filter = "all"
         pane.selected_item = open_item
-        tree = screen.query_one("#wl-tree", WatchlistTree)
         inspector = screen.query_one("#watchlists-entity-inspector", InspectorPane)
         entered = asyncio.Event()
         release = asyncio.Event()
@@ -1058,8 +1129,21 @@ async def test_atomic_scope_keeps_committed_reader_until_first_page_mounts(
 
         controller.list_reader_items_page.reset_mock()
         controller.list_reader_items_page.side_effect = replacement
-        candidate = TreeScope(kind="watchlist", watchlist_id=7)
-        screen._tree_watchlists = [{"id": 7, "name": "Candidate scope"}]
+        candidate_source_id = screen._watchlist_bundle_service()._db.add_subscription(
+            name="Candidate feed",
+            type="rss",
+            source="https://atomic-candidate.example/feed",
+        )
+        await screen._load_tree_data().wait()
+        candidate = TreeScope(
+            kind="source",
+            source_id=candidate_source_id,
+            parent_context="unread",
+        )
+        screen._tree_all_source_rows = [
+            {"id": candidate_source_id, "name": "Candidate feed"}
+        ]
+        tree = screen.query_one("#wl-tree", WatchlistTree)
         screen.post_message(TreeScopeChanged(candidate))
         await _wait_until(pilot, entered.is_set)
 
@@ -1081,7 +1165,9 @@ async def test_atomic_scope_keeps_committed_reader_until_first_page_mounts(
                     ),
                     inspector_scope=inspector.scope,
                     inspector_labels=list(inspector.breadcrumb_labels),
-                    tree_scope=tree.active_scope,
+                    tree_scope=screen.query_one(
+                        "#wl-tree", WatchlistTree
+                    ).active_scope,
                     rows=[row["item_id"] for row in pane.items],
                     snapshot_count=screen._items_snapshot_count,
                     page_number=pane.page_number,
@@ -1094,9 +1180,12 @@ async def test_atomic_scope_keeps_committed_reader_until_first_page_mounts(
         monkeypatch.setattr(screen, "_publish_items_rows", observe_atomic_paint)
         release.set()
         await _wait_until(pilot, lambda: bool(committed_paint))
-        assert "Candidate scope" in str(committed_paint["heading"])
+        assert "All Unread / Candidate feed" in str(committed_paint["heading"])
         assert committed_paint["inspector_scope"] == candidate
-        assert committed_paint["inspector_labels"] == ["Candidate scope"]
+        assert committed_paint["inspector_labels"] == [
+            "All Unread",
+            "Candidate feed",
+        ]
         assert committed_paint["tree_scope"] == candidate
         assert committed_paint["rows"] == [9]
         assert committed_paint["snapshot_count"] == 23
@@ -1104,13 +1193,30 @@ async def test_atomic_scope_keeps_committed_reader_until_first_page_mounts(
         assert committed_paint["has_next"] is True
         assert committed_paint["page_loading"] is False
         assert committed_paint["reader"] is None
-        assert tree.active_scope == candidate
+        assert screen.query_one("#wl-tree", WatchlistTree).active_scope == candidate
         assert [row["item_id"] for row in screen._loaded_items] == [9]
         assert screen._items_snapshot_count == 23
         assert screen._selected_content_item is None
         assert content.item is None
         assert content.position == ""
         assert pane.selected_item is None
+        assert screen._items_status_filter == "all"
+        assert pane.status_filter == "unread"
+        assert pane.status_filter_disabled_reason == (
+            "All Unread always shows unread items."
+        )
+
+        controller.list_reader_items_page.side_effect = None
+        controller.list_reader_items_page.return_value = _page(
+            [11], high_water=11, snapshot_count=1
+        )
+        restored_scope = TreeScope(kind="all")
+        screen.post_message(TreeScopeChanged(restored_scope))
+        await _wait_until(pilot, lambda: screen.tree_scope == restored_scope)
+
+        assert screen._items_status_filter == "all"
+        assert pane.status_filter == "all"
+        assert pane.status_filter_disabled_reason is None
 
 
 @pytest.mark.asyncio
@@ -1133,7 +1239,6 @@ async def test_pending_scope_failure_retains_committed_scope_and_names_both():
         prior_snapshot = screen._items_snapshot
         prior_rows = screen._loaded_items
         prior_count = screen._items_snapshot_count
-        tree = screen.query_one("#wl-tree", WatchlistTree)
         pane = screen.query_one("#watchlists-items-pane", ArticleListPane)
         inspector = screen.query_one("#watchlists-entity-inspector", InspectorPane)
         content = screen.query_one("#watchlists-content-pane", ContentPane)
@@ -1144,19 +1249,41 @@ async def test_pending_scope_failure_retains_committed_scope_and_names_both():
         content.item = open_item
         content.position = "1 of 17"
         await pilot.pause()
-        prior_heading = _static_text(screen.query_one("#wc-watchlists-summary"))
         prior_inspector_scope = inspector.scope
         prior_inspector_labels = list(inspector.breadcrumb_labels)
         prior_page_number = pane.page_number
         prior_has_next = pane.has_next
         prior_content_position = content.position
-        screen._tree_watchlists = [{"id": 7, "name": "Candidate [A]"}]
+        screen._items_status_filter = "all"
+        pane.status_filter = "all"
+        candidate_source_id = screen._watchlist_bundle_service()._db.add_subscription(
+            name="Candidate [A]",
+            type="rss",
+            source="https://failed-candidate.example/feed",
+        )
+        await screen._load_tree_data().wait()
+        screen._tree_all_source_rows = [
+            {"id": candidate_source_id, "name": "Candidate [A]"}
+        ]
+        tree = screen.query_one("#wl-tree", WatchlistTree)
+        await _wait_until(
+            pilot,
+            lambda: "1 source"
+            in _static_text(screen.query_one("#wc-watchlists-summary")),
+        )
+        prior_heading = _static_text(screen.query_one("#wc-watchlists-summary"))
         screen.app_instance.notify = Mock()
         controller.list_reader_items_page.reset_mock()
         controller.list_reader_items_page.side_effect = RuntimeError("offline")
 
         screen.post_message(
-            TreeScopeChanged(TreeScope(kind="watchlist", watchlist_id=7))
+            TreeScopeChanged(
+                TreeScope(
+                    kind="source",
+                    source_id=candidate_source_id,
+                    parent_context="unread",
+                )
+            )
         )
         await _wait_until(
             pilot, lambda: controller.list_reader_items_page.await_count == 1
@@ -1166,6 +1293,9 @@ async def test_pending_scope_failure_retains_committed_scope_and_names_both():
         assert screen.tree_scope == prior_scope
         assert screen.selected_scope == prior_selected_scope
         assert tree.active_scope == prior_scope
+        assert screen._items_status_filter == "all"
+        assert pane.status_filter == "all"
+        assert pane.status_filter_disabled_reason is None
         assert _static_text(screen.query_one("#wc-watchlists-summary")) == prior_heading
         assert inspector.scope == prior_inspector_scope
         assert list(inspector.breadcrumb_labels) == prior_inspector_labels
@@ -1181,7 +1311,8 @@ async def test_pending_scope_failure_retains_committed_scope_and_names_both():
         assert content.item is open_item
         assert content.position == prior_content_position
         screen.app_instance.notify.assert_called_once_with(
-            "Couldn't open Candidate [A]; still showing All Sources.",
+            "Couldn't open Candidate [A] under All Unread; still showing "
+            "All Sources.",
             severity="error",
             markup=False,
         )
@@ -1266,10 +1397,15 @@ async def test_management_scope_invalidates_reader_without_hidden_item_io():
 
         screen.__dict__["_reactive_active_section"] = "sources"
         controller.list_reader_items_page.reset_mock()
-        candidate = TreeScope(kind="watchlist", watchlist_id=7)
+        candidate = TreeScope(
+            kind="source",
+            source_id=9,
+            parent_context="unassigned",
+        )
         screen._request_tree_scope(candidate)
 
         assert controller.list_reader_items_page.await_count == 0
+        assert screen.tree_scope == candidate
         assert screen._items_snapshot is None
         assert screen._loaded_items == []
         assert screen._selected_content_item is None
@@ -1288,52 +1424,71 @@ async def test_pending_scope_only_newest_request_can_publish():
 
     async with _open_screen(controller) as (screen, pilot):
         assert await screen._replace_items_snapshot(reason="initial") is True
-        calls: list[int] = []
-        returned: list[int] = []
-        releases = {watchlist_id: asyncio.Event() for watchlist_id in (7, 8, 9)}
+        calls: list[str] = []
+        returned: list[str] = []
+        releases = {
+            parent: asyncio.Event() for parent in ("all", "unassigned", "unread")
+        }
+        item_ids = {"all": 7, "unassigned": 8, "unread": 9}
 
         async def replacement(**kwargs):
-            watchlist_id = int(kwargs["watchlist_id"])
-            calls.append(watchlist_id)
-            while not releases[watchlist_id].is_set():
+            parent = (
+                "unread"
+                if kwargs.get("status") == "new"
+                else "unassigned"
+                if kwargs.get("unassigned_only")
+                else "all"
+            )
+            calls.append(parent)
+            while not releases[parent].is_set():
                 try:
-                    await releases[watchlist_id].wait()
+                    await releases[parent].wait()
                 except asyncio.CancelledError:
                     continue
-            returned.append(watchlist_id)
+            returned.append(parent)
+            item_id = item_ids[parent]
             return _page(
-                [watchlist_id],
-                high_water=watchlist_id,
-                snapshot_count=watchlist_id,
+                [item_id],
+                high_water=item_id,
+                snapshot_count=item_id,
             )
 
         controller.list_reader_items_page.reset_mock()
         controller.list_reader_items_page.side_effect = replacement
-        for watchlist_id in (7, 8, 9):
+        for parent in ("all", "unassigned", "unread"):
             screen.post_message(
                 TreeScopeChanged(
-                    TreeScope(kind="watchlist", watchlist_id=watchlist_id)
+                    TreeScope(kind="source", source_id=9, parent_context=parent)
                 )
             )
-            await _wait_until(pilot, lambda: watchlist_id in calls)
+            await _wait_until(pilot, lambda: parent in calls)
 
         assert screen._pending_tree_scope == TreeScope(
-            kind="watchlist", watchlist_id=9
+            kind="source", source_id=9, parent_context="unread"
         )
-        releases[9].set()
-        await _wait_until(pilot, lambda: screen.tree_scope.watchlist_id == 9)
-        assert returned == [9]
+        releases["unread"].set()
+        await _wait_until(
+            pilot, lambda: screen.tree_scope.parent_context == "unread"
+        )
+        assert returned == ["unread"]
         assert screen._pending_tree_scope is None
-        assert screen.tree_scope == TreeScope(kind="watchlist", watchlist_id=9)
+        assert screen.tree_scope == TreeScope(
+            kind="source", source_id=9, parent_context="unread"
+        )
         assert [row["item_id"] for row in screen._loaded_items] == [9]
         assert screen._items_snapshot_count == 9
 
-        releases[8].set()
-        releases[7].set()
-        await _wait_until(pilot, lambda: set(returned) == {7, 8, 9})
+        releases["unassigned"].set()
+        releases["all"].set()
+        await _wait_until(
+            pilot,
+            lambda: set(returned) == {"all", "unassigned", "unread"},
+        )
         await pilot.pause(0.1)
 
         assert screen._pending_tree_scope is None
-        assert screen.tree_scope == TreeScope(kind="watchlist", watchlist_id=9)
+        assert screen.tree_scope == TreeScope(
+            kind="source", source_id=9, parent_context="unread"
+        )
         assert [row["item_id"] for row in screen._loaded_items] == [9]
         assert screen._items_snapshot_count == 9
