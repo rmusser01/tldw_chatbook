@@ -1463,7 +1463,7 @@ def test_native_tool_call_round_trip_streams_final_answer(tmp_path):
     assert any("get_current_datetime" in marker.content for marker in tool_rows)
 
 
-def test_native_multi_call_round_emits_one_thinking_marker_with_resume_parity(
+def test_native_multi_call_round_without_summary_emits_no_planning(
     tmp_path,
 ) -> None:
     calls = ProviderToolCalls(
@@ -1497,15 +1497,14 @@ def test_native_multi_call_round_emits_one_thinking_marker_with_resume_parity(
 
     assert outcome.status == "done"
     assert [marker.activity_presentation.kind for marker in live] == [
-        "thinking",
         "tool",
         "tool",
     ]
-    assert sum(marker.activity_presentation.kind == "thinking" for marker in live) == 1
+    assert not any(marker.activity_presentation.kind == "planning" for marker in live)
     assert _activity_marker_signature(resumed) == _activity_marker_signature(live)
 
 
-def test_unsafe_model_summary_emits_detail_free_thinking_with_resume_parity(
+def test_unsafe_model_summary_emits_no_planning_with_resume_parity(
     tmp_path,
 ) -> None:
     scripts = [
@@ -1520,14 +1519,9 @@ def test_unsafe_model_summary_emits_detail_free_thinking_with_resume_parity(
     outcome = _run(bridge, store, session, aid)
     live = _tool_messages(store, session.id)
     resumed = _resume_tool_messages(db)
-    thinking = live[0]
 
     assert outcome.status == "done"
-    assert thinking.activity_presentation == ConsoleActivityPresentation(
-        "thinking", "Thinking", "done"
-    )
-    assert thinking.content == ""
-    assert thinking.tool_output_full is None
+    assert all(marker.activity_presentation.kind != "planning" for marker in live)
     assert _activity_marker_signature(resumed) == _activity_marker_signature(live)
     assert "PRIVATE_REASONING_CANARY" not in repr(_activity_marker_signature(live))
     assert "PRIVATE_REASONING_CANARY" not in repr(_activity_marker_signature(resumed))
@@ -2668,16 +2662,15 @@ def test_spawn_renders_marker_and_persists_linked_subagent(tmp_path):
     ]
     assert spawn_markers
     assert [marker.activity_presentation.kind for marker in live_markers] == [
-        "thinking",
         "spawn",
         "tool",
     ]
-    assert sum(
-        marker.activity_presentation.kind == "thinking" for marker in live_markers
-    ) == 1
+    assert not any(
+        marker.activity_presentation.kind == "planning" for marker in live_markers
+    )
     live_signature = _activity_marker_signature(live_markers)
     resumed_signature = _activity_marker_signature(resumed_markers)
-    assert live_signature[:2] == resumed_signature[:2]
+    assert live_signature[:1] == resumed_signature[:1]
     assert [item[1:] for item in live_signature] == [
         item[1:] for item in resumed_signature
     ]
@@ -3199,7 +3192,6 @@ def test_resume_marker_messages_reproduces_live_markers_after_simulated_restart(
     resumed_markers = [m for _anchor, block in blocks for m in block]
     assert [m.content for m in resumed_markers] == live_tool_contents
     assert [m.activity_presentation for m in resumed_markers] == [
-        ConsoleActivityPresentation("thinking", "Thinking", "done"),
         ConsoleActivityPresentation("tool", "calculator", "success"),
     ]
     live_markers = [
@@ -3284,14 +3276,23 @@ def test_structured_tool_failure_status_has_live_resume_parity(
     assert _activity_marker_signature(resumed) == _activity_marker_signature(live)
 
 
-def _thinking_markers_for_attributed_steps(
+def _planning_markers_for_attributed_steps(
     events: list[tuple[AgentStep, str]],
+    *,
+    actual_thinking_round_ordinals: frozenset[int] = frozenset(),
 ) -> list[ConsoleChatMessage]:
-    deriver = bridge_module._PendingPrimaryThinkingDeriver()
+    deriver = bridge_module._PendingPrimaryPlanningDeriver()
     return [
         marker
         for step, agent_kind in events
-        if (marker := deriver.observe(step, agent_kind)) is not None
+        if (
+            marker := deriver.observe(
+                step,
+                agent_kind,
+                actual_thinking_round_ordinals=actual_thinking_round_ordinals,
+            )
+        )
+        is not None
     ]
 
 
@@ -3352,20 +3353,134 @@ def _thinking_markers_for_attributed_steps(
         ),
     ],
 )
-def test_pending_primary_thinking_marker_sequence_rules(
+def test_pending_primary_planning_marker_sequence_rules(
     events: list[tuple[AgentStep, str]], expected_content: list[str]
 ) -> None:
-    markers = _thinking_markers_for_attributed_steps(events)
+    markers = _planning_markers_for_attributed_steps(events)
 
     assert [marker.content for marker in markers] == expected_content
     assert all(
         marker.activity_presentation
-        == ConsoleActivityPresentation("thinking", "Thinking", "done")
+        == ConsoleActivityPresentation("planning", "Planning", "done")
         for marker in markers
     )
 
 
-def test_subagent_steps_do_not_flush_or_clear_pending_primary_thinking() -> None:
+def test_actual_thinking_suppresses_only_its_owned_planning_round() -> None:
+    events = [
+        (AgentStep(0, STEP_MODEL, summary="Actual round."), "primary"),
+        (AgentStep(1, STEP_TOOL_CALL, tool_name="first"), "primary"),
+        (AgentStep(2, STEP_TOOL_RESULT, tool_name="first"), "primary"),
+        (AgentStep(3, STEP_MODEL, summary="Planning-only round."), "primary"),
+        (AgentStep(4, STEP_TOOL_CALL, tool_name="second"), "primary"),
+        (AgentStep(5, STEP_TOOL_RESULT, tool_name="second"), "primary"),
+        (AgentStep(6, STEP_MODEL, summary="Final answer."), "primary"),
+    ]
+
+    markers = _planning_markers_for_attributed_steps(
+        events,
+        actual_thinking_round_ordinals=frozenset({0}),
+    )
+
+    assert [marker.content for marker in markers] == ["Planning-only round."]
+    assert markers[0].activity_round_ordinal == 1
+    assert markers[0].activity_presentation == ConsoleActivityPresentation(
+        "planning", "Planning", "done"
+    )
+
+
+@pytest.mark.parametrize(
+    "evidence",
+    [
+        ProviderThinkingDelta(
+            text="actual reasoning",
+            provider="llama_cpp",
+            model="reasoner",
+            protocol="chat_completions",
+            source_format="start_anchored_think",
+        ),
+        ProviderProprietaryThinkingEvidence(
+            provider="moonshot",
+            model="kimi",
+            protocol="chat_completions",
+            source_format="reasoning_content",
+        ),
+    ],
+    ids=["displayable", "proprietary"],
+)
+def test_live_actual_thinking_suppresses_only_its_model_round(
+    tmp_path,
+    evidence: ProviderThinkingDelta | ProviderProprietaryThinkingEvidence,
+) -> None:
+    bridge, _db, store, session, assistant_id = _bridge(
+        tmp_path,
+        [
+            [
+                evidence,
+                "First round plan.\n",
+                _fence("calculator", {"expression": "1 + 1"}),
+            ],
+            [
+                "Second round plan.\n",
+                _fence("calculator", {"expression": "2 + 2"}),
+            ],
+            ["Done."],
+        ],
+    )
+
+    outcome = _run(bridge, store, session, assistant_id)
+
+    assistant = store.get_message(assistant_id)
+    assert outcome.status == RUN_DONE
+    assert assistant.thinking is not None
+    assert [block.round_ordinal for block in assistant.thinking.blocks] == [0]
+    markers = _tool_messages(store, session.id)
+    assert [marker.activity_presentation.kind for marker in markers] == [
+        "tool",
+        "planning",
+        "tool",
+    ]
+    assert [marker.activity_round_ordinal for marker in markers] == [0, 1, 1]
+
+
+def test_resume_suppresses_planning_from_exact_selected_envelope_rounds(
+    tmp_path,
+) -> None:
+    db = AgentRunsDB(tmp_path / "runs.db", client_id="t")
+    run_id = db.create_run(
+        conversation_id="conv-1",
+        agent_kind="primary",
+        assistant_message_id="assistant-1",
+    )
+    db.append_steps(
+        run_id,
+        [
+            vars(AgentStep(0, STEP_MODEL, summary="Actual first round.")),
+            vars(AgentStep(1, STEP_TOOL_CALL, tool_name="first")),
+            vars(AgentStep(2, STEP_TOOL_RESULT, tool_name="first", result="one")),
+            vars(AgentStep(3, STEP_MODEL, summary="Planning second round.")),
+            vars(AgentStep(4, STEP_TOOL_CALL, tool_name="second")),
+            vars(AgentStep(5, STEP_TOOL_RESULT, tool_name="second", result="two")),
+            vars(AgentStep(6, STEP_MODEL, summary="Final answer.")),
+        ],
+    )
+    db.set_status(run_id, RUN_DONE, result="Final answer.")
+    bridge = ConsoleAgentBridge(agent_runs_db=db, store=None, provider_gateway=None)
+
+    block = bridge.resume_marker_messages(
+        "conv-1",
+        thinking_round_ordinals_by_assistant_message_id={"assistant-1": frozenset({0})},
+    )[0][1]
+
+    assert [marker.activity_presentation.kind for marker in block] == [
+        "tool",
+        "planning",
+        "tool",
+    ]
+    assert [marker.activity_round_ordinal for marker in block] == [0, 1, 1]
+
+
+def test_subagent_steps_do_not_flush_or_clear_pending_primary_planning() -> None:
     events = [
         (AgentStep(0, STEP_MODEL, summary="Primary preamble."), "primary"),
         (AgentStep(0, STEP_MODEL, summary="Child private turn."), "subagent"),
@@ -3374,12 +3489,12 @@ def test_subagent_steps_do_not_flush_or_clear_pending_primary_thinking() -> None
         (AgentStep(1, STEP_TOOL_CALL, tool_name="primary_tool"), "primary"),
     ]
 
-    markers = _thinking_markers_for_attributed_steps(events)
+    markers = _planning_markers_for_attributed_steps(events)
 
     assert [marker.content for marker in markers] == ["Primary preamble."]
 
 
-def test_live_callback_interleaving_preserves_primary_thinking_and_resume_sequence(
+def test_live_callback_interleaving_preserves_primary_planning_and_resume_sequence(
     tmp_path,
     monkeypatch,
 ) -> None:
@@ -3450,7 +3565,7 @@ def test_live_callback_interleaving_preserves_primary_thinking_and_resume_sequen
 
     assert outcome.status == "done"
     assert [marker.activity_presentation.kind for marker in live] == [
-        "thinking",
+        "planning",
         "tool",
     ]
     assert live[0].content == "Primary preamble."
@@ -3458,7 +3573,7 @@ def test_live_callback_interleaving_preserves_primary_thinking_and_resume_sequen
     assert _activity_marker_signature(resumed) == _activity_marker_signature(live)
 
 
-def test_thinking_live_resume_marker_order_content_and_presentation_parity(
+def test_planning_live_resume_marker_order_content_and_presentation_parity(
     tmp_path,
 ) -> None:
     scripts = [
@@ -3486,7 +3601,7 @@ def test_thinking_live_resume_marker_order_content_and_presentation_parity(
 
     assert outcome.status == "done"
     assert [message.activity_presentation.kind for message in live] == [
-        "thinking",
+        "planning",
         "tool",
     ]
     assert live[0].content == "I will calculate this safely."
@@ -5823,7 +5938,7 @@ def test_run_reply_forwards_review_tool_calls_hook_to_agent_service(tmp_path):
         == "blocked"
     )
     assert [marker.activity_presentation.kind for marker in live] == [
-        "thinking",
+        "planning",
         "tool",
     ]
     assert live[0].content == "I will request approval for this calculation."

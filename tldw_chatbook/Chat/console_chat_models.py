@@ -250,6 +250,7 @@ ConsoleMessageStatus = Literal[
 ConsoleMessageFeedback = Literal["up", "down"]
 ConsoleActivityKind = Literal[
     "thinking",
+    "planning",
     "tool",
     "spawn",
     "tasks",
@@ -267,6 +268,7 @@ PROPRIETARY_THINKING_NOTICE = "Proprietary thinking obfuscated - not available"
 _CONSOLE_ACTIVITY_KINDS = frozenset(
     {
         "thinking",
+        "planning",
         "tool",
         "spawn",
         "tasks",

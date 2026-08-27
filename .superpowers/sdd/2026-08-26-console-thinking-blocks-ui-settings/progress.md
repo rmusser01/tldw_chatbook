@@ -137,3 +137,15 @@ settings-policy/persistence controls and confirmed the structured mutation outco
 one-writer coalescing, continuation-derived Required state, and universal store-level
 new-session default together. Ruff and `git diff --check` passed. Task 3 is complete
 after two bounded review-fix rounds.
+
+Task 4: renamed the safe intermediate primary model-step activity to Planning and
+suppressed it only for exact rounds owned by selected-generation displayable or
+proprietary Thinking evidence. Live and resume now stamp session-only activity round
+ownership; the existing controller passes selected ThinkingEnvelope round sets by
+stable Assistant owner. RED was 10 pure failures and 4 live/resume ownership failures;
+GREEN was 10/10 and 4/4. The prescribed bridge/activity/UI run reached 558/560 with
+two stale no-summary Planning expectations; both passed after correction and the
+complete bridge/activity files finished 403/403. All 157 UI cases in that prescribed
+run were green. Scoped Ruff lint and `git diff --check` passed. ADR-090 governs; no new
+ADR is required. Report: `task-4-report.md`. Parent retains visual/detector, Backlog,
+and export-task ownership.

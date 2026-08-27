@@ -19,7 +19,7 @@ import threading
 import time
 from collections import deque
 from concurrent.futures import TimeoutError as FuturesTimeoutError
-from collections.abc import Mapping
+from collections.abc import Mapping, Set as AbstractSet
 from dataclasses import dataclass, replace as dataclass_replace
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Callable, ContextManager, Sequence
@@ -141,7 +141,7 @@ from tldw_chatbook.Chat.console_provider_gateway import (
 from tldw_chatbook.Chat.console_chat_store import require_thinking_persistence_support
 from tldw_chatbook.Chat.console_thinking_capture import ThinkingCapture
 from tldw_chatbook.Chat.console_thinking_history import ProviderThinkingSidecar
-from tldw_chatbook.Chat.thinking_blocks import ThinkingHistoryPolicy
+from tldw_chatbook.Chat.thinking_blocks import ThinkingEnvelope, ThinkingHistoryPolicy
 from tldw_chatbook.Chat.console_history_budget import DEFAULT_RESPONSE_RESERVATION
 from tldw_chatbook.Chat.provider_continuation import (
     ContinuationOwnerGroup,
@@ -1099,27 +1099,33 @@ def safe_intermediate_thinking_summary(summary: str | None) -> str | None:
     )
 
 
-def build_intermediate_thinking_marker(
+def build_intermediate_planning_marker(
     summary: str | None,
-) -> ConsoleChatMessage:
-    """Build one session-only Thinking activity from a visible step summary.
+    *,
+    round_ordinal: int | None = None,
+) -> ConsoleChatMessage | None:
+    """Build one session-only Planning activity from a visible step summary.
 
     Args:
         summary: Existing visible step summary, or ``None``.
+        round_ordinal: Exact owning primary model round when known.
 
     Returns:
-        A display-only Thinking marker containing only the bounded safe
-        summary.
+        A display-only Planning marker containing only the bounded safe
+        summary, or ``None`` when the summary is unsafe or empty.
     """
     safe_summary = safe_intermediate_thinking_summary(summary)
+    if safe_summary is None:
+        return None
     return ConsoleChatMessage(
         role=ConsoleMessageRole.TOOL,
-        content=safe_summary or "",
+        content=safe_summary,
         status="complete",
         activity_presentation=ConsoleActivityPresentation(
-            "thinking", "Thinking", "done"
+            "planning", "Planning", "done"
         ),
-        # A Thinking row never carries uncapped/raw model text. Its bounded
+        activity_round_ordinal=round_ordinal,
+        # A Planning row never carries uncapped/raw model text. Its bounded
         # content is the complete safe detail, so a full-output sidecar would
         # only add a dead expansion affordance (or weaken the privacy cap).
         tool_output_full=None,
@@ -1131,17 +1137,27 @@ def _step_proves_intermediate_tool_work(kind: str) -> bool:
     return kind in _THINKING_PROVING_STEP_KINDS
 
 
-class _PendingPrimaryThinkingDeriver:
-    """Derive at most one Thinking marker from each primary model round."""
+class _PendingPrimaryPlanningDeriver:
+    """Derive at most one Planning marker from each primary model round."""
 
     def __init__(self) -> None:
         self._has_pending_model = False
         self._pending_summary: str | None = None
+        self._pending_round_ordinal: int | None = None
+        self._active_round_ordinal: int | None = None
+        self._next_round_ordinal = 0
+
+    @property
+    def active_round_ordinal(self) -> int | None:
+        """Return the exact primary model round owning the current steps."""
+        return self._active_round_ordinal
 
     def observe(
         self,
         step: AgentStep | Mapping[str, Any],
         agent_kind: str,
+        *,
+        actual_thinking_round_ordinals: AbstractSet[int] = frozenset(),
     ) -> ConsoleChatMessage | None:
         """Observe one attributed step and return a marker before it, if proven."""
         if agent_kind != AGENT_KIND_PRIMARY:
@@ -1159,15 +1175,34 @@ class _PendingPrimaryThinkingDeriver:
             # no later proving step will ever flush it.
             self._has_pending_model = True
             self._pending_summary = summary
+            self._pending_round_ordinal = self._next_round_ordinal
+            self._active_round_ordinal = self._next_round_ordinal
+            self._next_round_ordinal += 1
             return None
         if not self._has_pending_model:
             return None
         pending_summary = self._pending_summary
+        pending_round_ordinal = self._pending_round_ordinal
         self._has_pending_model = False
         self._pending_summary = None
+        self._pending_round_ordinal = None
         if not _step_proves_intermediate_tool_work(kind):
             return None
-        return build_intermediate_thinking_marker(pending_summary)
+        if pending_round_ordinal in actual_thinking_round_ordinals:
+            return None
+        return build_intermediate_planning_marker(
+            pending_summary,
+            round_ordinal=pending_round_ordinal,
+        )
+
+
+def _thinking_round_ordinals(
+    envelope: ThinkingEnvelope | None,
+) -> frozenset[int]:
+    """Return only explicit model-round ownership from a validated envelope."""
+    if not isinstance(envelope, ThinkingEnvelope):
+        return frozenset()
+    return frozenset(block.round_ordinal for block in envelope.blocks)
 
 
 _BUILTIN_KILL_SWITCH_REFUSAL = "tool execution is disabled by the kill switch"
@@ -4272,7 +4307,7 @@ class ConsoleAgentBridge:
         # source of truth for this conversation from here on, so any
         # previously cached historical (DB-derived) summary is stale.
         self._historical_cache.pop(conversation_id, None)
-        thinking_deriver = _PendingPrimaryThinkingDeriver()
+        planning_deriver = _PendingPrimaryPlanningDeriver()
 
         def on_step(step: AgentStep, agent_kind: str, run_id: str) -> None:
             # PR 2a (task-3): AgentService now attributes every step to its
@@ -4335,14 +4370,21 @@ class ConsoleAgentBridge:
             tool_diff: tuple[str, str, str] | None = None
             if step.kind == STEP_TOOL_RESULT and pending_diffs:
                 tool_diff = _pair_step_diff(pending_diffs, step.tool_name)
-            thinking_marker = thinking_deriver.observe(step, agent_kind)
+            planning_marker = planning_deriver.observe(
+                step,
+                agent_kind,
+                actual_thinking_round_ordinals=_thinking_round_ordinals(
+                    thinking_capture.snapshot().envelope
+                ),
+            )
             if agent_kind == AGENT_KIND_PRIMARY:
-                if thinking_marker is not None:
+                if planning_marker is not None:
                     self._append_marker(
                         session_id,
-                        thinking_marker.content,
-                        full_output=thinking_marker.tool_output_full,
-                        activity_presentation=(thinking_marker.activity_presentation),
+                        planning_marker.content,
+                        full_output=planning_marker.tool_output_full,
+                        activity_presentation=(planning_marker.activity_presentation),
+                        activity_round_ordinal=(planning_marker.activity_round_ordinal),
                     )
                 if step.kind == STEP_SPAWN:
                     # PR2b Task 2: this is this run's ONLY source of rows
@@ -4389,6 +4431,7 @@ class ConsoleAgentBridge:
                             result=step.result,
                             tool_outcome=step.tool_outcome,
                         ),
+                        activity_round_ordinal=(planning_deriver.active_round_ordinal),
                     )
             # Content-free operational logging for tool outcomes. The actual
             # invocation lives inside AgentService, so this intentionally
@@ -6161,7 +6204,11 @@ class ConsoleAgentBridge:
         return self._db.count_subagents_by_conversation(conversation_ids)
 
     def resume_marker_messages(
-        self, conversation_id: str
+        self,
+        conversation_id: str,
+        *,
+        thinking_round_ordinals_by_assistant_message_id: Mapping[str, AbstractSet[int]]
+        | None = None,
     ) -> list[tuple[str | None, list[ConsoleChatMessage]]]:
         """Re-derive transcript TOOL marker messages from ``AgentRunsDB`` for resume.
 
@@ -6214,6 +6261,7 @@ class ConsoleAgentBridge:
             if record["agent_kind"] == AGENT_KIND_PRIMARY
         ]
         records.reverse()  # list_runs is newest-first; markers must read chronologically
+        thinking_rounds_by_owner = thinking_round_ordinals_by_assistant_message_id or {}
         # TASK-1972 review round: ONE conversation-level query, grouped in
         # memory -- the per-run lookup was an N+1 over sqlite on every
         # resume (finding 3).
@@ -6262,23 +6310,20 @@ class ConsoleAgentBridge:
         for record in records:
             block: list[ConsoleChatMessage] = []
             steps = record.get("steps") or []
-            for index, step in enumerate(steps):
+            planning_deriver = _PendingPrimaryPlanningDeriver()
+            actual_thinking_rounds = thinking_rounds_by_owner.get(
+                str(record.get("assistant_message_id") or ""),
+                frozenset(),
+            )
+            for step in steps:
                 kind = str(step.get("kind") or "")
-                # Resume's persisted primary run has no interleaved child
-                # steps. Immediate look-ahead is therefore equivalent to
-                # the live pending-primary state machine above: only a
-                # proving next primary step turns this model round into a
-                # Thinking row; a final model round has no proving successor.
-                if (
-                    kind == STEP_MODEL
-                    and index + 1 < len(steps)
-                    and _step_proves_intermediate_tool_work(
-                        str(steps[index + 1].get("kind") or "")
-                    )
-                ):
-                    block.append(
-                        build_intermediate_thinking_marker(step.get("summary"))
-                    )
+                planning_marker = planning_deriver.observe(
+                    step,
+                    AGENT_KIND_PRIMARY,
+                    actual_thinking_round_ordinals=actual_thinking_rounds,
+                )
+                if planning_marker is not None:
+                    block.append(planning_marker)
                 text = format_agent_step_marker(
                     kind,
                     tool_name=step.get("tool_name"),
@@ -6296,6 +6341,9 @@ class ConsoleAgentBridge:
                                 tool_name=step.get("tool_name"),
                                 result=step.get("result"),
                                 tool_outcome=step.get("tool_outcome"),
+                            ),
+                            activity_round_ordinal=(
+                                planning_deriver.active_round_ordinal
                             ),
                             # AC#5: a resumed marker is as expandable as a
                             # live one -- the step rows carry the full result.
@@ -6560,6 +6608,7 @@ class ConsoleAgentBridge:
         full_output: str | None = None,
         tool_diff: tuple[str, str, str] | None = None,
         activity_presentation: ConsoleActivityPresentation | None = None,
+        activity_round_ordinal: int | None = None,
     ) -> None:
         # Kept raw (no escaping): both consumers render markup-off --
         # console_transcript.py's _message_render_text builds a Content via
@@ -6581,6 +6630,7 @@ class ConsoleAgentBridge:
                 tool_output_full=full_output,
                 tool_diff=tool_diff,
                 activity_presentation=activity_presentation,
+                activity_round_ordinal=activity_round_ordinal,
             )
         except KeyError:
             pass  # session vanished mid-run; the rail still has the live snapshot

@@ -5584,6 +5584,7 @@ class ConsoleChatStore:
         change_review_run_id: str | None = None,
         metadata: "MessageMetadata | None" = None,
         activity_presentation: ConsoleActivityPresentation | None = None,
+        activity_round_ordinal: int | None = None,
         message_id: str | None = None,
     ) -> ConsoleChatMessage:
         """Append a message; scalar image kwargs become a one-item tuple.
@@ -5599,6 +5600,8 @@ class ConsoleChatStore:
 
         ``activity_presentation`` is session-only structured display state;
         it is attached only to the in-memory message and never serialized.
+        ``activity_round_ordinal`` carries the same marker's explicit model-
+        round owner and is likewise session-only.
         """
         self._session_or_raise(session_id)
         effective = tuple(attachments)
@@ -5654,6 +5657,7 @@ class ConsoleChatStore:
             change_review_run_id=change_review_run_id,
             metadata=metadata,
             activity_presentation=activity_presentation,
+            activity_round_ordinal=activity_round_ordinal,
         )
         self._set_message_attachments(message, effective)
         if attachment_label and effective and not effective[0].display_name:

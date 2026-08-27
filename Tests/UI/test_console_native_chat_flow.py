@@ -10553,6 +10553,15 @@ def test_resume_wiring_injects_agent_markers_from_agent_runs_db(tmp_path):
         [
             {
                 "index": 0,
+                "kind": "model",
+                "tool_name": "",
+                "result": "",
+                "summary": "I will calculate this.",
+                "args": None,
+                "created_at": "",
+            },
+            {
+                "index": 1,
                 "kind": "tool_result",
                 "tool_name": "calculator",
                 "result": "42",
@@ -10571,6 +10580,20 @@ def test_resume_wiring_injects_agent_markers_from_agent_runs_db(tmp_path):
             content="It is 42.",
             status="complete",
             persisted_message_id="asst-42",
+            thinking=ThinkingEnvelope(
+                (
+                    DisplayableThinkingBlock(
+                        block_id="thinking-0",
+                        round_ordinal=0,
+                        provider="llama_cpp",
+                        model="reasoner",
+                        protocol="chat_completions",
+                        source_format="start_anchored_think",
+                        status="complete",
+                        text="actual reasoning",
+                    ),
+                )
+            ),
         ),
     ]
 
