@@ -274,10 +274,12 @@ def test_final_index_validation_chunks_exact_force_removals(
     import os as _os
 
     repo = tracker.service.repo_for_root(root)
-    paths = tuple(
+    ordinary_paths = tuple(
         f"nested/dir-{index:05d}/{'x' * 180}-{index:05d}.txt"
         for index in range(20_000)
     )
+    overlong = f"nested/{'y' * 5_000}"
+    paths = (*ordinary_paths[:10_000], overlong, *ordinary_paths[10_000:])
     object_id = "a" * 40
     stage_entries = tuple(
         f"100644 {object_id} 0\t{path}" for path in paths
@@ -306,10 +308,23 @@ def test_final_index_validation_chunks_exact_force_removals(
         call[:3] == ("update-index", "--force-remove", "--")
         for call in calls
     )
-    assert all(
-        sum(len(_os.fsencode(arg)) + 1 for arg in call) <= 64 * 1024
-        for call in calls
+    base_args = (
+        repo._git,
+        "--git-dir",
+        str(repo.git_dir),
+        "--work-tree",
+        str(repo.root),
     )
+
+    def conservative_cost(args):
+        return sum(2 * len(_os.fsencode(arg)) + 3 for arg in args)
+
+    for call in calls:
+        assert (
+            conservative_cost((*base_args, *call)) <= 8 * 1024
+            or call[3:] == (overlong,)
+        )
+    assert next(call for call in calls if overlong in call)[3:] == (overlong,)
     assert tuple(path for call in calls for path in call[3:]) == paths
 
 

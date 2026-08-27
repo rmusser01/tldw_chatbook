@@ -100,7 +100,12 @@ _LOCK_RETRY_SECONDS = 0.05
 
 _GIT_TIMEOUT_SECONDS = 120.0
 
-_FORCE_REMOVE_ARGV_BUDGET_BYTES = 64 * 1024
+_FORCE_REMOVE_ARGV_BUDGET_BYTES = 8 * 1024
+
+
+def _conservative_argv_cost(argument: str) -> int:
+    """Bound encoded argument cost after quoting plus its separator."""
+    return 2 * len(os.fsencode(argument)) + 3
 
 
 class ChangeTrackingError(Exception):
@@ -453,7 +458,7 @@ class ShadowRepo:
             return
         args = ("update-index", "--force-remove", "--")
         command_bytes = sum(
-            len(os.fsencode(arg)) + 1
+            _conservative_argv_cost(arg)
             for arg in (
                 self._git,
                 "--git-dir",
@@ -466,7 +471,7 @@ class ShadowRepo:
         chunk: list[str] = []
         chunk_bytes = command_bytes
         for path in paths:
-            path_bytes = len(os.fsencode(path)) + 1
+            path_bytes = _conservative_argv_cost(path)
             if (
                 chunk
                 and chunk_bytes + path_bytes
