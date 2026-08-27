@@ -180,7 +180,10 @@ from tldw_chatbook.TTS.profile_errors import ProfileValidationError
 from tldw_chatbook.TTS.profile_types import CharacterRef
 from tldw_chatbook.Utils.log_sanitizer import REDACTION_MARKER, redact_log_line
 from tldw_chatbook.Video_Generation.video_metadata import VideoGenerationMetadata
-from tldw_chatbook.Video_Generation.video_store import video_content_marker
+from tldw_chatbook.Video_Generation.video_store import (
+    parse_video_marker,
+    video_content_marker,
+)
 
 if TYPE_CHECKING:
     # Annotation-only: ``from __future__ import annotations`` (top of file)
@@ -4779,13 +4782,18 @@ class ConsoleChatStore:
         prefix: Sequence[str],
         selections: Sequence[ConsoleForkImageSelectionFence],
     ) -> bool:
-        if not selections:
-            return True
         generated_ids = {
             native_id for native_id in prefix if nodes[native_id].generation_metadata
         }
         if (
-            any(type(item) is not ConsoleForkImageSelectionFence for item in selections)
+            any(
+                nodes[native_id].role is not ConsoleMessageRole.ASSISTANT
+                for native_id in generated_ids
+            )
+            or len(selections) != len(generated_ids)
+            or any(
+                type(item) is not ConsoleForkImageSelectionFence for item in selections
+            )
             or len(selections) != len({item.native_message_id for item in selections})
             or {item.native_message_id for item in selections} != generated_ids
         ):
@@ -5128,6 +5136,7 @@ class ConsoleChatStore:
         }
         turn_ids: dict[str, str] = {}
         projected: list[ConsoleForkProjectedMessage] = []
+        projected_image_ids: dict[str, str] = {}
         previous_native: str | None = None
         previous_persisted: str | None = None
         for entry in fence.lineage:
@@ -5194,17 +5203,9 @@ class ConsoleChatStore:
             video_tombstone: ConsoleForkProjectedVideoTombstone | None = None
             if source.video_metadata is not None:
                 video = source.video_metadata
-                source_image_target: str | None = None
-                if video.source_image_message_id is not None:
-                    for source_id, target_id in native_ids.items():
-                        source_message = nodes[source_id]
-                        if video.source_image_message_id not in {
-                            source_id,
-                            source_message.persisted_message_id,
-                        }:
-                            continue
-                        source_image_target = persisted_ids[source_id] or target_id
-                        break
+                source_image_target = projected_image_ids.get(
+                    video.source_image_message_id or ""
+                )
                 video_tombstone = ConsoleForkProjectedVideoTombstone(
                     owner_native_message_id=target_native,
                     owner_persisted_message_id=target_persisted,
@@ -5245,6 +5246,15 @@ class ConsoleChatStore:
                     video_tombstone=video_tombstone,
                 )
             )
+            if any(
+                attachment.mime_type.startswith("image/") for attachment in attachments
+            ):
+                projected_image_id = target_persisted or target_native
+                projected_image_ids[source.id] = projected_image_id
+                if source.persisted_message_id is not None:
+                    projected_image_ids[source.persisted_message_id] = (
+                        projected_image_id
+                    )
             previous_native = target_native
             previous_persisted = target_persisted
         configuration = self._fork_configuration_snapshot(session)
@@ -5496,6 +5506,11 @@ class ConsoleChatStore:
                 or type(projected.visible_variant_id) not in {str, type(None)}
             ):
                 raise ValueError("Fork message content or state is invalid.")
+            if (
+                projected.video_tombstone is None
+                and parse_video_marker(projected.content) is not None
+            ):
+                raise ValueError("Fork video tombstone is invalid.")
             if not snapshot.durable and (
                 projected.persisted_message_id is not None
                 or projected.persisted_parent_id is not None
