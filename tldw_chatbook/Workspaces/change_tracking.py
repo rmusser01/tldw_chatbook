@@ -461,59 +461,96 @@ class ShadowRepo:
             if tip
             else ()
         )
-        new_entries: list[tuple[str, str]] = []
+        new_entries: list[tuple[str, str, str]] = []
         for entry in self._z_tokens("ls-files", "--stage", "-z"):
             metadata, separator, rel = entry.partition("\t")
             fields = metadata.split()
             if not separator or len(fields) != 3:
                 raise ChangeTrackingError("git ls-files returned malformed output")
-            _mode, object_id, stage = fields
+            mode, object_id, stage = fields
             if stage != "0" or rel in tip_paths:
                 continue
-            new_entries.append((rel, object_id))
+            new_entries.append((rel, object_id, mode))
         if not new_entries:
             return (), ()
 
-        object_ids = tuple(dict.fromkeys(object_id for _, object_id in new_entries))
-        proc = self._run(
-            "cat-file",
-            "--batch-check=%(objectname) %(objecttype) %(objectsize)",
-            input_data="".join(f"{object_id}\n" for object_id in object_ids),
+        regular_entries = tuple(
+            entry for entry in new_entries if entry[2] in {"100644", "100755"}
         )
-        lines = str(proc.stdout).splitlines()
-        if len(lines) != len(object_ids):
-            raise ChangeTrackingError("git cat-file returned malformed output")
-        sizes: dict[str, int] = {}
-        for line in lines:
-            fields = line.split()
-            if len(fields) != 3:
-                raise ChangeTrackingError("git cat-file returned malformed output")
-            object_id, object_type, size_text = fields
-            if object_type == "blob":
-                sizes[object_id] = int(size_text)
-
-        candidates = tuple(rel for rel, _object_id in new_entries)
-        safe = set(self._exact_force_paths(candidates))
-        unsafe = tuple(rel for rel in candidates if rel not in safe)
-        oversized = tuple(
+        safe = {
             rel
-            for rel, object_id in new_entries
-            if rel in safe and sizes.get(object_id, 0) > cap
+            for rel, _object_id, _mode in regular_entries
+            if self._exact_force_paths((rel,)) == [rel]
+        }
+        for rel, _object_id, mode in new_entries:
+            path = Path(rel)
+            # Git stores a symlink's link text; do not resolve or read its target.
+            if (
+                mode == "120000"
+                and rel
+                and rel != "."
+                and not path.is_absolute()
+                and ".." not in path.parts
+                and self._nested_owner(self.root / path) is None
+            ):
+                safe.add(rel)
+        unsafe_entries = tuple(
+            entry for entry in new_entries if entry[0] not in safe
         )
-        removed_set = set((*unsafe, *oversized))
-        removed = tuple(rel for rel in candidates if rel in removed_set)
-        if removed:
-            self._run("update-index", "--force-remove", "--", *removed)
+        unsafe = tuple(rel for rel, _object_id, _mode in unsafe_entries)
+        if unsafe:
+            self._run("update-index", "--force-remove", "--", *unsafe)
         nested = tuple(
             dict.fromkeys(
                 owner
-                for rel in unsafe
-                if (owner := self._nested_owner(self.root / rel)) is not None
+                for rel, _object_id, mode in unsafe_entries
+                if (
+                    owner := (
+                        rel
+                        if mode == "160000"
+                        else self._nested_owner(self.root / rel)
+                    )
+                )
+                is not None
             )
         )
         self.last_nested_repos = tuple(
             dict.fromkeys((*self.last_nested_repos, *nested))
         )
+
+        object_ids = tuple(
+            dict.fromkeys(
+                object_id
+                for rel, object_id, _mode in regular_entries
+                if rel in safe
+            )
+        )
+        sizes: dict[str, int] = {}
+        if object_ids:
+            proc = self._run(
+                "cat-file",
+                "--batch-check=%(objectname) %(objecttype) %(objectsize)",
+                input_data="".join(f"{object_id}\n" for object_id in object_ids),
+            )
+            lines = str(proc.stdout).splitlines()
+            if len(lines) != len(object_ids):
+                raise ChangeTrackingError("git cat-file returned malformed output")
+            for line in lines:
+                fields = line.split()
+                if len(fields) != 3 or fields[1] != "blob":
+                    raise ChangeTrackingError(
+                        "git cat-file returned malformed output"
+                    )
+                object_id, _object_type, size_text = fields
+                sizes[object_id] = int(size_text)
+
+        oversized = tuple(
+            rel
+            for rel, object_id, _mode in regular_entries
+            if rel in safe and sizes.get(object_id, 0) > cap
+        )
+        if oversized:
+            self._run("update-index", "--force-remove", "--", *oversized)
         included = safe.difference(oversized)
         self.last_oversize_excluded = tuple(
             rel
