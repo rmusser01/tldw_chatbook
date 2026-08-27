@@ -79,6 +79,7 @@ from tldw_chatbook.Chat.console_chat_fork import (
     fingerprint_console_fork_configuration,
     fingerprint_console_fork_selected_image,
     normalize_fork_title,
+    validate_console_fork_image_payload,
 )
 from tldw_chatbook.Chat.console_context_policy import ConsoleContextPolicyOverrides
 from tldw_chatbook.Chat.console_dispatch_checkpoint import (
@@ -4710,6 +4711,11 @@ class ConsoleChatStore:
                 or attachment.position != index
             ):
                 raise ValueError("Console fork attachment is unavailable.")
+            if attachment.mime_type.startswith("image/") or generation:
+                validate_console_fork_image_payload(
+                    attachment.data,
+                    attachment.mime_type,
+                )
             metadata = generation[index] if index < len(generation) else None
             metadata_payload: dict[str, object] | None = None
             if metadata is not None:
@@ -4851,13 +4857,21 @@ class ConsoleChatStore:
     @classmethod
     def _fork_media_fingerprint(cls, message: ConsoleChatMessage) -> str:
         if message.video_metadata is None:
+            if (
+                type(message.content) is str
+                and parse_video_marker(message.content) is not None
+            ):
+                raise ValueError("Console fork video metadata is unavailable.")
             return cls._fork_attachment_fingerprint(
                 message.attachments,
                 message.generation_metadata,
             )
         if message.attachments or message.generation_metadata:
             raise ValueError("Console fork video payload is unavailable.")
-        return cls._fork_video_fingerprint(message.video_metadata)
+        fingerprint = cls._fork_video_fingerprint(message.video_metadata)
+        if message.content != video_content_marker(message.video_metadata.name):
+            raise ValueError("Console fork video marker is unavailable.")
+        return fingerprint
 
     def _fork_persisted_message_version(
         self,
@@ -5151,6 +5165,7 @@ class ConsoleChatStore:
             )
             attachments: list[ConsoleForkProjectedAttachment] = []
             generation_rows: list[ConsoleForkProjectedGeneration] = []
+            message_has_image = False
             selection = selection_by_message.get(source.id)
             source_positions = (
                 (selection.selected_position,)
@@ -5168,6 +5183,12 @@ class ConsoleChatStore:
                     or type(attachment.display_name) is not str
                 ):
                     raise ValueError("Fork attachment bytes are unavailable.")
+                if attachment.mime_type.startswith("image/"):
+                    validate_console_fork_image_payload(
+                        attachment.data,
+                        attachment.mime_type,
+                    )
+                    message_has_image = True
                 attachments.append(
                     ConsoleForkProjectedAttachment(
                         owner_native_message_id=target_native,
@@ -5246,9 +5267,7 @@ class ConsoleChatStore:
                     video_tombstone=video_tombstone,
                 )
             )
-            if any(
-                attachment.mime_type.startswith("image/") for attachment in attachments
-            ):
+            if message_has_image:
                 projected_image_id = target_persisted or target_native
                 projected_image_ids[source.id] = projected_image_id
                 if source.persisted_message_id is not None:
@@ -5488,7 +5507,7 @@ class ConsoleChatStore:
         expected_parent: str | None = None
         expected_persisted_parent: str | None = None
         built_messages: list[ConsoleChatMessage] = []
-        fork_image_message_ids: set[str] = set()
+        fork_image_reference_ids: set[str] = set()
         for projected in messages:
             if (
                 projected.native_parent_id != expected_parent
@@ -5517,6 +5536,7 @@ class ConsoleChatStore:
             ):
                 raise ValueError("Temporary fork ancestry is invalid.")
             attachments: list[MessageAttachment] = []
+            message_has_image = False
             for index, attachment in enumerate(projected.attachments):
                 if (
                     type(attachment) is not ConsoleForkProjectedAttachment
@@ -5529,6 +5549,12 @@ class ConsoleChatStore:
                     or type(attachment.display_name) is not str
                 ):
                     raise ValueError("Fork attachment ownership is invalid.")
+                if attachment.mime_type.startswith("image/"):
+                    validate_console_fork_image_payload(
+                        attachment.data,
+                        attachment.mime_type,
+                    )
+                    message_has_image = True
                 attachments.append(
                     MessageAttachment(
                         data=attachment.data,
@@ -5604,7 +5630,7 @@ class ConsoleChatStore:
                     or (
                         tombstone.source_image_message_id is not None
                         and tombstone.source_image_message_id
-                        not in fork_image_message_ids
+                        not in fork_image_reference_ids
                     )
                     or type(tombstone.container) is not str
                     or projected.content != CONSOLE_FORK_VIDEO_TOMBSTONE_CONTENT
@@ -5659,12 +5685,15 @@ class ConsoleChatStore:
                     video_metadata=video_metadata,
                 )
             )
-            if any(
-                attachment.mime_type.startswith("image/") for attachment in attachments
-            ):
-                fork_image_message_ids.add(projected.native_message_id)
-                if projected.persisted_message_id is not None:
-                    fork_image_message_ids.add(projected.persisted_message_id)
+            if message_has_image:
+                image_reference_id = (
+                    projected.persisted_message_id
+                    if snapshot.durable
+                    else projected.native_message_id
+                )
+                if image_reference_id is None:
+                    raise ValueError("Fork image ownership is invalid.")
+                fork_image_reference_ids.add(image_reference_id)
             expected_parent = projected.native_message_id
             expected_persisted_parent = projected.persisted_message_id
 

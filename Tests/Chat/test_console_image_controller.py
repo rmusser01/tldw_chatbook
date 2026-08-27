@@ -5,11 +5,13 @@ from __future__ import annotations
 import ast
 from dataclasses import replace
 import inspect
+from io import BytesIO
 from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import Mock
 
 import pytest
+from PIL import Image as PILImage
 
 from tldw_chatbook.UI.Screens.chat_screen import ChatScreen
 from tldw_chatbook.Chat.console_chat_models import (
@@ -18,6 +20,12 @@ from tldw_chatbook.Chat.console_chat_models import (
     MessageAttachment,
 )
 from tldw_chatbook.Chat.console_chat_store import ConsoleChatStore
+
+
+def _image_bytes(color: tuple[int, int, int] = (0, 0, 0)) -> bytes:
+    buffer = BytesIO()
+    PILImage.new("RGB", (2, 2), color).save(buffer, format="PNG")
+    return buffer.getvalue()
 
 
 def _generation_meta(prompt: str) -> GenerationVariantMeta:
@@ -76,8 +84,13 @@ def _generation_message(
         content=f"[image] {message_id}",
         message_id=message_id,
         attachments=(
-            MessageAttachment(b"first", "image/png", "first.png", 0),
-            MessageAttachment(b"second", "image/png", "second.png", 1),
+            MessageAttachment(_image_bytes(), "image/png", "first.png", 0),
+            MessageAttachment(
+                _image_bytes((0, 255, 0)),
+                "image/png",
+                "second.png",
+                1,
+            ),
         ),
     )
     live = store._nodes_by_session[session_id][message.id]
@@ -229,7 +242,10 @@ def test_image_selection_fence_stales_for_each_relevant_media_change(mutation) -
     elif mutation == "attachment":
         generated.attachments = (
             generated.attachments[0],
-            replace(generated.attachments[1], data=b"replacement"),
+            replace(
+                generated.attachments[1],
+                data=_image_bytes((0, 0, 255)),
+            ),
         )
     elif mutation == "generation":
         generated.generation_metadata = (
@@ -267,7 +283,10 @@ def test_unrelated_generated_image_outside_prefix_does_not_stale_fence() -> None
         excluded, direction="variant-previous"
     )
     excluded.attachments = (
-        replace(excluded.attachments[0], data=b"changed outside prefix"),
+        replace(
+            excluded.attachments[0],
+            data=_image_bytes((255, 0, 0)),
+        ),
         excluded.attachments[1],
     )
 

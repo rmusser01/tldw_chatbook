@@ -4,8 +4,12 @@ from __future__ import annotations
 
 import hashlib
 import json
+import warnings
 from dataclasses import dataclass
+from io import BytesIO
 from typing import Literal
+
+from PIL import Image as PILImage
 
 from tldw_chatbook.Chat.console_chat_models import (
     ConsoleMessageRole,
@@ -35,6 +39,9 @@ from tldw_chatbook.Chat.console_project_instructions import (
 from tldw_chatbook.Chat.console_session_settings import ConsoleSessionSettings
 from tldw_chatbook.Chat.console_speech_preferences import ConsoleSpeechPreferences
 from tldw_chatbook.Chat.rag_scope import RagScope, ScopeItem
+from tldw_chatbook.Event_Handlers.Chat_Events.chat_image_events import (
+    PAYLOAD_FORMAT_MIME,
+)
 
 
 CONSOLE_FORK_TITLE_MAX_LENGTH = 60
@@ -572,15 +579,9 @@ def fingerprint_console_fork_selected_image(
 
     if type(attachment) not in {MessageAttachment, ConsoleForkProjectedAttachment}:
         raise TypeError("Fork selected image attachment is invalid.")
-    if (
-        type(attachment.data) is not bytes
-        or not attachment.data
-        or len(attachment.data) > MAX_IMAGE_BYTES
-        or type(attachment.mime_type) is not str
-        or not attachment.mime_type.startswith("image/")
-        or type(attachment.display_name) is not str
-    ):
+    if type(attachment.display_name) is not str:
         raise ValueError("Fork selected image attachment is unavailable.")
+    validate_console_fork_image_payload(attachment.data, attachment.mime_type)
     if type(metadata) not in {GenerationVariantMeta, ConsoleForkProjectedGeneration}:
         raise TypeError("Fork selected image generation metadata is invalid.")
     if (
@@ -625,6 +626,31 @@ def fingerprint_console_fork_selected_image(
             },
         },
     )
+
+
+def validate_console_fork_image_payload(data: bytes, declared_mime: str) -> str:
+    """Decode one bounded provider-safe image and confirm its declared MIME."""
+
+    if (
+        type(data) is not bytes
+        or not data
+        or len(data) > MAX_IMAGE_BYTES
+        or type(declared_mime) is not str
+    ):
+        raise ValueError("Fork image payload is unavailable.")
+    try:
+        with warnings.catch_warnings():
+            warnings.simplefilter("error", PILImage.DecompressionBombWarning)
+            with PILImage.open(BytesIO(data)) as probe:
+                detected_mime = PAYLOAD_FORMAT_MIME.get((probe.format or "").upper())
+                probe.verify()
+            with PILImage.open(BytesIO(data)) as decoded:
+                decoded.load()
+    except Exception as exc:
+        raise ValueError("Fork image payload is unavailable.") from exc
+    if detected_mime is None or detected_mime != declared_mime:
+        raise ValueError("Fork image payload MIME is unavailable.")
+    return detected_mime
 
 
 def _fingerprint_console_fork_payload(purpose: str, payload: object) -> str:

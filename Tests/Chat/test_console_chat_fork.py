@@ -1,11 +1,13 @@
 import asyncio
 import pickle
 from dataclasses import FrozenInstanceError, fields, replace
+from io import BytesIO
 from itertools import combinations
 from types import SimpleNamespace
 from typing import get_args
 
 import pytest
+from PIL import Image as PILImage
 
 from tldw_chatbook.Chat import console_chat_fork
 from tldw_chatbook.Chat.chat_persistence_service import ChatPersistenceService
@@ -51,6 +53,7 @@ from tldw_chatbook.Chat.console_speech_preferences import ConsoleSpeechPreferenc
 from tldw_chatbook.Chat.rag_scope import RagScope, ScopeItem
 from tldw_chatbook.DB.ChaChaNotes_DB import CharactersRAGDB
 from tldw_chatbook.Video_Generation.video_metadata import VideoGenerationMetadata
+from tldw_chatbook.Video_Generation.video_store import video_content_marker
 
 
 class _ForkVersionPersistence:
@@ -65,6 +68,16 @@ class _ForkVersionPersistence:
 
     def get_message_version(self, message_id: str) -> int | None:
         return self.message_versions.get(message_id)
+
+
+def _image_bytes(
+    color: tuple[int, int, int] = (0, 0, 0),
+    *,
+    image_format: str = "PNG",
+) -> bytes:
+    buffer = BytesIO()
+    PILImage.new("RGB", (2, 2), color).save(buffer, format=image_format)
+    return buffer.getvalue()
 
 
 def _fork_store(
@@ -137,7 +150,9 @@ def _fork_store(
         first_answer.id,
         role=ConsoleMessageRole.ASSISTANT,
         content="Selected answer",
-        attachments=(MessageAttachment(b"image", "image/png", "selected.png", 0),),
+        attachments=(
+            MessageAttachment(_image_bytes(), "image/png", "selected.png", 0),
+        ),
     )
     store.add_variant(selected.id, "Selected variant")
     selected_live = store._nodes_by_session[session.id][selected.id]
@@ -1439,7 +1454,12 @@ def test_validate_fork_fence_rechecks_every_captured_source_field(mutation) -> N
         store._children_by_parent[session.id][user.id].remove(first_answer.id)
     elif mutation == "attachment":
         selected_live.attachments = (
-            MessageAttachment(b"changed", "image/png", "selected.png", 0),
+            MessageAttachment(
+                _image_bytes((255, 0, 0)),
+                "image/png",
+                "selected.png",
+                0,
+            ),
         )
     elif mutation == "generation":
         selected_live.generation_metadata = (
@@ -1761,7 +1781,10 @@ def test_stage_fork_snapshot_rejects_late_source_mutation(
             selected_live.turn_id = "late-live-turn"
         elif mutation == "attachment":
             selected_live.attachments = (
-                replace(selected_live.attachments[0], data=b"late-image"),
+                replace(
+                    selected_live.attachments[0],
+                    data=_image_bytes((255, 0, 0)),
+                ),
             )
         elif mutation == "generation":
             selected_live.generation_metadata = (
@@ -1820,7 +1843,10 @@ def test_stage_fork_snapshot_rejects_aba_payload_mutation(
             valid = original_validate(candidate, image_selections=image_selections)
             if mutation == "attachment":
                 selected_live.attachments = (
-                    replace(original_attachments[0], data=b"transient-image"),
+                    replace(
+                        original_attachments[0],
+                        data=_image_bytes((255, 0, 0)),
+                    ),
                 )
             else:
                 selected_live.generation_metadata = (
@@ -1907,7 +1933,12 @@ def test_stage_fork_snapshot_rebuilds_only_selected_generated_image() -> None:
     selected_live = store._nodes_by_session[session.id][selected.id]
     selected_live.attachments = (
         *selected_live.attachments,
-        MessageAttachment(b"second-image", "image/png", "second.png", 1),
+        MessageAttachment(
+            _image_bytes((0, 255, 0)),
+            "image/png",
+            "second.png",
+            1,
+        ),
     )
     selected_live.generation_metadata = (
         *selected_live.generation_metadata,
@@ -1939,7 +1970,7 @@ def test_stage_fork_snapshot_rebuilds_only_selected_generated_image() -> None:
     projected = snapshot.messages[-1]
 
     assert len(projected.attachments) == 1
-    assert projected.attachments[0].data == b"second-image"
+    assert projected.attachments[0].data == _image_bytes((0, 255, 0))
     assert projected.attachments[0].position == 0
     assert (
         projected.attachments[0].owner_native_message_id == projected.native_message_id
@@ -1953,13 +1984,121 @@ def test_stage_fork_snapshot_rebuilds_only_selected_generated_image() -> None:
     )
 
 
+@pytest.mark.parametrize("invalid_kind", ("corrupt", "truncated", "mime-mismatch"))
+def test_fork_image_payload_validation_rejects_noncanonical_bytes(
+    invalid_kind,
+) -> None:
+    payload = _image_bytes()
+    mime_type = "image/png"
+    if invalid_kind == "corrupt":
+        payload = b"not an image"
+    elif invalid_kind == "truncated":
+        payload = payload[:-12]
+    else:
+        mime_type = "image/jpeg"
+
+    with pytest.raises(ValueError, match="image"):
+        console_chat_fork.validate_console_fork_image_payload(payload, mime_type)
+
+
+@pytest.mark.parametrize(
+    ("payload", "mime_type"),
+    (
+        (b"not an image", "image/png"),
+        (_image_bytes(), "image/jpeg"),
+    ),
+)
+def test_fork_fence_rejects_a_noncanonical_declared_image(
+    payload,
+    mime_type,
+) -> None:
+    store = ConsoleChatStore()
+    session = _new_fork_session(store, title="Source")
+    message = store.append_message(
+        session.id,
+        role=ConsoleMessageRole.USER,
+        content="Attached image",
+        attachments=(MessageAttachment(payload, mime_type, "source.png", 0),),
+    )
+
+    with pytest.raises(ValueError, match="image"):
+        store.issue_fork_fence(message.id)
+
+
+def test_fork_registration_rejects_a_forged_corrupt_image_without_publication() -> None:
+    snapshot = _registration_snapshot()
+    first, *rest = snapshot.messages
+    forged_attachment = ConsoleForkProjectedAttachment(
+        owner_native_message_id=first.native_message_id,
+        owner_persisted_message_id=first.persisted_message_id,
+        position=0,
+        data=b"not an image",
+        mime_type="image/png",
+        display_name="forged.png",
+    )
+    snapshot = replace(
+        snapshot,
+        messages=(replace(first, attachments=(forged_attachment,)), *rest),
+    )
+    store = ConsoleChatStore()
+
+    with pytest.raises(ValueError, match="image"):
+        store.register_fork_snapshot(snapshot, activate=False)
+
+    assert store.sessions() == []
+
+
+def test_fork_registration_rejects_generated_metadata_for_a_non_image() -> None:
+    snapshot = _registration_snapshot()
+    first, generated = snapshot.messages
+    attachment = ConsoleForkProjectedAttachment(
+        owner_native_message_id=generated.native_message_id,
+        owner_persisted_message_id=generated.persisted_message_id,
+        position=0,
+        data=b"not an image",
+        mime_type="text/plain",
+        display_name="forged.txt",
+    )
+    metadata = ConsoleForkProjectedGeneration(
+        owner_native_message_id=generated.native_message_id,
+        owner_persisted_message_id=generated.persisted_message_id,
+        position=0,
+        prompt="forged",
+        negative_prompt="",
+        backend="openai",
+        model=None,
+        seed=None,
+        style=None,
+        params_json="{}",
+    )
+    snapshot = replace(
+        snapshot,
+        messages=(
+            first,
+            replace(
+                generated,
+                attachments=(attachment,),
+                generation_metadata=(metadata,),
+            ),
+        ),
+    )
+    store = ConsoleChatStore()
+
+    with pytest.raises(ValueError, match="image"):
+        store.register_fork_snapshot(snapshot, activate=False)
+
+    assert store.sessions() == []
+
+
 def test_fork_fence_requires_a_selection_for_every_generated_image() -> None:
     store, _, session, _, _, _, selected, _ = _fork_store(generated_image=True)
     selected_live = store._nodes_by_session[session.id][selected.id]
     second = store.append_generation_message(
         session.id,
         content="[image] second",
-        variants=[(b"second", "image/png", _generation_meta_for_video())],
+        variants=[
+            (_image_bytes((0, 255, 0)), "image/png", _generation_meta_for_video())
+        ],
     )
 
     with pytest.raises(ValueError, match="image selection"):
@@ -1975,7 +2114,7 @@ def test_generated_image_fork_fails_closed_without_a_selection() -> None:
     generated = store.append_generation_message(
         session.id,
         content="[image] generated",
-        variants=[(b"image", "image/png", _generation_meta_for_video())],
+        variants=[(_image_bytes(), "image/png", _generation_meta_for_video())],
     )
 
     with pytest.raises(ValueError, match="image selection"):
@@ -1988,7 +2127,7 @@ def test_stage_fork_snapshot_rejects_a_generated_fence_with_no_selection() -> No
     generated = store.append_generation_message(
         session.id,
         content="[image] generated",
-        variants=[(b"image", "image/png", _generation_meta_for_video())],
+        variants=[(_image_bytes(), "image/png", _generation_meta_for_video())],
     )
     fence = store.issue_fork_fence(
         generated.id,
@@ -2033,7 +2172,7 @@ def test_generated_image_fork_rejects_a_selection_for_a_user_role() -> None:
     generated = store.append_generation_message(
         session.id,
         content="[image] generated",
-        variants=[(b"image", "image/png", _generation_meta_for_video())],
+        variants=[(_image_bytes(), "image/png", _generation_meta_for_video())],
     )
     selection = _image_selection(generated, position=0)
     store._nodes_by_session[session.id][generated.id].role = ConsoleMessageRole.USER
@@ -2052,13 +2191,22 @@ def test_generated_image_fork_rejects_non_exact_selection_sets(invalid_kind) -> 
     off_prefix = store.append_generation_message(
         session.id,
         content="[image] old branch",
-        variants=[(b"old", "image/png", _generation_meta_for_video())],
+        variants=[
+            (_image_bytes((255, 0, 0)), "image/png", _generation_meta_for_video())
+        ],
     )
     active = store.create_sibling(
         off_prefix.id,
         role=ConsoleMessageRole.ASSISTANT,
         content="[image] active branch",
-        attachments=(MessageAttachment(b"active", "image/png", "active.png", 0),),
+        attachments=(
+            MessageAttachment(
+                _image_bytes((0, 255, 0)),
+                "image/png",
+                "active.png",
+                0,
+            ),
+        ),
     )
     active_live = store._nodes_by_session[session.id][active.id]
     active_live.generation_metadata = (_generation_meta_for_video(),)
@@ -2162,7 +2310,12 @@ def test_stage_fork_selected_image_candidate_remains_aba_safe(monkeypatch) -> No
     selected_live = store._nodes_by_session[session.id][selected.id]
     selected_live.attachments = (
         *selected_live.attachments,
-        MessageAttachment(b"selected", "image/png", "selected-2.png", 1),
+        MessageAttachment(
+            _image_bytes((0, 255, 0)),
+            "image/png",
+            "selected-2.png",
+            1,
+        ),
     )
     selected_live.generation_metadata = (
         *selected_live.generation_metadata,
@@ -2181,7 +2334,10 @@ def test_stage_fork_selected_image_candidate_remains_aba_safe(monkeypatch) -> No
             valid = original_validate(candidate, image_selections=image_selections)
             selected_live.attachments = (
                 original_attachments[0],
-                replace(original_attachments[1], data=b"transient selected"),
+                replace(
+                    original_attachments[1],
+                    data=_image_bytes((0, 0, 255)),
+                ),
             )
             return valid
         selected_live.attachments = original_attachments
@@ -2219,7 +2375,7 @@ def test_video_projects_as_unavailable_tombstone_and_remaps_only_internal_source
     source_image = store.append_generation_message(
         session.id,
         content="[image] source",
-        variants=[(b"image", "image/png", _generation_meta_for_video())],
+        variants=[(_image_bytes(), "image/png", _generation_meta_for_video())],
     )
     if not source_inside_snapshot:
         store.create_sibling(
@@ -2296,6 +2452,64 @@ def test_video_projects_as_unavailable_tombstone_and_remaps_only_internal_source
     assert fork_session.id == "fork-session"
 
 
+@pytest.mark.parametrize(
+    "invalid_kind",
+    ("marker-without-metadata", "metadata-without-marker", "marker-name-mismatch"),
+)
+def test_fork_issue_rejects_inconsistent_source_video_content(invalid_kind) -> None:
+    store = ConsoleChatStore()
+    session = _new_fork_session(store, title="Video source")
+    if invalid_kind == "marker-without-metadata":
+        message = store.append_message(
+            session.id,
+            role=ConsoleMessageRole.ASSISTANT,
+            content=video_content_marker("source-video"),
+        )
+    else:
+        message = store.append_video_message(
+            session.id,
+            video_metadata=VideoGenerationMetadata(
+                name="source-video",
+                prompt="animate",
+                backend="minimax",
+            ),
+        )
+        live = store._nodes_by_session[session.id][message.id]
+        live.content = (
+            "ordinary assistant text"
+            if invalid_kind == "metadata-without-marker"
+            else video_content_marker("different-video")
+        )
+
+    with pytest.raises(ValueError, match="video"):
+        store.issue_fork_fence(message.id)
+
+
+def test_stage_rejects_a_forged_fence_for_mismatched_video_marker() -> None:
+    store = ConsoleChatStore()
+    session = _new_fork_session(store, title="Video source")
+    video = store.append_video_message(
+        session.id,
+        video_metadata=VideoGenerationMetadata(
+            name="source-video",
+            prompt="animate",
+            backend="minimax",
+        ),
+    )
+    fence = store.issue_fork_fence(video.id)
+    mismatched_content = video_content_marker("different-video")
+    store._nodes_by_session[session.id][video.id].content = mismatched_content
+    forged_entry = replace(fence.lineage[0], visible_content=mismatched_content)
+
+    with pytest.raises(ValueError, match="source changed"):
+        store.stage_fork_snapshot(
+            replace(fence, lineage=(forged_entry,)),
+            title="Independent fork",
+            fork_session_id="fork-session",
+            fork_conversation_id="fork-conversation",
+        )
+
+
 def test_video_remaps_an_ordinary_sent_source_image_inside_snapshot() -> None:
     store = ConsoleChatStore()
     session = _new_fork_session(store, title="Video source")
@@ -2303,7 +2517,7 @@ def test_video_remaps_an_ordinary_sent_source_image_inside_snapshot() -> None:
         session.id,
         role=ConsoleMessageRole.USER,
         content="Animate this upload",
-        attachments=(MessageAttachment(b"image", "image/png", "source.png", 0),),
+        attachments=(MessageAttachment(_image_bytes(), "image/png", "source.png", 0),),
     )
     video = store.append_video_message(
         session.id,
@@ -2347,7 +2561,7 @@ def test_video_clears_a_source_image_reference_to_a_later_message() -> None:
         session.id,
         role=ConsoleMessageRole.USER,
         content="Image uploaded after the video",
-        attachments=(MessageAttachment(b"image", "image/png", "source.png", 0),),
+        attachments=(MessageAttachment(_image_bytes(), "image/png", "source.png", 0),),
         message_id=later_image_id,
     )
 
@@ -2405,7 +2619,7 @@ def test_fork_registration_rejects_tampered_video_authority(tamper) -> None:
         session.id,
         role=ConsoleMessageRole.USER,
         content="Animate this upload",
-        attachments=(MessageAttachment(b"image", "image/png", "source.png", 0),),
+        attachments=(MessageAttachment(_image_bytes(), "image/png", "source.png", 0),),
     )
     video = source_store.append_video_message(
         session.id,
@@ -2466,6 +2680,49 @@ def test_fork_registration_rejects_a_source_video_marker_without_tombstone() -> 
         video_tombstone=None,
     )
     snapshot = replace(snapshot, messages=(projected_video,))
+    registration_store = ConsoleChatStore()
+
+    with pytest.raises(ValueError, match="video"):
+        registration_store.register_fork_snapshot(snapshot, activate=False)
+
+    assert registration_store.sessions() == []
+
+
+def test_durable_video_tombstone_rejects_a_native_source_image_id() -> None:
+    source_store = ConsoleChatStore()
+    session = _new_fork_session(source_store, title="Video source")
+    source_image = source_store.append_message(
+        session.id,
+        role=ConsoleMessageRole.USER,
+        content="Animate this upload",
+        attachments=(MessageAttachment(_image_bytes(), "image/png", "source.png", 0),),
+    )
+    video = source_store.append_video_message(
+        session.id,
+        video_metadata=VideoGenerationMetadata(
+            name="source-video",
+            prompt="animate",
+            backend="minimax",
+            source_image_message_id=source_image.id,
+        ),
+    )
+    snapshot = source_store.stage_fork_snapshot(
+        source_store.issue_fork_fence(video.id),
+        title="Independent fork",
+        fork_session_id="fork-session",
+        fork_conversation_id="fork-conversation",
+    )
+    projected_image, projected_video = snapshot.messages
+    assert snapshot.durable is True
+    assert projected_video.video_tombstone is not None
+    projected_video = replace(
+        projected_video,
+        video_tombstone=replace(
+            projected_video.video_tombstone,
+            source_image_message_id=projected_image.native_message_id,
+        ),
+    )
+    snapshot = replace(snapshot, messages=(projected_image, projected_video))
     registration_store = ConsoleChatStore()
 
     with pytest.raises(ValueError, match="video"):
