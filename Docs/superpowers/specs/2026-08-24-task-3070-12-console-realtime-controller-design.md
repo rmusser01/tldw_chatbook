@@ -94,6 +94,12 @@ unchanged; two additional Library TASK-494 diagnostics bring the aggregate
 inventory to 538 owners, 1,244 TASK-492 calls, 7,365 TASK-494 calls, and 8 sink
 files.
 
+The final delivery base `4cee590b83` adds the first-run setup wizard and updates
+the shared Console chat controller, but does not change `ChatScreen` or the
+realtime controller family. Four additional wizard TASK-494 diagnostics bring the
+aggregate inventory to 538 owners, 1,244 TASK-492 calls, 7,369 TASK-494 calls, and
+8 sink files; the ownership and size projections remain unchanged.
+
 ## Goals
 
 1. Give the 56 reviewed realtime policy methods one explicit, non-DOM owner.
