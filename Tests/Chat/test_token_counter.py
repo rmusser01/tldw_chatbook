@@ -148,12 +148,16 @@ class TestTokenCounter:
 
     def test_tiktoken_counting(self):
         """Test accurate token counting with the required tiktoken dependency."""
-        from tldw_chatbook.Utils.token_counter import count_tokens_tiktoken
+        from tldw_chatbook.Utils.token_counter import (
+            count_tokens_tiktoken,
+            get_tiktoken_encoding,
+        )
 
         # Known text with predictable token count
         text = "Hello world"  # Should be 2 tokens for most models
-        result = count_tokens_tiktoken(text, "gpt-3.5-turbo")
-        assert result == 2
+        encoding = get_tiktoken_encoding("gpt-3.5-turbo")
+        assert encoding is not None
+        assert count_tokens_tiktoken(text, "gpt-3.5-turbo") == len(encoding.encode(text)) == 2
 
     @pytest.mark.usefixtures("force_character_estimation")
     def test_character_estimation_fallback(self):
