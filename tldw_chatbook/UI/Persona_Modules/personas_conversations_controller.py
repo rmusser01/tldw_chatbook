@@ -78,6 +78,9 @@ class PersonasConversationsController:
         self._has_more_conversations = False
         self._conversation_list_phase: str | None = None
         self._conversation_list_attempt: object | None = None
+        self._conversation_attempt_boundaries: list[
+            tuple[Any, str] | None
+        ] = []
 
     def reset(self) -> None:
         try:
@@ -166,6 +169,7 @@ class PersonasConversationsController:
         self._next_conversation_cursor = None
         self._has_more_conversations = False
         self._conversation_list_phase = None
+        self._conversation_attempt_boundaries = []
 
     def _claim_conversation_page(self, *, initial: bool) -> object | None:
         character_id = self._list_character_id
@@ -176,6 +180,7 @@ class PersonasConversationsController:
         self._conversation_list_phase = (
             "initial-loading" if initial else "append-loading"
         )
+        self._conversation_attempt_boundaries = [self._next_conversation_cursor]
         return attempt
 
     def _schedule_conversation_page(self, *, initial: bool, attempt: object) -> None:
@@ -358,9 +363,8 @@ class PersonasConversationsController:
         if not self._owns_conversation_page(character_id, cursor, attempt):
             return
 
-        accepted: list[tuple[str, str, Any]] = []
-        page_ids: set[str] = set()
-        for record in records[:_CONVERSATIONS_PAGE_SIZE]:
+        durable_page: list[tuple[str, str, Any]] = []
+        for record in records:
             if not isinstance(record, Mapping):
                 continue
             raw_id = record.get("id")
@@ -368,26 +372,49 @@ class PersonasConversationsController:
             if raw_id is None or last_modified is None:
                 continue
             conversation_id = str(raw_id).strip()
-            if (
-                not conversation_id
-                or conversation_id in self._loaded_conversation_ids
-                or conversation_id in page_ids
-            ):
+            if not conversation_id:
                 continue
-            page_ids.add(conversation_id)
-            accepted.append(
+            durable_page.append(
                 (
                     conversation_id,
                     str(record.get("title") or "Untitled conversation"),
                     last_modified,
                 )
             )
+            if len(durable_page) == _CONVERSATIONS_PAGE_SIZE:
+                break
+
+        raw_cursor = (
+            (durable_page[-1][2], durable_page[-1][0])
+            if durable_page
+            else None
+        )
+        accepted: list[tuple[str, str, Any]] = []
+        page_ids: set[str] = set()
+        for conversation_id, title, last_modified in durable_page:
+            if (
+                conversation_id in self._loaded_conversation_ids
+                or conversation_id in page_ids
+            ):
+                continue
+            page_ids.add(conversation_id)
+            accepted.append((conversation_id, title, last_modified))
 
         has_more = len(records) > _CONVERSATIONS_PAGE_SIZE
-        if records and not accepted:
+        if not accepted and has_more:
+            advances = raw_cursor is not None and not any(
+                raw_cursor == boundary
+                for boundary in self._conversation_attempt_boundaries
+            )
+            if advances:
+                self._next_conversation_cursor = raw_cursor
+                self._conversation_attempt_boundaries.append(raw_cursor)
+                self._schedule_conversation_page(initial=initial, attempt=attempt)
+                return
             logger.warning(
                 f"Conversation page for character {character_id} contained "
-                "records but no new valid durable rows; treating it as exhausted."
+                "no new rows and no advancing durable boundary; treating it as "
+                "exhausted."
             )
             has_more = False
 
@@ -397,16 +424,13 @@ class PersonasConversationsController:
             proposed_ids = {
                 conversation_id for conversation_id, _ in rows
             }
-            proposed_cursor = None
+            proposed_cursor = raw_cursor
         else:
             proposed_rows = dict(self._conversation_rows)
             proposed_rows.update(rows)
             proposed_ids = set(self._loaded_conversation_ids)
             proposed_ids.update(conversation_id for conversation_id, _ in rows)
-            proposed_cursor = self._next_conversation_cursor
-        if accepted:
-            last_id, _, last_modified = accepted[-1]
-            proposed_cursor = (last_modified, last_id)
+            proposed_cursor = raw_cursor or self._next_conversation_cursor
 
         rendered = False
         try:

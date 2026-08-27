@@ -4315,11 +4315,139 @@ class TestConversationsPanel:
                 screen.query_one(".personas-conversations-tail")
             ) == tail_copy
 
-    async def test_duplicate_only_later_page_terminates_without_duplicate_rows(
+    async def test_duplicate_shadow_page_auto_advances_to_unseen_rows(
         self, mock_app_instance, stub_characters, stub_conversations
     ):
         first_page = [_conversation_record(index) for index in range(1, 22)]
-        duplicate_page = [_conversation_record(index) for index in range(1, 21)]
+        retained_cursor_time = datetime.fromisoformat(first_page[19]["last_modified"])
+        duplicate_shadow = []
+        for index in range(1, 21):
+            duplicate = _conversation_record(index)
+            duplicate["last_modified"] = (
+                retained_cursor_time - timedelta(seconds=index)
+            ).isoformat()
+            duplicate_shadow.append(duplicate)
+        duplicate_shadow.append(_conversation_record(21))
+        continued_page = [_conversation_record(index) for index in range(21, 42)]
+        continued_read_started = asyncio.Event()
+        app = PersonasTestApp(mock_app_instance)
+
+        def continued_read(character_id, limit=50, offset=0, **cursor):
+            app.call_from_thread(continued_read_started.set)
+            return continued_page
+
+        stub_conversations.replace_pages(
+            first_page, duplicate_shadow, continued_read
+        )
+
+        async with app.run_test(size=(160, 50)) as pilot:
+            screen = await _mounted(pilot)
+            await pilot.app.workers.wait_for_complete()
+            conversation_list = screen.query_one(
+                "#personas-conversations-list", ListView
+            )
+            conversation_list.focus()
+            conversation_list.index = len(conversation_list.children) - 1
+            await pilot.press("enter")
+            await wait_for_signal(
+                continued_read_started, what="the duplicate-shadow continuation"
+            )
+            await pilot.app.workers.wait_for_complete()
+            await pilot.pause()
+
+            original_twentieth = first_page[19]
+            raw_shadow_boundary = duplicate_shadow[19]
+            assert stub_conversations.calls == [
+                (1, 21, 0, {}),
+                (
+                    1,
+                    21,
+                    0,
+                    {
+                        "before_last_modified": original_twentieth["last_modified"],
+                        "before_id": original_twentieth["id"],
+                    },
+                ),
+                (
+                    1,
+                    21,
+                    0,
+                    {
+                        "before_last_modified": raw_shadow_boundary[
+                            "last_modified"
+                        ],
+                        "before_id": raw_shadow_boundary["id"],
+                    },
+                ),
+            ]
+            rows = list(screen.query(".personas-conversation-row"))
+            assert [_row_text(row) for row in rows] == [
+                f"Case {index}" for index in range(1, 41)
+            ]
+            assert len({row.id for row in rows}) == 40
+            assert _row_text(
+                screen.query_one(".personas-conversations-tail")
+            ) == "Load 20 older conversations"
+
+    async def test_mixed_page_commits_raw_boundary_after_last_accepted_row(
+        self, mock_app_instance, stub_characters, stub_conversations
+    ):
+        first_page = [_conversation_record(index) for index in range(1, 22)]
+        row_21 = _conversation_record(21)
+        row_21_time = datetime.fromisoformat(row_21["last_modified"])
+        trailing_duplicates = []
+        for index in range(1, 20):
+            duplicate = _conversation_record(index)
+            duplicate["last_modified"] = (
+                row_21_time - timedelta(seconds=index)
+            ).isoformat()
+            trailing_duplicates.append(duplicate)
+        mixed_page = [row_21, *trailing_duplicates, _conversation_record(22)]
+        stub_conversations.replace_pages(
+            first_page, mixed_page, [_conversation_record(22)]
+        )
+        app = PersonasTestApp(mock_app_instance)
+
+        async with app.run_test(size=(160, 50)) as pilot:
+            screen = await _mounted(pilot)
+            await pilot.app.workers.wait_for_complete()
+            conversation_list = screen.query_one(
+                "#personas-conversations-list", ListView
+            )
+            conversation_list.focus()
+            conversation_list.index = len(conversation_list.children) - 1
+            await pilot.press("enter")
+            await pilot.app.workers.wait_for_complete()
+            await pilot.pause()
+
+            raw_boundary = trailing_duplicates[-1]
+            assert screen.conversations._next_conversation_cursor == (
+                raw_boundary["last_modified"],
+                raw_boundary["id"],
+            )
+            assert list(screen.query("#personas-conversation-row-conv-21"))
+
+            conversation_list.index = len(conversation_list.children) - 1
+            await pilot.press("enter")
+            await pilot.app.workers.wait_for_complete()
+            await pilot.pause()
+
+            assert stub_conversations.calls[-1] == (
+                1,
+                21,
+                0,
+                {
+                    "before_last_modified": raw_boundary["last_modified"],
+                    "before_id": raw_boundary["id"],
+                },
+            )
+            assert list(screen.query("#personas-conversation-row-conv-22"))
+
+    async def test_nonadvancing_duplicate_page_terminates_without_looping(
+        self, mock_app_instance, stub_characters, stub_conversations
+    ):
+        first_page = [_conversation_record(index) for index in range(1, 22)]
+        duplicate_page = [_conversation_record(index) for index in range(1, 22)]
         stub_conversations.replace_pages(first_page, duplicate_page)
         app = PersonasTestApp(mock_app_instance)
 
