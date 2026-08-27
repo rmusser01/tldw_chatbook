@@ -103,6 +103,11 @@ class ChatPersistenceService:
         self.console_library_policy_repository = ConsoleLibraryPolicyRepository(db)
         self.console_dispatch_repository = ConsoleDispatchRepository(db)
 
+    @staticmethod
+    def thinking_round_trip_version() -> int:
+        """Return the thinking envelope version this local adapter round-trips."""
+        return 1
+
     @property
     def canonical_citation_writes_ready(self) -> bool:
         """Return whether this service can persist canonical local citations.
@@ -149,11 +154,7 @@ class ChatPersistenceService:
         if conversation is None or conversation.get("deleted"):
             return None
         version = conversation.get("version")
-        if (
-            not isinstance(version, int)
-            or isinstance(version, bool)
-            or version < 1
-        ):
+        if not isinstance(version, int) or isinstance(version, bool) or version < 1:
             return None
         return version
 
@@ -208,6 +209,25 @@ class ChatPersistenceService:
         """Persist local sparse context-policy overrides without sync writes."""
         return self.context_repository.save_policy(conversation_id, overrides)
 
+    def update_conversation_thinking_history_policy(
+        self,
+        *,
+        conversation_id: str,
+        policy: str,
+    ) -> bool:
+        """Persist one normalized conversation-owned thinking replay policy."""
+
+        version = self.get_conversation_version(conversation_id)
+        if version is None:
+            return False
+        return bool(
+            self.db.update_conversation(
+                conversation_id,
+                {"thinking_history_policy": policy},
+                expected_version=version,
+            )
+        )
+
     @staticmethod
     def derive_conversation_title(
         *,
@@ -253,6 +273,7 @@ class ChatPersistenceService:
         system_prompt: Optional[str] = None,
         metadata: Mapping[str, object] | str | None = None,
         speech_preferences: ConsoleSpeechPreferences | None = None,
+        thinking_history_policy: str | None = None,
     ) -> str:
         """Create a conversation after validating any workspace authority.
 
@@ -284,6 +305,8 @@ class ChatPersistenceService:
                 string. Malformed or non-object values are rejected before creation.
             speech_preferences: Optional staged Console reply-speech preferences
                 to include in the conversation metadata before returning.
+            thinking_history_policy: Optional normalized conversation replay
+                preference. Null and missing values retain legacy Auto behavior.
 
         Returns:
             Persisted conversation ID.
@@ -317,6 +340,7 @@ class ChatPersistenceService:
             else workspace_id,
             "title": title,
             "system_prompt": system_prompt,
+            "thinking_history_policy": thinking_history_policy,
             "client_id": self.db.client_id,
         }
         if conversation_id is not None:
@@ -357,7 +381,9 @@ class ChatPersistenceService:
                 **dict(conversation_kwargs),
             )
             if created_id != conversation_id:
-                raise RuntimeError("Persistence returned an unexpected conversation id.")
+                raise RuntimeError(
+                    "Persistence returned an unexpected conversation id."
+                )
             result = self.console_library_policy_repository.insert(
                 conversation_id,
                 policy_candidate,
@@ -455,7 +481,9 @@ class ChatPersistenceService:
                 **dict(conversation_kwargs),
             )
             if created_id != conversation_id:
-                raise RuntimeError("Persistence returned an unexpected conversation id.")
+                raise RuntimeError(
+                    "Persistence returned an unexpected conversation id."
+                )
             policy_result = self.console_library_policy_repository.insert(
                 conversation_id,
                 policy_candidate,
@@ -640,8 +668,7 @@ class ChatPersistenceService:
         if (
             expected_system_prompts is not None
             and not allow_source_owned_repair
-            and current_conversation.get("system_prompt")
-            not in expected_system_prompts
+            and current_conversation.get("system_prompt") not in expected_system_prompts
         ):
             return False
 
@@ -819,6 +846,7 @@ class ChatPersistenceService:
         expected_roleplay_version: int | None = None,
         preserve_provider_continuation: bool = False,
         preserve_descendants: bool = False,
+        clear_generation_provenance: bool = False,
     ) -> bool:
         """Update a message's content, optionally its parent/feedback, and its images.
 
@@ -904,8 +932,7 @@ class ChatPersistenceService:
             if (
                 current_metadata is None
                 or current_metadata.template_kind != "character_greeting"
-                or current_metadata.template_source
-                != expected_roleplay_template_source
+                or current_metadata.template_source != expected_roleplay_template_source
             ):
                 return False
         if (
@@ -957,6 +984,8 @@ class ChatPersistenceService:
         # ``metadata_json`` column (task-2364).
         if metadata_json is not None:
             update_data["metadata_json"] = metadata_json
+        if clear_generation_provenance:
+            update_data["thinking_blocks_json"] = None
 
         citation_repository = self.citation_repository
         if citation_repository is not None and citation_repository.db is not self.db:
@@ -1041,6 +1070,28 @@ class ChatPersistenceService:
                 preserve_provider_continuation=preserve_provider_continuation,
                 preserve_descendants=preserve_descendants,
             )
+        )
+
+    def replace_assistant_generation_projection(
+        self,
+        *,
+        message_id: str,
+        content: str,
+        thinking_blocks_json: str | None,
+        provider_continuation_json: str | None,
+        assistant_generation_state: str | None,
+        usage_json: str | None,
+        expected_version: int | None = None,
+    ) -> int:
+        """Replace and return one committed selected-generation version."""
+        return self.db.replace_assistant_generation_projection(
+            message_id=message_id,
+            content=content,
+            thinking_blocks_json=thinking_blocks_json,
+            provider_continuation_json=provider_continuation_json,
+            assistant_generation_state=assistant_generation_state,
+            usage_json=usage_json,
+            expected_version=expected_version,
         )
 
     def update_message_usage(self, *, message_id: str, usage_json: str) -> bool:
@@ -1214,6 +1265,9 @@ class ChatPersistenceService:
         citation_write: SealedCitationWrite | None = None,
         usage_json: Optional[str] = None,
         metadata_json: Optional[str] = None,
+        thinking_blocks_json: Optional[str] = None,
+        provider_continuation_json: Optional[str] = None,
+        assistant_generation_state: Optional[str] = None,
     ) -> str:
         """Create a new message, optionally with a legacy image or a full attachment list.
 
@@ -1278,6 +1332,12 @@ class ChatPersistenceService:
                 (task-2364: engine provenance, interrupted flag, transcript
                 status), written into the row's local-only
                 ``metadata_json`` column via ``CharactersRAGDB.add_message``.
+            thinking_blocks_json: Canonical thinking envelope owned by this
+                initial assistant generation.
+            provider_continuation_json: Canonical private continuation owned
+                by this initial assistant generation.
+            assistant_generation_state: Portable lifecycle state for the
+                initial assistant generation.
 
         Returns:
             The newly created message's id.
@@ -1348,6 +1408,9 @@ class ChatPersistenceService:
             "client_id": self.db.client_id,
             "usage_json": usage_json,
             "metadata_json": metadata_json,
+            "thinking_blocks_json": thinking_blocks_json,
+            "provider_continuation_json": provider_continuation_json,
+            "assistant_generation_state": assistant_generation_state,
         }
         if prepared_citation is not None:
             # IMMEDIATE (task-21100): outer wrappers decide the begin mode for
@@ -1455,6 +1518,11 @@ class ChatPersistenceService:
             "image_data": message_payload["image_data"],
             "image_mime_type": message_payload["image_mime_type"],
             "client_id": message_payload["client_id"],
+            "usage_json": message_payload["usage_json"],
+            "metadata_json": message_payload["metadata_json"],
+            "provider_continuation_json": message_payload["provider_continuation_json"],
+            "thinking_blocks_json": message_payload["thinking_blocks_json"],
+            "assistant_generation_state": message_payload["assistant_generation_state"],
             "feedback": feedback,
         }
         if any(
@@ -1479,11 +1547,9 @@ class ChatPersistenceService:
         ):
             raise CitationPersistenceUnavailable("message_identity_conflict")
 
-        existing_generation_metadata = (
-            self.db.get_generation_metadata_for_messages([existing_message["id"]]).get(
-                existing_message["id"], []
-            )
-        )
+        existing_generation_metadata = self.db.get_generation_metadata_for_messages(
+            [existing_message["id"]]
+        ).get(existing_message["id"], [])
 
         def generation_identity(row: Mapping[str, Any]) -> tuple[Any, ...]:
             return (

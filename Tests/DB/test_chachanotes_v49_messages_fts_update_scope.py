@@ -39,14 +39,10 @@ half is witnessed against the index's PHYSICAL storage, because an fts5
 'delete' of an unindexed row can corrupt silently with a green
 integrity-check (task-21100's review measured that form).
 
-This module carried the repo's EXACT current-schema-version pin while v49 was
-the newest step; task-22225 added v49 -> v50, so the pin moved on to
-`Tests/DB/test_chachanotes_v50_console_policy_tombstone_cleanup.py`. The pin
-belongs to the NEWEST migration's own file, so a schema bump touches the file
-that caused it rather than an unrelated older one. What stays here is the
-entry-version pin (a v48 database is what THIS step upgrades) and end-state
-assertions that read `_CURRENT_SCHEMA_VERSION`: a version literal is only
-correct at a fixture's SEEDED starting point, never after an upgrade.
+This module is explicitly historical. Every production-shape fixture stops the
+real migration chain at v49, so later schema steps cannot silently change the
+trigger or writer behavior this v48→v49 regression matrix measures. The newest
+migration's own module carries the current-schema-version assertion.
 
 Renumbered from v47->v48 to v48->v49: the Console Library policy step took 48
 by merging first, and schema versions must be contiguous. Its content was
@@ -66,6 +62,7 @@ import json
 import re
 import sqlite3
 import uuid
+from contextlib import ExitStack
 from pathlib import Path
 
 import pytest
@@ -145,9 +142,7 @@ def _fts_rowids(db: CharactersRAGDB, needle: str) -> list[int]:
 def _docsize_rowids(db: CharactersRAGDB) -> set[int]:
     return {
         row[0]
-        for row in db.execute_query(
-            "SELECT rowid FROM messages_fts_docsize"
-        ).fetchall()
+        for row in db.execute_query("SELECT rowid FROM messages_fts_docsize").fetchall()
     }
 
 
@@ -219,6 +214,46 @@ def _rowid_of(db: CharactersRAGDB, message_id: str) -> int:
     ).fetchone()[0]
 
 
+def _update_message_v49(
+    db: CharactersRAGDB,
+    message_id: str,
+    update_data: dict[str, object],
+    *,
+    expected_version: int,
+) -> None:
+    """Issue the historical writer shape without naming post-v49 columns."""
+    assert update_data and set(update_data) <= {"content", "ranking"}
+    assignments = [f"{column} = ?" for column in update_data]
+    values = list(update_data.values())
+    assignments.extend(
+        ["last_modified = CURRENT_TIMESTAMP", "version = version + 1", "client_id = ?"]
+    )
+    with db.transaction(immediate=True) as conn:
+        cursor = conn.execute(
+            f"UPDATE messages SET {', '.join(assignments)} "
+            "WHERE id = ? AND version = ? AND deleted = 0",
+            (*values, db.client_id, message_id, expected_version),
+        )
+        assert cursor.rowcount == 1
+
+
+def _soft_delete_message_v49(
+    db: CharactersRAGDB, message_id: str, *, expected_version: int
+) -> None:
+    """Issue the historical tombstone shape without naming post-v49 columns."""
+    with db.transaction(immediate=True) as conn:
+        cursor = conn.execute(
+            """
+            UPDATE messages
+               SET deleted = 1, last_modified = CURRENT_TIMESTAMP,
+                   version = version + 1, client_id = ?
+             WHERE id = ? AND version = ? AND deleted = 0
+            """,
+            (db.client_id, message_id, expected_version),
+        )
+        assert cursor.rowcount == 1
+
+
 def _seed_v45(db_path: Path, bodies: list[str]) -> tuple[list[str], list[int]]:
     """Build a genuine v45 DB, so opening it lands inside v47's backfill window.
 
@@ -259,9 +294,10 @@ def _seed_v45(db_path: Path, bodies: list[str]) -> tuple[list[str], list[int]]:
 
 @pytest.fixture
 def db(tmp_path: Path):
-    instance = CharactersRAGDB(tmp_path / "chachanotes.db", client_id="v49-test")
-    yield instance
-    instance.close_connection()
+    with chachanotes_db_at_version(
+        tmp_path / "chachanotes.db", 49, client_id="v49-test"
+    ) as instance:
+        yield instance
 
 
 @pytest.fixture
@@ -272,10 +308,9 @@ def conversation(db: CharactersRAGDB) -> str:
 # ---------------------------------------------------------------------------
 # the step itself
 # ---------------------------------------------------------------------------
-def test_a_fresh_database_is_at_least_v49(db):
-    """This step's floor. The exact pin lives in the newest step's file."""
-    assert _version(db.get_connection()) >= 49
-    assert CharactersRAGDB._CURRENT_SCHEMA_VERSION >= 49
+def test_historical_fixture_stops_the_real_chain_at_v49(db):
+    """The matrix measures v49 itself, independently of today's schema."""
+    assert _version(db.get_connection()) == 49
 
 
 def test_fresh_schema_scopes_messages_au_to_content_and_deleted(db):
@@ -344,11 +379,8 @@ def test_upgrading_a_v48_database_replaces_the_trigger_and_keeps_its_index(
         )
         assert len(before_index) == 5
 
-    migrated = CharactersRAGDB(db_path, client_id="v49-upgrade")
-    try:
-        assert _version(migrated.get_connection()) == (
-            CharactersRAGDB._CURRENT_SCHEMA_VERSION
-        )
+    with chachanotes_db_at_version(db_path, 49, client_id="v49-upgrade") as migrated:
+        assert _version(migrated.get_connection()) == 49
         after_sql = _trigger_sql(migrated, "messages_au")
         assert after_sql != before_sql, "the migration did not replace the trigger"
         assert "after update of content, deleted on messages" in after_sql
@@ -357,8 +389,6 @@ def test_upgrading_a_v48_database_replaces_the_trigger_and_keeps_its_index(
         assert _fts_storage_image(migrated) == before_storage
         assert len(_fts_rowids(migrated, "upgradeneedle002")) == 1
         _assert_index_structurally_sound(migrated)
-    finally:
-        migrated.close_connection()
 
 
 def test_a_failure_mid_v49_rewinds_the_whole_chain(
@@ -387,7 +417,8 @@ def test_a_failure_mid_v49_rewinds_the_whole_chain(
 
     monkeypatch.setattr(CharactersRAGDB, "_execute_migration_statements", poisoned)
     with pytest.raises(SchemaError, match="no_such_table_21128"):
-        CharactersRAGDB(db_path, client_id="poisoned")
+        with chachanotes_db_at_version(db_path, 49, client_id="poisoned"):
+            pass
 
     connection = sqlite3.connect(str(db_path))
     try:
@@ -401,7 +432,10 @@ def test_a_failure_mid_v49_rewinds_the_whole_chain(
         surviving = " ".join(
             connection.execute(
                 "SELECT sql FROM sqlite_master WHERE name = 'messages_au'"
-            ).fetchone()[0].lower().split()
+            )
+            .fetchone()[0]
+            .lower()
+            .split()
         )
         assert surviving == original_sql, (
             "the DROP must rewind with the failing chain, or the database is "
@@ -411,18 +445,13 @@ def test_a_failure_mid_v49_rewinds_the_whole_chain(
         connection.close()
 
     monkeypatch.undo()
-    migrated = CharactersRAGDB(db_path, client_id="poison-removed")
-    try:
-        assert _version(migrated.get_connection()) == (
-            CharactersRAGDB._CURRENT_SCHEMA_VERSION
-        )
+    with chachanotes_db_at_version(db_path, 49, client_id="poison-removed") as migrated:
+        assert _version(migrated.get_connection()) == 49
         assert "after update of content, deleted" in _trigger_sql(
             migrated, "messages_au"
         )
         assert sorted(_docsize_rowids(migrated)) == rowids
         assert _fts_rowids(migrated, "poison49needle") == rowids
-    finally:
-        migrated.close_connection()
 
 
 # ---------------------------------------------------------------------------
@@ -468,7 +497,9 @@ def test_the_update_of_list_covers_every_fts_relevant_column(db):
         "to the row again (task-21128)"
     )
     listed = {column.strip() for column in match.group("columns").split(",")}
-    assert required <= listed, f"UPDATE OF {sorted(listed)} misses {sorted(required - listed)}"
+    assert required <= listed, (
+        f"UPDATE OF {sorted(listed)} misses {sorted(required - listed)}"
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -480,7 +511,9 @@ def test_content_edit_reindexes(db, conversation):
     )
     rowid = _rowid_of(db, message_id)
 
-    db.update_message(message_id, {"content": "bbbneedle new"}, expected_version=1)
+    _update_message_v49(
+        db, message_id, {"content": "bbbneedle new"}, expected_version=1
+    )
 
     assert _fts_rowids(db, "bbbneedle") == [rowid]
     assert _fts_rowids(db, "aaaneedle") == []
@@ -540,7 +573,7 @@ def test_soft_delete_still_drops_the_message_from_the_index(db, conversation):
     rowid = _rowid_of(db, message_id)
     assert _fts_rowids(db, "eeeneedle") == [rowid]
 
-    db.soft_delete_message(message_id, expected_version=1)
+    _soft_delete_message_v49(db, message_id, expected_version=1)
 
     assert _fts_rowids(db, "eeeneedle") == []
     _assert_index_structurally_sound(db)
@@ -554,7 +587,7 @@ def test_undelete_puts_the_message_back_into_the_index(db, conversation):
         {"conversation_id": conversation, "sender": "user", "content": "fffneedle body"}
     )
     rowid = _rowid_of(db, message_id)
-    db.soft_delete_message(message_id, expected_version=1)
+    _soft_delete_message_v49(db, message_id, expected_version=1)
     assert _fts_rowids(db, "fffneedle") == []
 
     with db.transaction() as conn:
@@ -585,8 +618,8 @@ def test_streaming_finalize_indexes_the_finished_reply(db, conversation):
     )
     rowid = _rowid_of(db, message_id)
 
-    db.update_message(
-        message_id, {"content": f"hhhneedle {REPLY_BODY}"}, expected_version=1
+    _update_message_v49(
+        db, message_id, {"content": f"hhhneedle {REPLY_BODY}"}, expected_version=1
     )
 
     assert _fts_rowids(db, "hhhneedle") == [rowid]
@@ -606,15 +639,23 @@ def test_a_content_edit_after_auxiliary_flushes_still_reindexes(db, conversation
     the wrong text (or nothing at all).
     """
     message_id = db.add_message(
-        {"conversation_id": conversation, "sender": "assistant", "content": "iiineedle first"}
+        {
+            "conversation_id": conversation,
+            "sender": "assistant",
+            "content": "iiineedle first",
+        }
     )
     rowid = _rowid_of(db, message_id)
 
     db.update_message_usage_local(message_id, json.dumps({"in": 1}))
     db.update_message_metadata_local(message_id, json.dumps({"model": "m"}))
-    db.update_message(message_id, {"content": "jjjneedle second"}, expected_version=1)
+    _update_message_v49(
+        db, message_id, {"content": "jjjneedle second"}, expected_version=1
+    )
     db.update_message_usage_local(message_id, json.dumps({"in": 2}))
-    db.update_message(message_id, {"content": "kkkneedle third"}, expected_version=2)
+    _update_message_v49(
+        db, message_id, {"content": "kkkneedle third"}, expected_version=2
+    )
 
     assert _fts_rowids(db, "kkkneedle") == [rowid]
     assert _fts_rowids(db, "jjjneedle") == []
@@ -629,7 +670,7 @@ def test_soft_delete_after_auxiliary_flushes_still_drops_the_row(db, conversatio
     db.update_message_metadata_local(message_id, json.dumps({"model": "m"}))
     db.update_message_usage_local(message_id, json.dumps({"in": 1}))
 
-    db.soft_delete_message(message_id, expected_version=1)
+    _soft_delete_message_v49(db, message_id, expected_version=1)
 
     assert _fts_rowids(db, "lllneedle") == []
     _assert_index_structurally_sound(db)
@@ -665,15 +706,17 @@ def test_the_whole_matrix_is_safe_on_un_backfilled_rows(tmp_path: Path):
     bodies = [f"windowneedle{i:03d} body" for i in range(8)]
     message_ids, rowids = _seed_v45(db_path, bodies)
 
-    migrated = CharactersRAGDB(
-        db_path,
-        client_id="v49-window",
-        console_library_migration_seed=MIGRATION_SEED,
+    historical = ExitStack()
+    migrated = historical.enter_context(
+        chachanotes_db_at_version(
+            db_path,
+            49,
+            client_id="v49-window",
+            console_library_migration_seed=MIGRATION_SEED,
+        )
     )
     try:
-        assert _version(migrated.get_connection()) == (
-            CharactersRAGDB._CURRENT_SCHEMA_VERSION
-        )
+        assert _version(migrated.get_connection()) == 49
         assert _docsize_rowids(migrated) == set(), "the window is not open"
 
         # usage-only flush on an un-backfilled row: the trigger must not fire
@@ -693,8 +736,11 @@ def test_the_whole_matrix_is_safe_on_un_backfilled_rows(tmp_path: Path):
         # content edit: the guarded delete half skips (not in the index), the
         # insert half indexes the new content -- the row is indexed EARLY, and
         # the backfill (keyed on the same membership) then skips it.
-        migrated.update_message(
-            message_ids[1], {"content": "editedneedle body"}, expected_version=1
+        _update_message_v49(
+            migrated,
+            message_ids[1],
+            {"content": "editedneedle body"},
+            expected_version=1,
         )
         assert _fts_rowids(migrated, "editedneedle") == [rowids[1]]
         assert _fts_rowids(migrated, "windowneedle001") == []
@@ -703,7 +749,7 @@ def test_the_whole_matrix_is_safe_on_un_backfilled_rows(tmp_path: Path):
 
         # soft delete of an un-backfilled row: nothing to remove, no write.
         before = _fts_storage_image(migrated)
-        migrated.soft_delete_message(message_ids[2], expected_version=1)
+        _soft_delete_message_v49(migrated, message_ids[2], expected_version=1)
         assert _fts_storage_image(migrated) == before, (
             "soft-deleting an unindexed row wrote into messages_fts_data -- "
             "the v47 membership guard is not holding under the new scope"
@@ -739,8 +785,8 @@ def test_the_whole_matrix_is_safe_on_un_backfilled_rows(tmp_path: Path):
                 "content": "...",
             }
         )
-        migrated.update_message(
-            streamed, {"content": "streamneedle finished"}, expected_version=1
+        _update_message_v49(
+            migrated, streamed, {"content": "streamneedle finished"}, expected_version=1
         )
         assert _fts_rowids(migrated, "streamneedle") == [_rowid_of(migrated, streamed)]
         _assert_index_structurally_sound(migrated)
@@ -756,7 +802,7 @@ def test_the_whole_matrix_is_safe_on_un_backfilled_rows(tmp_path: Path):
         # Idempotent afterwards.
         assert backfill_chachanotes_messages_fts(migrated) == 0
     finally:
-        migrated.close_connection()
+        historical.close()
 
 
 # ---------------------------------------------------------------------------
@@ -773,7 +819,11 @@ def _streamed_turn_index_rewrites(db: CharactersRAGDB) -> tuple[int, int]:
     """
     conversation_id = db.add_conversation({"title": "turn", "character_id": 1})
     db.add_message(
-        {"conversation_id": conversation_id, "sender": "user", "content": "turnneedle ask"}
+        {
+            "conversation_id": conversation_id,
+            "sender": "user",
+            "content": "turnneedle ask",
+        }
     )
     assistant_id = db.add_message(
         {"conversation_id": conversation_id, "sender": "assistant", "content": "..."}
@@ -790,13 +840,13 @@ def _streamed_turn_index_rewrites(db: CharactersRAGDB) -> tuple[int, int]:
             rewrites += 1
             image = current
 
-    db.update_message(assistant_id, {"content": REPLY_BODY}, expected_version=1)
+    _update_message_v49(db, assistant_id, {"content": REPLY_BODY}, expected_version=1)
     account()
     db.update_message_usage_local(assistant_id, json.dumps({"in": 10, "out": 20}))
     account()
     db.update_message_metadata_local(assistant_id, json.dumps({"model": "m"}))
     account()
-    db.update_message(assistant_id, {"ranking": 1}, expected_version=2)
+    _update_message_v49(db, assistant_id, {"ranking": 1}, expected_version=2)
     account()
 
     assert _fts_rowids(db, "replyneedle0399") == [_rowid_of(db, assistant_id)], (
@@ -815,8 +865,13 @@ def test_a_streamed_turn_rewrites_the_index_once(tmp_path: Path):
     to the turn's write count, and a single-arm assertion would not show the
     saving is real.
     """
-    after_db = CharactersRAGDB(tmp_path / "after.db", client_id="v49-after")
-    before_db = CharactersRAGDB(tmp_path / "before.db", client_id="v49-before")
+    historical = ExitStack()
+    after_db = historical.enter_context(
+        chachanotes_db_at_version(tmp_path / "after.db", 49, client_id="v49-after")
+    )
+    before_db = historical.enter_context(
+        chachanotes_db_at_version(tmp_path / "before.db", 49, client_id="v49-before")
+    )
     try:
         _install_trigger(before_db, V47_MESSAGES_AU)
         assert "after update on messages" in _trigger_sql(before_db, "messages_au")
@@ -842,5 +897,4 @@ def test_a_streamed_turn_rewrites_the_index_once(tmp_path: Path):
         _assert_index_structurally_sound(after_db)
         _assert_index_structurally_sound(before_db)
     finally:
-        after_db.close_connection()
-        before_db.close_connection()
+        historical.close()

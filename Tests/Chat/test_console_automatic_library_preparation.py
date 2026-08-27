@@ -5,9 +5,10 @@ from __future__ import annotations
 import asyncio
 import gc
 import threading
-from types import SimpleNamespace
 import warnings
 import weakref
+from dataclasses import replace
+from types import SimpleNamespace
 
 import pytest
 
@@ -40,14 +41,14 @@ from tldw_chatbook.Chat.console_library_policy import (
     ConsoleLibraryPolicySnapshot,
 )
 from tldw_chatbook.Chat.console_live_work import ConsoleLiveWorkLaunch
+from tldw_chatbook.Chat.console_project_instructions import (
+    ProjectInstructionControlState,
+)
 from tldw_chatbook.Chat.console_prompt_queue import (
     PromptQueueMode,
     PromptQueueReservation,
 )
 from tldw_chatbook.Chat.console_provider_gateway import ConsoleProviderResolution
-from tldw_chatbook.Chat.console_project_instructions import (
-    ProjectInstructionControlState,
-)
 from tldw_chatbook.Chat.console_turn_context import (
     ConsoleTurnConfigurationSnapshot,
     ConsoleTurnExecutionContext,
@@ -160,6 +161,28 @@ class _BlockingFirstFence(_StreamingFence):
         self.started.set()
         await self.release.wait()
         yield "ok"
+
+
+class _ThinkingBlockingFirstFence(_BlockingFirstFence):
+    async def resolve_for_send(self, selection):
+        resolution = await super().resolve_for_send(selection)
+        return replace(
+            resolution,
+            thinking_stream_disposition="displayable",
+            thinking_round_trip_version=1,
+        )
+
+
+class _MutableThinkingPersistence:
+    def __init__(self, delegate, version: int = 1) -> None:
+        self._delegate = delegate
+        self.version = version
+
+    def thinking_round_trip_version(self) -> int:
+        return self.version
+
+    def __getattr__(self, name: str):
+        return getattr(self._delegate, name)
 
 
 class _PrepareFailureFence(_StreamingFence):
@@ -471,7 +494,7 @@ def _real_retrieval_controller_for_launch(state: dict[str, object]):
     return controller
 
 
-async def _paused_queued_send(*, persistence=None):
+async def _paused_queued_send(*, persistence=None, gateway=None):
     store = ConsoleChatStore(persistence=persistence)
     policy = _PolicyCoordinator(ConsoleAutoRetrieve.NEVER)
     store.library_policy_coordinator = policy
@@ -479,7 +502,7 @@ async def _paused_queued_send(*, persistence=None):
         session_id="session-1",
         ephemeral=not callable(getattr(persistence, "commit_durable_turn", None)),
     )
-    gateway = _BlockingFirstFence()
+    gateway = gateway or _BlockingFirstFence()
     service = _RagService(error=RuntimeError("queued retrieval failed"))
     controller = ConsoleChatController(store=store, provider_gateway=gateway)
     controller.app = SimpleNamespace(library_rag_search_service=service)
@@ -1397,6 +1420,70 @@ async def test_queued_recovery_reclaims_same_entry_then_advances_without_spin(ac
     assert final.total_count == 0
     assert gateway.provider_calls == 3
     assert store.preparation_for_session(session.id) is None
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("action", ["retry", "bypass"])
+async def test_queued_reclaim_thinking_refusal_returns_owner_to_recoverable_head(
+    action,
+):
+    from Tests.Chat.test_console_chat_controller import FakePersistence
+
+    persistence = _MutableThinkingPersistence(FakePersistence())
+    gateway = _ThinkingBlockingFirstFence()
+    (
+        controller,
+        store,
+        _gateway,
+        service,
+        paused,
+        first,
+        second,
+    ) = await _paused_queued_send(persistence=persistence, gateway=gateway)
+    assert paused.transient_user_message_id is not None
+    owner_before = store.get_message(paused.transient_user_message_id)
+    continuation_before = controller._prepared_send_continuations[paused.preparation_id]
+    service.error = None
+    persistence.version = 0
+
+    result = (
+        await controller.retry_library_preparation(paused.preparation_id)
+        if action == "retry"
+        else await controller.bypass_library_preparation(paused.preparation_id)
+    )
+
+    assert result.accepted is False
+    assert result.visible_copy == (
+        "This persistent backend cannot preserve model thinking version 1. "
+        "Upgrade it before sending."
+    )
+    current = store.preparation_for_session(paused.session_id)
+    assert current is not None
+    assert current.state is ConsoleTurnPreparationState.PAUSED
+    assert current.pause_kind is ConsolePreparationPauseKind.PERSISTENCE
+    assert current.transient_user_message_id == paused.transient_user_message_id
+    assert store.get_message(paused.transient_user_message_id) == owner_before
+    assert (
+        controller._prepared_send_continuations[paused.preparation_id]
+        is continuation_before
+    )
+    snapshot = controller.prompt_queue_registry.snapshot(paused.session_id)
+    assert snapshot.claimed_count == 0
+    assert [entry.entry_id for entry in snapshot.entries] == [
+        first.entry_id,
+        second.entry_id,
+    ]
+    assert gateway.provider_calls == 1
+
+    persistence.version = 1
+    recovered = await controller.retry_library_preparation(paused.preparation_id)
+
+    assert recovered.accepted is True
+    assert store.preparation_for_session(paused.session_id) is None
+    assert gateway.provider_calls == 2
+    recovered_snapshot = controller.prompt_queue_registry.snapshot(paused.session_id)
+    assert recovered_snapshot.claimed_count == 0
+    assert [entry.entry_id for entry in recovered_snapshot.entries] == [second.entry_id]
 
 
 @pytest.mark.asyncio

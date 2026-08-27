@@ -727,6 +727,139 @@ def test_source_projection_receipt_readback_failure_rolls_back_both_rows(
         )
 
 
+def test_tombstone_supersedes_only_exact_object_outbox_history(tmp_path):
+    repo = SyncStateRepository(tmp_path / "sync_state.db")
+    dataset_key = generate_dataset_key()
+    builder = SyncEnvelopeBuilder(
+        dataset_id="dataset-1", device_id="device-1", dataset_key=dataset_key
+    )
+    scope = {
+        "server_profile_id": "server-a",
+        "authenticated_principal_id": "user-a",
+        "workspace_scope": "workspace-1",
+        "dataset_id": "dataset-1",
+    }
+
+    def enqueue(envelope, *, version, target_scope=scope, supersede=False):
+        return repo.enqueue_sync_v2_outbox_envelope_with_source_receipt(
+            **target_scope,
+            envelope=envelope,
+            source_entity_id=envelope.object_id,
+            source_version=version,
+            source_payload_hash=envelope.payload_hash,
+            supersede_object_history=supersede,
+        )
+
+    private = builder.build_chat_message(
+        conversation_id="conversation-1",
+        message_id="message-1",
+        role="assistant",
+        content="PRIVATE-OUTBOX-CANARY",
+        entity_version=1,
+    )
+    unrelated_object = builder.build_chat_message(
+        conversation_id="conversation-1",
+        message_id="message-2",
+        role="assistant",
+        content="unrelated",
+        entity_version=1,
+    )
+    unrelated_domain = builder.build_note_upsert(
+        note_id="message-1", title="note", body="unrelated", entity_version=1
+    )
+    other_scope = {**scope, "workspace_scope": "workspace-2"}
+    enqueue(private, version=1)
+    enqueue(unrelated_object, version=1)
+    enqueue(unrelated_domain, version=1)
+    enqueue(private, version=1, target_scope=other_scope)
+
+    tombstone = builder.build_chat_message_delete(
+        conversation_id="conversation-1",
+        message_id="message-1",
+        base_version=private.payload_hash,
+        entity_version=2,
+    )
+    result = enqueue(tombstone, version=2, supersede=True)
+
+    exact_scope = repo.list_sync_v2_outbox_entries(**scope)
+    other_scope_entries = repo.list_sync_v2_outbox_entries(**other_scope)
+    assert result["outbox_entry"]["envelope"]["operation"] == "delete"
+    assert {
+        (entry["envelope"]["domain"], entry["envelope"]["object_id"])
+        for entry in exact_scope
+    } == {("chat", "message-1"), ("chat", "message-2"), ("notes", "message-1")}
+    assert (
+        next(
+            entry
+            for entry in exact_scope
+            if entry["envelope"]["domain"] == "chat"
+            and entry["envelope"]["object_id"] == "message-1"
+        )["envelope"]["operation"]
+        == "delete"
+    )
+    assert len(other_scope_entries) == 1
+    assert other_scope_entries[0]["envelope"]["operation"] == "upsert"
+    assert "PRIVATE-OUTBOX-CANARY" not in repr(exact_scope)
+
+
+def test_tombstone_supersession_failure_restores_prior_outbox(tmp_path, monkeypatch):
+    repo = SyncStateRepository(tmp_path / "sync_state.db")
+    builder = SyncEnvelopeBuilder(
+        dataset_id="dataset-1",
+        device_id="device-1",
+        dataset_key=generate_dataset_key(),
+    )
+    scope = {
+        "server_profile_id": "server-a",
+        "authenticated_principal_id": "user-a",
+        "workspace_scope": "workspace-1",
+        "dataset_id": "dataset-1",
+    }
+    private = builder.build_chat_message(
+        conversation_id="conversation-1",
+        message_id="message-1",
+        role="assistant",
+        content="PRIVATE-ROLLBACK-CANARY",
+        entity_version=1,
+    )
+    repo.enqueue_sync_v2_outbox_envelope_with_source_receipt(
+        **scope,
+        envelope=private,
+        source_entity_id="message-1",
+        source_version=1,
+        source_payload_hash=private.payload_hash,
+    )
+    tombstone = builder.build_chat_message_delete(
+        conversation_id="conversation-1",
+        message_id="message-1",
+        base_version=private.payload_hash,
+        entity_version=2,
+    )
+
+    def refuse_readback(_row):
+        raise RuntimeError("injected post-supersession failure")
+
+    monkeypatch.setattr(
+        SyncStateRepository,
+        "_source_projection_receipt_from_row",
+        staticmethod(refuse_readback),
+    )
+    with pytest.raises(RuntimeError, match="post-supersession failure"):
+        repo.enqueue_sync_v2_outbox_envelope_with_source_receipt(
+            **scope,
+            envelope=tombstone,
+            source_entity_id="message-1",
+            source_version=2,
+            source_payload_hash=tombstone.payload_hash,
+            supersede_object_history=True,
+        )
+
+    remaining = repo.list_sync_v2_outbox_entries(**scope)
+    assert len(remaining) == 1
+    assert remaining[0]["envelope"]["client_envelope_id"] == private.client_envelope_id
+    assert remaining[0]["envelope"]["operation"] == "upsert"
+
+
 def test_source_projection_receipt_rejects_orphan_and_wrong_scope(tmp_path):
     db_path = tmp_path / "sync_state.db"
     repo = SyncStateRepository(db_path)

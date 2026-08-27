@@ -150,6 +150,7 @@ from ...Agents.agent_models import (
     TERMINAL_RUN_STATUSES,
 )
 from ...Chat.cost_display import format_token_count
+from ...Chat.console_chat_models import ConsoleMessageRole
 from ...Widgets.Console.console_agent_steering_bar import (
     STEERING_STATE_HIDDEN,
     ConsoleAgentSteeringState,
@@ -1718,10 +1719,26 @@ class ConsoleAgentController:
         if bridge is None:
             return messages
         from tldw_chatbook.Chat.console_agent_bridge import inject_resume_agent_markers
+        from tldw_chatbook.Chat.thinking_blocks import ThinkingEnvelope
+
+        thinking_rounds_by_owner = {
+            message.persisted_message_id or message.id: frozenset(
+                block.round_ordinal for block in message.thinking.blocks
+            )
+            for message in messages
+            if message.role is ConsoleMessageRole.ASSISTANT
+            and isinstance(message.thinking, ThinkingEnvelope)
+        }
 
         # bridge.resume_marker_messages returns the (anchor_id, block) pairs
         # inject_resume_agent_markers now expects directly -- no reshaping
         # needed here, just passed straight through.
         return inject_resume_agent_markers(
-            messages, bridge.resume_marker_messages(conversation_id)
+            messages,
+            bridge.resume_marker_messages(
+                conversation_id,
+                thinking_round_ordinals_by_assistant_message_id=(
+                    thinking_rounds_by_owner
+                ),
+            ),
         )

@@ -23,7 +23,10 @@ from tldw_chatbook.Sync_Interop.domain_adapters.notes_m1 import NotesM1SyncAdapt
 from tldw_chatbook.Sync_Interop.domain_adapters._helpers import (
     decrypt_envelope_payload,
 )
-from tldw_chatbook.Sync_Interop.hashing import canonical_payload_hash
+from tldw_chatbook.Sync_Interop.hashing import (
+    canonical_payload_hash,
+    canonical_thinking_blocks_json,
+)
 
 if TYPE_CHECKING:
     from tldw_chatbook.tldw_api import SyncV2Envelope
@@ -84,9 +87,7 @@ class SyncEnvelopeApplier:
                     local_store,
                     claimed_payload_hash=envelope.payload_hash,
                     payload=(
-                        decrypt_envelope_payload(
-                            envelope, dataset_key=self.dataset_key
-                        )
+                        decrypt_envelope_payload(envelope, dataset_key=self.dataset_key)
                         if envelope.operation != "delete"
                         else None
                     ),
@@ -192,12 +193,25 @@ class _ContinuationValidatingChatStore:
         allowed_keys = {"assistant_generation_state", "content", "role"}
         if "provider_continuation_json" in payload:
             allowed_keys.add("provider_continuation_json")
+        if "thinking_blocks_json" in payload:
+            allowed_keys.add("thinking_blocks_json")
         if (
             set(payload) != allowed_keys
             or type(payload.get("content")) is not str
             or type(payload.get("role")) is not str
         ):
             raise _InvalidChatMessagePayload
+
+        thinking_value = payload.get("thinking_blocks_json")
+        if "thinking_blocks_json" in payload:
+            if payload["role"] != "assistant" or thinking_value is None:
+                raise _InvalidChatMessagePayload
+            try:
+                payload["thinking_blocks_json"] = canonical_thinking_blocks_json(
+                    thinking_value
+                )
+            except (TypeError, ValueError):
+                raise _InvalidChatMessagePayload from None
 
         private_value = payload.get("provider_continuation_json")
         active_continuation = False

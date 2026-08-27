@@ -173,6 +173,18 @@ def test_missing_section_is_rejected(db) -> None:
         load_trajectory_snapshot(payload)
 
 
+def test_import_rejects_reserved_thinking_via_shared_validator(db) -> None:
+    payload = build_trajectory_export(db, _seed_conversation(db))
+    payload["messages"][0]["thinking_blocks_json"] = "IMPORT-THINKING-CANARY"
+
+    with pytest.raises(
+        TrajectoryImportError, match="reserved thinking field"
+    ) as caught:
+        load_trajectory_snapshot(payload)
+
+    assert "IMPORT-THINKING-CANARY" not in str(caught.value)
+
+
 def test_json_array_top_level_is_rejected(tmp_path) -> None:
     bad = tmp_path / "array.json"
     bad.write_text("[]", encoding="utf-8")

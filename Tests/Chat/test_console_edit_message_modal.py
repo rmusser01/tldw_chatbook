@@ -45,6 +45,22 @@ def test_modal_accepts_can_resend_kwarg():
     assert m2._can_resend is False
 
 
+@pytest.mark.asyncio
+async def test_assistant_generation_edit_names_provenance_that_save_clears() -> None:
+    app = _ModalHost()
+    async with app.run_test() as pilot:
+        modal = ConsoleEditMessageModal(
+            content="answer",
+            clears_generation_provenance=True,
+        )
+        app.push_screen(modal)
+        await pilot.pause()
+        copy = _static_plain_text(
+            modal.query_one("#console-edit-message-context", Static)
+        )
+        assert "clears model thinking and provider continuation" in copy
+
+
 class _ModalHost(App):
     pass
 

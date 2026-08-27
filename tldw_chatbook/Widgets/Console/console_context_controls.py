@@ -8,6 +8,7 @@ store/controller while making the quick and full settings surfaces agree.
 from __future__ import annotations
 
 from dataclasses import dataclass
+from typing import Literal
 
 from tldw_chatbook.Chat.console_context_policy import (
     ConsoleContextCapacity,
@@ -23,11 +24,32 @@ from tldw_chatbook.Chat.console_session_settings import (
     ConsoleSessionSettings,
     ConsoleSettingsContextEstimate,
 )
+from tldw_chatbook.Chat.console_thinking_history import (
+    EffectiveThinkingHistoryPolicy,
+)
+from tldw_chatbook.Chat.thinking_blocks import (
+    ThinkingHistoryPolicy,
+    normalize_thinking_history_policy,
+)
+
+
+_REQUIRED_THINKING_HISTORY_REASON = (
+    "Completed provider continuation history must be replayed for this model."
+)
 
 
 def format_context_tokens(value: int | None) -> str:
     """Format a token count without pretending an unknown value is zero."""
     return "unknown" if value is None else f"{value:,}"
+
+
+@dataclass(frozen=True, slots=True)
+class ThinkingHistoryControlState:
+    """Saved optional replay preference and its current effective state."""
+
+    saved_policy: ThinkingHistoryPolicy
+    effective_label: Literal["Auto", "Include", "Exclude", "Required"]
+    required_reason: str | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -49,6 +71,9 @@ class ConsoleContextControlState:
     active_memory: ConsoleMemoryRecord | None = None
     busy: bool = False
     status_message: str = ""
+    thinking_history: ThinkingHistoryControlState = ThinkingHistoryControlState(
+        "auto", "Auto"
+    )
 
     @property
     def conversation_budget_tokens(self) -> int | None:
@@ -102,6 +127,8 @@ def build_console_context_control_state(
     safety_margin_tokens: int | None = None,
     busy: bool = False,
     status_message: str = "",
+    thinking_history_policy: object = None,
+    thinking_history_effective_policy: EffectiveThinkingHistoryPolicy | None = None,
 ) -> ConsoleContextControlState:
     """Build a UI snapshot from the current estimate and owned policy values.
 
@@ -133,6 +160,16 @@ def build_console_context_control_state(
         if estimate.token_limit_verified is None
         else estimate.token_limit_verified
     )
+    saved_thinking_policy = normalize_thinking_history_policy(thinking_history_policy)
+    effective_thinking_policy = (
+        thinking_history_effective_policy or saved_thinking_policy
+    )
+    effective_thinking_label = effective_thinking_policy.title()
+    required_reason = (
+        _REQUIRED_THINKING_HISTORY_REASON
+        if effective_thinking_policy == "required"
+        else None
+    )
     return ConsoleContextControlState(
         request_tokens=used,
         conversation_tokens=conversation_used,
@@ -149,11 +186,17 @@ def build_console_context_control_state(
         active_memory=active_memory,
         busy=busy,
         status_message=status_message,
+        thinking_history=ThinkingHistoryControlState(
+            saved_policy=saved_thinking_policy,
+            effective_label=effective_thinking_label,
+            required_reason=required_reason,
+        ),
     )
 
 
 __all__ = [
     "ConsoleContextControlState",
+    "ThinkingHistoryControlState",
     "build_console_context_control_state",
     "format_context_tokens",
 ]

@@ -253,7 +253,11 @@ def test_visible_discard_projects_explicit_checkpoint_clear(tmp_path) -> None:
             json.loads(entries[0]["envelope"]["payload_ciphertext"]),
             key=dataset_key,
         )
-        assert payload == {"content": "Visible", "role": "assistant"}
+        assert payload == {
+            "assistant_generation_state": "discarded",
+            "content": "Visible",
+            "role": "assistant",
+        }
     finally:
         database.close_connection()
 

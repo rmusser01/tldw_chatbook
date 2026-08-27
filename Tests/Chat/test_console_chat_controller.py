@@ -1,6 +1,8 @@
 import asyncio
+import copy
 import json
 import threading
+import time
 from dataclasses import replace
 from types import SimpleNamespace
 
@@ -27,25 +29,39 @@ from tldw_chatbook.Chat.chat_persistence_service import ChatPersistenceService
 from tldw_chatbook.Chat.console_provider_gateway import (
     ConsoleProviderGateway,
     ConsoleProviderResolution,
+    ProviderProprietaryThinkingEvidence,
+    ProviderThinkingDelta,
 )
 from tldw_chatbook.Chat.provider_continuation import parse_provider_continuation_json
 from tldw_chatbook.Chat.console_chat_models import (
+    ConsoleChatMessage,
+    ConsoleDispatchRecoveryActionId,
+    ConsoleDispatchRecoveryKind,
+    ConsoleDispatchRecoveryState,
     ConsoleNextSendHistoryProjection,
     ConsoleMessageRole,
     ConsoleProviderSelection,
     ConsoleRunState,
     ConsoleRunStatus,
     ConsoleStagedSource,
+    ConsoleVariant,
+    ConsoleVariantSet,
     ConsoleWorkspaceContext,
     MessageAttachment,
+    console_dispatch_recovery_from_checkpoint,
 )
 from tldw_chatbook.Chat.console_session_settings import ConsoleSessionSettings
+from tldw_chatbook.Chat.console_thinking_capture import ThinkingCapture
 from tldw_chatbook.Chat.console_project_instructions import (
     ProjectInstructionControlState,
 )
-from tldw_chatbook.Chat.console_chat_store import ConsoleChatStore as _ConsoleChatStore
+from tldw_chatbook.Chat.console_chat_store import (
+    ConsoleChatStore as _ConsoleChatStore,
+    ConsoleDispatchSettlementError,
+)
 from tldw_chatbook.Chat.console_dispatch_checkpoint import (
     ConsoleDispatchCheckpoint,
+    ConsoleDispatchReconstructability,
     ConsoleDispatchCheckpointState,
     ConsoleDispatchResultStatus,
     ConsoleDispatchWriteResult,
@@ -305,6 +321,37 @@ class ContinuationHistoryGateway(ConsoleProviderGateway):
         yield "ok"
 
 
+class ThinkingHistoryGateway(ContinuationHistoryGateway):
+    async def resolve_for_send(self, selection):
+        return ConsoleProviderResolution(
+            provider="llama_cpp",
+            base_url="http://127.0.0.1:9099",
+            model="reasoner",
+            ready=True,
+            readiness_key="llama_cpp",
+            execution_key="llama_cpp",
+            max_tokens=10,
+            thinking_stream_disposition="displayable",
+            thinking_round_trip_version=1,
+            resolved_destination=ConsoleResolvedDestination(
+                provider="llama_cpp",
+                model="reasoner",
+                endpoint_identity="http://127.0.0.1:9099",
+                egress_class=ConsoleEgressClass.ON_DEVICE,
+            ),
+        )
+
+    def prepare_chat_request(self, resolution, messages, **kwargs):
+        self.prepare_kwargs = kwargs
+        return ConsoleProviderGateway.prepare_chat_request(
+            self,
+            resolution,
+            messages,
+            context_window_override_tokens=10_000,
+            **kwargs,
+        )
+
+
 class WipBlockedGateway:
     async def resolve_for_send(self, selection):
         return type(
@@ -339,6 +386,24 @@ class EmptyStreamingGateway(StreamingGateway):
 class EmptyHeartbeatStreamingGateway(StreamingGateway):
     async def stream_chat(self, resolution, messages, **kwargs):
         yield ""
+
+
+class ThinkingStreamingGateway(StreamingGateway):
+    def __init__(self, *items):
+        self.items = items
+        self.provider_contacts = 0
+
+    async def resolve_for_send(self, selection):
+        resolution = await super().resolve_for_send(selection)
+        resolution.may_emit_thinking = True
+        return resolution
+
+    async def stream_chat(self, resolution, messages, **kwargs):
+        self.provider_contacts += 1
+        for item in self.items:
+            if isinstance(item, BaseException):
+                raise item
+            yield item
 
 
 def _last_failed_assistant(store, session_id=None):
@@ -1037,12 +1102,13 @@ async def test_character_dispatch_shares_active_pack_prompt_and_capture_snapshot
         assert completed.content == "Visible answer"
         assert completed.metadata.character_emote.pack_id == graph["pack"]["id"]
         assert (
-            completed.metadata.character_emote.pack_version_id
-            == graph["version"]["id"]
+            completed.metadata.character_emote.pack_version_id == graph["version"]["id"]
         )
         assert completed.metadata.character_emote.expression_key == "custom:smug"
         smug_asset = next(
-            asset for asset in graph["assets"] if asset["expression_key"] == "custom:smug"
+            asset
+            for asset in graph["assets"]
+            if asset["expression_key"] == "custom:smug"
         )
         assert completed.metadata.character_emote.asset_id == smug_asset["id"]
     finally:
@@ -4568,6 +4634,135 @@ async def test_controller_real_gateway_budgets_active_continuation_owner_atomica
 
 
 @pytest.mark.asyncio
+async def test_controller_direct_replays_live_session_thinking_policy() -> None:
+    store = ConsoleChatStore()
+    session = _arm_session(store)
+    session.thinking_history_policy = "include"
+    store.append_message(session.id, role=ConsoleMessageRole.USER, content="old")
+    owner = store.append_message(
+        session.id,
+        role=ConsoleMessageRole.ASSISTANT,
+        content="old answer",
+    )
+    store._message_or_raise(owner.id).thinking = _terminal_thinking(
+        owner.id,
+        "complete",
+    )
+    gateway = ThinkingHistoryGateway()
+    controller = ConsoleChatController(
+        store=store,
+        provider_gateway=gateway,
+        agent_runtime_enabled=False,
+    )
+
+    result = await controller.submit_draft("current")
+
+    assert result.accepted
+    assert gateway.prepare_kwargs["thinking_policy"] == "include"
+    assert gateway.prepare_kwargs["thinking_sidecar"][0].owner_message_id == owner.id
+    wire = repr(gateway.prepared.messages_payload)
+    assert wire.count("late serialized evidence") == 1
+    assert store._generation_runtime_counts() == (0, 0, 0)
+
+
+@pytest.mark.asyncio
+async def test_controller_agent_replays_same_live_session_thinking_policy(
+    tmp_path,
+) -> None:
+    store = ConsoleChatStore()
+    session = _arm_session(store)
+    session.thinking_history_policy = "include"
+    store.append_message(session.id, role=ConsoleMessageRole.USER, content="old")
+    owner = store.append_message(
+        session.id,
+        role=ConsoleMessageRole.ASSISTANT,
+        content="old answer",
+    )
+    store._message_or_raise(owner.id).thinking = _terminal_thinking(
+        owner.id,
+        "complete",
+    )
+    gateway = ThinkingHistoryGateway()
+    bridge = ConsoleAgentBridge(
+        agent_runs_db=AgentRunsDB(tmp_path / "thinking-runs.db", client_id="task4"),
+        store=store,
+        provider_gateway=gateway,
+    )
+    controller = ConsoleChatController(
+        store=store,
+        provider_gateway=gateway,
+        agent_runtime_enabled=True,
+        agent_bridge=bridge,
+    )
+
+    result = await controller.submit_draft("current")
+
+    assert result.accepted
+    assert gateway.prepare_kwargs["thinking_policy"] == "include"
+    assert gateway.prepare_kwargs["thinking_sidecar"][0].owner_message_id == owner.id
+    wire = repr(gateway.prepared.messages_payload)
+    assert wire.count("late serialized evidence") == 1
+    assert store._generation_runtime_counts() == (0, 0, 0)
+
+
+@pytest.mark.asyncio
+async def test_auxiliary_summary_discards_typed_thinking_without_sidecars() -> None:
+    class AuxiliaryGateway(StreamingGateway):
+        def __init__(self):
+            self.kwargs = None
+
+        async def stream_chat(self, resolution, messages, **kwargs):
+            self.kwargs = kwargs
+            yield ProviderThinkingDelta(
+                text="AUXILIARY-THINKING-CANARY",
+                provider="llama_cpp",
+                model="reasoner",
+                protocol="chat_completions",
+                source_format="start_anchored_think",
+            )
+            yield "safe summary"
+
+    store = ConsoleChatStore()
+    session = _arm_session(store)
+    message = store.append_message(
+        session.id,
+        role=ConsoleMessageRole.USER,
+        content="source",
+    )
+    gateway = AuxiliaryGateway()
+    controller = ConsoleChatController(store=store, provider_gateway=gateway)
+
+    summary = await controller._collect_summary_completion(
+        object(),
+        [{"role": "user", "content": "summarize"}],
+    )
+
+    assert summary == "safe summary"
+    assert "AUXILIARY-THINKING-CANARY" not in summary
+    assert gateway.kwargs == {}
+    assert store.get_message(message.id).thinking is None
+
+
+def test_controller_thinking_sidecars_exclude_opaque_application_copy() -> None:
+    store = ConsoleChatStore()
+    session = _arm_session(store)
+    owner = store.append_message(
+        session.id,
+        role=ConsoleMessageRole.ASSISTANT,
+        content="visible answer",
+    )
+    store._message_or_raise(
+        owner.id
+    ).opaque_thinking_json = '{"private":"OPAQUE-THINKING-CANARY"}'
+    controller = ConsoleChatController(store=store, provider_gateway=StreamingGateway())
+
+    sidecars = controller._provider_thinking_sidecar_for_session(session.id)
+
+    assert sidecars == ()
+    assert "OPAQUE-THINKING-CANARY" not in repr(sidecars)
+
+
+@pytest.mark.asyncio
 async def test_controller_bridge_agent_service_bound_private_history_on_real_send(
     tmp_path, monkeypatch
 ):
@@ -6674,3 +6869,1707 @@ async def test_unattributed_fleet_tokens_is_zero_for_an_unwatched_session():
     session = store.ensure_session()
     assert controller.unattributed_fleet_tokens(session.id) == 0
     assert controller.unattributed_fleet_tokens("no-such-session") == 0
+
+
+# Thinking capture is exercised at the real direct-provider consumer seam so
+# a regression that sends typed items into ``append_stream_chunk`` fails here.
+@pytest.mark.asyncio
+async def test_direct_stream_pairs_typed_thinking_with_visible_answer() -> None:
+    gateway = ThinkingStreamingGateway(
+        ProviderThinkingDelta(
+            text="private plan",
+            provider="llama_cpp",
+            model="test-model",
+            protocol="chat_completions",
+            source_format="start_anchored_think",
+        ),
+        "visible answer",
+    )
+    store = ConsoleChatStore()
+    thinking_tokens: list[int | None] = []
+    original_replace = store.replace_message_thinking
+
+    def record_thinking_token(message_id, envelope, *, generation_token=None):
+        thinking_tokens.append(generation_token)
+        return original_replace(
+            message_id,
+            envelope,
+            generation_token=generation_token,
+        )
+
+    store.replace_message_thinking = record_thinking_token
+    controller = ConsoleChatController(store=store, provider_gateway=gateway)
+
+    result = await controller.submit_draft("hello")
+
+    assistant = next(
+        message
+        for message in store.messages_for_session(store.active_session_id)
+        if message.role is ConsoleMessageRole.ASSISTANT
+    )
+    assert result.accepted is True
+    assert assistant.content == "visible answer"
+    assert assistant.status == "complete"
+    assert assistant.thinking is not None
+    assert len(assistant.thinking.blocks) == 1
+    assert assistant.thinking.blocks[0].text == "private plan"
+    assert assistant.thinking.blocks[0].status == "complete"
+    assert thinking_tokens
+    assert len(set(thinking_tokens)) == 1
+    assert type(thinking_tokens[0]) is int
+
+
+@pytest.mark.asyncio
+async def test_direct_stream_failure_settles_captured_thinking_as_failed() -> None:
+    gateway = ThinkingStreamingGateway(
+        ProviderProprietaryThinkingEvidence(
+            provider="moonshot",
+            model="kimi",
+            protocol="chat_completions",
+            source_format="reasoning_content",
+        ),
+        RuntimeError("provider exploded"),
+    )
+    store = ConsoleChatStore()
+    controller = ConsoleChatController(store=store, provider_gateway=gateway)
+
+    await controller.submit_draft("hello")
+
+    assistant = next(
+        message
+        for message in store.messages_for_session(store.active_session_id)
+        if message.role is ConsoleMessageRole.ASSISTANT
+    )
+    assert assistant.content == ""
+    assert assistant.status == "failed"
+    assert assistant.thinking is not None
+    assert assistant.thinking.blocks[0].visibility == "proprietary"
+    assert assistant.thinking.blocks[0].status == "failed"
+
+
+@pytest.mark.asyncio
+async def test_retry_with_only_thinking_evidence_reaches_failed_terminal() -> None:
+    store = ConsoleChatStore()
+    controller = ConsoleChatController(
+        store=store, provider_gateway=FailingStreamingGateway()
+    )
+    await controller.submit_draft("hello")
+    failed = _last_failed_assistant(store)
+    controller.provider_gateway = ThinkingStreamingGateway(
+        ProviderThinkingDelta(
+            text="retry plan",
+            provider="llama_cpp",
+            model="test-model",
+            protocol="chat_completions",
+            source_format="start_anchored_think",
+        )
+    )
+
+    result = await controller.retry_message(failed.id)
+
+    retried = store.get_message(failed.id)
+    assert result.accepted is True
+    assert retried.status == "failed"
+    assert retried.content == ""
+    assert retried.thinking is not None
+    assert retried.thinking.blocks[0].status == "failed"
+
+
+@pytest.mark.asyncio
+async def test_answer_only_retry_does_not_reuse_prior_failed_thinking() -> None:
+    store = ConsoleChatStore()
+    controller = ConsoleChatController(
+        store=store,
+        provider_gateway=ThinkingStreamingGateway(
+            ProviderThinkingDelta(
+                text="failed attempt",
+                provider="llama_cpp",
+                model="test-model",
+                protocol="chat_completions",
+                source_format="start_anchored_think",
+            ),
+            RuntimeError("provider exploded"),
+        ),
+    )
+    await controller.submit_draft("hello")
+    failed = _last_failed_assistant(store)
+    assert failed.thinking is not None
+    controller.provider_gateway = StreamingGateway()
+
+    result = await controller.retry_message(failed.id)
+
+    retried = store.get_message(failed.id)
+    assert result.accepted is True
+    assert retried.status == "complete"
+    assert retried.content == "hello"
+    assert retried.thinking is None
+
+
+@pytest.mark.asyncio
+async def test_thinking_backend_preflight_runs_before_direct_provider_contact() -> None:
+    gateway = ThinkingStreamingGateway("must not be contacted")
+    store = ConsoleChatStore(persistence=FakePersistence())
+    controller = ConsoleChatController(store=store, provider_gateway=gateway)
+
+    await controller.submit_draft("hello")
+
+    assert gateway.provider_contacts == 0
+
+
+class _UnsupportedThinkingPersistence:
+    """Delegate every persistence operation except thinking V1 support."""
+
+    def __init__(self, delegate: ChatPersistenceService) -> None:
+        self._delegate = delegate
+        self.db = delegate.db
+
+    @staticmethod
+    def thinking_round_trip_version() -> int:
+        return 0
+
+    def __getattr__(self, name: str):
+        return getattr(self._delegate, name)
+
+
+def _seed_durable_generation_with_private_state(
+    store: ConsoleChatStore,
+    session_id: str,
+    *,
+    status: str,
+) -> ConsoleChatMessage:
+    store.append_message(
+        session_id,
+        role=ConsoleMessageRole.USER,
+        content="question",
+        persist=True,
+    )
+    assistant = store.append_message(
+        session_id,
+        role=ConsoleMessageRole.ASSISTANT,
+        content="prior answer",
+        persist=True,
+    )
+    capture = ThinkingCapture(assistant_owner_id=assistant.id)
+    capture.observe(
+        ProviderThinkingDelta(
+            text="private prior reasoning",
+            provider="llama_cpp",
+            model="reasoner",
+            protocol="chat_completions",
+            source_format="start_anchored_think",
+        )
+    )
+    owned = store._message_or_raise(assistant.id)
+    owned.thinking = capture.settle(
+        "failed" if status == "failed" else "complete"
+    ).envelope
+    owned.provider_continuation = _controller_history_checkpoint(
+        "PREFLIGHT-PRIVATE-CANARY"
+    )
+    owned.status = status
+    owned.assistant_generation_state = status
+    assert store.persist_selected_generation(assistant.id) is True
+    selected = store._generation_variant(owned)
+    owned.variants = ConsoleVariantSet.from_generations(
+        turn_id=owned.id,
+        generations=[replace(selected, content="older answer"), selected],
+        selected_index=1,
+    )
+    return store.get_message(assistant.id)
+
+
+@pytest.mark.asyncio
+async def test_agent_retry_preflight_preserves_selected_generation_exactly(
+    tmp_path,
+) -> None:
+    chat_db = CharactersRAGDB(tmp_path / "retry-chat.sqlite", "retry-preflight")
+    runs_db = AgentRunsDB(tmp_path / "retry-runs.sqlite", client_id="retry-preflight")
+    try:
+        persistence = ChatPersistenceService(chat_db)
+        store = ConsoleChatStore(persistence=persistence)
+        session = _arm_session(store)
+        failed = _seed_durable_generation_with_private_state(
+            store, session.id, status="failed"
+        )
+        gateway = ThinkingStreamingGateway("must not be contacted")
+        bridge = ConsoleAgentBridge(
+            agent_runs_db=runs_db,
+            store=store,
+            provider_gateway=gateway,
+        )
+        controller = ConsoleChatController(
+            store=store,
+            provider_gateway=gateway,
+            agent_bridge=bridge,
+            agent_runtime_enabled=True,
+        )
+        before_live = copy.deepcopy(store._message_or_raise(failed.id))
+        before_row = copy.deepcopy(
+            chat_db.get_message_by_id(failed.persisted_message_id)
+        )
+        store.persistence = _UnsupportedThinkingPersistence(persistence)
+
+        result = await controller.retry_message(failed.id)
+
+        after_live = store._message_or_raise(failed.id)
+        after_row = chat_db.get_message_by_id(failed.persisted_message_id)
+        assert result.accepted is False
+        assert gateway.provider_contacts == 0
+        assert after_live == before_live
+        assert after_row == before_row
+        assert after_row["thinking_blocks_json"] == before_row["thinking_blocks_json"]
+        assert (
+            after_row["provider_continuation_json"]
+            == (before_row["provider_continuation_json"])
+        )
+        assert after_row["version"] == before_row["version"]
+    finally:
+        runs_db.close()
+        chat_db.close_connection()
+
+
+@pytest.mark.asyncio
+async def test_agent_regenerate_preflight_does_not_create_a_sibling(
+    tmp_path,
+) -> None:
+    chat_db = CharactersRAGDB(
+        tmp_path / "regenerate-chat.sqlite", "regenerate-preflight"
+    )
+    runs_db = AgentRunsDB(
+        tmp_path / "regenerate-runs.sqlite", client_id="regenerate-preflight"
+    )
+    try:
+        persistence = ChatPersistenceService(chat_db)
+        store = ConsoleChatStore(persistence=persistence)
+        session = _arm_session(store)
+        original = _seed_durable_generation_with_private_state(
+            store, session.id, status="complete"
+        )
+        gateway = ThinkingStreamingGateway("must not be contacted")
+        bridge = ConsoleAgentBridge(
+            agent_runs_db=runs_db,
+            store=store,
+            provider_gateway=gateway,
+        )
+        controller = ConsoleChatController(
+            store=store,
+            provider_gateway=gateway,
+            agent_bridge=bridge,
+            agent_runtime_enabled=True,
+        )
+        before_live = copy.deepcopy(store._message_or_raise(original.id))
+        before_path = store.active_path_message_ids(session.id)
+        before_rows = copy.deepcopy(
+            chat_db.get_messages_for_conversation(
+                session.persisted_conversation_id, limit=100
+            )
+        )
+        store.persistence = _UnsupportedThinkingPersistence(persistence)
+
+        result = await controller.regenerate_message(original.id)
+
+        assert result.accepted is False
+        assert gateway.provider_contacts == 0
+        assert store._message_or_raise(original.id) == before_live
+        assert store.active_path_message_ids(session.id) == before_path
+        assert (
+            chat_db.get_messages_for_conversation(
+                session.persisted_conversation_id, limit=100
+            )
+            == before_rows
+        )
+    finally:
+        runs_db.close()
+        chat_db.close_connection()
+
+
+def _reload_console_message(
+    db: CharactersRAGDB,
+    *,
+    conversation_id: str,
+    active_leaf_persisted_id: str,
+) -> ConsoleChatMessage:
+    rows = db.get_messages_for_conversation(conversation_id, limit=100)
+    nodes = [
+        ConsoleChatMessage(
+            id=str(row["id"]),
+            role=ConsoleMessageRole(str(row["role"])),
+            content=str(row.get("content") or ""),
+            persisted_message_id=str(row["id"]),
+            parent_message_id=row.get("parent_message_id"),
+        )
+        for row in rows
+    ]
+    restored = ConsoleChatStore(persistence=ChatPersistenceService(db))
+    restored.restore_persisted_session(
+        title="thinking-race-reload",
+        workspace_id=None,
+        persisted_conversation_id=conversation_id,
+        all_nodes=nodes,
+        active_leaf_persisted_id=active_leaf_persisted_id,
+    )
+    return restored.get_message(active_leaf_persisted_id)
+
+
+@pytest.mark.asyncio
+async def test_direct_stop_after_typed_yield_persists_stopped_thinking(
+    tmp_path,
+) -> None:
+    """A delivered typed item must be captured before the Stop poll wins."""
+
+    class YieldThenStopGateway(ThinkingStreamingGateway):
+        def __init__(self) -> None:
+            super().__init__()
+            self.controller = None
+            self.session_id = None
+
+        def stream_chat(self, resolution, messages, **kwargs):
+            event = ProviderThinkingDelta(
+                text="delivered before stop",
+                provider="llama_cpp",
+                model="test-model",
+                protocol="chat_completions",
+                source_format="start_anchored_think",
+            )
+            controller = self.controller
+            session_id = self.session_id
+
+            class DeliveredItem:
+                delivered = False
+
+                def __aiter__(self):
+                    return self
+
+                async def __anext__(self):
+                    if self.delivered:
+                        raise StopAsyncIteration
+                    self.delivered = True
+                    delivered = asyncio.get_running_loop().create_future()
+
+                    def deliver_then_stop() -> None:
+                        # Completing ``__anext__`` makes the typed event the
+                        # consumer's next item. Stop is set in the same loop
+                        # callback before the consumer can poll it.
+                        delivered.set_result(event)
+                        controller._signal_stop(session_id=session_id)
+
+                    asyncio.get_running_loop().call_soon(deliver_then_stop)
+                    return await delivered
+
+            return DeliveredItem()
+
+    db = CharactersRAGDB(tmp_path / "direct-thinking-stop.sqlite", "thinking-stop")
+    try:
+        gateway = YieldThenStopGateway()
+        store = ConsoleChatStore(persistence=ChatPersistenceService(db))
+        controller = ConsoleChatController(store=store, provider_gateway=gateway)
+        session = _arm_session(store)
+        gateway.controller = controller
+        gateway.session_id = session.id
+
+        result = await controller.submit_draft("hello", session_id=session.id)
+
+        assistant = next(
+            message
+            for message in store.messages_for_session(session.id)
+            if message.role is ConsoleMessageRole.ASSISTANT
+        )
+        assert result.accepted is True
+        assert assistant.status == "stopped"
+        assert assistant.content == ""
+        assert assistant.thinking is not None
+        assert assistant.thinking.blocks[0].status == "stopped"
+        assert assistant.persisted_message_id is not None
+        assert session.persisted_conversation_id is not None
+
+        reloaded = _reload_console_message(
+            db,
+            conversation_id=session.persisted_conversation_id,
+            active_leaf_persisted_id=assistant.persisted_message_id,
+        )
+        assert reloaded.content == ""
+        assert reloaded.thinking is not None
+        assert reloaded.thinking.blocks[0].text == "delivered before stop"
+        assert reloaded.thinking.blocks[0].status == "stopped"
+    finally:
+        db.close_connection()
+
+
+class _CountingGenerationPersistence:
+    """Count generation projections and optionally pause the next writer."""
+
+    def __init__(self, delegate: ChatPersistenceService) -> None:
+        self._delegate = delegate
+        self.db = delegate.db
+        self._count_lock = threading.Lock()
+        self.projection_attempts = 0
+        self.projection_commits = 0
+        self._block_next = False
+        self.writer_entered = threading.Event()
+        self.writer_release = threading.Event()
+
+    def arm_next_writer(self) -> None:
+        self._block_next = True
+        self.writer_entered.clear()
+        self.writer_release.clear()
+
+    def replace_assistant_generation_projection(self, **kwargs):
+        with self._count_lock:
+            self.projection_attempts += 1
+            should_block = self._block_next
+            self._block_next = False
+        if should_block:
+            self.writer_entered.set()
+            assert self.writer_release.wait(timeout=3)
+        version = self._delegate.replace_assistant_generation_projection(**kwargs)
+        with self._count_lock:
+            self.projection_commits += 1
+        return version
+
+    def __getattr__(self, name: str):
+        return getattr(self._delegate, name)
+
+
+def _durable_streaming_generation(
+    tmp_path,
+    *,
+    name: str,
+) -> tuple[
+    CharactersRAGDB,
+    ConsoleChatStore,
+    object,
+    ConsoleChatMessage,
+    object,
+    int,
+]:
+    db = CharactersRAGDB(tmp_path / f"{name}.sqlite", name)
+    persistence = ChatPersistenceService(db)
+    store = ConsoleChatStore(persistence=persistence)
+    session = _arm_session(store)
+    store.append_message(
+        session.id,
+        role=ConsoleMessageRole.USER,
+        content="question",
+        persist=True,
+    )
+    assistant = store.append_message(
+        session.id,
+        role=ConsoleMessageRole.ASSISTANT,
+        content="paired answer",
+        persist=True,
+    )
+    checkpoint = _controller_history_checkpoint("LOCKED-PRIVATE-CANARY")
+    owned = store._message_or_raise(assistant.id)
+    owned.provider_continuation = checkpoint
+    assert store.persist_selected_generation(assistant.id) is True
+    initial_row = db.get_message_by_id(assistant.persisted_message_id)
+    assert initial_row is not None
+    owned.status = "streaming"
+    owned.assistant_generation_state = "streaming"
+    return db, store, session, assistant, checkpoint, int(initial_row["version"])
+
+
+def _terminal_thinking(assistant_id: str, status: str):
+    capture = ThinkingCapture(assistant_owner_id=assistant_id)
+    capture.observe(
+        ProviderThinkingDelta(
+            text="late serialized evidence",
+            provider="llama_cpp",
+            model="reasoner",
+            protocol="chat_completions",
+            source_format="start_anchored_think",
+        )
+    )
+    return capture.settle(status).envelope
+
+
+def _install_retryable_dispatch_recovery(
+    store: ConsoleChatStore,
+    session,
+    assistant: ConsoleChatMessage,
+) -> None:
+    user = next(
+        message
+        for message in store.messages_for_session(session.id)
+        if message.role is ConsoleMessageRole.USER
+    )
+    destination = ConsoleResolvedDestination(
+        provider="llama_cpp",
+        model="test-model",
+        endpoint_identity="http://127.0.0.1:9099",
+        egress_class=ConsoleEgressClass.ON_DEVICE,
+    )
+    checkpoint = ConsoleDispatchCheckpoint(
+        assistant_message_id=assistant.id,
+        user_message_id=user.id,
+        conversation_id=session.persisted_conversation_id or session.id,
+        preparation_id="recovery-preparation",
+        attempt_id="prior-attempt",
+        state=ConsoleDispatchCheckpointState.ACCEPTED,
+        checkpoint_revision=1,
+        user_message_version=1,
+        assistant_message_version=1,
+        origin="manual",
+        queue_entry_id=None,
+        frozen_authority=_library_authority("prior-attempt"),
+        resolved_destination=destination,
+        reconstructability=ConsoleDispatchReconstructability(True, True, True, None),
+    )
+    store._dispatch_recoveries_by_session[session.id] = (
+        console_dispatch_recovery_from_checkpoint(checkpoint)
+    )
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("terminal_status", ["stopped", "failed"])
+async def test_dispatch_recovery_preflight_preserves_prior_generation_token(
+    tmp_path,
+    monkeypatch,
+    terminal_status: str,
+) -> None:
+    db, store, session, assistant, checkpoint, _ = _durable_streaming_generation(
+        tmp_path,
+        name=f"recovery-preflight-{terminal_status}",
+    )
+    try:
+        owned = store._message_or_raise(assistant.id)
+        owned.status = terminal_status
+        owned.assistant_generation_state = terminal_status
+        assert store.persist_selected_generation(assistant.id) is True
+        before_row = copy.deepcopy(db.get_message_by_id(assistant.persisted_message_id))
+        before_live = store.get_message(assistant.id)
+        prior_token = store.begin_generation_attempt(assistant.id)
+        _install_retryable_dispatch_recovery(store, session, assistant)
+
+        gateway = ThinkingStreamingGateway()
+        resolution = await gateway.resolve_for_send(None)
+        context = controller_module._DispatchRetryContext(
+            resolution=resolution,
+            authority=_library_authority("replacement-attempt"),
+            destination=resolution.resolved_destination,
+            provider_messages=[],
+            turn_context=None,
+        )
+        controller = ConsoleChatController(store=store, provider_gateway=gateway)
+
+        async def resolve_context(*_args, **_kwargs):
+            return context
+
+        monkeypatch.setattr(
+            controller, "_resolve_dispatch_retry_context", resolve_context
+        )
+        store.persistence = _UnsupportedThinkingPersistence(store.persistence)
+
+        result = await controller.retry_dispatch_recovery(session.id)
+
+        assert result.accepted is False
+        assert gateway.provider_contacts == 0
+        assert store.get_message(assistant.id) == before_live
+        assert db.get_message_by_id(assistant.persisted_message_id) == before_row
+        assert store._generation_attempt_is_current(assistant.id, prior_token)
+
+        store.settle_message_thinking(
+            assistant.id,
+            _terminal_thinking(assistant.id, terminal_status),
+            generation_token=prior_token,
+        )
+
+        after_row = db.get_message_by_id(assistant.persisted_message_id)
+        assert after_row is not None and before_row is not None
+        assert int(after_row["version"]) == int(before_row["version"]) + 1
+        reloaded = _reload_console_message(
+            db,
+            conversation_id=session.persisted_conversation_id,
+            active_leaf_persisted_id=assistant.persisted_message_id,
+        )
+        assert reloaded.content == "paired answer"
+        assert reloaded.assistant_generation_state == terminal_status
+        assert reloaded.thinking is not None
+        assert reloaded.thinking.blocks[0].text == "late serialized evidence"
+        assert reloaded.thinking.blocks[0].status == terminal_status
+        assert reloaded.provider_continuation == checkpoint
+    finally:
+        db.close_connection()
+
+
+@pytest.mark.parametrize("issue_newer_token", [False, True])
+def test_dispatch_recovery_release_invalidates_only_exact_replacement_token(
+    issue_newer_token: bool,
+) -> None:
+    store = ConsoleChatStore()
+    session = _arm_session(store)
+    store.append_message(
+        session.id,
+        role=ConsoleMessageRole.USER,
+        content="question",
+    )
+    assistant = store.append_message(
+        session.id,
+        role=ConsoleMessageRole.ASSISTANT,
+        content="prior answer",
+    )
+    _install_retryable_dispatch_recovery(store, session, assistant)
+    claimed = store.claim_dispatch_recovery_action(
+        session.id,
+        ConsoleDispatchRecoveryActionId.RETRY_RESPONSE,
+    )
+    assert claimed is not None
+    replacement_token = store.begin_generation_attempt(assistant.id)
+    newer_token = (
+        store.begin_generation_attempt(assistant.id) if issue_newer_token else None
+    )
+
+    assert store.release_dispatch_recovery_action(
+        session.id,
+        assistant.id,
+        generation_token=replacement_token,
+    )
+
+    if newer_token is None:
+        assert not store._generation_attempt_is_current(assistant.id, replacement_token)
+    else:
+        assert store._generation_attempt_is_current(assistant.id, newer_token)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("issue_newer_token", [False, True])
+async def test_accepted_turn_settlement_rollback_uses_issued_generation_token(
+    monkeypatch: pytest.MonkeyPatch,
+    issue_newer_token: bool,
+) -> None:
+    """The normal accepted-turn rollback must fence its detached stream."""
+
+    store = ConsoleChatStore()
+    session = _arm_session(store)
+    controller = ConsoleChatController(store=store, provider_gateway=StreamingGateway())
+    issued: dict[str, int | str | None] = {}
+
+    async def fail_after_token(*_args, **kwargs):
+        assistant_id = str(kwargs["assistant_message_id"])
+        issued["assistant_id"] = assistant_id
+        issued["replacement"] = store.begin_generation_attempt(assistant_id)
+        issued["newer"] = (
+            store.begin_generation_attempt(assistant_id) if issue_newer_token else None
+        )
+        raise ConsoleDispatchSettlementError("injected settlement failure")
+
+    monkeypatch.setattr(controller, "_stream_assistant_response", fail_after_token)
+
+    with pytest.raises(ConsoleDispatchSettlementError):
+        await controller.submit_draft("accepted rollback", session_id=session.id)
+
+    assistant_id = str(issued["assistant_id"])
+    replacement = int(issued["replacement"])
+    newer = issued["newer"]
+    if newer is None:
+        assert not store._generation_attempt_is_current(assistant_id, replacement)
+    else:
+        assert store._generation_attempt_is_current(assistant_id, int(newer))
+
+
+@pytest.mark.parametrize("issue_newer_token", [False, True])
+def test_stop_settlement_rollback_uses_issued_generation_token(
+    monkeypatch: pytest.MonkeyPatch,
+    issue_newer_token: bool,
+) -> None:
+    """Stop's generic settlement rollback must fence only its exact stream."""
+
+    store = ConsoleChatStore()
+    session = _arm_session(store)
+    store.append_message(session.id, role=ConsoleMessageRole.USER, content="question")
+    assistant = store.append_message(
+        session.id,
+        role=ConsoleMessageRole.ASSISTANT,
+        content="prior answer",
+    )
+    _install_retryable_dispatch_recovery(store, session, assistant)
+    claimed = store.claim_dispatch_recovery_action(
+        session.id,
+        ConsoleDispatchRecoveryActionId.RETRY_RESPONSE,
+    )
+    assert claimed is not None
+    replacement = store.begin_generation_attempt(assistant.id)
+    newer = store.begin_generation_attempt(assistant.id) if issue_newer_token else None
+    controller = ConsoleChatController(store=store, provider_gateway=StreamingGateway())
+    controller._active_assistant_message_ids[session.id] = assistant.id
+    controller._set_run_state(
+        ConsoleRunState(ConsoleRunStatus.STREAMING, "Streaming response."),
+        session_id=session.id,
+    )
+
+    def fail_stop(*_args, **_kwargs):
+        raise ConsoleDispatchSettlementError("injected stop settlement failure")
+
+    monkeypatch.setattr(controller, "_mark_stream_stopped", fail_stop)
+
+    assert controller.stop_active_run(record_user_stop=False) is True
+    if newer is None:
+        assert not store._generation_attempt_is_current(assistant.id, replacement)
+    else:
+        assert store._generation_attempt_is_current(assistant.id, newer)
+
+
+def _wait_for_generation_owner_users(
+    store: ConsoleChatStore,
+    message_id: str,
+    minimum_users: int,
+) -> None:
+    """Wait until the scoped owner registry contains holder plus waiters."""
+    deadline = time.monotonic() + 3
+    while store._generation_runtime_counts(message_id)[1] < minimum_users:
+        assert time.monotonic() < deadline
+        time.sleep(0.001)
+
+
+@pytest.mark.parametrize("terminal_status", ["stopped", "failed"])
+def test_late_settlement_decision_serializes_with_terminal_commit(
+    tmp_path,
+    terminal_status,
+) -> None:
+    """A nonterminal decision cannot race past a stopped/failed projection."""
+    db, store, session, assistant, checkpoint, initial_version = (
+        _durable_streaming_generation(
+            tmp_path,
+            name=f"decision-{terminal_status}",
+        )
+    )
+    persistence = _CountingGenerationPersistence(store.persistence)
+    store.persistence = persistence
+    envelope = _terminal_thinking(assistant.id, terminal_status)
+    decision_passed = threading.Event()
+    settlement_release = threading.Event()
+    controller_attempted = threading.Event()
+    original_replace = store._replace_message_thinking
+
+    def pause_after_nonterminal_decision(message_id, thinking):
+        decision_passed.set()
+        assert settlement_release.wait(timeout=3)
+        return original_replace(message_id, thinking)
+
+    store._replace_message_thinking = pause_after_nonterminal_decision
+    errors: list[BaseException] = []
+
+    def settle_from_bridge() -> None:
+        try:
+            store.settle_message_thinking(assistant.id, envelope)
+        except BaseException as exc:  # pragma: no cover - asserted below
+            errors.append(exc)
+
+    def settle_from_controller() -> None:
+        try:
+            controller_attempted.set()
+            if terminal_status == "stopped":
+                store.mark_message_stopped(assistant.id)
+            else:
+                store.mark_message_failed(assistant.id)
+        except BaseException as exc:  # pragma: no cover - asserted below
+            errors.append(exc)
+
+    bridge_thread = threading.Thread(target=settle_from_bridge, daemon=True)
+    controller_thread = threading.Thread(target=settle_from_controller, daemon=True)
+    try:
+        bridge_thread.start()
+        assert decision_passed.wait(timeout=3)
+        assert persistence.projection_attempts == 0
+        owner_users = store._generation_runtime_counts(assistant.id)[1]
+        controller_thread.start()
+        assert controller_attempted.wait(timeout=3)
+        _wait_for_generation_owner_users(store, assistant.id, owner_users + 1)
+        controller_thread.join(timeout=0.25)
+        terminal_committed_early = not controller_thread.is_alive()
+        settlement_release.set()
+        bridge_thread.join(timeout=3)
+        controller_thread.join(timeout=3)
+
+        assert terminal_committed_early is False
+        assert not bridge_thread.is_alive()
+        assert not controller_thread.is_alive()
+        assert errors == []
+        assert persistence.projection_attempts == 1
+        assert persistence.projection_commits == 1
+
+        settled = store.get_message(assistant.id)
+        store.settle_message_thinking(assistant.id, settled.thinking)
+        assert persistence.projection_attempts == 1
+        row = db.get_message_by_id(assistant.persisted_message_id)
+        assert row is not None
+        assert row["version"] == initial_version + 1
+        assert row["assistant_generation_state"] == terminal_status
+
+        reloaded = _reload_console_message(
+            db,
+            conversation_id=session.persisted_conversation_id,
+            active_leaf_persisted_id=assistant.persisted_message_id,
+        )
+        rows = db.get_messages_for_conversation(
+            session.persisted_conversation_id, limit=100
+        )
+        assert sum(row["role"] == "assistant" for row in rows) == 1
+        assert reloaded.content == "paired answer"
+        assert reloaded.provider_continuation == checkpoint
+        assert reloaded.thinking is not None
+        assert reloaded.thinking.blocks[0].text == "late serialized evidence"
+        assert reloaded.thinking.blocks[0].status == terminal_status
+    finally:
+        settlement_release.set()
+        bridge_thread.join(timeout=1)
+        if controller_thread.ident is not None:
+            controller_thread.join(timeout=1)
+        db.close_connection()
+
+
+def test_late_settlement_waits_for_terminal_writer_without_conflict(tmp_path) -> None:
+    """A bridge writer cannot compete with an in-flight terminal projection."""
+    db, store, session, assistant, checkpoint, initial_version = (
+        _durable_streaming_generation(tmp_path, name="writer-race")
+    )
+    persistence = _CountingGenerationPersistence(store.persistence)
+    store.persistence = persistence
+    envelope = _terminal_thinking(assistant.id, "stopped")
+    errors: list[BaseException] = []
+    bridge_attempted = threading.Event()
+    persistence.arm_next_writer()
+
+    def stop_from_controller() -> None:
+        try:
+            store.mark_message_stopped(assistant.id)
+        except BaseException as exc:  # pragma: no cover - asserted below
+            errors.append(exc)
+
+    def settle_from_bridge() -> None:
+        try:
+            bridge_attempted.set()
+            store.settle_message_thinking(assistant.id, envelope)
+        except BaseException as exc:  # pragma: no cover - asserted below
+            errors.append(exc)
+
+    controller_thread = threading.Thread(target=stop_from_controller, daemon=True)
+    bridge_thread = threading.Thread(target=settle_from_bridge, daemon=True)
+    try:
+        controller_thread.start()
+        assert persistence.writer_entered.wait(timeout=3)
+        owner_users = store._generation_runtime_counts(assistant.id)[1]
+        bridge_thread.start()
+        assert bridge_attempted.wait(timeout=3)
+        _wait_for_generation_owner_users(store, assistant.id, owner_users + 1)
+        bridge_thread.join(timeout=0.25)
+        bridge_completed_early = not bridge_thread.is_alive()
+        persistence.writer_release.set()
+        controller_thread.join(timeout=3)
+        bridge_thread.join(timeout=3)
+
+        assert bridge_completed_early is False
+        assert not controller_thread.is_alive()
+        assert not bridge_thread.is_alive()
+        assert errors == []
+        assert persistence.projection_attempts == 2
+        assert persistence.projection_commits == 2
+
+        settled = store.get_message(assistant.id)
+        store.settle_message_thinking(assistant.id, settled.thinking)
+        assert persistence.projection_attempts == 2
+        row = db.get_message_by_id(assistant.persisted_message_id)
+        assert row is not None
+        assert row["version"] == initial_version + 2
+        assert row["assistant_generation_state"] == "stopped"
+
+        reloaded = _reload_console_message(
+            db,
+            conversation_id=session.persisted_conversation_id,
+            active_leaf_persisted_id=assistant.persisted_message_id,
+        )
+        rows = db.get_messages_for_conversation(
+            session.persisted_conversation_id, limit=100
+        )
+        assert sum(row["role"] == "assistant" for row in rows) == 1
+        assert reloaded.content == "paired answer"
+        assert reloaded.provider_continuation == checkpoint
+        assert reloaded.thinking is not None
+        assert reloaded.thinking.blocks[0].text == "late serialized evidence"
+        assert reloaded.thinking.blocks[0].status == "stopped"
+    finally:
+        persistence.writer_release.set()
+        controller_thread.join(timeout=1)
+        bridge_thread.join(timeout=1)
+        db.close_connection()
+
+
+def test_abandoned_variant_rejects_late_thinking_from_restored_attempt(
+    tmp_path,
+) -> None:
+    """A worker from a stopped regenerate cannot decorate the restored base."""
+    db, store, session, assistant, checkpoint, _ = _durable_streaming_generation(
+        tmp_path,
+        name="stale-restored-variant",
+    )
+    owned = store._message_or_raise(assistant.id)
+    owned.status = "complete"
+    owned.assistant_generation_state = "complete"
+    owned.thinking = _terminal_thinking(assistant.id, "complete")
+    assert store.persist_selected_generation(assistant.id) is True
+
+    generation_token = store.begin_generation_attempt(assistant.id)
+    worker_entered = threading.Event()
+    worker_release = threading.Event()
+    errors: list[BaseException] = []
+
+    def settle_abandoned_worker() -> None:
+        worker_entered.set()
+        assert worker_release.wait(timeout=3)
+        try:
+            store.settle_message_thinking(
+                assistant.id,
+                _terminal_thinking(assistant.id, "stopped"),
+                generation_token=generation_token,
+            )
+        except BaseException as exc:  # pragma: no cover - asserted below
+            errors.append(exc)
+
+    worker = threading.Thread(target=settle_abandoned_worker, daemon=True)
+    try:
+        store.begin_variant_stream(
+            assistant.id,
+            generation_token=generation_token,
+        )
+        store.append_stream_chunk(assistant.id, "discarded replacement")
+        worker.start()
+        assert worker_entered.wait(timeout=3)
+        store.mark_message_stopped(assistant.id)
+
+        expected_live = copy.deepcopy(store.get_message(assistant.id))
+        expected_row = dict(db.get_message_by_id(assistant.persisted_message_id))
+        worker_release.set()
+        worker.join(timeout=3)
+
+        assert not worker.is_alive()
+        assert errors == []
+        assert store.get_message(assistant.id) == expected_live
+        assert (
+            dict(db.get_message_by_id(assistant.persisted_message_id)) == expected_row
+        )
+
+        # Repeated settlement by the same detached owner remains a no-op.
+        store.settle_message_thinking(
+            assistant.id,
+            _terminal_thinking(assistant.id, "stopped"),
+            generation_token=generation_token,
+        )
+        assert (
+            dict(db.get_message_by_id(assistant.persisted_message_id)) == expected_row
+        )
+
+        reloaded = _reload_console_message(
+            db,
+            conversation_id=session.persisted_conversation_id,
+            active_leaf_persisted_id=assistant.persisted_message_id,
+        )
+        assert reloaded.content == "paired answer"
+        assert reloaded.thinking == expected_live.thinking
+        assert reloaded.variants == expected_live.variants
+        assert reloaded.provider_continuation == checkpoint
+        assert reloaded.assistant_generation_state == "complete"
+    finally:
+        worker_release.set()
+        worker.join(timeout=1)
+        db.close_connection()
+
+
+def test_new_no_evidence_generation_rejects_prior_worker_settlement(tmp_path) -> None:
+    """Starting a newer retry fences a detached worker from the failed try."""
+    db, store, session, assistant, checkpoint, _ = _durable_streaming_generation(
+        tmp_path,
+        name="stale-new-generation",
+    )
+    owned = store._message_or_raise(assistant.id)
+    owned.status = "failed"
+    owned.assistant_generation_state = "failed"
+    owned.thinking = _terminal_thinking(assistant.id, "failed")
+    assert store.persist_selected_generation(assistant.id) is True
+
+    old_token = store.begin_generation_attempt(assistant.id)
+    worker_entered = threading.Event()
+    worker_release = threading.Event()
+    errors: list[BaseException] = []
+
+    def settle_old_worker() -> None:
+        worker_entered.set()
+        assert worker_release.wait(timeout=3)
+        try:
+            store.settle_message_thinking(
+                assistant.id,
+                _terminal_thinking(assistant.id, "failed"),
+                generation_token=old_token,
+            )
+        except BaseException as exc:  # pragma: no cover - asserted below
+            errors.append(exc)
+
+    worker = threading.Thread(target=settle_old_worker, daemon=True)
+    try:
+        worker.start()
+        assert worker_entered.wait(timeout=3)
+        new_token = store.begin_generation_attempt(assistant.id)
+        assert new_token != old_token
+        store.prepare_message_retry(
+            assistant.id,
+            generation_token=new_token,
+        )
+        store.append_stream_chunk(assistant.id, "new answer without thinking")
+        store.mark_message_complete(assistant.id)
+
+        expected_live = copy.deepcopy(store.get_message(assistant.id))
+        expected_row = dict(db.get_message_by_id(assistant.persisted_message_id))
+        worker_release.set()
+        worker.join(timeout=3)
+
+        assert not worker.is_alive()
+        assert errors == []
+        assert store.get_message(assistant.id) == expected_live
+        assert (
+            dict(db.get_message_by_id(assistant.persisted_message_id)) == expected_row
+        )
+        assert expected_live.content == "new answer without thinking"
+        assert expected_live.thinking is None
+        assert expected_live.provider_continuation == checkpoint
+
+        reloaded = _reload_console_message(
+            db,
+            conversation_id=session.persisted_conversation_id,
+            active_leaf_persisted_id=assistant.persisted_message_id,
+        )
+        assert reloaded.content == expected_live.content
+        assert reloaded.thinking is None
+        assert reloaded.variants == expected_live.variants
+        assert reloaded.provider_continuation == checkpoint
+        assert reloaded.assistant_generation_state == "complete"
+    finally:
+        worker_release.set()
+        worker.join(timeout=1)
+        db.close_connection()
+
+
+def test_generation_owner_lock_counts_waiter_and_releases_scoped_entry() -> None:
+    """The keyed owner entry covers holder+waiter, then is reclaimed."""
+    store = ConsoleChatStore()
+    session = _arm_session(store)
+    assistant = store.append_message(
+        session.id,
+        role=ConsoleMessageRole.ASSISTANT,
+        content="answer",
+    )
+    holder_entered = threading.Event()
+    holder_release = threading.Event()
+    waiter_attempted = threading.Event()
+    waiter_entered = threading.Event()
+
+    def hold_owner() -> None:
+        with store._generation_owner_scope(assistant.id):
+            holder_entered.set()
+            assert holder_release.wait(timeout=3)
+
+    def wait_for_owner() -> None:
+        waiter_attempted.set()
+        with store._generation_owner_scope(assistant.id):
+            waiter_entered.set()
+
+    holder = threading.Thread(target=hold_owner, daemon=True)
+    waiter = threading.Thread(target=wait_for_owner, daemon=True)
+    try:
+        holder.start()
+        assert holder_entered.wait(timeout=3)
+        waiter.start()
+        assert waiter_attempted.wait(timeout=3)
+        deadline = time.monotonic() + 3
+        while store._generation_runtime_counts(assistant.id)[1] != 2:
+            assert time.monotonic() < deadline
+        assert waiter_entered.is_set() is False
+        assert store._generation_runtime_counts(assistant.id) == (1, 2, 0)
+        holder_release.set()
+        holder.join(timeout=3)
+        waiter.join(timeout=3)
+
+        assert waiter_entered.is_set()
+        assert store._generation_runtime_counts(assistant.id) == (0, 0, 0)
+    finally:
+        holder_release.set()
+        holder.join(timeout=1)
+        waiter.join(timeout=1)
+
+
+def test_generation_runtime_entries_do_not_survive_invalid_or_owner_churn() -> None:
+    """Invalid calls, delete, close, and restore retain no lock/token owners."""
+    store = ConsoleChatStore()
+    for index in range(25):
+        with pytest.raises(KeyError):
+            store.mark_message_complete(f"missing-{index}")
+        assert store._generation_runtime_counts() == (0, 0, 0)
+
+    first = _arm_session(store)
+    deleted = store.append_message(
+        first.id,
+        role=ConsoleMessageRole.ASSISTANT,
+        content="delete me",
+    )
+    store.begin_generation_attempt(deleted.id)
+    assert store._generation_runtime_counts() == (0, 0, 1)
+    store.delete_message(deleted.id)
+    assert store._generation_runtime_counts() == (0, 0, 0)
+
+    closed = store.append_message(
+        first.id,
+        role=ConsoleMessageRole.ASSISTANT,
+        content="close me",
+    )
+    store.begin_generation_attempt(closed.id)
+    store.close_session(first.id)
+    assert store._generation_runtime_counts() == (0, 0, 0)
+
+    restored_session = store.create_session(title="restored")
+    restored = store.append_message(
+        restored_session.id,
+        role=ConsoleMessageRole.ASSISTANT,
+        content="replace state",
+    )
+    store.begin_generation_attempt(restored.id)
+    store.restore_state(sessions=())
+    assert store._generation_runtime_counts() == (0, 0, 0)
+
+
+def test_generation_attempt_retirement_is_exact_and_fences_late_thinking() -> None:
+    """Retirement reclaims only its own token and rejects its late evidence."""
+    store = ConsoleChatStore()
+    session = _arm_session(store)
+    assistant = store.append_message(
+        session.id,
+        role=ConsoleMessageRole.ASSISTANT,
+        content="answer",
+    )
+    retired = store.begin_generation_attempt(assistant.id)
+
+    assert store.retire_generation_attempt(assistant.id, retired) is True
+    assert store._generation_runtime_counts() == (0, 0, 0)
+    store.settle_message_thinking(
+        assistant.id,
+        _terminal_thinking(assistant.id, "complete"),
+        generation_token=retired,
+    )
+    assert store.get_message(assistant.id).thinking is None
+
+    stale = store.begin_generation_attempt(assistant.id)
+    current = store.begin_generation_attempt(assistant.id)
+    assert store.retire_generation_attempt(assistant.id, stale) is False
+    assert store._generation_attempt_tokens[assistant.id] == current
+    assert store.retire_generation_attempt(assistant.id, current) is True
+    assert store._generation_runtime_counts() == (0, 0, 0)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("failure_type", [RuntimeError, asyncio.CancelledError])
+async def test_direct_setup_failure_retires_issued_generation_token(
+    monkeypatch,
+    failure_type,
+) -> None:
+    """Direct setup owns and retires its token before provider dispatch."""
+    store = ConsoleChatStore()
+    session = _arm_session(store)
+    assistant = store.append_message(
+        session.id,
+        role=ConsoleMessageRole.ASSISTANT,
+        content="",
+    )
+    issued: list[int] = []
+    original_begin = store.begin_generation_attempt
+
+    def record_begin(message_id):
+        token = original_begin(message_id)
+        issued.append(token)
+        return token
+
+    def fail_setup(*_args, **_kwargs):
+        raise failure_type("setup interrupted")
+
+    monkeypatch.setattr(store, "begin_generation_attempt", record_begin)
+    monkeypatch.setattr(store, "begin_variant_stream", fail_setup)
+    gateway = StreamingGateway()
+    controller = ConsoleChatController(store=store, provider_gateway=gateway)
+    resolution = await gateway.resolve_for_send(None)
+
+    with pytest.raises(failure_type, match="setup interrupted"):
+        await controller._run_direct_provider_reply(
+            resolution=resolution,
+            provider_messages=[],
+            assistant_message_id=assistant.id,
+            prepare_retry=False,
+            variant_mode=True,
+            prefill=None,
+            prefill_from_one_shot=False,
+            one_shot_prefill_revision=None,
+            citation_repair_session=None,
+            stream_signals=None,
+        )
+
+    assert len(issued) == 1
+    assert store._generation_runtime_counts() == (0, 0, 0)
+    store.settle_message_thinking(
+        assistant.id,
+        _terminal_thinking(assistant.id, "failed"),
+        generation_token=issued[0],
+    )
+    assert store.get_message(assistant.id).thinking is None
+
+
+@pytest.mark.asyncio
+async def test_direct_setup_retirement_cannot_erase_newer_generation(
+    monkeypatch,
+) -> None:
+    store = ConsoleChatStore()
+    session = _arm_session(store)
+    assistant = store.append_message(
+        session.id,
+        role=ConsoleMessageRole.ASSISTANT,
+        content="",
+    )
+    original_begin = store.begin_generation_attempt
+    issued: list[int] = []
+
+    def record_begin(message_id):
+        token = original_begin(message_id)
+        issued.append(token)
+        return token
+
+    def supersede_then_fail(*_args, **_kwargs):
+        original_begin(assistant.id)
+        raise RuntimeError("setup superseded")
+
+    monkeypatch.setattr(store, "begin_generation_attempt", record_begin)
+    monkeypatch.setattr(store, "begin_variant_stream", supersede_then_fail)
+    gateway = StreamingGateway()
+    controller = ConsoleChatController(store=store, provider_gateway=gateway)
+    resolution = await gateway.resolve_for_send(None)
+
+    with pytest.raises(RuntimeError, match="setup superseded"):
+        await controller._run_direct_provider_reply(
+            resolution=resolution,
+            provider_messages=[],
+            assistant_message_id=assistant.id,
+            prepare_retry=False,
+            variant_mode=True,
+            prefill=None,
+            prefill_from_one_shot=False,
+            one_shot_prefill_revision=None,
+            citation_repair_session=None,
+            stream_signals=None,
+        )
+
+    assert store._generation_attempt_tokens[assistant.id] != issued[0]
+    store.retire_generation_attempt(
+        assistant.id,
+        store._generation_attempt_tokens[assistant.id],
+    )
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("failure_type", [RuntimeError, asyncio.CancelledError])
+@pytest.mark.parametrize("issue_newer_token", [False, True])
+async def test_agent_pre_worker_failure_retires_preissued_generation_token(
+    monkeypatch,
+    failure_type,
+    issue_newer_token,
+) -> None:
+    """A recovery-owned token stays local until an agent worker accepts it."""
+    store = ConsoleChatStore()
+    session = _arm_session(store)
+    store.append_message(session.id, role=ConsoleMessageRole.USER, content="question")
+    assistant = store.append_message(
+        session.id,
+        role=ConsoleMessageRole.ASSISTANT,
+        content="",
+    )
+    gateway = StreamingGateway()
+    controller = ConsoleChatController(
+        store=store,
+        provider_gateway=gateway,
+        agent_runtime_enabled=True,
+        agent_bridge=SimpleNamespace(run_reply=lambda **_kwargs: None),
+    )
+    configuration = controller.resolve_turn_configuration_snapshot(session.id)
+    (
+        resolution,
+        turn_context,
+    ) = await controller._capture_and_resolve_turn_execution_context(
+        session.id,
+        configuration,
+    )
+    assert turn_context is not None
+    issued = store.begin_generation_attempt(assistant.id)
+    newer_tokens: list[int] = []
+
+    async def fail_before_worker(**_kwargs):
+        if issue_newer_token:
+            newer_tokens.append(store.begin_generation_attempt(assistant.id))
+        raise failure_type("pre-worker interrupted")
+
+    monkeypatch.setattr(
+        controller,
+        "_compose_agent_request_providers",
+        fail_before_worker,
+    )
+    with pytest.raises(failure_type, match="pre-worker interrupted"):
+        await controller._run_agent_reply(
+            resolution=resolution,
+            provider_messages=[],
+            assistant_message_id=assistant.id,
+            prepare_retry=False,
+            variant_mode=False,
+            turn_context=turn_context,
+            generation_token=issued,
+        )
+
+    if issue_newer_token:
+        assert store._generation_attempt_tokens[assistant.id] == newer_tokens[0]
+    else:
+        assert store._generation_runtime_counts() == (0, 0, 0)
+    store.settle_message_thinking(
+        assistant.id,
+        _terminal_thinking(assistant.id, "failed"),
+        generation_token=issued,
+    )
+    assert store.get_message(assistant.id).thinking is None
+    if issue_newer_token:
+        assert store.retire_generation_attempt(assistant.id, newer_tokens[0]) is True
+    assert store._generation_runtime_counts() == (0, 0, 0)
+
+
+@pytest.mark.asyncio
+async def test_agent_cancellation_before_worker_start_retires_and_rejects_handoff(
+    monkeypatch,
+) -> None:
+    store = ConsoleChatStore()
+    gateway = StreamingGateway()
+    bridge_calls: list[dict] = []
+    controller = ConsoleChatController(
+        store=store,
+        provider_gateway=gateway,
+        agent_runtime_enabled=True,
+        agent_bridge=SimpleNamespace(
+            run_reply=lambda **kwargs: bridge_calls.append(kwargs)
+        ),
+    )
+    _arm_session(store)
+    captured: list[tuple[object, tuple, dict]] = []
+    issued: list[tuple[str, int]] = []
+    original_begin = store.begin_generation_attempt
+    original_to_thread = controller_module.asyncio.to_thread
+
+    def record_begin(message_id):
+        token = original_begin(message_id)
+        issued.append((message_id, token))
+        return token
+
+    async def cancel_before_start(function, *args, **kwargs):
+        if "_generation_handoff" not in kwargs:
+            return await original_to_thread(function, *args, **kwargs)
+        captured.append((function, args, kwargs))
+        raise asyncio.CancelledError("worker not started")
+
+    monkeypatch.setattr(store, "begin_generation_attempt", record_begin)
+    monkeypatch.setattr(controller_module.asyncio, "to_thread", cancel_before_start)
+
+    await controller.submit_draft("hello")
+
+    assert len(issued) == 1
+    assert len(captured) == 1
+    assert store._generation_runtime_counts() == (0, 0, 0)
+    _function, _args, kwargs = captured[0]
+    assert kwargs["_generation_handoff"].accept() is False
+    assert bridge_calls == []
+    message_id, retired = issued[0]
+    store.settle_message_thinking(
+        message_id,
+        _terminal_thinking(message_id, "failed"),
+        generation_token=retired,
+    )
+    assert store.get_message(message_id).thinking is None
+
+
+@pytest.mark.asyncio
+async def test_agent_teardown_refusal_occurs_before_generation_issuance(
+    monkeypatch,
+) -> None:
+    store = ConsoleChatStore()
+    gateway = StreamingGateway()
+    bridge_calls: list[dict] = []
+    controller = ConsoleChatController(
+        store=store,
+        provider_gateway=gateway,
+        agent_runtime_enabled=True,
+        agent_bridge=SimpleNamespace(
+            run_reply=lambda **kwargs: bridge_calls.append(kwargs)
+        ),
+    )
+    _arm_session(store)
+    monkeypatch.setattr(controller, "_teardown_refuses_turn", lambda _session: True)
+
+    result = await controller.submit_draft("hello")
+
+    assert result.accepted is True
+    assert bridge_calls == []
+    assert store._generation_runtime_counts() == (0, 0, 0)
+
+
+def test_edit_fences_detached_thinking_before_generation_evidence_is_cleared(
+    tmp_path,
+) -> None:
+    """Editing an assistant prevents its prior worker from restoring thinking."""
+    db, store, session, assistant, _checkpoint, _ = _durable_streaming_generation(
+        tmp_path,
+        name="edit-fences-worker",
+    )
+    owned = store._message_or_raise(assistant.id)
+    owned.status = "complete"
+    owned.assistant_generation_state = "complete"
+    owned.thinking = _terminal_thinking(assistant.id, "complete")
+    assert store.persist_selected_generation(assistant.id) is True
+    old_token = store.begin_generation_attempt(assistant.id)
+    worker_entered = threading.Event()
+    worker_release = threading.Event()
+    errors: list[BaseException] = []
+
+    def settle_old_worker() -> None:
+        worker_entered.set()
+        assert worker_release.wait(timeout=3)
+        try:
+            store.settle_message_thinking(
+                assistant.id,
+                _terminal_thinking(assistant.id, "complete"),
+                generation_token=old_token,
+            )
+        except BaseException as exc:  # pragma: no cover - asserted below
+            errors.append(exc)
+
+    worker = threading.Thread(target=settle_old_worker, daemon=True)
+    try:
+        worker.start()
+        assert worker_entered.wait(timeout=3)
+        store.update_message_content(assistant.id, "user-edited answer")
+        expected_live = copy.deepcopy(store.get_message(assistant.id))
+        worker_release.set()
+        worker.join(timeout=3)
+
+        assert not worker.is_alive()
+        assert errors == []
+        assert store.get_message(assistant.id) == expected_live
+        assert expected_live.thinking is None
+        assert expected_live.provider_continuation is None
+        assert store.persist_selected_generation(assistant.id) is True
+
+        reloaded = _reload_console_message(
+            db,
+            conversation_id=session.persisted_conversation_id,
+            active_leaf_persisted_id=assistant.persisted_message_id,
+        )
+        assert reloaded.content == "user-edited answer"
+        assert reloaded.thinking is None
+        assert reloaded.provider_continuation is None
+    finally:
+        worker_release.set()
+        worker.join(timeout=1)
+        db.close_connection()
+
+
+@pytest.mark.parametrize("mutation", ["add", "select"])
+def test_manual_variant_replacement_fences_detached_thinking(
+    tmp_path,
+    mutation: str,
+) -> None:
+    """Manual variant replacement cannot inherit a detached worker's evidence."""
+    db, store, session, assistant, _checkpoint, _ = _durable_streaming_generation(
+        tmp_path,
+        name=f"manual-variant-{mutation}",
+    )
+    owned = store._message_or_raise(assistant.id)
+    owned.status = "complete"
+    owned.assistant_generation_state = "complete"
+    owned.thinking = _terminal_thinking(assistant.id, "complete")
+    assert store.persist_selected_generation(assistant.id) is True
+    if mutation == "select":
+        owned.variants = ConsoleVariantSet.from_generations(
+            turn_id=assistant.id,
+            generations=[
+                store._generation_variant(owned),
+                ConsoleVariant(
+                    content="manually selected answer",
+                    assistant_generation_state="complete",
+                ),
+            ],
+            selected_index=0,
+        )
+    old_token = store.begin_generation_attempt(assistant.id)
+
+    if mutation == "add":
+        store.add_variant(assistant.id, "manually added answer")
+        expected_content = "manually added answer"
+    else:
+        store.select_variant(assistant.id, 1)
+        expected_content = "manually selected answer"
+    expected_live = copy.deepcopy(store.get_message(assistant.id))
+
+    store.settle_message_thinking(
+        assistant.id,
+        _terminal_thinking(assistant.id, "complete"),
+        generation_token=old_token,
+    )
+
+    assert store.get_message(assistant.id) == expected_live
+    assert expected_live.content == expected_content
+    assert expected_live.thinking is None
+    assert store.persist_selected_generation(assistant.id) is True
+    reloaded = _reload_console_message(
+        db,
+        conversation_id=session.persisted_conversation_id,
+        active_leaf_persisted_id=assistant.persisted_message_id,
+    )
+    assert reloaded.content == expected_content
+    assert reloaded.thinking is None
+    db.close_connection()
+
+
+@pytest.mark.asyncio
+async def test_dispatch_recovery_reset_reuses_fence_for_no_evidence_reply(
+    tmp_path,
+) -> None:
+    """Recovery reset fences the old worker before the replacement reply starts."""
+    db, store, session, assistant, _checkpoint, _ = _durable_streaming_generation(
+        tmp_path,
+        name="dispatch-recovery-fence",
+    )
+    owned = store._message_or_raise(assistant.id)
+    owned.status = "failed"
+    owned.assistant_generation_state = "failed"
+    owned.thinking = _terminal_thinking(assistant.id, "failed")
+    assert store.persist_selected_generation(assistant.id) is True
+    old_token = store.begin_generation_attempt(assistant.id)
+    worker_entered = threading.Event()
+    worker_release = threading.Event()
+    errors: list[BaseException] = []
+
+    def settle_old_worker() -> None:
+        worker_entered.set()
+        assert worker_release.wait(timeout=3)
+        try:
+            store.settle_message_thinking(
+                assistant.id,
+                _terminal_thinking(assistant.id, "failed"),
+                generation_token=old_token,
+            )
+        except BaseException as exc:  # pragma: no cover - asserted below
+            errors.append(exc)
+
+    worker = threading.Thread(target=settle_old_worker, daemon=True)
+    gateway = StreamingGateway()
+    controller = ConsoleChatController(
+        store=store,
+        provider_gateway=gateway,
+        agent_runtime_enabled=False,
+    )
+    try:
+        worker.start()
+        assert worker_entered.wait(timeout=3)
+        store._dispatch_recoveries_by_session[session.id] = (
+            ConsoleDispatchRecoveryState(
+                kind=ConsoleDispatchRecoveryKind.EPHEMERAL_DISPATCH_STARTED,
+                assistant_message_id=assistant.id,
+                conversation_id=session.id,
+                visible_copy="Response recovery is active.",
+                actions=(),
+                in_flight=True,
+                runtime_active=True,
+            )
+        )
+        replacement_token = store.begin_generation_attempt(assistant.id)
+        store.prepare_dispatch_recovery_message(
+            session.id,
+            assistant.id,
+            generation_token=replacement_token,
+        )
+        worker_release.set()
+        worker.join(timeout=3)
+        assert errors == []
+        assert store.get_message(assistant.id).thinking is None
+
+        store._dispatch_recoveries_by_session.pop(session.id)
+        resolution = await gateway.resolve_for_send(None)
+        result = await controller._run_direct_provider_reply(
+            resolution=resolution,
+            provider_messages=[],
+            assistant_message_id=assistant.id,
+            prepare_retry=False,
+            variant_mode=False,
+            prefill=None,
+            prefill_from_one_shot=False,
+            one_shot_prefill_revision=None,
+            citation_repair_session=None,
+            stream_signals=None,
+            generation_token=replacement_token,
+        )
+
+        assert result.accepted is True
+        assert store._generation_runtime_counts() == (0, 0, 0)
+        store.settle_message_thinking(
+            assistant.id,
+            _terminal_thinking(assistant.id, "complete"),
+            generation_token=replacement_token,
+        )
+        assert store.get_message(assistant.id).thinking is None
+        assert store.get_message(assistant.id).content == "hello"
+        assert store.get_message(assistant.id).thinking is None
+        reloaded = _reload_console_message(
+            db,
+            conversation_id=session.persisted_conversation_id,
+            active_leaf_persisted_id=assistant.persisted_message_id,
+        )
+        assert reloaded.content == "hello"
+        assert reloaded.thinking is None
+    finally:
+        worker_release.set()
+        worker.join(timeout=1)
+        db.close_connection()
+
+
+def test_empty_continuation_discard_reclaims_generation_runtime_owner(
+    tmp_path,
+) -> None:
+    """Discarding an empty continuation removes its token and tolerates late work."""
+    db, store, _session, assistant, _checkpoint, _ = _durable_streaming_generation(
+        tmp_path,
+        name="continuation-discard-fence",
+    )
+    owned = store._message_or_raise(assistant.id)
+    owned.content = ""
+    owned.status = "failed"
+    owned.assistant_generation_state = "failed"
+    assert store.persist_selected_generation(assistant.id) is True
+    old_token = store.begin_generation_attempt(assistant.id)
+    expected_version = owned.provider_continuation_message_version
+    assert type(expected_version) is int
+
+    assert (
+        store.discard_provider_continuation(
+            assistant.id,
+            expected_message_version=expected_version,
+        )
+        is True
+    )
+
+    with pytest.raises(KeyError):
+        store.get_message(assistant.id)
+    assert store._generation_runtime_counts() == (0, 0, 0)
+    assert (
+        store.settle_message_thinking(
+            assistant.id,
+            _terminal_thinking(assistant.id, "failed"),
+            generation_token=old_token,
+        )
+        is None
+    )
+    assert store._generation_runtime_counts() == (0, 0, 0)
+    db.close_connection()

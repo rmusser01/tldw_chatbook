@@ -48,6 +48,14 @@ their decoded persisted bytes. A green projection or sanitized primary table pro
 only that owner. When content is intentionally withheld, also verify that recovery
 handles and user/model guidance do not promise a nonexistent full copy.
 
+**Recurred, TASK-18932.1, 2026-08-26.** Clearing thinking from a deleted Chat message
+was insufficient: the trigger-authored `sync_log` upsert and encrypted Sync outbox
+still retained the pre-delete reasoning. The deletion tests became meaningful only
+after they inspected all three durable owners and proved that the sole surviving
+records were a content-free tombstone plus its hash-only conflict proof. For private
+fields, deletion coverage must include queued and historical synchronization
+sidecars, including rollback behavior when their cleanup shares a transaction.
+
 ---
 
 ## An outer SQLite rollback cannot undo a write committed by another database
@@ -5337,6 +5345,16 @@ fresh/upgraded DBs assert `== CharactersRAGDB._CURRENT_SCHEMA_VERSION`, and a
 equality. If you are bumping the schema, run `Tests/DB/` and `Tests/ChaChaNotesDB/`
 in full — the tests your bump breaks are not in your feature's test files.
 
+**The same trap applies to fixture writes.** TASK-18932's final rebase raised the
+current schema from v51 to v52, then `test_chachanotes_full_capture_migration.py`
+failed before its v50→v51 assertion: it seeded a genuine v50 database through the
+current `add_conversation()` method, which now correctly writes a v52-only column.
+A historical migration fixture must seed rows with SQL limited to columns that
+existed at its pinned starting version. Current production CRUD is valid only after
+the database has migrated to the current schema; using it to populate an older
+fixture makes an unrelated future column addition break the fixture before the
+migration under test can run.
+
 ## Removing a widget's border box activates the global focus outline on it (task-17651, 2026-08-17)
 
 **What happened.** Flattening the Console composer to a one-row dense-form bar
@@ -9088,3 +9106,26 @@ writes happen on a worker thread**, and this repo has no shared-cache workaround
 available until `CharactersRAGDB` opts into `uri=True`. A temp-directory file
 plus explicit cleanup is the only option — measured at 0 directories leaked when
 an autouse fixture closes the connection and removes the directory.
+
+---
+
+## A bounded private-prefix probe must not buy its memory bound by failing open
+
+**TASK-18932, 2026-08-27.** The local `<think>` splitter buffered leading
+whitespace while deciding whether a response began with a reasoning block. To
+bound that buffer, it switched permanently to visible-answer mode after 20
+characters. The parser tests explicitly blessed that transition as a memory
+guard. Final feature review then tried 21 spaces followed by
+`<think>secret</think>answer`: the reasoning channel was empty and the entire
+tagged value entered visible assistant content, which would also feed ordinary
+history and human-readable exports. Every feature matrix had passed because
+none crossed the parser's old whitespace cap before an opener.
+
+**What to do.** For a stream prefix that may contain private data, a resource
+limit must fail closed or keep a bounded decision state; it must never turn an
+undecided prefix into public content merely because filler crossed a cap. Here,
+dropping leading response whitespace while retaining only the possible opener
+prefix removed the unbounded state without weakening start anchoring. Boundary
+tests must sit immediately below and above the former cap, include a much larger
+input, and partition the opener across chunks. A test that proves memory stays
+small is incomplete until it also proves the private/public channel assignment.

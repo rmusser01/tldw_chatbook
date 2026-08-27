@@ -40,6 +40,8 @@ _MAX_TOOL_CALLS = 128
 _JSON_DECODE_FAILED = object()
 _RETRYABLE_STATUS_CODES = frozenset({429, 500, 502, 503, 504})
 
+ReasoningDisposition = Literal["displayable", "proprietary", "ignored"]
+
 
 class HostedChatBaseURLValidationError(ValueError):
     """Raised when a hosted Chat API base URL is malformed or ambiguous."""
@@ -67,6 +69,8 @@ def _same_json_value(left: object, right: object) -> bool:
 
 class HostedChatFinishPolicy(Protocol):
     """Provider-owned finish and reasoning validation policy."""
+
+    reasoning_disposition: ReasoningDisposition
 
     def validate_finish(
         self,

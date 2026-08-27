@@ -1,0 +1,143 @@
+{
+  "evidence_honesty": {
+    "application_notice_not_durable": true,
+    "capable_no_event_has_no_row": true,
+    "frames": [
+      {
+        "markers": [
+          "Thinking",
+          "Proprietary thinking obfuscated - not available"
+        ],
+        "path": "captures/05-proprietary-expanded.svg",
+        "sha256": "4058512f0aa305409545e1f66b097e336f49faa8edd070629b9074fc3a387ba7"
+      },
+      {
+        "markers": [
+          "VISIBLE-ANSWER-CANARY"
+        ],
+        "path": "captures/06-capable-no-evidence-no-row.svg",
+        "sha256": "df90dc2930a65b204b635272c4bf16af377cfc402f8bc3709981cbd304d984f9"
+      }
+    ],
+    "proprietary_exact_notice": "Proprietary thinking obfuscated - not available",
+    "proprietary_raw_text_absent": true
+  },
+  "functional_controls": {
+    "plain_same_backend_model_dispatches_on_v0": true,
+    "replay": [
+      {
+        "continuation_required": false,
+        "effective": "auto",
+        "expected_replay_groups": 1,
+        "saved": "auto"
+      },
+      {
+        "continuation_required": false,
+        "effective": "include",
+        "expected_replay_groups": 1,
+        "saved": "include"
+      },
+      {
+        "continuation_required": false,
+        "effective": "exclude",
+        "expected_replay_groups": 0,
+        "saved": "exclude"
+      },
+      {
+        "continuation_required": true,
+        "effective": "required",
+        "expected_replay_groups": 1,
+        "saved": "include"
+      }
+    ],
+    "resumed_bypass_owner_recoverable": true,
+    "resumed_retry_owner_recoverable": true,
+    "unsupported_displayable_refused_pre_provider": true,
+    "unsupported_proprietary_refused_pre_provider": true
+  },
+  "live_lifecycle": {
+    "actual_event_only": true,
+    "collapsed_at_answer": true,
+    "default_visibility": true,
+    "durable_envelope_present": true,
+    "expanded_live": true,
+    "frames": [
+      {
+        "markers": [
+          "Thinking",
+          "DISPLAYABLE-THINKING-CANARY"
+        ],
+        "path": "captures/01-live-displayable-expanded.svg",
+        "sha256": "130aebc47779af794f207e5a8d76db2aeb0544db5ff6b1814830689a653915d6"
+      },
+      {
+        "markers": [
+          "Thinking",
+          "VISIBLE-ANSWER-CANARY"
+        ],
+        "path": "captures/02-answer-boundary-collapsed.svg",
+        "sha256": "3fdfa42011b1c51d77b532aa4eb72059e316937db86c6c2da2a0dac42952666f"
+      },
+      {
+        "markers": [
+          "VISIBLE-ANSWER-CANARY"
+        ],
+        "path": "captures/03-presentation-setting-off.svg",
+        "sha256": "e4e331287a5d72e748fae77e59d5524bfa2c53b3f540fe4fb48a88a6874566b1"
+      },
+      {
+        "markers": [
+          "Thinking",
+          "VISIBLE-ANSWER-CANARY"
+        ],
+        "path": "captures/04-restart-history-collapsed.svg",
+        "sha256": "463c887a4780a8ee242227b2ab57f34ce70f2e3e670123e39e51e255dca4a923"
+      }
+    ],
+    "off_hides_immediately": true,
+    "on_restores_collapsed": true,
+    "one_time_transition_consumed": true,
+    "restart_collapsed_lazy": true
+  },
+  "policy_presentation": {
+    "frame": {
+      "markers": [
+        "Thinking history replay",
+        "Effective: Required"
+      ],
+      "path": "captures/07-thinking-history-required.svg",
+      "sha256": "6f3217046545a0bd2cd1e3cd0f2eebe4333b68afd50cc145e59469f7bc6931ef"
+    },
+    "required_copy_mentions_provider_continuation": true,
+    "states": {
+      "auto": {
+        "editable": true,
+        "effective": "Auto",
+        "saved": "auto"
+      },
+      "exclude": {
+        "editable": true,
+        "effective": "Exclude",
+        "saved": "exclude"
+      },
+      "include": {
+        "editable": true,
+        "effective": "Include",
+        "saved": "include"
+      },
+      "required": {
+        "editable": false,
+        "effective": "Required",
+        "saved": "exclude"
+      }
+    }
+  },
+  "profile": {
+    "config": "profile/config.toml",
+    "config_sha256_after": "84cd5716eef955345a1e5c6f0cbaa5a8b3eb4eec9ea53e135e9472174819944b",
+    "config_sha256_before": "84cd5716eef955345a1e5c6f0cbaa5a8b3eb4eec9ea53e135e9472174819944b",
+    "config_unchanged": true,
+    "isolated_environment": true,
+    "root": "profile"
+  }
+}

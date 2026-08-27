@@ -192,6 +192,36 @@ in **Settings > Console Behavior**.
 - Assistant replies render markdown (headings, bold, code, italics); your
   own messages — and System/Tool rows — stay exactly as you typed them.
 
+### Model thinking disclosures
+
+Console adds a **Thinking** activity only when the selected provider adapter
+reports evidence for that turn. A model being capable of reasoning is not
+evidence by itself, so an ordinary answer with no adapter event gets no
+Thinking row. This surface reports provider output; it does not promise access
+to hidden chain-of-thought.
+
+- Displayable evidence can be expanded to read the exact bounded text reported
+  by the adapter. Proprietary evidence is text-free and appears as
+  **Thinking · unavailable**; expanding it shows exactly
+  `Proprietary thinking obfuscated - not available`.
+- A new live disclosure opens when its first evidence arrives, then
+  auto-collapses once at the first visible answer or tool event. If neither
+  occurs, the terminal state is the fallback boundary. Expanding or collapsing
+  it manually cancels that pending automatic transition. Reopened conversation
+  history starts collapsed.
+- Stopped and failed replies retain only evidence that actually arrived. They
+  do not synthesize a completed thought. A no-event turn remains without a
+  Thinking row.
+- **Settings > Console Behavior > Show model thinking** is on by default.
+  Turning it off hides both displayable and unavailable rows immediately; it
+  does not disable capture, saved history, compatible replay, or token
+  accounting.
+
+If a persistent conversation backend cannot round-trip the adapter's resolved
+thinking format, Console refuses the send before contacting the provider and
+asks you to upgrade the backend. The draft remains available to retry, and no
+synthetic assistant reply is saved.
+
 ### Prompt queue
 
 After the current turn is accepted, **Send** changes to **Queue**. Each Console

@@ -44,6 +44,10 @@ def _resolution(**overrides: object) -> ZAIResolution:
     return ZAIResolution(**values)  # type: ignore[arg-type]
 
 
+def test_zai_declares_reasoning_as_proprietary() -> None:
+    assert ZAIFinishPolicy().reasoning_disposition == "proprietary"
+
+
 def _tool(name: str = "calculator") -> dict[str, object]:
     return {
         "type": "function",

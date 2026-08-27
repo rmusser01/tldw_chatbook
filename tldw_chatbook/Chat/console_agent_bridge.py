@@ -19,7 +19,7 @@ import threading
 import time
 from collections import deque
 from concurrent.futures import TimeoutError as FuturesTimeoutError
-from collections.abc import Mapping
+from collections.abc import Mapping, Set as AbstractSet
 from dataclasses import dataclass, replace as dataclass_replace
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Callable, ContextManager, Sequence
@@ -41,6 +41,8 @@ from tldw_chatbook.Agents.agent_models import (
     LOAD_TOOLS_NAME,
     MAX_RUN_CONTROL_STEPS,
     MAX_STEERING_CHARS,
+    RUN_CANCELLED,
+    RUN_DONE,
     RunBudget,
     RUNTIME_TOOL_NAMES,
     STEERING_SOURCE_USER,
@@ -131,9 +133,15 @@ from tldw_chatbook.Chat.console_provider_gateway import (
     ConsoleProviderCallSignals,
     ConsoleProviderGateway,
     ConsoleProviderStreamSignals,
+    ProviderProprietaryThinkingEvidence,
+    ProviderThinkingDelta,
     ProviderToolCalls,
     ProviderTurnMetadata,
 )
+from tldw_chatbook.Chat.console_chat_store import require_thinking_persistence_support
+from tldw_chatbook.Chat.console_thinking_capture import ThinkingCapture
+from tldw_chatbook.Chat.console_thinking_history import ProviderThinkingSidecar
+from tldw_chatbook.Chat.thinking_blocks import ThinkingEnvelope, ThinkingHistoryPolicy
 from tldw_chatbook.Chat.console_history_budget import DEFAULT_RESPONSE_RESERVATION
 from tldw_chatbook.Chat.provider_continuation import (
     ContinuationOwnerGroup,
@@ -155,6 +163,39 @@ from tldw_chatbook.Internal_Prompts import get_internal_prompt
 from tldw_chatbook.Internal_Prompts.catalog import CATALOG
 from tldw_chatbook.Skills_Interop.skill_trust_models import SkillTrustBlockedError
 from tldw_chatbook.Utils.token_counter import get_model_token_limit
+
+
+def _retire_generation_attempt_after_reply(
+    method: Callable[..., Any],
+) -> Callable[..., Any]:
+    """Keep an agent attempt current through capture settlement, then retire it."""
+
+    @functools.wraps(method)
+    def wrapped(self: Any, *args: Any, **kwargs: Any) -> Any:
+        generation_handoff = kwargs.pop("_generation_handoff", None)
+        assistant_message_id = kwargs["assistant_message_id"]
+        generation_token = kwargs.get("generation_token")
+        if generation_token is None:
+            generation_token = self._store.begin_generation_attempt(
+                assistant_message_id
+            )
+            kwargs["generation_token"] = generation_token
+        if generation_handoff is not None and not generation_handoff.accept():
+            self._store.retire_generation_attempt(
+                assistant_message_id,
+                generation_token,
+            )
+            raise asyncio.CancelledError("Generation handoff was cancelled.")
+        try:
+            return method(self, *args, **kwargs)
+        finally:
+            self._store.retire_generation_attempt(
+                assistant_message_id,
+                generation_token,
+            )
+
+    return wrapped
+
 
 # Catalog-default re-export: keeps existing imports/tests valid and pins
 # the "shipped default" text. compose_agent_system_prompt below resolves
@@ -384,9 +425,7 @@ def console_run_budget() -> RunBudget:
     except Exception:  # noqa: BLE001 -- config import must never break a run
         return DEFAULT_CONSOLE_RUN_BUDGET
 
-    def _int(
-        key: str, default: int, minimum: int, maximum: int | None = None
-    ) -> int:
+    def _int(key: str, default: int, minimum: int, maximum: int | None = None) -> int:
         try:
             raw = get_cli_setting("console", key, default)
         except Exception:  # noqa: BLE001
@@ -1060,27 +1099,33 @@ def safe_intermediate_thinking_summary(summary: str | None) -> str | None:
     )
 
 
-def build_intermediate_thinking_marker(
+def build_intermediate_planning_marker(
     summary: str | None,
-) -> ConsoleChatMessage:
-    """Build one session-only Thinking activity from a visible step summary.
+    *,
+    round_ordinal: int | None = None,
+) -> ConsoleChatMessage | None:
+    """Build one session-only Planning activity from a visible step summary.
 
     Args:
         summary: Existing visible step summary, or ``None``.
+        round_ordinal: Exact owning primary model round when known.
 
     Returns:
-        A display-only Thinking marker containing only the bounded safe
-        summary.
+        A display-only Planning marker containing only the bounded safe
+        summary, or ``None`` when the summary is unsafe or empty.
     """
     safe_summary = safe_intermediate_thinking_summary(summary)
+    if safe_summary is None:
+        return None
     return ConsoleChatMessage(
         role=ConsoleMessageRole.TOOL,
-        content=safe_summary or "",
+        content=safe_summary,
         status="complete",
         activity_presentation=ConsoleActivityPresentation(
-            "thinking", "Thinking", "done"
+            "planning", "Planning", "done"
         ),
-        # A Thinking row never carries uncapped/raw model text. Its bounded
+        activity_round_ordinal=round_ordinal,
+        # A Planning row never carries uncapped/raw model text. Its bounded
         # content is the complete safe detail, so a full-output sidecar would
         # only add a dead expansion affordance (or weaken the privacy cap).
         tool_output_full=None,
@@ -1092,17 +1137,27 @@ def _step_proves_intermediate_tool_work(kind: str) -> bool:
     return kind in _THINKING_PROVING_STEP_KINDS
 
 
-class _PendingPrimaryThinkingDeriver:
-    """Derive at most one Thinking marker from each primary model round."""
+class _PendingPrimaryPlanningDeriver:
+    """Derive at most one Planning marker from each primary model round."""
 
     def __init__(self) -> None:
         self._has_pending_model = False
         self._pending_summary: str | None = None
+        self._pending_round_ordinal: int | None = None
+        self._active_round_ordinal: int | None = None
+        self._next_round_ordinal = 0
+
+    @property
+    def active_round_ordinal(self) -> int | None:
+        """Return the exact primary model round owning the current steps."""
+        return self._active_round_ordinal
 
     def observe(
         self,
         step: AgentStep | Mapping[str, Any],
         agent_kind: str,
+        *,
+        actual_thinking_round_ordinals: AbstractSet[int] = frozenset(),
     ) -> ConsoleChatMessage | None:
         """Observe one attributed step and return a marker before it, if proven."""
         if agent_kind != AGENT_KIND_PRIMARY:
@@ -1120,15 +1175,34 @@ class _PendingPrimaryThinkingDeriver:
             # no later proving step will ever flush it.
             self._has_pending_model = True
             self._pending_summary = summary
+            self._pending_round_ordinal = self._next_round_ordinal
+            self._active_round_ordinal = self._next_round_ordinal
+            self._next_round_ordinal += 1
             return None
         if not self._has_pending_model:
             return None
         pending_summary = self._pending_summary
+        pending_round_ordinal = self._pending_round_ordinal
         self._has_pending_model = False
         self._pending_summary = None
+        self._pending_round_ordinal = None
         if not _step_proves_intermediate_tool_work(kind):
             return None
-        return build_intermediate_thinking_marker(pending_summary)
+        if pending_round_ordinal in actual_thinking_round_ordinals:
+            return None
+        return build_intermediate_planning_marker(
+            pending_summary,
+            round_ordinal=pending_round_ordinal,
+        )
+
+
+def _thinking_round_ordinals(
+    envelope: ThinkingEnvelope | None,
+) -> frozenset[int]:
+    """Return only explicit model-round ownership from a validated envelope."""
+    if not isinstance(envelope, ThinkingEnvelope):
+        return frozenset()
+    return frozenset(block.round_ordinal for block in envelope.blocks)
 
 
 _BUILTIN_KILL_SWITCH_REFUSAL = "tool execution is disabled by the kill switch"
@@ -2205,6 +2279,11 @@ class _StreamingModelAdapter:
         continuation_sidecar: tuple[ProviderContinuationSidecar, ...] = (),
         continuation_target: ContinuationRestoreTarget | None = None,
         continuation_owner_key: str | None = None,
+        thinking_sidecar: tuple[ProviderThinkingSidecar, ...] = (),
+        thinking_policy: ThinkingHistoryPolicy = "auto",
+        thinking_owner_key: str | None = None,
+        thinking_capture: ThinkingCapture | None = None,
+        generation_token: int | None = None,
     ):
         self._store = store
         self._gateway = provider_gateway
@@ -2217,6 +2296,13 @@ class _StreamingModelAdapter:
         self._continuation_sidecar = tuple(continuation_sidecar)
         self._continuation_target = continuation_target
         self._continuation_owner_key = continuation_owner_key
+        self._thinking_sidecar = tuple(thinking_sidecar)
+        self._thinking_policy = thinking_policy
+        self._thinking_owner_key = thinking_owner_key
+        self._thinking_capture = thinking_capture or ThinkingCapture(
+            assistant_owner_id=assistant_message_id
+        )
+        self._generation_token = generation_token
         # PR3a-1 Task 1: per-THREAD lifeline override. A fleet child runs on
         # its own thread and enters `child_lifeline()` there before its run
         # begins, which parks that child's private loop here; every
@@ -2370,9 +2456,14 @@ class _StreamingModelAdapter:
                 semantic_messages: list[dict[str, Any]] = []
                 for message in transport_messages:
                     row = dict(message)
-                    owner_id = row.pop(self._continuation_owner_key, None)
+                    owner_id = row.get(self._continuation_owner_key)
                     if type(owner_id) is str and owner_id in owner_ids:
                         row[CONTINUATION_OWNER_KEY] = owner_id
+                    if (
+                        not self._thinking_sidecar
+                        or self._thinking_owner_key != self._continuation_owner_key
+                    ):
+                        row.pop(self._continuation_owner_key, None)
                     semantic_messages.append(row)
                 dispatch_messages = prepare_request(
                     self._resolution,
@@ -2382,9 +2473,14 @@ class _StreamingModelAdapter:
                         continuation_groups=continuation_groups,
                     ),
                     continuation_target=self._continuation_target,
+                    thinking_sidecar=self._thinking_sidecar,
+                    thinking_policy=self._thinking_policy,
+                    thinking_owner_key=self._thinking_owner_key,
                 )
                 stream_kwargs.pop("tools", None)
-            elif self._continuation_sidecar and callable(prepare_request):
+            elif (self._continuation_sidecar or self._thinking_sidecar) and callable(
+                prepare_request
+            ):
                 dispatch_messages = prepare_request(
                     self._resolution,
                     transport_messages,
@@ -2392,15 +2488,46 @@ class _StreamingModelAdapter:
                     continuation_target=self._continuation_target,
                     continuation_sidecar=self._continuation_sidecar,
                     continuation_owner_key=self._continuation_owner_key,
+                    thinking_sidecar=self._thinking_sidecar,
+                    thinking_policy=self._thinking_policy,
+                    thinking_owner_key=self._thinking_owner_key,
                 )
                 stream_kwargs.pop("tools", None)
             if gateway_signals is not None:
                 stream_kwargs["signals"] = gateway_signals
+            owner_session_id = self._store.session_id_for_message(
+                self._assistant_message_id
+            )
+            require_thinking_persistence_support(
+                self._store.persistence,
+                persistent=(
+                    self._store.persistence is not None
+                    and not self._store.session_is_ephemeral(owner_session_id)
+                ),
+                may_emit_thinking=bool(
+                    getattr(self._resolution, "may_emit_thinking", False)
+                ),
+            )
             async for chunk in self._gateway.stream_chat(
                 self._resolution, dispatch_messages, **stream_kwargs
             ):
                 if terminal_metadata is not None:
                     raise ValueError("Provider terminal metadata must be final.")
+                if isinstance(
+                    chunk,
+                    (ProviderThinkingDelta, ProviderProprietaryThinkingEvidence),
+                ):
+                    if not is_subagent:
+                        update = self._thinking_capture.observe(chunk)
+                        if update.envelope is not None:
+                            self._store.replace_message_thinking(
+                                self._assistant_message_id,
+                                update.envelope,
+                                generation_token=self._generation_token,
+                            )
+                    if self._should_cancel():
+                        break
+                    continue
                 if isinstance(chunk, ProviderToolCalls):
                     # Plan-B contract: structured deltas never hit the
                     # transcript — captured here, surfaced only through the
@@ -2410,15 +2537,21 @@ class _StreamingModelAdapter:
                         if not isinstance(chunk.metadata, ProviderTurnMetadata):
                             raise ValueError("Provider terminal metadata is malformed.")
                         terminal_metadata = chunk.metadata
+                    if not is_subagent:
+                        self._thinking_capture.observe(chunk)
+                    if self._should_cancel():
+                        break
                     continue
                 visible = gate.feed(chunk)
                 if visible and not is_subagent:
+                    self._thinking_capture.observe_answer(visible)
                     self._store.append_stream_chunk(self._assistant_message_id, visible)
                     any_streamed = True
                 if self._should_cancel():
                     break
             tail = gate.flush_tail()
             if tail and not is_subagent:
+                self._thinking_capture.observe_answer(tail)
                 self._store.append_stream_chunk(self._assistant_message_id, tail)
                 any_streamed = True
 
@@ -2456,6 +2589,9 @@ class _StreamingModelAdapter:
             raise TimeoutError(
                 f"provider turn did not complete within {_CHAT_CALL_TIMEOUT_SECONDS}s"
             ) from None
+        _visible, tool_call = gate.result()
+        if tool_call is not None and not native_calls and not is_subagent:
+            self._thinking_capture.observe_tool()
         if any_streamed and not is_subagent:
             # Finding A: this turn leaked prose to the store before it was
             # known to be a tool call (a well-behaved fence-first tool call
@@ -2466,7 +2602,6 @@ class _StreamingModelAdapter:
             # chunks on the same message. Extended for native tool-calls
             # (Task 5): a native turn that streamed leaked prose before its
             # ProviderToolCalls sentinel arrived must be reset the same way.
-            _visible, tool_call = gate.result()
             if tool_call is not None or native_calls:
                 self._store.reset_stream_content(self._assistant_message_id)
         message: dict = {"content": gate.full_text}
@@ -3602,6 +3737,7 @@ class ConsoleAgentBridge:
 
     # -- run ------------------------------------------------------------
 
+    @_retire_generation_attempt_after_reply
     def run_reply(
         self,
         *,
@@ -3649,6 +3785,10 @@ class ConsoleAgentBridge:
         continuation_sidecar: tuple[ProviderContinuationSidecar, ...] = (),
         continuation_target: ContinuationRestoreTarget | None = None,
         continuation_owner_key: str | None = None,
+        thinking_sidecar: tuple[ProviderThinkingSidecar, ...] = (),
+        thinking_policy: ThinkingHistoryPolicy = "auto",
+        thinking_owner_key: str | None = None,
+        generation_token: int | None = None,
         startup_instruction_candidate: StartupInstructionCandidate | None = None,
         confirm_project_instruction_dispatch: Callable[[InstructionSnapshot], str]
         | None = None,
@@ -3657,6 +3797,10 @@ class ConsoleAgentBridge:
         ]
         | None = None,
     ) -> tuple[str, RunOutcome]:
+        if generation_token is None:
+            generation_token = self._store.begin_generation_attempt(
+                assistant_message_id
+            )
         protocol = getattr(resolution, "continuation_protocol", None)
         if continuation_target is None and isinstance(protocol, str) and protocol:
             provider = getattr(resolution, "execution_key", None)
@@ -4029,9 +4173,7 @@ class ConsoleAgentBridge:
                                     skill_name,
                                     script_path,
                                     list(args),
-                                    output_root=(
-                                        scratch_root / "skill_script_output"
-                                    ),
+                                    output_root=(scratch_root / "skill_script_output"),
                                 )
                             )
                     else:
@@ -4112,6 +4254,7 @@ class ConsoleAgentBridge:
         # birth via `adapter.child_lifeline`. This one stays exactly what
         # it always was: the PRIMARY agent's, turn-scoped.
         turn_lifeline = _ModelCallLifeline("console-agent-loop")
+        thinking_capture = ThinkingCapture(assistant_owner_id=assistant_message_id)
         adapter = _StreamingModelAdapter(
             store=self._store,
             provider_gateway=self._gateway,
@@ -4127,6 +4270,11 @@ class ConsoleAgentBridge:
             continuation_sidecar=continuation_sidecar,
             continuation_target=continuation_target,
             continuation_owner_key=continuation_owner_key,
+            thinking_sidecar=thinking_sidecar,
+            thinking_policy=thinking_policy,
+            thinking_owner_key=thinking_owner_key,
+            thinking_capture=thinking_capture,
+            generation_token=generation_token,
         )
 
         # PR3a-1 Task 6b (audit F1): this turn's own key into
@@ -4159,7 +4307,7 @@ class ConsoleAgentBridge:
         # source of truth for this conversation from here on, so any
         # previously cached historical (DB-derived) summary is stale.
         self._historical_cache.pop(conversation_id, None)
-        thinking_deriver = _PendingPrimaryThinkingDeriver()
+        planning_deriver = _PendingPrimaryPlanningDeriver()
 
         def on_step(step: AgentStep, agent_kind: str, run_id: str) -> None:
             # PR 2a (task-3): AgentService now attributes every step to its
@@ -4222,14 +4370,21 @@ class ConsoleAgentBridge:
             tool_diff: tuple[str, str, str] | None = None
             if step.kind == STEP_TOOL_RESULT and pending_diffs:
                 tool_diff = _pair_step_diff(pending_diffs, step.tool_name)
-            thinking_marker = thinking_deriver.observe(step, agent_kind)
+            planning_marker = planning_deriver.observe(
+                step,
+                agent_kind,
+                actual_thinking_round_ordinals=_thinking_round_ordinals(
+                    thinking_capture.snapshot().envelope
+                ),
+            )
             if agent_kind == AGENT_KIND_PRIMARY:
-                if thinking_marker is not None:
+                if planning_marker is not None:
                     self._append_marker(
                         session_id,
-                        thinking_marker.content,
-                        full_output=thinking_marker.tool_output_full,
-                        activity_presentation=(thinking_marker.activity_presentation),
+                        planning_marker.content,
+                        full_output=planning_marker.tool_output_full,
+                        activity_presentation=(planning_marker.activity_presentation),
+                        activity_round_ordinal=(planning_marker.activity_round_ordinal),
                     )
                 if step.kind == STEP_SPAWN:
                     # PR2b Task 2: this is this run's ONLY source of rows
@@ -4276,6 +4431,7 @@ class ConsoleAgentBridge:
                             result=step.result,
                             tool_outcome=step.tool_outcome,
                         ),
+                        activity_round_ordinal=(planning_deriver.active_round_ordinal),
                     )
             # Content-free operational logging for tool outcomes. The actual
             # invocation lives inside AgentService, so this intentionally
@@ -4776,6 +4932,20 @@ class ConsoleAgentBridge:
                     logger.opt(exception=True).warning(
                         "change_review: could not stamp/disclose diff feedback"
                     )
+        capture_outcome = (
+            "complete"
+            if outcome.status == RUN_DONE
+            else "stopped"
+            if outcome.status == RUN_CANCELLED
+            else "failed"
+        )
+        capture_update = thinking_capture.settle(capture_outcome)
+        if capture_update.envelope is not None:
+            self._store.settle_message_thinking(
+                assistant_message_id,
+                capture_update.envelope,
+                generation_token=generation_token,
+            )
         for step in outcome.steps:
             logger.info(
                 "agent run step",
@@ -5889,7 +6059,9 @@ class ConsoleAgentBridge:
             return False
         try:
             access_scope = (
-                authority.access_scope if authority is not None else contextlib.nullcontext
+                authority.access_scope
+                if authority is not None
+                else contextlib.nullcontext
             )
             with access_scope():
                 log_dir = resolve_existing_log_dir(
@@ -5902,9 +6074,7 @@ class ConsoleAgentBridge:
                     return True
                 from tldw_chatbook.Agents.run_log_search import load_records
 
-                return any(
-                    record.run_id == run_id for record in load_records(log_dir)
-                )
+                return any(record.run_id == run_id for record in load_records(log_dir))
         except Exception:  # noqa: BLE001 -- stale authority fails closed
             return False
 
@@ -5958,7 +6128,9 @@ class ConsoleAgentBridge:
             return ""
         try:
             access_scope = (
-                authority.access_scope if authority is not None else contextlib.nullcontext
+                authority.access_scope
+                if authority is not None
+                else contextlib.nullcontext
             )
             with access_scope():
                 log_dir = resolve_existing_log_dir(
@@ -6032,7 +6204,11 @@ class ConsoleAgentBridge:
         return self._db.count_subagents_by_conversation(conversation_ids)
 
     def resume_marker_messages(
-        self, conversation_id: str
+        self,
+        conversation_id: str,
+        *,
+        thinking_round_ordinals_by_assistant_message_id: Mapping[str, AbstractSet[int]]
+        | None = None,
     ) -> list[tuple[str | None, list[ConsoleChatMessage]]]:
         """Re-derive transcript TOOL marker messages from ``AgentRunsDB`` for resume.
 
@@ -6085,6 +6261,7 @@ class ConsoleAgentBridge:
             if record["agent_kind"] == AGENT_KIND_PRIMARY
         ]
         records.reverse()  # list_runs is newest-first; markers must read chronologically
+        thinking_rounds_by_owner = thinking_round_ordinals_by_assistant_message_id or {}
         # TASK-1972 review round: ONE conversation-level query, grouped in
         # memory -- the per-run lookup was an N+1 over sqlite on every
         # resume (finding 3).
@@ -6133,23 +6310,20 @@ class ConsoleAgentBridge:
         for record in records:
             block: list[ConsoleChatMessage] = []
             steps = record.get("steps") or []
-            for index, step in enumerate(steps):
+            planning_deriver = _PendingPrimaryPlanningDeriver()
+            actual_thinking_rounds = thinking_rounds_by_owner.get(
+                str(record.get("assistant_message_id") or ""),
+                frozenset(),
+            )
+            for step in steps:
                 kind = str(step.get("kind") or "")
-                # Resume's persisted primary run has no interleaved child
-                # steps. Immediate look-ahead is therefore equivalent to
-                # the live pending-primary state machine above: only a
-                # proving next primary step turns this model round into a
-                # Thinking row; a final model round has no proving successor.
-                if (
-                    kind == STEP_MODEL
-                    and index + 1 < len(steps)
-                    and _step_proves_intermediate_tool_work(
-                        str(steps[index + 1].get("kind") or "")
-                    )
-                ):
-                    block.append(
-                        build_intermediate_thinking_marker(step.get("summary"))
-                    )
+                planning_marker = planning_deriver.observe(
+                    step,
+                    AGENT_KIND_PRIMARY,
+                    actual_thinking_round_ordinals=actual_thinking_rounds,
+                )
+                if planning_marker is not None:
+                    block.append(planning_marker)
                 text = format_agent_step_marker(
                     kind,
                     tool_name=step.get("tool_name"),
@@ -6167,6 +6341,9 @@ class ConsoleAgentBridge:
                                 tool_name=step.get("tool_name"),
                                 result=step.get("result"),
                                 tool_outcome=step.get("tool_outcome"),
+                            ),
+                            activity_round_ordinal=(
+                                planning_deriver.active_round_ordinal
                             ),
                             # AC#5: a resumed marker is as expandable as a
                             # live one -- the step rows carry the full result.
@@ -6431,6 +6608,7 @@ class ConsoleAgentBridge:
         full_output: str | None = None,
         tool_diff: tuple[str, str, str] | None = None,
         activity_presentation: ConsoleActivityPresentation | None = None,
+        activity_round_ordinal: int | None = None,
     ) -> None:
         # Kept raw (no escaping): both consumers render markup-off --
         # console_transcript.py's _message_render_text builds a Content via
@@ -6452,6 +6630,7 @@ class ConsoleAgentBridge:
                 tool_output_full=full_output,
                 tool_diff=tool_diff,
                 activity_presentation=activity_presentation,
+                activity_round_ordinal=activity_round_ordinal,
             )
         except KeyError:
             pass  # session vanished mid-run; the rail still has the live snapshot

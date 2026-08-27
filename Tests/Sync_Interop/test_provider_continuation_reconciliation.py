@@ -120,8 +120,13 @@ def test_state_survives_create_update_delete_and_undelete_projection(
             for entry in entries
             if entry["envelope"]["operation"] == "upsert"
         ]
-        assert projected == [expected_payload] * 3
-        assert entries[2]["envelope"]["base_version"] == upsert_hash
+        assert projected == [expected_payload]
+        delete_envelope = next(
+            entry["envelope"]
+            for entry in entries
+            if entry["envelope"]["operation"] == "delete"
+        )
+        assert delete_envelope["base_version"] == upsert_hash
     finally:
         db.close_connection()
 
@@ -513,8 +518,10 @@ def test_restore_reconciles_committed_delete_after_projection_failure(tmp_path) 
         entries = repo.list_sync_v2_outbox_entries(
             **scope, dataset_id="dataset-1"
         )
-        assert [entry["envelope"]["entity_version"] for entry in entries] == [1, 2]
-        delete_envelope = SyncV2Envelope.model_validate(entries[-1]["envelope"])
+        assert [entry["envelope"]["entity_version"] for entry in entries] == [2]
+        delete_envelope = SyncV2Envelope.model_validate(entries[0]["envelope"])
+        assert delete_envelope.operation == "delete"
+        assert delete_envelope.base_version == first_hash
         assert applier.apply(delete_envelope) == {"status": "applied"}
         stable_key = first_envelope.stable_key
         assert stable_key is not None

@@ -984,11 +984,16 @@ class SyncStateRepository(BaseDB):
         source_entity_id: str,
         source_version: int,
         source_payload_hash: str,
+        supersede_object_history: bool = False,
     ) -> dict[str, Any]:
         """Atomically persist an envelope and its exact source projection receipt."""
+        if type(supersede_object_history) is not bool:
+            raise ValueError("supersede_object_history must be a boolean")
         parsed = self._parse_outbox_envelope(envelope)
         if parsed.dataset_id != dataset_id:
             raise ValueError("outbox envelope dataset_id must match dataset_id")
+        if supersede_object_history and parsed.operation not in {"delete", "tombstone"}:
+            raise ValueError("only a tombstone may supersede object history")
         if (
             parsed.payload_hash != source_payload_hash
             or parsed.object_id != source_entity_id
@@ -1057,6 +1062,22 @@ class SyncStateRepository(BaseDB):
             ).fetchone()
             if row is None or row["client_envelope_id"] != parsed.client_envelope_id:
                 raise RuntimeError("source projection receipt conflict")
+            if supersede_object_history:
+                conn.execute(
+                    """
+                    DELETE FROM sync_v2_local_outbox
+                     WHERE source_scope_key = ? AND dataset_id = ? AND domain = ?
+                       AND client_envelope_id != ?
+                       AND json_extract(envelope, '$.object_id') = ?
+                    """,
+                    (
+                        source_scope_key,
+                        dataset_id,
+                        parsed.domain,
+                        parsed.client_envelope_id,
+                        parsed.object_id,
+                    ),
+                )
             receipt = self._source_projection_receipt_from_row(row)
         return {"outbox_entry": outbox_entry, "receipt": receipt}
 

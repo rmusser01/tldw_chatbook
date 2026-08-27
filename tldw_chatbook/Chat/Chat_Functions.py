@@ -96,6 +96,11 @@ from .provider_continuation import (  # noqa: E402
 from .assistant_generation_state import (  # noqa: E402
     normalize_assistant_generation_state,
 )
+from .thinking_blocks import (  # noqa: E402
+    THINKING_EXPORT_WARNING,
+    normalize_thinking_history_policy,
+    thinking_envelope_to_exchange,
+)
 #
 ####################################################################################################
 #
@@ -2560,7 +2565,7 @@ def save_chat_history(
     start_time = time.time()
     try:
         content, conversation_name = generate_chat_history_content(
-            history, conversation_id, media_content
+            history, conversation_id, media_content, db_instance=db_instance
         )
 
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
@@ -2652,10 +2657,27 @@ def generate_chat_history_content(
     """
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
 
-    # Try to get conversation name from DB if possible
+    # Resolve DB-owned conversation metadata once so policy cannot silently
+    # downgrade when the owning lookup fails.
+    conversation = None
     conversation_name = None
-    if conversation_id:
-        conversation_name = get_conversation_name(conversation_id, db_instance)
+    if conversation_id is not None:
+        if db_instance is None:
+            raise ValueError(
+                "Conversation metadata is unavailable for export."
+            )
+        try:
+            conversation = db_instance.get_conversation_by_id(conversation_id)
+        except Exception:
+            raise ValueError(
+                "Conversation metadata is unavailable for export."
+            ) from None
+        if not conversation:
+            raise ValueError(
+                "Conversation metadata is unavailable for export."
+            )
+        if conversation and conversation.get("title"):
+            conversation_name = conversation["title"]
 
     if not conversation_name:  # Fallback logic
         media_name_extracted = extract_media_name(
@@ -2678,7 +2700,13 @@ def generate_chat_history_content(
         # Assuming 'history' is like chatbot: List[Tuple[Optional[str], Optional[str]]]
     }
 
+    raw_policy = (
+        conversation.get("thinking_history_policy") if conversation else None
+    )
+    chat_data["thinking_history_policy"] = normalize_thinking_history_policy(raw_policy)
+
     contains_private = False
+    contains_thinking = False
     for item in history:  # Iterating through the provided history structure
         if isinstance(item, tuple) and len(item) == 2:  # Expected (user_msg, bot_msg)
             user_msg, bot_msg = item
@@ -2735,9 +2763,20 @@ def generate_chat_history_content(
                 )
             ):
                 raise ValueError("Invalid assistant generation state on export.")
-            projected["assistant_generation_state"] = (
-                generation_state.value if generation_state is not None else None
-            )
+            if raw_state is not None:
+                projected["assistant_generation_state"] = (
+                    generation_state.value if generation_state is not None else None
+                )
+            thinking_value = item.get("thinking_blocks_json")
+            if thinking_value is not None:
+                if item["role"] != "assistant":
+                    raise ValueError("Invalid thinking owner on export.")
+                thinking_payload = thinking_envelope_to_exchange(thinking_value)
+                if thinking_payload is not None:
+                    projected["thinking_blocks"] = thinking_payload
+                    contains_thinking = contains_thinking or bool(
+                        thinking_payload["blocks"]
+                    )
             if item["role"] == "assistant" and private.checkpoint is not None:
                 canonical = dump_provider_continuation_json(private.checkpoint)
                 projected["_private"] = {
@@ -2752,9 +2791,11 @@ def generate_chat_history_content(
         chat_data["private_data_warning"] = (
             "This JSON contains private provider continuation data."
         )
+    if contains_private or contains_thinking:
+        chat_data["sensitive_data_warning"] = THINKING_EXPORT_WARNING
 
     return json.dumps(
-        chat_data, indent=2
+        chat_data, indent=2, ensure_ascii=False
     ), conversation_name  # Return the derived/fetched name
 
 

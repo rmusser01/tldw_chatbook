@@ -6,15 +6,22 @@ from dataclasses import FrozenInstanceError
 import pytest
 
 from tldw_chatbook.Chat.console_chat_models import (
+    ConsoleActivityPresentation,
     ConsoleChatMessage,
     ConsoleMessageRole,
     ConsoleMessageStatus,
 )
 from tldw_chatbook.Chat.console_turn_grouping import (
     ConsoleAssistantTurn,
+    ConsoleThinkingActivityRef,
     ConsoleTranscriptUnit,
     group_console_transcript_messages,
+    ordered_assistant_activities,
     visual_messages,
+)
+from tldw_chatbook.Chat.thinking_blocks import (
+    DisplayableThinkingBlock,
+    ThinkingEnvelope,
 )
 
 
@@ -261,3 +268,173 @@ def test_projection_value_objects_are_frozen() -> None:
         turn.activities = ()  # type: ignore[misc]
     with pytest.raises(FrozenInstanceError):
         unit.assistant_turn = None  # type: ignore[misc]
+
+
+def _thinking_block(block_id: str, round_ordinal: int) -> DisplayableThinkingBlock:
+    return DisplayableThinkingBlock(
+        block_id=block_id,
+        round_ordinal=round_ordinal,
+        provider="local_vllm",
+        model="thinking-model",
+        protocol="openai_chat",
+        source_format="start_anchored_think",
+        status="complete",
+        text=f"thinking round {round_ordinal}",
+    )
+
+
+def _activity(
+    message_id: str,
+    kind: str,
+    label: str,
+    *,
+    round_ordinal: int | None = None,
+) -> ConsoleChatMessage:
+    return ConsoleChatMessage(
+        role=ConsoleMessageRole.TOOL,
+        content=label,
+        id=message_id,
+        activity_presentation=ConsoleActivityPresentation(
+            kind,
+            label,
+            "done",  # type: ignore[arg-type]
+        ),
+        activity_round_ordinal=round_ordinal,
+    )
+
+
+def _ordered_ids(
+    activities: tuple[ConsoleChatMessage | ConsoleThinkingActivityRef, ...],
+) -> list[str]:
+    return [
+        activity.activity_id
+        if isinstance(activity, ConsoleThinkingActivityRef)
+        else activity.id
+        for activity in activities
+    ]
+
+
+def test_ordered_activities_place_each_block_before_first_activity_in_round() -> None:
+    assistant = _message(
+        ConsoleMessageRole.ASSISTANT,
+        "Answer",
+        message_id="a1",
+    )
+    assistant.thinking = ThinkingEnvelope(
+        (_thinking_block("block-0", 0), _thinking_block("block-1", 1))
+    )
+    planning_0 = _activity("planning-0", "thinking", "Thinking", round_ordinal=0)
+    tool_0 = _activity("tool-0", "tool", "fs_read", round_ordinal=0)
+    planning_1 = _activity("planning-1", "thinking", "Thinking", round_ordinal=1)
+    tool_1 = _activity("tool-1", "tool", "fs_write", round_ordinal=1)
+
+    ordered = ordered_assistant_activities(
+        ConsoleAssistantTurn(
+            assistant,
+            (planning_0, tool_0, planning_1, tool_1),
+        ),
+    )
+
+    assert [
+        activity.block_id
+        if isinstance(activity, ConsoleThinkingActivityRef)
+        else activity.id
+        for activity in ordered
+    ] == [
+        "block-0",
+        "planning-0",
+        "tool-0",
+        "block-1",
+        "planning-1",
+        "tool-1",
+    ]
+
+
+def test_ordered_activities_never_infer_rounds_from_activity_positions() -> None:
+    assistant = _message(
+        ConsoleMessageRole.ASSISTANT,
+        "Answer",
+        message_id="a1",
+    )
+    assistant.thinking = ThinkingEnvelope(
+        (_thinking_block("block-0", 0), _thinking_block("block-1", 1))
+    )
+    legacy_marker = _activity("planning-0", "thinking", "Thinking")
+    tool = _activity("tool-0", "tool", "fs_read")
+
+    ordered = ordered_assistant_activities(
+        ConsoleAssistantTurn(assistant, (legacy_marker, tool)),
+    )
+
+    assert [
+        activity.block_id
+        if isinstance(activity, ConsoleThinkingActivityRef)
+        else activity.id
+        for activity in ordered
+    ] == ["block-0", "block-1", "planning-0", "tool-0"]
+
+
+def test_ordered_activities_without_evidence_preserve_tool_identity_and_order() -> None:
+    assistant = _message(
+        ConsoleMessageRole.ASSISTANT,
+        "Answer",
+        message_id="a1",
+    )
+    first = _activity("tool-0", "tool", "fs_read")
+    second = _activity("tool-1", "tool", "fs_write")
+
+    ordered = ordered_assistant_activities(
+        ConsoleAssistantTurn(assistant, (first, second)),
+    )
+
+    assert ordered == (first, second)
+    assert _ordered_ids(ordered) == ["tool-0", "tool-1"]
+
+
+def test_explicit_round_ownership_handles_multirow_skips_and_trailing_rows() -> None:
+    assistant = _message(
+        ConsoleMessageRole.ASSISTANT,
+        "Answer",
+        message_id="a1",
+    )
+    assistant.thinking = ThinkingEnvelope(
+        (
+            _thinking_block("block-0", 0),
+            _thinking_block("block-2", 2),
+            _thinking_block("block-3", 3),
+        )
+    )
+    round_0_first = _activity("round-0-first", "tool", "fs_read", round_ordinal=0)
+    round_0_second = _activity("round-0-second", "tool", "fs_grep", round_ordinal=0)
+    round_1_without_thinking = _activity("round-1", "tool", "fs_list", round_ordinal=1)
+    round_2 = _activity("round-2", "tool", "fs_write", round_ordinal=2)
+    post_run = _activity("post-run", "changes", "Changes")
+
+    ordered = ordered_assistant_activities(
+        ConsoleAssistantTurn(
+            assistant,
+            (
+                round_0_first,
+                round_0_second,
+                round_1_without_thinking,
+                round_2,
+                post_run,
+            ),
+        ),
+    )
+
+    assert [
+        activity.block_id
+        if isinstance(activity, ConsoleThinkingActivityRef)
+        else activity.id
+        for activity in ordered
+    ] == [
+        "block-0",
+        "round-0-first",
+        "round-0-second",
+        "round-1",
+        "block-2",
+        "round-2",
+        "block-3",
+        "post-run",
+    ]

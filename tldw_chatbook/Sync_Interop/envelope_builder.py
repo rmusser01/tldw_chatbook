@@ -17,7 +17,10 @@ from tldw_chatbook.Chat.assistant_generation_state import (
     normalize_assistant_generation_state,
 )
 from tldw_chatbook.Sync_Interop.crypto import encrypt_sync_payload
-from tldw_chatbook.Sync_Interop.hashing import canonical_payload_hash
+from tldw_chatbook.Sync_Interop.hashing import (
+    canonical_payload_hash,
+    canonical_thinking_blocks_json,
+)
 
 if TYPE_CHECKING:
     from tldw_chatbook.tldw_api import SyncV2Envelope
@@ -182,6 +185,7 @@ class SyncEnvelopeBuilder:
         variant_count: int | None = None,
         selected_variant_id: str | None = None,
         provider_continuation_json: str | None = None,
+        thinking_blocks_json: str | None = None,
         assistant_generation_state: str | None = None,
         base_version: str | int | None = None,
         entity_version: str | int | None = None,
@@ -200,6 +204,7 @@ class SyncEnvelopeBuilder:
             variant_count: Optional number of available variants for the message.
             selected_variant_id: Optional selected variant identifier.
             provider_continuation_json: Optional canonical private continuation.
+            thinking_blocks_json: Optional canonical displayable/proprietary evidence.
             assistant_generation_state: Portable assistant generation lifecycle state.
             base_version: Optional previous payload hash for versioned updates.
             entity_version: Optional explicit entity version after this mutation.
@@ -233,6 +238,8 @@ class SyncEnvelopeBuilder:
             checkpoint = parse_provider_continuation_json(provider_continuation_json)
         if assistant_generation_state is not None and role != "assistant":
             raise ValueError("Invalid assistant generation state.")
+        if thinking_blocks_json is not None and role != "assistant":
+            raise ValueError("Invalid thinking data.")
         try:
             normalized_state = normalize_assistant_generation_state(
                 role=role,
@@ -243,9 +250,8 @@ class SyncEnvelopeBuilder:
             )
         except ValueError:
             raise ValueError("Invalid assistant generation state.") from None
-        if (
-            normalized_state is AssistantGenerationState.CONTINUATION_ACTIVE
-            and (checkpoint is None or checkpoint.state != "active")
+        if normalized_state is AssistantGenerationState.CONTINUATION_ACTIVE and (
+            checkpoint is None or checkpoint.state != "active"
         ):
             raise ValueError("Invalid assistant generation state.")
         payload = {
@@ -258,6 +264,10 @@ class SyncEnvelopeBuilder:
         if checkpoint is not None:
             payload["provider_continuation_json"] = dump_provider_continuation_json(
                 checkpoint
+            )
+        if thinking_blocks_json is not None:
+            payload["thinking_blocks_json"] = canonical_thinking_blocks_json(
+                thinking_blocks_json
             )
         return self._encrypted_envelope(
             domain="chat",

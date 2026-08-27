@@ -36,6 +36,12 @@ from tldw_chatbook.Chat.provider_continuation import (
     parse_provider_continuation_json,
     read_provider_continuation_json,
 )
+from tldw_chatbook.Chat.thinking_blocks import (
+    ThinkingEnvelopeValidationError,
+    dump_thinking_blocks_json,
+    parse_thinking_blocks_json,
+    read_thinking_blocks_json,
+)
 from tldw_chatbook.Chat.console_transaction_contribution import (
     _scoped_console_transaction_writer,
 )
@@ -63,7 +69,8 @@ _OWNER_SELECT = """
            assistant_message.version AS current_assistant_version,
            assistant_message.deleted AS assistant_deleted,
            assistant_message.assistant_generation_state AS assistant_state,
-           assistant_message.provider_continuation_json AS provider_continuation_json
+           assistant_message.provider_continuation_json AS provider_continuation_json,
+           assistant_message.thinking_blocks_json AS thinking_blocks_json
       FROM console_dispatch_checkpoints AS checkpoint
       JOIN conversations AS conversation
         ON conversation.id = checkpoint.conversation_id
@@ -179,11 +186,7 @@ class ConsoleDispatchRepository:
                 message_id, position, data, mime_type, display_name
             ) VALUES (?, ?, ?, ?, ?)
             """,
-            [
-                (acceptance.user_message_id, *row)
-                for row in attachments
-                if row[0] >= 1
-            ],
+            [(acceptance.user_message_id, *row) for row in attachments if row[0] >= 1],
         )
         cursor.execute(
             """
@@ -357,9 +360,7 @@ class ConsoleDispatchRepository:
                 return outcome
             outcome = self._reconcile_pass(conversation_id, allow_writes=True)
             if isinstance(outcome, _ReconcileWriteNeeded):  # pragma: no cover
-                raise sqlite3.IntegrityError(
-                    "Reconcile write pass refused to write."
-                )
+                raise sqlite3.IntegrityError("Reconcile write pass refused to write.")
             return outcome
         except sqlite3.Error:
             return self._quarantined(
@@ -765,6 +766,7 @@ class ConsoleDispatchRepository:
             payload_hash = self._message_payload_hash(
                 content=updated_row["assistant_content"],
                 state=transition.new_state.value,
+                thinking_blocks_json=updated_row["thinking_blocks_json"],
             )
             return ConsoleDispatchWriteResult(
                 ConsoleDispatchResultStatus.COMMITTED,
@@ -818,6 +820,16 @@ class ConsoleDispatchRepository:
                 )
         terminal_continuation = None
         canonical_continuation = None
+        canonical_thinking = None
+        if settlement.thinking_blocks_json is not None:
+            try:
+                canonical_thinking = dump_thinking_blocks_json(
+                    parse_thinking_blocks_json(settlement.thinking_blocks_json)
+                )
+            except ThinkingEnvelopeValidationError as exc:
+                raise ConsoleDispatchCheckpointValidationError(
+                    "Invalid terminal thinking."
+                ) from exc
         if settlement.provider_continuation_json is not None:
             try:
                 terminal_continuation = parse_provider_continuation_json(
@@ -845,8 +857,11 @@ class ConsoleDispatchRepository:
                 return self._write_status(ConsoleDispatchResultStatus.NOT_FOUND)
             if not self._matches_settlement(row, settlement):
                 return self._write_status(ConsoleDispatchResultStatus.CONFLICT)
-            if terminal_continuation is not None and not self._continuation_matches_destination(
-                row, terminal_continuation
+            if (
+                terminal_continuation is not None
+                and not self._continuation_matches_destination(
+                    row, terminal_continuation
+                )
             ):
                 return self._write_status(ConsoleDispatchResultStatus.CONFLICT)
             next_message_version = settlement.expected_assistant_message_version + 1
@@ -855,7 +870,7 @@ class ConsoleDispatchRepository:
                 """
                 UPDATE messages
                    SET content = ?, metadata_json = ?, usage_json = ?,
-                       provider_continuation_json = ?,
+                       provider_continuation_json = ?, thinking_blocks_json = ?,
                        assistant_generation_state = ?, version = ?,
                        last_modified = ?, client_id = ?
                  WHERE id = ? AND conversation_id = ? AND role = 'assistant'
@@ -866,6 +881,7 @@ class ConsoleDispatchRepository:
                     settlement.metadata_json,
                     settlement.usage_json,
                     canonical_continuation,
+                    canonical_thinking,
                     settlement.terminal_state,
                     next_message_version,
                     now,
@@ -905,6 +921,7 @@ class ConsoleDispatchRepository:
                     content=settlement.content,
                     state=settlement.terminal_state,
                     provider_continuation_json=canonical_continuation,
+                    thinking_blocks_json=canonical_thinking,
                 ),
             )
 
@@ -994,6 +1011,7 @@ class ConsoleDispatchRepository:
                     content=content,
                     state="continuation_active",
                     provider_continuation_json=canonical,
+                    thinking_blocks_json=row["thinking_blocks_json"],
                 ),
             )
 
@@ -1016,9 +1034,7 @@ class ConsoleDispatchRepository:
                 "Invalid continuation normalization."
             )
         try:
-            continuation = parse_provider_continuation_json(
-                provider_continuation_json
-            )
+            continuation = parse_provider_continuation_json(provider_continuation_json)
             canonical = dump_provider_continuation_json(continuation)
         except ContinuationValidationError as exc:
             raise ConsoleDispatchCheckpointValidationError(
@@ -1249,6 +1265,7 @@ class ConsoleDispatchRepository:
         row: sqlite3.Row,
     ) -> tuple[ConsoleDispatchCheckpoint | None, str | None]:
         try:
+            thinking = read_thinking_blocks_json(row["thinking_blocks_json"])
             if (
                 row["schema_version"] != 1
                 or row["conversation_deleted"] != 0
@@ -1262,6 +1279,8 @@ class ConsoleDispatchRepository:
                 or row["current_assistant_version"] != row["assistant_message_version"]
                 or row["assistant_state"] != row["state"]
                 or row["provider_continuation_json"] is not None
+                or thinking.warning is not None
+                or not thinking.generation_actions_enabled
                 or not ConsoleDispatchRepository._positive_versions(
                     row["checkpoint_revision"],
                     row["user_message_version"],
@@ -1402,6 +1421,7 @@ class ConsoleDispatchRepository:
         content: str,
         state: str,
         provider_continuation_json: str | None = None,
+        thinking_blocks_json: str | None = None,
     ) -> str:
         payload: dict[str, object] = {
             "assistant_generation_state": state,
@@ -1410,4 +1430,6 @@ class ConsoleDispatchRepository:
         }
         if provider_continuation_json is not None:
             payload["provider_continuation_json"] = provider_continuation_json
+        if thinking_blocks_json is not None:
+            payload["thinking_blocks_json"] = thinking_blocks_json
         return canonical_payload_hash(payload)
