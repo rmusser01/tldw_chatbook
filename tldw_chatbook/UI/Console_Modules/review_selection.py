@@ -16,11 +16,13 @@ from datetime import datetime
 from typing import Any
 
 from loguru import logger
+from pydantic import BaseModel, ConfigDict, Field, ValidationError, field_validator
 from rich.markup import escape as escape_markup
 
 from tldw_chatbook.Chat.citation_trace_repository import ActiveCitationTraceState
 from tldw_chatbook.Chat.provider_usage import ProviderUsage
 from tldw_chatbook.Chat.trajectory import TrajectorySnapshot, derive_trajectory
+from tldw_chatbook.Widgets.Console.console_selection import SELECTION_QUOTE_CAP
 
 
 _FEEDBACK_MESSAGE_HEADERS = {
@@ -28,6 +30,43 @@ _FEEDBACK_MESSAGE_HEADERS = {
     "lgm": "[LGTM]",
     "comment": "[Comment]",
 }
+
+
+class _SelectionFeedbackRequest(BaseModel):
+    """Validated boundary values for one selection-feedback request."""
+
+    model_config = ConfigDict(extra="forbid", frozen=True, strict=True)
+
+    action: str
+    quote: str = Field(min_length=1, max_length=SELECTION_QUOTE_CAP)
+    anchor_message_id: str | None = Field(default=None, min_length=1, max_length=255)
+
+    @field_validator("action")
+    @classmethod
+    def _validate_action(cls, value: str) -> str:
+        if value not in _FEEDBACK_MESSAGE_HEADERS:
+            raise ValueError("unsupported feedback action")
+        return value
+
+    @field_validator("quote")
+    @classmethod
+    def _validate_quote(cls, value: str) -> str:
+        from tldw_chatbook.Utils.input_validation import validate_text_input
+
+        if not value.strip() or not validate_text_input(
+            value, max_length=SELECTION_QUOTE_CAP, allow_html=True
+        ):
+            raise ValueError("invalid feedback quote")
+        return value
+
+    @field_validator("anchor_message_id")
+    @classmethod
+    def _validate_anchor_message_id(cls, value: str | None) -> str | None:
+        from tldw_chatbook.Utils.input_validation import validate_text_input
+
+        if value is not None and not validate_text_input(value, max_length=255):
+            raise ValueError("invalid feedback anchor")
+        return value
 
 
 @dataclass(frozen=True, slots=True)
@@ -270,6 +309,25 @@ class ConsoleReviewSelectionController:
         present_trajectory: Callable[..., None],
         notify: Callable[..., None],
     ) -> None:
+        """Initialize the controller from explicit, late-bound collaborators.
+
+        Args:
+            store_accessor: Return the active Console chat store.
+            agent_conversation_id_accessor: Return the active run conversation ID.
+            change_review_provider_accessor: Build review operations for a conversation.
+            run_active_accessor: Report whether any Console run is active.
+            run_active_for_root: Report whether a workspace root has an active run.
+            workspace_roots_accessor: Return the active turn's workspace roots.
+            agent_runs_db_accessor: Return the optional agent-run database.
+            capture_policy_bindings_accessor: Resolve trajectory capture bindings.
+            native_messages_accessor: Return current native Console messages.
+            run_worker: Schedule a Textual worker.
+            show_feedback_comment: Present the feedback-comment modal.
+            dispatch_prompt: Dispatch composed feedback through the prompt queue.
+            marshal_to_ui: Marshal a callback onto the UI thread.
+            present_trajectory: Present a completed trajectory launch.
+            notify: Show a user-facing Console notification.
+        """
         self._store_accessor = store_accessor
         self._agent_conversation_id_accessor = agent_conversation_id_accessor
         self._change_review_provider_accessor = change_review_provider_accessor
@@ -367,7 +425,11 @@ class ConsoleReviewSelectionController:
         self.annotation_previews = previews
 
     def request_selection_note(self, quote: str) -> None:
-        """Schedule selection-note creation for non-blank input."""
+        """Schedule selection-note creation for non-blank input.
+
+        Args:
+            quote: Capped transcript selection to persist as a note.
+        """
         if not quote.strip():
             return
         self._run_worker(
@@ -379,9 +441,6 @@ class ConsoleReviewSelectionController:
     async def _create_console_selection_note(self, quote: str) -> None:
         """Derive note provenance and persist it off-thread."""
         from tldw_chatbook.Utils.input_validation import validate_text_input
-        from tldw_chatbook.Widgets.Console.console_selection import (
-            SELECTION_QUOTE_CAP,
-        )
 
         if not validate_text_input(
             quote, max_length=SELECTION_QUOTE_CAP + 64, allow_html=True
@@ -420,12 +479,35 @@ class ConsoleReviewSelectionController:
     def request_selection_feedback(
         self, action: str, quote: str, anchor_message_id: str | None
     ) -> None:
-        """Schedule one feedback flow for a non-blank transcript selection."""
-        if not quote.strip() or self.selection_feedback_inflight:
+        """Validate and schedule one transcript-selection feedback flow.
+
+        Args:
+            action: Supported feedback action identifier.
+            quote: Capped transcript selection included in the feedback.
+            anchor_message_id: Optional native message ID for durable attribution.
+        """
+        if self.selection_feedback_inflight:
+            return
+        if isinstance(quote, str) and not quote.strip():
+            return
+        try:
+            request = _SelectionFeedbackRequest(
+                action=action,
+                quote=quote,
+                anchor_message_id=anchor_message_id,
+            )
+        except ValidationError:
+            self._notify(
+                "Selection feedback is invalid or too large.", severity="warning"
+            )
             return
         self.selection_feedback_inflight = True
         self._run_worker(
-            self._console_selection_feedback_flow(action, quote, anchor_message_id),
+            self._console_selection_feedback_flow(
+                request.action,
+                request.quote,
+                request.anchor_message_id,
+            ),
             group="console-selection-feedback",
         )
 

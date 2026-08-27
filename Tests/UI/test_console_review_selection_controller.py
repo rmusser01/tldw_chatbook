@@ -13,6 +13,7 @@ from tldw_chatbook.UI.Console_Modules import review_selection as review_module
 from tldw_chatbook.UI.Console_Modules.review_selection import (
     ConsoleReviewSelectionController,
 )
+from tldw_chatbook.Widgets.Console.console_selection import SELECTION_QUOTE_CAP
 
 
 class _EventLoopOnlyMap(dict[str, tuple[str, ...]]):
@@ -89,6 +90,34 @@ def test_change_review_provider_uses_live_run_probes() -> None:
     roots.add("/workspace")
     assert provider.run_active() is True
     assert provider.run_active_for_root("/workspace") is True
+
+
+@pytest.mark.parametrize(
+    ("action", "quote", "anchor_message_id"),
+    [
+        ("unsupported", "selected", "message-1"),
+        ("comment", 42, "message-1"),
+        ("comment", "x" * (SELECTION_QUOTE_CAP + 1), "message-1"),
+        ("comment", "selected", "m" * 256),
+    ],
+)
+def test_feedback_request_rejects_invalid_boundary_values(
+    action: str, quote: object, anchor_message_id: str
+) -> None:
+    scheduled: list[tuple[tuple[Any, ...], dict[str, Any]]] = []
+    notifications: list[tuple[tuple[Any, ...], dict[str, Any]]] = []
+    controller = _controller(
+        run_worker=lambda *args, **kwargs: scheduled.append((args, kwargs)),
+        notify=lambda *args, **kwargs: notifications.append((args, kwargs)),
+    )
+
+    controller.request_selection_feedback(action, quote, anchor_message_id)  # type: ignore[arg-type]
+
+    assert scheduled == []
+    assert controller.selection_feedback_inflight is False
+    assert notifications == [
+        (("Selection feedback is invalid or too large.",), {"severity": "warning"})
+    ]
 
 
 @pytest.mark.asyncio
