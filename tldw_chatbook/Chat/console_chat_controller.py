@@ -7103,6 +7103,20 @@ class ConsoleChatController:
                 self.store.publish_durable_recovery_owner(
                     session_id,
                     commit,
+                    # TASK-22617: deliberately None, established by test rather
+                    # than assumption -- `continuation.terminal_citation_
+                    # finalizer` IS in scope here, and this is not the
+                    # TASK-22302 data-loss class. The recovery gate above makes
+                    # this publish reachable only BEFORE `durable_owner_
+                    # publication` (that effect registers the dispatch
+                    # recovery), so no finalizer has ever been armed when this
+                    # runs; the continuation survives the failure, and the
+                    # resume's owner publication forwards its finalizer, so the
+                    # trace still persists on retry. Forwarding it HERE would
+                    # arm a deferred finalizer on a turn whose delivery is
+                    # unknown -- provenance worse than absent. Pinned by the
+                    # TASK-22617 tests in
+                    # test_console_terminal_citation_persistence.py.
                     terminal_citation_finalizer=None,
                     defer_terminal_persistence=(
                         continuation.citation_repair_session is not None
