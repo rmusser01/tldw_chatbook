@@ -1316,15 +1316,37 @@ async def test_direct_non_success_does_not_seal_and_clears_terminal_state(
     )
 
     if raises:
-        with pytest.raises(asyncio.CancelledError):
-            await controller.submit_draft("question")
+        # TASK-22301: on the DURABLE path a stream failure no longer propagates.
+        # The turn was already committed, so `resume_durable_postcommit` retains
+        # it for recovery instead of losing it -- which is the whole point of a
+        # durable turn. The old `pytest.raises(CancelledError)` was correct for
+        # an EPHEMERAL session, where there is nothing to retain and the error
+        # is all that is left. The subject of this test is unchanged and still
+        # asserted below: a non-success must not seal, and must clear terminal
+        # state.
+        outcome = await controller.submit_draft("question")
+        assert outcome.terminal_status is ConsoleRunStatus.BLOCKED
+        assert outcome.visible_copy == "Accepted turn is retained for recovery."
     else:
         await controller.submit_draft("question")
 
     assert _citation_calls(persistence) == []
     assert builder.is_sealed is False
     assert builder.answer_attempts == ()
-    _assert_no_terminal_state(store)
+    if raises:
+        # A RETAINED turn keeps its terminal citation finalizer armed, because
+        # the recovery that is supposed to resume it still needs one. Asserting
+        # it is empty here would demand that recovery lose the very thing it
+        # would resume with. Note the two non-retained failures below DO clear
+        # it, which is what makes this conditional meaningful rather than a
+        # blanket exemption -- a finalizer left behind by a turn that was NOT
+        # retained is still caught.
+        assert store._terminal_citation_finalizers != {}, (
+            "a turn retained for recovery dropped the finalizer that recovery "
+            "would need"
+        )
+    else:
+        _assert_no_terminal_state(store)
 
 
 @pytest.mark.asyncio
