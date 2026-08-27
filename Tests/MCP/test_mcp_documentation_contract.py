@@ -42,6 +42,13 @@ LOCAL_TOOL_PROVIDER = REPO_ROOT / "tldw_chatbook" / "Agents" / "local_tool_provi
 MCP_SERVER = REPO_ROOT / "tldw_chatbook" / "MCP" / "server.py"
 MCP_WORKBENCH = REPO_ROOT / "tldw_chatbook" / "UI" / "MCP_Modules" / "mcp_workbench.py"
 WATCHLISTS_TOOL_DOCUMENTS = (CONSOLE_AGENT_TOOLS_DOCUMENT, USER_GUIDE_DOCUMENT)
+WATCHLISTS_REMEDIATION_DESIGN = (
+    REPO_ROOT
+    / "Docs"
+    / "superpowers"
+    / "specs"
+    / "2026-08-26-console-driven-watchlists-workflow-uat-remediation-design.md"
+)
 LOCAL_TOOL_COPY_SURFACES = (
     CONFIG_TEMPLATE,
     BUILTIN_TOOL_GATE,
@@ -405,12 +412,22 @@ def test_watchlists_tools_document_search_evidence_and_cursor_semantics() -> Non
             "`last_checked` and `last_successful_check` remain separate",
             "For “all,” follow `next_cursor` until `has_more` is `false`",
             "Continuation excludes later inserts but is not snapshot isolation",
+            "casefolded_name_prefix_asc_name_prefix_asc_id_asc",
+            "first 96 Unicode characters",
             "server Watchlists search is not yet supported",
             "`status` is `unsupported`",
             "`retryable` is `false`",
             "`message` is exactly `server Watchlists search is not supported; switch Watchlists to Local before retrying`",
         ):
             assert contract in normalized, (path, contract)
+
+
+def test_watchlists_design_pins_bounded_name_cursor_ordering() -> None:
+    normalized = " ".join(
+        WATCHLISTS_REMEDIATION_DESIGN.read_text(encoding="utf-8").split()
+    )
+    assert "casefolded_name_prefix_asc_name_prefix_asc_id_asc" in normalized
+    assert "first 96 Unicode characters" in normalized
 
 
 def test_watchlists_tools_document_privacy_and_external_mcp_permission() -> None:
@@ -428,6 +445,16 @@ def test_watchlists_tools_document_privacy_and_external_mcp_permission() -> None
             "article and briefing content remains Console-only",
         ):
             assert contract in normalized, (path, contract)
+
+
+def test_watchlists_operations_limit_is_documented_as_one_combined_page() -> None:
+    for path in WATCHLISTS_TOOL_DOCUMENTS:
+        normalized = " ".join(path.read_text(encoding="utf-8").split())
+        start = normalized.index("#### `watchlists_get_operations_status`")
+        end = normalized.index("#### `watchlists_get_operation_status`", start)
+        section = normalized[start:end]
+        assert "combined operation page" in section, path
+        assert "per receipt kind" not in section, path
 
 
 def test_watchlists_documents_pin_external_receipts_and_console_content() -> None:

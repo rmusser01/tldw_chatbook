@@ -51,6 +51,7 @@ if TYPE_CHECKING:
 
 
 _CURRENT_SCHEMA_VERSION = 2
+_AGENT_NAME_ORDER_PREFIX_CHARS = 96
 
 INTERRUPTED_RUN_ERROR = (
     "Interrupted: the application stopped before this run finished."
@@ -3684,13 +3685,13 @@ class SubscriptionsDB(BaseDB):
         is_paused: Optional[bool] = None,
         watchlist_id: Optional[int] = None,
         limit: int = 10,
-        after_name_casefold: Optional[str] = None,
-        after_name: Optional[str] = None,
+        after_name_casefold_prefix: Optional[str] = None,
+        after_name_prefix: Optional[str] = None,
         after_id: Optional[int] = None,
     ) -> Dict[str, Any]:
         """Return one stable, allowlisted source-metadata page."""
         self._validate_agent_page(limit)
-        cursor_values = (after_name_casefold, after_name, after_id)
+        cursor_values = (after_name_casefold_prefix, after_name_prefix, after_id)
         if any(value is not None for value in cursor_values) and any(
             value is None for value in cursor_values
         ):
@@ -3719,18 +3720,24 @@ class SubscriptionsDB(BaseDB):
             params.append(watchlist_id)
         if after_id is not None:
             predicates.append(
-                "s.id != ? AND (unicode_casefold(s.name) > ? "
-                "OR (unicode_casefold(s.name) = ? AND s.name > ?) "
-                "OR (unicode_casefold(s.name) = ? AND s.name = ? AND s.id > ?))"
+                f"s.id != ? AND (substr(unicode_casefold(s.name), 1, "
+                f"{_AGENT_NAME_ORDER_PREFIX_CHARS}) > ? OR "
+                f"(substr(unicode_casefold(s.name), 1, "
+                f"{_AGENT_NAME_ORDER_PREFIX_CHARS}) = ? "
+                f"AND substr(s.name, 1, {_AGENT_NAME_ORDER_PREFIX_CHARS}) > ?) "
+                f"OR (substr(unicode_casefold(s.name), 1, "
+                f"{_AGENT_NAME_ORDER_PREFIX_CHARS}) = ? "
+                f"AND substr(s.name, 1, {_AGENT_NAME_ORDER_PREFIX_CHARS}) = ? "
+                "AND s.id > ?))"
             )
             params.extend(
                 (
                     after_id,
-                    after_name_casefold,
-                    after_name_casefold,
-                    after_name,
-                    after_name_casefold,
-                    after_name,
+                    after_name_casefold_prefix,
+                    after_name_casefold_prefix,
+                    after_name_prefix,
+                    after_name_casefold_prefix,
+                    after_name_prefix,
                     after_id,
                 )
             )
@@ -3741,31 +3748,36 @@ class SubscriptionsDB(BaseDB):
                 SELECT s.id, s.name, s.type, s.source, s.is_active, s.is_paused,
                        s.check_frequency, s.last_checked,
                        s.last_successful_check, s.consecutive_failures,
-                       s.created_at, s.updated_at
+                       s.created_at, s.updated_at,
+                       substr(unicode_casefold(s.name), 1,
+                              {_AGENT_NAME_ORDER_PREFIX_CHARS})
+                           AS name_casefold_prefix,
+                       substr(s.name, 1, {_AGENT_NAME_ORDER_PREFIX_CHARS})
+                           AS name_prefix
                 FROM subscriptions s
                 {where}
-                ORDER BY unicode_casefold(s.name), s.name, s.id
+                ORDER BY name_casefold_prefix, name_prefix, s.id
                 LIMIT ?
                 """,
                 (*params, limit + 1),
             ).fetchall()
-        items = [dict(row) for row in rows[:limit]]
-        for item in items:
-            item["name_casefold"] = str(item["name"]).casefold()
-        return {"items": items, "has_more": len(rows) > limit}
+        return {
+            "items": [dict(row) for row in rows[:limit]],
+            "has_more": len(rows) > limit,
+        }
 
     def list_collections_for_agent(
         self,
         *,
         name_query: Optional[str] = None,
         limit: int = 10,
-        after_name_casefold: Optional[str] = None,
-        after_name: Optional[str] = None,
+        after_name_casefold_prefix: Optional[str] = None,
+        after_name_prefix: Optional[str] = None,
         after_id: Optional[int] = None,
     ) -> Dict[str, Any]:
         """Return one stable, allowlisted collection-metadata page."""
         self._validate_agent_page(limit)
-        cursor_values = (after_name_casefold, after_name, after_id)
+        cursor_values = (after_name_casefold_prefix, after_name_prefix, after_id)
         if any(value is not None for value in cursor_values) and any(
             value is None for value in cursor_values
         ):
@@ -3779,18 +3791,24 @@ class SubscriptionsDB(BaseDB):
             params.append(name_query)
         if after_id is not None:
             predicates.append(
-                "w.id != ? AND (unicode_casefold(w.name) > ? "
-                "OR (unicode_casefold(w.name) = ? AND w.name > ?) "
-                "OR (unicode_casefold(w.name) = ? AND w.name = ? AND w.id > ?))"
+                f"w.id != ? AND (substr(unicode_casefold(w.name), 1, "
+                f"{_AGENT_NAME_ORDER_PREFIX_CHARS}) > ? OR "
+                f"(substr(unicode_casefold(w.name), 1, "
+                f"{_AGENT_NAME_ORDER_PREFIX_CHARS}) = ? "
+                f"AND substr(w.name, 1, {_AGENT_NAME_ORDER_PREFIX_CHARS}) > ?) "
+                f"OR (substr(unicode_casefold(w.name), 1, "
+                f"{_AGENT_NAME_ORDER_PREFIX_CHARS}) = ? "
+                f"AND substr(w.name, 1, {_AGENT_NAME_ORDER_PREFIX_CHARS}) = ? "
+                "AND w.id > ?))"
             )
             params.extend(
                 (
                     after_id,
-                    after_name_casefold,
-                    after_name_casefold,
-                    after_name,
-                    after_name_casefold,
-                    after_name,
+                    after_name_casefold_prefix,
+                    after_name_casefold_prefix,
+                    after_name_prefix,
+                    after_name_casefold_prefix,
+                    after_name_prefix,
                     after_id,
                 )
             )
@@ -3801,6 +3819,11 @@ class SubscriptionsDB(BaseDB):
                 SELECT w.id, w.name, w.is_active, w.briefing_selection_mode,
                        w.default_briefing_preset_id, p.name AS default_preset_name,
                        w.briefing_cadence_seconds, w.created_at, w.updated_at,
+                       substr(unicode_casefold(w.name), 1,
+                              {_AGENT_NAME_ORDER_PREFIX_CHARS})
+                           AS name_casefold_prefix,
+                       substr(w.name, 1, {_AGENT_NAME_ORDER_PREFIX_CHARS})
+                           AS name_prefix,
                        COUNT(ws.subscription_id) AS source_count,
                        (SELECT b.created_at FROM briefings b
                         WHERE b.watchlist_id = w.id
@@ -3824,15 +3847,15 @@ class SubscriptionsDB(BaseDB):
                        ON p.id = w.default_briefing_preset_id
                 {where}
                 GROUP BY w.id
-                ORDER BY unicode_casefold(w.name), w.name, w.id
+                ORDER BY name_casefold_prefix, name_prefix, w.id
                 LIMIT ?
                 """,
                 (*params, limit + 1),
             ).fetchall()
-        items = [dict(row) for row in rows[:limit]]
-        for item in items:
-            item["name_casefold"] = str(item["name"]).casefold()
-        return {"items": items, "has_more": len(rows) > limit}
+        return {
+            "items": [dict(row) for row in rows[:limit]],
+            "has_more": len(rows) > limit,
+        }
 
     @staticmethod
     def _briefing_agent_columns() -> str:

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import base64
+import hashlib
 import json
 import logging
 import sqlite3
@@ -1576,8 +1577,8 @@ def test_list_sources_and_collections_are_bounded_redacted_and_filter_bound(
     first = _payload(first_raw)
     cursor_position = _decode_cursor(first["next_cursor"])["position"]
     assert cursor_position == {
-        "name_casefold": "alpha",
-        "name": "Alpha",
+        "name_casefold_prefix": "alpha",
+        "name_prefix": "Alpha",
         "id": int(first["sources"][0]["id"].rsplit(":", 1)[1]),
     }
     collections = _payload(service.list_collections({"name": "threat", "limit": 1}))
@@ -1597,7 +1598,7 @@ def test_list_sources_and_collections_are_bounded_redacted_and_filter_bound(
     )
 
     assert first["status"] == second["status"] == "ok"
-    assert first["ordering"] == "casefolded_name_asc_name_asc_id_asc"
+    assert first["ordering"] == "casefolded_name_prefix_asc_name_prefix_asc_id_asc"
     assert first["sources"][0]["id"].startswith("local:subscription:")
     assert first["sources"][0]["url"] == "https://sources.test/Alpha"
     assert "secret" not in first_raw
@@ -1643,6 +1644,62 @@ def test_source_metadata_page_packs_complete_rows_with_compact_continuation(
     }
     assert traversed <= set(source_ids)
     assert len(traversed) == len(result["sources"] + continuation["sources"])
+
+
+@pytest.mark.parametrize("entity", ("source", "collection"))
+@pytest.mark.parametrize(
+    "base_name",
+    (
+        "".join(hashlib.sha256(str(index).encode()).hexdigest() for index in range(16)),
+        "A" * 40_000,
+        "界🙂ß" * 334,
+    ),
+    ids=("incompressible-1000", "compressible-over-32k", "multibyte"),
+)
+def test_name_metadata_cursor_is_fixed_size_and_followable_for_hostile_names(
+    db: SubscriptionsDB,
+    entity: str,
+    base_name: str,
+) -> None:
+    if entity == "source":
+        expected_ids = [
+            _source(db, base_name + suffix, url=f"https://sources.test/{index}")
+            for index, suffix in enumerate(("-first", "-second", "-third"))
+        ]
+        handler = _service(db).list_sources
+        item_key = "sources"
+    else:
+        expected_ids = [
+            _collection(db, base_name + suffix)
+            for suffix in ("-first", "-second", "-third")
+        ]
+        handler = _service(db).list_collections
+        item_key = "collections"
+
+    first_raw = handler({"limit": 1})
+    first = _payload(first_raw)
+    cursor = first["next_cursor"]
+
+    assert len(first_raw.encode("utf-8")) < 30 * 1024
+    assert len(cursor) <= 2_048
+    assert not cursor.startswith("z.")
+    padding = b"=" * (-len(cursor) % 4)
+    assert len(base64.urlsafe_b64decode(cursor.encode() + padding)) <= 1_536
+    position = _decode_cursor(cursor)["position"]
+    assert set(position) == {"name_casefold_prefix", "name_prefix", "id"}
+    assert len(position["name_casefold_prefix"]) <= 96
+    assert len(position["name_prefix"]) <= 96
+
+    continued_raw = handler({"limit": 10, "cursor": cursor})
+    continued = _payload(continued_raw)
+    traversed = [
+        int(item["id"].rsplit(":", 1)[1])
+        for item in first[item_key] + continued[item_key]
+    ]
+    assert len(continued_raw.encode("utf-8")) < 30 * 1024
+    assert traversed == expected_ids
+    assert continued["has_more"] is False
+    assert continued["next_cursor"] is None
 
 
 def test_briefing_receipts_exclude_body_and_latest_keeps_newer_context(

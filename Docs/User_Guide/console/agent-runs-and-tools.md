@@ -1302,7 +1302,9 @@ never an instruction.
 | `limit` | Defaults to 10; integer from 1 through 50. |
 | `cursor` | Filter-bound opaque continuation; maximum 2,048 characters. |
 
-Sources use `casefolded_name_asc_name_asc_id_asc` ordering, canonical
+Sources use `casefolded_name_prefix_asc_name_prefix_asc_id_asc` ordering: the
+first 96 Unicode characters of the casefolded name, then the first 96 Unicode
+characters of the raw name, then ID. They return canonical
 `local:subscription:<id>` identities, bounded memberships, and sanitized URLs.
 Authentication, headers, extraction secrets, and raw errors are excluded.
 
@@ -1388,7 +1390,7 @@ byte budgets; follow their respective continuation until its next cursor is abse
 | --- | --- |
 | `source` | Optional name/URL, canonical source ID, or positive row ID. |
 | `collection` | Optional name, canonical collection ID, or positive row ID. |
-| `limit` | Defaults to 10; integer from 1 through 50 per receipt kind. |
+| `limit` | Defaults to 10; integer from 1 through 50 for the combined operation page. |
 | `cursor` | Filter-bound opaque continuation; maximum 2,048 characters. |
 
 The overview returns bounded normalized source-check and briefing-generation

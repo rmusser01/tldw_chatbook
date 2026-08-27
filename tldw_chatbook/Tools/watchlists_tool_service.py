@@ -10,7 +10,6 @@ import json
 import logging
 import math
 import re
-import zlib
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from datetime import UTC, date, datetime, time, timedelta
@@ -18,6 +17,7 @@ from typing import Any
 from urllib.parse import urlsplit, urlunsplit
 
 from tldw_chatbook.DB.Subscriptions_DB import (
+    _AGENT_NAME_ORDER_PREFIX_CHARS,
     SubscriptionsDBReadError,
     SubscriptionsDBUnavailableError,
 )
@@ -71,6 +71,9 @@ _PROVENANCE_ARRAY_BUDGET = 6 * 1024
 _PROVENANCE_LIMIT = 50
 _PUBLIC_EXECUTION_ERROR = "Watchlists tool execution error"
 _CURSOR_VERSION = 1
+_MAX_PAGE_CURSOR_CHARS = 2_048
+_MAX_PAGE_CURSOR_DECODED_BYTES = 1_536
+_NAME_ORDERING = "casefolded_name_prefix_asc_name_prefix_asc_id_asc"
 _CURSOR_KEYS = frozenset(
     {
         "version",
@@ -398,7 +401,7 @@ class WatchlistsToolService:
             "type": source_type,
             "state": state,
             "collection_id": collection_id,
-            "ordering": "casefolded_name_asc_name_asc_id_asc",
+            "ordering": _NAME_ORDERING,
         }
         fingerprint = self._metadata_fingerprint(filters)
         self._require_matching_page_cursor(cursor, fingerprint)
@@ -410,8 +413,8 @@ class WatchlistsToolService:
             is_paused=True if state == "paused" else (False if state == "active" else None),
             watchlist_id=collection_id,
             limit=limit,
-            after_name_casefold=position.get("name_casefold"),
-            after_name=position.get("name"),
+            after_name_casefold_prefix=position.get("name_casefold_prefix"),
+            after_name_prefix=position.get("name_prefix"),
             after_id=position.get("id"),
         )
         rows = page["items"]
@@ -425,7 +428,7 @@ class WatchlistsToolService:
         return self._finalize_metadata_page(
             base={
                 "status": "ok",
-                "ordering": "casefolded_name_asc_name_asc_id_asc",
+                "ordering": _NAME_ORDERING,
             },
             item_key="sources",
             rows=rows,
@@ -434,8 +437,8 @@ class WatchlistsToolService:
             cursor_for=lambda row: self._encode_page_cursor(
                 "sources",
                 {
-                    "name_casefold": row["name_casefold"],
-                    "name": row["name"],
+                    "name_casefold_prefix": row["name_casefold_prefix"],
+                    "name_prefix": row["name_prefix"],
                     "id": int(row["id"]),
                 },
                 fingerprint,
@@ -470,7 +473,7 @@ class WatchlistsToolService:
         fingerprint = self._metadata_fingerprint(
             {
                 "name": name,
-                "ordering": "casefolded_name_asc_name_asc_id_asc",
+                "ordering": _NAME_ORDERING,
             }
         )
         self._require_matching_page_cursor(cursor, fingerprint)
@@ -478,8 +481,8 @@ class WatchlistsToolService:
         page = database.list_collections_for_agent(
             name_query=name,
             limit=limit,
-            after_name_casefold=position.get("name_casefold"),
-            after_name=position.get("name"),
+            after_name_casefold_prefix=position.get("name_casefold_prefix"),
+            after_name_prefix=position.get("name_prefix"),
             after_id=position.get("id"),
         )
         rows = page["items"]
@@ -491,7 +494,7 @@ class WatchlistsToolService:
         return self._finalize_metadata_page(
             base={
                 "status": "ok",
-                "ordering": "casefolded_name_asc_name_asc_id_asc",
+                "ordering": _NAME_ORDERING,
             },
             item_key="collections",
             rows=rows,
@@ -500,8 +503,8 @@ class WatchlistsToolService:
             cursor_for=lambda row: self._encode_page_cursor(
                 "collections",
                 {
-                    "name_casefold": row["name_casefold"],
-                    "name": row["name"],
+                    "name_casefold_prefix": row["name_casefold_prefix"],
+                    "name_prefix": row["name_prefix"],
                     "id": int(row["id"]),
                 },
                 fingerprint,
@@ -997,11 +1000,12 @@ class WatchlistsToolService:
                 "filter_fingerprint": filter_fingerprint,
             }
         ).encode("utf-8")
+        if len(raw) > _MAX_PAGE_CURSOR_DECODED_BYTES:
+            raise RuntimeError("bounded Watchlists cursor payload did not fit")
         encoded = base64.urlsafe_b64encode(raw).decode("ascii").rstrip("=")
-        if len(encoded) <= 2_048:
-            return encoded
-        compressed = base64.urlsafe_b64encode(zlib.compress(raw)).decode("ascii")
-        return "z." + compressed.rstrip("=")
+        if len(encoded) > _MAX_PAGE_CURSOR_CHARS:
+            raise RuntimeError("bounded Watchlists cursor did not fit")
+        return encoded
 
     @staticmethod
     def _validate_page_cursor(
@@ -1009,20 +1013,19 @@ class WatchlistsToolService:
     ) -> _PageCursor | None:
         if not supplied:
             return None
-        if type(value) is not str or not value or len(value) > 2_048:
+        if (
+            type(value) is not str
+            or not value
+            or len(value) > _MAX_PAGE_CURSOR_CHARS
+        ):
             raise _InvalidArgument("cursor is invalid")
         try:
-            compressed = value.startswith("z.")
-            encoded = value[2:] if compressed else value
-            padding = b"=" * (-len(encoded) % 4)
+            padding = b"=" * (-len(value) % 4)
             raw = base64.b64decode(
-                encoded.encode() + padding, altchars=b"-_", validate=True
+                value.encode() + padding, altchars=b"-_", validate=True
             )
-            if compressed:
-                decompressor = zlib.decompressobj()
-                raw = decompressor.decompress(raw, 32_769)
-                if len(raw) > 32_768 or not decompressor.eof:
-                    raise ValueError
+            if len(raw) > _MAX_PAGE_CURSOR_DECODED_BYTES:
+                raise ValueError
             payload = json.loads(
                 raw.decode("utf-8"),
                 object_pairs_hook=WatchlistsToolService._unique_json_object,
@@ -1043,7 +1046,7 @@ class WatchlistsToolService:
             raise _InvalidArgument("cursor is invalid")
         position = payload["position"]
         if kind in {"sources", "collections"}:
-            expected = {"name_casefold", "name", "id"}
+            expected = {"name_casefold_prefix", "name_prefix", "id"}
         elif kind in {"briefing_selected", "briefing_cited"}:
             expected = {"position_is_null", "position", "item_id"}
         elif kind == "operations":
@@ -1078,7 +1081,11 @@ class WatchlistsToolService:
         if type(position["id"]) is not int or not 1 <= position["id"] <= _MAX_SQLITE_ROW_ID:
             raise _InvalidArgument("cursor is invalid")
         for key, item in position.items():
-            maximum = 16_384 if key in {"name", "name_casefold"} else 512
+            maximum = (
+                _AGENT_NAME_ORDER_PREFIX_CHARS
+                if key in {"name_prefix", "name_casefold_prefix"}
+                else 512
+            )
             if key != "id" and (type(item) is not str or len(item) > maximum):
                 raise _InvalidArgument("cursor is invalid")
         return _PageCursor(

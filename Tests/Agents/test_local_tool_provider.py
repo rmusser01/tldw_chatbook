@@ -607,6 +607,10 @@ def test_watchlists_catalog_has_exact_read_only_schemas_and_trust_warnings(tmp_p
             LocalApprovalEffect.PRIVATE_READ,
         )
         assert name in externally_exposed
+    for name in ("watchlists_list_sources", "watchlists_list_collections"):
+        description = provider.load_schema(name).description
+        assert "casefolded-name-prefix, raw-name-prefix, then ID" in description
+        assert "96 Unicode characters" in description
     assert "watchlists_get_briefing" not in externally_exposed
     briefing = provider.load_schema("local:watchlists_get_briefing")
     assert set(briefing.parameters["properties"]) == {

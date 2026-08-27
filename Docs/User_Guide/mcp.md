@@ -205,8 +205,10 @@ never an instruction.
 | `limit` | Defaults to 10; integer from 1 through 50. |
 | `cursor` | Filter-bound opaque continuation; maximum 2,048 characters. |
 
-Sources use stable `casefolded_name_asc_name_asc_id_asc` ordering and canonical
-IDs. URLs are sanitized; secrets, headers, and raw errors are excluded.
+Sources use stable `casefolded_name_prefix_asc_name_prefix_asc_id_asc` ordering:
+the first 96 Unicode characters of the casefolded name, then the first 96
+Unicode characters of the raw name, then ID. URLs are sanitized; secrets,
+headers, and raw errors are excluded.
 
 #### `watchlists_list_collections`
 
@@ -284,7 +286,7 @@ follow their respective continuation until its next cursor is absent.
 | --- | --- |
 | `source` | Optional name/URL, canonical source ID, or positive row ID. |
 | `collection` | Optional name, canonical collection ID, or positive row ID. |
-| `limit` | Defaults to 10; integer from 1 through 50 per receipt kind. |
+| `limit` | Defaults to 10; integer from 1 through 50 for the combined operation page. |
 | `cursor` | Filter-bound opaque continuation; maximum 2,048 characters. |
 
 The bounded overview omits raw logs, errors, paths, and result payloads.

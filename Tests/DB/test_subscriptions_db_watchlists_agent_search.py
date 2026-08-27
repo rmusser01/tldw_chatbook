@@ -131,8 +131,8 @@ def test_agent_source_and_collection_pages_use_stable_filterable_keysets(
     second = db.list_sources_for_agent(
         watchlist_id=selected,
         limit=1,
-        after_name_casefold=first["items"][0]["name_casefold"],
-        after_name=first["items"][0]["name"],
+        after_name_casefold_prefix=first["items"][0]["name_casefold_prefix"],
+        after_name_prefix=first["items"][0]["name_prefix"],
         after_id=first["items"][0]["id"],
     )
     collections = db.list_collections_for_agent(name_query="select", limit=10)
@@ -161,8 +161,8 @@ def test_agent_source_cursor_survives_deleted_anchor_without_skipping(
         conn.execute("DELETE FROM subscriptions WHERE id = ?", (first_id,))
     continued = db.list_sources_for_agent(
         limit=10,
-        after_name_casefold=first["items"][0]["name_casefold"],
-        after_name=first["items"][0]["name"],
+        after_name_casefold_prefix=first["items"][0]["name_casefold_prefix"],
+        after_name_prefix=first["items"][0]["name_prefix"],
         after_id=first["items"][0]["id"],
     )
 
@@ -181,8 +181,8 @@ def test_agent_collection_cursor_survives_renamed_anchor_without_duplication(
         conn.execute("UPDATE watchlists SET name = 'Zulu' WHERE id = ?", (first_id,))
     continued = db.list_collections_for_agent(
         limit=10,
-        after_name_casefold=first["items"][0]["name_casefold"],
-        after_name=first["items"][0]["name"],
+        after_name_casefold_prefix=first["items"][0]["name_casefold_prefix"],
+        after_name_prefix=first["items"][0]["name_prefix"],
         after_id=first["items"][0]["id"],
     )
 

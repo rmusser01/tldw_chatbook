@@ -234,8 +234,10 @@ briefing content are Console-only.
 #### `watchlists_list_sources`
 
 Lists bounded local source metadata using stable
-`casefolded_name_asc_name_asc_id_asc` ordering with cursor pagination. Optional
-filters cover name/type, active/paused state, and collection. Each row
+`casefolded_name_prefix_asc_name_prefix_asc_id_asc` ordering with cursor
+pagination: the first 96 Unicode characters of the casefolded name, then the
+first 96 Unicode characters of the raw name, then ID. Optional filters cover
+name/type, active/paused state, and collection. Each row
 uses canonical `local:subscription:<id>` identity and includes sanitized URL,
 type, collection memberships, check frequency, last check, last successful
 check, failure count, and attention state. Authentication, headers, extraction
