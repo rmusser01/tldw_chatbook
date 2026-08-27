@@ -3961,6 +3961,266 @@ class TestConversationsPanel:
         finally:
             release.set()
 
+    async def test_initial_loading_render_exception_becomes_keyboard_retry(
+        self,
+        mock_app_instance,
+        stub_characters,
+        stub_conversations,
+        monkeypatch,
+    ):
+        stub_conversations.replace_pages([_conversation_record(90)])
+        app = PersonasTestApp(mock_app_instance)
+
+        async with app.run_test(size=(160, 50)) as pilot:
+            screen = await _mounted(pilot)
+            await pilot.app.workers.wait_for_complete()
+            calls_before = list(stub_conversations.calls)
+            inspector = screen.query_one(PersonasInspectorPane)
+            original_loading = inspector.show_conversations_loading
+            fail_once = True
+
+            async def one_shot_loading_failure(render_attempt=None):
+                nonlocal fail_once
+                rendered = await original_loading(render_attempt)
+                if fail_once:
+                    fail_once = False
+                    raise RuntimeError("initial loading render failed")
+                return rendered
+
+            monkeypatch.setattr(
+                inspector, "show_conversations_loading", one_shot_loading_failure
+            )
+
+            await pilot.click("#personas-library-row-character-2")
+            await pilot.pause()
+
+            assert stub_conversations.calls == calls_before
+            assert screen.conversations._conversation_list_attempt is None
+            assert screen.conversations._conversation_list_phase == "initial-retry"
+            tail = screen.query_one(".personas-conversations-tail")
+            assert "Retry conversations" in _row_text(tail)
+            assert not tail.disabled
+
+            conversation_list = screen.query_one(
+                "#personas-conversations-list", ListView
+            )
+            conversation_list.focus()
+            conversation_list.index = 0
+            await pilot.press("enter")
+            await pilot.app.workers.wait_for_complete()
+            await pilot.pause()
+
+            assert stub_conversations.calls[-1] == (2, 21, 0, {})
+            assert [_row_text(row) for row in screen.query(".personas-conversation-row")] == [
+                "Case 90"
+            ]
+
+    async def test_append_loading_render_exception_preserves_boundary_for_retry(
+        self,
+        mock_app_instance,
+        stub_characters,
+        stub_conversations,
+        monkeypatch,
+    ):
+        first_page = [_conversation_record(index) for index in range(1, 22)]
+        stub_conversations.replace_pages(first_page, [_conversation_record(21)])
+        app = PersonasTestApp(mock_app_instance)
+
+        async with app.run_test(size=(160, 50)) as pilot:
+            screen = await _mounted(pilot)
+            await pilot.app.workers.wait_for_complete()
+            inspector = screen.query_one(PersonasInspectorPane)
+            original_loading = inspector.show_older_conversations_loading
+            fail_once = True
+
+            async def one_shot_loading_failure(render_attempt=None):
+                nonlocal fail_once
+                rendered = await original_loading(render_attempt)
+                if fail_once:
+                    fail_once = False
+                    raise RuntimeError("append loading render failed")
+                return rendered
+
+            monkeypatch.setattr(
+                inspector,
+                "show_older_conversations_loading",
+                one_shot_loading_failure,
+            )
+            cursor = screen.conversations._next_conversation_cursor
+            rows_before = dict(screen.conversations._conversation_rows)
+            ids_before = set(screen.conversations._loaded_conversation_ids)
+            conversation_list = screen.query_one(
+                "#personas-conversations-list", ListView
+            )
+            conversation_list.focus()
+            conversation_list.index = len(conversation_list.children) - 1
+
+            await pilot.press("enter")
+            await pilot.pause()
+
+            assert len(stub_conversations.calls) == 1
+            assert screen.conversations._conversation_list_attempt is None
+            assert screen.conversations._conversation_list_phase == "append-retry"
+            assert screen.conversations._conversation_rows == rows_before
+            assert screen.conversations._loaded_conversation_ids == ids_before
+            assert screen.conversations._next_conversation_cursor == cursor
+            tail = screen.query_one(".personas-conversations-tail")
+            assert "Retry older conversations" in _row_text(tail)
+            assert not tail.disabled
+
+            conversation_list.index = len(conversation_list.children) - 1
+            await pilot.press("enter")
+            await pilot.app.workers.wait_for_complete()
+            await pilot.pause()
+
+            assert stub_conversations.calls[-1] == (
+                1,
+                21,
+                0,
+                {
+                    "before_last_modified": cursor[0],
+                    "before_id": cursor[1],
+                },
+            )
+            assert screen.conversations._next_conversation_cursor != cursor
+            assert screen.query_one("#personas-conversation-row-conv-21")
+
+    async def test_append_result_render_exception_rolls_back_dom_and_page_state(
+        self,
+        mock_app_instance,
+        stub_characters,
+        stub_conversations,
+        monkeypatch,
+    ):
+        first_page = [_conversation_record(index) for index in range(1, 22)]
+        stub_conversations.replace_pages(first_page, [_conversation_record(21)])
+        app = PersonasTestApp(mock_app_instance)
+
+        async with app.run_test(size=(160, 50)) as pilot:
+            screen = await _mounted(pilot)
+            await pilot.app.workers.wait_for_complete()
+            inspector = screen.query_one(PersonasInspectorPane)
+            original_append = inspector.append_conversations
+            fail_once = True
+
+            async def one_shot_result_failure(*args, **kwargs):
+                nonlocal fail_once
+                rendered = await original_append(*args, **kwargs)
+                if fail_once:
+                    fail_once = False
+                    raise RuntimeError("append result render failed")
+                return rendered
+
+            monkeypatch.setattr(
+                inspector, "append_conversations", one_shot_result_failure
+            )
+            cursor = screen.conversations._next_conversation_cursor
+            rows_before = dict(screen.conversations._conversation_rows)
+            ids_before = set(screen.conversations._loaded_conversation_ids)
+            conversation_list = screen.query_one(
+                "#personas-conversations-list", ListView
+            )
+            conversation_list.focus()
+            conversation_list.index = len(conversation_list.children) - 1
+
+            await pilot.press("enter")
+            await pilot.app.workers.wait_for_complete()
+            await pilot.pause()
+
+            assert screen.conversations._conversation_list_attempt is None
+            assert screen.conversations._conversation_list_phase == "append-retry"
+            assert screen.conversations._conversation_rows == rows_before
+            assert screen.conversations._loaded_conversation_ids == ids_before
+            assert screen.conversations._next_conversation_cursor == cursor
+            assert not screen.query("#personas-conversation-row-conv-21")
+            assert "Retry older conversations" in _row_text(
+                screen.query_one(".personas-conversations-tail")
+            )
+
+            conversation_list.index = len(conversation_list.children) - 1
+            await pilot.press("enter")
+            await pilot.app.workers.wait_for_complete()
+            await pilot.pause()
+
+            expected_cursor = {
+                "before_last_modified": cursor[0],
+                "before_id": cursor[1],
+            }
+            assert stub_conversations.calls[1:] == [
+                (1, 21, 0, expected_cursor),
+                (1, 21, 0, expected_cursor),
+            ]
+            assert list(screen.query("#personas-conversation-row-conv-21"))
+            assert "conv-21" in screen.conversations._loaded_conversation_ids
+
+    async def test_db_failure_retries_retry_tail_render_once(
+        self,
+        mock_app_instance,
+        stub_characters,
+        stub_conversations,
+        monkeypatch,
+    ):
+        read_started = asyncio.Event()
+        release_read = threading.Event()
+        app = PersonasTestApp(mock_app_instance)
+
+        def gated_failure(character_id, limit=50, offset=0, **cursor):
+            app.call_from_thread(read_started.set)
+            release_read.wait(timeout=5)
+            raise RuntimeError("database failed")
+
+        stub_conversations.replace_pages(
+            gated_failure, [_conversation_record(91, title="Retry succeeded")]
+        )
+        try:
+            async with app.run_test(size=(160, 50)) as pilot:
+                screen = await _mounted(pilot)
+                await wait_for_signal(read_started, what="the gated failed DB read")
+                inspector = screen.query_one(PersonasInspectorPane)
+                original_failure = inspector.show_conversations_failure
+                fail_once = True
+
+                async def one_shot_retry_tail_failure(*args, **kwargs):
+                    nonlocal fail_once
+                    if fail_once:
+                        fail_once = False
+                        raise RuntimeError("retry tail render failed")
+                    return await original_failure(*args, **kwargs)
+
+                monkeypatch.setattr(
+                    inspector,
+                    "show_conversations_failure",
+                    one_shot_retry_tail_failure,
+                )
+                release_read.set()
+                await pilot.app.workers.wait_for_complete()
+                await pilot.pause()
+
+                assert screen.conversations._conversation_list_attempt is None
+                assert screen.conversations._conversation_list_phase == "initial-retry"
+                tail = screen.query_one(".personas-conversations-tail")
+                assert "Retry conversations" in _row_text(tail)
+                assert not tail.disabled
+
+                conversation_list = screen.query_one(
+                    "#personas-conversations-list", ListView
+                )
+                conversation_list.focus()
+                conversation_list.index = 0
+                await pilot.press("enter")
+                await pilot.app.workers.wait_for_complete()
+                await pilot.pause()
+
+                assert stub_conversations.calls == [
+                    (1, 21, 0, {}),
+                    (1, 21, 0, {}),
+                ]
+                assert _row_text(
+                    screen.query_one("#personas-conversation-row-conv-91")
+                ) == "Retry succeeded"
+        finally:
+            release_read.set()
+
     async def test_initial_and_append_failures_retry_the_identical_boundary(
         self, mock_app_instance, stub_characters, stub_conversations
     ):
@@ -4209,6 +4469,10 @@ class TestConversationsPanel:
 
                 assert screen.state.active_mode == "personas"
                 assert list(screen.query(".personas-conversation-row")) == []
+                assert not any(
+                    "Retry" in _row_text(tail)
+                    for tail in screen.query(".personas-conversations-tail")
+                )
             finally:
                 release_initial_mount.set()
                 if not mode_switch.done():

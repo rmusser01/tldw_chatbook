@@ -736,7 +736,11 @@ class PersonasInspectorPane(VerticalScroll):
             return rendered
 
     async def show_conversations_failure(
-        self, *, initial: bool, render_attempt: object | None = None
+        self,
+        *,
+        initial: bool,
+        render_attempt: object | None = None,
+        preserved_rows: tuple[tuple[str, str], ...] | None = None,
     ) -> bool:
         """Show an actionable initial or append retry state."""
         token = self._standalone_or_existing_conversation_render(render_attempt)
@@ -748,6 +752,30 @@ class PersonasInspectorPane(VerticalScroll):
                     disabled=False,
                     render_attempt=token,
                 )
+            if preserved_rows is not None:
+                if not self._conversation_render_is_current(token):
+                    return False
+                list_view = self.query_one("#personas-conversations-list", ListView)
+                # A result failure may follow a completed append. Clear finishes
+                # before rebuilding the committed rows, so no candidate row is
+                # retained while the retry tail is presented.
+                await list_view.clear()
+                if not self._conversation_render_is_current(token):
+                    return False
+                self._conversation_lookup = {}
+                self._conversation_tail = None
+                self._conversation_tail_actionable = False
+                self._conversation_tail_loading = False
+                items = self._build_conversation_rows(preserved_rows)
+                items.append(
+                    self._make_conversation_tail(
+                        "Load failed.\nRetry older conversations",
+                        actionable=True,
+                        disabled=False,
+                    )
+                )
+                await list_view.extend(items)
+                return self._conversation_render_is_current(token)
             return await self._replace_conversation_tail(
                 "Load failed.\nRetry older conversations",
                 actionable=True,
