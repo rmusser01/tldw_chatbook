@@ -16265,7 +16265,7 @@ class SettingsScreen(BaseAppScreen):
                 ),
             ):
                 yield Static(
-                    "DANGER — RAW CLI HOST ACCESS",
+                    "DANGER!!! RAW CLI HOST ACCESS",
                     id="settings-raw-cli-title",
                     classes="destination-section",
                 )
@@ -21729,7 +21729,21 @@ class SettingsScreen(BaseAppScreen):
             self.app.notify("Failed to save the raw CLI unlock.", severity="error")
             return
         self.app_instance.app_config = loaded_config
-        self._settings_drafts.pop(category, None)
+        saved_value = self._loaded_raw_cli_permitted()
+        draft = self._settings_drafts.get(category)
+        current_value = (
+            draft.values.get(RAW_CLI_PERMITTED_DRAFT_KEY) is True
+            if draft is not None
+            else saved_value
+        )
+        if current_value == value:
+            self._settings_drafts.pop(category, None)
+        elif draft is not None:
+            draft.set_value(
+                RAW_CLI_PERMITTED_DRAFT_KEY,
+                saved_value,
+                current_value,
+            )
         if not value:
             runtime = self._raw_cli_runtime()
             if runtime is not None:

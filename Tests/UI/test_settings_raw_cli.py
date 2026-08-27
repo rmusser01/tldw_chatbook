@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from pathlib import Path
+import threading
 import time
 
 import pytest
@@ -119,6 +120,10 @@ async def test_raw_cli_unlock_and_arm_are_separate_confirmed_gates():
             "Privacy & Security must mount the raw CLI danger gate"
         )
         card = screen.query_one("#settings-raw-cli-card")
+        assert (
+            str(card.query_one("#settings-raw-cli-title", Static).content)
+            == "DANGER!!! RAW CLI HOST ACCESS"
+        )
         text = _visible_text(card)
         for disclosure in RAW_CLI_DISCLOSURE:
             assert disclosure in text
@@ -337,6 +342,70 @@ async def test_failed_raw_cli_lock_save_keeps_saved_authority_and_draft(monkeypa
         assert "ARMED — HOST ACCESS" in str(
             screen.query_one("#settings-raw-cli-state", Static).content
         )
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("saved_value", "dispatched_value", "newer_value"),
+    ((False, True, False), (True, False, True)),
+    ids=("unlock-arrival", "lock-arrival"),
+)
+async def test_raw_cli_save_arrival_preserves_a_newer_mounted_checkbox_edit(
+    monkeypatch,
+    saved_value: bool,
+    dispatched_value: bool,
+    newer_value: bool,
+):
+    app = _build_test_app(
+        config_overrides={"console": {"raw_cli_permitted": saved_value}}
+    )
+    if saved_value:
+        assert app.raw_cli_runtime.arm().armed is True
+    loaded_config = dict(app.app_config)
+    loaded_config["console"] = dict(app.app_config["console"])
+    loaded_config["console"]["raw_cli_permitted"] = dispatched_value
+    save_started = threading.Event()
+    release_save = threading.Event()
+
+    def blocked_save(value: bool) -> tuple[bool, dict | None]:
+        assert value is dispatched_value
+        save_started.set()
+        assert release_save.wait(timeout=3)
+        return True, loaded_config
+
+    monkeypatch.setattr(
+        SettingsScreen,
+        "_save_raw_cli_permitted_value",
+        staticmethod(blocked_save),
+    )
+    host = RawCliStyledSettingsHarness(app, "settings")
+
+    async with host.run_test(size=(120, 35)) as pilot:
+        screen = await _open_privacy(pilot)
+        checkbox = screen.query_one("#settings-raw-cli-permitted", Checkbox)
+        checkbox.value = dispatched_value
+        await pilot.pause()
+
+        screen.action_settings_save_category()
+        if dispatched_value:
+            await _wait_until(
+                pilot, lambda: isinstance(host.screen, ConfirmationDialog)
+            )
+            assert await pilot.click("#confirm-button")
+        await _wait_until(pilot, save_started.is_set)
+
+        checkbox.value = newer_value
+        await pilot.pause()
+        release_save.set()
+        await _wait_for_save(pilot)
+
+        draft = screen._settings_drafts[SettingsCategoryId.PRIVACY_SECURITY]
+        assert app.app_config["console"]["raw_cli_permitted"] is dispatched_value
+        assert draft.originals == {"console.raw_cli_permitted": dispatched_value}
+        assert draft.values == {"console.raw_cli_permitted": newer_value}
+        assert draft.is_dirty
+        assert checkbox.value is newer_value
+        assert app.raw_cli_runtime.armed is False
 
 
 @pytest.mark.asyncio
