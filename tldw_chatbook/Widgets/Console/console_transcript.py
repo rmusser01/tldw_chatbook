@@ -5935,8 +5935,12 @@ class ConsoleTranscript(VerticalScroll):
 
     async def _dismiss_message_more_for_pointer(self, control: Widget | None) -> None:
         """Dismiss More for transcript pointer activity except its own opener."""
-        if getattr(control, "console_action_id", None) != "more":
-            await self.dismiss_message_more_menu(restore_focus=False)
+        if (
+            getattr(control, "console_action_id", None) != "more"
+            and self.is_mounted
+            and message_more_menus_on_screen(self.screen)
+        ):
+            await self.dismiss_message_more_menu()
 
     def on_key(self, event: Key) -> None:
         if self._kb_selection_row is not None:

@@ -2122,6 +2122,7 @@ async def test_console_more_menu_closes_before_annotation_stops_click(monkeypatc
         await pilot.click("#console-message-m2")
         await pilot.click("#console-message-action-more-m2")
         await _wait_for_selector(app, pilot, "#console-message-more-menu")
+        opener = app.query_one("#console-message-action-more-m2", Button)
         dispatched = []
         monkeypatch.setattr(
             transcript,
@@ -2138,6 +2139,7 @@ async def test_console_more_menu_closes_before_annotation_stops_click(monkeypatc
         assert transcript.selected_message_id == "m2"
         assert dispatched == []
         assert app.review_note_requests == ["m2"]
+        assert opener.has_focus
 
 
 @pytest.mark.asyncio
