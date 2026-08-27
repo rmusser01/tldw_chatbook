@@ -1185,54 +1185,6 @@ def test_validate_fork_fence_rejects_each_changed_image_selection_field(
     )
 
 
-def test_selected_image_fence_fails_closed_when_attachment_is_removed() -> None:
-    store, _, session, _, _, _, selected, _ = _fork_store()
-    selection = ConsoleForkImageSelectionFence(
-        native_message_id=selected.id,
-        selected_position=0,
-        browse_revision=7,
-        attachment_meta_fingerprint="sha256:selected-image",
-    )
-    fence = store.issue_fork_fence(
-        selected.id,
-        image_selections=(selection,),
-    )
-    store._nodes_by_session[session.id][selected.id].attachments = ()
-
-    assert store.validate_fork_fence(fence, image_selections=(selection,)) is False
-    with pytest.raises(ValueError, match="^Console fork source changed\\.$"):
-        store.stage_fork_snapshot(
-            fence,
-            title="Independent fork",
-            fork_session_id="fork-session",
-            fork_conversation_id="fork-conversation",
-        )
-
-
-def test_selected_image_fence_fails_closed_when_generation_is_removed() -> None:
-    store, _, session, _, _, _, selected, _ = _fork_store()
-    selection = ConsoleForkImageSelectionFence(
-        native_message_id=selected.id,
-        selected_position=0,
-        browse_revision=7,
-        attachment_meta_fingerprint="sha256:selected-image",
-    )
-    fence = store.issue_fork_fence(
-        selected.id,
-        image_selections=(selection,),
-    )
-    store._nodes_by_session[session.id][selected.id].generation_metadata = ()
-
-    assert store.validate_fork_fence(fence, image_selections=(selection,)) is False
-    with pytest.raises(ValueError, match="^Console fork source changed\\.$"):
-        store.stage_fork_snapshot(
-            fence,
-            title="Independent fork",
-            fork_session_id="fork-session",
-            fork_conversation_id="fork-conversation",
-        )
-
-
 def test_fork_fence_rejects_a_boundary_outside_the_active_path() -> None:
     store, _, _, _, first_answer, _, _, _ = _fork_store()
 
@@ -1763,37 +1715,13 @@ def test_stage_fork_snapshot_rejects_late_source_mutation(
     assert "fork-session" not in store._nodes_by_session
 
 
-@pytest.mark.parametrize(
-    ("mutation", "selected_position"),
-    (
-        ("attachment", None),
-        ("generation", None),
-        ("attachment", 0),
-        ("generation", 0),
-    ),
-)
+@pytest.mark.parametrize("mutation", ("attachment", "generation"))
 def test_stage_fork_snapshot_rejects_aba_payload_mutation(
     mutation,
-    selected_position,
     monkeypatch,
 ) -> None:
     store, _, session, _, _, _, selected, _ = _fork_store()
-    image_selections = (
-        (
-            ConsoleForkImageSelectionFence(
-                native_message_id=selected.id,
-                selected_position=selected_position,
-                browse_revision=1,
-                attachment_meta_fingerprint="sha256:selected-image",
-            ),
-        )
-        if selected_position is not None
-        else ()
-    )
-    fence = store.issue_fork_fence(
-        selected.id,
-        image_selections=image_selections,
-    )
+    fence = store.issue_fork_fence(selected.id)
     selected_live = store._nodes_by_session[session.id][selected.id]
     original_attachments = selected_live.attachments
     original_generation = selected_live.generation_metadata
@@ -1889,18 +1817,9 @@ def test_stage_fork_snapshot_uses_fenced_source_identity_across_aba(
     assert projected.status == entry.status
 
 
-@pytest.mark.parametrize(
-    ("selected_position", "expected_data", "expected_prompt"),
-    (
-        (None, (b"image", b"second-image"), ("a diagram", "second prompt")),
-        (1, (b"second-image",), ("second prompt",)),
-    ),
-)
-def test_stage_fork_snapshot_projects_the_fenced_attachment_scope(
-    selected_position,
-    expected_data,
-    expected_prompt,
-) -> None:
+def test_stage_fork_snapshot_keeps_image_selection_opaque_and_copies_baseline_payload() -> (
+    None
+):
     store, _, session, _, _, _, selected, _ = _fork_store()
     selected_live = store._nodes_by_session[session.id][selected.id]
     selected_live.attachments = (
@@ -1919,22 +1838,19 @@ def test_stage_fork_snapshot_projects_the_fenced_attachment_scope(
             params={"size": "small"},
         ),
     )
-    image_selections = (
-        (
-            ConsoleForkImageSelectionFence(
-                native_message_id=selected.id,
-                selected_position=selected_position,
-                browse_revision=1,
-                attachment_meta_fingerprint="sha256:selected-image",
-            ),
-        )
-        if selected_position is not None
-        else ()
+    selection = ConsoleForkImageSelectionFence(
+        native_message_id=selected.id,
+        selected_position=99,
+        browse_revision=1,
+        attachment_meta_fingerprint="sha256:selected-image",
     )
     fence = store.issue_fork_fence(
         selected.id,
-        image_selections=image_selections,
+        image_selections=(selection,),
     )
+
+    assert fence.image_selections == (selection,)
+    assert store.validate_fork_fence(fence, image_selections=(selection,)) is True
 
     snapshot = store.stage_fork_snapshot(
         fence,
@@ -1944,12 +1860,13 @@ def test_stage_fork_snapshot_projects_the_fenced_attachment_scope(
     )
     projected = snapshot.messages[-1]
 
-    assert (
-        tuple(attachment.data for attachment in projected.attachments) == expected_data
+    assert tuple(attachment.data for attachment in projected.attachments) == (
+        b"image",
+        b"second-image",
     )
-    assert (
-        tuple(metadata.prompt for metadata in projected.generation_metadata)
-        == expected_prompt
+    assert tuple(metadata.prompt for metadata in projected.generation_metadata) == (
+        "a diagram",
+        "second prompt",
     )
 
 
@@ -2138,7 +2055,18 @@ def test_durable_fork_registration_hydrates_seeded_policy_before_cas(
     async def scenario() -> None:
         db = CharactersRAGDB(tmp_path / "fork-policy.sqlite", client_id="fork-policy")
         service = ChatPersistenceService(db)
-        snapshot = _registration_snapshot()
+        durable_policy = ConsoleLibraryPolicyCandidate(
+            auto_retrieve=ConsoleAutoRetrieve.AUTOMATIC,
+            assistant_access=ConsoleAssistantLibraryAccess.ALLOWED,
+        )
+        base_snapshot = _registration_snapshot()
+        snapshot = replace(
+            base_snapshot,
+            configuration=replace(
+                base_snapshot.configuration,
+                library_policy=durable_policy,
+            ),
+        )
         conversation_id = service.create_conversation(
             conversation_id=snapshot.fork_conversation_id,
             conversation_title=snapshot.title,
@@ -2146,10 +2074,19 @@ def test_durable_fork_registration_hydrates_seeded_policy_before_cas(
         assert conversation_id == snapshot.fork_conversation_id
         seeded = service.console_library_policy_repository.insert(
             conversation_id,
-            snapshot.configuration.library_policy,
+            durable_policy,
         )
         assert seeded.status is ConsoleLibraryPolicyWriteStatus.COMMITTED
         assert seeded.snapshot.policy_revision == 1
+        for message in snapshot.messages:
+            assert message.persisted_message_id is not None
+            service.create_message(
+                conversation_id=conversation_id,
+                sender=message.role.value,
+                content=message.content,
+                message_id=message.persisted_message_id,
+                parent_message_id=message.persisted_parent_id,
+            )
 
         store = ConsoleChatStore(persistence=service)
         session = store.register_fork_snapshot(snapshot, activate=False)
@@ -2165,15 +2102,33 @@ def test_durable_fork_registration_hydrates_seeded_policy_before_cas(
             session.library_policy_holder.snapshot.assistant_access
             is ConsoleAssistantLibraryAccess.BLOCKED
         )
+        boundary_id = snapshot.messages[-1].native_message_id
+        assert store.fork_eligibility(boundary_id) == ConsoleForkEligibility(
+            False,
+            "Durable Console Library policy is not loaded.",
+        )
+        with pytest.raises(ValueError, match="Library policy is not loaded"):
+            store.issue_fork_fence(boundary_id)
 
         hydrated = await store.hydrate_session_library_policy(session.id)
         assert session.library_policy_hydrated is True
         assert hydrated.source == "durable"
         assert hydrated.policy_revision == 1
+        assert hydrated.auto_retrieve is durable_policy.auto_retrieve
+        assert hydrated.assistant_access is durable_policy.assistant_access
+        assert store.fork_eligibility(boundary_id).eligible is True
+        fence = store.issue_fork_fence(boundary_id)
+        refork = store.stage_fork_snapshot(
+            fence,
+            title="Independent refork",
+            fork_session_id="refork-session",
+            fork_conversation_id="refork-conversation",
+        )
+        assert refork.configuration.library_policy == durable_policy
 
         edited = ConsoleLibraryPolicyCandidate(
-            auto_retrieve=ConsoleAutoRetrieve.AUTOMATIC,
-            assistant_access=ConsoleAssistantLibraryAccess.ALLOWED,
+            auto_retrieve=ConsoleAutoRetrieve.NEVER,
+            assistant_access=ConsoleAssistantLibraryAccess.BLOCKED,
         )
         store.stage_session_library_policy(session.id, edited)
         saved = await store.save_session_library_policy(session.id)
