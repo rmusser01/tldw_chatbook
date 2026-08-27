@@ -19,7 +19,7 @@ Add two small pure helpers beside the existing local citation normalization and 
 
 The adapter preserves the send path's current mapping contract: `source_type` supplies source identity, `source_id` supplies lineage, a non-empty string `metadata["chunk_id"]` becomes both the result ID and chunk lineage, a missing score becomes `0.0`, and candidate ranks are assigned sequentially after successful normalization. Empty snippet text remains valid and produces a counted header-only prompt entry; changing that send policy is outside this task.
 
-Both consumers will use this helper:
+Both consumers will use these helpers:
 
 - The send path will normalize with the adapter, perform its existing asynchronous authority re-check, and pass the surviving candidates to the shared prompt-formatting wrapper.
 - The estimator will normalize with the adapter and immediately pass those candidates to the same prompt-formatting wrapper without I/O.
@@ -27,6 +27,8 @@ Both consumers will use this helper:
 The estimator's prompted-source count will be the number of entries returned by the formatter. Its prompted-evidence text will be the formatter's exact context string. This makes the two estimates derive from one canonical formatted result and automatically includes the existing `[S#]` headers, source labels, title text, `\n---\n` separators, and 64-entry cap.
 
 The wrapper will keep the send path's existing character allowance calculation, `sum(len(title) + len(content) + 32 for candidate in candidates)`, so this change does not introduce a second truncation policy. Per-entry UTF-8 limits remain enforced by `format_local_evidence_context()`. No cache or new abstraction layer is needed.
+
+The affected docstrings and call-site comments will describe this result as the formatted **pre-authority estimate**, not as an unconditional claim about what reaches the model. The sent-notice path continues to prefer the capture result's authoritative repair-contract ordinals; its launch-only fallback is explicitly best-effort because it cannot reproduce send-time authority checks without I/O.
 
 ## Data Flow
 
@@ -44,8 +46,8 @@ Invalid or non-normalizable references remain excluded, matching current send be
 - A later authority change may make the final sent evidence smaller than the estimate; this is intentional and fail-closed.
 - `console_staged_source_count()` continues to report the true staged total for the UI. Only `console_prompted_source_count()` and prompted evidence text reflect normalization, formatting omissions, and the 64-entry prompt cap.
 - No database schema, UI layout, dependency, provider contract, or persistence behavior changes.
-- The pre-existing failing UI assertion in `test_console_send_consumes_staging_and_shows_the_sent_transient` is outside this modelling fix; it fails on an unchanged `origin/dev` checkout because the capture mock is invoked only for a send that has staged evidence.
-- The dependency direction is intentionally `Chat.console_display_state` to the pure `RAG_Search.local_citation_capture` helpers. That module imports only lower-level Chat citation models/builders, not Console display state; a fresh-interpreter import smoke test will guard against a cycle.
+- The dependency direction is intentionally `Chat.console_display_state` to the pure `RAG_Search.local_citation_capture` helpers. That module imports only lower-level Chat citation models/builders, not Console display state.
+- `test_console_send_consumes_staging_and_shows_the_sent_transient` has a separate deterministic baseline fixture failure on unchanged `origin/dev`: its second durable turn is refused before evidence capture because the mounted harness's thread-local `:memory:` SQLite connection has no `conversations` or `world_books` schema. This does not invalidate the pure estimator baseline. Any harness repair remains a focused test-infrastructure change, not a TASK-2525 production change, and must be kept separate from the modelling diff.
 
 ## Verification
 
@@ -56,7 +58,8 @@ Use red/green focused tests to prove:
 - An invalid reference between two valid chunked references is omitted while the valid results retain successful-normalization order, sequential ranks, chunk lineage, and score fallback semantics.
 - A 65-reference bundle reports and formats 64 sources, omitting the final source; the estimator's formatted context matches the shared formatter exactly.
 - A two-source Console case estimates both sources without authority I/O, while a send-time authority rejection removes one and re-formats the survivor.
-- A fresh-interpreter import smoke test covers the new dependency direction.
+- A one-time fresh-interpreter import command verifies the dependency direction; no permanent subprocess regression test is added unless a real import cycle is observed.
+- Updated docstrings and call-site comments consistently distinguish the formatted pre-authority estimate from authoritative send results.
 - Existing Console estimate tests continue to pass.
 - Existing local citation formatting and send-boundary tests remain green.
 
