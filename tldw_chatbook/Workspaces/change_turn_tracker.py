@@ -155,7 +155,11 @@ class ChangeTurnTracker:
 
     # -- turn lifecycle ----------------------------------------------------
 
-    def begin_turn(self, roots: Sequence[Path | str]) -> TurnHandle:
+    def begin_turn(
+        self,
+        roots: Sequence[Path | str],
+        touched_paths: Sequence[str] = (),
+    ) -> TurnHandle:
         """Kick baseline snapshots for ``roots`` in the background.
 
         Returns immediately; never raises. Non-directory roots are recorded
@@ -163,6 +167,8 @@ class ChangeTurnTracker:
 
         Args:
             roots: The run's workspace folder roots.
+            touched_paths: Paths eligible for the WRITE-tool ignore carve-out
+                at the baseline snapshot.
 
         Returns:
             A handle for :meth:`TurnHandle.await_baseline` / :meth:`end_turn`.
@@ -174,6 +180,7 @@ class ChangeTurnTracker:
         handle = TurnHandle(
             [Path(r).expanduser().resolve() for r in roots]
         )
+        frozen_touched_paths = tuple(touched_paths)
 
         def _baseline() -> None:
             from tldw_chatbook.Workspaces.change_bounds import (
@@ -229,7 +236,12 @@ class ChangeTurnTracker:
                         if rel not in registered
                     )
                     repo = self.service.repo_for_root(root)
-                    handle.baselines[key] = repo.snapshot("turn baseline")
+                    eligible = self._eligible_touched_paths(
+                        root, frozen_touched_paths
+                    )
+                    handle.baselines[key] = repo.snapshot(
+                        "turn baseline", force_paths=eligible
+                    )
                     handle.baseline_oversize[key] = repo.last_oversize_excluded
                 except Exception as exc:  # noqa: BLE001 -- disclosed, never raised
                     handle.errors[key] = str(exc)[:400]
@@ -335,11 +347,13 @@ class ChangeTurnTracker:
                 continue
             try:
                 repo = self.service.repo_for_root(root)
+                eligible = self._eligible_touched_paths(root, touched_paths)
                 provided = (end_shas or {}).get(key)
                 if provided:
-                    # No force-add and no oversize/nested disclosure on
-                    # this path: both describe a snapshot, and this window
-                    # ends at one somebody else took.
+                    # The supplied snapshot stays immutable. Priming the
+                    # shared index only lets the next fresh snapshot consume
+                    # a path that became available after this exact boundary.
+                    repo.force_add(eligible)
                     end = provided
                     handle.end_shas[key] = end
                     if end == baseline:
@@ -356,22 +370,7 @@ class ChangeTurnTracker:
                         )
                     )
                     continue
-                in_root = self._paths_within(root, touched_paths)
-                if in_root:
-                    # TASK-1975: force-add exists to defeat IGNORE rules,
-                    # not the size cap -- a tool-written oversized file is
-                    # disclosed, never committed.
-                    cap = change_review_setting(
-                        "max_file_bytes", DEFAULT_MAX_FILE_BYTES
-                    )
-                    in_root = [
-                        rel
-                        for rel in in_root
-                        if not self._over_cap(root, rel, cap)
-                    ]
-                if in_root:
-                    repo.force_add(in_root)
-                end = repo.snapshot("turn end")
+                end = repo.snapshot("turn end", force_paths=eligible)
                 handle.end_shas[key] = end
                 oversize = repo.last_oversize_excluded
                 # TASK-1977: a TRACKED sub-root is not an untracked hole —
@@ -430,6 +429,20 @@ class ChangeTurnTracker:
         return records
 
     # -- helpers -----------------------------------------------------------
+
+    def _eligible_touched_paths(
+        self, root: Path, touched_paths: Iterable[str]
+    ) -> list[str]:
+        """Return root-relative touched paths allowed into a snapshot."""
+        in_root = self._paths_within(root, touched_paths)
+        if not in_root:
+            return []
+        # TASK-1975: force-add exists to defeat IGNORE rules, not the size
+        # cap -- a tool-written oversized file is disclosed, never committed.
+        cap = change_review_setting("max_file_bytes", DEFAULT_MAX_FILE_BYTES)
+        return [
+            rel for rel in in_root if not self._over_cap(root, rel, cap)
+        ]
 
     @staticmethod
     def _over_cap(root: Path, rel: str, cap: int) -> bool:

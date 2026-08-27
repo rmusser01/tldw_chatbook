@@ -75,6 +75,20 @@ def test_a_clean_turn_yields_no_records(tracker, root):
     assert records == []
 
 
+def test_begin_turn_force_adds_an_ignored_path_into_the_baseline(tracker, root):
+    target = root / "ignored-agent-output.txt"
+    expected = b"present before the baseline\n"
+    (root / ".gitignore").write_text(f"{target.name}\n")
+    target.write_bytes(expected)
+
+    handle = tracker.begin_turn([root], touched_paths=[str(target)])
+    handle.await_baseline()
+
+    baseline = handle.baselines[str(root.resolve())]
+    repo = tracker.service.repo_for_root(root)
+    assert repo.file_bytes(baseline, target.name) == expected
+
+
 def test_begin_is_nonblocking_and_await_gates(tmp_path, root):
     """B must ride the model's first-token latency: begin_turn returns
     while the snapshot is still running; await_baseline blocks until done.
@@ -86,10 +100,10 @@ def test_begin_is_nonblocking_and_await_gates(tmp_path, root):
             repo = super().repo_for_root(r)
             original = repo.snapshot
 
-            def slow_snapshot(message: str) -> str:
+            def slow_snapshot(message: str, *, force_paths=()) -> str:
                 time.sleep(0.4)
                 events.append("baseline-finished")
-                return original(message)
+                return original(message, force_paths=force_paths)
 
             repo.snapshot = slow_snapshot  # type: ignore[method-assign]
             return repo
@@ -133,6 +147,40 @@ def test_force_add_carveout_for_tool_touched_ignored_paths(tracker, root):
     assert not any("side_effect" in p for p in paths), (
         "script writes into ignored dirs are OUT of scope by design"
     )
+
+
+def test_supplied_successor_sha_primes_a_late_ignored_path_for_successor_e(
+    tracker, root
+):
+    target = root / "ignored-agent-output.txt"
+    expected = b"created after successor baseline\n"
+    (root / ".gitignore").write_text(f"{target.name}\n")
+
+    parent = tracker.begin_turn([root])
+    parent.await_baseline()
+    assert tracker.end_turn(parent) == []
+    continuation = tracker.continuation(parent)
+    assert continuation is not None
+
+    successor = tracker.begin_turn([root])
+    successor.await_baseline()
+    key = str(root.resolve())
+    supplied = successor.baselines[key]
+    target.write_bytes(expected)
+
+    continuation_records = tracker.end_turn(
+        continuation,
+        touched_paths=[str(target)],
+        end_shas=successor.baselines,
+    )
+    assert continuation_records == []
+    assert continuation.end_shas[key] == supplied
+
+    successor_records = tracker.end_turn(successor)
+    assert len(successor_records) == 1
+    assert successor_records[0].baseline_sha == supplied
+    repo = tracker.service.repo_for_root(root)
+    assert repo.file_bytes(successor_records[0].end_sha, target.name) == expected
 
 
 def test_tracking_failure_yields_error_records_never_raises(tmp_path, root):
@@ -372,11 +420,11 @@ def test_baseline_completes_before_the_first_tool_executes(tmp_path, root):
             repo = super().repo_for_root(r)
             original = repo.snapshot
 
-            def slow_snapshot(message: str) -> str:
+            def slow_snapshot(message: str, *, force_paths=()) -> str:
                 if "baseline" in message:
                     time.sleep(0.5)
                     events.append("baseline-finished")
-                return original(message)
+                return original(message, force_paths=force_paths)
 
             repo.snapshot = slow_snapshot  # type: ignore[method-assign]
             return repo
@@ -1243,11 +1291,11 @@ def test_a_survivors_write_racing_the_next_baseline_is_still_reviewable(
             repo = super().repo_for_root(r)
             original = repo.snapshot
 
-            def slow_snapshot(message: str) -> str:
+            def slow_snapshot(message: str, *, force_paths=()) -> str:
                 if "baseline" in message:
                     time.sleep(0.6)
                     events.append("baseline-finished")
-                return original(message)
+                return original(message, force_paths=force_paths)
 
             repo.snapshot = slow_snapshot  # type: ignore[method-assign]
             return repo
@@ -1337,11 +1385,11 @@ def test_a_survivors_tool_dispatch_is_gated_on_nothing_across_turns(
             repo = super().repo_for_root(r)
             original = repo.snapshot
 
-            def slow_snapshot(message: str) -> str:
+            def slow_snapshot(message: str, *, force_paths=()) -> str:
                 if "baseline" in message:
                     time.sleep(0.6)
                     events.append("baseline-finished")
-                return original(message)
+                return original(message, force_paths=force_paths)
 
             repo.snapshot = slow_snapshot  # type: ignore[method-assign]
             return repo

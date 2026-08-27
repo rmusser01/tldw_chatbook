@@ -403,7 +403,7 @@ class ShadowRepo:
         proc = self._run("cat-file", "-e", f"{sha}^{{commit}}", check=False)
         return proc.returncode == 0
 
-    def snapshot(self, message: str) -> str:
+    def snapshot(self, message: str, *, force_paths: Sequence[str] = ()) -> str:
         """Stage everything and commit if anything changed; return the tip.
 
         A clean tree returns the existing tip without a new commit. The very
@@ -420,6 +420,8 @@ class ShadowRepo:
 
         Args:
             message: Commit message recorded on the snapshot (turn labels).
+            force_paths: Existing root-relative paths to stage despite ignore
+                rules before the ordinary snapshot add.
 
         Returns:
             The tip sha after the snapshot.
@@ -433,6 +435,11 @@ class ShadowRepo:
 
         with self._locked():
             self.ensure_initialized()
+            existing = [
+                path for path in force_paths if (self.root / path).exists()
+            ]
+            if existing:
+                self._run("add", "-f", "--", *existing)
             scan = scan_root(
                 self.root,
                 max_files=_sys.maxsize,
