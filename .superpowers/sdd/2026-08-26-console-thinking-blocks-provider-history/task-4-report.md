@@ -51,6 +51,27 @@ and without a newer token plus the prior helper/preflight cases.
   copies never become replay groups. No generic cross-provider assistant-text
   translation was added.
 
+## Review fix round 1
+
+Independent review found two post-implementation lifecycle/projection defects,
+corrected in `eff71a5635` (`fix: retire completed generation authority`).
+
+- Successful direct and agent generations retained their process-local attempt token.
+  The store now exposes exact compare-and-retire semantics: retirement removes only
+  the still-current `(message_id, token)` pair, so it cannot erase a newer attempt.
+  Direct tasks retire in their terminal `finally`; agent bridge calls retire only
+  after capture settlement (or terminal failure), preserving Stop authority while a
+  detached worker can still deliver late typed evidence.
+- Raw gateway preparation previously popped a shared native owner marker twice when
+  continuation and thinking coexisted. It now reads a shared key once and independently
+  attaches both internal owner markers. The regression test prepares and dispatches a
+  same-owner request and proves each sidecar is retained once with no wire duplication.
+
+Review RED/GREEN evidence covered zero runtime-token counts after direct, agent, and
+recovery success; rejection of late thinking after retirement; preservation of newer
+tokens; Stop-time retention followed by post-settlement retirement; and the shared raw
+owner prepare/dispatch path.
+
 ## Verification
 
 - RED: new history suite initially failed collection on the missing thinking-owner
@@ -66,7 +87,16 @@ and without a newer token plus the prior helper/preflight cases.
 - Carried rollback production/helper slice: **10 passed**.
 - Ruff format check, Ruff lint, and `git diff --check`: passed for the planned files
   plus the narrow session/persistence expansion.
+- Review fix focused slice: **5 passed**.
+- Review fix history/prepared/provider suite: **378 passed, 2 skipped** (expected
+  loopback permission skips).
+- Review fix controller/agent suite: **489 passed**.
+- Review fix detached-Stop lifetime case: **1 passed**.
+- Review fix Ruff format check (production, controller/history tests), Ruff lint
+  (all changed files), and `git diff --check`: passed. The pre-existing whole-file
+  formatter baseline in `test_console_agent_bridge.py` remains outside this narrow
+  two-assertion change; changed lines are formatter-conformant.
 
-No full repository suite was run, per repository and task instructions. No known
-functional concern remains; the only expected skips were sandbox loopback-listener
-permissions.
+No full repository suite was run, per repository and task instructions. The two
+expected skips were sandbox loopback-listener permission checks; the agent-bridge test
+file retains its documented pre-existing whole-file formatter baseline.
