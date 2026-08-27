@@ -1320,6 +1320,72 @@ async def test_folder_files_routes_rail_descendants_to_visible_authority(
 
 
 @pytest.mark.asyncio
+async def test_folder_files_explore_all_settles_focus_on_visible_rail_search(
+    tmp_path: Path,
+) -> None:
+    """Explore wins Files authority restoration after its real recompose."""
+    root = tmp_path / "notes"
+    root.mkdir()
+    workspace = LibraryFileNotesWorkspace(
+        root=root,
+        replica_path=tmp_path / "replica.sqlite",
+        poll_interval=10,
+    )
+    app = _build_test_app()
+    app.app_config.setdefault("library", {}).setdefault("rail_state", {})[
+        "lifecycle"
+    ] = "starter"
+    _seed_conversations(app, _two_conversations(), notes=[])
+    screen = LibraryScreen(app, file_notes_workspace_factory=lambda: workspace)
+
+    async with LibraryHarness(app, screen=screen).run_test(size=(160, 45)) as pilot:
+        await _wait_for_library_shell(screen, pilot)
+        await screen._select_library_rail_row(LIBRARY_ROW_BROWSE_NOTES)
+        await _wait_until(
+            pilot,
+            lambda: bool(screen.query("#library-notes-source-files")),
+            "Notes source chooser did not mount",
+        )
+        screen.query_one("#library-notes-source-files", Button).press()
+        await _wait_until(
+            pilot,
+            lambda: workspace.initialized and workspace.is_mounted,
+            "Folder Files did not mount",
+        )
+
+        files_rail = workspace._reader_shell.library
+        explore = files_rail.query_one("#library-rail-explore-all", Button)
+        folder_search = workspace.query_one("#file-notes-search", Input)
+        assert screen._library_lifecycle is LibraryLifecycle.STARTER
+        assert explore.visible and explore in screen.focus_chain
+
+        screen.set_focus(folder_search)
+        assert await pilot.click(explore)
+        await _wait_until(
+            pilot,
+            lambda: (
+                screen._library_lifecycle is LibraryLifecycle.EXPANDED
+                and workspace._active
+                and workspace.is_mounted
+                and screen._active_library_rail() is workspace._reader_shell.library
+                and workspace._reader_shell.library.lifecycle
+                is LibraryLifecycle.EXPANDED
+            ),
+            "Explore did not settle the expanded Files workspace",
+        )
+        await pilot.pause()
+        await pilot.pause()
+
+        visible_rail = workspace._reader_shell.library
+        visible_search = visible_rail.query_one("#library-search-input", Input)
+        assert screen.focused is visible_search
+        assert screen.focused is not folder_search
+        assert visible_rail in screen.focused.ancestors_with_self
+
+    await workspace.shutdown()
+
+
+@pytest.mark.asyncio
 async def test_folder_files_low_height_rail_scrolls_to_last_action(
     tmp_path: Path,
 ) -> None:
