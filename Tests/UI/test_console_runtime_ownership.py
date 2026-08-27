@@ -549,6 +549,58 @@ def test_the_runtime_is_disposed_by_the_apps_shutdown_lifecycles():
 
 
 @pytest.mark.unit
+def test_raw_cli_runtime_is_app_owned_unarmed_and_reads_config_replacements():
+    """The app owns one launch-local arm bit over its latest config object."""
+    from tldw_chatbook.app import TldwCli
+
+    initializer = inspect.getsource(TldwCli.__init__)
+    config_load = initializer.index("self.app_config = load_settings()")
+    raw_runtime = initializer.index("self.raw_cli_runtime")
+    next_owner = initializer.index("self.library_new_profile_admission")
+    assert config_load < raw_runtime < next_owner, initializer
+
+    app = _build_test_app(config_overrides={"console": {"raw_cli_permitted": True}})
+    runtime = app.raw_cli_runtime
+    assert runtime.permitted is True
+    assert runtime.armed is False
+
+    app.app_config = {"console": {"raw_cli_permitted": "true"}}
+    assert runtime.arm().armed is False
+    app.app_config = {"console": {"raw_cli_permitted": 1}}
+    assert runtime.arm().armed is False
+    app.app_config = {"console": {"raw_cli_permitted": True}}
+    assert runtime.arm().armed is True
+    assert app.raw_cli_runtime is runtime
+    runtime.shutdown()
+
+
+@pytest.mark.asyncio
+async def test_raw_cli_runtime_shutdown_is_once_and_precedes_console_shutdown():
+    """Both Textual shutdown paths share one raw-runtime shutdown task."""
+    from tldw_chatbook.app import TldwCli
+
+    calls: list[str] = []
+
+    class Runtime:
+        def shutdown(self) -> object:
+            calls.append("raw")
+            return object()
+
+    app = object.__new__(TldwCli)
+    app.raw_cli_runtime = Runtime()
+    app._raw_cli_runtime_shutdown_task = None
+
+    await TldwCli._shutdown_raw_cli_runtime(app)
+    await TldwCli._shutdown_raw_cli_runtime(app)
+
+    assert calls == ["raw"]
+    source = inspect.getsource(TldwCli._shutdown_app_owned_lifecycles)
+    raw = source.index("_shutdown_raw_cli_runtime")
+    console = source.index("_shutdown_console_runtime")
+    assert raw < console, source
+
+
+@pytest.mark.unit
 def test_persona_buddy_is_app_owned_and_shutdown_after_console_producers():
     """Console producers stop before Buddy drains, which precedes profiles.
 
