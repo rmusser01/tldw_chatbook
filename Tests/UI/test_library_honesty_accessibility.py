@@ -631,10 +631,7 @@ def test_notes_ctrl_s_is_absent_from_binding_footer_and_f1_while_skill_keeps_it(
     )
     LibraryScreen.action_show_workbench_help(fake)
     (panel,) = fake._pushed
-    assert not any(
-        key == "ctrl+s" and "note" in label.casefold()
-        for key, label in panel.state.shortcuts
-    )
+    assert all(key != "ctrl+s" for key, _label in panel.state.shortcuts)
 
 
 class _DatabaseNoteEditorApp(ConsolidatedCSSApp):
