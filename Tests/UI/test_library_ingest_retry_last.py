@@ -438,9 +438,9 @@ async def test_retry_last_restores_the_form_and_runs_a_fresh_preflight(
         # ...including the visible widgets after the re-render.
         await _wait_for_condition(
             pilot,
-            lambda: screen.query_one("#library-ingest-path", Input).value
-            == source,
-            message="path field never restored",
+            lambda: bool(screen.query("#library-ingest-title"))
+            and screen.query_one("#library-ingest-path", Input).value == source,
+            message="restaged ingest form never finished mounting",
         )
         assert (
             screen.query_one("#library-ingest-title", Input).value == "My talk"
@@ -453,6 +453,11 @@ async def test_retry_last_restores_the_form_and_runs_a_fresh_preflight(
             lambda: screen._library_ingest_form.preflight is warned,
             message="fresh pre-flight never ran after re-stage",
         )
+        tooling = await _wait_for_selector(
+            screen, pilot, "#ingest-preflight-tooling-detail"
+        )
+        if getattr(tooling, "collapsed", False):
+            tooling.collapsed = False
         warning = await _wait_for_selector(
             screen, pilot, "#ingest-preflight-warning-0"
         )

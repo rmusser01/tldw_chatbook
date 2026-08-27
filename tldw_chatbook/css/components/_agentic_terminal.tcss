@@ -3915,7 +3915,9 @@ ConsoleBoundedSection {
 }
 
 #console-workspace-tree > .tree--cursor {
-    text-style: bold;
+    background: $surface;
+    color: $text;
+    text-style: bold underline;
 }
 
 .console-bounded-section-hint {

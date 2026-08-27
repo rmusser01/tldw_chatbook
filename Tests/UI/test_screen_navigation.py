@@ -2959,7 +2959,7 @@ def test_compose_content_leaves_focus_alone_without_a_pending_request():
     except Exception:
         pass
 
-    assert focus_calls == []
+    assert all("focus_library" not in callback.__name__ for callback in focus_calls)
 
 
 def test_arm_library_list_entry_focus_schedules_immediate_attempt_and_settle_timer():

@@ -9109,20 +9109,20 @@ async def test_console_native_tab_strip_isolates_composer_drafts():
         composer = console.query_one("#console-native-composer", ConsoleComposerBar)
         composer.load_draft("first tab draft")
 
-        await pilot.click("#console-new-chat-tab")
-        second = store.active_session_id
+        console.query_one("#console-new-chat-tab", Button).press()
+        second = await _wait_for_active_session_change(store, pilot, first.id)
         assert second != first.id
         await _wait_for_selector(console, pilot, f"#console-session-tab-{second}")
 
         assert composer.draft_text() == ""
 
         composer.load_draft("second tab draft")
-        await pilot.click(f"#console-session-tab-{first.id}")
-        assert store.active_session_id == first.id
+        console.query_one(f"#console-session-tab-{first.id}", Button).press()
+        await _wait_for_active_session(store, pilot, first.id)
         assert composer.draft_text() == "first tab draft"
 
-        await pilot.click(f"#console-session-tab-{second}")
-        assert store.active_session_id == second
+        console.query_one(f"#console-session-tab-{second}", Button).press()
+        await _wait_for_active_session(store, pilot, second)
         assert composer.draft_text() == "second tab draft"
 
 
@@ -9197,10 +9197,15 @@ async def test_console_native_tab_strip_keeps_compact_close_x():
         assert close_button.label.plain == "✕"
         assert 2 <= close_button.region.width <= 4
 
-        await pilot.click("#console-new-chat-tab")
-        second = store.active_session_id
+        console.query_one("#console-new-chat-tab", Button).press()
+        second = await _wait_for_active_session_change(store, pilot, first.id)
         await _wait_for_selector(console, pilot, f"#console-close-session-tab-{second}")
-        await pilot.click(f"#console-close-session-tab-{second}")
+        console.query_one(f"#console-close-session-tab-{second}", Button).press()
+        await _wait_for_active_session(store, pilot, first.id)
+        for _ in range(40):
+            if second not in {session.id for session in store.sessions()}:
+                break
+            await pilot.pause(0.05)
 
         assert store.active_session_id == first.id
         assert second not in {session.id for session in store.sessions()}

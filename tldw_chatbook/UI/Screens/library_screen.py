@@ -1629,6 +1629,7 @@ def _sync_library_canvas(
     notes_focus_identity: LibraryNotesFocusIdentity | None = None,
     deferred_guard: Callable[[], bool] | None = None,
     sync_prompt_work: bool = True,
+    projection_owned: bool = False,
 ) -> bool:
     """Canvas-scoped targeted update for a Library browse canvas (Tier 2).
 
@@ -1679,10 +1680,21 @@ def _sync_library_canvas(
         sync_prompt_work: Whether a Prompt Items projection should also sync
             the independent retained Work pane. Browse-only settlements pass
             ``False`` so live editor widgets, cursor, and undo state survive.
+        projection_owned: Whether this is the projection's own final sync.
+            External syncs that land during a swap request one replay after
+            the swap; the final sync itself must not request another replay.
 
     Returns:
         True when the mounted canvas accepted the state; otherwise False.
     """
+    if (
+        not projection_owned
+        and getattr(screen, "_library_canvas_projection_depth", 0) > 0
+    ):
+        # Even when the outgoing canvas still exists and accepts this sync,
+        # the projection may already hold a replacement built from older
+        # state. Reapply current state after the outermost swap completes.
+        screen._library_canvas_resync_pending = True
     canvas: Widget | None = None
     prompt_work: LibraryPromptWorkPane | None = None
     prompt_work_kwargs: dict[str, Any] = {}
@@ -1950,11 +1962,15 @@ def _sync_library_canvas(
         # ``then=`` (whose callback is ordered after the new children
         # mount); running it here would target children about to be
         # replaced, the stranded-focus shape task-15457 recorded.
-        if getattr(screen, "_library_canvas_projection_depth", 0) > 0:
+        if (
+            not projection_owned
+            and getattr(screen, "_library_canvas_projection_depth", 0) > 0
+        ):
             logger.debug(
                 f"Library {kind} canvas sync suppressed: a targeted "
                 "projection owns the canvas host."
             )
+            screen._library_canvas_resync_pending = True
             if isinstance(follow_up_canvas, PostRecomposeCallback):
                 follow_up_canvas.queue_after_recompose(None)
             return False
@@ -4225,6 +4241,10 @@ class LibraryScreen(BaseAppScreen):
         #: projections must not have the inner one's exit clear the outer
         #: one's window.
         self._library_canvas_projection_depth: int = 0
+        #: A targeted sync that lands while the canvas child is detached is
+        #: suppressed to avoid a duplicate-id mount race. Remember that lost
+        #: repaint so the outermost projection replays the latest state.
+        self._library_canvas_resync_pending = False
         self._seed_local_source_snapshot_from_cache()
 
     def _library_route_shortcuts_for_current_state(
@@ -7732,7 +7752,10 @@ class LibraryScreen(BaseAppScreen):
 
     def _sync_library_emergency_guard_presentation(self) -> None:
         """Repaint guarded return truth after an in-place state transition."""
-        if self.is_mounted and self._library_emergency_stage == "canvas-only":
+        if (
+            getattr(self, "_is_mounted", False)
+            and self._library_emergency_stage == "canvas-only"
+        ):
             self._register_footer_shortcuts()
 
     def on_key(self, event: Key) -> None:
@@ -8582,10 +8605,10 @@ class LibraryScreen(BaseAppScreen):
         if not isinstance(state, dict):
             return
 
-        has_continue_receipt = "library_continue_receipt" in state
         continue_receipt = self._restore_library_continue_receipt(
             state.get("library_continue_receipt")
         )
+        has_continue_receipt = continue_receipt is not None
         self._library_continue_receipt = continue_receipt
         self._library_selected_row_id = (
             ""
@@ -10282,6 +10305,7 @@ class LibraryScreen(BaseAppScreen):
             self,
             kind,
             allow_screen_fallback=False,
+            projection_owned=True,
         )
 
     async def _repair_library_entry_canvas_owner(self) -> bool:
@@ -10305,7 +10329,7 @@ class LibraryScreen(BaseAppScreen):
         # Bounded purely as a hot-spin guard: convergence normally happens
         # on the first or second pass.
         for _attempt in range(8):
-            if not self.is_mounted:
+            if not getattr(self, "_is_mounted", False):
                 break
             replacement = self._build_library_entry_active_child()
             if replacement is None:
@@ -10349,13 +10373,26 @@ class LibraryScreen(BaseAppScreen):
                 if mount_failures >= 2:
                     return False
             finally:
-                self._library_canvas_projection_depth -= 1
+                self._finish_library_canvas_projection()
         return False
 
     def _schedule_library_entry_canvas_repair(self) -> None:
         """Project already-settled state under fresh generation authority."""
-        if self.is_mounted:
+        if getattr(self, "_is_mounted", False):
             self.call_later(self._repair_library_entry_canvas_owner)
+
+    def _finish_library_canvas_projection(self) -> None:
+        """Close one projection window and replay any suppressed state sync."""
+
+        self._library_canvas_projection_depth = max(
+            0, self._library_canvas_projection_depth - 1
+        )
+        if (
+            self._library_canvas_projection_depth == 0
+            and self._library_canvas_resync_pending
+        ):
+            self._library_canvas_resync_pending = False
+            self._schedule_library_entry_canvas_repair()
 
     async def _replace_library_canvas_child(
         self,
@@ -10470,7 +10507,7 @@ class LibraryScreen(BaseAppScreen):
                 then=then,
             )
         finally:
-            self._library_canvas_projection_depth -= 1
+            self._finish_library_canvas_projection()
 
     async def _project_library_canvas_child(
         self,
@@ -10570,6 +10607,7 @@ class LibraryScreen(BaseAppScreen):
                     if capture is not None and capture.identity is focus_identity
                     else None
                 ),
+                projection_owned=True,
             ):
                 return LibraryEntryReconcileResult.FAILED
         elif then is not None:
@@ -21128,11 +21166,6 @@ class LibraryScreen(BaseAppScreen):
             # skill-editor field itself, so it needs no preceding
             # ``_reset_library_skill_editor_state()`` call here.
             self._enter_library_skill_create_editor()
-        if self._library_selected_row_id == LIBRARY_ROW_BROWSE_PROMPTS:
-            self._request_library_prompts_browse(
-                self._library_prompt_browse_controller.mutation_refresh_scope,
-                focus_identity=None,
-            )
         if (
             self._library_selected_row_id == LIBRARY_ROW_BROWSE_COLLECTIONS
             and not self._library_collections_loaded
@@ -21182,6 +21215,17 @@ class LibraryScreen(BaseAppScreen):
             replaced = True
         if not replaced:
             await self.recompose()
+        if self._library_selected_row_id == LIBRARY_ROW_BROWSE_PROMPTS:
+            # The controller synchronizes its current/loading result
+            # immediately. Dispatch only after the destination canvas is
+            # mounted; dispatching before the awaited route recompose could
+            # let both the immediate result and a fast worker result land in
+            # the no-canvas window, permanently stranding a ready controller
+            # result off screen under load.
+            self._request_library_prompts_browse(
+                self._library_prompt_browse_controller.mutation_refresh_scope,
+                focus_identity=None,
+            )
         if self._library_ordinary_route_active():
             try:
                 width = self.query_one("#library-shell-grid").region.width
@@ -23300,6 +23344,11 @@ class LibraryScreen(BaseAppScreen):
             self,
             "skills",
             then=lambda: self._focus_library_control("#library-skills-import"),
+        )
+        # The permanent Work pane settles its adaptive layout during this
+        # targeted sync, so reassert the semantic return target afterwards.
+        self.call_after_refresh(
+            self._focus_library_control, "#library-skills-import"
         )
 
     @on(Button.Pressed, "#library-skills-import-browse")
@@ -32635,7 +32684,7 @@ class LibraryScreen(BaseAppScreen):
         pre-flight invalidation, rail reset, or Escape. Focus movement and
         an identical pre-flight refresh deliberately preserve it.
         """
-        if self._library_ingest_start_consent is None:
+        if getattr(self, "_library_ingest_start_consent", None) is None:
             return
         self._library_ingest_start_consent = None
         self._sync_library_emergency_guard_presentation()

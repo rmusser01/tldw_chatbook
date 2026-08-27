@@ -670,7 +670,9 @@ async def test_top_row_selection_bottom_overflow_pins_to_box_bottom():
         transcript.selection_manager.extend_drag(row.id, 5)
         row.set_selection_range(0, 5)
         transcript.selection_manager.finish_drag()
-        transcript.post_message(
+        # This is a geometry test, so await the handler that mounts the menu;
+        # leaving the message queued makes compositor load part of the setup.
+        await transcript._text_selected(
             ConsoleTranscript.TranscriptTextSelected(
                 selection=TextSelection(row.id, 0, 5),
                 screen_x=region.x + 4,

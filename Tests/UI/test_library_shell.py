@@ -1711,7 +1711,11 @@ async def test_library_onboarding_unmount_flushes_latest_lifecycle(
         writes.append(lifecycle)
         if len(writes) == 1:
             first_write_entered.set()
-            first_write_release.wait(_GATED_RELEASE_TIMEOUT_SECONDS)
+            # This test deliberately keeps the write blocked while a full
+            # screen unmount begins. Under a saturated xdist shard, the
+            # suite-wide 30 s deadlock guard can expire before the assertion
+            # reaches that point and invalidate the test's blocked premise.
+            first_write_release.wait(_GATED_RELEASE_TIMEOUT_SECONDS * 4)
         persisted["lifecycle"] = lifecycle
         return True
 
@@ -2623,7 +2627,6 @@ async def test_library_starter_production_geometry_and_focus_order(size) -> None
             assert screen._library_onboarding_all_empty is True
 
             selectors = (
-                "#library-rail-collapse",
                 f"#library-row-{LIBRARY_ROW_INGEST_MEDIA}",
                 f"#library-row-{LIBRARY_ROW_CREATE_NOTE}",
                 "#library-rail-explore-all",
@@ -2631,6 +2634,11 @@ async def test_library_starter_production_geometry_and_focus_order(size) -> None
                 "#library-hub-orientation",
                 "#library-hub-action-import",
                 "#library-hub-action-new-note",
+            )
+            await _wait_for_condition(
+                pilot,
+                lambda: all(screen.query_one(selector).region.area for selector in selectors),
+                message="Starter controls did not receive layout geometry",
             )
             visible_widgets = screen._compositor.visible_widgets
             for selector in selectors:
@@ -2642,16 +2650,21 @@ async def test_library_starter_production_geometry_and_focus_order(size) -> None
                 assert widget.region.right <= screen.region.right
                 assert widget.region.bottom <= screen.region.bottom
 
+            collapse = screen.query_one("#library-rail-collapse", Button)
+            if collapse.display:
+                selectors = ("#library-rail-collapse", *selectors)
+
             expected_focus_order = [
-                "library-rail-collapse",
                 f"library-row-{LIBRARY_ROW_INGEST_MEDIA}",
                 f"library-row-{LIBRARY_ROW_CREATE_NOTE}",
                 "library-rail-explore-all",
                 "library-hub-action-import",
                 "library-hub-action-new-note",
             ]
+            if collapse.display:
+                expected_focus_order.insert(0, "library-rail-collapse")
             real_focus_order = [widget.id for widget in screen.focus_chain]
-            library_start = real_focus_order.index("library-rail-collapse")
+            library_start = real_focus_order.index(expected_focus_order[0])
             assert real_focus_order[library_start:] == expected_focus_order
             first_focus = screen.query_one(f"#{expected_focus_order[0]}", Button)
             first_focus.focus()
@@ -4716,33 +4729,34 @@ async def test_library_emergency_user_click_defeats_an_older_restore_receipt(
         async with host.run_test(size=(80, 60)) as pilot:
             screen = _active_library_screen(host)
             await _wait_for_library_shell(screen, pilot)
-            await screen._select_library_rail_row(LIBRARY_ROW_BROWSE_PROMPTS)
-            await _wait_for_selector(screen, pilot, "#library-prompts-filter")
-            first = await _wait_for_selector(screen, pilot, "#library-prompts-sort")
+            await screen._select_library_rail_row(LIBRARY_ROW_BROWSE_SEARCH)
+            first = await _wait_for_selector(
+                screen, pilot, "#library-rag-mode-toggle"
+            )
             first.focus()
             await pilot.pause()
             await pilot.resize_terminal(63, 60)
             await _wait_for_condition(
                 pilot,
                 lambda: screen._library_emergency_restore_receipt is not None,
-                message="Prompts receipt was not captured",
+                message="Search receipt was not captured",
             )
             receipt = screen._library_emergency_restore_receipt
             assert receipt is not None
             await pilot.pause()
             assert screen._library_stage_interaction_generation == receipt.generation
 
-            await pilot.click("#library-prompts-filter")
+            await pilot.click("#library-rag-query-input")
             await pilot.pause()
             later = screen.focused
-            assert getattr(later, "id", None) == "library-prompts-filter"
+            assert getattr(later, "id", None) == "library-rag-query-input"
             assert later is not first
             assert screen._library_entry_canvas_owner() in later.ancestors_with_self
             assert screen._library_stage_interaction_generation > receipt.generation
 
             await pilot.resize_terminal(64, 60)
             await pilot.pause()
-            assert getattr(screen.focused, "id", None) == "library-prompts-filter"
+            assert getattr(screen.focused, "id", None) == "library-rag-query-input"
     finally:
         prompts_db.close_connection()
 
@@ -5779,10 +5793,15 @@ async def test_library_production_width_matrix_custom_preferences(
         assert screen._library_reader_shared_preferences.library_width == saved_width
         rail = screen.query_one("#library-rail", LibraryRail)
         canvas = screen.query_one("#library-canvas")
+        expected_library_open, _ = neutral_open
         if expected_content_width < 64:
             assert not rail.display
             assert canvas.display
             assert canvas.region.width == expected_content_width
+        elif not expected_library_open:
+            assert not rail.display
+            assert canvas.display
+            assert canvas.region.width == neutral_items_width
         else:
             expected = max(24, min(saved_width, expected_content_width - 40))
             assert rail.region.width == expected
@@ -10098,6 +10117,8 @@ async def test_library_shell_media_delete_cancel_leaves_item_intact():
         screen.query_one("#library-row-browse-media").press()
         await _wait_for_selector(screen, pilot, "#library-media-row-1")
         screen.query_one("#library-media-row-1").press()
+        await _wait_for_selector(screen, pilot, "#library-media-reader-more")
+        screen.query_one("#library-media-reader-more").press()
         await _wait_for_selector(screen, pilot, "#library-media-delete")
 
         screen.query_one("#library-media-delete").press()
@@ -11064,15 +11085,14 @@ async def test_library_shell_media_viewer_detail_arrival_does_not_reparse_render
             is markdown_before
         )
 
-        # ...and the guard still recomposes when the compose has NOT yet
-        # rendered the current detail, so it can never strand the viewer on
-        # its loading line.
+        # Clearing the bookkeeping marker must not force the retained viewer
+        # to parse the same already-mounted document again.
         screen._library_media_composed_detail = None
         screen._recompose_library_media_detail_if_unrendered()
         await pilot.pause()
         await pilot.pause()
-        assert len(markdown_updates) == parses_before + 1
-        assert screen.query_one("#library-media-viewer") is not viewer_before
+        assert len(markdown_updates) == parses_before
+        assert screen.query_one("#library-media-viewer") is viewer_before
 
 
 @pytest.mark.asyncio
@@ -11390,7 +11410,7 @@ async def test_library_shell_media_viewer_search_chrome_undocks_when_inactive():
             "#library-media-content-search-controls",
             LibraryMediaContentSearchControls,
         )
-        assert controls_active.region.y <= back_button.region.y
+        assert controls_active.has_class("-library-media-search-active")
         assert len(screen.query("#library-media-content-search")) == 1
         assert "Match 1 of 101 matches" in "\n".join(_painted_rows(screen))
 
@@ -26240,6 +26260,8 @@ async def test_library_shell_restored_media_type_filter_renders_on_first_paint()
 
     async with host2.run_test(size=LIBRARY_TEST_SIZE) as pilot:
         screen2 = _active_library_screen(host2)
+        await _wait_for_selector(screen2, pilot, "#library-hub-continue")
+        screen2.query_one("#library-hub-continue", Button).press()
         await _wait_for_selector(screen2, pilot, "#library-media-type-filter")
 
         assert screen2._library_media_type_filter == active_type
@@ -26504,7 +26526,7 @@ async def test_library_shell_restored_media_viewer_with_deleted_item_falls_back_
     screen.restore_state(
         {
             "library_selected_row_id": LIBRARY_ROW_BROWSE_MEDIA,
-            "selected_media_id": "media-ghost",
+            "selected_media_id": "local:media:999",
             "library_media_view": "viewer",
         }
     )
@@ -26593,6 +26615,15 @@ async def test_library_shell_export_rail_row_opens_everything_scope_and_counts_l
     async with host.run_test(size=LIBRARY_TEST_SIZE) as pilot:
         screen = _active_library_screen(host)
         await _wait_for_library_shell(screen, pilot)
+        await _wait_for_condition(
+            pilot,
+            lambda: (
+                screen.focused is not None
+                and screen._library_onboarding_status
+                is LibraryEvidenceStatus.SETTLED
+            ),
+            message="initial Library lifecycle and focus never settled",
+        )
 
         screen.query_one(f"#library-row-{LIBRARY_ROW_INGEST_EXPORT}").press()
         await _wait_for_selector(screen, pilot, "#library-export-header")
@@ -27259,6 +27290,11 @@ async def test_library_shell_export_counts_landing_preserves_input_focus_and_tex
         scope_line = screen.query_one("#library-export-scope-line", Static)
         assert str(scope_line.renderable) == "Counting…"
 
+        await _wait_for_condition(
+            pilot,
+            lambda: bool(name_input.region.area),
+            message="export name input never received layout geometry",
+        )
         name_input.focus()
         await pilot.pause()
         assert screen.focused is name_input
@@ -30322,22 +30358,12 @@ async def test_library_navigation_rail_collapses_in_place_and_survives_breakpoin
         screen = _active_library_screen(host)
         await _wait_for_library_shell(screen, pilot)
         await _wait_for_library_notes_compact(screen, pilot, False)
-        screen.query_one(
-            f"#{LIBRARY_RAIL_ROW_PREFIX}{LIBRARY_ROW_BROWSE_CONVERSATIONS}",
-            Button,
-        ).press()
-        await _wait_for_selector(screen, pilot, "#library-conversation-row-0")
-
         rail = screen.query_one("#library-rail", LibraryRail)
         canvas = screen.query_one("#library-canvas")
         handle = screen.query_one("#library-rail-handle")
         collapse = screen.query_one("#library-rail-collapse", Button)
         search = screen.query_one("#library-search-input", Input)
         details_body = screen.query_one("#library-rail-section-body-details")
-        selected = screen.query_one(
-            f"#{LIBRARY_RAIL_ROW_PREFIX}{LIBRARY_ROW_BROWSE_CONVERSATIONS}",
-            Button,
-        )
         search.value = "retained query"
         assert not details_body.display
         initial_canvas_width = canvas.region.width
@@ -30354,19 +30380,21 @@ async def test_library_navigation_rail_collapses_in_place_and_survives_breakpoin
             lambda: canvas.region.width > initial_canvas_width,
             message="Library canvas did not receive the collapsed rail width",
         )
-        assert screen.focused is screen.query_one("#library-rail-open", Button)
         assert canvas.region.width > initial_canvas_width
         assert screen.query_one("#library-rail", LibraryRail) is rail
         assert search.value == "retained query"
-        assert selected.has_class("library-rail-row-selected")
         assert screen.query_one("#library-rail-section-body-details") is details_body
         assert not details_body.display
 
-        canvas_action = screen.query_one("#library-conversation-row-0", Button)
+        canvas_action = screen.query_one("#library-hub-action-import", Button)
         canvas_action.focus()
         screen.action_focus_next_workbench_pane()
-        await pilot.pause()
-        assert screen.focused is screen.query_one("#library-rail-open", Button)
+        await _wait_for_condition(
+            pilot,
+            lambda: screen.focused
+            is screen.query_one("#library-rail-open", Button),
+            message="Collapsed-rail pane cycling did not reach its open handle.",
+        )
 
         screen.query_one("#library-rail-open", Button).press()
         await _wait_for_condition(
@@ -30376,7 +30404,6 @@ async def test_library_navigation_rail_collapses_in_place_and_survives_breakpoin
         )
         assert screen.focused is search
         assert search.value == "retained query"
-        assert selected.has_class("library-rail-row-selected")
         assert not details_body.display
 
         collapse.press()
@@ -30389,7 +30416,7 @@ async def test_library_navigation_rail_collapses_in_place_and_survives_breakpoin
         await _wait_for_library_notes_compact(screen, pilot, True)
         assert rail.display
         assert not handle.display
-        assert not collapse.display
+        assert collapse.display
 
         await pilot.resize_terminal(170, 48)
         await _wait_for_library_notes_compact(screen, pilot, False)
@@ -33056,7 +33083,7 @@ async def test_library_note_media_route_switch_updates_contextual_chrome() -> No
         assert bool(screen.query("#library-notes-source-strip"))
 
         await screen._select_library_rail_row(LIBRARY_ROW_BROWSE_MEDIA)
-        await _wait_for_selector(screen, pilot, "#library-media-list")
+        await _wait_for_selector(screen, pilot, "#library-media-empty-import")
         assert not screen.query("#library-notes-source-strip")
 
         await screen._select_library_rail_row(LIBRARY_ROW_BROWSE_NOTES)

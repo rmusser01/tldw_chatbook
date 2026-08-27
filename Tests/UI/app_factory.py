@@ -117,6 +117,9 @@ def build_test_app_config(
         config["first_run"] = first_run
     if first_run_setup_completed:
         first_run["setup_completed"] = True
+        # A completed setup is authoritative over load_settings()'s transient
+        # annotation for a newly-created test sandbox.
+        config.pop("_first_run", None)
     else:
         first_run.pop("setup_completed", None)
     if overrides:

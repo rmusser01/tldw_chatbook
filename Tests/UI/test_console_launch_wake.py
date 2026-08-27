@@ -378,7 +378,7 @@ async def test_a_second_launch_does_not_re_announce_a_delivered_wake(tmp_path):
 
 @pytest.mark.asyncio
 async def test_a_launch_into_console_delivers_without_stealing_the_active_tab(
-    tmp_path,
+    tmp_path, monkeypatch,
 ):
     """The OTHER launch shape, and the shipped default: `default_tab` is
     Console, so the startup screen IS a `ChatScreen` with its own fresh
@@ -392,7 +392,10 @@ async def test_a_launch_into_console_delivers_without_stealing_the_active_tab(
     """
     conversation_id, _run_id, rows = await _seed_a_finished_background_job(tmp_path)
 
+    monkeypatch.setenv("OPENAI_API_KEY", "test-key")
     app = _build_test_app("chat")
+    app.app_config.pop("_first_run", None)
+    app.app_config.setdefault("first_run", {})["setup_completed"] = True
     marks = _attach_real_dbs(app, tmp_path)
     _configure_native_ready_console(app)
     app.app_config.setdefault("console", {})["agent_runtime"] = False

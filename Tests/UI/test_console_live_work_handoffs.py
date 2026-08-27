@@ -1335,7 +1335,9 @@ async def test_watchlists_destination_click_uses_item_promised_by_button_label()
         assert "First visible run" in str(button.label)
         assert "Newer unseen run" not in str(button.label)
 
-        await pilot.click("#watchlists-follow-in-console")
+        button.scroll_visible()
+        await pilot.pause()
+        button.press()
         await pilot.pause(0.1)
 
     app.open_active_home_item_in_console.assert_called_once_with(

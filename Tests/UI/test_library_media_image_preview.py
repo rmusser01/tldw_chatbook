@@ -316,10 +316,12 @@ async def test_capability_off_keeps_complete_stored_text_without_file_calls() ->
             lambda: screen._library_media_reader_session.loaded_id == row.media_id,
             message="Image detail did not load with preview capability off.",
         )
-
-        body = screen.query_one(
-            "#library-media-viewer-content", LibraryMediaContentBody
+        body = await _wait_for_selector(
+            screen,
+            pilot,
+            "#library-media-viewer-content",
         )
+        assert isinstance(body, LibraryMediaContentBody)
         assert body.content.startswith("Complete stored text for image")
         assert not screen.query("#library-media-image-preview")
         assert service.check_calls == []

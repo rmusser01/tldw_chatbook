@@ -192,11 +192,12 @@ async def test_canvas_sync_suppresses_its_screen_fallback_inside_a_projection() 
                 )
                 await pilot.pause()
         finally:
-            screen._library_canvas_projection_depth -= 1
+            screen._finish_library_canvas_projection()
         assert calls == [], (
             "the canvas-sync fallback fired a whole-screen recompose while a "
             "targeted projection owned the canvas host"
         )
+        await _wait_for_selector(screen, pilot, "#library-media-canvas")
 
         # CONTROL: identical failure with no projection in flight must still
         # take the legacy fallback -- otherwise the treatment proves nothing.

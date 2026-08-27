@@ -194,6 +194,9 @@ class ConsoleRetrievalController:
     def _snapshot_console_staged_evidence(self) -> ConsoleLiveWorkLaunch | None:
         """Snapshot the exact live launch admitted with a prepared send."""
 
+        # Every admitted send supersedes the prior send's transient receipt,
+        # including the common no-staging fast path where capture is skipped.
+        self._clear_evidence_sent_notice()
         return self._pending_launch()
 
     async def _capture_frozen_console_staged_rag(

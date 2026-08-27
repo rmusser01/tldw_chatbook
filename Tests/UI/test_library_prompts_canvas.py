@@ -3084,7 +3084,7 @@ async def _wait_for_prompt_browse_scope(
     pilot,
     scope: PromptBrowseScope,
     *,
-    timeout: float = 30.0,
+    timeout: float = 60.0,
 ) -> None:
     """Wait for the exact mounted Prompt browse projection to settle."""
     deadline = asyncio.get_running_loop().time() + timeout

@@ -125,10 +125,14 @@ def test_citation_row_is_focusable_and_immediately_follows_owning_message() -> N
     transcript.set_citation_counts({"assistant-native-id": 2})
 
     rows = transcript._transcript_rows()
-    message_index = next(
-        index for index, row in enumerate(rows) if row.key == "message:assistant-native-id"
+    assistant_turn = next(
+        row for row in rows if row.key == "assistant-turn:assistant-native-id"
     )
-    citation_row = rows[message_index + 1]
+    citation_row = next(
+        row
+        for row in assistant_turn.nested_rows
+        if row.key == "citations:assistant-native-id"
+    )
     button = transcript._build_row_widget(citation_row, track=False)
 
     assert citation_row.kind == "citations"

@@ -3379,6 +3379,8 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
 
     def _available_layout_width(self) -> int | None:
         """Return positive screen allocation, never descendant content width."""
+        if not getattr(self, "_is_mounted", False):
+            return None
         width = self.size.width
         return width if width > 0 else None
 

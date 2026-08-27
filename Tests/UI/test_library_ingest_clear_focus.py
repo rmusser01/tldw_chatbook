@@ -111,6 +111,11 @@ async def _stage_warning_preflight(screen, pilot) -> None:
     form.preflight = _staged_preflight(_STAGED_PATH)
     form.preflight_checking = False
     screen._update_library_ingest_dynamic_regions()
+    tooling = await _wait_for_selector(
+        screen, pilot, "#ingest-preflight-tooling-detail"
+    )
+    if getattr(tooling, "collapsed", False):
+        tooling.collapsed = False
     await _wait_for_selector(screen, pilot, "#ingest-preflight-warning-0")
     await pilot.pause()
 
