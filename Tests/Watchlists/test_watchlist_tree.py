@@ -35,6 +35,23 @@ def _tree_data():
     }
 
 
+def test_source_scope_identity_includes_its_parent_context() -> None:
+    all_occurrence = TreeScope(
+        kind="source",
+        parent_context="all",
+        source_id=10,
+    )
+    unassigned_occurrence = TreeScope(
+        kind="source",
+        parent_context="unassigned",
+        source_id=10,
+    )
+
+    assert all_occurrence != unassigned_occurrence
+    assert all_occurrence.parent_context == "all"
+    assert unassigned_occurrence.parent_context == "unassigned"
+
+
 class _TreeApp(App):
     def __init__(
         self,
@@ -44,6 +61,10 @@ class _TreeApp(App):
         expanded=(),
         write_disabled_reason=None,
         source_counts=None,
+        all_source_rows=None,
+        unassigned_source_rows=None,
+        expanded_root_kinds=(),
+        unread_pin_source_id=None,
     ):
         super().__init__()
         self._data = data
@@ -52,6 +73,10 @@ class _TreeApp(App):
         self._expanded = expanded
         self._write_disabled_reason = write_disabled_reason
         self._source_counts = source_counts
+        self._all_source_rows = all_source_rows or []
+        self._unassigned_source_rows = unassigned_source_rows or []
+        self._expanded_root_kinds = expanded_root_kinds
+        self._unread_pin_source_id = unread_pin_source_id
         self.scopes: list[TreeScope] = []
         self.write_requests: list[Message] = []
 
@@ -64,6 +89,10 @@ class _TreeApp(App):
             expanded=self._expanded,
             write_disabled_reason=self._write_disabled_reason,
             source_counts=self._source_counts,
+            all_source_rows=self._all_source_rows,
+            unassigned_source_rows=self._unassigned_source_rows,
+            expanded_root_kinds=self._expanded_root_kinds,
+            unread_pin_source_id=self._unread_pin_source_id,
             id="wl-tree",
         )
 
@@ -181,6 +210,135 @@ async def test_selecting_all_sources_posts_the_all_scope():
 
 
 @pytest.mark.asyncio
+async def test_all_sources_caret_expands_without_selecting_and_child_keeps_context():
+    app = _TreeApp(
+        _tree_data(),
+        all_source_rows=[{"id": 10, "name": "ArXiv: AI", "type": "rss"}],
+    )
+    async with app.run_test() as pilot:
+        await pilot.click("#wl-tree-expand-root-all")
+        await pilot.pause()
+
+        assert app.scopes == []
+        assert app.query("#wl-tree-node-source-all-10")
+
+        await pilot.click("#wl-tree-node-source-all-10")
+        await pilot.pause()
+        assert app.scopes[-1] == TreeScope(
+            kind="source",
+            parent_context="all",
+            source_id=10,
+        )
+
+
+@pytest.mark.asyncio
+async def test_expanded_empty_aggregate_branches_explain_their_context():
+    app = _TreeApp(
+        _tree_data(),
+        expanded_root_kinds=frozenset({"all", "unassigned", "unread"}),
+    )
+    async with app.run_test():
+        expected = {
+            "#wl-tree-empty-all": "No Watchlists sources yet.",
+            "#wl-tree-empty-unassigned": "No unassigned feeds",
+            "#wl-tree-empty-unread": "No unread feeds",
+        }
+        for selector, copy in expected.items():
+            empty = app.query_one(selector, Static)
+            assert str(empty.renderable) == copy
+
+
+@pytest.mark.asyncio
+async def test_all_unread_keeps_only_positive_feeds_plus_the_zero_count_pin():
+    rows = [
+        {"id": 10, "name": "Pinned", "type": "rss"},
+        {"id": 11, "name": "Unread", "type": "rss"},
+        {"id": 12, "name": "Read", "type": "rss"},
+    ]
+    app = _TreeApp(
+        _tree_data(),
+        all_source_rows=rows,
+        expanded_root_kinds=frozenset({"unread"}),
+        unread_pin_source_id=10,
+        source_counts={
+            10: {"total": 1, "unread": 0},
+            11: {"total": 1, "unread": 1},
+            12: {"total": 1, "unread": 0},
+        },
+    )
+    async with app.run_test():
+        assert app.query("#wl-tree-node-source-unread-10")
+        assert app.query("#wl-tree-node-source-unread-11")
+        assert not app.query("#wl-tree-node-source-unread-12")
+
+
+@pytest.mark.asyncio
+async def test_aggregate_children_are_stably_sorted_and_keep_exact_occurrences():
+    rows = [
+        {"id": 12, "name": "zebra", "type": "rss"},
+        {"id": 11, "name": "Alpha", "type": "rss"},
+        {"id": 10, "name": "alpha", "type": "rss"},
+    ]
+    app = _TreeApp(
+        _tree_data(),
+        all_source_rows=rows,
+        unassigned_source_rows=[rows[0]],
+        expanded_root_kinds=frozenset({"all", "unassigned"}),
+        active_scope=TreeScope(
+            kind="source",
+            parent_context="unassigned",
+            source_id=12,
+        ),
+    )
+    async with app.run_test() as pilot:
+        all_ids = [
+            button.id
+            for button in app.query(Button)
+            if button.id and button.id.startswith("wl-tree-node-source-all-")
+        ]
+        assert all_ids == [
+            "wl-tree-node-source-all-10",
+            "wl-tree-node-source-all-11",
+            "wl-tree-node-source-all-12",
+        ]
+        assert app.query_one(
+            "#wl-tree-node-source-unassigned-12", Button
+        ).has_class("is-active")
+        assert not app.query_one(
+            "#wl-tree-node-source-all-12", Button
+        ).has_class("is-active")
+
+        await pilot.click("#wl-tree-node-source-unassigned-12")
+        await pilot.pause()
+        assert app.scopes[-1] == TreeScope(
+            kind="source",
+            parent_context="unassigned",
+            source_id=12,
+        )
+
+
+@pytest.mark.asyncio
+async def test_contextual_child_keeps_focus_when_scope_commit_recomposes_tree():
+    app = _TreeApp(
+        _tree_data(),
+        all_source_rows=[{"id": 10, "name": "Feed", "type": "rss"}],
+        expanded_root_kinds=frozenset({"all"}),
+    )
+    async with app.run_test() as pilot:
+        await pilot.click("#wl-tree-node-source-all-10")
+        await pilot.pause()
+        tree = app.query_one("#wl-tree", WatchlistTree)
+        tree.active_scope = TreeScope(
+            kind="source",
+            parent_context="all",
+            source_id=10,
+        )
+        await pilot.pause()
+
+        assert app.focused is app.query_one("#wl-tree-node-source-all-10", Button)
+
+
+@pytest.mark.asyncio
 async def test_sources_load_only_when_a_watchlist_is_expanded():
     calls: list[int] = []
 
@@ -245,7 +403,12 @@ async def test_selecting_a_source_posts_a_source_scope():
         await pilot.pause()
         await pilot.click("#wl-tree-node-source-1-10")
         await pilot.pause()
-        assert app.scopes[-1] == TreeScope(kind="source", watchlist_id=1, source_id=10)
+        assert app.scopes[-1] == TreeScope(
+            kind="source",
+            parent_context="watchlist",
+            watchlist_id=1,
+            source_id=10,
+        )
 
 
 @pytest.mark.asyncio
@@ -337,11 +500,21 @@ async def test_shared_source_across_watchlists_gets_distinct_ids_and_correct_sco
 
         await pilot.click("#wl-tree-node-source-1-10")
         await pilot.pause()
-        assert app.scopes[-1] == TreeScope(kind="source", watchlist_id=1, source_id=10)
+        assert app.scopes[-1] == TreeScope(
+            kind="source",
+            parent_context="watchlist",
+            watchlist_id=1,
+            source_id=10,
+        )
 
         await pilot.click("#wl-tree-node-source-2-10")
         await pilot.pause()
-        assert app.scopes[-1] == TreeScope(kind="source", watchlist_id=2, source_id=10)
+        assert app.scopes[-1] == TreeScope(
+            kind="source",
+            parent_context="watchlist",
+            watchlist_id=2,
+            source_id=10,
+        )
 
 
 # --- task-876: `active_scope` marks the node the screen is scoped to -------
@@ -397,7 +570,12 @@ async def test_active_scope_source_marks_only_that_source_node_active():
     app = _TreeApp(
         _tree_data(),
         source_rows={1: [{"id": 10, "name": "ArXiv: AI", "type": "rss"}]},
-        active_scope=TreeScope(kind="source", watchlist_id=1, source_id=10),
+        active_scope=TreeScope(
+            kind="source",
+            parent_context="watchlist",
+            watchlist_id=1,
+            source_id=10,
+        ),
         expanded=frozenset({1}),
     )
     async with app.run_test():
@@ -500,7 +678,12 @@ async def test_a_source_scope_arms_remove_only():
     app = _TreeApp(
         _tree_data(),
         source_rows={1: [{"id": 10, "name": "ArXiv: AI", "type": "rss"}]},
-        active_scope=TreeScope(kind="source", watchlist_id=1, source_id=10),
+        active_scope=TreeScope(
+            kind="source",
+            parent_context="watchlist",
+            watchlist_id=1,
+            source_id=10,
+        ),
         expanded=frozenset({1}),
     )
     async with app.run_test():
@@ -545,7 +728,12 @@ async def test_remove_carries_both_ids_because_membership_is_many_to_many():
     app = _TreeApp(
         _tree_data(),
         source_rows={1: [shared_row], 2: [shared_row]},
-        active_scope=TreeScope(kind="source", watchlist_id=2, source_id=10),
+        active_scope=TreeScope(
+            kind="source",
+            parent_context="watchlist",
+            watchlist_id=2,
+            source_id=10,
+        ),
         expanded=frozenset({1, 2}),
     )
     async with app.run_test() as pilot:

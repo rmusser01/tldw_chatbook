@@ -39,6 +39,9 @@ TODAY_BUCKET = -4
 # supplies this string.
 _STARRED_LABEL = "★ Starred"
 
+SourceParentContext = Literal["all", "unassigned", "unread", "watchlist"]
+AggregateRootKind = Literal["all", "unassigned", "unread"]
+
 
 @dataclass(frozen=True)
 class TreeScope:
@@ -47,6 +50,7 @@ class TreeScope:
     kind: Literal["all", "unassigned", "watchlist", "source", "starred", "unread", "today"]
     watchlist_id: int | None = None
     source_id: int | None = None
+    parent_context: SourceParentContext | None = None
 
 
 class TreeScopeChanged(Message):
@@ -67,8 +71,16 @@ class TreeExpansionChanged(Message):
     pane-local expansion would silently collapse under the user.
     """
 
-    def __init__(self, expanded: frozenset[int]) -> None:
-        self.expanded = expanded
+    def __init__(
+        self,
+        expanded_root_kinds: frozenset[AggregateRootKind],
+        expanded_watchlist_ids: frozenset[int],
+    ) -> None:
+        self.expanded_root_kinds = expanded_root_kinds
+        self.expanded_watchlist_ids = expanded_watchlist_ids
+        # Compatibility name for the existing screen mirror while its state
+        # is migrated in the next TDD slice.
+        self.expanded = expanded_watchlist_ids
         super().__init__()
 
 
@@ -135,6 +147,9 @@ class WatchlistTree(Vertical):
     """Roots, watchlists with counts, lazily-expanded sources, tag filters."""
 
     expanded: reactive[frozenset[int]] = reactive(frozenset(), recompose=True)
+    expanded_root_kinds: reactive[frozenset[AggregateRootKind]] = reactive(
+        frozenset(), recompose=True
+    )
     active_tag: reactive[str | None] = reactive(None, recompose=True)
     # task-876: the node matching the screen's `tree_scope` -- read-only from
     # this widget's own perspective. Unlike `expanded`/`active_tag`, this
@@ -148,7 +163,7 @@ class WatchlistTree(Vertical):
     # `watch_tree_scope` (pushing into the still-mounted instance after a
     # real click or a breadcrumb promotion, since neither rebuilds this
     # widget on its own).
-    active_scope: reactive["TreeScope | None"] = reactive(None, recompose=True)
+    active_scope: reactive["TreeScope | None"] = reactive(None)
     # task-895: why the five write verbs cannot run right now, or `None`
     # when they can. A single string because it is used verbatim in two
     # places -- the disabled buttons' tooltips and the visible note under
@@ -168,6 +183,10 @@ class WatchlistTree(Vertical):
         active_scope: "TreeScope | None" = None,
         write_disabled_reason: str | None = None,
         source_counts: Mapping[int, Mapping[str, int]] | None = None,
+        all_source_rows: Sequence[Mapping[str, Any]] = (),
+        unassigned_source_rows: Sequence[Mapping[str, Any]] = (),
+        expanded_root_kinds: Sequence[AggregateRootKind] = (),
+        unread_pin_source_id: int | None = None,
         **kwargs: Any,
     ) -> None:
         super().__init__(**kwargs)
@@ -180,6 +199,11 @@ class WatchlistTree(Vertical):
         # answer for a source; a source missing here renders no badge,
         # which is the honest state for "no items yet".
         self._source_counts: dict[int, Mapping[str, int]] = dict(source_counts or {})
+        self._all_source_rows = self._sorted_source_rows(all_source_rows)
+        self._unassigned_source_rows = self._sorted_source_rows(
+            unassigned_source_rows
+        )
+        self._unread_pin_source_id = unread_pin_source_id
         self._source_cache: dict[int, list[Mapping[str, Any]]] = {}
         # `set_reactive`, not plain assignment: both reactives are
         # `recompose=True`, so assigning here would queue a recompose of a
@@ -190,6 +214,10 @@ class WatchlistTree(Vertical):
         # without validators or watchers, and `compose()` reads it on the
         # FIRST render because it runs after this constructor.
         self.set_reactive(WatchlistTree.expanded, frozenset(expanded))
+        self.set_reactive(
+            WatchlistTree.expanded_root_kinds,
+            frozenset(expanded_root_kinds),
+        )
         self.set_reactive(WatchlistTree.active_tag, active_tag)
         self.set_reactive(WatchlistTree.active_scope, active_scope)
         self.set_reactive(WatchlistTree.write_disabled_reason, write_disabled_reason)
@@ -220,13 +248,31 @@ class WatchlistTree(Vertical):
             id="wl-tree-count-legend",
             classes="watchlist-tree-count-legend",
         )
-        yield self._root_node("all", "All sources", ALL_SOURCES_BUCKET)
-        yield self._root_node("unassigned", "Unassigned", UNASSIGNED_BUCKET)
+        yield from self._aggregate_root_node(
+            "all", "All sources", ALL_SOURCES_BUCKET, self._all_source_rows
+        )
+        yield from self._aggregate_root_node(
+            "unassigned",
+            "Unassigned",
+            UNASSIGNED_BUCKET,
+            self._unassigned_source_rows,
+        )
         # TASK-3791 plan task 4: the smart-feed cluster. All Unread reads
         # the same bucket as All sources (its badge IS the global unread
         # count); Today's rides TODAY_BUCKET, which the screen inserts from
         # the local-midnight unread count on every tree-data load.
-        yield self._root_node("unread", "All Unread", ALL_SOURCES_BUCKET)
+        yield from self._aggregate_root_node(
+            "unread",
+            "All Unread",
+            ALL_SOURCES_BUCKET,
+            [
+                row
+                for row in self._all_source_rows
+                if self._source_counts.get(int(row["id"]), {}).get("unread", 0)
+                > 0
+                or int(row["id"]) == self._unread_pin_source_id
+            ],
+        )
         yield self._root_node("today", "Today", TODAY_BUCKET)
         yield self._root_node(
             "starred",
@@ -439,6 +485,79 @@ class WatchlistTree(Vertical):
             button.add_class("is-active")
         return button
 
+    def _aggregate_root_node(
+        self,
+        key: AggregateRootKind,
+        label: str,
+        bucket: int,
+        rows: Sequence[Mapping[str, Any]],
+    ) -> ComposeResult:
+        """Render one aggregate parent with separate expansion and scope targets."""
+        is_open = key in self.expanded_root_kinds
+        expander = Button(
+            "▾" if is_open else "▸",
+            id=f"wl-tree-expand-root-{key}",
+            compact=True,
+            tooltip=f"{'Collapse' if is_open else 'Expand'} {label.lower()}.",
+        )
+        expander.add_class("watchlist-tree-expander")
+        yield Horizontal(
+            expander,
+            self._root_node(key, label, bucket),
+            classes="watchlist-tree-row",
+        )
+        if is_open:
+            if rows:
+                for row in rows:
+                    yield self._source_node(row, parent_context=key)
+            else:
+                empty_copy = {
+                    "all": "No Watchlists sources yet.",
+                    "unassigned": "No unassigned feeds",
+                    "unread": "No unread feeds",
+                }[key]
+                yield Static(
+                    empty_copy,
+                    id=f"wl-tree-empty-{key}",
+                    classes="watchlist-tree-empty",
+                )
+
+    def _source_node(
+        self,
+        row: Mapping[str, Any],
+        *,
+        parent_context: SourceParentContext,
+        watchlist_id: int | None = None,
+    ) -> Button:
+        """Render one occurrence of a feed beneath its contextual parent."""
+        source_id = int(row["id"])
+        source_name = escape_markup(str(row["name"]))
+        source_unread = self._source_counts.get(source_id, {}).get("unread", 0)
+        badge = f"  {source_unread}" if source_unread > 0 else ""
+        occurrence = (
+            f"{watchlist_id}-{source_id}"
+            if parent_context == "watchlist"
+            else f"{parent_context}-{source_id}"
+        )
+        source = Button(
+            f"    {source_name}{badge}",
+            id=f"wl-tree-node-source-{occurrence}",
+            compact=True,
+            tooltip=(
+                f"Show items from {source_name}. "
+                f"{self._unread_phrase(source_unread)}."
+            ),
+        )
+        source.add_class("watchlist-tree-source")
+        if self.active_scope == TreeScope(
+            kind="source",
+            parent_context=parent_context,
+            watchlist_id=watchlist_id,
+            source_id=source_id,
+        ):
+            source.add_class("is-active")
+        return source
+
     def _watchlist_node(self, watchlist: Mapping[str, Any]) -> ComposeResult:
         watchlist_id = int(watchlist["id"])
         unread = self._counts.get(watchlist_id, {}).get("unread", 0)
@@ -479,36 +598,17 @@ class WatchlistTree(Vertical):
         yield Horizontal(expander, node, classes="watchlist-tree-row")
 
         if is_open:
-            for row in self._source_rows(watchlist_id):
+            for row in self._sorted_source_rows(self._source_rows(watchlist_id)):
                 # A source can belong to more than one watchlist, so the id
                 # is qualified by watchlist — otherwise two expanded
                 # watchlists sharing a source would mount two buttons with
                 # the same id (a MountError) and the scope would be
                 # ambiguous besides.
-                source_id = int(row["id"])
-                source_name = escape_markup(str(row["name"]))
-                # task-2513 Task 8: the per-feed unread badge. Unlike roots
-                # and watchlists (which always show their count), a source
-                # shows the number only when it is positive — a permanent
-                # "0" on every feed is noise in the rail's narrowest indent,
-                # and the tooltip still answers the zero case in words.
-                source_unread = self._source_counts.get(source_id, {}).get("unread", 0)
-                badge = f"  {source_unread}" if source_unread > 0 else ""
-                source = Button(
-                    # TASK-1091 left-aligns tree labels. Four spaces plus the
-                    # Button line pad keep the source name one column past
-                    # the parent name after the expander's three columns.
-                    f"    {source_name}{badge}",
-                    id=f"wl-tree-node-source-{watchlist_id}-{row['id']}",
-                    compact=True,
-                    tooltip=f"Show items from {source_name}. {self._unread_phrase(source_unread)}.",
+                yield self._source_node(
+                    row,
+                    parent_context="watchlist",
+                    watchlist_id=watchlist_id,
                 )
-                source.add_class("watchlist-tree-source")
-                if self.active_scope == TreeScope(
-                    kind="source", watchlist_id=watchlist_id, source_id=source_id
-                ):
-                    source.add_class("is-active")
-                yield source
 
     # --- data ---
 
@@ -531,17 +631,71 @@ class WatchlistTree(Vertical):
             self._source_cache[watchlist_id] = list(self._load_source_rows(watchlist_id))
         return self._source_cache[watchlist_id]
 
+    @staticmethod
+    def _sorted_source_rows(
+        rows: Sequence[Mapping[str, Any]],
+    ) -> list[Mapping[str, Any]]:
+        """Return stable, case-insensitive feed order for every branch."""
+        return sorted(
+            rows,
+            key=lambda row: (str(row.get("name") or "").casefold(), int(row["id"])),
+        )
+
     # --- interaction ---
 
     def watch_expanded(self, expanded: frozenset[int]) -> None:
         """Tell the owning screen what is open, so it survives a recompose."""
         if self.is_mounted:
-            self.post_message(TreeExpansionChanged(expanded))
+            self.post_message(
+                TreeExpansionChanged(self.expanded_root_kinds, expanded)
+            )
+
+    def watch_expanded_root_kinds(
+        self, expanded_root_kinds: frozenset[AggregateRootKind]
+    ) -> None:
+        """Mirror independently expanded aggregate parents to the screen."""
+        if self.is_mounted:
+            self.post_message(
+                TreeExpansionChanged(expanded_root_kinds, self.expanded)
+            )
 
     def watch_active_tag(self, tag: str | None) -> None:
         """Tell the owning screen the tag filter, for the same reason."""
         if self.is_mounted:
             self.post_message(TreeTagFilterChanged(tag))
+
+    def watch_active_scope(self, scope: TreeScope | None) -> None:
+        """Move the active marker in place so scope commits retain focus."""
+        if not self.is_mounted:
+            return
+        for button in self.query(".is-active"):
+            button.remove_class("is-active")
+        button_id = self._scope_button_id(scope)
+        if button_id is None:
+            return
+        try:
+            self.query_one(f"#{button_id}", Button).add_class("is-active")
+        except Exception:
+            return
+
+    @staticmethod
+    def _scope_button_id(scope: TreeScope | None) -> str | None:
+        """Return the exact mounted occurrence id for a tree scope."""
+        if scope is None:
+            return None
+        if scope.kind in {"all", "unassigned", "unread", "today", "starred"}:
+            return f"wl-tree-node-{scope.kind}"
+        if scope.kind == "watchlist" and scope.watchlist_id is not None:
+            return f"wl-tree-node-watchlist-{scope.watchlist_id}"
+        if scope.kind != "source" or scope.source_id is None:
+            return None
+        if scope.parent_context == "watchlist" and scope.watchlist_id is not None:
+            occurrence = f"{scope.watchlist_id}-{scope.source_id}"
+        elif scope.parent_context in {"all", "unassigned", "unread"}:
+            occurrence = f"{scope.parent_context}-{scope.source_id}"
+        else:
+            return None
+        return f"wl-tree-node-source-{occurrence}"
 
     def on_button_pressed(self, event: Button.Pressed) -> None:
         button_id = event.button.id or ""
@@ -553,6 +707,12 @@ class WatchlistTree(Vertical):
 
         if button_id.startswith("wl-tree-expand-"):
             event.stop()
+            if button_id.startswith("wl-tree-expand-root-"):
+                root_kind = button_id.removeprefix("wl-tree-expand-root-")
+                expanded_roots = set(self.expanded_root_kinds)
+                expanded_roots.symmetric_difference_update({root_kind})
+                self.expanded_root_kinds = frozenset(expanded_roots)
+                return
             watchlist_id = int(button_id.rsplit("-", 1)[1])
             expanded = set(self.expanded)
             expanded.symmetric_difference_update({watchlist_id})
@@ -583,12 +743,20 @@ class WatchlistTree(Vertical):
             scope = TreeScope(kind="watchlist", watchlist_id=int(button_id.rsplit("-", 1)[1]))
         elif button_id.startswith("wl-tree-node-source-"):
             remainder = button_id[len("wl-tree-node-source-"):]
-            watchlist_part, _, source_part = remainder.partition("-")
-            scope = TreeScope(
-                kind="source",
-                watchlist_id=int(watchlist_part),
-                source_id=int(source_part),
-            )
+            parent_part, _, source_part = remainder.partition("-")
+            if parent_part in {"all", "unassigned", "unread"}:
+                scope = TreeScope(
+                    kind="source",
+                    parent_context=parent_part,
+                    source_id=int(source_part),
+                )
+            else:
+                scope = TreeScope(
+                    kind="source",
+                    parent_context="watchlist",
+                    watchlist_id=int(parent_part),
+                    source_id=int(source_part),
+                )
 
         if scope is not None:
             event.stop()
@@ -616,6 +784,7 @@ class WatchlistTree(Vertical):
         if button_id == "wl-tree-remove-source":
             if (
                 scope.kind == "source"
+                and scope.parent_context == "watchlist"
                 and scope.watchlist_id is not None
                 and scope.source_id is not None
             ):
