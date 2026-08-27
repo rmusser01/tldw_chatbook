@@ -177,8 +177,19 @@ tools/providers, invalid policy values, and descriptors that do not opt in.
 interruptible, but after approved execution starts it invokes a definitive tool
 directly and waits for its single result instead of abandoning a timeout worker.
 Do not change the timeout behavior of ordinary read or network tools. The
-existing mutation approval card remains pending until the definitive result;
-the execution policy does not authorize a call or change its exposure.
+existing mutation approval row remains keyed and visible after approval as
+**“Finishing — Stop will not cancel”**, with every decision control disabled,
+until the real tool-completion path returns commit, rollback, or a scrubbed
+crash result. Run completion clears an approved row that never dispatched. The
+closing-session path removes finishing rows owned by that deleted session
+without claiming to cancel work already started. The execution policy does not
+authorize a call or change its exposure.
+
+The exact-source database API must not accept a result callback. Give it only a
+fixed identity mode and a fixed allowlisted Watchlists source projection,
+materialized before the existing ``BEGIN IMMEDIATE`` commits. Projection
+failure rolls back the batch, and opaque authentication/header/notification
+configuration is excluded from the result.
 
 Run:
 

@@ -772,7 +772,7 @@ class LocalWatchlistsService:
         db: SubscriptionsDB, rows: Sequence[Mapping[str, Any]]
     ) -> list[dict[str, Any]]:
         outcomes = db.create_sources_exact_batch(
-            rows, materialize=normalize_local_subscription_row
+            rows, result_mode="watchlist_source"
         )
         return [
             {

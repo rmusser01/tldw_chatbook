@@ -810,6 +810,7 @@ class LocalToolProvider:
             ),
             reason=reason,
             effects=self._specs[name].approval_effects,
+            execution_policy=self._specs[name].execution_policy,
         )
         return gate, False
 

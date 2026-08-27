@@ -134,6 +134,16 @@ auto-denied on a clock, set `[mcp] approval_timeout_seconds` in
 `config.toml` (seconds; `0`, the default, waits indefinitely — the skill
 install and run-script confirm cards follow the same rule).
 
+Some short local database mutations have a definitive-after-start contract.
+Before approval, Stop still withdraws the request. After you approve and the
+mutation starts, the card changes to **“Finishing — Stop will not cancel”**;
+its decision controls are disabled and the row stays visible until the actual
+commit, rollback, or scrubbed failure result arrives. Stop can still end the
+rest of the run, but it cannot truthfully cancel a transaction already in
+progress, so Console does not claim that it did. Closing that Console chat
+removes its finishing row because the session no longer exists; it does not
+retroactively cancel a mutation that already started.
+
 **Always allow** (MCP tools only) is remembered per tool, tied to the tool's
 current definition — if the server later changes the tool, the approval card
 comes back with a "(definition changed)" badge. Review or change a remembered

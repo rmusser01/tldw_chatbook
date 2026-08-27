@@ -313,7 +313,7 @@ from tldw_chatbook.Agents.session_todo_store import (
     SessionTodoStore,
     TodoChangeCallback,
 )
-from tldw_chatbook.Agents.tool_catalog import BuiltinToolProvider
+from tldw_chatbook.Agents.tool_catalog import BuiltinToolProvider, ToolExecutionPolicy
 from tldw_chatbook.Agents.raw_shell_tool_provider import (
     RAW_SHELL_SERVER_KEY,
     RAW_SHELL_TOOL_NAME,
@@ -8396,6 +8396,7 @@ class ConsoleChatController:
                 self._cancel_raw_cli_session(session_id)
             except Exception:  # noqa: BLE001 -- teardown remains best-effort
                 logger.warning("close_session could not cancel raw CLI commands")
+        self._discard_approval_rows_for_closing_session(session_id)
         # Revoke file authority before any close action can wake a worker or
         # remove the owning session from the store.
         self._scratch_spaces.close(session_id)
@@ -9086,6 +9087,7 @@ class ConsoleChatController:
         payload = {
             "round_id": round_id,
             "session_id": owning_session_id,
+            "run_id": owning_run_id,
             "calls": [
                 {
                     "llm_name": call.llm_name,
@@ -9096,6 +9098,11 @@ class ConsoleChatController:
                     "reason": call.reason,
                     "options": list(call.options),
                     "effects": list(call.effects),
+                    "execution_policy": (
+                        call.execution_policy.value
+                        if isinstance(call.execution_policy, ToolExecutionPolicy)
+                        else ToolExecutionPolicy.BOUNDED_ABANDONABLE.value
+                    ),
                     "path_precheck_failed": call.path_precheck_failed,
                     "call_id": call.call_id,
                     "full_command": call.full_command,
@@ -9160,6 +9167,7 @@ class ConsoleChatController:
                 self._parked_approval_payloads, round_id, payload
             )
 
+        finishing_calls: list[dict[str, Any]] = []
         try:
             if self._approval_view_is_detached():
                 # task-15860 Task 5: no Console view exists, so BOTH the
@@ -9249,7 +9257,25 @@ class ConsoleChatController:
             # above already guarantees every name resolves, so `.get`'s
             # own "deny" fallback here is a belt-and-suspenders no-op, not
             # a second source of truth.
-            return {key: decisions.get(key, "deny") for key in unique_keys}
+            decision_snapshot = {
+                key: decisions.get(key, "deny") for key in unique_keys
+            }
+            approved_values = {"approve_once", "approve_session", "always_allow"}
+            finishing_calls = [
+                call_payload
+                for call_payload in payload["calls"]
+                if call_payload.get("execution_policy")
+                == ToolExecutionPolicy.DEFINITIVE_AFTER_START.value
+                and decision_snapshot.get(
+                    str(
+                        call_payload.get("call_id")
+                        or call_payload.get("llm_name")
+                        or ""
+                    )
+                )
+                in approved_values
+            ]
+            return decision_snapshot
         finally:
             # F2b fix (Qodo wave): guard the pop -- `resolve_pending_
             # approval`'s round_id lookup and the `fleet_summary_counts`
@@ -9264,7 +9290,20 @@ class ConsoleChatController:
             # only copy. Per-round storage makes that guard meaningless --
             # each round owns its own key -- and takes the accepted
             # last-armed-wins limitation (task-15661) with it.
-            self._unpark_round_payload(self._parked_approval_payloads, round_id)
+            if finishing_calls and session_id is not None:
+                # The decision round is over, but the approved definitive
+                # mutation is not.  Retain the SAME keyed payload as a
+                # non-interactive finishing surface until AgentService
+                # reports the real provider terminal.
+                with self._approval_state_lock:
+                    retained = self._parked_approval_payloads.get(round_id)
+                    if retained is not None:
+                        retained["phase"] = "finishing"
+                        retained["calls"] = finishing_calls
+                        retained["timeout_seconds"] = 0.0
+                        retained["deadline_monotonic"] = None
+            else:
+                self._unpark_round_payload(self._parked_approval_payloads, round_id)
             if session_id is not None:
                 # TASK-1050 (Defect A): discard ONLY this round's own id --
                 # the badge clears only once every bridge round for this
@@ -10306,6 +10345,102 @@ class ConsoleChatController:
         approval_event = round_state["event"]
         decisions_dict.update(decisions or {})
         approval_event.set()
+
+    def complete_definitive_tool(
+        self, run_id: str, call_key: str, tool_name: str
+    ) -> None:
+        """WORKER THREAD: clear one finishing row at its real terminal.
+
+        The primary key is the provider call id.  Fence/local rows that did
+        not carry one fall back to the tool name; only one matching row is
+        consumed per callback so repeated same-name calls remain visible
+        until each sequential mutation actually finishes.
+        """
+        affected_session: str | None = None
+        with self._approval_state_lock:
+            for round_id, payload in list(self._parked_approval_payloads.items()):
+                if payload.get("phase") != "finishing":
+                    continue
+                if payload.get("run_id") != run_id:
+                    continue
+                calls = list(payload.get("calls") or [])
+                match_index = next(
+                    (
+                        index
+                        for index, call in enumerate(calls)
+                        if str(call.get("call_id") or call.get("llm_name") or "")
+                        == call_key
+                    ),
+                    None,
+                )
+                if match_index is None:
+                    match_index = next(
+                        (
+                            index
+                            for index, call in enumerate(calls)
+                            if not call.get("call_id")
+                            and str(call.get("llm_name") or "") == tool_name
+                        ),
+                        None,
+                    )
+                if match_index is None:
+                    continue
+                calls.pop(match_index)
+                affected_session = str(payload.get("session_id") or "") or None
+                if calls:
+                    payload["calls"] = calls
+                else:
+                    self._parked_approval_payloads.pop(round_id, None)
+                break
+        if affected_session is not None:
+            self._remount_head(
+                self._parked_approval_payloads,
+                self.set_pending_approval,
+                affected_session,
+            )
+
+    def complete_definitive_run(self, run_id: str) -> None:
+        """WORKER THREAD: remove finishing rows a run never dispatched."""
+        if not run_id:
+            return
+        affected_sessions: set[str] = set()
+        with self._approval_state_lock:
+            for round_id, payload in list(self._parked_approval_payloads.items()):
+                if (
+                    payload.get("phase") != "finishing"
+                    or payload.get("run_id") != run_id
+                ):
+                    continue
+                session_id = str(payload.get("session_id") or "")
+                if session_id:
+                    affected_sessions.add(session_id)
+                self._parked_approval_payloads.pop(round_id, None)
+        for session_id in affected_sessions:
+            self._remount_head(
+                self._parked_approval_payloads,
+                self.set_pending_approval,
+                session_id,
+            )
+
+    def _discard_approval_rows_for_closing_session(self, session_id: str) -> None:
+        """Drop every approval payload owned by a closing session.
+
+        This uses the same lock as the approval-to-finishing transition, so
+        whichever operation wins first, no later transition can retain a row
+        for a session that is being deleted.
+        """
+        removed = False
+        with self._approval_state_lock:
+            for round_id, payload in list(self._parked_approval_payloads.items()):
+                if payload.get("session_id") == session_id:
+                    self._parked_approval_payloads.pop(round_id, None)
+                    removed = True
+        if removed and self.store.active_session_id == session_id:
+            self._remount_head(
+                self._parked_approval_payloads,
+                self.set_pending_approval,
+                session_id,
+            )
 
     def revoke_approval_rounds_for_run(self, run_id: str) -> int:
         """Fail every approval round owned by ``run_id`` closed, right now.
@@ -18513,6 +18648,8 @@ class ConsoleChatController:
                 # tool for real). Run-keyed, so a live sibling child --
                 # which shares this same session -- keeps its own card.
                 revoke_approvals=self.revoke_approval_rounds_for_run,
+                on_tool_terminal=self.complete_definitive_tool,
+                on_run_terminal=self.complete_definitive_run,
                 restore_provider_continuation=restore_provider_continuation,
                 restore_provider_target=restore_provider_target,
                 expand_provider_continuation=expand_provider_continuation,

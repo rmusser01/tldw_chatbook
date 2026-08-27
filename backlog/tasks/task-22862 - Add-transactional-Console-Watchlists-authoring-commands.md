@@ -44,8 +44,8 @@ Let a user create multiple sources, create a collection, and update collection m
 <!-- SECTION:PLAN:BEGIN -->
 1. Add race and validation RED tests, then implement one BEGIN IMMEDIATE database-owner exact-source batch used by Console, direct UI, and OPML.
 2. Add collision-policy and atomic-membership RED tests, then implement explicit conflict/return-existing/auto-suffix creation and all-or-nothing membership updates.
-3. Build the synchronous WatchlistsCommandService with exact schemas, direct Console-worker calls into application-owned synchronous mutation seams, in-transaction result materialization, definitive commit/rollback outcomes, redaction, server-mode refusal, and no implicit follow-on work.
-4. Register the three mutation descriptors as Console-only with code-owned mutation effects/tags, definitive-after-start execution ownership, and sanitized destination presentation; carry the policy through the catalog/runtime without name lists, prove pre-start cancellation remains interruptible, and prove read-only bindings, external MCP, and ordinary bounded tools retain their respective contracts.
+3. Build the synchronous WatchlistsCommandService with exact schemas, direct Console-worker calls into application-owned synchronous mutation seams, a fixed allowlisted in-transaction result projection (no caller callback), definitive commit/rollback outcomes, redaction, server-mode refusal, and no implicit follow-on work.
+4. Register the three mutation descriptors as Console-only with code-owned mutation effects/tags, definitive-after-start execution ownership, and sanitized destination presentation; carry the policy through the catalog/runtime and approval payload without name lists, retain approved rows as disabled keyed finishing cards until real tool/run completion, prove pre-start cancellation remains interruptible, and prove read-only bindings, external MCP, and ordinary bounded tools retain their respective contracts.
 5. Run complete task-targeted tests, Ruff, diff checks, self-review, and independent review.
 
 ADR required: yes

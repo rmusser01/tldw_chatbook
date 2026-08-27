@@ -62,6 +62,7 @@ class ChatTaskCards(Container):
             # "whichever session is active" -- see
             # `ConsoleChatController.resolve_pending_approval`.
             round_id=approval.get("round_id"),
+            phase=str(approval.get("phase") or "approval"),
         )
         install_card.set_install(task_state.pending_skill_install)
         script_card.set_script(task_state.pending_skill_script)

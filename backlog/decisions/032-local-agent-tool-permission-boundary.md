@@ -221,9 +221,24 @@ timeout/cancellation wrapper; all three TASK-22862 authoring descriptors carry
 that policy. Permission review remains interruptible before approval and an
 already-cancelled run does not start the handler. After approved execution
 begins, Stop or budget expiry cannot emit a cancellation/timeout while the
-mutation can still commit: the tool card remains pending until one definitive
-result arrives. This policy grants no permission, changes no risk tag, and
-adds no external MCP exposure.
+mutation can still commit. The approval payload therefore carries the same
+code-owned policy into Console: after approval, the keyed row remains visible
+as **“Finishing — Stop will not cancel”** with every decision control disabled.
+The real run/call-keyed provider terminal removes that row, including a
+scrubbed crash result; run termination removes any approved row that never
+reached dispatch. Session close removes finishing rows owned by the deleted UI
+session without representing that removal as cancellation. Provider
+``BaseException`` terminals are converted into the same single scrubbed
+``ToolResult`` contract rather than escaping the run.
+This policy grants no permission, changes no risk tag, and adds no external
+MCP exposure.
+
+Database-owned source creation exposes only two fixed result modes: the legacy
+identity outcome and an allowlisted Watchlists source projection materialized
+inside the same ``BEGIN IMMEDIATE``. Callers cannot inject result callbacks or
+read arbitrary source columns; projection failure rolls back the batch before
+commit, and authentication, custom-header, and notification configuration is
+not returned in the command result.
 
 Completed briefings preserve immutable, ordered evidence snapshots rather than
 depending on mutable live source/item joins. The focused Subscriptions schema

@@ -1449,6 +1449,8 @@ class AgentService:
         # a `Callable[[str], None]` annotation would make that a type error
         # at the wiring site.
         revoke_approvals: Callable[[str], object] | None = None,
+        on_tool_terminal: Callable[[str, str, str], object] | None = None,
+        on_run_terminal: Callable[[str], object] | None = None,
         child_model_scope: Callable[[], "contextlib.AbstractContextManager"]
         | None = None,
         on_child_settled: Callable[[str | None, str], None] | None = None,
@@ -1590,6 +1592,13 @@ class AgentService:
         # before. Never load-bearing for the run itself: a raise here is
         # logged and swallowed (see `_revoke_run_approvals`).
         self._revoke_approvals = revoke_approvals
+        # Console-only lifecycle observations for approved definitive
+        # mutations.  The service reports the real provider terminal by
+        # run + call key/name, and reports run termination as a final stale-
+        # card sweep for approved calls cancelled before dispatch.  Neither
+        # callback is permission-bearing or load-bearing for execution.
+        self._on_tool_terminal = on_tool_terminal
+        self._on_run_terminal = on_run_terminal
         # PR3a-1 Task 1 -- THE CHILD'S MODEL-CALL LIFETIME.
         #
         # A zero-argument callable returning a context manager, entered ON
@@ -2298,7 +2307,26 @@ class AgentService:
                         error=f"tool call cancelled before start: {call.name}",
                         outcome=TOOL_OUTCOME_CANCELLED,
                     )
-                return _invoke()
+                try:
+                    try:
+                        return _invoke()
+                    except BaseException:  # noqa: BLE001 - protocol boundary
+                        # This branch runs synchronously after the approved
+                        # mutation has started.  Every terminal -- including
+                        # control-flow BaseExceptions raised by a provider --
+                        # must collapse to one scrubbed result instead of
+                        # escaping the agent loop or being mistaken for the
+                        # pre-start cooperative-cancel outcome above.
+                        return ToolResult(
+                            ok=False,
+                            error=f"tool call failed: {call.name}",
+                        )
+                finally:
+                    self._notify_tool_terminal(
+                        run_id,
+                        call.call_id or call.name,
+                        call.name,
+                    )
 
             timeout = self.registry.timeout_for(call.name) or (
                 config.budget.max_tool_call_seconds
@@ -2398,6 +2426,28 @@ class AgentService:
             # down the cancellation path; the card's own approval timeout
             # remains the backstop.
             logger.warning("could not revoke pending approvals")
+
+    def _notify_tool_terminal(
+        self, run_id: str, call_key: str, tool_name: str
+    ) -> None:
+        """Report one definitive provider terminal without affecting it."""
+        callback = self._on_tool_terminal
+        if callback is None:
+            return
+        try:
+            callback(run_id, call_key, tool_name)
+        except BaseException:  # noqa: BLE001 - observer cannot escape boundary
+            logger.warning("could not report definitive tool completion")
+
+    def _notify_run_terminal(self, run_id: str) -> None:
+        """Sweep approved-but-never-dispatched definitive card rows."""
+        callback = self._on_run_terminal
+        if callback is None:
+            return
+        try:
+            callback(run_id)
+        except BaseException:  # noqa: BLE001 - observer cannot break persistence
+            logger.warning("could not report definitive run completion")
 
     def _drain_fleet_handles(
         self, fleet: FleetCoordinator, handle_ids: list[str]
@@ -5658,6 +5708,7 @@ class AgentService:
                     )
                 ],
             )
+        self._notify_run_terminal(run_id)
         self._persist(run_id, outcome, durable_handle_ids)
         return run_id, outcome
 

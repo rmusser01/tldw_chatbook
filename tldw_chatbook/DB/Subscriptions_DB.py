@@ -31,7 +31,7 @@ from contextlib import closing, contextmanager
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Callable, List, Dict, Any, Mapping, Optional, Sequence, TYPE_CHECKING, Union
+from typing import List, Dict, Any, Literal, Mapping, Optional, Sequence, TYPE_CHECKING, Union
 from urllib.parse import urlparse, urlunparse
 from urllib.parse import urlsplit, urlunsplit
 
@@ -2068,7 +2068,7 @@ class SubscriptionsDB(BaseDB):
         self,
         rows: Sequence[Mapping[str, Any]],
         *,
-        materialize: Callable[[Mapping[str, Any]], Any] | None = None,
+        result_mode: Literal["identity", "watchlist_source"] = "identity",
     ) -> List[Dict[str, Any]]:
         """Create an ordered exact-identity source batch under one write lock.
 
@@ -2079,12 +2079,15 @@ class SubscriptionsDB(BaseDB):
         Args:
             rows: Validated subscription mappings accepted by
                 :meth:`add_subscription`.
-            materialize: Optional pure result mapper run against the stored row
-                before commit. A mapper failure rolls back the whole batch.
+            result_mode: Fixed database-owned result projection.  The default
+                preserves the historic identity-only outcome; ``watchlist_source``
+                adds a safe, allowlisted normalized row before commit.
 
         Returns:
             One ordered outcome mapping per input row.
         """
+        if result_mode not in {"identity", "watchlist_source"}:
+            raise ValueError("invalid source batch result mode")
         results: List[Dict[str, Any]] = []
         with self.transaction(immediate=True) as conn:
             for input_index, raw_row in enumerate(rows):
@@ -2101,15 +2104,107 @@ class SubscriptionsDB(BaseDB):
                     "outcome": outcome,
                     "source_id": source_id,
                 }
-                if materialize is not None:
+                if result_mode == "watchlist_source":
                     stored = conn.execute(
-                        "SELECT * FROM subscriptions WHERE id = ?", (source_id,)
+                        "SELECT id, name, type, source, description, tags, "
+                        "check_frequency, last_checked, last_successful_check, "
+                        "last_error, error_count, is_active, is_paused, "
+                        "extraction_method, extraction_rules, processing_options, "
+                        "auto_ingest, change_threshold, ignore_selectors, "
+                        "created_at, updated_at "
+                        "FROM subscriptions WHERE id = ?",
+                        (source_id,),
                     ).fetchone()
                     if stored is None:
                         raise RuntimeError("source result materialization failed")
-                    result["source"] = materialize(dict(stored))
+                    result["source"] = self._materialize_watchlist_source_result(
+                        dict(stored)
+                    )
                 results.append(result)
         return results
+
+    @staticmethod
+    def _materialize_watchlist_source_result(
+        row: Mapping[str, Any],
+    ) -> Dict[str, Any]:
+        """Build the fixed safe watchlist projection for a stored source.
+
+        The allowlisted query feeding this method intentionally excludes
+        authentication, custom headers, notification endpoints, and other
+        opaque configuration.  Materialization runs before the surrounding
+        ``BEGIN IMMEDIATE`` commits, so any malformed required value aborts
+        the entire source batch.
+        """
+
+        def json_mapping(value: Any) -> Dict[str, Any]:
+            if isinstance(value, Mapping):
+                return dict(value)
+            if not isinstance(value, str) or not value.strip():
+                return {}
+            try:
+                parsed = json.loads(value)
+            except (TypeError, ValueError):
+                return {}
+            return dict(parsed) if isinstance(parsed, Mapping) else {}
+
+        source_id = int(row["id"])
+        paused = bool(row.get("is_paused", False))
+        active = bool(row.get("is_active", True)) and not paused
+        error_count = int(row.get("error_count") or 0)
+        last_error = row.get("last_error")
+        if paused:
+            status_summary = "paused"
+        elif last_error:
+            status_summary = f"error ({error_count})" if error_count else "error"
+        else:
+            status_summary = "active" if active else "inactive"
+
+        settings: Dict[str, Any] = {}
+        for field in (
+            "check_frequency",
+            "extraction_method",
+            "change_threshold",
+            "auto_ingest",
+        ):
+            value = row.get(field)
+            if value is not None:
+                settings[field] = value
+        for field in ("extraction_rules", "processing_options"):
+            parsed = json_mapping(row.get(field))
+            if parsed:
+                settings[field] = parsed
+        if row.get("ignore_selectors"):
+            settings["ignore_selectors"] = [
+                selector.strip()
+                for selector in str(row["ignore_selectors"]).split("\n")
+                if selector.strip()
+            ]
+
+        tags = [
+            tag.strip()
+            for tag in str(row.get("tags") or "").split(",")
+            if tag.strip()
+        ]
+        return {
+            "id": f"local:subscription:{source_id}",
+            "backend": "local",
+            "entity_kind": "subscription",
+            "source_id": source_id,
+            "title": row.get("name") or "Untitled subscription",
+            "description": row.get("description"),
+            "source_type": row.get("type"),
+            "url": row.get("source"),
+            "active": active,
+            "paused": paused,
+            "tags": tags,
+            "group_ids": [],
+            "settings": settings,
+            "status_summary": status_summary,
+            "last_checked_or_scraped_at": row.get("last_checked")
+            or row.get("last_successful_check"),
+            "created_at": row.get("created_at"),
+            "updated_at": row.get("updated_at"),
+        }
 
     def add_subscription(
         self,

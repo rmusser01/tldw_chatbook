@@ -567,6 +567,7 @@ class ChatApprovalCard(Container):
         #: whenever no batch (or a caller that predates round ids) is
         #: showing.
         self._batch_round_id: str | None = None
+        self._batch_phase = "approval"
         # task-17500: the initial hide is CONSTRUCTION state, never deferred
         # mount work. This used to live in `on_mount` (`self.display =
         # False` plus a `call_after_refresh(_hide_batch_body)` for the batch
@@ -618,6 +619,7 @@ class ChatApprovalCard(Container):
         *,
         timeout_seconds: float,
         round_id: str | None = None,
+        phase: str = "approval",
     ) -> None:
         """Render one row per unique ``llm_name`` in ``calls``.
 
@@ -653,9 +655,15 @@ class ChatApprovalCard(Container):
         """
         # task-17500: all-or-nothing -- resolve every container this method
         # writes to before mutating anything, including the round-id stash.
+        title = self.query_one("#approval-title", Static)
         batch_body = self.query_one("#approval-batch-body")
         rows_container = self.query_one("#approval-batch-rows", Vertical)
         self._batch_round_id = round_id
+        self._batch_phase = "finishing" if phase == "finishing" else "approval"
+        finishing = self._batch_phase == "finishing"
+        title.update(
+            "Finishing — Stop will not cancel" if finishing else "Approval required"
+        )
         # TASK-1844: actually surface the deadline the docstring promised.
         try:
             deadline = self.query_one("#approval-deadline", Static)
@@ -682,10 +690,15 @@ class ChatApprovalCard(Container):
         # A NEW batch must start every submitting control re-enabled,
         # otherwise a round whose PREDECESSOR was resolved via Submit would
         # render with a permanently-disabled Submit button.
-        try:
-            self.query_one("#approval-submit", Button).disabled = False
-        except NoMatches:
-            pass
+        for button_id in (
+            "#approval-approve-all",
+            "#approval-submit",
+            "#approval-deny-all",
+        ):
+            try:
+                self.query_one(button_id, Button).disabled = finishing
+            except NoMatches:
+                pass
 
         grouped = _collapse_pending_calls(calls)
         self._batch_generation += 1
@@ -721,6 +734,7 @@ class ChatApprovalCard(Container):
                 id=f"approval-row-decision-{generation}-{index}",
                 classes="approval-row-decision",
             )
+            select.disabled = finishing
             selects.append(select)
             legal_values.append(row_values)
             header_static = Static(
@@ -822,6 +836,8 @@ class ChatApprovalCard(Container):
                     tooltip=("Deny and resume immediately (skips Select + Submit)."),
                 )
                 fast_buttons.extend((fast_approve, fast_deny))
+                fast_approve.disabled = finishing
+                fast_deny.disabled = finishing
                 control_children.append(fast_approve)
                 control_children.append(fast_deny)
             rows.append(

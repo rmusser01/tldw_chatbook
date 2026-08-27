@@ -217,8 +217,21 @@ timeout behavior. The three short Watchlists authoring mutations explicitly use
 `definitive_after_start`. Permission denial and cancellation before handler
 start remain interruptible. Once an approved definitive handler begins, budget
 expiry or Stop does not return control while its side effects may continue; the
-existing tool card stays pending until commit or rollback produces one result.
-This property neither authorizes the call nor changes external exposure.
+existing tool row changes to the disabled, keyed finishing state **“Finishing
+— Stop will not cancel”** until commit, rollback, or a scrubbed crash result
+produces one real terminal. The run/call-keyed completion path removes the row;
+run termination sweeps an approved row that never reached dispatch. This
+property neither authorizes the call nor changes external exposure. Closing a
+Console session removes its retained finishing rows because their UI owner no
+longer exists, without representing that teardown as cancellation of an
+already-started mutation.
+
+Exact source creation has no caller-supplied materializer. The database owner
+offers only its identity result and one fixed, allowlisted Watchlists source
+projection, selected before entering the transaction and fully materialized
+inside the same ``BEGIN IMMEDIATE``. Projection failure rolls back the batch;
+authentication, custom headers, notification endpoints, and unselected columns
+cannot cross the command result boundary.
 
 Exposure is separate from authorization:
 

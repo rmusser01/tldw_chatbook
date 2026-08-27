@@ -320,7 +320,25 @@ async def test_import_reuses_existing_unicode_casefold_equivalent_folder(tmp_pat
     )
     db = SubscriptionsDB(str(tmp_path / "subs.db"), client_id="test")
     bundle = WatchlistBundleService(db)
-    existing = bundle.create("STRASSE")
+    prior_source_id = db.add_subscription(
+        name="Prior",
+        type="rss",
+        source="https://example.com/prior",
+    )
+    existing_result = bundle.create_with_sources(
+        "STRASSE",
+        description="Keep this operator-authored description",
+        tags=["priority", "threat-intel"],
+        source_ids=[prior_source_id],
+        if_exists="conflict",
+    )
+    existing = existing_result["watchlist"]
+    with db.transaction() as conn:
+        conn.execute(
+            "UPDATE watchlists SET is_active = 0, sort_order = 73 WHERE id = ?",
+            (existing["id"],),
+        )
+    existing = bundle.list_watchlists()[0]
     scope = WatchlistScopeService(
         local_service=LocalWatchlistsService(db_factory=lambda: db),
         server_service=None,
@@ -331,9 +349,21 @@ async def test_import_reuses_existing_unicode_casefold_equivalent_folder(tmp_pat
     )
 
     assert bundle.list_watchlists() == [existing]
+    assert existing == {
+        "id": existing["id"],
+        "name": "STRASSE",
+        "description": "Keep this operator-authored description",
+        "tags": ["priority", "threat-intel"],
+        "is_active": False,
+        "sort_order": 73,
+    }
     assert result["watchlists_created"] == []
     assert result["watchlists_reused"] == ["STRASSE"]
-    assert len(bundle.list_source_rows(existing["id"])) == 1
+    members = bundle.list_source_rows(existing["id"])
+    assert {row["url"] for row in members} == {
+        "https://example.com/prior",
+        "https://example.com/one",
+    }
 
 
 # --- TASK-3604 plan task 4: export nests watchlists as folders (ADR-043 rule 5) -

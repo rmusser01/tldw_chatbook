@@ -1736,22 +1736,34 @@ def test_create_sources_exact_batch_sync_uses_database_owner_directly(tmp_path):
     assert results[0]["source"]["source_id"] == results[1]["source"]["source_id"]
 
 
-def test_create_sources_exact_batch_rolls_back_when_materialization_fails(
-    tmp_path, monkeypatch
-):
+def test_create_sources_exact_batch_rejects_arbitrary_materializer(tmp_path):
     db = SubscriptionsDB(tmp_path / "subscriptions.db", "test")
+
+    with pytest.raises(TypeError):
+        db.create_sources_exact_batch(
+            [
+                {
+                    "name": "One",
+                    "type": "rss",
+                    "source": "https://example.com/feed",
+                    "auth_config": {"token": "must-not-leak"},
+                }
+            ],
+            materialize=lambda row: dict(row),
+        )
+
+    assert db.conn.execute("SELECT COUNT(*) FROM subscriptions").fetchone()[0] == 0
+
+
+def test_create_sources_exact_batch_rolls_back_when_fixed_projection_fails(tmp_path):
+    class ProjectionFailureDB(SubscriptionsDB):
+        def _materialize_watchlist_source_result(self, row):
+            raise RuntimeError("source result materialization failed")
+
+    db = ProjectionFailureDB(tmp_path / "subscriptions.db", "test")
     service = LocalWatchlistsService(db_factory=lambda: db)
 
-    def fail_materialization(_row):
-        raise RuntimeError("materialization failed")
-
-    monkeypatch.setattr(
-        local_watchlists_service,
-        "normalize_local_subscription_row",
-        fail_materialization,
-    )
-
-    with pytest.raises(RuntimeError, match="materialization failed"):
+    with pytest.raises(RuntimeError, match="source result materialization failed"):
         service.create_sources_exact_batch_sync(
             [
                 {
@@ -1763,6 +1775,32 @@ def test_create_sources_exact_batch_rolls_back_when_materialization_fails(
         )
 
     assert db.conn.execute("SELECT COUNT(*) FROM subscriptions").fetchone()[0] == 0
+
+
+def test_fixed_source_projection_excludes_opaque_sensitive_configuration(tmp_path):
+    db = SubscriptionsDB(tmp_path / "subscriptions.db", "test")
+
+    outcomes = db.create_sources_exact_batch(
+        [
+            {
+                "name": "One",
+                "type": "rss",
+                "source": "https://example.com/feed",
+                "auth_config": {"token": "must-not-leak"},
+                "custom_headers": {"Authorization": "must-not-leak"},
+                "notification_config": {"webhook": "must-not-leak"},
+            }
+        ],
+        result_mode="watchlist_source",
+    )
+
+    projected = outcomes[0]["source"]
+    assert projected["source_id"] == outcomes[0]["source_id"]
+    assert projected["url"] == "https://example.com/feed"
+    assert "auth_config" not in projected
+    assert "custom_headers" not in projected
+    assert "notification_config" not in projected.get("settings", {})
+    assert "must-not-leak" not in repr(projected)
 
 
 @pytest.mark.asyncio

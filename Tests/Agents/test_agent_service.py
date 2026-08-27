@@ -1,6 +1,7 @@
 # Tests/Agents/test_agent_service.py
 """Service tests: scripted chat_call (no network) + real AgentRunsDB."""
 
+import asyncio
 import dataclasses
 import hashlib
 import json
@@ -3017,6 +3018,88 @@ def test_make_invoke_tool_cancels_definitive_call_before_start(db, monkeypatch):
     assert result.ok is False
     assert result.outcome == "cancelled"
     assert invoked == []
+
+
+@pytest.mark.parametrize(
+    "failure_factory",
+    [
+        lambda: SystemExit("secret system-exit detail"),
+        lambda: asyncio.CancelledError("secret cancellation detail"),
+        lambda: type("FatalToolFailure", (BaseException,), {})(
+            "secret base-exception detail"
+        ),
+    ],
+    ids=("system-exit", "cancelled-error-after-start", "custom-base-exception"),
+)
+def test_make_invoke_tool_scrubs_every_definitive_provider_terminal(
+    db, tmp_path, failure_factory
+):
+    """An approved definitive tool has one never-raise terminal contract.
+
+    These failures occur after dispatch has started.  They therefore must
+    not escape as process/control-flow exceptions, and a ``CancelledError``
+    here must not be confused with the pre-start cooperative-cancel result.
+    """
+    from tldw_chatbook.Agents.agent_models import ToolCall
+    from tldw_chatbook.Agents.local_tool_provider import LocalToolProvider
+    from tldw_chatbook.Agents.tool_catalog import ToolCatalogRegistry
+    from tldw_chatbook.MCP.permission_store import EffectiveToolState
+    from tldw_chatbook.Tools.watchlists_command_service import (
+        WatchlistsCommandService,
+    )
+
+    def crash(**_kwargs):
+        raise failure_factory()
+
+    def unavailable(*_args, **_kwargs):
+        return None
+
+    commands = WatchlistsCommandService(
+        runtime_source_loader=lambda: "local",
+        create_sources_batch=unavailable,
+        create_collection=crash,
+        update_collection_sources=unavailable,
+    )
+    registry = ToolCatalogRegistry()
+    registry.register_provider(
+        LocalToolProvider(
+            workspace_root=tmp_path,
+            watchlists_command_service=commands,
+            resolve_state=lambda _tool: EffectiveToolState(
+                state="allow", origin="tool_override"
+            ),
+        )
+    )
+    service = AgentService(
+        db=db,
+        registry=registry,
+        chat_call=lambda **_kwargs: provider_reply("unused"),
+    )
+    config = AgentConfig(
+        model="test-model",
+        system_prompt="s",
+        allowed_tools=("watchlists_create_collection",),
+        budget=RunBudget(max_tool_call_seconds=0.001),
+    )
+    invoke_tool = service._make_invoke_tool(
+        config,
+        disclosed_names={"watchlists_create_collection"},
+        should_cancel=lambda: False,
+        run_id="run-definitive-crash",
+    )
+
+    result = invoke_tool(
+        ToolCall(
+            name="watchlists_create_collection",
+            args={"name": "Threat intel", "if_exists": "auto_suffix"},
+            call_id="call-crash",
+        )
+    )
+
+    assert result.ok is False
+    assert result.error == "tool call failed: watchlists_create_collection"
+    assert "secret" not in result.error
+    assert result.outcome != "cancelled"
 
 
 def test_registry_timeout_for_reports_a_tools_own_ceiling():
