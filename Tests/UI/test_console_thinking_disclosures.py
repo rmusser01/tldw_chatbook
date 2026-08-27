@@ -9,11 +9,13 @@ import pytest
 from textual.app import App, ComposeResult
 
 from Tests.UI.consolidated_css import BUNDLED_STYLESHEET
+import tldw_chatbook.Widgets.Console.console_transcript as transcript_module
 from tldw_chatbook.Chat.console_chat_models import (
     PROPRIETARY_THINKING_NOTICE,
     ConsoleActivityPresentation,
     ConsoleChatMessage,
     ConsoleMessageRole,
+    ConsoleThinkingActivityRef,
 )
 from tldw_chatbook.Chat.console_turn_grouping import project_thinking_activities
 from tldw_chatbook.Chat.thinking_blocks import (
@@ -189,9 +191,7 @@ async def test_unowned_tool_arrival_collapses_only_current_live_thinking() -> No
         content="tool result",
         id="ordinal-less-tool",
         activity_round_ordinal=None,
-        activity_presentation=ConsoleActivityPresentation(
-            "tool", "fs_read", "success"
-        ),
+        activity_presentation=ConsoleActivityPresentation("tool", "fs_read", "success"),
     )
 
     async with app.run_test(size=(100, 28)):
@@ -498,6 +498,57 @@ def test_collapsed_inspector_resolves_full_thinking_without_changing_answer() ->
     assert transcript.thinking_detail_text(activity_id) == "full private thinking"
     assert transcript.display_message(activity_id).content == "full private thinking"
     assert transcript.display_message(assistant.id).content == "Public answer"
+
+
+def test_plain_transcript_omits_thinking_refs_but_keeps_planning_and_tools(
+    monkeypatch,
+) -> None:
+    transcript = ConsoleTranscript()
+    assistant = _assistant(
+        content="VISIBLE-ANSWER-CANARY",
+        status="complete",
+        blocks=(
+            _displayable("DISPLAYABLE-THINKING-CANARY"),
+            replace(_proprietary(), round_ordinal=1),
+        ),
+    )
+    planning = ConsoleChatMessage(
+        role=ConsoleMessageRole.TOOL,
+        content="VISIBLE-PLANNING-CANARY",
+        id="planning-activity",
+        activity_presentation=ConsoleActivityPresentation(
+            "planning", "Planning", "done"
+        ),
+    )
+    tool = ConsoleChatMessage(
+        role=ConsoleMessageRole.TOOL,
+        content="VISIBLE-TOOL-CANARY",
+        id="tool-activity",
+        activity_presentation=ConsoleActivityPresentation("tool", "fs_read", "success"),
+    )
+    transcript.set_messages([assistant, planning, tool], session_id="session-a")
+    thinking_ref = project_thinking_activities(assistant=assistant)[0]
+    assert isinstance(thinking_ref, ConsoleThinkingActivityRef)
+
+    # Mutation control: exercise the plain exporter with the same merged
+    # activity projection the mounted disclosure path consumes.
+    turn = SimpleNamespace(
+        assistant=assistant,
+        activities=(planning, thinking_ref, tool),
+    )
+    monkeypatch.setattr(
+        transcript_module,
+        "group_console_transcript_messages",
+        lambda _messages: (SimpleNamespace(standalone=None, assistant_turn=turn),),
+    )
+
+    plain = transcript.to_plain_text()
+
+    assert "VISIBLE-ANSWER-CANARY" in plain
+    assert "VISIBLE-PLANNING-CANARY" in plain
+    assert "VISIBLE-TOOL-CANARY" in plain
+    assert "DISPLAYABLE-THINKING-CANARY" not in plain
+    assert PROPRIETARY_THINKING_NOTICE not in plain
 
 
 @pytest.mark.asyncio

@@ -89,3 +89,16 @@ its DB (222 passed, 2 failed); those fixtures now either provide the owner or us
 ownerless contract. The final Task 1 plus policy suites passed 224/224 with only the
 existing RequestsDependencyWarning. Scoped Ruff, production `py_compile`, and
 `git diff --check` passed.
+
+Task 2 implementation (2026-08-26): plain Console transcripts now skip typed thinking
+activity references while preserving answers, Planning, and tools. Trajectory V1's
+shared validator rejects the three thinking-reserved field names at top-level,
+message, variant-set, and mapping variant-value locations without echoing values;
+unrelated ADR-067 additive fields remain accepted. Existing text, Markdown, document,
+FTS, title, summary, usage, speech, copy, log, and error projections were verified as
+visible/safe-data-only, so no broader production changes were made. RED was 14 failed
+and 1 passed plus a genuine transcript `AttributeError`; focused GREEN was 15 passed.
+The new real-owner privacy inventory passed 5/5, and the required six-file gate passed
+99/99 with only the pre-existing RequestsDependencyWarning. See `task-2-report.md` for
+the decoded durable-owner matrix and ADR-090/063/067 self-review. No new ADR is
+required; Task 3 remains pending.

@@ -4859,7 +4859,7 @@ class ConsoleTranscript(VerticalScroll):
             self.call_later(self.refresh_messages)
 
     def to_plain_text(self, width: int = 80) -> str:
-        """Return a terminal-readable transcript rendering for tests and exports."""
+        """Return an answer-oriented transcript without model thinking."""
         rule = "─" * max(1, width)
         lines: list[str] = []
 
@@ -4886,6 +4886,8 @@ class ConsoleTranscript(VerticalScroll):
             lines.append(_speaker_label(message, presentation))
             if turn is not None:
                 for activity in turn.activities:
+                    if isinstance(activity, ConsoleThinkingActivityRef):
+                        continue
                     activity_presentation = activity.activity_presentation
                     if activity_presentation is None:
                         activity_header = "Activity · done"

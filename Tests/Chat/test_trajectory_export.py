@@ -399,6 +399,65 @@ def test_validator_normalizes_optional_sections(db) -> None:
     assert normalized["active_leaf_message_id"] is None
 
 
+@pytest.mark.parametrize(
+    "reserved_field",
+    ["_thinking", "thinking_blocks", "thinking_blocks_json"],
+)
+@pytest.mark.parametrize(
+    "location",
+    ["top-level", "message", "variant-set", "variant-value"],
+)
+def test_validator_rejects_reserved_thinking_extensions_without_echoing_content(
+    db, reserved_field: str, location: str
+) -> None:
+    payload = _valid_payload(db)
+    private_canary = "TRAJECTORY-PRIVATE-THINKING-CANARY"
+    payload["variants"] = [
+        {
+            "turn_id": "t1",
+            "variants": ["answer variant"],
+            "selected_index": 0,
+        }
+    ]
+    if location == "top-level":
+        payload[reserved_field] = private_canary
+    elif location == "message":
+        payload["messages"][0][reserved_field] = private_canary
+    elif location == "variant-set":
+        payload["variants"][0][reserved_field] = private_canary
+    else:
+        payload["variants"][0]["variants"] = [
+            {"content": "answer variant", reserved_field: private_canary}
+        ]
+
+    with pytest.raises(
+        TrajectoryExportError, match="reserved thinking field"
+    ) as caught:
+        validate_trajectory_export(payload)
+
+    assert private_canary not in str(caught.value)
+
+
+def test_validator_keeps_general_additive_field_compatibility(db) -> None:
+    payload = _valid_payload(db)
+    payload["future_top_level"] = {"accepted": True}
+    payload["messages"][0]["future_message_field"] = "accepted"
+    payload["variants"] = [
+        {
+            "turn_id": "t1",
+            "variants": ["answer variant"],
+            "selected_index": 0,
+            "future_variant_field": "accepted",
+        }
+    ]
+
+    normalized = validate_trajectory_export(payload)
+
+    assert normalized["future_top_level"] == {"accepted": True}
+    assert normalized["messages"][0]["future_message_field"] == "accepted"
+    assert normalized["variants"][0]["future_variant_field"] == "accepted"
+
+
 # ---------------------------------------------------------------------------
 # Atomic write
 # ---------------------------------------------------------------------------
