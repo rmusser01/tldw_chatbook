@@ -573,6 +573,7 @@ def _raw_cli_worker_entry(
         exit_code = shell_process.wait()
         shell_exit_code.value = exit_code
         shell_exited_event.set()
+        output_queue.put(("terminal", "exited", exit_code, argv[0]))
         for reader in readers:
             reader.join()
     finally:
@@ -652,17 +653,17 @@ class _LaunchCommit:
             self._launch_event.set()
             self._committed.set()
 
-    @property
-    def started_at(self) -> float | None:
-        with self._lock:
-            return self._started_at
-
     def wait(self, timeout: float) -> bool:
         return self._committed.wait(timeout)
 
-    def close(self) -> None:
+    def settle(self) -> float | None:
+        """Atomically honor an existing commit or permanently refuse a later one."""
         with self._lock:
             self._closed = True
+            return self._started_at
+
+    def close(self) -> None:
+        self.settle()
 
 
 class _DiskSpoolOwner:
@@ -857,8 +858,7 @@ class RawShellExecutor:
                 if time.monotonic() >= admission_deadline:
                     terminal_state = "containment_unavailable"
                     break
-            else:
-                started_at = launch_commit.started_at
+            started_at = launch_commit.settle()
 
             if started_at is None:
                 launch_commit.close()
@@ -960,6 +960,7 @@ class RawShellExecutor:
         ended_streams: set[RawCliStream] = set()
         exited_at: float | None = None
         exited_code: int | None = None
+        exited_terminal_seen = False
         while True:
             message: tuple[Any, ...] | None = None
             try:
@@ -981,13 +982,17 @@ class RawShellExecutor:
                 elif kind == "launched":
                     resolved_shell = str(message[1])
                 elif kind == "terminal":
-                    return message[1], message[2], str(message[3]), False
+                    if message[1] != "exited":
+                        return message[1], message[2], str(message[3]), False
+                    exited_terminal_seen = True
+                    exited_code = int(message[2])
+                    resolved_shell = str(message[3])
 
             if exited_at is None and shell_exited_event.is_set():
                 exited_code = int(shell_exit_code.value)
                 exited_at = time.monotonic()
             if exited_at is not None:
-                if ended_streams == {"stdout", "stderr"}:
+                if exited_terminal_seen and ended_streams == {"stdout", "stderr"}:
                     return "exited", exited_code, resolved_shell, False
                 if time.monotonic() - exited_at >= _RAW_POST_EXIT_DRAIN_SECONDS:
                     return "exited", exited_code, resolved_shell, True

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import multiprocessing
+import multiprocessing.queues
 from multiprocessing.connection import wait
 import os
 from pathlib import Path
@@ -397,6 +398,65 @@ def test_closed_admission_cannot_be_committed_late_after_cancellation(
     assert marker.exists() is False
 
 
+def test_commit_between_failed_wait_and_parent_settlement_is_honored(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    wait_returned_false = threading.Event()
+    commit_finished = threading.Event()
+    consume_called = threading.Event()
+    first_wait = True
+    real_wait = raw_cli._LaunchCommit.wait
+    real_consume = raw_cli.RawShellExecutor._consume
+
+    def boundary_wait(commit: Any, timeout: float) -> bool:
+        nonlocal first_wait
+        if first_wait:
+            first_wait = False
+            wait_returned_false.set()
+            return False
+        return real_wait(commit, timeout)
+
+    class BoundaryCancel:
+        def is_set(self) -> bool:
+            if not wait_returned_false.is_set():
+                return False
+            assert commit_finished.wait(5.0)
+            return True
+
+    def admit(tree: ExecutorProcessTree, commit_launch: Any) -> bool:
+        tree.admit()
+        assert wait_returned_false.wait(5.0)
+        commit_launch()
+        commit_finished.set()
+        return True
+
+    def recording_consume(*args: Any, **kwargs: Any) -> Any:
+        consume_called.set()
+        return real_consume(*args, **kwargs)
+
+    monkeypatch.setattr(raw_cli._LaunchCommit, "wait", boundary_wait)
+    monkeypatch.setattr(
+        raw_cli.RawShellExecutor,
+        "_consume",
+        staticmethod(recording_consume),
+    )
+
+    result = _executor().execute(
+        _request(
+            tmp_path,
+            _python_command("import threading; threading.Event().wait(120)"),
+        ),
+        cancel_event=BoundaryCancel(),
+        on_event=lambda _event: None,
+        admit_worker=admit,
+    )
+
+    assert commit_finished.is_set()
+    assert consume_called.is_set()
+    assert result.terminal_state == "cancelled"
+
+
 def test_worker_needs_parent_commit_after_containment_admission(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -451,6 +511,71 @@ def test_worker_needs_parent_commit_after_containment_admission(
     abort.set()
     thread.join(5.0)
     assert thread.is_alive() is False
+
+
+@pytest.mark.parametrize(
+    ("mode", "expected"),
+    [
+        ("success", ("terminal", "exited", 7, "/fixed/bash")),
+        ("failure", ("terminal", "shell_unavailable", None, None)),
+    ],
+)
+def test_worker_emits_exactly_one_terminal_payload(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    mode: str,
+    expected: tuple[Any, ...],
+) -> None:
+    messages: list[tuple[Any, ...]] = []
+    connection = SimpleNamespace(send=lambda _identity: None, close=lambda: None)
+    output_queue = SimpleNamespace(
+        put=messages.append,
+        close=lambda: None,
+        join_thread=lambda: None,
+    )
+    gate = threading.Event()
+    gate.set()
+    request = _request(tmp_path, "ignored")
+    monkeypatch.setattr(
+        raw_cli,
+        "enter_worker_containment",
+        lambda: WorkerContainmentIdentity(pid=os.getpid(), process_group_id=None),
+    )
+
+    if mode == "success":
+
+        def pipe() -> Any:
+            value = SimpleNamespace(closed=False, read=lambda _size: b"")
+            value.close = lambda: setattr(value, "closed", True)
+            return value
+
+        process = SimpleNamespace(stdout=pipe(), stderr=pipe(), wait=lambda: 7)
+        monkeypatch.setattr(
+            raw_cli,
+            "resolve_shell_argv",
+            lambda *_args: ("/fixed/bash", "-c", "ignored"),
+        )
+        monkeypatch.setattr(raw_cli, "_launch_shell", lambda *_args: process)
+    else:
+
+        def unavailable(*_args: Any) -> Any:
+            raise FileNotFoundError
+
+        monkeypatch.setattr(raw_cli, "resolve_shell_argv", unavailable)
+        expected = (*expected[:3], request.shell)
+
+    raw_cli._raw_cli_worker_entry(
+        request,
+        connection,
+        gate,
+        gate,
+        threading.Event(),
+        threading.Event(),
+        SimpleNamespace(value=0),
+        output_queue,
+    )
+
+    assert [message for message in messages if message[0] == "terminal"] == [expected]
 
 
 def test_outer_shell_launch_is_noninteractive_and_never_uses_shell_true(
@@ -726,15 +851,24 @@ def test_saturated_output_cancellation_never_reads_queue_after_forced_stop(
 ) -> None:
     cancel_event = threading.Event()
     saw_output = threading.Event()
+    termination_started = threading.Event()
+    get_after_termination: list[bool] = []
+    real_get = multiprocessing.queues.Queue.get
+    real_terminate = raw_cli.ExecutorProcessTree.terminate_tree
 
-    def forbidden_post_stop_read(*_args: Any, **_kwargs: Any) -> None:
-        raise AssertionError("terminated multiprocessing queue was read")
+    def guarded_get(queue: Any, *args: Any, **kwargs: Any) -> Any:
+        if termination_started.is_set():
+            get_after_termination.append(True)
+            raise AssertionError("terminated multiprocessing queue was read")
+        return real_get(queue, *args, **kwargs)
 
+    def recording_terminate(tree: ExecutorProcessTree, **kwargs: Any) -> bool:
+        termination_started.set()
+        return real_terminate(tree, **kwargs)
+
+    monkeypatch.setattr(multiprocessing.queues.Queue, "get", guarded_get)
     monkeypatch.setattr(
-        raw_cli.RawShellExecutor,
-        "_drain_after_stop",
-        forbidden_post_stop_read,
-        raising=False,
+        raw_cli.ExecutorProcessTree, "terminate_tree", recording_terminate
     )
 
     def cancel_on_output(event: Any) -> None:
@@ -754,6 +888,8 @@ def test_saturated_output_cancellation_never_reads_queue_after_forced_stop(
     )
 
     assert saw_output.is_set()
+    assert termination_started.is_set()
+    assert get_after_termination == []
     assert result.terminal_state == "cancelled"
     assert result.cleanup_proven is True
 
