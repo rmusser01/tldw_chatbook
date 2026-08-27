@@ -352,6 +352,7 @@ Drafted, with one exception.
 
 | Group | What's in it |
 |---|---|
+| **Model thinking presentation** | **Show model thinking** is on by default and applies immediately. Off hides displayable and **Thinking · unavailable** rows only; capture, persistence, replay policy, and token accounting continue unchanged. This is a device-local presentation preference, not a request for hidden chain-of-thought. |
 | **Rail presentation** | **Stack collapsed rail labels** is off by default, so the collapsed handles read **Context ▸** and **Inspector** horizontally. Turn it on to use narrower three-column handles with the letters stacked upright. Save the category, then return to Console to see the new style; no restart is required. |
 | **Status row placement** | An **Above composer**/**Below composer** toggle, above by default: where the Console status-chip row (Provider, Model, Tools, …) sits relative to the composer input. Writes immediately — no save, no draft — and takes effect when you return to Console. |
 | **Composer paste handling** | An Enabled/Disabled toggle plus **Threshold (chars)** (1–100000): "Collapse large pasted chunks only when they exceed the threshold." Normal typing stays literal and the message actually sent is unchanged. |
@@ -365,6 +366,14 @@ Two honest limits: fallbacks reach **new or default sessions**, not a
 conversation already open; and "Workbench (advanced)" under **Scope** is
 silently downgraded — "Workbench scope is not available in this build; using
 Transcript scope."
+
+The current conversation's **Thinking history replay** control lives in its
+Console settings, because Auto/Include/Exclude is durable conversation state,
+not a device presentation setting. **Save as default for new conversations**
+copies that optional value to `console.thinking_history_policy_default` for
+future conversations only. An effective **Required** state is derived from
+mandatory provider continuation, is read-only, and never replaces the saved
+optional default.
 
 **Save (s)** and **Revert (r)** apply to every unsaved Console Behavior edit
 together, including Rail presentation. A failed save keeps the draft and leaves
@@ -636,7 +645,8 @@ not open an editor.
   refresh), `[app_tts]` (Speech & TTS defaults, per-provider setup, and the
   default voice profile), `[general]` + `[appearance]` + `[web_server]`
   (Appearance), `[splash_screen]`, `[console]` and `[chat.images]` (Console
-  Behavior), `[database]` (Storage), `[image_generation]`,
+  Behavior, including `show_model_thinking` and the new-conversation
+  `thinking_history_policy_default`), `[database]` (Storage), `[image_generation]`,
   `[internal_prompts]`, `[encryption]`, and `[rag.service]` (which RAG profile
   is active). Workspaces are the exception — they live in their own database,
   not in `config.toml`.

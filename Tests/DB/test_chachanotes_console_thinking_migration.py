@@ -752,7 +752,7 @@ def test_projection_owner_guards_and_optional_version(
     assert _raw_message(db, active_id)["content"] == "unguarded replacement"
 
 
-def test_local_only_writes_stay_out_of_sync_and_tombstones_hide_thinking(
+def test_local_only_writes_stay_out_of_sync_and_tombstones_clear_private_owners(
     db: CharactersRAGDB,
 ) -> None:
     conversation_id = db.add_conversation({"title": "privacy"})
@@ -782,7 +782,7 @@ def test_local_only_writes_stay_out_of_sync_and_tombstones_hide_thinking(
     assert db.get_message_by_id(message_id) is None
     tombstone = _raw_message(db, message_id)
     assert tombstone["thinking_blocks_json"] is None
-    assert tombstone["provider_continuation_json"] == continuation
+    assert tombstone["provider_continuation_json"] is None
     delete_payload = _payloads(db, "messages")[-1]
     assert set(delete_payload) == MESSAGE_DELETE_PAYLOAD_KEYS
     assert re.fullmatch(r"sha256:[0-9a-f]{64}", delete_payload["base_payload_hash"])
@@ -791,7 +791,7 @@ def test_local_only_writes_stay_out_of_sync_and_tombstones_hide_thinking(
     assert _payloads(db, "messages") == [delete_payload]
 
 
-def test_subtree_tombstones_clear_thinking_but_retain_continuation(
+def test_subtree_tombstones_clear_private_generation_owners(
     db: CharactersRAGDB,
 ) -> None:
     conversation_id = db.add_conversation({"title": "subtree"})
@@ -829,11 +829,11 @@ def test_subtree_tombstones_clear_thinking_but_retain_continuation(
     assert root["deleted"] == child["deleted"] == 1
     assert root["thinking_blocks_json"] is None
     assert child["thinking_blocks_json"] is None
-    assert root["provider_continuation_json"] == root_continuation
-    assert child["provider_continuation_json"] == child_continuation
+    assert root["provider_continuation_json"] is None
+    assert child["provider_continuation_json"] is None
 
 
-def test_content_edit_tombstones_descendant_thinking_only(
+def test_content_edit_tombstones_descendant_private_generation_owners(
     db: CharactersRAGDB,
 ) -> None:
     conversation_id = db.add_conversation({"title": "edit subtree"})
@@ -870,7 +870,7 @@ def test_content_edit_tombstones_descendant_thinking_only(
     child = _raw_message(db, child_id)
     assert child["deleted"] == 1
     assert child["thinking_blocks_json"] is None
-    assert child["provider_continuation_json"] == continuation
+    assert child["provider_continuation_json"] is None
 
 
 def test_continuation_discard_tombstone_clears_thinking_in_raw_storage(

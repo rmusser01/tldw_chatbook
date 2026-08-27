@@ -12600,6 +12600,7 @@ UPDATE db_schema_version
                         UPDATE messages
                            SET deleted = 1,
                                thinking_blocks_json = NULL,
+                               provider_continuation_json = NULL,
                                last_modified = ?,
                                version = version + 1,
                                client_id = ?
@@ -13217,7 +13218,7 @@ UPDATE db_schema_version
         now = self._get_current_utc_timestamp_iso()
         next_version_val = expected_version + 1
 
-        query = "UPDATE messages SET deleted = 1, thinking_blocks_json = NULL, last_modified = ?, version = ?, client_id = ? WHERE id = ? AND version = ? AND deleted = 0"
+        query = "UPDATE messages SET deleted = 1, thinking_blocks_json = NULL, provider_continuation_json = NULL, last_modified = ?, version = ?, client_id = ? WHERE id = ? AND version = ? AND deleted = 0"
         params = (now, next_version_val, self.client_id, message_id, expected_version)
 
         try:
@@ -13294,9 +13295,8 @@ UPDATE db_schema_version
 
         The returned rows describe the committed tombstones so callers can
         project the exact entity versions to another outbox after this local
-        transaction succeeds. Provider-continuation sidecars remain attached
-        to tombstoned rows for audit/recovery diagnostics, but normal reads can
-        no longer expose them.
+        transaction succeeds. Thinking and provider-continuation sidecars are
+        cleared with the deleted generation before the tombstone commits.
         """
         now = self._get_current_utc_timestamp_iso()
         # IMMEDIATE: hot messages writer; see add_message's scoping comment.
@@ -13358,6 +13358,7 @@ UPDATE db_schema_version
                 UPDATE messages
                    SET deleted = 1,
                        thinking_blocks_json = NULL,
+                       provider_continuation_json = NULL,
                        last_modified = ?,
                        version = version + 1,
                        client_id = ?

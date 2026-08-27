@@ -150,3 +150,29 @@ maintainability, test-quality, or YAGNI issue.
 Task 3 (2026-08-27): dispatched joined lifecycle/backend-refusal integration and user
 documentation. Root retains ownership of the isolated live Console verification and
 Backlog closeout after independent specification and code-quality reviews.
+
+Task 3 implementation (2026-08-27): joined lifecycle evidence found two genuine
+production seams. Persistent thinking compatibility was checked only after durable
+turn acceptance; it now refuses immediately after provider resolution, removes only
+the transient optimistic echo, restores pre-send conversation identity/title, keeps
+the draft, and contacts no provider. Direct delete, subtree delete, and descendant
+tombstoning after content edit cleared thinking but retained the same generation's
+provider continuation; all three now clear both fields after the complete prior
+generation's sync base hash is captured. No remote adapter or new envelope was added.
+
+Task 3 joined GREEN: the new tracked-lowercase
+`Tests/integration/test_console_thinking_end_to_end.py` passed 18/18. The ownership
+fix plus nearest DB regressions passed 4/4. Existing opaque future-envelope and
+whole-record no-splice sync controls passed 2/2. The required broad targeted gate
+passed **1,275**, skipped 2 loopback-listener permission controls, and reported 2
+environment warnings in 132.46s. CSS bundle sync, scoped Ruff format/check, relevant
+`py_compile`, and `git diff --check` passed. All five required user guides were
+updated without promising hidden chain-of-thought. See `task-3-report.md`.
+
+Task 3 diagnostic residual: the plan's `Scripts/` and `Tests/Integration/` casing is
+stale; Git tracks lowercase `scripts/` and `Tests/integration/`. The actual lowercase
+diagnostic inventory guard reports aggregate drift already present from Task 1 and
+formatter rewrites since pin `995036264207f4249fce880c6d288c7a369beb0e`. Its
+statement review found no Task 3 logger/sink change, and the tool has no selective
+write mode, so the shared inventory was not regenerated. Root retains adjudication,
+independent reviews, isolated live verification, and Backlog closeout.

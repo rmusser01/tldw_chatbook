@@ -5779,6 +5779,21 @@ class ConsoleChatController:
                 self._mark_transient_echo_blocked(echoed_user.id)
             return self._block(session.id, visible_copy)
 
+        thinking_block = self._thinking_persistence_preflight(
+            session_id=session.id,
+            resolution=resolution,
+        )
+        if thinking_block is not None:
+            # The optimistic echo exists only to cover a slow readiness probe.
+            # Compatibility is still pre-acceptance: leave neither a synthetic
+            # transcript owner nor an auto-derived title behind, so the exact
+            # draft can be retried after the persistent backend is upgraded.
+            if echoed_user is not None:
+                self.store.delete_message(echoed_user.id)
+            session.title = pre_send_title
+            session.persisted_conversation_id = pre_send_conversation_id
+            return thinking_block
+
         if resumed_preparation is not None:
             turn_context = resumed_preparation.execution_context
         else:
