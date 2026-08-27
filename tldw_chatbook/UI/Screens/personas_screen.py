@@ -4622,6 +4622,7 @@ class PersonasScreen(BaseAppScreen):
     async def _select_character(
         self, entity_id: str, entity_name: str, *, restore_preview: dict | None = None
     ) -> None:
+        self.conversations.close_conversation_preview()
         session_generation = self._advance_persona_buddy_session()
         server_record: dict | None = None
         if self.state.runtime_source == "server":

@@ -567,6 +567,7 @@ NATIVE_CONSOLE_STATE_VERSION = "1.0"
 _CHATDICT_MAX_TOKENS = 500
 _CHATDICT_STRATEGY = "sorted_evenly"
 _CONSOLE_RAIL_PREFERENCE_WRITE_LOCK = threading.Lock()
+_RESUME_LOCAL_CONVERSATION_ID_MAX_LENGTH = 256
 # Statuses during which the 0.2s transcript poll is actively ticking
 # (see `_start_console_transcript_sync_timer`) -- also used by the
 # sub-agent badge-count cache (Finding A) to decide whether a live run
@@ -3455,12 +3456,19 @@ class ChatScreen(BaseAppScreen):
     _resume_navigation_startup_in_progress: bool = False
 
     def apply_navigation_context(self, context: Mapping[str, object]) -> None:
-        """Capture one valid saved-conversation ID for post-mount resume."""
+        """Capture one valid saved-conversation ID for post-mount resume.
+
+        Args:
+            context: Memory-only navigation values supplied for this screen visit.
+        """
         value = context.get(CONSOLE_NAV_CONTEXT_RESUME_LOCAL_CONVERSATION_ID)
         if not isinstance(value, str):
             return
         conversation_id = value.strip()
-        if not conversation_id or len(conversation_id) > 256:
+        if (
+            not conversation_id
+            or len(conversation_id) > _RESUME_LOCAL_CONVERSATION_ID_MAX_LENGTH
+        ):
             return
         self._pending_resume_local_conversation_id = conversation_id
 

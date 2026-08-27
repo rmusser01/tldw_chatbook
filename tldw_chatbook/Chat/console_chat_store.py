@@ -590,7 +590,17 @@ class ConsoleChatPersistence(Protocol):
         character_system_template: str | None,
         character_name_snapshot: str | None,
     ) -> bool:
-        """Persist Console-owned roleplay identity context for a conversation."""
+        """Persist Console-owned roleplay identity context for a conversation.
+
+        Args:
+            conversation_id: Durable conversation identifier.
+            user_name_override: Optional saved user display-name override.
+            character_system_template: Optional saved character prompt template.
+            character_name_snapshot: Optional historical character display name.
+
+        Returns:
+            True when the roleplay context was persisted.
+        """
 
     def update_conversation_pinned_prefill(
         self,
@@ -1606,7 +1616,17 @@ class ConsoleChatStore:
         expected_session: ConsoleChatSession,
         prior_active_session_id: str | None,
     ) -> bool:
-        """Remove only the exact runtime session created by a failed restore."""
+        """Remove only the exact runtime session created by a failed restore.
+
+        Args:
+            session_id: Runtime session identifier to remove.
+            expected_session: Exact restored session instance that still owns cleanup.
+            prior_active_session_id: Session to reactivate when it still exists.
+
+        Returns:
+            True when the exact restored session was removed; False when ownership
+            had changed and no cleanup was performed.
+        """
 
         if self._sessions.get(session_id) is not expected_session:
             return False

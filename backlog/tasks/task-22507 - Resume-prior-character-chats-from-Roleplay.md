@@ -1,10 +1,10 @@
 ---
 id: TASK-22507
 title: Resume prior character chats from Roleplay
-status: Done
+status: In Progress
 assignee: []
 created_date: '2026-08-26 15:14'
-updated_date: '2026-08-26 21:26'
+updated_date: '2026-08-27 01:33'
 labels:
   - roleplay
   - console
@@ -39,6 +39,8 @@ Users who discover a saved local character conversation in Roleplay need to cont
 - [x] #10 Send transcript to Console draft remains a separate bounded 6000-character context action, and Open in Library remains unchanged.
 - [x] #11 Targeted automated tests cover navigation, ordering, live-session reuse, hydration, failure atomicity, metadata compatibility, focus, contrast, and compact layout behavior.
 - [x] #12 ADR-046 is amended before implementation to record the metadata-version and historical character-name authority decision.
+- [x] #13 Preview ownership is bound to the exact selected character and conversation, and a stale async render cannot mutate the shared transcript after ownership changes.
+- [x] #14 Changed public APIs document parameters and returns in Google style, and the resume conversation-ID limit uses a descriptive named constant.
 <!-- AC:END -->
 
 ## Implementation Plan
@@ -64,4 +66,6 @@ Detailed executable plan: Docs/superpowers/plans/2026-08-26-roleplay-resume-prio
 - Core files span Console metadata/persistence/store/hydration/workspace/startup, Roleplay preview/controller/widgets, production CSS, focused Chat/UI tests, and ADR-046.
 - Plan deviations: the joined gate exposed and corrected a historical hermetic-config fixture bug without changing production; whole-branch review added one consolidated regression-fix wave; the builder-owned app CSS bundle was included so source and production output remain synchronized.
 - Verification: the exact nine-file targeted gate passed 1202/1202 with zero failures or skips; CSS build and bundle sync passed; Ruff passed across all 22 changed Python/test files; diff checks passed; final whole-branch re-review found all findings addressed and reported Ready to merge. The full repository suite was not run, per repository instruction.
+
+Post-push Qodo follow-up: addressed all ten findings. Added the named resume-ID limit and Google-style public API documentation; bound preview ownership to the exact selected character; invalidated previews before character-detail awaits; and serialized token-guarded transcript replacement with two mounted race regressions. No new ADR is required because this hardens the existing Roleplay-read-only/Console-owner boundary without changing storage or cross-module authority.
 <!-- SECTION:NOTES:END -->

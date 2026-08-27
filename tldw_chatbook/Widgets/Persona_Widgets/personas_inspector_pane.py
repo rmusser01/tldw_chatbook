@@ -179,7 +179,11 @@ class PersonasInspectorPane(VerticalScroll):
         self._apply_action_state()
 
     def set_card_actions_visible(self, visible: bool) -> None:
-        """Retain whether card-level actions belong in the current center view."""
+        """Retain whether card-level actions belong in the current center view.
+
+        Args:
+            visible: Whether the current center view owns card-level actions.
+        """
         self._card_actions_visible = bool(visible)
         self._apply_action_state()
 

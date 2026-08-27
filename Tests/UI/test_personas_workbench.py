@@ -4009,6 +4009,123 @@ class TestConversationsPanel:
             finally:
                 first_release.set()
 
+    async def test_character_switch_invalidates_preview_before_detail_load_finishes(
+        self, mock_app_instance, stub_characters, stub_conversations, monkeypatch
+    ):
+        app = PersonasTestApp(mock_app_instance)
+        async with app.run_test(size=(160, 50)) as pilot:
+            screen = await self._open_conversation(pilot)
+            prior_attempt = screen.conversations._preview_attempt
+            detail_started = asyncio.Event()
+            release_detail = asyncio.Event()
+            original_load_character = screen.character_handler.load_character
+
+            async def gated_load_character(character_id):
+                if str(character_id) == "2":
+                    detail_started.set()
+                    await release_detail.wait()
+                await original_load_character(character_id)
+
+            monkeypatch.setattr(
+                screen.character_handler, "load_character", gated_load_character
+            )
+            selection = asyncio.create_task(
+                screen._select_character("2", "Lab Assistant")
+            )
+            try:
+                await asyncio.wait_for(detail_started.wait(), 2)
+                assert screen.state.selected_entity_id == "2"
+                assert screen.conversations._preview_attempt is None
+
+                await screen.conversations.show_conversation_view(
+                    "conv-1",
+                    [{"role": "assistant", "content": "Stale character preview"}],
+                    "Stale character preview",
+                    False,
+                    prior_attempt,
+                )
+                rendered = "\n".join(
+                    str(line.renderable)
+                    for line in screen.query(".personas-transcript-line")
+                )
+                assert "Stale character preview" not in rendered
+            finally:
+                release_detail.set()
+                await selection
+
+    async def test_stale_transcript_mount_cannot_replace_newer_loading_state(
+        self, mock_app_instance, stub_characters, stub_conversations, monkeypatch
+    ):
+        app = PersonasTestApp(mock_app_instance)
+        async with app.run_test(size=(160, 50)) as pilot:
+            screen = await self._open_conversation(pilot)
+            controller = screen.conversations
+            prior_attempt = controller._preview_attempt
+            controller._conversation_rows["conv-2"] = "Second case"
+            monkeypatch.setattr(
+                controller, "load_conversation_messages", lambda *args, **kwargs: None
+            )
+
+            view = screen.query_one("#personas-conversation-transcript-view")
+            scroll = screen.query_one("#personas-transcript-scroll")
+            stale_mount_started = asyncio.Event()
+            release_stale_mount = asyncio.Event()
+            loading_complete = asyncio.Event()
+            original_mount_all = scroll.mount_all
+            original_show_loading = view.show_loading
+            mount_calls = 0
+
+            async def gated_mount_all(widgets, *args, **kwargs):
+                nonlocal mount_calls
+                mount_calls += 1
+                if mount_calls == 1:
+                    stale_mount_started.set()
+                    await release_stale_mount.wait()
+                return await original_mount_all(widgets, *args, **kwargs)
+
+            async def observed_show_loading(*args, **kwargs):
+                result = await original_show_loading(*args, **kwargs)
+                loading_complete.set()
+                return result
+
+            monkeypatch.setattr(scroll, "mount_all", gated_mount_all)
+            monkeypatch.setattr(view, "show_loading", observed_show_loading)
+
+            stale_render = asyncio.create_task(
+                controller.show_conversation_view(
+                    "conv-1",
+                    [{"role": "assistant", "content": "Stale completion"}],
+                    "Stale completion",
+                    False,
+                    prior_attempt,
+                )
+            )
+            await asyncio.wait_for(stale_mount_started.wait(), 2)
+            current_open = asyncio.create_task(controller.open_conversation("conv-2"))
+            try:
+                for _ in range(100):
+                    if controller._preview_attempt is not prior_attempt:
+                        break
+                    await pilot.pause(0.01)
+                assert controller._preview_attempt is not prior_attempt
+                try:
+                    await asyncio.wait_for(loading_complete.wait(), 0.2)
+                except TimeoutError:
+                    pass
+                release_stale_mount.set()
+                await asyncio.gather(stale_render, current_open)
+                await pilot.pause()
+
+                assert screen.query_one("#personas-transcript-loading", Static)
+                rendered = "\n".join(
+                    str(line.renderable)
+                    for line in screen.query(".personas-transcript-line")
+                )
+                assert "Stale completion" not in rendered
+            finally:
+                release_stale_mount.set()
+                await asyncio.gather(stale_render, current_open, return_exceptions=True)
+
     async def test_empty_conversation_is_distinct_and_can_resume(
         self, mock_app_instance, stub_characters, stub_conversations, monkeypatch
     ):

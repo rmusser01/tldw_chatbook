@@ -56,6 +56,7 @@ class PersonasConversationsController:
         # Conversations listed for the selected character (id -> title) and
         # the conversation currently open in the read-only center view.
         self._conversation_rows: dict[str, str] = {}
+        self._open_character_id: str | None = None
         self._open_conversation_id: str | None = None
         self._open_conversation_title: str = ""
         self._open_conversation_transcript: str = ""
@@ -69,14 +70,8 @@ class PersonasConversationsController:
         self._resume_in_flight_attempts: dict[str, object] = {}
 
     def reset(self) -> None:
+        self.close_conversation_preview()
         self._conversation_rows = {}
-        self._open_conversation_id = None
-        self._open_conversation_title = ""
-        self._open_conversation_transcript = ""
-        self._open_conversation_truncated = False
-        self._loaded_conversation_id = None
-        self._failed_conversation_id = None
-        self._preview_attempt = None
         self._resume_in_flight_attempts = {}
 
     # ===== Listing =====
@@ -148,6 +143,11 @@ class PersonasConversationsController:
         screen = self.screen
         preview_attempt = object()
         self._preview_attempt = preview_attempt
+        self._open_character_id = (
+            str(screen.state.selected_entity_id).strip()
+            if screen.state.selected_entity_id is not None
+            else None
+        )
         screen._edit_mode = "view"
         self._open_conversation_id = conversation_id
         self._open_conversation_title = self._conversation_rows.get(
@@ -162,8 +162,8 @@ class PersonasConversationsController:
         try:
             view = screen.query_one(PersonasConversationTranscriptWidget)
             view.set_title(self._open_conversation_title or "Conversation")
-            await view.show_loading()
-            if not self._owns_preview(conversation_id, preview_attempt):
+            rendered = await view.show_loading(preview_attempt)
+            if not rendered or not self._owns_preview(conversation_id, preview_attempt):
                 return
             screen._show_center(_CONVERSATION_VIEW_ID)
             # Sync header title and console actions for the open transcript.
@@ -184,7 +184,13 @@ class PersonasConversationsController:
         character_name: str,
         preview_attempt: object,
     ) -> None:
-        """Schedule the transcript fetch on the screen's worker pool."""
+        """Schedule the transcript fetch on the screen's worker pool.
+
+        Args:
+            conversation_id: Durable conversation selected for preview.
+            character_name: Historical speaker label used while shaping messages.
+            preview_attempt: Exact ownership token for this preview load.
+        """
         self.screen.run_worker(
             partial(
                 self._load_conversation_messages_sync,
@@ -256,7 +262,16 @@ class PersonasConversationsController:
         preview_attempt: object,
         speaker_names: dict[str, str] | None = None,
     ) -> None:
-        """UI-thread continuation: display the read-only transcript view."""
+        """Display the read-only transcript when this continuation still owns it.
+
+        Args:
+            conversation_id: Durable conversation being rendered.
+            messages: Transcript messages shaped for the read-only widget.
+            transcript: Bounded plain-text transcript for the draft handoff.
+            truncated: Whether the draft handoff transcript was truncated.
+            preview_attempt: Exact ownership token for this preview load.
+            speaker_names: Optional role-to-display-name mapping.
+        """
         if not self._owns_preview(conversation_id, preview_attempt):
             return
         screen = self.screen
@@ -265,8 +280,12 @@ class PersonasConversationsController:
         except QueryError:
             logger.warning("Conversation transcript widget is not mounted.")
             return
-        await view.load_messages(messages, speaker_names=speaker_names)
-        if not self._owns_preview(conversation_id, preview_attempt):
+        rendered = await view.load_messages(
+            messages,
+            speaker_names=speaker_names,
+            render_attempt=preview_attempt,
+        )
+        if not rendered or not self._owns_preview(conversation_id, preview_attempt):
             return
         self._open_conversation_transcript = transcript
         self._open_conversation_truncated = truncated
@@ -279,7 +298,12 @@ class PersonasConversationsController:
     async def show_conversation_error(
         self, conversation_id: str, preview_attempt: object
     ) -> None:
-        """Display a recoverable error for the current preview only."""
+        """Display a recoverable error for the current preview only.
+
+        Args:
+            conversation_id: Durable conversation whose preview failed.
+            preview_attempt: Exact ownership token for this preview load.
+        """
         if not self._owns_preview(conversation_id, preview_attempt):
             return
         screen = self.screen
@@ -287,8 +311,8 @@ class PersonasConversationsController:
             view = screen.query_one(PersonasConversationTranscriptWidget)
         except QueryError:
             return
-        await view.show_error()
-        if not self._owns_preview(conversation_id, preview_attempt):
+        rendered = await view.show_error(preview_attempt)
+        if not rendered or not self._owns_preview(conversation_id, preview_attempt):
             return
         self._loaded_conversation_id = None
         self._failed_conversation_id = conversation_id
@@ -299,7 +323,15 @@ class PersonasConversationsController:
 
     def close_conversation_preview(self) -> None:
         """Invalidate the open preview so delayed continuations lose ownership."""
+        preview_attempt = self._preview_attempt
+        try:
+            self.screen.query_one(
+                PersonasConversationTranscriptWidget
+            ).invalidate_render(preview_attempt)
+        except QueryError:
+            pass
         self._preview_attempt = None
+        self._open_character_id = None
         self._open_conversation_id = None
         self._open_conversation_title = ""
         self._open_conversation_transcript = ""
@@ -312,6 +344,13 @@ class PersonasConversationsController:
         screen = self.screen
         return bool(
             self._preview_attempt is preview_attempt
+            and self._open_character_id is not None
+            and self._open_character_id
+            == (
+                str(screen.state.selected_entity_id).strip()
+                if screen.state.selected_entity_id is not None
+                else None
+            )
             and self._open_conversation_id == conversation_id
             and screen.is_mounted
             and screen.state.active_mode == "characters"
