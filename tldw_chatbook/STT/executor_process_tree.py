@@ -215,8 +215,8 @@ class _WindowsJobApi:
     def close_handle(self, job_handle: int) -> None:
         """Close a Job Object handle if present."""
 
-        if job_handle:
-            self._kernel32.CloseHandle(job_handle)
+        if job_handle and not self._kernel32.CloseHandle(job_handle):
+            raise self._last_error("CloseHandle")
 
 
 class ExecutorProcessTree:
@@ -363,12 +363,15 @@ class ExecutorProcessTree:
                     pass
             self._process.join(max(0.0, kill_timeout))
 
-        if self._process.is_alive() or not job_proven_dead:
+        cleanup_proven = not self._process.is_alive() and job_proven_dead
+        if not cleanup_proven:
+            self._quarantined = True
+        try:
+            self._close_job_handle()
+        except OSError:
             self._quarantined = True
             return False
-        self._close_job_handle()
-        self._closed = True
-        return True
+        return cleanup_proven
 
     def _terminate_posix_group(
         self,
@@ -440,8 +443,9 @@ class ExecutorProcessTree:
         with self._lock:
             if not self._job_handle:
                 return
-            self._windows_api.close_handle(self._job_handle)
+            job_handle = self._job_handle
             self._job_handle = 0
+            self._windows_api.close_handle(job_handle)
 
 
 __all__ = [

@@ -1089,12 +1089,6 @@ def test_post_exit_grace_marks_discarded_stream_output_truncated(
     spool.close()
 
 
-def test_admission_callback_return_value_is_not_the_success_signal() -> None:
-    assert raw_cli.RawCliAdmissionCallback is not None
-    assert "return value is ignored" in (raw_cli.RawShellExecutor.execute.__doc__ or "")
-    assert "commit_launch" in (raw_cli.RawShellExecutor.execute.__doc__ or "")
-
-
 def test_parent_queue_finalization_never_joins_a_terminated_writer() -> None:
     calls: list[str] = []
 

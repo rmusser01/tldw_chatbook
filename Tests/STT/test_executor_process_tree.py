@@ -70,11 +70,13 @@ class _FakeWindowsApi:
         assign_error: bool = False,
         active_process_counts: tuple[int, ...] = (0,),
         query_error: bool = False,
+        close_error: bool = False,
     ) -> None:
         self.calls = calls
         self.assign_error = assign_error
         self.active_process_counts = active_process_counts
         self.query_error = query_error
+        self.close_error = close_error
 
     def create_kill_on_close_job(self) -> int:
         self.calls.append("create_job")
@@ -100,6 +102,8 @@ class _FakeWindowsApi:
 
     def close_handle(self, job_handle: int) -> None:
         self.calls.append(("close_job", job_handle))
+        if self.close_error:
+            raise OSError("close failed")
 
 
 class _FakeCFunction:
@@ -442,6 +446,17 @@ def test_windows_job_empty_query_failure_is_generic_oserror() -> None:
     assert calls == [("query", 99, 1, 48)]
 
 
+def test_windows_job_handle_close_failure_is_generic_oserror() -> None:
+    api = object.__new__(_WindowsJobApi)
+    api._ctypes = SimpleNamespace(get_last_error=lambda: 6)  # type: ignore[attr-defined]
+    api._kernel32 = SimpleNamespace(  # type: ignore[attr-defined]
+        CloseHandle=lambda _handle: 0
+    )
+
+    with pytest.raises(OSError, match="CloseHandle failed"):
+        api.close_handle(99)
+
+
 def test_failed_windows_assignment_never_admits_and_reaps_worker() -> None:
     calls: list[object] = []
     process = _FakeProcess(calls)
@@ -492,7 +507,7 @@ def test_windows_dead_leader_still_terminates_and_proves_empty_job() -> None:
     ]
 
 
-def test_windows_job_query_failure_quarantines_and_retains_owned_handle() -> None:
+def test_windows_job_query_failure_quarantines_and_releases_owned_handle() -> None:
     calls: list[object] = []
     process = _FakeProcess(calls)
     admission = _RecordingEvent(calls)
@@ -511,9 +526,57 @@ def test_windows_job_query_failure_quarantines_and_retains_owned_handle() -> Non
 
     assert tree.terminate_tree(term_timeout=0.2, kill_timeout=0.3) is False
     assert tree.quarantined is True
-    assert tree._job_handle == 99
+    assert tree._job_handle == 0
     assert calls.count(("query_job_error", 99)) == 2
-    assert ("close_job", 99) not in calls
+    assert calls.count(("close_job", 99)) == 1
+
+
+def test_windows_job_timeout_quarantines_and_releases_owned_handle() -> None:
+    calls: list[object] = []
+    process = _FakeProcess(calls)
+    admission = _RecordingEvent(calls)
+    api = _FakeWindowsApi(calls, active_process_counts=(1,))
+    identity = WorkerContainmentIdentity(pid=process.pid, process_group_id=None)
+    tree = ExecutorProcessTree(
+        process,
+        admission,
+        identity,
+        platform_name="nt",
+        windows_api=api,
+    )
+    tree.admit()
+    process._alive = False
+    calls.clear()
+
+    assert tree.terminate_tree(term_timeout=0.0, kill_timeout=0.0) is False
+    assert tree.quarantined is True
+    assert tree._job_handle == 0
+    assert calls.count(("active_processes", 99, 1)) == 2
+    assert calls.count(("close_job", 99)) == 1
+
+
+def test_windows_job_close_failure_is_unproven_and_not_retried() -> None:
+    calls: list[object] = []
+    process = _FakeProcess(calls)
+    admission = _RecordingEvent(calls)
+    api = _FakeWindowsApi(calls, close_error=True)
+    identity = WorkerContainmentIdentity(pid=process.pid, process_group_id=None)
+    tree = ExecutorProcessTree(
+        process,
+        admission,
+        identity,
+        platform_name="nt",
+        windows_api=api,
+    )
+    tree.admit()
+    process._alive = False
+    calls.clear()
+
+    assert tree.terminate_tree(term_timeout=0.2, kill_timeout=0.3) is False
+    assert tree.quarantined is True
+    assert tree._job_handle == 0
+    assert tree.terminate_tree(term_timeout=4.0, kill_timeout=5.0) is False
+    assert calls.count(("close_job", 99)) == 1
 
 
 def test_cleanup_serializes_late_windows_admission_and_closes_job_once() -> None:
