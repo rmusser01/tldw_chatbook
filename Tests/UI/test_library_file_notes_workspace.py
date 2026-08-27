@@ -1247,6 +1247,137 @@ async def test_notes_authority_round_trip_retains_both_workspaces(
     await workspace.shutdown()
 
 
+@pytest.mark.parametrize(
+    ("return_path", "size"),
+    (
+        ("task-return", (160, 45)),
+        ("source-button", (100, 35)),
+        ("escape", (160, 45)),
+    ),
+)
+@pytest.mark.asyncio
+async def test_notes_authority_switch_restores_visible_focus_and_typing_owner(
+    tmp_path: Path,
+    return_path: str,
+    size: tuple[int, int],
+) -> None:
+    """Every Files exit evacuates hidden focus and restores both editors."""
+    root = tmp_path / "notes"
+    root.mkdir()
+    (root / "file.md").write_text("folder body", encoding="utf-8")
+    workspace = LibraryFileNotesWorkspace(
+        root=root,
+        replica_path=tmp_path / "replica.sqlite",
+        poll_interval=10,
+        autosave_delay=30,
+    )
+    app = _build_test_app()
+    _seed_conversations(
+        app,
+        _two_conversations(),
+        notes=[
+            {
+                "id": "db-note",
+                "title": "Database note",
+                "content": "database body",
+                "version": 1,
+                "keywords": [],
+            }
+        ],
+    )
+    screen = LibraryScreen(app, file_notes_workspace_factory=lambda: workspace)
+
+    async with LibraryHarness(app, screen=screen).run_test(size=size) as pilot:
+        await _wait_for_library_shell(screen, pilot)
+        await screen._select_library_rail_row(LIBRARY_ROW_BROWSE_NOTES)
+        await _wait_until(
+            pilot,
+            lambda: bool(screen.query("#library-notes-row-0")),
+            "Database Notes did not mount",
+        )
+        screen.query_one("#library-notes-row-0", Button).press()
+        await _wait_until(
+            pilot,
+            lambda: bool(screen.query("#library-note-body")),
+            "Database editor did not mount",
+        )
+        database_editor = screen.query_one("#library-note-body", TextArea)
+        _replace_editor_text(database_editor, "database retained")
+        database_editor.selection = database_editor.selection.__class__(
+            (0, len("database retained")),
+            (0, len("database retained")),
+        )
+        screen.set_focus(database_editor)
+        await pilot.pause()
+
+        screen.query_one("#library-notes-source-files", Button).press()
+        await _wait_until(
+            pilot,
+            lambda: workspace.initialized and workspace.is_mounted,
+            "Folder Files did not mount",
+        )
+        assert await workspace.open_path("file.md")
+        folder_editor = workspace.query_one("#file-notes-editor", TextArea)
+        _replace_editor_text(folder_editor, "folder retained")
+        folder_editor.selection = folder_editor.selection.__class__(
+            (0, len("folder retained")),
+            (0, len("folder retained")),
+        )
+        assert await workspace.flush_pending_work()
+        screen.set_focus(folder_editor)
+        await pilot.pause()
+
+        if return_path == "task-return":
+            assert screen.query_one("#library-notes-task-return", Button).display
+            await pilot.click("#library-notes-task-return")
+        elif return_path == "source-button":
+            database_source = screen.query_one("#library-notes-source-database", Button)
+            assert database_source.display
+            await pilot.click("#library-notes-source-database")
+        else:
+            await pilot.press("escape")
+        await _wait_until(
+            pilot,
+            lambda: screen._library_notes_source == "database",
+            f"{return_path} did not return to Database Notes",
+        )
+        await _wait_until(
+            pilot,
+            lambda: screen.focused is database_editor,
+            f"{return_path} did not restore the Database editor focus",
+        )
+        assert screen.focused is database_editor
+        assert screen.focused.visible
+        assert not workspace.display
+        assert screen.query_one("#library-notes-reader-shell").display
+        folder_before_database_type = folder_editor.text
+        await pilot.press("x")
+        assert database_editor.text == "database retainedx"
+        assert folder_editor.text == folder_before_database_type
+
+        screen.query_one("#library-notes-source-files", Button).press()
+        await _wait_until(
+            pilot,
+            lambda: screen._library_notes_source == "files",
+            "Folder Files did not reopen",
+        )
+        await _wait_until(
+            pilot,
+            lambda: screen.focused is folder_editor,
+            "Folder Files did not restore its retained editor focus",
+        )
+        assert screen.focused is folder_editor
+        assert screen.focused.visible
+        assert workspace.display
+        assert not screen.query_one("#library-notes-reader-shell").display
+        database_before_folder_type = database_editor.text
+        await pilot.press("y")
+        assert folder_editor.text == f"{folder_before_database_type}y"
+        assert database_editor.text == database_before_folder_type
+
+    await workspace.shutdown()
+
+
 @pytest.mark.asyncio
 async def test_folder_files_routes_rail_descendants_to_visible_authority(
     tmp_path: Path,
