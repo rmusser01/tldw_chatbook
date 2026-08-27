@@ -5120,7 +5120,10 @@ class ConsoleChatStore:
             raise TypeError("Fork messages must be projected message records.")
         native_ids = [message.native_message_id for message in messages]
         if (
-            any(type(native_id) is not str or not native_id for native_id in native_ids)
+            any(
+                type(native_id) is not str or not native_id.strip()
+                for native_id in native_ids
+            )
             or len(native_ids) != len(set(native_ids))
             or any(native_id in self._message_session_index for native_id in native_ids)
         ):
@@ -5140,7 +5143,7 @@ class ConsoleChatStore:
             (snapshot.durable and len(persisted_ids) != len(messages))
             or (not snapshot.durable and persisted_ids)
             or any(
-                type(persisted_id) is not str or not persisted_id
+                type(persisted_id) is not str or not persisted_id.strip()
                 for persisted_id in persisted_ids
             )
             or len(persisted_ids) != len(set(persisted_ids))
@@ -5167,29 +5170,43 @@ class ConsoleChatStore:
                     )
         existing_ownership_ids.update(existing_turn_ids)
         existing_ownership_ids.update(existing_variant_ids)
-        target_turn_ids = {
+        turn_ids = [
             message.turn_id for message in messages if message.turn_id is not None
-        }
-        target_variant_ids = {
+        ]
+        variant_ids = [
             message.visible_variant_id
             for message in messages
             if message.visible_variant_id is not None
-        }
-        target_ownership_ids = {
-            snapshot.fork_session_id,
-            *native_ids,
-            *persisted_ids,
-            *target_turn_ids,
-            *target_variant_ids,
-        }
-        if snapshot.fork_conversation_id is not None:
-            target_ownership_ids.add(snapshot.fork_conversation_id)
+        ]
+        if any(
+            type(ownership_id) is not str or not ownership_id.strip()
+            for ownership_id in (*turn_ids, *variant_ids)
+        ):
+            raise ValueError("Fork ownership ids must be nonblank.")
+        target_turn_ids = set(turn_ids)
+        target_variant_ids = set(variant_ids)
+        target_ownership_ids: set[str] = set()
+        target_domains = (
+            {snapshot.fork_session_id},
+            (
+                {snapshot.fork_conversation_id}
+                if snapshot.fork_conversation_id is not None
+                else set()
+            ),
+            set(native_ids),
+            set(persisted_ids),
+            target_turn_ids,
+            target_variant_ids,
+        )
+        for domain in target_domains:
+            if target_ownership_ids & domain:
+                raise ValueError("Fork ownership ids must be disjoint.")
+            target_ownership_ids.update(domain)
         if (
             target_ownership_ids & existing_ownership_ids
             or target_turn_ids & existing_turn_ids
             or target_variant_ids & existing_variant_ids
-            or len(target_variant_ids)
-            != sum(message.visible_variant_id is not None for message in messages)
+            or len(target_variant_ids) != len(variant_ids)
         ):
             raise ValueError("Fork ownership id already exists.")
         expected_parent: str | None = None

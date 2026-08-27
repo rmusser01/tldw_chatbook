@@ -1,5 +1,6 @@
 import pickle
 from dataclasses import FrozenInstanceError, fields, replace
+from itertools import combinations
 from typing import get_args
 
 import pytest
@@ -26,6 +27,7 @@ from tldw_chatbook.Chat.console_chat_fork import (
 from tldw_chatbook.Chat.console_context_policy import ConsoleContextPolicyOverrides
 from tldw_chatbook.Chat.console_chat_models import (
     ConsoleMessageRole,
+    ConsoleVariant,
     GenerationVariantMeta,
     MessageAttachment,
 )
@@ -264,6 +266,63 @@ def _configuration_snapshot() -> ConsoleForkConfigurationSnapshot:
         character_system_template=None,
         speech_preferences=ConsoleSpeechPreferences(),
         project_instruction_state=ProjectInstructionControlState.new_session(),
+    )
+
+
+def _registration_snapshot(
+    collision: tuple[str, str] | None = None,
+) -> ConsoleChatForkSnapshot:
+    ids = {
+        "session": "fork-session",
+        "conversation": "fork-conversation",
+        "native": "fork-native-1",
+        "persisted": "fork-persisted-1",
+        "turn": "fork-turn",
+        "variant": "fork-variant",
+    }
+    if collision is not None:
+        ids[collision[0]] = ids[collision[1]] = "colliding-id"
+    messages = (
+        ConsoleForkProjectedMessage(
+            source_native_message_id="source-native-1",
+            source_persisted_message_id=None,
+            source_persisted_revision=None,
+            native_message_id=ids["native"],
+            persisted_message_id=ids["persisted"],
+            native_parent_id=None,
+            persisted_parent_id=None,
+            turn_id=ids["turn"],
+            visible_variant_id=None,
+            role=ConsoleMessageRole.USER,
+            status="complete",
+            content="Question",
+        ),
+        ConsoleForkProjectedMessage(
+            source_native_message_id="source-native-2",
+            source_persisted_message_id=None,
+            source_persisted_revision=None,
+            native_message_id="fork-native-2",
+            persisted_message_id="fork-persisted-2",
+            native_parent_id=ids["native"],
+            persisted_parent_id=ids["persisted"],
+            turn_id=ids["turn"],
+            visible_variant_id=ids["variant"],
+            role=ConsoleMessageRole.ASSISTANT,
+            status="complete",
+            content="Answer",
+        ),
+    )
+    return ConsoleChatForkSnapshot(
+        fork_session_id=ids["session"],
+        fork_conversation_id=ids["conversation"],
+        title="Independent fork",
+        source_session_id="source-session",
+        source_conversation_id=None,
+        source_boundary_persisted_message_id=None,
+        durable=True,
+        messages=messages,
+        configuration=_configuration_snapshot(),
+        citation_links=(),
     )
 
 
@@ -686,6 +745,59 @@ def test_issue_fork_fence_uses_only_the_canonical_active_prefix() -> None:
     assert store.get_message(selected.id).variants.current.id == selected_variant_before
 
 
+def test_issue_fork_fence_captures_the_exact_image_selection_tuple() -> None:
+    store, _, _, _, _, _, selected, _ = _fork_store()
+    selection = ConsoleForkImageSelectionFence(
+        native_message_id=selected.id,
+        selected_position=0,
+        browse_revision=7,
+        attachment_meta_fingerprint="sha256:selected-image",
+    )
+
+    fence = store.issue_fork_fence(
+        selected.id,
+        image_selections=(selection,),
+    )
+
+    assert fence.image_selections == (selection,)
+    assert store.validate_fork_fence(
+        fence,
+        image_selections=(selection,),
+    ) is True
+
+
+@pytest.mark.parametrize(
+    ("field_name", "changed_value"),
+    (
+        ("selected_position", 1),
+        ("browse_revision", 8),
+        ("attachment_meta_fingerprint", "sha256:changed-image"),
+    ),
+)
+def test_validate_fork_fence_rejects_each_changed_image_selection_field(
+    field_name,
+    changed_value,
+) -> None:
+    store, _, _, _, _, _, selected, _ = _fork_store()
+    selection = ConsoleForkImageSelectionFence(
+        native_message_id=selected.id,
+        selected_position=0,
+        browse_revision=7,
+        attachment_meta_fingerprint="sha256:selected-image",
+    )
+    fence = store.issue_fork_fence(
+        selected.id,
+        image_selections=(selection,),
+    )
+
+    changed = replace(selection, **{field_name: changed_value})
+
+    assert store.validate_fork_fence(
+        fence,
+        image_selections=(changed,),
+    ) is False
+
+
 def test_fork_fence_rejects_a_boundary_outside_the_active_path() -> None:
     store, _, _, _, first_answer, _, _, _ = _fork_store()
 
@@ -769,14 +881,21 @@ def test_validate_fork_fence_rechecks_every_captured_source_field(mutation) -> N
     elif mutation == "content":
         store._nodes_by_session[session.id][user.id].content = "Changed"
     elif mutation == "status":
-        selected_live.status = "discarded"
+        selected_live.status = "stopped"
     elif mutation == "parent":
         store._native_parent_by_message[selected.id] = None
     elif mutation == "persisted_parent":
         selected_live.parent_message_id = None
     elif mutation == "selected_variant":
-        selected_live.variants.selected_index = 0
-        selected_live.content = selected_live.variants.current.content
+        selected_live.variants.variants.append(
+            ConsoleVariant(
+                content=selected_live.content,
+                id="same-content-other-variant",
+            )
+        )
+        selected_live.variants.selected_index = len(
+            selected_live.variants.variants
+        ) - 1
     elif mutation == "siblings":
         store._children_by_parent[session.id][user.id].remove(first_answer.id)
     elif mutation == "attachment":
@@ -789,9 +908,12 @@ def test_validate_fork_fence_rechecks_every_captured_source_field(mutation) -> N
         )
     elif mutation == "persisted_id":
         selected_live.persisted_message_id = "other-id"
+        persistence.message_versions["other-id"] = fence.lineage[-1].persisted_revision
     else:
         persistence.message_versions[selected_live.persisted_message_id] += 1
 
+    if mutation in {"status", "selected_variant", "persisted_id"}:
+        assert store.fork_eligibility(selected.id).eligible is True
     assert store.validate_fork_fence(fence) is False
 
 
@@ -1096,6 +1218,84 @@ def test_fork_registration_failure_publishes_no_partial_indices() -> None:
 
     assert tuple(item.id for item in store.sessions()) == before_sessions
     assert store._message_session_index == before_message_index
+
+
+def test_staged_session_and_conversation_id_collision_is_rejected_before_publish() -> None:
+    store, _, session, _, _, _, selected, _ = _fork_store()
+    snapshot = store.stage_fork_snapshot(
+        store.issue_fork_fence(selected.id),
+        title="Independent fork",
+        fork_session_id="same-target-id",
+        fork_conversation_id="same-target-id",
+    )
+
+    with pytest.raises(ValueError, match="ownership"):
+        store.register_fork_snapshot(snapshot, activate=False)
+
+    assert "same-target-id" not in {item.id for item in store.sessions()}
+    assert store.active_session_id == session.id
+
+
+@pytest.mark.parametrize(
+    "collision",
+    tuple(
+        combinations(
+            ("session", "conversation", "native", "persisted", "turn", "variant"),
+            2,
+        )
+    ),
+)
+def test_fork_registration_rejects_cross_domain_ownership_id_collisions(
+    collision,
+) -> None:
+    store = ConsoleChatStore()
+    snapshot = _registration_snapshot(collision)
+
+    with pytest.raises(ValueError, match="ownership"):
+        store.register_fork_snapshot(snapshot, activate=False)
+
+    assert store.sessions() == []
+    assert store._message_session_index == {}
+
+
+@pytest.mark.parametrize(
+    ("field_name", "invalid_id"),
+    (
+        ("turn_id", ""),
+        ("turn_id", "  "),
+        ("visible_variant_id", ""),
+        ("visible_variant_id", "  "),
+    ),
+)
+def test_fork_registration_rejects_blank_turn_and_variant_ids(
+    field_name,
+    invalid_id,
+) -> None:
+    store = ConsoleChatStore()
+    snapshot = _registration_snapshot()
+    messages = tuple(
+        replace(message, **{field_name: invalid_id})
+        if field_name == "turn_id" or message.visible_variant_id is not None
+        else message
+        for message in snapshot.messages
+    )
+    snapshot = replace(snapshot, messages=messages)
+
+    with pytest.raises(ValueError, match="ownership"):
+        store.register_fork_snapshot(snapshot, activate=False)
+
+    assert store.sessions() == []
+
+
+def test_fork_registration_allows_one_turn_id_shared_by_multiple_messages() -> None:
+    store = ConsoleChatStore()
+    snapshot = _registration_snapshot()
+
+    session = store.register_fork_snapshot(snapshot, activate=False)
+
+    assert {
+        message.turn_id for message in store.messages_for_session(session.id)
+    } == {"fork-turn"}
 
 
 def test_fork_registration_rolls_back_all_indices_if_activation_raises(
