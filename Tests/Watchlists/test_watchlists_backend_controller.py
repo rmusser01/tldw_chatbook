@@ -94,6 +94,34 @@ async def test_check_now_routes_to_scope_service():
     assert result["run_id"] == "42"
 
 
+@pytest.mark.parametrize(
+    ("runtime_backend", "source_id", "job_id"),
+    [
+        ("local", 5, None),
+        ("server", None, "job-7"),
+    ],
+)
+@pytest.mark.asyncio
+async def test_launch_run_forwards_backend_specific_identity(
+    runtime_backend, source_id, job_id
+):
+    scope_service = AsyncMock()
+    expected = {"run_id": "run-1", "status": "started"}
+    scope_service.launch_run = AsyncMock(return_value=expected)
+    ctrl = WatchlistsBackendController(
+        app_instance=None, scope_service=scope_service, server_service=None
+    )
+
+    result = await ctrl.launch_run(
+        runtime_backend=runtime_backend, source_id=source_id, job_id=job_id
+    )
+
+    scope_service.launch_run.assert_awaited_once_with(
+        runtime_backend=runtime_backend, source_id=source_id, job_id=job_id
+    )
+    assert result == expected
+
+
 @pytest.mark.asyncio
 async def test_import_opml_routes_to_scope_service():
     scope_service = AsyncMock()

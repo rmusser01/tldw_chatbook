@@ -183,10 +183,18 @@ class WatchlistsBackendController:
         )
         return dict(result)
 
-    async def launch_run(self, *, runtime_backend: str | None = None, source_id: Any = None) -> dict[str, Any]:
+    async def launch_run(
+        self,
+        *,
+        runtime_backend: str | None = None,
+        source_id: Any = None,
+        job_id: Any = None,
+    ) -> dict[str, Any]:
         backend = self._normalize_backend(runtime_backend)
         result = await self._maybe_await(
-            self.scope_service.launch_run(runtime_backend=backend, source_id=source_id)
+            self.scope_service.launch_run(
+                runtime_backend=backend, source_id=source_id, job_id=job_id
+            )
         )
         return dict(result)
 
