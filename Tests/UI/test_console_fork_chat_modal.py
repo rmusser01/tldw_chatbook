@@ -42,12 +42,42 @@ def _assert_inside(inner, outer) -> None:
     assert inner.region.bottom <= outer.content_region.bottom
 
 
-def _painted_button_label(modal, button: Button) -> str:
+def _painted_widget_text(modal, widget) -> str:
     strips = modal._compositor.render_strips()
-    visible_rows = strips[button.region.y : button.region.bottom]
+    visible_rows = strips[
+        max(0, widget.region.y) : min(len(strips), widget.region.bottom)
+    ]
     return "\n".join(
-        row.text[button.region.x : button.region.right] for row in visible_rows
+        row.text[max(0, widget.region.x) : widget.region.right] for row in visible_rows
     )
+
+
+def _painted_button_label(modal, button: Button) -> str:
+    return _painted_widget_text(modal, button)
+
+
+def _assert_actions_clear_visible_content(modal: ConsoleForkChatModal) -> None:
+    panel = modal.query_one("#console-fork-chat-modal")
+    actions = modal.query_one("#console-fork-chat-actions")
+    content = [
+        *panel.children,
+        modal.query_one("#console-fork-chat-title", Input),
+        modal.query_one("#console-fork-chat-status", Static),
+    ]
+    for child in dict.fromkeys(content):
+        if (
+            child is actions
+            or not child.display
+            or not _painted_widget_text(modal, child)
+        ):
+            continue
+        overlaps = (
+            child.region.x < actions.region.right
+            and child.region.right > actions.region.x
+            and child.region.y < actions.region.bottom
+            and child.region.bottom > actions.region.y
+        )
+        assert not overlaps, (child.id, child.region, actions.region)
 
 
 @pytest.mark.asyncio
@@ -84,6 +114,7 @@ async def test_fork_modal_editing_summary_and_layout_fit(size):
         assert panel.region.right <= size[0] and panel.region.bottom <= size[1]
         cancel = modal.query_one("#console-fork-chat-cancel", Button)
         confirm = modal.query_one("#console-fork-chat-confirm", Button)
+        _assert_actions_clear_visible_content(modal)
         assert cancel.label.plain in _painted_button_label(modal, cancel)
         assert confirm.label.plain in _painted_button_label(modal, confirm)
 
@@ -101,6 +132,36 @@ async def test_fork_modal_editing_summary_and_layout_fit(size):
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("size", [(120, 35), (100, 30), (80, 24)])
+async def test_fork_modal_state_copy_stays_visible_above_actions(size):
+    app = ConsolidatedCSSApp()
+    modal = ConsoleForkChatModal(_summary(), on_submit=lambda _: None)
+
+    async with app.run_test(size=size) as pilot:
+        app.push_screen(modal)
+        await pilot.pause()
+        status = modal.query_one("#console-fork-chat-status", Static)
+
+        modal.show_validating()
+        await pilot.pause()
+        _assert_actions_clear_visible_content(modal)
+        assert "Checking fork…" in _painted_widget_text(modal, status)
+
+        modal.show_committing()
+        await pilot.pause()
+        _assert_actions_clear_visible_content(modal)
+        assert "Forking…" in _painted_widget_text(modal, status)
+
+        await modal.action_request_safe_cancel()
+        await pilot.pause()
+        _assert_actions_clear_visible_content(modal)
+        assert (
+            "Fork creation is finishing and can no longer be cancelled."
+            in _painted_widget_text(modal, status)
+        )
+
+
+@pytest.mark.asyncio
 async def test_fork_modal_temporary_disclosure_is_truthful():
     app = ConsolidatedCSSApp()
     modal = ConsoleForkChatModal(_summary(temporary=True), on_submit=lambda _: None)
@@ -110,9 +171,7 @@ async def test_fork_modal_temporary_disclosure_is_truthful():
         await pilot.pause()
 
         visible = " ".join(
-            str(widget.render())
-            for widget in modal.query("Static")
-            if widget.display
+            str(widget.render()) for widget in modal.query("Static") if widget.display
         )
         assert "Temporary chat · Save later to keep it" in visible
         assert "Saving this fork will not save the original chat" in visible
@@ -201,7 +260,10 @@ async def test_fork_modal_state_contract_and_escape_semantics():
         await pilot.pause()
         assert modal.state == "committing"
         assert modal.query_one("#console-fork-chat-title", Input).disabled
-        assert modal.query_one("#console-fork-chat-confirm", Button).label.plain == "Forking…"
+        assert (
+            modal.query_one("#console-fork-chat-confirm", Button).label.plain
+            == "Forking…"
+        )
         assert all(button.disabled for button in modal.query(Button))
         await modal.action_request_safe_cancel()
         assert app.screen is modal
@@ -213,7 +275,9 @@ async def test_fork_modal_state_contract_and_escape_semantics():
         await pilot.pause()
         assert modal.state == "precommit_error"
         assert not modal.query_one("#console-fork-chat-title", Input).disabled
-        assert modal.query_one("#console-fork-chat-confirm", Button).label.plain == "Retry"
+        assert (
+            modal.query_one("#console-fork-chat-confirm", Button).label.plain == "Retry"
+        )
 
         modal.show_stale_source()
         await pilot.pause()

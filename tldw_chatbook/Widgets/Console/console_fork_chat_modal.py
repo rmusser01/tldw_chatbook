@@ -9,7 +9,7 @@ from typing import Literal
 
 from textual import events, on
 from textual.app import ComposeResult
-from textual.containers import Horizontal, Vertical
+from textual.containers import Horizontal, Vertical, VerticalScroll
 from textual.screen import ModalScreen
 from textual.widgets import Button, Input, Static
 
@@ -89,12 +89,20 @@ class ConsoleForkChatModal(SafeModalDismissMixin, ModalScreen[None]):
     #console-fork-chat-modal {
         width: 74;
         max-width: 96%;
-        height: auto;
+        height: 28;
         max-height: 96%;
         border: round $primary;
         background: $panel;
         padding: 1 2;
+        overflow-y: hidden;
+    }
+
+    #console-fork-chat-content {
+        height: 1fr;
+        min-height: 0;
         overflow-y: auto;
+        overflow-x: hidden;
+        scrollbar-gutter: stable;
     }
 
     #console-fork-chat-heading {
@@ -164,14 +172,14 @@ class ConsoleForkChatModal(SafeModalDismissMixin, ModalScreen[None]):
     }
 
     #console-fork-chat-status:focus {
-        outline: heavy $accent;
+        background: $accent 10%;
+        color: $text;
+        text-style: bold;
     }
 
     #console-fork-chat-actions {
-        dock: bottom;
         width: 100%;
         height: 3;
-        margin-top: 1;
         align-horizontal: right;
     }
 
@@ -211,93 +219,96 @@ class ConsoleForkChatModal(SafeModalDismissMixin, ModalScreen[None]):
         summary = self.summary
         detail = f" · {summary.response_variant}" if summary.response_variant else ""
         with Vertical(id="console-fork-chat-modal"):
-            yield Static("Fork chat", id="console-fork-chat-heading", markup=False)
-            yield Static(
-                f"{summary.boundary_label}: “{summary.boundary_excerpt}”",
-                id="console-fork-chat-boundary",
-                classes="console-fork-chat-summary",
-                markup=False,
-            )
-            count_label = "message" if summary.message_count == 1 else "messages"
-            yield Static(
-                f"{summary.message_count} {count_label}{detail}",
-                classes="console-fork-chat-summary",
-                markup=False,
-            )
-            yield Static(
-                f"Creates: {summary.destination}",
-                id="console-fork-chat-destination",
-                classes="console-fork-chat-summary",
-                markup=False,
-            )
-            if summary.temporary:
+            with VerticalScroll(id="console-fork-chat-content", can_focus=False):
+                yield Static("Fork chat", id="console-fork-chat-heading", markup=False)
                 yield Static(
-                    "Saving this fork will not save the original chat.",
+                    f"{summary.boundary_label}: “{summary.boundary_excerpt}”",
+                    id="console-fork-chat-boundary",
                     classes="console-fork-chat-summary",
                     markup=False,
                 )
-                if summary.includes_attachments:
+                count_label = "message" if summary.message_count == 1 else "messages"
+                yield Static(
+                    f"{summary.message_count} {count_label}{detail}",
+                    classes="console-fork-chat-summary",
+                    markup=False,
+                )
+                yield Static(
+                    f"Creates: {summary.destination}",
+                    id="console-fork-chat-destination",
+                    classes="console-fork-chat-summary",
+                    markup=False,
+                )
+                if summary.temporary:
                     yield Static(
-                        "Includes sent attachments.",
+                        "Saving this fork will not save the original chat.",
+                        classes="console-fork-chat-summary",
+                        markup=False,
+                    )
+                    if summary.includes_attachments:
+                        yield Static(
+                            "Includes sent attachments.",
+                            classes="console-fork-chat-summary",
+                            markup=False,
+                        )
+                    yield Static(
+                        "Citation markers remain in the message text; source inspector "
+                        "details are not copied.",
+                        classes="console-fork-chat-summary",
+                        markup=False,
+                    )
+                elif summary.includes_attachments or summary.includes_citations:
+                    yield Static(
+                        self._included_copy(),
                         classes="console-fork-chat-summary",
                         markup=False,
                     )
                 yield Static(
-                    "Citation markers remain in the message text; source inspector "
-                    "details are not copied.",
+                    "Starts with new private working files; file and tool access will "
+                    "be requested again.",
                     classes="console-fork-chat-summary",
                     markup=False,
                 )
-            elif summary.includes_attachments or summary.includes_citations:
+                if summary.contains_video:
+                    yield Static(
+                        "This video will appear as unavailable in the fork. Save a copy "
+                        "first if you need the file.",
+                        id="console-fork-chat-warning",
+                        classes="console-fork-chat-summary",
+                        markup=False,
+                    )
+                yield Button(
+                    "What is not copied",
+                    id="console-fork-chat-disclosure",
+                    variant="default",
+                )
                 yield Static(
-                    self._included_copy(),
-                    classes="console-fork-chat-summary",
+                    "Runs, tool history, drafts, staged files, temporary working files, "
+                    "and prior permissions are not copied."
+                    + (
+                        " Inspectable citation provenance is also not copied."
+                        if summary.temporary
+                        else ""
+                    ),
+                    id="console-fork-chat-exclusions",
                     markup=False,
                 )
-            yield Static(
-                "Starts with new private working files; file and tool access will "
-                "be requested again.",
-                classes="console-fork-chat-summary",
-                markup=False,
-            )
-            if summary.contains_video:
-                yield Static(
-                    "This video will appear as unavailable in the fork. Save a copy "
-                    "first if you need the file.",
-                    id="console-fork-chat-warning",
-                    classes="console-fork-chat-summary",
+                yield Static("Name", id="console-fork-chat-name-label", markup=False)
+                yield _ConsoleForkTitleInput(
+                    value=summary.default_title,
+                    max_length=CONSOLE_FORK_TITLE_MAX_LENGTH,
+                    id="console-fork-chat-title",
+                )
+                yield _ConsoleForkStatus(
+                    "Ready to create an independent fork.",
+                    id="console-fork-chat-status",
                     markup=False,
                 )
-            yield Button(
-                "What is not copied",
-                id="console-fork-chat-disclosure",
-                variant="default",
-            )
-            yield Static(
-                "Runs, tool history, drafts, staged files, temporary working files, "
-                "and prior permissions are not copied."
-                + (
-                    " Inspectable citation provenance is also not copied."
-                    if summary.temporary
-                    else ""
-                ),
-                id="console-fork-chat-exclusions",
-                markup=False,
-            )
-            yield Static("Name", id="console-fork-chat-name-label", markup=False)
-            yield _ConsoleForkTitleInput(
-                value=summary.default_title,
-                max_length=CONSOLE_FORK_TITLE_MAX_LENGTH,
-                id="console-fork-chat-title",
-            )
-            yield _ConsoleForkStatus(
-                "Ready to create an independent fork.",
-                id="console-fork-chat-status",
-                markup=False,
-            )
             with Horizontal(id="console-fork-chat-actions"):
                 yield Button("Cancel", id="console-fork-chat-cancel")
-                yield Button("Open fork", id="console-fork-chat-open", variant="primary")
+                yield Button(
+                    "Open fork", id="console-fork-chat-open", variant="primary"
+                )
                 yield Button(
                     "Fork chat", id="console-fork-chat-confirm", variant="primary"
                 )
@@ -316,6 +327,10 @@ class ConsoleForkChatModal(SafeModalDismissMixin, ModalScreen[None]):
         title.opened_at = event.time
         title.focus()
         title.action_select_all()
+        content = self.query_one("#console-fork-chat-content", VerticalScroll)
+        self.call_after_refresh(
+            content.scroll_end, animate=False, immediate=True, force=True
+        )
 
     def _invoke(self, callback: Callable[..., object], *args: object) -> None:
         result = callback(*args)
@@ -367,13 +382,11 @@ class ConsoleForkChatModal(SafeModalDismissMixin, ModalScreen[None]):
     def _toggle_disclosure(self, event: Button.Pressed) -> None:
         event.stop()
         self._disclosure_open = not self._disclosure_open
-        self.query_one("#console-fork-chat-exclusions", Static).display = (
-            self._disclosure_open
-        )
+        self.query_one(
+            "#console-fork-chat-exclusions", Static
+        ).display = self._disclosure_open
         event.button.label = (
-            "Hide what is not copied"
-            if self._disclosure_open
-            else "What is not copied"
+            "Hide what is not copied" if self._disclosure_open else "What is not copied"
         )
 
     async def _perform_safe_cancel(self, *, source: str) -> None:
@@ -391,6 +404,7 @@ class ConsoleForkChatModal(SafeModalDismissMixin, ModalScreen[None]):
             self.query_one("#console-fork-chat-status", Static).focus()
             return
         if self._on_cancel is not None:
+
             async def cancel_once() -> None:
                 result = self._on_cancel()
                 if inspect.isawaitable(result):
@@ -408,6 +422,9 @@ class ConsoleForkChatModal(SafeModalDismissMixin, ModalScreen[None]):
         title = self.query_one("#console-fork-chat-title", _ConsoleForkTitleInput)
         title.locked = True
         title.focus()
+        self.query_one("#console-fork-chat-content", VerticalScroll).scroll_end(
+            animate=False, immediate=True, force=True
+        )
         self.query_one("#console-fork-chat-confirm", Button).disabled = True
 
     def show_committing(self) -> None:
@@ -419,6 +436,9 @@ class ConsoleForkChatModal(SafeModalDismissMixin, ModalScreen[None]):
         for button in self.query(Button):
             button.disabled = True
         self.query_one("#console-fork-chat-status", Static).focus()
+        self.query_one("#console-fork-chat-content", VerticalScroll).scroll_end(
+            animate=False, immediate=True, force=True
+        )
 
     def show_precommit_error(self, error: str, *, retryable: bool = True) -> None:
         self.state = "precommit_error"
