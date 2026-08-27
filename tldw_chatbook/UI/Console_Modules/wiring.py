@@ -77,6 +77,7 @@ from .prompt_queue import (
 )
 from .prompts import ConsolePromptsController
 from .reaction_preview import get_console_reaction_preview_coordinator
+from .realtime import ConsoleRealtimeController
 from .retrieval import ConsoleRetrievalController
 from .send_price import ConsoleSendPriceController
 from .session import ConsoleSessionController
@@ -194,13 +195,13 @@ def build_console_controllers(
     rag_source_types_accessor: Callable[[], tuple[str, ...]],
     rag_top_k_accessor: Callable[[], int],
 ) -> None:
-    """Construct the Console screen's fifteen controllers and attach them.
+    """Construct the Console screen's sixteen controllers and attach them.
 
     Assigns, in this order, `screen._image`, `screen._video`,
     `screen._retrieval`, `screen._skill`, `screen._workspace`,
     `screen._character`, `screen._fleet`, `screen._session`, `screen._dictation`,
-    `screen._hands_free`, `screen._message`, `screen._prompts`, `screen._agent`, and
-    `screen._prompt_queue`, and `screen._send_price`. The order is
+    `screen._hands_free`, `screen._realtime`, `screen._message`, `screen._prompts`,
+    `screen._agent`, `screen._prompt_queue`, and `screen._send_price`. The order is
     documentation, not a constraint:
     every cross-controller dependency below is resolved at call time (see the
     module docstring), so no controller reads a sibling that does not exist
@@ -209,7 +210,7 @@ def build_console_controllers(
     `ChatScreen.__init__` calls this at exactly the point the first
     construction used to occupy. That position matters: the ~250 attribute
     assignments around it in `__init__` include names these lambdas read, and
-    none of the fifteen constructors reads mutable state off `screen` eagerly
+    none of the sixteen constructors reads mutable state off `screen` eagerly
     (each stores its inputs and callables), so the call needs to sit where it
     can see everything the pre-move constructions could.
 
@@ -945,18 +946,12 @@ def build_console_controllers(
                 )
             )
         ),
-        # Realtime stays screen-owned (not extracted this wave); this
-        # was the same "temporary exception" shape as the four above,
-        # for the same staleness reason, now closed out the same way.
         realtime_adopt_transcript=(
-            lambda transcript: screen._console_realtime_adopt_transcript(transcript)
+            lambda transcript: screen._realtime._console_realtime_adopt_transcript(
+                transcript
+            )
         ),
-        # Same screen-owned realtime engine, read as a live session rather
-        # than called: `_handle_console_dictation_button` (wave-4 task 2)
-        # must see a loop that started AFTER this wiring ran, so this is a
-        # late-binding accessor, never a snapshot. `ConsoleHandsFree
-        # Controller` takes an identically-named, identically-shaped one.
-        realtime_session_accessor=lambda: screen._console_realtime,
+        realtime_session_accessor=lambda: screen._realtime.session,
         run_pending_voice_action=(
             lambda session_id: screen._run_pending_console_voice_action(session_id)
         ),
@@ -978,8 +973,7 @@ def build_console_controllers(
     #: `on_unmount`, the realtime engine's own loud fallback, tests)
     #: had to change. See `hands_free.py`'s module docstring for the
     #: full map of what moved and why, including the two-engine
-    #: boundary this controller draws around the still-on-screen
-    #: realtime engine.
+    #: boundary this controller draws around the realtime engine.
     screen._hands_free = ConsoleHandsFreeController(
         screen,
         app_instance=screen.app_instance,
@@ -997,9 +991,9 @@ def build_console_controllers(
         run_pending_voice_action=(
             lambda session_id: screen._run_pending_console_voice_action(session_id)
         ),
-        realtime_session_accessor=lambda: screen._console_realtime,
+        realtime_session_accessor=lambda: screen._realtime.session,
         enter_realtime_loop=(
-            lambda capture_live: screen._enter_console_realtime_loop(
+            lambda capture_live: screen._realtime._enter_console_realtime_loop(
                 capture_live=capture_live
             )
         ),
@@ -1019,6 +1013,44 @@ def build_console_controllers(
         sync_hands_free_state=(
             lambda active: _sync_hands_free_presentation(screen, active)
         ),
+    )
+    screen._realtime = ConsoleRealtimeController(
+        ensure_session_settings=(
+            lambda: screen._session._ensure_active_console_session_settings()
+        ),
+        chat_store_accessor=lambda: screen._ensure_console_chat_store(),
+        runtime_accessor=lambda: screen._console_runtime(),
+        dictation_state_accessor=lambda: screen._console_dictation_state,
+        request_dictation_stop=lambda: screen._request_console_dictation_stop(),
+        pipeline_blocker=(
+            lambda: screen._hands_free._console_pipeline_hands_free_blocker()
+        ),
+        enter_pipeline_loop=(
+            lambda capture_live: (
+                screen._hands_free._enter_console_hands_free_pipeline_loop(
+                    capture_live=capture_live
+                )
+            )
+        ),
+        recorder_factory_accessor=lambda: getattr(
+            screen.app_instance, "console_realtime_recorder_factory", None
+        ),
+        provider_session_factory_accessor=lambda: getattr(
+            screen.app_instance, "console_realtime_session_factory", None
+        ),
+        sink_factory_accessor=lambda: getattr(
+            screen.app_instance, "console_realtime_sink_factory", None
+        ),
+        notify=lambda *args, **kwargs: screen.app_instance.notify(*args, **kwargs),
+        ui_thread_id_accessor=lambda: screen.app_instance._thread_id,
+        event_loop_accessor=lambda: getattr(screen.app_instance, "_loop", None),
+        set_interval=lambda *args, **kwargs: screen.set_interval(*args, **kwargs),
+        run_worker=lambda *args, **kwargs: screen.run_worker(*args, **kwargs),
+        defer_native_sync=(
+            lambda: screen.call_later(screen._sync_native_console_chat_ui)
+        ),
+        repaint_chip=lambda: screen._repaint_console_realtime_chip(),
+        restore_voice_chip=lambda: screen._restore_console_voice_chip(),
     )
     #: The native message-transcript cluster -- serialize/restore,
     #: resume-tree flattening, screen-state rehydration, per-message
@@ -1156,7 +1188,7 @@ def build_console_controllers(
         hands_free_active=(
             lambda: (
                 screen._console_hands_free is not None
-                or screen._console_realtime is not None
+                or screen._realtime.session is not None
             )
         ),
         sync_controls=lambda enabled, paused, retry_available: (
