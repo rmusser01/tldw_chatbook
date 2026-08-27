@@ -26,7 +26,6 @@ from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
-from textual.app import App
 
 # Harness apps load the consolidated widget CSS the real app loads
 # (TASK-15450); without it the widgets under test mount unstyled.
@@ -256,7 +255,9 @@ class _CollectionsPanelApp(ConsolidatedCSSApp):
 async def test_collections_disabled_actions_carry_marker_enabled_do_not():
     """RC-07: Collections' three form buttons measured 2.30:1 disabled with
     colour as the only state carrier."""
-    async with _CollectionsPanelApp(_collections_state(create_enabled=False)).run_test() as pilot:
+    async with _CollectionsPanelApp(
+        _collections_state(create_enabled=False)
+    ).run_test() as pilot:
         for widget_id in (
             "library-create-collection",
             "library-rename-collection",
@@ -264,12 +265,14 @@ async def test_collections_disabled_actions_carry_marker_enabled_do_not():
         ):
             button = pilot.app.query_one(f"#{widget_id}", Button)
             assert button.disabled is True
-            assert str(button.label).startswith(
-                f"{LIBRARY_DISABLED_ACTION_MARKER} "
-            ), widget_id
+            assert str(button.label).startswith(f"{LIBRARY_DISABLED_ACTION_MARKER} "), (
+                widget_id
+            )
             assert str(button.tooltip), widget_id  # reason at the control
 
-    async with _CollectionsPanelApp(_collections_state(create_enabled=True)).run_test() as pilot:
+    async with _CollectionsPanelApp(
+        _collections_state(create_enabled=True)
+    ).run_test() as pilot:
         create = pilot.app.query_one("#library-create-collection", Button)
         assert create.disabled is False
         assert not str(create.label).startswith(LIBRARY_DISABLED_ACTION_MARKER)
@@ -532,9 +535,9 @@ def test_library_footer_sets_share_one_grammar():
     for name, shortcuts in sets.items():
         for key, label in shortcuts:
             assert "·" not in label, f"{name} embeds a run-on separator: {label!r}"
-            assert (
-                key == key.lower() or re.fullmatch(r"F\d+", key)
-            ), f"{name} spells a key off-grammar: {key!r}"
+            assert key == key.lower() or re.fullmatch(r"F\d+", key), (
+                f"{name} spells a key off-grammar: {key!r}"
+            )
 
 
 def test_notes_footer_states_use_per_key_grammar_and_never_advertise_dead_keys():
@@ -682,8 +685,10 @@ def test_no_widget_module_still_builds_a_cycler_with_the_disclosure_glyph():
     ]
     for path in sources:
         for lineno, line in enumerate(path.read_text().splitlines(), start=1):
-            if ' ▸"' in line and "marker" not in line and not line.lstrip().startswith(
-                "#"
+            if (
+                ' ▸"' in line
+                and "marker" not in line
+                and not line.lstrip().startswith("#")
             ):
                 offenders.append(f"{path.name}:{lineno}: {line.strip()}")
     assert not offenders, "\n".join(offenders)
@@ -1090,7 +1095,9 @@ async def test_row_toggle_patcher_rebuilds_marker_label_both_directions():
         row_button = pilot.app.query_one("#library-media-row-0", Button)
         export_btn = pilot.app.query_one("#library-media-export-selected", Button)
         delete_btn = pilot.app.query_one("#library-media-delete-selected", Button)
-        assert str(export_btn.label) == f"{LIBRARY_DISABLED_ACTION_MARKER} Export selected"
+        assert (
+            str(export_btn.label) == f"{LIBRARY_DISABLED_ACTION_MARKER} Export selected"
+        )
 
         # 0 -> 1 selected through the real patch path.
         app._library_media_row_selection.toggle("m0")
@@ -1148,9 +1155,7 @@ async def test_collections_patcher_rebuilds_marker_label_both_directions():
 
         create_btn = screen.query_one("#library-create-collection", Button)
         assert create_btn.disabled is True
-        assert str(create_btn.label).startswith(
-            f"{LIBRARY_DISABLED_ACTION_MARKER} "
-        )
+        assert str(create_btn.label).startswith(f"{LIBRARY_DISABLED_ACTION_MARKER} ")
 
         name_input = screen.query_one("#library-collection-name-input", Input)
         name_input.value = "Research"
@@ -1297,9 +1302,7 @@ async def test_rail_entry_to_export_after_media_origin_does_not_claim_media():
         await _wait_for_selector(screen, pilot, "#library-collections-panel")
 
         # Fresh rail entry into Export: the stale Media origin must be gone.
-        screen.query_one(
-            f"#library-row-{LIBRARY_ROW_INGEST_EXPORT}", Button
-        ).press()
+        screen.query_one(f"#library-row-{LIBRARY_ROW_INGEST_EXPORT}", Button).press()
         await _wait_for_selector(screen, pilot, "#library-export-submit")
         shortcuts = dict(screen._library_footer_shortcuts_for_current_state())
         assert shortcuts.get("esc") == "back to hub"

@@ -895,6 +895,21 @@ async def _wait_until(
     raise AssertionError(message)
 
 
+async def _show_manage(
+    workspace: LibraryFileNotesWorkspace,
+    pilot,
+) -> None:
+    """Enter the retained Manage surface that owns Session Git."""
+    if workspace.work_mode == "manage":
+        return
+    workspace.query_one("#file-notes-manage", Button).press()
+    await _wait_until(
+        pilot,
+        lambda: workspace.work_mode == "manage",
+        "Manage mode did not open",
+    )
+
+
 async def _wait_for_current_git_row_projection(
     workspace: LibraryFileNotesWorkspace,
 ) -> None:
@@ -981,6 +996,7 @@ async def _open_git_and_stage_one(
     pilot,
 ) -> None:
     """Reach one proven mounted Stage result for lifetime regressions."""
+    await _show_manage(workspace, pilot)
     workspace.query_one("#file-notes-session-changes", Button).press()
     await _wait_until(
         pilot,
@@ -1025,6 +1041,7 @@ async def _open_guarded_commit_form(
         _row("owned", group_id=1, unstage_eligible=True),
         _row("owned", group_id=2, unstage_eligible=True),
     )
+    await _show_manage(workspace, pilot)
     workspace.query_one("#file-notes-session-changes", Button).press()
     await _wait_until(
         pilot,
@@ -1086,7 +1103,9 @@ async def _assert_visible_editor_actions_fit(
 ) -> None:
     """Assert each disclosed action is complete when scrolled into its pane."""
     pane = workspace.query_one("#file-notes-editor-pane")
-    visible_actions = tuple(button for button in pane.query(Button) if button.display)
+    visible_actions = tuple(
+        button for button in pane.query(Button) if _is_effectively_displayed(button)
+    )
     assert visible_actions
     clipped_labels: dict[str | None, tuple[str, str]] = {}
     for button in visible_actions:
@@ -3161,6 +3180,7 @@ async def test_workspace_retains_files_search_and_git_modes_with_back_focus(
 
         search.value = "needle"
         await _wait_until(pilot, lambda: search_tree.display, "search mode not shown")
+        await _show_manage(workspace, pilot)
         entry.press()
         await _wait_until(
             pilot,
@@ -3170,8 +3190,8 @@ async def test_workspace_retains_files_search_and_git_modes_with_back_focus(
         assert workspace.query_one("#file-notes-tree", Tree) is files_tree
         assert workspace.query_one("#file-notes-search-results", Tree) is search_tree
         assert not files_tree.display
-        assert not search_tree.display
-        assert not search_row.display
+        assert search_tree.display
+        assert search_row.display
         assert search.display
 
         panel.query_one("#file-notes-git-back", Button).press()
@@ -3253,6 +3273,7 @@ async def test_thousand_unrelated_notes_send_only_three_session_groups_and_resto
         files_tree.select_node(archive_node)
         await pilot.pause()
         tree_children_before = tuple(node.data for node in files_tree.root.children)
+        await _show_manage(workspace, pilot)
         entry = workspace.query_one("#file-notes-session-changes", Button)
         assert str(entry.label) == "Review session changes (3)"
 
@@ -3310,6 +3331,7 @@ async def test_opening_session_git_moves_focus_to_a_visible_ready_control(
     git_service.status_release = asyncio.Event()
     async with _WorkspaceHarness(workspace).run_test(size=(120, 40)) as pilot:
         await _wait_until(pilot, lambda: workspace.initialized, "scan did not finish")
+        await _show_manage(workspace, pilot)
         entry = workspace.query_one("#file-notes-session-changes", Button)
         entry.focus()
         await pilot.press("enter")
@@ -3356,6 +3378,7 @@ async def test_reopening_cached_status_keeps_mutation_controls_disabled(
     git_service.action_release = asyncio.Event()
     async with _WorkspaceHarness(workspace).run_test(size=(120, 40)) as pilot:
         await _wait_until(pilot, lambda: workspace.initialized, "scan did not finish")
+        await _show_manage(workspace, pilot)
         entry = workspace.query_one("#file-notes-session-changes", Button)
         entry.press()
         await _wait_until(
@@ -3416,6 +3439,7 @@ async def test_reopening_cached_status_keeps_controls_disabled_during_refresh(
     )
     async with _WorkspaceHarness(workspace).run_test(size=(120, 40)) as pilot:
         await _wait_until(pilot, lambda: workspace.initialized, "scan did not finish")
+        await _show_manage(workspace, pilot)
         entry = workspace.query_one("#file-notes-session-changes", Button)
         entry.press()
         await _wait_until(
@@ -3496,6 +3520,7 @@ async def test_fresh_workspace_attaches_retained_status_before_cached_ready_stat
                 lambda: workspace.initialized,
                 "fresh workspace scan did not finish",
             )
+            await _show_manage(workspace, pilot)
             workspace.query_one("#file-notes-session-changes", Button).press()
             await _wait_until(
                 pilot,
@@ -3571,6 +3596,7 @@ async def test_repository_retrust_consumes_rejected_status_before_fresh_refresh(
             await _wait_until(
                 pilot, lambda: workspace.initialized, "scan did not finish"
             )
+            await _show_manage(workspace, pilot)
             entry = workspace.query_one("#file-notes-session-changes", Button)
             entry.press()
             await _wait_until(
@@ -3670,6 +3696,7 @@ async def test_hidden_action_summary_is_presented_after_reopen(
     git_service.action_release = asyncio.Event()
     async with _WorkspaceHarness(workspace).run_test(size=(120, 40)) as pilot:
         await _wait_until(pilot, lambda: workspace.initialized, "scan did not finish")
+        await _show_manage(workspace, pilot)
         entry = workspace.query_one("#file-notes-session-changes", Button)
         entry.press()
         await _wait_until(
@@ -3744,6 +3771,7 @@ async def test_unexpected_action_failure_survives_postflight_refresh(
     git_service.action_error = RuntimeError("simulated action failure")
     async with _WorkspaceHarness(workspace).run_test(size=(120, 40)) as pilot:
         await _wait_until(pilot, lambda: workspace.initialized, "scan did not finish")
+        await _show_manage(workspace, pilot)
         workspace.query_one("#file-notes-session-changes", Button).press()
         await _wait_until(
             pilot,
@@ -3803,6 +3831,7 @@ async def test_hidden_unexpected_action_failure_refreshes_on_reopen(
     git_service.action_error = RuntimeError("simulated hidden action failure")
     async with _WorkspaceHarness(workspace).run_test(size=(120, 40)) as pilot:
         await _wait_until(pilot, lambda: workspace.initialized, "scan did not finish")
+        await _show_manage(workspace, pilot)
         entry = workspace.query_one("#file-notes-session-changes", Button)
         entry.press()
         await _wait_until(
@@ -4078,6 +4107,7 @@ async def test_remount_rehydrates_status_that_finished_while_unmounted(
     app = _RemountWorkspaceHarness(workspace)
     async with app.run_test(size=(120, 40)) as pilot:
         await _wait_until(pilot, lambda: workspace.initialized, "scan did not finish")
+        await _show_manage(workspace, pilot)
         workspace.query_one("#file-notes-session-changes", Button).press()
         await _wait_until(
             pilot,
@@ -4129,6 +4159,7 @@ async def test_workspace_trust_decline_runs_no_status_and_retry_revalidates(
     )
     async with _WorkspaceHarness(workspace).run_test(size=(120, 40)) as pilot:
         await _wait_until(pilot, lambda: workspace.initialized, "scan did not finish")
+        await _show_manage(workspace, pilot)
         workspace.query_one("#file-notes-session-changes", Button).press()
         await _wait_until(
             pilot,
@@ -4200,6 +4231,7 @@ async def test_hidden_session_mutation_marks_stale_without_status_until_reopen(
     )
     async with _WorkspaceHarness(workspace).run_test(size=(120, 40)) as pilot:
         await _wait_until(pilot, lambda: workspace.initialized, "scan did not finish")
+        await _show_manage(workspace, pilot)
         workspace.query_one("#file-notes-session-changes", Button).press()
         await _wait_until(
             pilot,
@@ -4244,6 +4276,7 @@ async def test_stage_flushes_then_gate_keeps_editor_back_and_one_latest_refresh(
             lambda: workspace.save_state == "dirty",
             "draft did not become dirty",
         )
+        await _show_manage(workspace, pilot)
         workspace.query_one("#file-notes-session-changes", Button).press()
         await _wait_until(
             pilot,
@@ -4320,6 +4353,7 @@ async def test_stage_all_summary_counts_the_complete_displayed_snapshot(
     )
     async with _WorkspaceHarness(workspace).run_test(size=(120, 40)) as pilot:
         await _wait_until(pilot, lambda: workspace.initialized, "scan did not finish")
+        await _show_manage(workspace, pilot)
         workspace.query_one("#file-notes-session-changes", Button).press()
         await _wait_until(
             pilot,
@@ -4368,6 +4402,7 @@ async def test_unstage_all_summary_counts_the_complete_displayed_snapshot(
     )
     async with _WorkspaceHarness(workspace).run_test(size=(120, 40)) as pilot:
         await _wait_until(pilot, lambda: workspace.initialized, "scan did not finish")
+        await _show_manage(workspace, pilot)
         workspace.query_one("#file-notes-session-changes", Button).press()
         await _wait_until(
             pilot,
@@ -4606,6 +4641,7 @@ async def test_unavailable_discovery_exposes_no_trust_or_mutation_action(
     git_service.discovery_result = discovery
     async with _WorkspaceHarness(workspace).run_test(size=(220, 40)) as pilot:
         await _wait_until(pilot, lambda: workspace.initialized, "scan did not finish")
+        await _show_manage(workspace, pilot)
         workspace.query_one("#file-notes-session-changes", Button).press()
         panel = workspace.query_one(
             "#file-notes-git-panel",
@@ -4641,6 +4677,7 @@ async def test_hidden_postflight_starts_no_status_and_transition_wins_admission(
     )
     async with _WorkspaceHarness(workspace).run_test(size=(120, 40)) as pilot:
         await _wait_until(pilot, lambda: workspace.initialized, "scan did not finish")
+        await _show_manage(workspace, pilot)
         workspace.query_one("#file-notes-session-changes", Button).press()
         await _wait_until(
             pilot,
@@ -4689,6 +4726,7 @@ async def test_identity_change_after_trust_runs_no_status(
     git_service.revalidate_result = False
     async with _WorkspaceHarness(workspace).run_test(size=(120, 40)) as pilot:
         await _wait_until(pilot, lambda: workspace.initialized, "scan did not finish")
+        await _show_manage(workspace, pilot)
         workspace.query_one("#file-notes-session-changes", Button).press()
         await _wait_until(
             pilot,
@@ -4724,6 +4762,7 @@ async def test_unstage_selected_reports_counts_and_refreshes_once(
     git_service.rows = (_row("owned", group_id=1, unstage_eligible=True),)
     async with _WorkspaceHarness(workspace).run_test(size=(120, 40)) as pilot:
         await _wait_until(pilot, lambda: workspace.initialized, "scan did not finish")
+        await _show_manage(workspace, pilot)
         workspace.query_one("#file-notes-session-changes", Button).press()
         await _wait_until(
             pilot,
@@ -4761,6 +4800,7 @@ async def test_back_during_status_and_file_poll_start_no_extra_git_work(
     git_service.status_release = asyncio.Event()
     async with _WorkspaceHarness(workspace).run_test(size=(120, 40)) as pilot:
         await _wait_until(pilot, lambda: workspace.initialized, "scan did not finish")
+        await _show_manage(workspace, pilot)
         workspace.query_one("#file-notes-session-changes", Button).press()
         await _wait_until(
             pilot,
@@ -4802,6 +4842,7 @@ async def test_mutation_blocks_root_and_path_while_path_lease_blocks_mutation(
     async with _WorkspaceHarness(workspace).run_test(size=(120, 40)) as pilot:
         await _wait_until(pilot, lambda: workspace.initialized, "scan did not finish")
         assert await workspace.open_path("two.md")
+        await _show_manage(workspace, pilot)
         delete_button = workspace.query_one("#file-notes-delete", Button)
         delete_button.press()
         await _wait_until(
@@ -4873,6 +4914,7 @@ async def test_stage_rechecks_transition_admission_after_flush_await(
     )
     async with _WorkspaceHarness(workspace).run_test(size=(120, 40)) as pilot:
         await _wait_until(pilot, lambda: workspace.initialized, "scan did not finish")
+        await _show_manage(workspace, pilot)
         workspace.query_one("#file-notes-session-changes", Button).press()
         await _wait_until(
             pilot,
@@ -4919,6 +4961,7 @@ async def test_stage_draft_conflict_names_save_and_editor_recovery(
     )
     async with _WorkspaceHarness(workspace).run_test(size=(120, 40)) as pilot:
         await _wait_until(pilot, lambda: workspace.initialized, "scan did not finish")
+        await _show_manage(workspace, pilot)
         workspace.query_one("#file-notes-session-changes", Button).press()
         await _wait_until(
             pilot,
@@ -4985,6 +5028,7 @@ async def test_narrow_git_navigation_retains_editor_search_tree_and_row_selectio
             f"{[node.data for node in tree.root.children]!r}"
         )
         folder.expand()
+        await _show_manage(workspace, pilot)
         workspace.query_one("#file-notes-session-changes", Button).press()
         await _wait_until(
             pilot,
@@ -5086,6 +5130,7 @@ async def test_40x20_prepare_scrolls_actions_below_a_long_linked_root(
             "Root-details disclosure did not close",
         )
 
+        await _show_manage(workspace, pilot)
         entry = workspace.query_one("#file-notes-session-changes", Button)
         entry.focus()
         await pilot.press("enter")
@@ -5214,6 +5259,7 @@ async def test_40x20_actionless_prepare_surface_is_keyboard_scrollable(
 
     async with _WorkspaceHarness(workspace).run_test(size=(40, 20)) as pilot:
         await _wait_until(pilot, lambda: workspace.initialized, "scan did not finish")
+        await _show_manage(workspace, pilot)
         entry = workspace.query_one("#file-notes-session-changes", Button)
         entry.focus()
         await pilot.press("enter")
@@ -5257,6 +5303,7 @@ async def test_review_session_entry_explains_scope_and_keeps_recovery_copy_compl
 
     async with _WorkspaceHarness(workspace).run_test(size=(40, 20)) as pilot:
         await _wait_until(pilot, lambda: workspace.initialized, "scan did not finish")
+        await _show_manage(workspace, pilot)
         entry = workspace.query_one("#file-notes-session-changes", Button)
         assert str(entry.label) == "Review session changes (2)"
         entry.press()
@@ -5303,6 +5350,7 @@ async def test_wide_prepare_session_quiets_and_restores_editor_toolbars_without_
         editor = workspace.query_one("#file-notes-editor", TextArea)
         editor.cursor_location = (0, 3)
         editor.selection = editor.selection.__class__((0, 1), (0, 5))
+        await _show_manage(workspace, pilot)
         file_toolbar = workspace.query_one("#file-notes-file-actions")
         maintenance_toolbar = workspace.query_one("#file-notes-maintenance-actions")
         toolbars = (file_toolbar, maintenance_toolbar)
@@ -5341,7 +5389,18 @@ async def test_wide_prepare_session_quiets_and_restores_editor_toolbars_without_
         assert workspace.query_one("#file-notes-editor", TextArea) is editor
         assert not editor.read_only
 
-        editor.focus()
+        workspace.query_one("#file-notes-git-back", Button).press()
+        await _wait_until(
+            pilot,
+            lambda: file_toolbar.display and not maintenance_toolbar.display,
+            "Back did not restore the primary Manage toolbar",
+        )
+        workspace.query_one("#file-notes-edit", Button).press()
+        await _wait_until(
+            pilot,
+            lambda: workspace.work_mode == "edit" and editor.has_focus,
+            "Edit did not restore the retained editor focus",
+        )
         await pilot.press("x")
         await _wait_until(
             pilot,
@@ -5351,12 +5410,6 @@ async def test_wide_prepare_session_quiets_and_restores_editor_toolbars_without_
         body = editor.text
         cursor = editor.cursor_location
         selection = editor.selection
-        workspace.query_one("#file-notes-git-back", Button).press()
-        await _wait_until(
-            pilot,
-            lambda: file_toolbar.display and not maintenance_toolbar.display,
-            "Back did not restore the primary editor toolbar",
-        )
 
         assert workspace.query_one("#file-notes-editor", TextArea) is editor
         assert editor.text == body
@@ -5397,6 +5450,7 @@ async def test_deferred_git_row_focus_does_not_steal_retained_editor(
             assert await workspace.open_path("folder/one.md")
             editor = workspace.query_one("#file-notes-editor", TextArea)
             original_body = editor.text
+            await _show_manage(workspace, pilot)
             entry = workspace.query_one("#file-notes-session-changes", Button)
             entry.focus()
             await _wait_until(
@@ -5415,10 +5469,14 @@ async def test_deferred_git_row_focus_does_not_steal_retained_editor(
                 "Git row replacement did not enter its pending state",
             )
 
-            workspace.query_one("#file-notes-git-back", Button).focus()
+            workspace.query_one("#file-notes-edit", Button).press()
+            await _wait_until(
+                pilot,
+                lambda: workspace.work_mode == "edit" and editor.has_focus,
+                "Edit did not reclaim focus from the pending Git surface",
+            )
             workspace._focus_session_git_panel(retries_remaining=1)
             assert not editor.read_only
-            editor.focus()
             release_rows.set()
             await _wait_for_current_git_row_projection(workspace)
             await pilot.pause()
@@ -5449,6 +5507,7 @@ async def test_narrow_delete_confirmation_keeps_complete_action_labels(
     async with _WorkspaceHarness(workspace).run_test(size=(40, 20)) as pilot:
         await _wait_until(pilot, lambda: workspace.initialized, "scan did not finish")
         assert await workspace.open_path("folder/one.md")
+        await _show_manage(workspace, pilot)
         await pilot.pause()
         await _assert_visible_editor_actions_fit(workspace, pilot)
         delete = workspace.query_one("#file-notes-delete", Button)
@@ -5476,6 +5535,12 @@ async def test_narrow_delete_confirmation_keeps_complete_action_labels(
         assert delete.styles.column_span == expected_span
         await _assert_visible_editor_actions_fit(workspace, pilot)
 
+        workspace.query_one("#file-notes-edit", Button).press()
+        await _wait_until(
+            pilot,
+            lambda: workspace.work_mode == "edit",
+            "Edit mode did not open",
+        )
         editor = workspace.query_one("#file-notes-editor", TextArea)
         editor.focus()
         await pilot.press("x")
@@ -5502,6 +5567,7 @@ async def test_narrow_editor_actions_keep_complete_labels_at_40_by_20(
     async with _WorkspaceHarness(workspace).run_test(size=(40, 20)) as pilot:
         await _wait_until(pilot, lambda: workspace.initialized, "scan did not finish")
         assert await workspace.open_path("folder/one.md")
+        await _show_manage(workspace, pilot)
         await pilot.pause()
         await _assert_visible_editor_actions_fit(workspace, pilot)
         workspace.query_one("#file-notes-maintenance-toggle", Button).press()
@@ -5820,6 +5886,7 @@ async def test_commit_editor_lease_does_not_make_stage_read_only(
         await _wait_until(pilot, lambda: workspace.initialized, "scan did not finish")
         assert await workspace.open_path("folder/one.md")
         editor = workspace.query_one("#file-notes-editor", TextArea)
+        await _show_manage(workspace, pilot)
         workspace.query_one("#file-notes-session-changes", Button).press()
         await _wait_until(
             pilot,
@@ -7107,6 +7174,7 @@ async def test_commit_40x20_keyboard_flow_keeps_navigator_and_editor_alternate(
             _row("owned", group_id=1, unstage_eligible=True),
             _row("owned", group_id=2, unstage_eligible=True),
         )
+        await _show_manage(workspace, pilot)
         entry = workspace.query_one("#file-notes-session-changes", Button)
         entry.focus()
         await pilot.press("enter")
@@ -7120,11 +7188,11 @@ async def test_commit_40x20_keyboard_flow_keeps_navigator_and_editor_alternate(
             ),
             "40x20 commit availability did not render",
         )
-        assert workspace.navigator_visible
-        assert not workspace.editor_visible
+        assert workspace.editor_visible
+        assert not workspace.navigator_visible
         shell = workspace.query_one("#library-file-notes-reader-shell")
-        assert shell.effective_layout.items_open
-        assert shell.effective_layout.priority_pane == "items"
+        assert not shell.effective_layout.items_open
+        assert shell.effective_layout.priority_pane is None
 
         commit = workspace.query_one(
             "#file-notes-git-commit-staged",
@@ -7285,6 +7353,7 @@ async def test_commit_1000_note_repository_reviews_only_session_set(
             attempts=300,
         )
         assert await workspace.open_path("note-0000.md")
+        await _show_manage(workspace, pilot)
         workspace.query_one("#file-notes-session-changes", Button).press()
         await _wait_until(
             pilot,

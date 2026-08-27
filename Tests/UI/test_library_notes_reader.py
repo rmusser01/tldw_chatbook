@@ -4,11 +4,13 @@ from __future__ import annotations
 
 import asyncio
 import threading
-from dataclasses import fields
+from dataclasses import fields, replace
+from types import SimpleNamespace
 from typing import get_args
+from unittest.mock import Mock, patch
 
 import pytest
-from textual.widgets import Button, Static, TextArea
+from textual.widgets import Button, Input, Static, TextArea
 
 from Tests.UI.test_library_shell import (
     LIBRARY_TEST_SIZE,
@@ -95,6 +97,435 @@ def test_folder_files_reader_authority_scaffold_is_distinct() -> None:
         screen._library_notes_reader_persistence_locks["items"]
         is not screen._library_file_notes_reader_persistence_locks["items"]
     )
+
+
+@pytest.mark.asyncio
+async def test_database_notes_capability_inventory_and_modes(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Database Notes keeps its full inventory behind three explicit modes."""
+    app = _build_test_app(configured_default="library")
+    _seed_conversations(app, _two_conversations(), notes=_two_notes())
+
+    def settings_without_splash(section, key=None, default=None):
+        if section == "splash_screen" and key == "enabled":
+            return False
+        return default
+
+    with patch(
+        "tldw_chatbook.app.get_cli_setting",
+        side_effect=settings_without_splash,
+    ):
+        async with app.run_test(size=LIBRARY_TEST_SIZE) as pilot:
+            await _wait_for_condition(
+                pilot,
+                lambda: isinstance(app.screen, LibraryScreen),
+                message="production app did not mount Library",
+            )
+            screen = app.screen
+            assert isinstance(screen, LibraryScreen)
+            await _wait_for_library_shell(screen, pilot)
+            screen.query_one("#library-row-browse-notes", Button).press()
+            await _wait_for_selector(screen, pilot, "#library-notes-row-0")
+
+            # The navigator capability inventory remains on the incumbent controls.
+            for selector in (
+                "#library-notes-filter",
+                "#library-notes-sort",
+                "#library-notes-select-toggle",
+                "#library-notes-new",
+                "#library-notes-add-from-files",
+                "#library-notes-export",
+            ):
+                assert screen.query_one(selector)
+            assert not screen.query("#library-notes-delete-selected")
+            filter_input = screen.query_one("#library-notes-filter", Input)
+            filter_input.value = "alpha"
+            filter_input.focus()
+            await pilot.press("enter")
+            await _wait_for_selector(screen, pilot, "#library-notes-filter-clear")
+            screen.query_one("#library-notes-filter-clear", Button).press()
+            await _wait_for_selector(screen, pilot, "#library-notes-row-0")
+            screen.query_one("#library-notes-select-toggle", Button).press()
+            await _wait_for_selector(screen, pilot, "#library-notes-export-selected")
+            export_selected = screen.query_one("#library-notes-export-selected", Button)
+            assert export_selected.disabled and export_selected.tooltip
+            screen.query_one("#library-notes-select-toggle", Button).press()
+            await _wait_for_selector(screen, pilot, "#library-notes-row-0")
+
+            screen.query_one("#library-notes-row-0", Button).press()
+            await _wait_for_selector(screen, pilot, "#library-note-body")
+            body = screen.query_one("#library-note-body", TextArea)
+            body.text = "retained mode draft"
+            await pilot.pause()
+            selected_title = screen._library_note_session.snapshot.title
+            edit_title = screen.query_one("#library-note-editor-title", Static)
+            assert edit_title.display
+            assert str(edit_title.renderable) == selected_title
+
+            assert tuple(
+                str(button.label)
+                for button in screen.query_one("#library-note-mode-controls").query(
+                    Button
+                )
+            ) == ("Edit", "Preview", "Info")
+            assert screen.query_one("#library-note-edit", Button).has_class("is-active")
+            save = screen.query_one("#library-note-save", Button)
+            use = screen.query_one("#library-note-use-in-console", Button)
+            assert save.display and use.display
+            assert use.parent is screen.query_one("#library-note-task-actions")
+            title_input = screen.query_one("#library-note-title", Input)
+            title_input.focus()
+            await pilot.pause()
+            assert title_input.has_focus
+            await pilot.press("f6")
+            await pilot.pause()
+            assert save.has_focus
+            for _ in range(len(screen.focus_chain) + 1):
+                if save.has_focus:
+                    break
+                await pilot.press("tab")
+            assert save.has_focus
+
+            screen.query_one("#library-note-preview", Button).press()
+            await pilot.pause()
+            assert screen.query_one("#library-note-preview-region").display
+            assert screen.query_one("#library-note-preview", Button).has_class(
+                "is-active"
+            )
+            screen.query_one("#library-note-context", Button).press()
+            await pilot.pause()
+            info = screen.query_one("#library-note-context-region")
+            assert info.display
+            assert screen.query_one("#library-note-context", Button).has_class(
+                "is-active"
+            )
+            assert tuple(
+                str(section.renderable)
+                for section in info.query(".destination-section")
+            ) == ("Properties", "Reuse & Export", "Danger")
+            for selector in (
+                "#library-note-context-keywords",
+                "#library-note-context-meta",
+                "#library-note-context-copy",
+                "#library-note-context-export-md",
+                "#library-note-context-export-txt",
+                "#library-note-context-delete",
+            ):
+                assert info.query_one(selector)
+            screen.query_one("#library-note-edit", Button).press()
+            await pilot.pause()
+            assert screen.query_one("#library-note-editor-region").display
+            assert screen.query_one("#library-note-body", TextArea) is body
+            assert body.text == "retained mode draft"
+
+    # Exercise the conditional inventory through the incumbent handlers and
+    # assert their service/guard arguments. A method-existence check would let
+    # broken event dispatch or a silently changed mutation contract pass.
+    with monkeypatch.context() as patcher:
+        sync_calls: list[tuple[str, tuple[object, ...], dict[str, object]]] = []
+        patcher.setattr(
+            library_screen_module,
+            "_sync_library_canvas",
+            lambda *args, **kwargs: sync_calls.append(("sync", args, kwargs)),
+        )
+
+        stopped = Mock()
+        event = SimpleNamespace(stop=stopped)
+        permitted = SimpleNamespace(
+            kind=library_screen_module.NoteFlushOutcomeKind.PERMITTED
+        )
+
+        async def flush() -> object:
+            return permitted
+
+        refresh_roots = Mock()
+        revisit_receipt = Mock()
+        task_screen = SimpleNamespace(
+            _library_notes_mutation_fenced=lambda: False,
+            _flush_library_note_save=flush,
+            _library_notes_sync_controller=SimpleNamespace(refresh_roots=refresh_roots),
+            _library_note_import_controller=SimpleNamespace(
+                revisit_receipt=revisit_receipt
+            ),
+            _library_notes_lasting_origin="setup",
+            _library_notes_view="list",
+            _apply_library_notes_footer_context=Mock(),
+        )
+        await LibraryScreen.handle_library_notes_manage_sync_folders(task_screen, event)
+        refresh_roots.assert_called_once_with()
+        assert task_screen._library_notes_view == "lasting_roots"
+        assert len(sync_calls) == 1
+        await LibraryScreen.handle_library_notes_import_receipt(task_screen, event)
+        revisit_receipt.assert_called_once_with()
+        assert task_screen._library_notes_view == "import"
+        assert len(sync_calls) == 2
+
+        mutations: list[tuple[str, dict[str, object]]] = []
+        pushed: list[tuple[object, object]] = []
+        folder = SimpleNamespace(
+            kind="folder",
+            protected=False,
+            folder_id="folder-1",
+            version=7,
+            label="Projects",
+        )
+        note = SimpleNamespace(
+            kind="note",
+            protected=False,
+            folder_id="folder-1",
+            note_id="note-1",
+            membership_id="member-1",
+            version=11,
+        )
+        tree_screen = SimpleNamespace(
+            app=SimpleNamespace(
+                push_screen=lambda modal, callback: pushed.append((modal, callback))
+            ),
+            _selected_library_notes_tree_row=lambda: folder,
+            _library_notes_folder_target_options=lambda **kwargs: (),
+            _schedule_library_notes_tree_mutation=lambda action, **kwargs: (
+                mutations.append((action, kwargs))
+            ),
+            _library_notes_deleted_folder_receipt=SimpleNamespace(
+                folder_id="folder-deleted", expected_version=13
+            ),
+        )
+        LibraryScreen.handle_library_notes_folder_new(tree_screen, event)
+        pushed.pop()[1]("Inbox")
+        assert mutations.pop() == (
+            "create_folder",
+            {"name": "Inbox", "parent_id": "folder-1"},
+        )
+        LibraryScreen.handle_library_notes_folder_rename(tree_screen, event)
+        pushed.pop()[1]("Renamed")
+        assert mutations.pop() == (
+            "rename_folder",
+            {
+                "folder_id": "folder-1",
+                "name": "Renamed",
+                "expected_version": 7,
+                "protected": False,
+            },
+        )
+        LibraryScreen.handle_library_notes_folder_move(tree_screen, event)
+        pushed.pop()[1]("folder-2")
+        assert mutations.pop() == (
+            "move_folder",
+            {
+                "folder_id": "folder-1",
+                "parent_id": "folder-2",
+                "expected_version": 7,
+                "protected": False,
+            },
+        )
+        LibraryScreen.handle_library_notes_folder_remove(tree_screen, event)
+        pushed.pop()[1](True)
+        assert mutations.pop() == (
+            "delete_folder",
+            {
+                "folder_id": "folder-1",
+                "expected_version": 7,
+                "protected": False,
+            },
+        )
+        LibraryScreen.handle_library_notes_folder_restore(tree_screen, event)
+        assert mutations.pop() == (
+            "restore_folder",
+            {"folder_id": "folder-deleted", "expected_version": 13},
+        )
+
+        tree_screen._selected_library_notes_tree_row = lambda: note
+        tree_screen._choose_library_notes_placement_target = lambda *, move: (
+            LibraryScreen._choose_library_notes_placement_target(tree_screen, move=move)
+        )
+        LibraryScreen.handle_library_notes_placement_add(tree_screen, event)
+        pushed.pop()[1]("folder-2")
+        assert mutations.pop() == (
+            "add_placement",
+            {"folder_id": "folder-2", "note_id": "note-1"},
+        )
+        LibraryScreen.handle_library_notes_placement_move(tree_screen, event)
+        pushed.pop()[1]("folder-2")
+        assert mutations.pop() == (
+            "move_placement",
+            {
+                "note_id": "note-1",
+                "destination_folder_id": "folder-2",
+                "source_folder_id": "folder-1",
+                "membership_version": 11,
+                "protected": False,
+            },
+        )
+        LibraryScreen.handle_library_notes_placement_remove(tree_screen, event)
+        assert mutations.pop() == (
+            "detach_placement",
+            {
+                "folder_id": "folder-1",
+                "note_id": "note-1",
+                "expected_version": 11,
+                "protected": False,
+            },
+        )
+
+        export_scope = object()
+        opened_exports: list[object] = []
+
+        async def open_export(scope: object) -> None:
+            opened_exports.append(scope)
+
+        export_screen = SimpleNamespace(
+            _library_notes_mutation_fenced=lambda: False,
+            _library_notes_row_selection=SimpleNamespace(
+                count=1, export_scope=lambda: export_scope
+            ),
+            _open_library_export_canvas=open_export,
+        )
+        await LibraryScreen.handle_library_notes_export_selected(export_screen, event)
+        assert opened_exports == [export_scope]
+
+        receipt = object()
+        undo_receipts: list[object] = []
+        workers: list[tuple[object, bool, str]] = []
+
+        def undo(selected_receipt: object) -> object:
+            undo_receipts.append(selected_receipt)
+
+            async def settle() -> None:
+                return None
+
+            return settle()
+
+        undo_screen = SimpleNamespace(
+            _library_notes_mutation_fenced=lambda: False,
+            _library_note_delete_receipt=receipt,
+            _library_notes_mutation_in_flight=False,
+            is_mounted=False,
+            _undo_library_note_delete=undo,
+            run_worker=lambda coroutine, *, exclusive, group: workers.append(
+                (coroutine, exclusive, group)
+            ),
+        )
+        LibraryScreen.handle_library_note_delete_undo(undo_screen, event)
+        assert undo_screen._library_notes_mutation_in_flight
+        assert undo_receipts == [receipt]
+        assert [(exclusive, group) for _, exclusive, group in workers] == [
+            (True, "library_note_mutation")
+        ]
+        workers[0][0].close()
+        assert stopped.call_count == 12
+
+
+@pytest.mark.parametrize(
+    ("authority", "state", "expected_content", "expected_authority", "safe"),
+    (
+        ("database", "conflict", "Conflict", "Database Notes", "Review recovery"),
+        ("database", "read_only", "Read-only", "Database Notes", "Keep the draft"),
+        ("database", "failed", "Save failed", "Database Notes", "Retry Save"),
+        ("database", "saving", "Saving", "Database Notes", None),
+        ("database", "dirty", "Unsaved changes", "Database Notes", None),
+        ("database", "clean", "Saved", "Database Notes", None),
+        ("folder", "conflict", "Conflict", "Folder Files", "Save Copy"),
+        ("folder", "read_only", "Read-only", "Folder Files", "Open Manage"),
+        ("folder", "failed", "Save failed", "Folder Files", "Save Copy"),
+        ("folder", "saving", "Saving", "Folder Files", None),
+        ("folder", "dirty", "Unsaved changes", "Folder Files", None),
+        ("folder", "clean", "Saved", "Folder Files", None),
+    ),
+)
+def test_notes_header_status_channels_follow_approved_precedence(
+    authority: str,
+    state: str,
+    expected_content: str,
+    expected_authority: str,
+    safe: str | None,
+) -> None:
+    """Pure status channels keep content recovery ahead of Git detail."""
+    if authority == "database":
+        from tldw_chatbook.Widgets.Library.library_notes_canvas import (
+            resolve_database_note_status_channels,
+        )
+
+        channels = resolve_database_note_status_channels(
+            conflict=state == "conflict",
+            read_only=state == "read_only",
+            save_failed=state == "failed",
+            saving=state == "saving",
+            dirty=state == "dirty",
+        )
+    else:
+        from tldw_chatbook.Widgets.Library.library_file_notes_workspace import (
+            resolve_file_note_status_channels,
+        )
+
+        channels = resolve_file_note_status_channels(
+            root="/notes/project",
+            conflict=state == "conflict",
+            read_only=state == "read_only",
+            save_failed=state == "failed",
+            saving=state == "saving",
+            dirty=state == "dirty",
+            git_failure="Push failed",
+            git_running="Pushing",
+            git_changes=3,
+        )
+
+    assert channels.content_recovery.startswith(expected_content)
+    assert channels.authority_git.startswith(expected_authority)
+    assert (channels.safe_next_action or None) == safe
+    if authority == "folder":
+        # Git failure wins only inside its own channel; it cannot replace the
+        # content/recovery decision or its safe next action.
+        assert "Push failed" in channels.authority_git
+        assert "Pushing" not in channels.authority_git
+        assert "3 changes" not in channels.authority_git
+    assert "\n" not in channels.content_recovery
+    assert "\n" not in channels.authority_git
+
+
+def test_folder_status_projects_reachable_read_only_recovery_and_bounds_git() -> None:
+    """Folder header copy stays truthful, semantic, and bounded."""
+    from rich.cells import cell_len
+
+    from tldw_chatbook.Widgets.Library.library_file_notes_workspace import (
+        resolve_file_note_status_channels,
+    )
+
+    ordinary = resolve_file_note_status_channels(
+        root="/notes/project",
+        read_only=True,
+    )
+    excerpt = resolve_file_note_status_channels(
+        root="/notes/project",
+        read_only=True,
+        exact_export_available=True,
+    )
+    git_states = (
+        resolve_file_note_status_channels(
+            root="/notes/project",
+            git_failure="FAILED — Git action failed: " + "private detail " * 30,
+        ),
+        resolve_file_note_status_channels(
+            root="/notes/project",
+            git_uncertain="Outcome uncertain: " + "private detail " * 30,
+        ),
+        resolve_file_note_status_channels(
+            root="/notes/project",
+            git_running="Checking: " + "private detail " * 30,
+        ),
+        resolve_file_note_status_channels(
+            root=None,
+            git_running="Checking: " + "private detail " * 30,
+        ),
+    )
+
+    assert ordinary.safe_next_action == "Open Manage"
+    assert excerpt.safe_next_action == "Export exact copy"
+    assert all(cell_len(channels.authority_git) <= 60 for channels in git_states)
+    assert all(
+        "private detail" not in channels.authority_git for channels in git_states
+    )
+    assert "Git action failed" in git_states[0].authority_git
 
 
 @pytest.mark.asyncio
@@ -671,6 +1102,60 @@ async def test_wide_editor_deep_link_keeps_reader_navigation_and_local_back() ->
         assert screen.query_one("#library-canvas").display is True
         assert screen.query_one("#library-notes-task-return", Button).display is False
         assert screen.query_one("#library-note-back", Button).display is True
+
+        heading = screen.query_one("#library-note-heading")
+        second_row = screen.query_one("#library-note-header-second-row")
+        editor = screen.query_one("#library-note-editor-region")
+        # Textual's wide controls use a three-cell physical button height;
+        # each wrapper must still remain one logical header row.
+        assert heading.region.height <= 3
+        assert second_row.region.height <= 3, (
+            second_row.styles.height,
+            second_row.styles.min_height,
+            second_row.styles.max_height,
+            second_row.styles.layout,
+        )
+        assert editor.region.y <= second_row.region.y + 3
+
+        await pilot.resize_terminal(60, 20)
+        await pilot.pause()
+        canvas = screen.query_one("#library-note-work-pane", LibraryNoteWorkPane)
+        from tldw_chatbook.Widgets.Library.library_notes_canvas import (
+            resolve_database_note_status_channels,
+        )
+
+        canvas.apply_session_state(
+            replace(
+                screen._library_note_presentation_state(),
+                compact=True,
+                status_channels=resolve_database_note_status_channels(conflict=True),
+            )
+        )
+        await pilot.pause()
+        status = screen.query_one("#library-note-status", Static)
+        rendered = " ".join(
+            status.render_line(row).text.strip() for row in range(status.region.height)
+        )
+        assert "Next: Review recovery." in rendered
+        selected_title = screen._library_note_session.snapshot.title
+        primary = screen.query_one("#library-note-primary-actions")
+        compact_controls = (
+            screen.query_one("#library-note-editor-title", Static),
+            screen.query_one("#library-note-save", Button),
+            screen.query_one("#library-note-use-in-console", Button),
+        )
+        assert all(
+            control in screen._compositor.visible_widgets
+            for control in compact_controls
+        )
+        assert all(
+            primary.region.contains_region(control.region)
+            for control in compact_controls[1:]
+        )
+        painted = "\n".join(strip.text for strip in screen._compositor.render_strips())
+        assert selected_title in painted
+        assert "Save" in painted
+        assert "Use in Console" in painted
 
 
 @pytest.mark.asyncio
