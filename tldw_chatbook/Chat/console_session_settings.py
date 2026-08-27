@@ -217,7 +217,7 @@ def parse_persisted_console_session_settings(
 
     try:
         metadata = json.loads(raw_metadata or "{}")
-    except (TypeError, ValueError):
+    except (TypeError, ValueError, RecursionError):
         return None
     if not isinstance(metadata, dict):
         return None
@@ -268,9 +268,12 @@ def parse_persisted_console_session_settings(
                 return None
             values[name] = float(values[name])
     try:
-        return ConsoleSessionSettings(**values)
+        settings = ConsoleSessionSettings(**values)
     except TypeError:
         return None
+    if _console_session_settings_structural_errors(settings):
+        return None
+    return settings
 
 
 @dataclass(frozen=True, slots=True)
@@ -696,30 +699,19 @@ def console_settings_warnings(settings: ConsoleSessionSettings) -> list[str]:
     return warnings
 
 
-def validate_console_session_settings(
+def _console_session_settings_structural_errors(
     settings: ConsoleSessionSettings,
-    *,
-    app_config: Mapping[str, object],
 ) -> list[str]:
-    """Return user-facing validation errors for Console settings."""
+    """Return pure shape/range errors shared by live and persisted settings."""
     errors: list[str] = []
-    provider_key = provider_config_key(settings.provider)
-    provider_settings = _provider_settings(app_config, provider_key)
-
-    if not provider_key:
-        errors.append("Provider is required.")
-    if provider_key not in NATIVE_CONSOLE_PROVIDER_KEYS and not _string_value(
-        settings.model
-    ):
-        errors.append("Model is required.")
-
-    base_url = _string_value(settings.base_url)
     if (
-        base_url
-        and _is_url_based_provider(provider_key, provider_settings)
-        and not _valid_base_url(provider_key, base_url)
+        type(settings.provider) is not str
+        or not settings.provider.strip()
+        or settings.provider != settings.provider.strip()
     ):
-        errors.append("Base URL must be a valid http(s) URL.")
+        errors.append("Provider is required.")
+    if settings.source not in {"derived", "user"}:
+        errors.append("Settings source must be derived or user.")
 
     if not _float_in_range(settings.temperature, 0.0, 2.0):
         errors.append("Temperature must be between 0 and 2.")
@@ -779,6 +771,32 @@ def validate_console_session_settings(
         settings.thinking_budget_tokens
     ) and not _optional_int_at_least(settings.thinking_budget_tokens, 1024):
         errors.append("Thinking budget tokens must be at least 1024.")
+
+    return errors
+
+
+def validate_console_session_settings(
+    settings: ConsoleSessionSettings,
+    *,
+    app_config: Mapping[str, object],
+) -> list[str]:
+    """Return user-facing validation errors for Console settings."""
+    errors = _console_session_settings_structural_errors(settings)
+    provider_key = provider_config_key(settings.provider)
+    provider_settings = _provider_settings(app_config, provider_key)
+
+    if provider_key not in NATIVE_CONSOLE_PROVIDER_KEYS and not _string_value(
+        settings.model
+    ):
+        errors.append("Model is required.")
+
+    base_url = _string_value(settings.base_url)
+    if (
+        base_url
+        and _is_url_based_provider(provider_key, provider_settings)
+        and not _valid_base_url(provider_key, base_url)
+    ):
+        errors.append("Base URL must be a valid http(s) URL.")
 
     return errors
 

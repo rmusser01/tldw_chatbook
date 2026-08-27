@@ -318,26 +318,65 @@ def test_temporary_fork_promotion_reloads_status_and_position_zero_label(
     assert hydrated[0].attachment_label == "original-name.png"
 
 
-def test_temporary_promotion_rejects_conflicting_fork_and_ordinary_metadata(
+@pytest.mark.parametrize("terminal_status", ("stopped", "failed"))
+def test_ordinary_temporary_promotion_preserves_message_metadata(
     tmp_path,
+    terminal_status,
 ):
-    db, _service, store = _store(tmp_path, "fork-metadata-conflict.db")
-    session = store.create_session(
-        title="Temporary fork",
-        settings=ConsoleSessionSettings(provider="openai", model="gpt-test"),
-        ephemeral=True,
-    )
+    db, _service, store = _store(tmp_path, f"ordinary-metadata-{terminal_status}.db")
+    session = store.create_session(title="Ordinary temporary", ephemeral=True)
     message = store.append_message(
         session.id,
         role=ConsoleMessageRole.ASSISTANT,
         content="partial answer",
+        attachments=(
+            MessageAttachment(_png_bytes(), "image/png", "ordinary-name.png", 0),
+        ),
     )
+    ordinary_metadata = MessageMetadata(engine="realtime")
     live = store._nodes_by_session[session.id][message.id]
+    live.status = terminal_status
+    live.metadata = ordinary_metadata
+
+    conversation_id = store.promote_ephemeral_session(session.id)
+
+    assert conversation_id is not None
+    row = db.get_message_by_id(live.persisted_message_id)
+    assert row is not None
+    assert row["metadata_json"] == ordinary_metadata.to_json()
+    assert MessageMetadata.from_json(row["metadata_json"]) == ordinary_metadata
+
+
+def test_temporary_fork_promotion_rejects_conflicting_fork_and_ordinary_metadata(
+    tmp_path,
+):
+    db, _service, store = _store(tmp_path, "fork-metadata-conflict.db")
+    source = store.create_session(
+        title="Temporary source",
+        settings=ConsoleSessionSettings(provider="openai", model="gpt-test"),
+        ephemeral=True,
+    )
+    message = store.append_message(
+        source.id,
+        role=ConsoleMessageRole.ASSISTANT,
+        content="partial answer",
+    )
+    live = store._nodes_by_session[source.id][message.id]
     live.status = "stopped"
-    live.metadata = MessageMetadata(engine="realtime")
+    snapshot = store.stage_fork_snapshot(
+        store.issue_fork_fence(message.id),
+        title="Temporary fork",
+        fork_session_id="temporary-fork-conflict",
+        fork_conversation_id=None,
+    )
+    fork = store.register_fork_snapshot(snapshot, activate=False)
+    fork_message = store._nodes_by_session[fork.id][
+        snapshot.messages[0].native_message_id
+    ]
+    fork_message.metadata = MessageMetadata(engine="realtime")
 
     with pytest.raises(ValueError, match="metadata shape"):
-        store.promote_ephemeral_session(session.id)
+        store.promote_ephemeral_session(fork.id)
 
     assert _conversation_count(db) == 0
 

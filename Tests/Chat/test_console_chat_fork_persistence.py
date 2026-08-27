@@ -1334,7 +1334,8 @@ def test_durable_reload_preserves_terminal_status_and_position_zero_label(
 
 
 @pytest.mark.parametrize("source_inside_snapshot", (True, False))
-def test_video_reference_round_trips_from_store_projection(
+@pytest.mark.asyncio
+async def test_video_reference_round_trips_from_store_projection(
     tmp_path,
     source_inside_snapshot,
 ) -> None:
@@ -1445,5 +1446,30 @@ def test_video_reference_round_trips_from_store_projection(
     assert metadata is not None
     assert metadata.name == f"forked-video-{projected_video.native_message_id}"
     assert metadata.source_image_message_id == expected_source_id
+    assert metadata.is_unavailable_tombstone is True
     assert "path" not in row["metadata_json"]
     assert "store" not in row["metadata_json"]
+
+    resumed_store = ConsoleChatStore(persistence=service)
+    resumed = resumed_store.restore_persisted_session(
+        title="Forked video",
+        workspace_id=None,
+        persisted_conversation_id="fork",
+        all_nodes=hydrated,
+        active_leaf_persisted_id=db.get_conversation_active_leaf("fork"),
+        settings=snapshot.configuration.settings,
+        activate=False,
+    )
+    await resumed_store.hydrate_session_library_policy(resumed.id)
+    resumed_video = next(
+        message
+        for message in resumed_store.messages_for_session(resumed.id)
+        if message.video_metadata is not None
+    )
+    refork = resumed_store.stage_fork_snapshot(
+        resumed_store.issue_fork_fence(resumed_video.id),
+        title="Forked again",
+        fork_session_id=f"refork-session-{source_inside_snapshot}",
+        fork_conversation_id=f"refork-{source_inside_snapshot}",
+    )
+    assert refork.messages[-1].video_tombstone is not None

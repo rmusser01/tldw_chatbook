@@ -779,6 +779,7 @@ class ChatPersistenceService:
                         ratio=video.ratio,
                         source_image_message_id=video.source_image_message_id,
                         container=video.container,
+                        is_unavailable_tombstone=True,
                     ).to_json()
                 else:
                     metadata_json = encode_console_fork_message_metadata(

@@ -975,6 +975,10 @@ class ConsoleChatSession:
     #: writing, which is the whole reason the guard lives at the id and not
     #: at the 43 sites that consult ``self.persistence``.
     ephemeral: bool = False
+    #: Process-local proof that this session was atomically published from a
+    #: validated fork snapshot. Ordinary temporary sessions must not inherit
+    #: fork-only durable metadata conventions during promotion.
+    fork_projection: bool = False
 
     def __post_init__(self) -> None:
         """Normalize nullable/legacy optional thinking replay preference."""
@@ -4866,6 +4870,7 @@ class ConsoleChatStore:
             or any(type(value) not in {int, float, type(None)} for value in numeric)
             or any(type(value) not in {int, type(None)} for value in integer)
             or any(value is not None and not math.isfinite(value) for value in numeric)
+            or type(video.is_unavailable_tombstone) is not bool
         ):
             raise ValueError("Console fork video metadata is unavailable.")
         payload = video.to_json().encode("utf-8")
@@ -4888,10 +4893,12 @@ class ConsoleChatStore:
         if message.attachments or message.generation_metadata:
             raise ValueError("Console fork video payload is unavailable.")
         fingerprint = cls._fork_video_fingerprint(message.video_metadata)
-        if message.content not in {
-            video_content_marker(message.video_metadata.name),
-            CONSOLE_FORK_VIDEO_TOMBSTONE_CONTENT,
-        }:
+        expected_content = (
+            CONSOLE_FORK_VIDEO_TOMBSTONE_CONTENT
+            if message.video_metadata.is_unavailable_tombstone
+            else video_content_marker(message.video_metadata.name)
+        )
+        if message.content != expected_content:
             raise ValueError("Console fork video marker is unavailable.")
         return fingerprint
 
@@ -5805,6 +5812,7 @@ class ConsoleChatStore:
                     ratio=tombstone.ratio,
                     source_image_message_id=tombstone.source_image_message_id,
                     container=tombstone.container,
+                    is_unavailable_tombstone=True,
                 )
                 self._fork_video_fingerprint(video_metadata)
             variants = (
@@ -5888,6 +5896,7 @@ class ConsoleChatStore:
             speech_preferences=configuration.speech_preferences,
             project_instruction_state=configuration.project_instruction_state,
             ephemeral=not snapshot.durable,
+            fork_projection=True,
         )
         nodes = {message.id: message for message in built_messages}
         parent_by_message = {
@@ -11809,9 +11818,13 @@ class ConsoleChatStore:
             attachment_display_name = (
                 message.attachments[0].display_name if message.attachments else ""
             )
-            fork_metadata_json = encode_console_fork_message_metadata(
-                message.status,
-                attachment_display_name,
+            fork_metadata_json = (
+                encode_console_fork_message_metadata(
+                    message.status,
+                    attachment_display_name,
+                )
+                if session.fork_projection
+                else None
             )
             if message.video_metadata is not None:
                 if fork_metadata_json is not None or (

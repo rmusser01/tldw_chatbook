@@ -119,6 +119,7 @@ def test_resume_restores_the_complete_versioned_console_settings_snapshot() -> N
                 }
             }
         ),
+        '{"nested":' * 1_200 + "null" + "}" * 1_200,
     ),
 )
 def test_resume_malformed_settings_fall_back_without_partial_poisoning(
@@ -145,6 +146,77 @@ def test_resume_malformed_settings_fall_back_without_partial_poisoning(
             "pinned_prefill": None,
         }
     )
+
+
+@pytest.mark.parametrize(
+    ("field", "invalid"),
+    (
+        ("provider", ""),
+        ("provider", "   "),
+        ("provider", " openai"),
+        ("provider", "openai "),
+        ("source", "external"),
+        ("source", " user"),
+        ("temperature", -0.01),
+        ("temperature", 2.01),
+        ("temperature", True),
+        ("top_p", -0.01),
+        ("top_p", 1.01),
+        ("min_p", -0.01),
+        ("min_p", 1.01),
+        ("top_k", -1),
+        ("top_k", True),
+        ("max_tokens", 0),
+        ("seed", -1),
+        ("presence_penalty", -2.01),
+        ("presence_penalty", 2.01),
+        ("frequency_penalty", -2.01),
+        ("frequency_penalty", 2.01),
+        ("thinking_budget_tokens", 1023),
+        ("reasoning_effort", "ultra"),
+        ("reasoning_effort", " high"),
+        ("reasoning_summary", "verbose"),
+        ("verbosity", "max"),
+        ("thinking_effort", "minimal"),
+    ),
+)
+def test_resume_structurally_invalid_settings_fall_back_as_one_snapshot(
+    field: str,
+    invalid: object,
+) -> None:
+    base = ConsoleSessionSettings(
+        provider="base",
+        model="safe-model",
+        temperature=0.61,
+        streaming=True,
+    )
+    persisted = {
+        **ConsoleSessionSettings(
+            provider="openai",
+            model="gpt-test",
+            min_p=0.1,
+            top_k=0,
+            max_tokens=1,
+            seed=0,
+            presence_penalty=0.0,
+            frequency_penalty=0.0,
+            reasoning_effort="high",
+            reasoning_summary="auto",
+            verbosity="medium",
+            thinking_effort="off",
+            thinking_budget_tokens=1024,
+            source="user",
+        ).__dict__,
+        field: invalid,
+    }
+    metadata = json.dumps({"console_session_settings": {"version": 1, **persisted}})
+
+    restored = apply_resume_settings_overrides(
+        base,
+        {"system_prompt": None, "metadata": metadata},
+    )
+
+    assert restored == base
 
 
 #: Deliberately awkward: two branches off one root, a truly-empty node in

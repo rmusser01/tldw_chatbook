@@ -1,4 +1,5 @@
 import asyncio
+import json
 import pickle
 from dataclasses import FrozenInstanceError, fields, replace
 from io import BytesIO
@@ -2678,7 +2679,13 @@ def test_video_projects_as_unavailable_tombstone_and_remaps_only_internal_source
 
 @pytest.mark.parametrize(
     "invalid_kind",
-    ("marker-without-metadata", "metadata-without-marker", "marker-name-mismatch"),
+    (
+        "marker-without-metadata",
+        "metadata-without-marker",
+        "marker-name-mismatch",
+        "tombstone-with-live-metadata",
+        "marker-with-tombstone-metadata",
+    ),
 )
 def test_fork_issue_rejects_inconsistent_source_video_content(invalid_kind) -> None:
     store = ConsoleChatStore()
@@ -2689,6 +2696,18 @@ def test_fork_issue_rejects_inconsistent_source_video_content(invalid_kind) -> N
             role=ConsoleMessageRole.ASSISTANT,
             content=video_content_marker("source-video"),
         )
+    elif invalid_kind == "marker-with-tombstone-metadata":
+        raw = json.loads(
+            VideoGenerationMetadata(
+                name="source-video",
+                prompt="animate",
+                backend="minimax",
+            ).to_json()
+        )
+        raw["video_generation"]["is_unavailable_tombstone"] = True
+        metadata = VideoGenerationMetadata.from_json(json.dumps(raw))
+        assert metadata is not None
+        message = store.append_video_message(session.id, video_metadata=metadata)
     else:
         message = store.append_video_message(
             session.id,
@@ -2699,11 +2718,12 @@ def test_fork_issue_rejects_inconsistent_source_video_content(invalid_kind) -> N
             ),
         )
         live = store._nodes_by_session[session.id][message.id]
-        live.content = (
-            "ordinary assistant text"
-            if invalid_kind == "metadata-without-marker"
-            else video_content_marker("different-video")
-        )
+        if invalid_kind == "metadata-without-marker":
+            live.content = "ordinary assistant text"
+        elif invalid_kind == "tombstone-with-live-metadata":
+            live.content = CONSOLE_FORK_VIDEO_TOMBSTONE_CONTENT
+        else:
+            live.content = video_content_marker("different-video")
 
     with pytest.raises(ValueError, match="video"):
         store.issue_fork_fence(message.id)
@@ -2745,6 +2765,8 @@ def test_registered_video_tombstone_can_be_fenced_and_forked_again() -> None:
 
     assert eligibility.eligible is True
     assert tombstone.content == CONSOLE_FORK_VIDEO_TOMBSTONE_CONTENT
+    assert tombstone.video_metadata is not None
+    assert tombstone.video_metadata.is_unavailable_tombstone is True
     assert second_snapshot.messages[-1].content == CONSOLE_FORK_VIDEO_TOMBSTONE_CONTENT
     assert second_snapshot.messages[-1].video_tombstone is not None
 
