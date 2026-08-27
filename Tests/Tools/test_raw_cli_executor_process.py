@@ -440,6 +440,7 @@ def test_worker_needs_parent_commit_after_containment_admission(
             launch_commit,
             abort,
             threading.Event(),
+            SimpleNamespace(value=0),
             OutputQueue(),
         ),
     )
@@ -847,7 +848,7 @@ def test_late_cancel_after_worker_exit_cannot_replace_exited_result(
     assert result.exit_code == 0
 
 
-def test_shell_exit_wins_cancel_while_terminal_payload_is_still_flushing(
+def test_shell_exit_wins_cancel_while_reader_payloads_are_still_flushing(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -903,6 +904,79 @@ def test_shell_exit_wins_cancel_while_terminal_payload_is_still_flushing(
     assert thread.is_alive() is False
     assert results[0].terminal_state == "exited"
     assert results[0].exit_code == 0
+
+
+@pytest.mark.skipif(os.name != "posix", reason="native POSIX process-group evidence")
+def test_exited_shell_with_inherited_pipe_settles_and_removes_descendant(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    real_event = multiprocessing.context.BaseContext.Event
+    process_events: list[Any] = []
+    all_events_created = threading.Event()
+
+    def recording_event(context: Any) -> Any:
+        event = real_event(context)
+        process_events.append(event)
+        if len(process_events) == 4:
+            all_events_created.set()
+        return event
+
+    monkeypatch.setattr(multiprocessing.context.BaseContext, "Event", recording_event)
+    pid_file = tmp_path / "inherited-pipe-child.pid"
+    child_source = (
+        "import os,pathlib,threading;"
+        f"pathlib.Path({str(pid_file)!r}).write_text(str(os.getpid()));"
+        "print('child inherited stdout',flush=True);"
+        "threading.Event().wait(120)"
+    )
+    parent_source = (
+        "import pathlib,subprocess,sys;"
+        f"subprocess.Popen([sys.executable,'-c',{child_source!r}]);"
+        f"path=pathlib.Path({str(pid_file)!r});"
+        "exec('while not path.exists():\\n pass');"
+        "raise SystemExit(7)"
+    )
+    cancel_event = threading.Event()
+    trees: list[ExecutorProcessTree] = []
+    results: list[Any] = []
+
+    def admit(tree: ExecutorProcessTree, commit_launch: Any) -> bool:
+        trees.append(tree)
+        tree.admit()
+        commit_launch()
+        return True
+
+    thread = threading.Thread(
+        target=lambda: results.append(
+            _executor().execute(
+                _request(tmp_path, _python_command(parent_source)),
+                cancel_event=cancel_event,
+                on_event=lambda _event: None,
+                admit_worker=admit,
+            )
+        )
+    )
+    thread.start()
+    settled = False
+    try:
+        assert all_events_created.wait(5.0)
+        shell_exited = process_events[3]
+        assert shell_exited.wait(5.0)
+        cancel_event.set()
+        thread.join(5.0)
+        settled = not thread.is_alive()
+    finally:
+        if thread.is_alive() and trees:
+            trees[0].terminate_tree()
+            thread.join(5.0)
+
+    assert settled
+    child_pid = int(pid_file.read_text(encoding="utf-8"))
+    assert results[0].terminal_state == "exited"
+    assert results[0].exit_code == 7
+    assert results[0].cleanup_proven is True
+    assert _wait_for_pid_exit(child_pid)
 
 
 def test_streaming_sanitizer_handles_control_sequences_split_across_chunks() -> None:

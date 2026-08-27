@@ -77,6 +77,7 @@ _RAW_OUTPUT_QUEUE_SIZE = 16
 _RAW_OUTPUT_FLUSH_SECONDS = 0.05
 _RAW_STARTUP_TIMEOUT_SECONDS = 10.0
 _RAW_QUEUE_POLL_SECONDS = 0.05
+_RAW_POST_EXIT_DRAIN_SECONDS = 1.0
 
 
 @dataclass(frozen=True, slots=True)
@@ -523,6 +524,7 @@ def _raw_cli_worker_entry(
     launch_event: Any,
     abort_event: Any,
     shell_exited_event: Any,
+    shell_exit_code: Any,
     output_queue: Any,
 ) -> None:
     """Enter containment, await admission, then run exactly one shell."""
@@ -569,10 +571,10 @@ def _raw_cli_worker_entry(
         for reader in readers:
             reader.start()
         exit_code = shell_process.wait()
+        shell_exit_code.value = exit_code
         shell_exited_event.set()
         for reader in readers:
             reader.join()
-        terminal = ("terminal", "exited", exit_code, argv[0])
     finally:
         try:
             identity_connection.close()
@@ -762,6 +764,7 @@ class RawShellExecutor:
         launch_event: Any | None = None
         launch_commit: _LaunchCommit | None = None
         shell_exited_event: Any | None = None
+        shell_exit_code: Any | None = None
         started_at: float | None = None
         cleanup_proven = True
         resolved_shell = request.shell
@@ -773,6 +776,7 @@ class RawShellExecutor:
             launch_event = self._context.Event()
             abort_event = self._context.Event()
             shell_exited_event = self._context.Event()
+            shell_exit_code = self._context.Value("q", 0)
             output_queue = self._context.Queue(maxsize=_RAW_OUTPUT_QUEUE_SIZE)
             process = self._context.Process(
                 target=_raw_cli_worker_entry,
@@ -783,6 +787,7 @@ class RawShellExecutor:
                     launch_event,
                     abort_event,
                     shell_exited_event,
+                    shell_exit_code,
                     output_queue,
                 ),
                 name=f"raw-cli-{request.invocation_id}",
@@ -883,6 +888,7 @@ class RawShellExecutor:
                 started_at,
                 resolved_shell,
                 shell_exited_event,
+                shell_exit_code,
             )
             if triggered:
                 cleanup_proven = _cleanup_tree(tree, terminate=True)
@@ -948,8 +954,12 @@ class RawShellExecutor:
         started_at: float,
         resolved_shell: str,
         shell_exited_event: Any,
+        shell_exit_code: Any,
     ) -> tuple[RawCliTerminalState, int | None, str, bool]:
         dead_empty_polls = 0
+        ended_streams: set[RawCliStream] = set()
+        exited_at: float | None = None
+        exited_code: int | None = None
         while True:
             message: tuple[Any, ...] | None = None
             try:
@@ -967,10 +977,20 @@ class RawShellExecutor:
                     accumulator.consume(message[1], message[2], on_event)
                 elif kind == "stream_end":
                     accumulator.finish(message[1], on_event)
+                    ended_streams.add(message[1])
                 elif kind == "launched":
                     resolved_shell = str(message[1])
                 elif kind == "terminal":
                     return message[1], message[2], str(message[3]), False
+
+            if exited_at is None and shell_exited_event.is_set():
+                exited_code = int(shell_exit_code.value)
+                exited_at = time.monotonic()
+            if exited_at is not None:
+                if ended_streams == {"stdout", "stderr"}:
+                    return "exited", exited_code, resolved_shell, False
+                if time.monotonic() - exited_at >= _RAW_POST_EXIT_DRAIN_SECONDS:
+                    return "exited", exited_code, resolved_shell, True
 
             if not _process_is_alive(process):
                 continue
