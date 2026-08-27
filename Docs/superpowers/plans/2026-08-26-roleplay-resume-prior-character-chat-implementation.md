@@ -25,7 +25,7 @@ services, pytest/pytest-asyncio, modular TCSS plus generated consolidated TCSS.
 `Docs/superpowers/specs/2026-08-26-roleplay-resume-prior-character-chat-design.md`
 
 **Backlog task:**
-`backlog/tasks/task-22507 - Resume-prior-character-chats-from-Roleplay.md`
+`backlog/tasks/task-22988 - Resume-prior-character-chats-from-Roleplay.md`
 
 ## ADR check
 
@@ -68,7 +68,7 @@ The ADR amendment is the first change in Task 1, before implementation code.
   `backlog/decisions/046-roleplay-chat-display-identity-and-template-provenance.md`
   to record metadata v2 and historical character-name authority.
 - Modify
-  `backlog/tasks/task-22507 - Resume-prior-character-chats-from-Roleplay.md`
+  `backlog/tasks/task-22988 - Resume-prior-character-chats-from-Roleplay.md`
   to add this implementation plan, then completion evidence and notes only after
   verification.
 - Keep the approved spec synchronized if implementation review exposes a genuine
@@ -159,7 +159,7 @@ Add a dated amendment to ADR-046 stating:
 - The data remains in the existing merge-safe metadata object; no schema migration
   is introduced.
 
-Link TASK-22507 and the approved design from the ADR.
+Link TASK-22988 and the approved design from the ADR.
 
 ### Step 2: Write failing metadata contract tests
 
@@ -848,7 +848,7 @@ git commit -m "feat(roleplay): resume saved character chats"
 **Files:**
 
 - Modify:
-  `backlog/tasks/task-22507 - Resume-prior-character-chats-from-Roleplay.md`
+  `backlog/tasks/task-22988 - Resume-prior-character-chats-from-Roleplay.md`
 - Modify lessons documentation only if implementation exposes a genuinely reusable
   incident-backed lesson.
 
@@ -910,13 +910,13 @@ Using Backlog CLI:
    amendment, tri-state/cancellation behavior, targeted commands, and exact results.
 3. Record any plan deviation.
 4. Add an incident-backed lesson only if one actually occurred.
-5. Set TASK-22507 to Done only when every Definition-of-Done item is satisfied.
+5. Set TASK-22988 to Done only when every Definition-of-Done item is satisfied.
 
 Example command shape; fill the notes with the actual observed evidence:
 
 ```bash
-backlog task edit 22507 --notes "Implemented the approved ID-only Roleplay-to-Console resume flow; amended ADR-046; verified the recorded targeted suites and generated CSS."
-backlog task edit 22507 -s Done
+backlog task edit 22988 --notes "Implemented the approved ID-only Roleplay-to-Console resume flow; amended ADR-046; verified the recorded targeted suites and generated CSS."
+backlog task edit 22988 -s Done
 ```
 
 Do not mark Done if any acceptance criterion, targeted test, static check, generated
@@ -926,7 +926,7 @@ CSS verification, documentation update, or self-review item remains incomplete.
 
 ```bash
 git add \
-  'backlog/tasks/task-22507 - Resume-prior-character-chats-from-Roleplay.md' \
+  'backlog/tasks/task-22988 - Resume-prior-character-chats-from-Roleplay.md' \
   backlog/docs
 git commit -m "docs(backlog): complete roleplay chat resume"
 git status --short --branch

@@ -11,7 +11,7 @@ decays into folklore, and folklore is ignored. If you add one, bring the inciden
 
 ## Persist test configuration through the same durable seam production reloads
 
-**TASK-22507, 2026-08-26.** The joined Roleplay-resume gate exposed seven
+**TASK-22988 (renumbered from TASK-22507), 2026-08-26.** The joined Roleplay-resume gate exposed seven
 deterministic Console native-flow failures. Baseline comparison proved that all
 seven predated the feature. The tests prepared provider keys, endpoints, models,
 and defaults by mutating only `app.app_config`. Mounting Console legitimately

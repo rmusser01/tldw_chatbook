@@ -4,7 +4,7 @@
 - **Status:** Proposed
 - **Revision:** 4 — resolves the ID-only navigation copy contract during planning
 - **Scope:** Local Roleplay conversation preview and native Console resume
-- **Main task:** [TASK-22507](../../../backlog/tasks/task-22507%20-%20Resume-prior-character-chats-from-Roleplay.md)
+- **Main task:** [TASK-22988](../../../backlog/tasks/task-22988%20-%20Resume-prior-character-chats-from-Roleplay.md)
 - **Related follow-up:** [TASK-22453](../../../backlog/tasks/task-22453%20-%20Make-older-local-character-conversations-discoverable-in-Roleplay.md)
 
 ## Problem

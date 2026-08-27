@@ -83,7 +83,7 @@ remains authoritative when provenance or the historical name is absent. The
 data remains in the existing merge-safe metadata object; no schema migration
 is introduced.
 
-This amendment supports [TASK-22507](../tasks/task-22507%20-%20Resume-prior-character-chats-from-Roleplay.md)
+This amendment supports [TASK-22988](../tasks/task-22988%20-%20Resume-prior-character-chats-from-Roleplay.md)
 and the approved [Roleplay Resume Prior Character Chat Design](../../Docs/superpowers/specs/2026-08-26-roleplay-resume-prior-character-chat-design.md).
 
 ## Context
