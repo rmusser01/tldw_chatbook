@@ -1389,6 +1389,28 @@ def test_local_same_name_finishing_rows_complete_by_call_id_out_of_order(tmp_pat
     assert received[-1] is None
 
 
+def test_definitive_tool_terminal_falls_back_to_name_for_empty_call_id():
+    """A fence/legacy terminal removes one no-id row and keeps its sibling."""
+    controller, store = _build_controller()
+    session = store.ensure_session()
+    run_id = "run-no-call-id"
+    tool_name = "watchlists_create_collection"
+    target = {"llm_name": tool_name, "call_id": ""}
+    sibling = {"llm_name": tool_name, "call_id": "call-sibling"}
+    controller._parked_approval_payloads["round-no-call-id"] = {
+        "round_id": "round-no-call-id",
+        "session_id": session.id,
+        "run_id": run_id,
+        "phase": "finishing",
+        "calls": [target, sibling],
+    }
+
+    controller.complete_definitive_tool(run_id, tool_name, tool_name)
+
+    retained = controller._parked_approval_payloads["round-no-call-id"]
+    assert retained["calls"] == [sibling]
+
+
 @pytest.mark.asyncio
 async def test_finishing_card_is_not_counted_and_keyboard_focuses_the_card():
     """Finishing is status, not a pending decision or disabled focus target."""

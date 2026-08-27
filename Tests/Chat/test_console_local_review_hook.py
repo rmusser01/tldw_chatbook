@@ -146,6 +146,47 @@ def test_hook_keeps_same_name_watchlist_decisions_per_call(tmp_path):
     }
 
 
+@pytest.mark.parametrize(
+    ("broad", "narrow"),
+    [
+        ("always_allow", "approve_session"),
+        ("always_allow", "approve_once"),
+        ("approve_session", "approve_once"),
+    ],
+)
+def test_local_same_name_broad_approval_scope_survives_later_narrow_scope(
+    tmp_path, broad, narrow
+):
+    """A later per-call approval must not downgrade the tool-level grant."""
+    p = provider(ASK, tmp_path)
+    hook = build_local_review_hook(
+        p,
+        lambda _pending: {
+            "call-broad": broad,
+            "call-narrow": narrow,
+        },
+    )
+
+    verdicts = hook(
+        [
+            ToolCall(
+                name="watchlists_create_collection",
+                args={"name": "Broad", "if_exists": "conflict"},
+                call_id="call-broad",
+            ),
+            ToolCall(
+                name="watchlists_create_collection",
+                args={"name": "Narrow", "if_exists": "conflict"},
+                call_id="call-narrow",
+            ),
+        ],
+        RUN,
+    )
+
+    assert verdicts == {"watchlists_create_collection": "proceed"}
+    assert p.stamped(RUN, "watchlists_create_collection") == broad
+
+
 def test_local_pending_gate_carries_descriptor_owned_effects(tmp_path):
     gate = provider(ASK, tmp_path).pending_gate_for("fs_list", {"path": "."})
 
