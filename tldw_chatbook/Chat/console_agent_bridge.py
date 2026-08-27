@@ -4883,19 +4883,38 @@ class ConsoleAgentBridge:
                     _steps = outcome.steps if "outcome" in locals() else []
                     _current_state_pending = bool(service.live_subagent_handles())
                     with self._change_window_lock:
+                        _pending_scope_states_before_e = ()
                         if _current_state_pending:
-                            self._child_change_states.setdefault(
+                            _live_states = self._child_change_states.setdefault(
                                 conversation_id, {}
-                            )[child_change_state.owner_key] = child_change_state
-                        _child_states_before_e = tuple(
+                            )
+                            if (
+                                _live_states.get(child_change_state.owner_key)
+                                is not child_change_state
+                            ):
+                                _pending_scope_states_before_e = (
+                                    child_change_state,
+                                )
+                            _live_states[
+                                child_change_state.owner_key
+                            ] = child_change_state
+                        _pending_child_states_before_e = tuple(
                             self._child_change_states.get(
                                 conversation_id, {}
                             ).values()
                         )
+                        _e_child_states = {
+                            state.owner_key: state
+                            for state in _pending_child_states_before_e
+                        }
+                        if child_change_state.touched_paths:
+                            _e_child_states[
+                                child_change_state.owner_key
+                            ] = child_change_state
                         _child_paths_before_e = sorted(
                             {
                                 path
-                                for state in _child_states_before_e
+                                for state in _e_child_states.values()
                                 for path in state.touched_paths
                             }
                         )
@@ -4948,13 +4967,16 @@ class ConsoleAgentBridge:
                                 else CHANGE_KIND_TURN
                             ),
                         )
-                        if _child_states_before_e:
+                        if _pending_child_states_before_e:
                             self._open_post_turn_change_window(
                                 conversation_id,
                                 run_id=run_id,
                                 session_id=session_id,
                                 handle=change_handle,
-                                child_states=_child_states_before_e,
+                                child_states=_pending_child_states_before_e,
+                                pending_scope_states=(
+                                    _pending_scope_states_before_e
+                                ),
                             )
                     elif _records:
                         logger.warning(
@@ -5349,6 +5371,7 @@ class ConsoleAgentBridge:
         session_id: str,
         handle: Any,
         child_states: Sequence[_ChildChangeState] = (),
+        pending_scope_states: Sequence[_ChildChangeState] = (),
     ) -> None:
         """Start tracking what this turn's survivors do from here on.
 
@@ -5369,6 +5392,8 @@ class ConsoleAgentBridge:
             session_id: Session for the transcript row.
             handle: The turn's own (already ended) ``TurnHandle``.
             child_states: Mutable child WRITE states retained by this window.
+            pending_scope_states: Captured states whose child handle had not yet
+                entered its real child scope at parent E.
         """
         if self._change_tracker is None:
             return
@@ -5392,12 +5417,13 @@ class ConsoleAgentBridge:
             self._close_post_turn_change_window(conversation_id)
             with self._change_window_lock:
                 self._post_turn_change_windows[conversation_id] = window
+                still_live = self._live_child_counts.get(conversation_id, 0) > 0
                 live_states = self._child_change_states.get(conversation_id, {})
-                still_live = any(
+                still_pending = any(
                     live_states.get(state.owner_key) is state
-                    for state in window.child_states
+                    for state in pending_scope_states
                 )
-            if not still_live:
+            if not still_live and not still_pending:
                 self._close_post_turn_change_window(conversation_id)
         except Exception:  # noqa: BLE001 -- tracking never breaks a reply
             logger.warning("change_review: could not open the post-turn window")
@@ -5435,13 +5461,8 @@ class ConsoleAgentBridge:
         Never raises: it runs inside a child's teardown and inside a
         turn's ``finally``, neither of which may die of a git failure.
 
-        Known gap, stated rather than hidden: no ``touched_paths`` are
-        passed, so the ``.gitignore`` force-add carve-out does not apply
-        to a survivor's window -- a child writing to an ignored path
-        (`.env`) surfaces inside its own TURN's window but not after it.
-        Closing that needs the survivor's persisted steps, which means
-        tracking which child runs a window covers; deliberately left to a
-        follow-up rather than half-built here.
+        Retained child WRITE paths are recomputed at close and passed to
+        ``end_turn``, so ignored paths use the same force-add carve-out.
 
         Args:
             conversation_id: The conversation whose window to close.

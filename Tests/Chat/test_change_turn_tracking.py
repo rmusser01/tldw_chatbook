@@ -2305,15 +2305,25 @@ def test_child_write_during_blocked_parent_e_is_retried_by_immediate_close(
     child_write_gate = threading.Event()
     end_started = threading.Event()
     release_end = threading.Event()
+    scope_exited = threading.Event()
+    allow_settle = threading.Event()
     gateway = _FleetSurvivorGateway(
         parent_scripts=[[_spawn_fence("write during parent E")], ["parent done"]],
         gate=child_write_gate,
         child_scripts=[[_write_fence(target, sentinel)], ["child done"]],
     )
     bridge, db, store, session, aid = _bridge_with(tmp_path, gateway, tracker)
+    original_scope = bridge._child_run_scope
     repo = tracker.service.repo_for_root(root)
     original_snapshot = repo.snapshot
     original_repo_for_root = tracker.service.repo_for_root
+
+    @contextlib.contextmanager
+    def pause_after_real_scope(*args, **kwargs):
+        with original_scope(*args, **kwargs):
+            yield
+        scope_exited.set()
+        assert allow_settle.wait(5), "test barrier timed out before child settle"
 
     def instrumented_repo_for_root(candidate):
         if Path(candidate).expanduser().resolve() == root.resolve():
@@ -2326,6 +2336,7 @@ def test_child_write_during_blocked_parent_e_is_retried_by_immediate_close(
             assert release_end.wait(5), "test barrier timed out inside parent E"
         return original_snapshot(message, *args, **kwargs)
 
+    monkeypatch.setattr(bridge, "_child_run_scope", pause_after_real_scope)
     monkeypatch.setattr(tracker.service, "repo_for_root", instrumented_repo_for_root)
     monkeypatch.setattr(repo, "snapshot", blocked_snapshot)
     result: dict[str, object] = {}
@@ -2350,21 +2361,31 @@ def test_child_write_during_blocked_parent_e_is_retried_by_immediate_close(
         assert end_started.wait(5), "parent never reached its E snapshot"
         assert gateway.child_started.wait(5), "child never reached its WRITE gate"
         child_write_gate.set()
-        _join_fleet_threads()
+        assert scope_exited.wait(5), "real child scope never exited"
+        assert bridge._live_child_count("conv-1") == 0
         assert target.read_text() == sentinel
         assert parent.is_alive(), "parent E was not held by the test barrier"
+        assert bridge._child_change_states.get("conv-1"), (
+            "child settle crossed the test barrier and removed live state"
+        )
+        release_end.set()
+        parent.join(10)
+        assert not parent.is_alive(), "parent did not leave E after barrier release"
     finally:
         child_write_gate.set()
         release_end.set()
+        allow_settle.set()
         parent.join(10)
         _join_fleet_threads()
 
-    assert not parent.is_alive(), "parent did not leave E after barrier release"
     if "error" in result:
         raise result["error"]  # type: ignore[misc]
     run_id, outcome = result["value"]  # type: ignore[misc]
     assert outcome.status == "done"
     assert bridge._child_change_states == {}
+    assert bridge._post_turn_change_windows.get("conv-1") is None, (
+        "zero live child scopes left a survivor window stranded"
+    )
 
     rows = db.change_snapshots_for_run(run_id)
     survivor_rows = [row for row in rows if row["kind"] == "subagent_post_turn"]
@@ -2380,6 +2401,88 @@ def test_child_write_during_blocked_parent_e_is_retried_by_immediate_close(
         repo.file_bytes(survivor_rows[0]["end_sha"], target.name)
         == sentinel.encode()
     )
+
+
+def test_settled_child_before_parent_e_keeps_ignored_write_reviewable(
+    tmp_path, root, tracker, monkeypatch
+):
+    import tldw_chatbook.config as config_module
+
+    monkeypatch.setattr(
+        config_module,
+        "get_cli_setting",
+        lambda section, key=None, default=None: (
+            True if section == "tools" and key == "write_file_enabled" else default
+        ),
+    )
+
+    target = root / "settled-child-output.txt"
+    sentinel = "written by child before parent E\n"
+    (root / ".gitignore").write_text(f"{target.name}\n")
+    child_write_gate = threading.Event()
+    child_settled = threading.Event()
+
+    def settle_child_before_parent_final() -> None:
+        assert gateway.child_started.wait(5), "child never reached its WRITE gate"
+        child_write_gate.set()
+        _join_fleet_threads()
+        child_settled.set()
+
+    gateway = _FleetSurvivorGateway(
+        parent_scripts=[
+            [_spawn_fence("write before parent E")],
+            ["parent done"],
+        ],
+        gate=child_write_gate,
+        child_scripts=[[_write_fence(target, sentinel)], ["child done"]],
+        parent_side_effect=settle_child_before_parent_final,
+        parent_side_effect_on_call=2,
+    )
+    bridge, db, store, session, aid = _bridge_with(tmp_path, gateway, tracker)
+    try:
+        run_id, outcome = _run(
+            bridge,
+            session,
+            aid,
+            root,
+            builtin_gate=_FakeBuiltinGateForRegistry(refuse=False),
+            scratch_root=root,
+            scratch_lease=lambda: contextlib.nullcontext(root),
+        )
+    finally:
+        child_write_gate.set()
+        _join_fleet_threads()
+
+    assert outcome.status == "done"
+    assert child_settled.is_set(), "child did not fully settle before parent E"
+    assert bridge._child_change_states == {}
+    assert target.read_text() == sentinel
+
+    child_runs = [
+        row for row in db.list_runs("conv-1") if row["agent_kind"] == "subagent"
+    ]
+    assert len(child_runs) == 1, child_runs
+    assert any(
+        step["kind"] == STEP_TOOL_RESULT
+        and step.get("tool_name") == "write_file"
+        and step.get("tool_outcome") == TOOL_OUTCOME_SUCCESS
+        for step in child_runs[0]["steps"]
+    ), child_runs[0]["steps"]
+
+    rows = db.change_snapshots_for_run(run_id)
+    turn_rows = [row for row in rows if row["kind"] == "turn"]
+    assert len(turn_rows) == 1, (
+        "the settled child's local WRITE state was omitted from parent E: "
+        f"{rows}"
+    )
+    assert not [row for row in rows if row["kind"] == "subagent_post_turn"], rows
+    assert bridge._post_turn_change_windows.get("conv-1") is None
+    repo = tracker.service.repo_for_root(root)
+    changed = repo.changed_files(
+        turn_rows[0]["baseline_sha"], turn_rows[0]["end_sha"]
+    )
+    assert [item.path for item in changed] == [target.name], changed
+    assert repo.file_bytes(turn_rows[0]["end_sha"], target.name) == sentinel.encode()
 
 
 def test_a_survivors_write_after_its_turn_lands_in_a_change_record(
