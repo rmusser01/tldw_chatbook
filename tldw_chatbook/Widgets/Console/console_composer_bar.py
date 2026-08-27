@@ -1811,11 +1811,27 @@ class ConsoleComposerBar(Horizontal):
         Textual shows a tooltip ``App.TOOLTIP_DELAY`` (0.5s) after the
         pointer settles and posts ``Enter`` immediately, so deriving here is
         both far off the keystroke path and always in time.
+
+        Args:
+            event: The arriving pointer event. Deliberately unread --
+                ``_refresh_send_price_for_pointer`` resolves the *current*
+                pointer from ``App.mouse_over`` instead, because
+                ``Button.watch_disabled`` can queue a synthetic ``Leave``
+                that arrives after Send is sendable again, so the event's
+                own node is not a reliable answer to "where is the pointer
+                now". Accepted to match Textual's handler signature.
         """
         self._refresh_send_price_for_pointer()
 
     def on_leave(self, event: Leave) -> None:
-        """Take the derived price back off Send when the pointer leaves."""
+        """Take the derived price back off Send when the pointer leaves.
+
+        Args:
+            event: The departing pointer event. Deliberately unread, for the
+                same reason as :meth:`on_enter` -- the current pointer is
+                read from ``App.mouse_over`` rather than trusted from the
+                event's node. Accepted to match Textual's handler signature.
+        """
         self._refresh_send_price_for_pointer()
 
     def sync_action_state(
