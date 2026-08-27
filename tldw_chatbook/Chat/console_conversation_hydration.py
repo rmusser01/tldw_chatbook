@@ -429,6 +429,12 @@ async def hydrate_console_session(
         if type(raw_assistant_authority_id) is str
         else None
     )
+    raw_persona_memory_mode = conversation.get("persona_memory_mode")
+    persona_memory_mode = (
+        raw_persona_memory_mode
+        if type(raw_persona_memory_mode) is str
+        else None
+    )
     raw_character_id = conversation.get("character_id")
     character_id = (
         raw_character_id
@@ -460,6 +466,7 @@ async def hydrate_console_session(
         assistant_kind=assistant_kind,
         assistant_id=assistant_id,
         assistant_authority_id=assistant_authority_id,
+        persona_memory_mode=persona_memory_mode,
         character_id=character_id,
         character_name=character_name,
         activate=False,

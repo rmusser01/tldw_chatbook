@@ -3274,6 +3274,7 @@ class ConsoleSessionController:
             "assistant_kind": session.assistant_kind,
             "assistant_id": session.assistant_id,
             "assistant_authority_id": session.assistant_authority_id,
+            "persona_memory_mode": session.persona_memory_mode,
             "character_id": session.local_character_id(),
             "character_name": session.character_name,
             "user_display_name_override": session.user_display_name_override,
@@ -3376,6 +3377,7 @@ class ConsoleSessionController:
                 "assistant_kind",
                 "assistant_id",
                 "assistant_authority_id",
+                "persona_memory_mode",
             ):
                 value = raw_session.get(key)
                 session_kwargs[key] = value if type(value) is str else None

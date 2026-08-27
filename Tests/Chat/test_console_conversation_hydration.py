@@ -24,6 +24,7 @@ from __future__ import annotations
 
 import asyncio
 from dataclasses import replace
+from types import SimpleNamespace
 
 import pytest
 
@@ -39,6 +40,9 @@ from tldw_chatbook.Chat.console_conversation_hydration import (
     hydrate_console_session,
     load_console_conversation_tree,
 )
+from tldw_chatbook.Chat.chat_persistence_service import ChatPersistenceService
+from tldw_chatbook.Chat.console_chat_models import ConsoleMessageRole
+from tldw_chatbook.Chat.console_chat_store import ConsoleChatStore
 from tldw_chatbook.Chat.console_session_settings import (
     default_console_session_settings,
 )
@@ -534,3 +538,63 @@ async def test_hydration_keeps_generic_sessions_without_character_identity(tmp_p
     assert session.character_name is None
     assert session.settings is not None
     assert session.settings.character_label == ""
+
+
+@pytest.mark.asyncio
+async def test_first_persist_and_canonical_hydration_round_trip_persona_memory_mode(
+    tmp_path,
+):
+    app = _fixture_app(tmp_path)
+    service = ChatPersistenceService(app.chachanotes_db)
+    source_store = ConsoleChatStore(persistence=service)
+    source = source_store.create_session(
+        title="Persona memory",
+        settings=default_console_session_settings(app.app_config),
+        assistant_kind="persona",
+        assistant_id="persona-1",
+        persona_memory_mode="read_write",
+    )
+    user = source_store.append_message(
+        source.id,
+        role=ConsoleMessageRole.USER,
+        content="Remember this",
+        persist=True,
+    )
+    assistant = source_store.append_message(
+        source.id,
+        role=ConsoleMessageRole.ASSISTANT,
+        content="I will",
+        persist=True,
+    )
+    conversation_id = source.persisted_conversation_id
+    conversation = app.chachanotes_db.get_conversation_by_id(conversation_id)
+    tree = {
+        "conversation": conversation,
+        "root_threads": [
+            {
+                "id": user.persisted_message_id,
+                "sender": "user",
+                "content": "Remember this",
+                "children": [
+                    {
+                        "id": assistant.persisted_message_id,
+                        "sender": "assistant",
+                        "content": "I will",
+                        "children": [],
+                    }
+                ],
+            }
+        ],
+    }
+    resumed_store = ConsoleChatStore(persistence=service)
+
+    resumed = await hydrate_console_session(
+        app=SimpleNamespace(chachanotes_db=app.chachanotes_db),
+        store=resumed_store,
+        conversation_id=conversation_id,
+        tree=tree,
+        settings=default_console_session_settings(app.app_config),
+    )
+
+    assert conversation["persona_memory_mode"] == "read_write"
+    assert resumed.persona_memory_mode == "read_write"

@@ -276,6 +276,24 @@ def test_typed_then_cleared_work_marker_survives_screen_state_restore(monkeypatc
     assert restored.has_user_work is True
 
 
+def test_persona_memory_mode_survives_screen_state_restore(monkeypatch):
+    screen = _character_screen(monkeypatch, _roleplay_card(name="Alba"))
+    store = screen._ensure_console_chat_store()
+    session = store.create_session(
+        title="Persona chat",
+        settings=screen._session._default_console_session_settings(),
+        assistant_kind="persona",
+        assistant_id="persona-1",
+        persona_memory_mode="read_write",
+    )
+
+    payload = screen._session._console_session_to_state(session)
+    restored = screen._session._console_session_from_state(payload)
+
+    assert payload["persona_memory_mode"] == "read_write"
+    assert restored.persona_memory_mode == "read_write"
+
+
 @pytest.mark.asyncio
 async def test_character_handoff_uses_current_canonical_defaults_not_stale_session(
     monkeypatch,

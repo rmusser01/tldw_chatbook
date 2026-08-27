@@ -92,17 +92,51 @@ class ConsoleForkFence:
 
 
 @dataclass(frozen=True, slots=True)
+class ConsoleForkProjectedAttachment:
+    """One copied attachment rebuilt under a fresh fork message owner."""
+
+    owner_native_message_id: str
+    owner_persisted_message_id: str | None
+    position: int
+    data: bytes
+    mime_type: str
+    display_name: str
+
+
+@dataclass(frozen=True, slots=True)
+class ConsoleForkProjectedGeneration:
+    """One copied generated-image provenance row with a fresh owner."""
+
+    owner_native_message_id: str
+    owner_persisted_message_id: str | None
+    position: int
+    prompt: str
+    negative_prompt: str
+    backend: str
+    model: str | None
+    seed: int | None
+    style: str | None
+    params_json: str
+
+
+@dataclass(frozen=True, slots=True)
 class ConsoleForkProjectedMessage:
     """One independently owned USER/ASSISTANT message in a fork snapshot."""
 
+    source_native_message_id: str
+    source_persisted_message_id: str | None
+    source_persisted_revision: int | None
     native_message_id: str
     persisted_message_id: str | None
     native_parent_id: str | None
     persisted_parent_id: str | None
     turn_id: str | None
+    visible_variant_id: str | None
     role: ConsoleMessageRole
     status: ConsoleMessageStatus
     content: str
+    attachments: tuple[ConsoleForkProjectedAttachment, ...] = ()
+    generation_metadata: tuple[ConsoleForkProjectedGeneration, ...] = ()
 
 
 @dataclass(frozen=True, slots=True)

@@ -1569,6 +1569,20 @@ class TestChatPersistenceService:
         assert conversation["assistant_kind"] == assistant_kind
         assert conversation["assistant_id"] == assistant_id
 
+    def test_create_conversation_persists_persona_memory_mode(
+        self, db_instance: CharactersRAGDB
+    ):
+        service = ChatPersistenceService(db_instance)
+
+        conversation_id = service.create_conversation(
+            assistant_kind="persona",
+            assistant_id="persona-1",
+            persona_memory_mode="read_write",
+        )
+
+        conversation = db_instance.get_conversation_by_id(conversation_id)
+        assert conversation["persona_memory_mode"] == "read_write"
+
     def test_create_conversation_persists_system_prompt(
         self, db_instance: CharactersRAGDB
     ):

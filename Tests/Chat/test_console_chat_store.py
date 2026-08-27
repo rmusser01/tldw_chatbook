@@ -2303,6 +2303,36 @@ def test_first_persist_includes_staged_reply_speech_preferences():
     )
 
 
+def test_first_persist_includes_persona_memory_mode():
+    persistence = FakePersistence()
+    store = ConsoleChatStore(persistence=persistence)
+    session = store.create_session(
+        assistant_kind="persona",
+        assistant_id="persona-1",
+        persona_memory_mode="read_write",
+    )
+
+    store.persist_session_if_needed(session.id)
+
+    assert persistence.created_conversations[0]["persona_memory_mode"] == "read_write"
+
+
+def test_restore_persisted_session_accepts_persona_memory_mode():
+    store = ConsoleChatStore(persistence=FakePersistence())
+
+    session = store.restore_persisted_session(
+        title="Persona chat",
+        workspace_id=None,
+        persisted_conversation_id="conv-1",
+        all_nodes=[],
+        assistant_kind="persona",
+        assistant_id="persona-1",
+        persona_memory_mode="read_only",
+    )
+
+    assert session.persona_memory_mode == "read_only"
+
+
 def test_restore_persisted_session_round_trips_reply_speech_preferences():
     from tldw_chatbook.Chat.console_speech_preferences import ConsoleSpeechPreferences
 
