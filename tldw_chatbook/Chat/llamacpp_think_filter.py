@@ -22,7 +22,6 @@ _OPEN_TO_CLOSE = {
     "<thinking>": "</thinking>",
 }
 _MAX_TAG_CHARS = max(map(len, (*_OPEN_TO_CLOSE, *_OPEN_TO_CLOSE.values())))
-_MAX_PROBE_CHARS = 2 * max(map(len, _OPEN_TO_CLOSE))
 
 ThinkCaptureStatus = Literal["pending", "complete", "failed"]
 
@@ -39,12 +38,11 @@ class ThinkSplitChunk:
 class StartAnchoredThinkSplitter:
     """Split a start-anchored thinking section from visible answer content.
 
-    The undecided probe retains at most twice the longest opener: one opener
-    length for ordinary leading whitespace and one for the possible tag. If
-    that cap is crossed before an opener is confirmed, the probe fails open
-    into visible content and every later tag stays literal. A confirmed
-    thinking block never fails open; it can only close, fail at EOF, or enter
-    a terminal content-free capture failure.
+    The undecided probe drops leading whitespace and retains only a possible
+    opener prefix. A real visible first token fails the probe open and every
+    later tag stays literal. A confirmed thinking block never fails open; it
+    can only close, fail at EOF, or enter a terminal content-free capture
+    failure.
     """
 
     def __init__(self) -> None:
@@ -93,12 +91,12 @@ class StartAnchoredThinkSplitter:
             self._buffer = ""
             return ThinkSplitChunk(status="complete")
 
-        had_buffered_probe = bool(self._buffer)
         for index, character in enumerate(chunk):
+            if not self._buffer and character.isspace():
+                continue
             self._buffer += character
-            stripped = self._buffer.lstrip()
             opening = next(
-                (tag for tag in _OPEN_TO_CLOSE if stripped.startswith(tag)),
+                (tag for tag in _OPEN_TO_CLOSE if self._buffer.startswith(tag)),
                 None,
             )
             if opening is not None:
@@ -106,25 +104,14 @@ class StartAnchoredThinkSplitter:
                 self._close_tag = _OPEN_TO_CLOSE[opening]
                 self._buffer = ""
                 return self._consume_thinking(chunk[index + 1 :], terminal=False)
-            elif stripped and not any(
-                tag.startswith(stripped) for tag in _OPEN_TO_CLOSE
-            ):
-                return self._fail_open_probe(
-                    chunk, index=index, had_buffered_probe=had_buffered_probe
-                )
-            if len(self._buffer) > _MAX_PROBE_CHARS:
-                return self._fail_open_probe(
-                    chunk, index=index, had_buffered_probe=had_buffered_probe
-                )
+            if not any(tag.startswith(self._buffer) for tag in _OPEN_TO_CLOSE):
+                return self._fail_open_probe(chunk, index=index)
         return ThinkSplitChunk()
 
-    def _fail_open_probe(
-        self, chunk: str, *, index: int, had_buffered_probe: bool
-    ) -> ThinkSplitChunk:
+    def _fail_open_probe(self, chunk: str, *, index: int) -> ThinkSplitChunk:
         buffered, self._buffer = self._buffer, ""
         self._state = "visible"
-        content = buffered + chunk[index + 1 :] if had_buffered_probe else chunk
-        return ThinkSplitChunk(content=content)
+        return ThinkSplitChunk(content=buffered + chunk[index + 1 :])
 
     def _consume_thinking(
         self, chunk: str, *, terminal: bool

@@ -128,6 +128,33 @@ def test_visible_answer_makes_all_later_tags_literal() -> None:
     )
 
 
+@pytest.mark.parametrize(
+    ("opening", "closing"),
+    [("<think>", "</think>"), ("<thinking>", "</thinking>")],
+)
+@pytest.mark.parametrize(
+    "whitespace",
+    [" " * 21, " \n\t" * 10_000],
+    ids=("above-old-cap", "well-beyond-old-cap"),
+)
+def test_leading_whitespace_never_exposes_later_anchored_thinking(
+    opening: str, closing: str, whitespace: str
+) -> None:
+    raw = f"{whitespace}{opening}secret{closing}answer"
+    partitionings = (
+        (raw,),
+        (raw[:20], raw[20:]),
+        tuple(raw[index : index + 7] for index in range(0, len(raw), 7)),
+    )
+
+    for chunks in partitionings:
+        assert _split_chunks(*chunks) == ThinkSplitChunk(
+            thinking="secret",
+            content="answer",
+            status="complete",
+        )
+
+
 @pytest.mark.parametrize(("raw", "cut"), _UNCONFIRMED_PREFIX_CASES)
 def test_unconfirmed_opener_prefix_at_eof_is_complete_no_evidence(
     raw: str, cut: int
@@ -144,24 +171,28 @@ def test_compatibility_filter_drops_unconfirmed_opener_prefix(
     assert content + stream_filter.flush() == ""
 
 
-def test_long_leading_whitespace_fails_open_without_retaining_probe_body() -> None:
+def test_long_leading_whitespace_is_discarded_without_growing_probe_state() -> None:
     whitespace = " \n\t" * 100_000
     splitter = StartAnchoredThinkSplitter()
 
     update = splitter.feed(whitespace)
 
-    assert update.content == whitespace
+    assert update == ThinkSplitChunk()
     assert max(
         len(value) for value in vars(splitter).values() if isinstance(value, str)
     ) <= len("</thinking>")
+    assert splitter.flush() == ThinkSplitChunk(status="complete")
 
 
-def test_probe_fail_open_makes_later_think_tag_literal() -> None:
+def test_long_leading_whitespace_keeps_probe_open_for_later_thinking() -> None:
     whitespace = " " * 100
     splitter = StartAnchoredThinkSplitter()
 
-    assert splitter.feed(whitespace).content == whitespace
-    assert splitter.feed("<think>literal</think>").content == ("<think>literal</think>")
+    assert splitter.feed(whitespace) == ThinkSplitChunk()
+    assert splitter.feed("<think>reason</think>answer") == ThinkSplitChunk(
+        thinking="reason",
+        content="answer",
+    )
     assert splitter.flush().status == "complete"
 
 
