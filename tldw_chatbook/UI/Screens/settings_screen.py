@@ -18034,6 +18034,8 @@ class SettingsScreen(BaseAppScreen):
     ) -> bool:
         """Stage one exact request and navigate without resolving the draft."""
 
+        if getattr(self, "_raw_cli_save_pending", False):
+            return False
         if (
             type(snapshot) is not SpeechTTSPanelDraftSnapshot
             or self._audio_cpp_result_cleanup is not None

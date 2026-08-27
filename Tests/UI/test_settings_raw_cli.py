@@ -19,8 +19,8 @@ from Tests.UI.test_settings_category_sweep import _click_settings_category
 from Tests.UI.test_settings_configuration_hub import StyledSettingsDestinationHarness
 import tldw_chatbook.UI.Screens.settings_screen as settings_screen_module
 from tldw_chatbook.config import RuntimeConfigSnapshot
-from tldw_chatbook.UI.Navigation.audio_cpp_model_handoff import (
-    AudioCppModelLibraryRequest,
+from tldw_chatbook.UI.Navigation.pending_handoff_store import (
+    HandoffChannel,
 )
 from tldw_chatbook.UI.Navigation.main_navigation import NavigateToScreen
 from tldw_chatbook.UI.Screens.settings_config_models import SettingsCategoryId
@@ -668,6 +668,17 @@ async def test_pending_raw_cli_save_vetoes_real_navigation_until_arrival(monkeyp
         )
         screen = app.screen
         assert isinstance(screen, SettingsScreen)
+        screen.query_one("#settings-category-speech-tts", Button).press()
+        await _wait_until(
+            pilot,
+            lambda: bool(screen.query("#settings-speech-tts-panel")),
+            timeout=8,
+        )
+        panel = screen.query_one(
+            "#settings-speech-tts-panel",
+            SpeechTTSSettingsPanel,
+        )
+        snapshot = panel.draft_snapshot()
         flush_outcomes: list[bool] = []
         real_flush = screen.flush_pending_work
 
@@ -681,16 +692,34 @@ async def test_pending_raw_cli_save_vetoes_real_navigation_until_arrival(monkeyp
         await _wait_until(pilot, save_started.is_set)
 
         try:
-            request = AudioCppModelLibraryRequest("raw-save-route", 1)
-            app._audio_cpp_settings_model_library_request = request
-            screen._speech_tts_model_library_route_token = request.token
-            screen.post_message(
-                NavigateToScreen(
-                    "llm",
-                    {"view": "curated", "consumer": "audio_cpp"},
-                )
+            staged = screen.stage_audio_cpp_model_library_request(snapshot)
+            request_pending = app.pending_handoffs.has_pending(
+                HandoffChannel.AUDIO_CPP_MODEL_LIBRARY_REQUEST
             )
-            await _wait_until(pilot, lambda: flush_outcomes == [False])
+            request_claim = app.pending_handoffs.claim(
+                HandoffChannel.AUDIO_CPP_MODEL_LIBRARY_REQUEST
+            )
+            screen.post_message(NavigateToScreen("home"))
+            await _wait_until(pilot, lambda: bool(flush_outcomes))
+            await _wait_until(
+                pilot,
+                lambda: (
+                    not any(
+                        worker.group == "screen-navigation" and not worker.is_finished
+                        for worker in app.workers
+                    )
+                ),
+            )
+
+            assert staged is False
+            assert request_pending is False
+            assert request_claim is None
+            assert not hasattr(
+                app,
+                "_audio_cpp_settings_model_library_request",
+            )
+            assert screen._speech_tts_model_library_route_token is None
+            assert flush_outcomes == [False]
             assert app.screen is screen
             assert screen.is_mounted
 
@@ -704,16 +733,6 @@ async def test_pending_raw_cli_save_vetoes_real_navigation_until_arrival(monkeyp
                 timeout=3,
             )
 
-        screen.query_one("#settings-category-speech-tts", Button).press()
-        await _wait_until(
-            pilot,
-            lambda: bool(screen.query("#settings-speech-tts-panel")),
-            timeout=8,
-        )
-        panel = screen.query_one(
-            "#settings-speech-tts-panel",
-            SpeechTTSSettingsPanel,
-        )
         panel.confirm_leave = AsyncMock(return_value=False)
 
         screen.post_message(NavigateToScreen("home"))
