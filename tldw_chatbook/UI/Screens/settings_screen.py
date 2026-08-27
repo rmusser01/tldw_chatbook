@@ -1447,6 +1447,14 @@ def _build_field_search_index() -> None:
                     "settings-appearance-library-media-library-width",
                     "Shared Library pane width",
                 ),
+                (
+                    "settings-appearance-library-notes-files-tree-open",
+                    "Folder Files tree pane",
+                ),
+                (
+                    "settings-appearance-library-notes-files-tree-width",
+                    "Folder Files tree width",
+                ),
                 *(
                     (
                         f"settings-appearance-library-{destination}-items-{suffix}",

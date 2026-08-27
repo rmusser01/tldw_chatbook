@@ -10080,6 +10080,44 @@ async def test_field_search_enter_focuses_the_field():
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("query", "field_id"),
+    (
+        (
+            "Folder Files tree pane",
+            "settings-appearance-library-notes-files-tree-open",
+        ),
+        (
+            "Folder Files tree width",
+            "settings-appearance-library-notes-files-tree-width",
+        ),
+    ),
+)
+async def test_field_search_finds_and_focuses_folder_files_tree_controls(
+    query, field_id
+):
+    """Folder Files controls are searchable and receive landing focus."""
+    app = _build_test_app()
+    app.app_config["library"]["reader"]["custom_widths_enabled"] = True
+    host = DestinationHarness(app, "settings")
+    async with host.run_test(size=(190, 55)) as pilot:
+        await _settle_settings_mount_storm(pilot)
+        screen = _active_destination_screen(host)
+
+        assert screen._top_field_match(query, SettingsCategoryId.APPEARANCE) == (
+            field_id,
+            query,
+        )
+        screen._submit_category_search(query)
+        for _ in range(8):
+            await pilot.pause()
+
+        assert screen.active_category == SettingsCategoryId.APPEARANCE.value
+        focused = host.focused
+        assert focused is not None and focused.id == field_id, f"focused={focused!r}"
+
+
+@pytest.mark.asyncio
 async def test_state_banner_is_pinned_outside_detail_scroll():
     """The State banner is pinned outside the detail scroll body.
 
