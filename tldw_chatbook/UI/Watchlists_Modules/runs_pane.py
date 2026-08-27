@@ -574,11 +574,11 @@ class RunsPane(RecomposeCaptureGuard, Vertical):
         if backend == "server":
             target_id = run.get("job_id")
             fallback = f"Job {target_id}" if cls._has_rerun_target(target_id) else ""
+            name = strip_control_characters(str(run.get("source_title") or "")).strip()
+            name = name or fallback
         else:
             target_id = run.get("source_id")
-            fallback = f"Source {target_id}" if cls._has_rerun_target(target_id) else ""
-        name = strip_control_characters(str(run.get("source_title") or "")).strip()
-        name = name or fallback
+            name = cls._run_identity(run)
         return target_id, name
 
     def on_button_pressed(self, event: Button.Pressed) -> None:
