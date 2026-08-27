@@ -1699,7 +1699,7 @@ class ConsoleMarkdownMessage(Vertical):
         while transcript is not None and not isinstance(transcript, ConsoleTranscript):
             transcript = transcript.parent
         if isinstance(transcript, ConsoleTranscript):
-            await transcript._dismiss_message_more_for_click(event.control)
+            await transcript._dismiss_message_more_for_pointer(event.control)
         if event.control is not None and event.control.has_class(
             "console-message-speech-action"
         ):
@@ -1931,7 +1931,7 @@ class ConsoleTranscriptMessage(Vertical):
         while transcript is not None and not isinstance(transcript, ConsoleTranscript):
             transcript = transcript.parent
         if isinstance(transcript, ConsoleTranscript):
-            await transcript._dismiss_message_more_for_click(event.control)
+            await transcript._dismiss_message_more_for_pointer(event.control)
         if event.control is not None and event.control.has_class(
             "console-message-speech-action"
         ):
@@ -5391,8 +5391,8 @@ class ConsoleTranscript(VerticalScroll):
             return None
         return widget
 
-    def on_mouse_down(self, event: MouseDown) -> None:
-        """Arm a text-selection drag on a left press over a selectable row."""
+    async def on_mouse_down(self, event: MouseDown) -> None:
+        """Dismiss More, then arm a drag on a left press over selectable text."""
         if self._kb_selection_row is not None:
             # Console selection phase 5: a mouse press takes over cleanly --
             # exit keyboard mode first, then let the normal drag-arming
@@ -5400,6 +5400,13 @@ class ConsoleTranscript(VerticalScroll):
             # fresh mouse drag).
             self._exit_keyboard_selection()
         press_control = self._selection_press_widget(event)
+        # MouseDown is the earliest transcript-owned pointer seam. Some
+        # descendants intentionally stop the later Click (for example the
+        # review-note marker), so Click-only dismissal can leave More
+        # mounted. Await detachment here before the descendant interaction
+        # proceeds; the active opener is exempt so its Button.Pressed can
+        # keep owning the menu's open/reopen lifecycle.
+        await self._dismiss_message_more_for_pointer(press_control)
         # Click-outside dismissal, row-body half (final review): rows stop
         # their own Clicks (the message-selection toggle), so with a menu
         # open a press on another row's body never reaches this
@@ -5885,7 +5892,7 @@ class ConsoleTranscript(VerticalScroll):
             self.selection_manager.consume_just_finished()
             return
         control = event.control
-        await self._dismiss_message_more_for_click(control)
+        await self._dismiss_message_more_for_pointer(control)
         self._remove_selection_menu()
         if self.selection_manager.just_finished:
             event.stop()
@@ -5926,8 +5933,8 @@ class ConsoleTranscript(VerticalScroll):
             self.action_clear_selection()
             event.stop()
 
-    async def _dismiss_message_more_for_click(self, control: Widget | None) -> None:
-        """Dismiss More for any transcript click except its own opener."""
+    async def _dismiss_message_more_for_pointer(self, control: Widget | None) -> None:
+        """Dismiss More for transcript pointer activity except its own opener."""
         if getattr(control, "console_action_id", None) != "more":
             await self.dismiss_message_more_menu(restore_focus=False)
 

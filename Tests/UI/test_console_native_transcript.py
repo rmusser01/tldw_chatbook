@@ -50,6 +50,7 @@ import tldw_chatbook.Widgets.Console.console_transcript as transcript_module
 from tldw_chatbook.Widgets.Console.console_transcript import (
     ConsoleMarkdownMessage,
     ConsoleMessageHeader,
+    ConsoleReviewNotesRequested,
     ConsoleTranscript,
     ConsoleTranscriptMessage,
 )
@@ -2098,6 +2099,45 @@ async def test_console_more_menu_closes_on_in_transcript_click_without_dispatch(
         assert not app.query("#console-message-more-menu")
         assert transcript.selected_message_id == expected_selection
         assert dispatched == []
+
+
+@pytest.mark.asyncio
+async def test_console_more_menu_closes_before_annotation_stops_click(monkeypatch):
+    class AnnotationHarness(TranscriptHarness):
+        def __init__(self, **kwargs):
+            super().__init__(**kwargs)
+            self.review_note_requests: list[str] = []
+
+        def on_console_review_notes_requested(
+            self, event: ConsoleReviewNotesRequested
+        ) -> None:
+            self.review_note_requests.append(event.anchor_message_id)
+
+    app = AnnotationHarness(css_path=str(_BUNDLE))
+
+    async with app.run_test(size=(80, 24)) as pilot:
+        transcript = app.query_one(ConsoleTranscript)
+        transcript.set_annotation_previews({"m2": ("Review note",)})
+        await transcript.refresh_messages()
+        await pilot.click("#console-message-m2")
+        await pilot.click("#console-message-action-more-m2")
+        await _wait_for_selector(app, pilot, "#console-message-more-menu")
+        dispatched = []
+        monkeypatch.setattr(
+            transcript,
+            "dispatch_captured_message_action",
+            lambda *args, **kwargs: dispatched.append((args, kwargs)),
+        )
+
+        # The marker stops Click propagation after posting its own event, so
+        # More must detach on the earlier transcript-owned pointer seam.
+        await pilot.click("#console-annotations-m2")
+        await pilot.pause()
+
+        assert not app.query("#console-message-more-menu")
+        assert transcript.selected_message_id == "m2"
+        assert dispatched == []
+        assert app.review_note_requests == ["m2"]
 
 
 @pytest.mark.asyncio
