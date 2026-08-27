@@ -87,6 +87,21 @@ ALLOWED_CONSTRUCT_IMPORTS: frozenset[str] = frozenset(
         "tldw_chatbook.Video_Generation.config",
         "tldw_chatbook.Video_Generation.video_formats",
         "tldw_chatbook.Video_Generation.video_store",
+        # Research source-association readiness adapters
+        # (_wire_research_source_association). TASK-23023 made the
+        # Research_Workspace facade lazy, so this function-level import --
+        # which predates the task -- now resolves the two adapters at
+        # construct instead of finding them pre-imported by the (heavier)
+        # boot closure. The 26-model pydantic module `server_adapter` used
+        # to drag (`tldw_api.notes_workspace_schemas`) is severed and must
+        # NOT reappear here; `notes_workspace_limits` is its stdlib-only
+        # replacement and `quick_notes`/`tldw_api.exceptions` are the
+        # adapters' own light dependencies.
+        "tldw_chatbook.Research_Workspace.local_adapter",
+        "tldw_chatbook.Research_Workspace.quick_notes",
+        "tldw_chatbook.Research_Workspace.server_adapter",
+        "tldw_chatbook.tldw_api.exceptions",
+        "tldw_chatbook.tldw_api.notes_workspace_limits",
     }
 )
 
