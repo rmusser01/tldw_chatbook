@@ -144,32 +144,47 @@ def test_manifest_records_reviewed_runtime_and_redistribution_contract() -> None
         assert entry["sha256"] in notice
 
 
-def test_package_import_installs_guard_and_loads_every_supported_encoding(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    runtime = _runtime_module()
-    import tiktoken
-    import tiktoken.load
-    import tiktoken.registry
+def test_package_import_installs_guard_and_loads_every_supported_encoding() -> None:
+    env = os.environ.copy()
+    env.pop("TIKTOKEN_CACHE_DIR", None)
+    env.pop("DATA_GYM_CACHE_DIR", None)
+    result = _run_source_child(
+        """
+from pathlib import Path
+import os
 
-    def fail_fetch(*_args: object, **_kwargs: object) -> bytes:
-        raise AssertionError("tiktoken attempted an upstream fetch")
+assert "TIKTOKEN_CACHE_DIR" not in os.environ
+assert "DATA_GYM_CACHE_DIR" not in os.environ
+import tldw_chatbook
+import tiktoken
+import tiktoken.load
+import tiktoken.registry
+from tldw_chatbook.Utils import tiktoken_runtime
 
-    monkeypatch.setattr(tiktoken.load, "read_file", fail_fetch)
-    assert Path(os.environ["TIKTOKEN_CACHE_DIR"]).resolve() == CACHE_DIR.resolve()
-    assert tiktoken.load.read_file_cached is runtime._read_bundled_file
-    runtime.install_tiktoken_runtime()
-    assert tiktoken.load.read_file_cached is runtime._read_bundled_file
+def fail_fetch(*_args, **_kwargs):
+    raise AssertionError("tiktoken attempted an upstream fetch")
 
-    tiktoken.registry.ENCODINGS.clear()
-    for encoding_name in (
-        "gpt2",
-        "r50k_base",
-        "p50k_base",
-        "cl100k_base",
-        "o200k_base",
-    ):
-        assert tiktoken.get_encoding(encoding_name).encode("hello world")
+tiktoken.load.read_file = fail_fetch
+assert Path(os.environ["TIKTOKEN_CACHE_DIR"]).resolve() == Path(
+    os.environ["EXPECTED_CACHE_DIR"]
+).resolve()
+assert tiktoken.load.read_file_cached is tiktoken_runtime._read_bundled_file
+tiktoken_runtime.install_tiktoken_runtime()
+assert tiktoken.load.read_file_cached is tiktoken_runtime._read_bundled_file
+
+tiktoken.registry.ENCODINGS.clear()
+for encoding_name in (
+    "gpt2",
+    "r50k_base",
+    "p50k_base",
+    "cl100k_base",
+    "o200k_base",
+):
+    assert tiktoken.get_encoding(encoding_name).encode("hello world")
+""",
+        {**env, "EXPECTED_CACHE_DIR": str(CACHE_DIR)},
+    )
+    assert result.returncode == 0, result.stdout + result.stderr
 
 
 @pytest.mark.parametrize(
