@@ -1,11 +1,11 @@
 ---
 id: TASK-22859
 title: Define Watchlists Console tool exposure and approval effects
-status: In Progress
+status: Done
 assignee:
   - '@codex'
 created_date: '2026-08-27 04:14'
-updated_date: '2026-08-27 04:58'
+updated_date: '2026-08-27 06:17'
 labels:
   - watchlists
   - console
@@ -53,6 +53,8 @@ Reason: ADR-032 owns the synthetic local principal, approval semantics, and exte
 
 ## Implementation Notes
 
-- Added fail-closed local descriptor exposure and approval-effect metadata; external MCP now derives publication from descriptor exposure.
-- Approval rows render code-owned effects without inspecting arguments, and read-only providers exclude every local mutation effect.
-- Repaired the stale Console review-hook fixture using the current complete execution-context constructor; ADR-032's approved TASK-22859 addendum already records this boundary.
+<!-- SECTION:NOTES:BEGIN -->
+Implemented a fail-closed LocalToolSpec exposure/effect contract and explicit inventory. External MCP publication now derives solely from descriptor exposure; Console-only Watchlists item/detail/briefing content cannot be published by persisted Allow. Code-owned effects flow through pending calls and the Console controller into production approval cards without inspecting raw arguments; allow_write=False filters all mutates_local descriptors. Updated the Console guide and verified ADR-032's existing addendum. Added descriptor, publication, permission, controller, formatter, and production-mounted Textual regressions.
+
+Verification: fresh targeted suite 389 passed, 5 skipped because optional mcp_unified is not installed; Ruff and git diff --check passed. Independent review approved after the mounted production-CSS regression was added. ADR required: yes; existing backlog/decisions/032-local-agent-tool-permission-boundary.md applies. No new ADR or dependency.
+<!-- SECTION:NOTES:END -->
