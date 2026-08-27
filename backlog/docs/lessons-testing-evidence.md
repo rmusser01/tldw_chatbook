@@ -6347,6 +6347,21 @@ and the exact `Input` identity. Every retained ancestor that synchronizes the
 field must preserve the same-mode child; one recomposing ancestor defeats all
 in-place work below it.
 
+**Recurred, TASK-22034, 2026-08-26.** The Skills adaptive reader passed its
+307-test destination gate and a 153-test cross-reader gate, including mode,
+trust, import, delete, and geometry behavior. Final diff review still found
+legacy whole-screen recomposes after import browsing, Back/discard, delete,
+trust reset, and first-time trust setup. The outcomes were correct, but each
+path could replace the supposedly permanent Items list. Adding exact list/work
+identity assertions to import, trust setup, and delete exposed the missing
+proof and the callbacks were changed to destination-scoped synchronization.
+
+For retained-reader migrations, do not infer permanence from successful
+behavior or from identity across mode buttons alone. Inventory every legacy
+`refresh(recompose=True)` reachable in the destination and prove exact owner
+identity across at least one ordinary exit, one asynchronous task settlement,
+and one destructive/recovery settlement.
+
 ## `exclusive=True` does not cancel work already handed to `to_thread` (TASK-19003, 2026-08-20)
 
 The first import handler scheduled an exclusive Textual worker. A repeated

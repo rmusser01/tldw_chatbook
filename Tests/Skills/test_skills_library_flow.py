@@ -142,8 +142,10 @@ def _wire_empty_non_skill_services(app) -> None:
     app.study_quiz_scope_service = object()
 
 
-async def _open_skill_editor(screen, pilot, skill_name: str) -> None:
-    """Open the rail's Skills row, then a specific skill's row."""
+async def _open_skill_editor(
+    screen, pilot, skill_name: str, *, mode: str = "edit"
+) -> None:
+    """Open a skill, then select the requested permanent work-pane mode."""
     skills_row = await _wait_for_selector(
         screen, pilot, "#library-row-browse-skills"
     )
@@ -154,7 +156,18 @@ async def _open_skill_editor(screen, pilot, skill_name: str) -> None:
     )
     assert isinstance(skill_row, Button)
     skill_row.press()
-    await _wait_for_selector(screen, pilot, "#library-skill-name")
+    mode_button = await _wait_for_selector(
+        screen, pilot, f"#library-skill-mode-{mode}"
+    )
+    assert isinstance(mode_button, Button)
+    mode_button.press()
+    target = {
+        "edit": "#library-skill-name",
+        "trust": "#library-skill-trust-region",
+        "files": "#library-skill-files-region",
+        "overview": "#library-skill-overview-region",
+    }[mode]
+    await _wait_for_selector(screen, pilot, target)
     assert screen._library_skill_detail is not None
 
 
@@ -385,7 +398,7 @@ async def test_trust_panel_review_then_approve_moves_skill_to_available(tmp_path
     async with host.run_test(size=LIBRARY_TEST_SIZE) as pilot:
         screen = _active_library_screen(host)
         await _wait_for_library_shell(screen, pilot)
-        await _open_skill_editor(screen, pilot, "approver")
+        await _open_skill_editor(screen, pilot, "approver", mode="trust")
 
         assert screen._library_skill_editor_state.trust_blocked is True
         review_files_before = str(
@@ -423,17 +436,8 @@ async def test_trust_panel_review_then_approve_moves_skill_to_available(tmp_path
 
 
 @pytest.mark.asyncio
-async def test_skill_editor_canvas_scrolls_trust_panel_into_view(tmp_path):
-    """Gate fix wave FIX 1: at the recipe's default terminal size the
-    editor's lower content (Trust panel, Save/Delete) sits below the fold.
-    Before the fix, ``LibrarySkillsListCanvas`` was a plain ``Vertical``
-    (clips overflow, no scrollbar, no mouse-wheel/keyboard scroll); the fix
-    makes it a real ``VerticalScroll`` (the same house pattern already used
-    by ``LibraryExportCanvas``/``LibraryIngestCanvas``). Mirrors
-    ``test_personas_dictionaries.py``'s AC5b Entries-tab scroll geometry
-    test: geometry + a real keyboard scroll + a real focus-jump, not a
-    hand-simulated mouse event.
-    """
+async def test_skill_edit_work_pane_scrolls_actions_into_view(tmp_path):
+    """The permanent Edit work pane scrolls and reveals its action row."""
     from textual.containers import VerticalScroll
 
     trust_service = _real_trust_service(tmp_path)
@@ -444,9 +448,6 @@ async def test_skill_editor_canvas_scrolls_trust_panel_into_view(tmp_path):
         content=_skill_content(title="Scroll", description="v1"),
     )
     trust_service.bootstrap_trust()
-    # Re-quarantine after bootstrap so the Trust panel's "Review changes"
-    # button is enabled (focusable) -- a disabled Button cannot take focus,
-    # so the focus-jump-into-view assertion below needs a real target.
     await local_service.update_skill(
         "scroll-check",
         content=_skill_content(title="Scroll", description="v2"),
@@ -458,12 +459,14 @@ async def test_skill_editor_canvas_scrolls_trust_panel_into_view(tmp_path):
     app.local_skill_trust_service = trust_service
     host = LibraryHarness(app)
 
-    async with host.run_test(size=LIBRARY_TEST_SIZE) as pilot:
+    # The split reader makes Trust compact; Edit remains the intentionally
+    # long form whose lower action row must stay reachable at short heights.
+    async with host.run_test(size=(100, 18)) as pilot:
         screen = _active_library_screen(host)
         await _wait_for_library_shell(screen, pilot)
-        await _open_skill_editor(screen, pilot, "scroll-check")
+        await _open_skill_editor(screen, pilot, "scroll-check", mode="edit")
 
-        canvas = screen.query_one("#library-skills-canvas", VerticalScroll)
+        canvas = screen.query_one("#library-skill-work-pane", VerticalScroll)
         # Structural proof this is a real scrolling container (the fix),
         # not a clipping plain Vertical -- and that mouse-wheel scroll is
         # actually enabled (the same flag Textual's own mouse-wheel handler
@@ -484,18 +487,20 @@ async def test_skill_editor_canvas_scrolls_trust_panel_into_view(tmp_path):
         await pilot.pause()
         assert canvas.scroll_offset.y > 0
 
-        # Reset, then prove a focus JUMP (e.g. tabbing into the Trust
-        # panel) auto-scrolls it into view -- not just a manual scroll.
+        # Reset, then prove a focus jump to the lower action row scrolls it
+        # into view rather than merely relying on manual paging.
         canvas.scroll_to(y=0, animate=False)
         await pilot.pause()
         assert canvas.scroll_offset.y == 0
 
-        review_button = screen.query_one("#library-skill-trust-review", Button)
-        assert review_button.disabled is False
-        review_button.focus()
+        screen.query_one("#library-skill-description", Input).value = "v3"
+        await pilot.pause()
+        save_button = screen.query_one("#library-skill-save", Button)
+        assert save_button.disabled is False
+        save_button.focus()
         for _ in range(200):
             canvas_region = canvas.region
-            button_region = review_button.region
+            button_region = save_button.region
             if (
                 canvas_region.y
                 <= button_region.y
@@ -504,11 +509,11 @@ async def test_skill_editor_canvas_scrolls_trust_panel_into_view(tmp_path):
                 break
             await pilot.pause(0.02)
         else:
-            raise AssertionError("Trust review control did not scroll into view")
+            raise AssertionError("Skill Save control did not scroll into view")
 
         assert canvas.scroll_offset.y > 0
         canvas_region = canvas.region
-        button_region = review_button.region
+        button_region = save_button.region
         assert (
             canvas_region.y <= button_region.y < canvas_region.y + canvas_region.height
         )
@@ -544,7 +549,9 @@ async def test_uninitialized_trust_shows_setup_state_and_bootstrap_enables_appro
     async with host.run_test(size=LIBRARY_TEST_SIZE) as pilot:
         screen = _active_library_screen(host)
         await _wait_for_library_shell(screen, pilot)
-        await _open_skill_editor(screen, pilot, "onboarding-check")
+        await _open_skill_editor(screen, pilot, "onboarding-check", mode="trust")
+        items = screen.query_one("#library-skills-canvas")
+        work = screen.query_one("#library-skill-work-pane")
 
         assert screen._library_skill_editor_state.trust_status == "trust_uninitialized"
         assert not trust_service.trust_store.has_manifest()
@@ -575,6 +582,8 @@ async def test_uninitialized_trust_shows_setup_state_and_bootstrap_enables_appro
         # switched to the normal (non-setup) layout.
         assert screen._library_skill_editor_state.trust_status == "trusted"
         assert trust_service.trust_store.has_manifest()
+        assert screen.query_one("#library-skills-canvas") is items
+        assert screen.query_one("#library-skill-work-pane") is work
         assert len(screen.query("#library-skill-trust-setup")) == 0
         view_details = screen.query_one("#library-skill-trust-view-details", Button)
         assert view_details
@@ -592,23 +601,19 @@ async def test_uninitialized_trust_shows_setup_state_and_bootstrap_enables_appro
             "onboarding-check",
             content=_skill_content(title="Onboard", description="v2"),
         )
-        screen.query_one("#library-skill-back", Button).press()
-        await pilot.pause()
-        for _ in range(150):
-            if screen._library_skills_view == "list":
-                break
-            await pilot.pause(0.02)
-        for _ in range(150):
-            if screen.query("#library-skill-row-onboarding-check"):
-                break
-            await pilot.pause(0.02)
+        # Items stays mounted in the split reader. Re-selecting the row is
+        # the direct refresh path; no round-trip through the old list-only
+        # screen state is needed.
         screen.query_one("#library-skill-row-onboarding-check", Button).press()
         await pilot.pause()
         for _ in range(150):
-            if screen._library_skill_detail is not None:
+            state = screen._library_skill_editor_state
+            if state is not None and state.trust_blocked:
                 break
             await pilot.pause(0.02)
         await pilot.pause()
+        screen.query_one("#library-skill-mode-trust", Button).press()
+        await _wait_for_selector(screen, pilot, "#library-skill-trust-region")
 
         assert screen._library_skill_editor_state.trust_blocked is True
         screen.query_one("#library-skill-trust-review", Button).press()
@@ -660,7 +665,9 @@ async def test_already_bootstrapped_store_never_shows_setup_state(tmp_path):
     async with host.run_test(size=LIBRARY_TEST_SIZE) as pilot:
         screen = _active_library_screen(host)
         await _wait_for_library_shell(screen, pilot)
-        await _open_skill_editor(screen, pilot, "already-bootstrapped")
+        await _open_skill_editor(
+            screen, pilot, "already-bootstrapped", mode="trust"
+        )
 
         assert screen._library_skill_editor_state.trust_status != "trust_uninitialized"
         assert len(screen.query("#library-skill-trust-setup")) == 0
@@ -775,6 +782,8 @@ async def test_delete_skill_returns_to_list_and_decrements_count(tmp_path):
         screen = _active_library_screen(host)
         await _wait_for_library_shell(screen, pilot)
         await _open_skill_editor(screen, pilot, "throwaway")
+        items = screen.query_one("#library-skills-canvas")
+        work = screen.query_one("#library-skill-work-pane")
 
         # task-415: Delete is a two-step inline confirmation now.
         more = await _wait_for_display(screen, pilot, "#library-skill-more-actions")
@@ -807,6 +816,8 @@ async def test_delete_skill_returns_to_list_and_decrements_count(tmp_path):
         assert "(1)" in rail_label
         assert len(screen.query("#library-skill-row-throwaway")) == 0
         assert screen.query_one("#library-skill-row-keeper", Button)
+        assert screen.query_one("#library-skills-canvas") is items
+        assert screen.query_one("#library-skill-work-pane") is work
 
 
 @pytest.mark.asyncio
@@ -1096,6 +1107,8 @@ async def test_library_shell_create_skill_save_arrives_needs_review_with_panel_p
 
         assert screen._library_skill_editor_state.trust_status == "quarantined_added"
         assert screen._library_skill_editor_state.trust_blocked is True
+        screen.query_one("#library-skill-mode-trust", Button).press()
+        await _wait_for_selector(screen, pilot, "#library-skill-trust-region")
         trust_state_text = str(
             screen.query_one("#library-skill-trust-state", Static).renderable
         )

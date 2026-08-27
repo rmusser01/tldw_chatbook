@@ -53,6 +53,19 @@ def test_list_renders_trusted_and_blocked_with_glyphs():
     assert state.count == 2
 
 
+def test_list_marks_the_selected_skill_independently_of_focus():
+    state = build_skills_list_state(
+        _ctx(available=[_summary("alpha"), _summary("bravo")]),
+        query="",
+        sort="name",
+        selected_name="bravo",
+    )
+
+    by_name = {row.name: row for row in state.rows}
+    assert by_name["alpha"].selected is False
+    assert by_name["bravo"].selected is True
+
+
 def test_status_sort_puts_needs_review_first():
     state = build_skills_list_state(
         _ctx(
