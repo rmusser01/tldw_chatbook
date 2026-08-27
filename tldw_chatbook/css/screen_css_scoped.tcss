@@ -81,6 +81,56 @@
     TraceFiltersDialog #trace-filter-dialog-actions Button { min-width: 9; }
 
 
+/* ===== WIDGET: ConsoleCapturePolicyDialog (Widgets/Console/console_capture_policy_dialog.py) ===== */
+
+
+    ConsoleCapturePolicyDialog #capture-policy-dialog {
+        width: 76; max-width: 96%; height: 22; max-height: 96%;
+        border: tall $primary; background: $surface; padding: 1 2;
+    }
+    ConsoleCapturePolicyDialog #capture-policy-title { height: 1; text-style: bold; }
+    ConsoleCapturePolicyDialog #capture-policy-effective { height: auto; margin-bottom: 1; }
+    ConsoleCapturePolicyDialog #capture-policy-body { height: 1fr; scrollbar-gutter: stable; }
+    ConsoleCapturePolicyDialog #capture-policy-scopes, ConsoleCapturePolicyDialog #capture-policy-details { height: auto; }
+    ConsoleCapturePolicyDialog #capture-policy-reason, ConsoleCapturePolicyDialog #capture-policy-count, ConsoleCapturePolicyDialog #capture-policy-status {
+        height: auto;
+    }
+    ConsoleCapturePolicyDialog #capture-policy-reason { color: $warning; }
+    ConsoleCapturePolicyDialog #capture-policy-actions { height: 3; min-height: 3; align-horizontal: right; }
+    ConsoleCapturePolicyDialog #capture-policy-actions Button { min-width: 10; margin-left: 1; }
+    ConsoleCapturePolicyDialog #capture-policy-status.-error { color: $error; }
+
+
+/* ===== WIDGET: ConsoleExchangeExportDialog (Widgets/Console/console_exchange_export_dialog.py) ===== */
+
+
+    ConsoleExchangeExportDialog #exchange-export-dialog {
+        width: 76;
+        max-width: 96%;
+        height: 22;
+        max-height: 96%;
+        border: tall $primary;
+        background: $surface;
+        padding: 1 2;
+    }
+    ConsoleExchangeExportDialog #exchange-export-title { height: 1; text-style: bold; }
+    ConsoleExchangeExportDialog #exchange-export-body { height: 1fr; scrollbar-gutter: stable; }
+    ConsoleExchangeExportDialog #exchange-export-profiles,
+    ConsoleExchangeExportDialog #exchange-export-destinations { height: auto; margin-top: 1; }
+    ConsoleExchangeExportDialog #exchange-export-profile-copy,
+    ConsoleExchangeExportDialog #exchange-export-full-reason,
+    ConsoleExchangeExportDialog #exchange-export-status { height: auto; }
+    ConsoleExchangeExportDialog #exchange-export-full-reason { color: $warning; }
+    ConsoleExchangeExportDialog #exchange-export-path { height: 3; }
+    ConsoleExchangeExportDialog #exchange-export-actions {
+        height: 3;
+        min-height: 3;
+        align-horizontal: right;
+    }
+    ConsoleExchangeExportDialog #exchange-export-actions Button { min-width: 10; margin-left: 1; }
+    ConsoleExchangeExportDialog #exchange-export-status.-error { color: $error; }
+
+
 /* ===== WIDGET: ConsolePromptComparisonModal (Widgets/Console/console_prompt_comparison_modal.py) ===== */
 
 

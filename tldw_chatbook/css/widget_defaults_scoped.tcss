@@ -2009,7 +2009,8 @@
         padding: 0 1;
     }
     TrajectoryScreen #trajectory-title {
-        height: 1;
+        height: auto;
+        max-height: 3;
         color: $text;
         background: $panel;
     }
@@ -2092,11 +2093,13 @@
         border: tall gray; padding: 1 2;
     }
     ConsoleConversationInspector #console-inspector-header { height: auto; }
+    ConsoleConversationInspector #console-inspector-policy-status { height: auto; color: $text-muted; }
     ConsoleConversationInspector #console-inspector-tabs { height: 1fr; margin-top: 1; }
     ConsoleConversationInspector #console-inspector-costs-rows { height: 1fr; }
     ConsoleConversationInspector .console-inspector-cost-row { height: auto; }
     ConsoleConversationInspector #console-inspector-costs-totals { height: auto; margin-top: 1; text-style: bold; }
     ConsoleConversationInspector #console-inspector-exchange-caveat { height: auto; color: gray; margin-bottom: 1; }
+    ConsoleConversationInspector #console-inspector-capture-status { height: auto; color: yellow; }
     ConsoleConversationInspector #console-inspector-exchange-turns { height: 1fr; }
     ConsoleConversationInspector .console-inspector-exchange-turn { height: auto; }
     ConsoleConversationInspector .console-inspector-exchange-call { height: auto; }

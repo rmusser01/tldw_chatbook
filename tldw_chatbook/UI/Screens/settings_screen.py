@@ -52,6 +52,8 @@ from tldw_chatbook.Utils.about_text import ABOUT_MARKDOWN, get_app_version
 
 from ...Chat.Chat_Deps import ChatConfigurationError
 from ...Chat.console_chat_models import CONSOLE_DEFAULT_MAX_PARALLEL_RUNS
+from ...Chat.console_chat_controller import CapturePolicyMutationStatus
+from ...Chat.console_exchange_capture import CaptureDetail, resolve_capture_policy
 from ...Chat.console_context_policy import (
     CompactionFailureBehavior,
     ContextBudgetMode,
@@ -106,6 +108,10 @@ from ...Workspaces.registry_service import (
     WorkspaceRegistryServiceError,
 )
 from ...Widgets.confirmation_dialog import ConfirmationDialog
+from ...Widgets.Console.console_capture_policy_dialog import (
+    global_full_capture_confirmation,
+    off_to_on_confirmation,
+)
 from ...Widgets.destination_workbench import DestinationModeStrip
 from ...Chat.provider_catalog import (
     PROVIDER_CUSTOM_GROUP_KEYS,
@@ -138,6 +144,7 @@ from ...config import (
     ProviderSettingsError,
     _default_base_data_dir,
     apply_settings_mutation_to_cli_config,
+    apply_console_capture_settings,
     coerce_bool_setting,
     coerce_float_setting,
     coerce_int_setting,
@@ -145,6 +152,7 @@ from ...config import (
     get_runtime_config_snapshot,
     load_settings,
     provider_settings_for_key,
+    runtime_capture_policy,
     save_settings_to_cli_config,
 )
 from ...LLM_Provider_Catalog.model_catalog_settings import (
@@ -2523,6 +2531,9 @@ class SettingsScreen(BaseAppScreen):
 
     def __init__(self, app_instance, **kwargs):
         super().__init__(app_instance, "settings", **kwargs)
+        self._console_capture_policy = runtime_capture_policy()
+        self._console_capture_status = "Global exchange capture settings are active."
+        self._console_capture_applying = False
         self._settings_drafts: dict[SettingsCategoryId, SettingsDraft] = {}
         self._provider_test_result = self._PROVIDER_TEST_NOT_RUN_COPY
         self._provider_test_evidence_store = ProviderTestEvidenceStore()
@@ -3910,6 +3921,8 @@ class SettingsScreen(BaseAppScreen):
                 owns_config_sections=(
                     "console.rail_layout_scope",
                     "console.stack_collapsed_rail_labels",
+                    "console.exchange_capture",
+                    "console.exchange_capture_detail",
                     "console.collapse_large_pastes",
                     "console.paste_collapse_threshold",
                     "console.max_parallel_runs",
@@ -13103,6 +13116,38 @@ class SettingsScreen(BaseAppScreen):
                 id="settings-console-behavior-section-index",
                 classes="settings-detail-row",
             )
+            yield Static("Exchange capture", classes="destination-section")
+            yield Checkbox(
+                "Capture future provider exchanges",
+                value=self._console_capture_policy.enabled,
+                id="settings-console-exchange-capture-enabled",
+            )
+            with Horizontal(classes="settings-input-row settings-select-row"):
+                yield Static("Capture detail", classes="settings-input-label")
+                yield Select(
+                    (("Safe", "safe"), ("Full", "full")),
+                    value=self._console_capture_policy.detail.value,
+                    allow_blank=False,
+                    id="settings-console-exchange-capture-detail",
+                    classes="settings-compact-select",
+                    compact=True,
+                )
+            yield Static(
+                "Safe is the default. Capture Off keeps the selected detail dormant; "
+                "turning it back On may resume Full.",
+                id="settings-console-exchange-capture-help",
+                classes="settings-help-copy",
+            )
+            yield Button(
+                "Apply exchange capture",
+                id="settings-console-exchange-capture-apply",
+                variant="primary",
+            )
+            yield Static(
+                self._console_capture_status,
+                id="settings-console-exchange-capture-status",
+                classes="settings-status-row",
+            )
             yield Static("Rail presentation", classes="destination-section")
             yield Static("Rail layout scope", classes="settings-input-label")
             yield Select(
@@ -19109,6 +19154,149 @@ class SettingsScreen(BaseAppScreen):
         event.stop()
         self._submit_category_search(event.value)
 
+    @on(Button.Pressed, "#settings-console-exchange-capture-apply")
+    async def handle_console_exchange_capture_apply(
+        self, event: Button.Pressed
+    ) -> None:
+        """Apply the canonical global capture policy with shared warnings."""
+        event.stop()
+        if self._console_capture_applying:
+            return
+        enabled = self.query_one(
+            "#settings-console-exchange-capture-enabled", Checkbox
+        ).value
+        raw_detail = self.query_one(
+            "#settings-console-exchange-capture-detail", Select
+        ).value
+        try:
+            detail = CaptureDetail(str(raw_detail))
+        except ValueError:
+            self._set_console_capture_status("Failed — choose Safe or Full")
+            return
+        current = self._console_capture_policy
+        console_runtime = getattr(self.app_instance, "console_runtime", None)
+        controller = getattr(console_runtime, "chat_controller", None)
+        session_id = (
+            getattr(getattr(controller, "store", None), "active_session_id", None)
+            if controller is not None
+            else None
+        )
+        live_snapshot = (
+            controller.capture_policy_snapshot(session_id)
+            if controller is not None and session_id is not None
+            else None
+        )
+        dormant = (
+            resolve_capture_policy(
+                enabled=True,
+                next_send=live_snapshot.next_detail,
+                conversation=live_snapshot.conversation_detail,
+                global_default=detail,
+            )
+            if live_snapshot is not None
+            else None
+        )
+        needs_global_ack = enabled and detail is CaptureDetail.FULL
+        was_enabled = live_snapshot.enabled if live_snapshot is not None else current.enabled
+        resumes_override_full = (
+            enabled
+            and not was_enabled
+            and dormant is not None
+            and dormant.detail is CaptureDetail.FULL
+            and not needs_global_ack
+        )
+        if needs_global_ack:
+            confirmed = await self.app.push_screen_wait(
+                global_full_capture_confirmation()
+            )
+            if not confirmed:
+                self._set_console_capture_status("Full policy change cancelled")
+                return
+        elif resumes_override_full:
+            confirmed = await self.app.push_screen_wait(
+                off_to_on_confirmation()
+            )
+            if not confirmed:
+                self._set_console_capture_status("Full capture resume cancelled")
+                return
+
+        self._console_capture_applying = True
+        event.button.disabled = True
+        self._set_console_capture_status("Applying")
+        try:
+            if live_snapshot is not None:
+                mutation = await asyncio.to_thread(
+                    controller.apply_global_capture_settings,
+                    enabled=bool(enabled),
+                    detail=detail,
+                    expected_config_generation=live_snapshot.config_generation,
+                    expected_policy_revision=live_snapshot.policy_revision,
+                )
+                if mutation.status is CapturePolicyMutationStatus.STALE:
+                    self._set_console_capture_status(
+                        "Failed — settings changed; reload and try again"
+                    )
+                    return
+                if mutation.status is CapturePolicyMutationStatus.FAILED:
+                    self._set_console_capture_status(
+                        "Failed — Full capture was not activated"
+                    )
+                    return
+                if mutation.status is CapturePolicyMutationStatus.SAFE_SESSION_ONLY:
+                    self._set_console_capture_status(
+                        "Failed — Safe state is active for this session; file save failed"
+                    )
+                    return
+                if mutation.status is not CapturePolicyMutationStatus.APPLIED:
+                    self._set_console_capture_status(
+                        "Failed — active Console changed; reload and try again"
+                    )
+                    return
+                self._console_capture_policy = runtime_capture_policy()
+                self._set_console_capture_status(
+                    "Saved and active — settings cache refresh degraded"
+                    if mutation.reason_code == "cache_refresh_degraded"
+                    else "Saved and active"
+                )
+                return
+            result = await asyncio.to_thread(
+                apply_console_capture_settings,
+                enabled=bool(enabled),
+                detail=detail,
+                expected_generation=current.generation,
+            )
+            if result.conflict:
+                self._set_console_capture_status(
+                    "Failed — settings changed; reload and try again"
+                )
+                return
+            runtime = runtime_capture_policy()
+            self._console_capture_policy = runtime
+            if result.file_replaced and result.failure_phase is not None:
+                self._set_console_capture_status(
+                    "Saved and active — settings cache refresh degraded"
+                )
+            elif result.file_replaced or result.failure_phase is None:
+                self._set_console_capture_status("Saved and active")
+            elif not enabled or detail is CaptureDetail.SAFE:
+                self._set_console_capture_status(
+                    "Failed — Safe state is active for this session; file save failed"
+                )
+            else:
+                self._set_console_capture_status(
+                    "Failed — Full capture was not activated"
+                )
+        except Exception:
+            self._set_console_capture_status("Failed — capture settings were not saved")
+        finally:
+            self._console_capture_applying = False
+            if event.button.is_mounted:
+                event.button.disabled = False
+
+    def _set_console_capture_status(self, message: str) -> None:
+        self._console_capture_status = message
+        self._set_static_text("#settings-console-exchange-capture-status", message)
+
     @on(Checkbox.Changed, "#settings-console-collapse-large-pastes-toggle")
     def handle_console_collapse_large_pastes_changed(
         self, event: Checkbox.Changed
@@ -22829,6 +23017,20 @@ class SettingsScreen(BaseAppScreen):
         )
 
     def _sync_console_behavior_widgets(self) -> None:
+        self._console_capture_policy = runtime_capture_policy()
+        try:
+            self.query_one(
+                "#settings-console-exchange-capture-enabled", Checkbox
+            ).value = self._console_capture_policy.enabled
+            self.query_one(
+                "#settings-console-exchange-capture-detail", Select
+            ).value = self._console_capture_policy.detail.value
+        except QueryError:
+            pass
+        self._set_static_text(
+            "#settings-console-exchange-capture-status",
+            self._console_capture_status,
+        )
         try:
             self._syncing_console_rail_layout_scope = True
             try:

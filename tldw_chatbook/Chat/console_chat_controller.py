@@ -17,6 +17,7 @@ from collections import OrderedDict
 from collections.abc import Iterable, Mapping
 from dataclasses import dataclass, replace
 from datetime import UTC, datetime
+from enum import Enum
 from pathlib import Path
 from typing import (
     TYPE_CHECKING,
@@ -91,6 +92,8 @@ from tldw_chatbook.Chat.citation_trace_models import SealedCitationWrite
 from tldw_chatbook.Chat.citation_evidence_models import EvidenceBundle
 from tldw_chatbook.Chat.answer_citations import format_evidence_for_cited_answer
 from tldw_chatbook.Chat.console_chat_store import (
+    CapturePurgeStaleError,
+    CapturePolicyStaleError,
     ConsoleChatSession,
     ConsoleChatStore,
     ConsoleDispatchSettlementError,
@@ -98,6 +101,16 @@ from tldw_chatbook.Chat.console_chat_store import (
     ConsoleDurableAcceptanceFingerprint,
     ConsoleDurableTurnCommit,
     TerminalCitationFinalizer,
+)
+from tldw_chatbook.Chat.console_exchange_capture import (
+    CaptureDetail,
+    CapturePolicyResolution,
+    resolve_capture_policy,
+)
+from tldw_chatbook.Chat.console_capture_policy_repository import (
+    CapturePolicyReadStatus,
+    CapturePolicyWriteStatus,
+    ConsoleCapturePolicyRepository,
 )
 from tldw_chatbook.Chat.console_command_grammar import COMMAND_PREFIX
 from tldw_chatbook.Chat.console_history_budget import (
@@ -258,12 +271,15 @@ from tldw_chatbook.Agents.session_todo_store import (
 )
 from tldw_chatbook.Agents.tool_catalog import BuiltinToolProvider
 from tldw_chatbook.config import (
+    ConfigMutationResult,
     DEFAULT_CONSOLE_PROJECT_INSTRUCTIONS_MAX_BYTES,
     MAX_CONSOLE_PROJECT_INSTRUCTIONS_MAX_BYTES,
     MIN_CONSOLE_PROJECT_INSTRUCTIONS_MAX_BYTES,
     coerce_bool_setting,
     coerce_int_setting,
     get_cli_setting,
+    apply_console_capture_settings,
+    runtime_capture_policy,
 )
 from tldw_chatbook.Library.library_tool_contract import LIBRARY_TOOL_DESCRIPTORS
 from tldw_chatbook.Library.library_rag_service import (
@@ -1785,12 +1801,83 @@ class _DurablePostcommitContinuation:
     turn_context: ConsoleTurnExecutionContext
     prepared: _PreparedSendContinuation | None
     committed_context_epoch: int
+    stream_signals: ConsoleProviderStreamSignals
     #: TASK-22302: the durable turn commits in `_accept_durable_turn` and
     #: publishes its live owners in `resume_durable_postcommit`; the terminal
     #: citation finalizer has to survive that hand-off. It did not -- the
     #: publish site passed a hard-coded None -- so no durable Console turn
     #: persisted any citation provenance from `a26cdafd8` onward.
     terminal_citation_finalizer: TerminalCitationFinalizer | None = None
+
+
+@dataclass(frozen=True, slots=True)
+class CapturePolicySnapshot:
+    """Future and active capture policy for one immutable Console session."""
+
+    session_id: str
+    conversation_id: str | None
+    conversation_title: str
+    enabled: bool
+    next_detail: CaptureDetail | None
+    conversation_detail: CaptureDetail | None
+    global_detail: CaptureDetail
+    effective: CapturePolicyResolution
+    policy_revision: int
+    config_generation: int
+    capture_revision: int
+    active_run_detail: CaptureDetail | None
+    queued_consumer: bool
+    save_pending: bool
+    error_code: str | None
+
+
+class CapturePolicyMutationStatus(str, Enum):
+    APPLIED = "applied"
+    SAFE_SESSION_ONLY = "safe_session_only"
+    STALE = "stale"
+    TARGET_MISSING = "target_missing"
+    FAILED = "failed"
+
+
+@dataclass(frozen=True, slots=True)
+class CapturePurgeAvailability:
+    can_purge: bool
+    reason_code: str | None = None
+
+
+class CapturePurgeStatus(str, Enum):
+    DELETED = "deleted"
+    BLOCKED = "blocked"
+    STALE = "stale"
+    FAILED = "failed"
+
+
+_MISSING_CAPTURE_REVISION = -1
+
+
+@dataclass(frozen=True, slots=True)
+class CapturePurgeResult:
+    status: CapturePurgeStatus
+    removed_count: int
+    capture_revision: int
+    reason_code: str | None = None
+
+    @classmethod
+    def blocked(cls, revision: int, reason_code: str) -> "CapturePurgeResult":
+        return cls(CapturePurgeStatus.BLOCKED, 0, revision, reason_code)
+
+    @classmethod
+    def deleted(cls, removed_count: int, revision: int) -> "CapturePurgeResult":
+        return cls(CapturePurgeStatus.DELETED, removed_count, revision)
+
+
+@dataclass(frozen=True, slots=True)
+class CapturePolicyMutationResult:
+    status: CapturePolicyMutationStatus
+    snapshot: CapturePolicySnapshot
+    retryable: bool
+    reason_code: str | None
+    config_result: ConfigMutationResult | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -2026,6 +2113,15 @@ class ConsoleChatController:
         self._library_provider_factory = library_provider_factory
         self._global_user_display_name = global_user_display_name or (lambda: "User")
         persistence_db = getattr(getattr(store, "persistence", None), "db", None)
+        self._capture_policy_repository = getattr(
+            store, "capture_policy_repository", None
+        ) or (
+            ConsoleCapturePolicyRepository(persistence_db)
+            if persistence_db is not None
+            else None
+        )
+        self._capture_policy_hydrated: set[str] = set()
+        self._capture_policy_hydration_errors: dict[str, str] = {}
         self._visual_identity_repository = (
             VisualIdentityRepository(persistence_db)
             if persistence_db is not None
@@ -2193,6 +2289,8 @@ class ConsoleChatController:
         self._active_submit_tasks: dict[asyncio.Task, str] = {}
         self._active_submit_preparations: dict[asyncio.Task, str] = {}
         self._active_submit_tasks_lock = threading.RLock()
+        self._capture_quiescence_lock = threading.RLock()
+        self._capture_exchange_flush_sessions: set[str] = set()
         try:
             self._owner_loop: asyncio.AbstractEventLoop | None = (
                 asyncio.get_running_loop()
@@ -2313,6 +2411,7 @@ class ConsoleChatController:
         #: docstring for the resulting, deliberately-scoped-down, limit on
         #: the three worker-thread approval/confirm bridges below.
         self._active_cancel_events: dict[str, threading.Event] = {}
+        self._active_capture_details: dict[str, CaptureDetail] = {}
         # Cost-ticker PR3: per-session cache-break/TTL ground truth for the
         # cost chip. All three are process-local and best-effort -- a missed
         # write means a stale chip, never a broken send.
@@ -2528,6 +2627,532 @@ class ConsoleChatController:
         #: `request_id`. The mounted card is the session's FIFO head, so a
         #: second same-session confirm no longer evicts an older sibling.
         self._parked_skill_script_payloads: dict[str, dict[str, Any]] = {}
+
+    def _hydrate_capture_policy(self, session: ConsoleChatSession) -> None:
+        if session.id in self._capture_policy_hydrated:
+            return
+        if session.persisted_conversation_id is None:
+            self._capture_policy_hydrated.add(session.id)
+            self._capture_policy_hydration_errors.pop(session.id, None)
+            return
+        outcome = self.store.hydrate_session_capture_policy(session.id)
+        if outcome.status in {
+            CapturePolicyReadStatus.ABSENT,
+            CapturePolicyReadStatus.FOUND,
+        }:
+            self._capture_policy_hydrated.add(session.id)
+            self._capture_policy_hydration_errors.pop(session.id, None)
+        else:
+            self._capture_policy_hydration_errors[session.id] = (
+                "conversation_policy_unavailable"
+            )
+
+    def capture_policy_snapshot(self, session_id: str) -> CapturePolicySnapshot:
+        """Resolve the future policy for one immutable session identity."""
+        session = next((item for item in self.store.sessions() if item.id == session_id), None)
+        if session is None:
+            raise KeyError(session_id)
+        self._hydrate_capture_policy(session)
+        state = self.store.capture_policy_state(session_id)
+        runtime = runtime_capture_policy()
+        effective = resolve_capture_policy(
+            enabled=runtime.enabled,
+            next_send=state.next_detail,
+            conversation=state.conversation_detail,
+            global_default=runtime.detail,
+        )
+        queue = self.prompt_queue_registry.snapshot(session_id)
+        return CapturePolicySnapshot(
+            session_id=session_id,
+            conversation_id=session.persisted_conversation_id,
+            conversation_title=session.title,
+            enabled=runtime.enabled,
+            next_detail=state.next_detail,
+            conversation_detail=state.conversation_detail,
+            global_detail=runtime.detail,
+            effective=effective,
+            policy_revision=state.policy_revision,
+            config_generation=runtime.generation,
+            capture_revision=state.capture_revision,
+            active_run_detail=self._active_capture_details.get(session_id),
+            queued_consumer=bool(getattr(queue, "entries", ())),
+            save_pending=state.save_pending,
+            error_code=self._capture_policy_hydration_errors.get(session_id) or (
+                "invalid_" + "_".join(effective.invalid_sources)
+                if effective.invalid_sources
+                else None
+            ),
+        )
+
+    def capture_revision(self, session_id: str) -> int:
+        """Return the authoritative process-local capture revision."""
+        return self.store.capture_revision(session_id)
+
+    def capture_purge_availability(
+        self, session_id: str
+    ) -> CapturePurgeAvailability:
+        """Report the first bounded writer reason preventing quiescence."""
+        try:
+            self.store.capture_revision(session_id)
+        except KeyError:
+            return CapturePurgeAvailability(False, "target_missing")
+        with self._capture_quiescence_lock:
+            reason = self._capture_purge_blocker(session_id, include_lease=True)
+            return CapturePurgeAvailability(reason is None, reason)
+
+    def _capture_purge_blocker(
+        self, session_id: str, *, include_lease: bool
+    ) -> str | None:
+        """Return the first bounded writer code for one session."""
+        if include_lease and self.store.capture_quiescent(session_id):
+            return "purge_in_progress"
+        task = self._active_stream_tasks.get(session_id)
+        if task is not None and not task.done():
+            return "primary_writer_active"
+        with self._active_submit_tasks_lock:
+            if session_id in self._active_submit_tasks.values():
+                return "preparation_active"
+        if self.store.preparation_for_session(session_id) is not None:
+            return "preparation_active"
+        checker = getattr(self._agent_bridge, "has_unsettled_children", None)
+        if callable(checker):
+            try:
+                if checker(self._agent_conversation_id(session_id)):
+                    return "fleet_writer_active"
+            except Exception:
+                return "fleet_state_unavailable"
+        if session_id in self._capture_exchange_flush_sessions:
+            return "exchange_flush_active"
+        for message_id in self._fleet_usage_reattach_sources:
+            try:
+                if self.store.session_id_for_message(message_id) == session_id:
+                    return "retained_signals_active"
+            except KeyError:
+                continue
+        return None
+
+    async def purge_full_captures(
+        self, session_id: str, expected_capture_revision: int
+    ) -> CapturePurgeResult:
+        """Logically erase Full captures while every session writer is fenced."""
+        with self._capture_quiescence_lock:
+            try:
+                revision = self.store.capture_revision(session_id)
+            except KeyError:
+                return CapturePurgeResult.blocked(
+                    _MISSING_CAPTURE_REVISION,
+                    "target_missing",
+                )
+            reason = self._capture_purge_blocker(session_id, include_lease=True)
+            if reason is not None:
+                return CapturePurgeResult.blocked(
+                    revision, reason
+                )
+            if revision != expected_capture_revision:
+                return CapturePurgeResult(
+                    CapturePurgeStatus.STALE,
+                    0,
+                    revision,
+                    "stale_capture_revision",
+                )
+            if not self.store.begin_capture_quiescence(session_id):
+                return CapturePurgeResult.blocked(revision, "purge_in_progress")
+            reason = self._capture_purge_blocker(session_id, include_lease=False)
+            if reason is not None:
+                self.store.end_capture_quiescence(session_id)
+                return CapturePurgeResult.blocked(revision, reason)
+        try:
+            stage = self.store.stage_full_capture_purge(session_id)
+            removed = self.store.commit_full_capture_purge(stage)
+            return CapturePurgeResult.deleted(
+                removed, self.store.capture_revision(session_id)
+            )
+        except CapturePurgeStaleError:
+            return CapturePurgeResult(
+                CapturePurgeStatus.STALE,
+                0,
+                self.store.capture_revision(session_id),
+                "stale_capture_revision",
+            )
+        except Exception as exc:
+            logger.warning(
+                "capture_purge_failed (exception_type={})", type(exc).__name__
+            )
+            return CapturePurgeResult(
+                CapturePurgeStatus.FAILED,
+                0,
+                self.store.capture_revision(session_id),
+                "persistence_unavailable",
+            )
+        finally:
+            self.store.end_capture_quiescence(session_id)
+
+    def set_next_capture_detail(
+        self,
+        session_id: str,
+        detail: CaptureDetail | None,
+        *,
+        expected_policy_revision: int,
+    ) -> CapturePolicyMutationResult:
+        try:
+            self.store.set_session_next_capture_detail(
+                session_id,
+                detail,
+                expected_policy_revision=expected_policy_revision,
+            )
+        except CapturePolicyStaleError:
+            return CapturePolicyMutationResult(
+                CapturePolicyMutationStatus.STALE,
+                self.capture_policy_snapshot(session_id),
+                True,
+                "stale_policy_revision",
+            )
+        except KeyError:
+            raise
+        return CapturePolicyMutationResult(
+            CapturePolicyMutationStatus.APPLIED,
+            self.capture_policy_snapshot(session_id),
+            False,
+            None,
+        )
+
+    async def replace_conversation_capture_detail(
+        self,
+        session_id: str,
+        detail: CaptureDetail | None,
+        *,
+        expected_policy_revision: int,
+    ) -> CapturePolicyMutationResult:
+        before = self.capture_policy_snapshot(session_id)
+        if before.policy_revision != expected_policy_revision:
+            return CapturePolicyMutationResult(
+                CapturePolicyMutationStatus.STALE,
+                before,
+                True,
+                "stale_policy_revision",
+            )
+        try:
+            reservation = self.store.reserve_capture_policy_mutation(
+                expected_policy_revision=expected_policy_revision
+            )
+        except CapturePolicyStaleError:
+            return CapturePolicyMutationResult(
+                CapturePolicyMutationStatus.STALE,
+                self.capture_policy_snapshot(session_id),
+                True,
+                "stale_policy_revision",
+            )
+        inherited = resolve_capture_policy(
+            enabled=before.enabled,
+            conversation=detail,
+            global_default=before.global_detail,
+            allow_next_send=False,
+        ).detail
+        has_durable_identity = before.conversation_id is not None
+        privacy_safe_result = inherited is CaptureDetail.SAFE
+        if privacy_safe_result:
+            try:
+                self.store.publish_reserved_capture_safe(
+                    reservation,
+                    session_id=session_id,
+                    save_pending=has_durable_identity,
+                )
+            except KeyError:
+                self.store.abandon_capture_policy_mutation(reservation)
+                return CapturePolicyMutationResult(
+                    CapturePolicyMutationStatus.TARGET_MISSING,
+                    before,
+                    False,
+                    "session_closed",
+                )
+
+        async def reconcile() -> CapturePolicyMutationResult:
+            reservation_owned = True
+            reconciliation_cancelled = False
+            try:
+                session_only = False
+                if (
+                    has_durable_identity
+                    and self._capture_policy_repository is not None
+                ):
+                    repository = self._capture_policy_repository
+                    repository_settled = asyncio.Event()
+                    repository_result: list[Any] = []
+                    repository_error: list[BaseException] = []
+                    loop = asyncio.get_running_loop()
+
+                    def run_repository_call() -> None:
+                        try:
+                            repository_result.append(
+                                repository.replace(
+                                    before.conversation_id,
+                                    detail,
+                                )
+                            )
+                        except BaseException as exc:
+                            repository_error.append(exc)
+                        finally:
+                            loop.call_soon_threadsafe(repository_settled.set)
+
+                    if self._durable_db_call_offloadable():
+                        threading.Thread(
+                            target=run_repository_call,
+                            name="console-capture-policy-write",
+                        ).start()
+                    else:
+                        run_repository_call()
+                    while not repository_settled.is_set():
+                        try:
+                            await repository_settled.wait()
+                        except asyncio.CancelledError:
+                            reconciliation_cancelled = True
+                    if repository_error:
+                        if not privacy_safe_result:
+                            if reconciliation_cancelled:
+                                raise asyncio.CancelledError from None
+                            raise repository_error[0]
+                        session_only = True
+                        write_status = None
+                    else:
+                        write_status = repository_result[0]
+                    if (
+                        write_status is not None
+                        and write_status.status
+                        is CapturePolicyWriteStatus.MISSING_CONVERSATION
+                    ):
+                        self.store.abandon_capture_policy_mutation(reservation)
+                        reservation_owned = False
+                        if reconciliation_cancelled:
+                            raise asyncio.CancelledError
+                        return CapturePolicyMutationResult(
+                            CapturePolicyMutationStatus.TARGET_MISSING,
+                            before,
+                            False,
+                            "conversation_missing",
+                        )
+                    if write_status is not None:
+                        session_only = (
+                            write_status.status is CapturePolicyWriteStatus.UNAVAILABLE
+                        )
+                elif has_durable_identity:
+                    session_only = True
+                if session_only and inherited is CaptureDetail.FULL:
+                    self.store.abandon_capture_policy_mutation(reservation)
+                    reservation_owned = False
+                    if reconciliation_cancelled:
+                        raise asyncio.CancelledError
+                    return CapturePolicyMutationResult(
+                        CapturePolicyMutationStatus.FAILED,
+                        before,
+                        True,
+                        "save_failed",
+                    )
+                try:
+                    self.store.finish_capture_policy_mutation(
+                        reservation,
+                        session_id=session_id,
+                        detail=(
+                            CaptureDetail.SAFE
+                            if session_only and privacy_safe_result
+                            else detail
+                        ),
+                        save_pending=session_only and has_durable_identity,
+                    )
+                except KeyError:
+                    reservation_owned = False
+                    if reconciliation_cancelled:
+                        raise asyncio.CancelledError
+                    return CapturePolicyMutationResult(
+                        CapturePolicyMutationStatus.TARGET_MISSING,
+                        before,
+                        False,
+                        "session_closed",
+                    )
+                reservation_owned = False
+                if has_durable_identity and not session_only:
+                    self._capture_policy_hydrated.add(session_id)
+                    self._capture_policy_hydration_errors.pop(session_id, None)
+                result = CapturePolicyMutationResult(
+                    CapturePolicyMutationStatus.SAFE_SESSION_ONLY
+                    if session_only and has_durable_identity
+                    else CapturePolicyMutationStatus.APPLIED,
+                    self.capture_policy_snapshot(session_id),
+                    session_only and has_durable_identity,
+                    "save_failed"
+                    if session_only and has_durable_identity
+                    else None,
+                )
+                if reconciliation_cancelled:
+                    raise asyncio.CancelledError
+                return result
+            finally:
+                if reservation_owned:
+                    try:
+                        self.store.abandon_capture_policy_mutation(reservation)
+                    except CapturePolicyStaleError:
+                        pass
+
+        reconciliation = asyncio.create_task(reconcile())
+        caller_cancelled = False
+        while not reconciliation.done():
+            try:
+                await asyncio.shield(reconciliation)
+            except asyncio.CancelledError:
+                if reconciliation.cancelled():
+                    break
+                caller_cancelled = True
+            except BaseException:
+                if caller_cancelled:
+                    raise asyncio.CancelledError from None
+                raise
+        if reconciliation.cancelled():
+            try:
+                self.store.abandon_capture_policy_mutation(reservation)
+            except CapturePolicyStaleError:
+                pass
+            raise asyncio.CancelledError
+        try:
+            result = reconciliation.result()
+        except BaseException:
+            if caller_cancelled:
+                raise asyncio.CancelledError from None
+            raise
+        if caller_cancelled:
+            raise asyncio.CancelledError
+        return result
+
+    def apply_global_capture_settings(
+        self,
+        *,
+        enabled: bool,
+        detail: CaptureDetail,
+        expected_config_generation: int,
+        expected_policy_revision: int,
+    ) -> CapturePolicyMutationResult:
+        session_id = self.store.active_session_id
+        if session_id is None:
+            raise KeyError("No active Console session")
+        before = self.capture_policy_snapshot(session_id)
+        if before.policy_revision != expected_policy_revision:
+            return CapturePolicyMutationResult(
+                CapturePolicyMutationStatus.STALE,
+                before,
+                True,
+                "stale_policy_revision",
+            )
+        try:
+            reservation = self.store.reserve_capture_policy_mutation(
+                expected_policy_revision=expected_policy_revision
+            )
+        except CapturePolicyStaleError:
+            return CapturePolicyMutationResult(
+                CapturePolicyMutationStatus.STALE,
+                self.capture_policy_snapshot(session_id),
+                True,
+                "stale_policy_revision",
+            )
+        try:
+            config_result = apply_console_capture_settings(
+                enabled=enabled,
+                detail=detail,
+                expected_generation=expected_config_generation,
+            )
+        except BaseException:
+            self.store.abandon_capture_policy_mutation(reservation)
+            raise
+        if config_result.conflict:
+            self.store.abandon_capture_policy_mutation(reservation)
+            return CapturePolicyMutationResult(
+                CapturePolicyMutationStatus.STALE,
+                before,
+                True,
+                "stale_config_generation",
+                config_result,
+            )
+        active = not enabled or detail is CaptureDetail.SAFE or config_result.file_replaced
+        if not active:
+            self.store.abandon_capture_policy_mutation(reservation)
+            return CapturePolicyMutationResult(
+                CapturePolicyMutationStatus.FAILED,
+                before,
+                True,
+                "save_failed",
+                config_result,
+            )
+        self.store.finish_capture_policy_mutation(
+            reservation,
+            disarm_next=not enabled,
+        )
+        return CapturePolicyMutationResult(
+            CapturePolicyMutationStatus.SAFE_SESSION_ONLY
+            if config_result.failure_phase == "before_replace"
+            else CapturePolicyMutationStatus.APPLIED,
+            self.capture_policy_snapshot(session_id),
+            config_result.failure_phase == "before_replace",
+            "save_failed"
+            if config_result.failure_phase == "before_replace"
+            else "cache_refresh_degraded"
+            if config_result.failure_phase == "cache_reload"
+            else None,
+            config_result,
+        )
+
+    def _admit_capture_policy(
+        self,
+        session_id: str,
+        origin: ConsoleSubmissionOrigin,
+    ) -> ConsoleProviderStreamSignals:
+        """Freeze capture detail once, after an accepted owner exists."""
+        eligible = origin in {
+            ConsoleSubmissionOrigin.MANUAL,
+            ConsoleSubmissionOrigin.QUEUED,
+        }
+        try:
+            session = next(
+                (item for item in self.store.sessions() if item.id == session_id),
+                None,
+            )
+            if session is None:
+                raise KeyError(session_id)
+            self._hydrate_capture_policy(session)
+            state = self.store.capture_policy_state(session_id)
+            runtime = runtime_capture_policy()
+            resolution = resolve_capture_policy(
+                enabled=runtime.enabled,
+                next_send=state.next_detail,
+                conversation=state.conversation_detail,
+                global_default=runtime.detail,
+                allow_next_send=eligible,
+            )
+        except Exception as exc:
+            logger.bind(
+                phase="resolution",
+                error_type=type(exc).__name__,
+            ).warning("capture_policy_resolution_failed")
+            return ConsoleProviderStreamSignals(
+                exchange_capture_enabled=False,
+                capture_detail=CaptureDetail.SAFE,
+            )
+        signals = ConsoleProviderStreamSignals(
+            exchange_capture_enabled=resolution.enabled,
+            capture_detail=resolution.detail,
+        )
+        if eligible and state.next_detail is not None:
+            try:
+                self.store.consume_session_next_capture_detail(
+                    session_id,
+                    expected_next_revision=state.next_revision,
+                )
+            except Exception as exc:
+                logger.bind(
+                    phase="one_shot_consumption",
+                    error_type=type(exc).__name__,
+                ).warning("capture_policy_resolution_failed")
+                return ConsoleProviderStreamSignals(
+                    exchange_capture_enabled=False,
+                    capture_detail=CaptureDetail.SAFE,
+                )
+        return signals
 
     @property
     def run_state(self) -> ConsoleRunState:
@@ -4554,13 +5179,25 @@ class ConsoleChatController:
     ) -> ConsoleSubmitResult:
         """Fence one complete submit lifecycle for close and shutdown."""
 
+        owner_key = session_id or self.store.active_session_id
         if self._disposed or (
             self._shutdown_requested.is_set()
             and origin is not ConsoleSubmissionOrigin.AGENT_WAKE
         ):
             return ConsoleSubmitResult(False, False, "Console is shutting down.")
         active_task = asyncio.current_task()
-        owner_key = session_id or self.store.active_session_id
+        with self._capture_quiescence_lock:
+            if owner_key is not None and self.store.capture_quiescent(owner_key):
+                return ConsoleSubmitResult(
+                    False,
+                    False,
+                    "Stored captures are being updated; retry shortly.",
+                    session_id=owner_key,
+                    origin=origin,
+                    queue_entry_id=queue_entry_id,
+                )
+            if active_task is not None:
+                self._register_submit_task(active_task, owner_key)
         if active_task is None:
             return await self._submit_draft_inner(
                 draft,
@@ -4572,7 +5209,6 @@ class ConsoleChatController:
                 _resume_preparation_id=_resume_preparation_id,
                 _resume_resolution=_resume_resolution,
             )
-        self._register_submit_task(active_task, owner_key)
         try:
             return await self._submit_draft_inner(
                 draft,
@@ -5519,6 +6155,7 @@ class ConsoleChatController:
                 ConsoleTurnPreparationState.ACCEPTED,
             ):
                 raise RuntimeError("Prepared turn changed before acceptance.")
+            stream_signals = self._admit_capture_policy(session.id, origin)
             self._release_prepared_evidence(prepared_continuation)
             for pending in pendings:
                 self.store.consume_pending_attachment(session.id, pending.attachment_id)
@@ -5561,6 +6198,7 @@ class ConsoleChatController:
                 preparation_id=(
                     preparation.preparation_id if preparation is not None else None
                 ),
+                stream_signals=stream_signals,
             )
             result = replace(
                 stream_result,
@@ -5894,6 +6532,7 @@ class ConsoleChatController:
             turn_context=turn_context,
             prepared=prepared_continuation,
             committed_context_epoch=committed_context_epoch,
+            stream_signals=self._admit_capture_policy(session.id, origin),
             terminal_citation_finalizer=terminal_citation_finalizer,
         )
         with self.store.durable_preparation_lock:
@@ -6249,6 +6888,7 @@ class ConsoleChatController:
                     citation_repair_session=continuation.citation_repair_session,
                     turn_context=continuation.turn_context,
                     preparation_id=None,
+                    stream_signals=continuation.stream_signals,
                 ),
                 fingerprint=fingerprint,
             )
@@ -13862,6 +14502,7 @@ class ConsoleChatController:
         citation_repair_session: ConsoleCitationRepairSession | None = None,
         turn_context: ConsoleTurnExecutionContext | None = None,
         preparation_id: str | None = None,
+        stream_signals: ConsoleProviderStreamSignals | None = None,
     ) -> ConsoleSubmitResult:
         try:
             return await self._stream_assistant_response_inner(
@@ -13878,6 +14519,7 @@ class ConsoleChatController:
                 citation_repair_session=citation_repair_session,
                 turn_context=turn_context,
                 preparation_id=preparation_id,
+                stream_signals=stream_signals,
             )
         finally:
             if isinstance(turn_context, ConsoleTurnExecutionContext):
@@ -13908,6 +14550,7 @@ class ConsoleChatController:
         citation_repair_session: ConsoleCitationRepairSession | None = None,
         turn_context: ConsoleTurnExecutionContext | None = None,
         preparation_id: str | None = None,
+        stream_signals: ConsoleProviderStreamSignals | None = None,
     ) -> ConsoleSubmitResult:
         try:
             owner_id = self.store.session_id_for_message(assistant_message_id)
@@ -14124,7 +14767,8 @@ class ConsoleChatController:
         # passed `signals=` to the gateway and NOTHING was ever captured for
         # the path virtually every real send takes. Cost is not an opt-in
         # feature of one repair mode; every run needs its own signals object.
-        stream_signals = self._new_run_stream_signals()
+        stream_signals = stream_signals or self._new_run_stream_signals()
+        self._active_capture_details[owner_id] = stream_signals.capture_detail
         # Trajectory sidecar (schema v38): arm this turn's timing capture at
         # the single dispatch choke point covering BOTH the direct-provider
         # and agent paths, BEFORE the provider call. First-token is stamped
@@ -14206,6 +14850,7 @@ class ConsoleChatController:
                 # A no-op for the direct path, whose own finally already
                 # popped its own cancel_event before returning.
                 self._active_cancel_events.pop(owner_id, None)
+                self._active_capture_details.pop(owner_id, None)
 
     @staticmethod
     def _usage_payloads(stream_signals: Any) -> list[Any]:
@@ -14243,10 +14888,10 @@ class ConsoleChatController:
         is the arc's sixth site with this exact trap -- see the
         ``local_tools_enabled`` read a few hundred lines up for the first.
         """
+        runtime = runtime_capture_policy()
         return ConsoleProviderStreamSignals(
-            exchange_capture_enabled=coerce_bool_setting(
-                get_cli_setting("console", "exchange_capture", True), True
-            )
+            exchange_capture_enabled=runtime.enabled,
+            capture_detail=CaptureDetail.SAFE,
         )
 
     def _watch_post_turn_usage(
@@ -14558,9 +15203,25 @@ class ConsoleChatController:
         try:
             captures = list(stream_signals.exchange_captures())
             if captures:
-                self.store.attach_message_exchanges(assistant_message_id, captures)
+                session_id = self.store.session_id_for_message(assistant_message_id)
+                with self._capture_quiescence_lock:
+                    if self.store.capture_quiescent(session_id):
+                        captures = []
+                    else:
+                        self._capture_exchange_flush_sessions.add(session_id)
+                try:
+                    if captures:
+                        self.store.attach_message_exchanges(
+                            assistant_message_id, captures
+                        )
+                finally:
+                    with self._capture_quiescence_lock:
+                        self._capture_exchange_flush_sessions.discard(session_id)
         except Exception as exc:
-            logger.bind(message_id=assistant_message_id, error=repr(exc)).warning(
+            logger.bind(
+                message_id=assistant_message_id,
+                error_type=type(exc).__name__,
+            ).warning(
                 "exchange_attach_failed"
             )
         payloads = self._usage_payloads(stream_signals)

@@ -172,6 +172,9 @@ EXPECTED_CHACHANOTES_INDEXES: dict[str, IndexPin] = {
     "idx_message_exchanges_message": IndexPin(
         "message_exchanges", False, ("message_id",)
     ),
+    "idx_message_exchanges_capture_detail": IndexPin(
+        "message_exchanges", False, ("capture_detail", "message_id")
+    ),
     "idx_message_trajectory_conv_seq": IndexPin(
         "message_trajectory_metadata", True, ("conversation_id", "seq")
     ),

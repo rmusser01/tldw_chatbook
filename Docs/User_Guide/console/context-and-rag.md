@@ -577,6 +577,42 @@ Mistyping a command shows the full list: "Unknown command /… — available:
 /prompt, /system, /skills, /prefill, /generate-image, /rewind. Press
 Enter again to send as text."
 
+## Safe and Full exchange capture
+
+Console defaults to **Safe** capture. Press **c** in the Conversation
+Inspector or a live Trace to change exactly one future scope: **Next send**
+(a one-shot that expires when consumed), **This conversation**, or the
+**Global default**. F9 **Settings > Console Behavior** owns the same global
+On/Off and Safe/Full setting. Turning Capture **Off** does not erase a dormant
+Full choice; turning it back on warns before Full resumes.
+
+Safe retains bounded routing/provenance, status, usage, and omission/truncation
+inventories. Full may retain semantic provider input and output: for Anthropic
+that includes system, messages, and tools, plus injected AGENTS/workspace
+instructions, RAG snippets, tool schemas, arguments, and results. Capture
+occurs at the semantic provider-adapter boundary, not raw HTTP; llama.cpp is
+the documented exception because its adapter payload is the literal outgoing
+request.
+
+Structured credential fields are excluded and credential-bearing endpoint
+userinfo, query, and fragments are removed. That structural protection cannot
+recognize every secret typed into ordinary prompt or tool text, so treat Full
+as sensitive. Capture input is bounded to **64 MiB** uncompressed and each
+stored exchange blob to **16 MiB**. Compression saves space; it is **not
+encryption**.
+
+Each historical call records its own `capture: Safe|Full` provenance. Its
+**Export…** action offers Safe summary, Redacted diagnostic, and Full trace.
+Full export is available only for a stored Full call and requires confirmation
+every time, whether the destination is Clipboard or File. Redacted diagnostic
+reapplies Safe project-instruction redaction.
+
+**Delete stored Full captures** performs logical record deletion. SQLite WAL
+frames and free pages, filesystem snapshots, prior exports, and backups may
+still retain older bytes; deletion does not change a Full capture policy.
+Imported/shared Trace is read-only and says **Capture policy unavailable for
+imported Trace**; it has no `c` action.
+
 ## Related settings & docs
 
 - `config.toml` `[rag]` (and legacy `[rag_search]`) — retrieval and

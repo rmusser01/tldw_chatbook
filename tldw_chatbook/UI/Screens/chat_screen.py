@@ -104,6 +104,10 @@ from ..Console_Modules.prompt_queue import (
 )
 from ..Console_Modules.realtime import CONSOLE_REALTIME_CHIP_MESSAGES
 from ..Console_Modules.dispatch_recovery import ConsoleDispatchRecoveryRegion
+from ..Console_Modules.capture_policy_bindings import (
+    build_capture_policy_bindings,
+    build_inspector_capture_policy_wiring,
+)
 from ..Console_Modules.left_rail import ConsoleLeftRail
 from ..Console_Modules.message import ConsoleMessageController
 from ..Console_Modules.right_rail import ConsoleInspectorRail
@@ -149,7 +153,7 @@ from ...Chat.console_cost_tracker import (
     fingerprint_break_reason,
     token_estimate_signature,
 )
-from ...Chat.console_exchange_capture import ExchangeCapture, capture_from_blob
+from ...Chat.console_exchange_capture import ExchangeCapture, capture_from_storage
 from ...Chat.provider_usage import ProviderUsage
 from ...Chat.trajectory import TrajectorySnapshot, derive_trajectory
 from ...LLM_Calls.pricing_catalog import get_pricing_catalog
@@ -1704,7 +1708,10 @@ def _build_console_inspector_exchanges_loader(
                 try:
                     out.append(
                         (
-                            capture_from_blob(db_row["capture_blob"]),
+                            capture_from_storage(
+                                db_row["capture_blob"],
+                                db_row.get("capture_detail", "safe"),
+                            ),
                             bool(db_row.get("abandoned", False)),
                         )
                     )
@@ -3342,6 +3349,15 @@ class ChatScreen(BaseAppScreen):
             self.notify("The active conversation has no persisted trace yet.")
             return
         conv_id = str(conversation_id)
+        target_session_id = str(session.id)
+        runtime = self._console_runtime()
+        capture_policy_bindings = None
+        if hasattr(runtime, "chat_controller"):
+            capture_policy_bindings = build_capture_policy_bindings(
+                self._ensure_console_chat_controller(),
+                target_session_id,
+                conv_id,
+            )
         screen_title = str(getattr(session, "title", "") or "Console")
         agent_controller = getattr(self, "_agent", None)
         bridge = (
@@ -3370,6 +3386,7 @@ class ChatScreen(BaseAppScreen):
                     conversation_id=conv_id,
                     revision_provider=lambda: store.get_payload_revision(conv_id),
                     snapshot_builder=build,
+                    capture_policy_bindings=capture_policy_bindings,
                 )
             )
 
@@ -7407,24 +7424,32 @@ class ChatScreen(BaseAppScreen):
         rows, totals, turns, exchanges_loader = (
             self._build_console_inspector_cost_data()
         )
-        self.app.push_screen(
-            ConsoleConversationInspector(
-                rows=rows,
-                totals=totals,
-                turns=turns,
-                exchanges_loader=exchanges_loader,
-                snapshot_factory=snapshot_factory,
-                token_estimate=token_estimate,
-                estimate_factory=estimate_factory,
-                in_progress=in_progress,
-                ephemeral=self._console_active_session_is_ephemeral(),
-                initial_tab=initial_tab,
-                project_instruction_state=project_instruction_state,
-                project_instruction_state_factory=project_instruction_state_factory,
-                project_instruction_session_id=project_instruction_session_id,
-                project_instruction_recovery=project_instruction_recovery,
-            )
+        controller = self._ensure_console_chat_controller()
+        capture_policy_wiring = build_inspector_capture_policy_wiring(controller)
+        if capture_policy_wiring is None:
+            return
+        inspector = ConsoleConversationInspector(
+            rows=rows,
+            totals=totals,
+            turns=turns,
+            exchanges_loader=exchanges_loader,
+            snapshot_factory=snapshot_factory,
+            token_estimate=token_estimate,
+            estimate_factory=estimate_factory,
+            in_progress=in_progress,
+            ephemeral=self._console_active_session_is_ephemeral(),
+            initial_tab=initial_tab,
+            project_instruction_state=project_instruction_state,
+            project_instruction_state_factory=project_instruction_state_factory,
+            project_instruction_session_id=project_instruction_session_id,
+            project_instruction_recovery=project_instruction_recovery,
+            target_session_id=capture_policy_wiring.target_session_id,
+            target_conversation_id=capture_policy_wiring.target_conversation_id,
+            capture_revision_provider=capture_policy_wiring.capture_revision,
+            capture_policy_bindings=capture_policy_wiring.bindings,
         )
+        capture_policy_wiring.bind_inspector(inspector)
+        self.app.push_screen(inspector)
 
     def _build_console_inspector_cost_data(
         self,

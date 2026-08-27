@@ -226,6 +226,11 @@ def _canonical_endpoint_identity(endpoint: str | None) -> str:
     return urlunsplit((scheme, _netloc(scheme, hostname, port), path, "", ""))
 
 
+def canonical_provider_endpoint_identity(endpoint: str | None) -> str:
+    """Return a credential-free canonical provider endpoint identity."""
+    return _canonical_endpoint_identity(endpoint)
+
+
 def _endpoint_origin(endpoint: str) -> str:
     parsed = _parse_endpoint(endpoint)
     if parsed is None:

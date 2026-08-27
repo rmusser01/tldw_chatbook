@@ -88,6 +88,10 @@ from tldw_chatbook.Chat.trajectory_import import (
 )
 from tldw_chatbook.UI.Widgets.trajectory_timeline import TrajectoryTimeline
 from tldw_chatbook.UI.Widgets.trace_filter_bar import TraceFilterBar, TraceFilterState
+from tldw_chatbook.Widgets.Console.console_capture_policy_dialog import (
+    CapturePolicyBindings,
+    ConsoleCapturePolicyDialog,
+)
 
 __all__ = [
     "LOAD_EARLIER_ROW_KEY",
@@ -207,6 +211,7 @@ class TrajectoryScreen(ModalScreen[None]):
         Binding("b", "previous_feedback", "Previous feedback"),
         Binding("a", "next_child_agent", "Next child agent"),
         Binding("s", "previous_child_agent", "Previous child agent"),
+        Binding("c", "capture_policy", "Capture"),
     ]
 
     #: Footer hints, 1:1 with the non-escape BINDINGS (ADR-031; tested).
@@ -234,6 +239,7 @@ class TrajectoryScreen(ModalScreen[None]):
         ("b", "previous feedback"),
         ("a", "next child"),
         ("s", "previous child"),
+        ("c", "capture"),
     )
 
     BUNDLED_CSS = """
@@ -248,7 +254,8 @@ class TrajectoryScreen(ModalScreen[None]):
         padding: 0 1;
     }
     #trajectory-title {
-        height: 1;
+        height: auto;
+        max-height: 3;
         color: $text;
         background: $panel;
     }
@@ -312,6 +319,7 @@ class TrajectoryScreen(ModalScreen[None]):
         snapshot_builder: Callable[[], TrajectorySnapshot] | None = None,
         shared_trace: bool = False,
         imported_trace: ImportedTrace | None = None,
+        capture_policy_bindings: CapturePolicyBindings | None = None,
     ) -> None:
         """Store the projection output; all rendering happens on mount.
 
@@ -341,6 +349,9 @@ class TrajectoryScreen(ModalScreen[None]):
         self._snapshot_builder = snapshot_builder
         self._shared_trace = shared_trace
         self._imported_trace = imported_trace
+        self._capture_policy_bindings = (
+            None if shared_trace else capture_policy_bindings
+        )
         self._last_revision: int | None = None
         #: Tail-follow: True while the reader is at the bottom; scrolling
         #: up suspends it, ``f`` re-enables.
@@ -865,7 +876,38 @@ class TrajectoryScreen(ModalScreen[None]):
         if self._screen_title:
             parts.append(self._screen_title)
         parts.append(f"{self._total_records} events")
-        return " · ".join(parts)
+        title = " · ".join(parts)
+        if self._shared_trace:
+            return title + "\nCapture policy unavailable for imported Trace"
+        bindings = self._capture_policy_bindings
+        if bindings is None:
+            return title
+        try:
+            snapshot = bindings.read()
+        except Exception:
+            return title + "\nFuture exchange capture: unavailable"
+        future = (
+            "Off" if not snapshot.enabled else snapshot.effective.detail.value.title()
+        )
+        policy = f"Future exchange capture: {future} · c Change…"
+        if snapshot.active_run_detail is not None:
+            policy += (
+                f" · Active run frozen at "
+                f"{snapshot.active_run_detail.value.title()}"
+            )
+        return title + "\n" + policy
+
+    def check_action(self, action: str, parameters: tuple[object, ...]) -> bool | None:
+        """Expose capture policy only for a live immutable binding bundle."""
+        if action == "capture_policy":
+            return self._capture_policy_bindings is not None
+        return True
+
+    def action_capture_policy(self) -> None:
+        """`c`: change future capture for this live Trace target."""
+        if self._capture_policy_bindings is None:
+            return
+        self.app.push_screen(ConsoleCapturePolicyDialog(self._capture_policy_bindings))
 
     # -- ledger rendering ------------------------------------------------------
 
@@ -1262,6 +1304,8 @@ class TrajectoryScreen(ModalScreen[None]):
             if not contextual:
                 core.append("o import trace")
             lines.append(" · ".join(core))
+        if self._capture_policy_bindings is not None and lines:
+            lines[-1] += " · c capture"
         text = "\n".join(lines)
         try:
             hints = self.query_one("#trajectory-hints", Static)

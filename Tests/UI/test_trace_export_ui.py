@@ -21,7 +21,12 @@ from tldw_chatbook.Chat.trajectory_export import (
 from tldw_chatbook.Chat.trajectory_import import load_imported_trace
 from tldw_chatbook.UI.Screens.trajectory_screen import TrajectoryScreen
 from tldw_chatbook.Widgets.Console import trace_export_dialog as export_dialog_module
-from tldw_chatbook.Widgets.Console.trace_export_dialog import TraceExportDialog
+from tldw_chatbook.Widgets.Console.trace_export_dialog import (
+    TRACE_EXPORT_PROFILE_COPY,
+    TRACE_EXPORT_PROFILE_LABELS,
+    TraceExportDialog,
+    full_trace_confirmation,
+)
 from Tests.UI.consolidated_css import BUNDLED_STYLESHEET, ConsolidatedCSSApp
 from Tests.UI.test_trace_responsive import _TraceHost
 from Tests.UI.test_trajectory_screen import base_snapshot
@@ -32,6 +37,21 @@ class _Harness(ConsolidatedCSSApp):
 
     def compose(self) -> ComposeResult:
         yield Static("base")
+
+
+def test_trace_export_publishes_shared_labels_and_full_warning() -> None:
+    assert TRACE_EXPORT_PROFILE_LABELS[TraceExportProfile.REDACTED_DIAGNOSTIC] == (
+        "Redacted diagnostic (recommended)"
+    )
+    assert "Credentials remain forbidden" in TRACE_EXPORT_PROFILE_COPY[
+        TraceExportProfile.FULL_TRACE
+    ]
+
+    confirmation = full_trace_confirmation(noun="Trace")
+    assert confirmation.title == "Export full Trace?"
+    assert confirmation.confirm_label == "Export full trace"
+    assert "injected instructions" in confirmation.message
+    assert "Credentials remain structurally blocked" in confirmation.message
 
 
 @pytest.mark.asyncio

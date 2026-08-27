@@ -7,7 +7,12 @@ local-only additions), and a hard delete of the parent message cascades
 straight through via the FK -- there is no soft-delete/version bookkeeping
 for these rows.
 """
+import sqlite3
+import traceback
+from contextlib import contextmanager
+
 import pytest
+from loguru import logger
 
 from Tests.ChaChaNotesDB.historical_bootstrap import (
     chachanotes_db_at_version,
@@ -15,10 +20,17 @@ from Tests.ChaChaNotesDB.historical_bootstrap import (
 )
 
 from tldw_chatbook.DB.ChaChaNotes_DB import CharactersRAGDB
+from tldw_chatbook.Chat.console_exchange_capture import (
+    CaptureDetail,
+    ExchangeCapture,
+    capture_from_storage,
+    capture_to_blob,
+)
 
 # Matches CharactersRAGDB._SCHEMA_NAME, per the sibling migration tests
 # (e.g. Tests/DB/test_chachanotes_message_usage_migration.py).
 SCHEMA_NAME = "rag_char_chat_schema"
+CAPTURE_DETAIL_INDEX = "idx_message_exchanges_capture_detail"
 
 
 @pytest.fixture
@@ -61,6 +73,96 @@ def test_append_and_read_round_trip(db):
         ("r1", 0, b"blob0"), ("r1", 1, b"blob1")]
 
 
+def test_lowest_exchange_write_error_boundary_is_content_free(db, monkeypatch):
+    message_id = _seed_message(db)
+    canaries = (
+        "SEMANTIC-EXCHANGE-ERROR-CANARY",
+        "/private/exchange/error/path/canary",
+        "QUJD" * 1200,
+    )
+
+    class FailingCursor:
+        def execute(self, _query, _params):
+            raise sqlite3.OperationalError(" | ".join(canaries))
+
+    @contextmanager
+    def failing_transaction(*_args, **_kwargs):
+        yield FailingCursor()
+
+    monkeypatch.setattr(db, "transaction", failing_transaction)
+    diagnostics: list[str] = []
+    sink_id = logger.add(
+        diagnostics.append,
+        level="ERROR",
+        format="{extra[message_id]} {extra[error_type]} {message}",
+    )
+    try:
+        with pytest.raises(Exception) as raised:
+            db.append_message_exchanges_local(
+                message_id,
+                [
+                    {
+                        "run_tag": "canary",
+                        "seq": 0,
+                        "status": "complete",
+                        "abandoned": False,
+                        "capture_detail": "full",
+                        "capture_blob": canaries[-1].encode(),
+                        "created_at": "t",
+                    }
+                ],
+            )
+    finally:
+        logger.remove(sink_id)
+
+    assert type(raised.value).__name__ == "CharactersRAGDBError"
+    assert raised.value.__cause__ is None
+    assert raised.value.__context__ is None
+    exception_graph: list[BaseException] = []
+    pending: list[BaseException] = [raised.value]
+    while pending:
+        error = pending.pop()
+        exception_graph.append(error)
+        if error.__cause__ is not None:
+            pending.append(error.__cause__)
+        if error.__context__ is not None:
+            pending.append(error.__context__)
+    rendered_traceback = "".join(
+        traceback.format_exception(raised.type, raised.value, raised.tb)
+    )
+    boundary_text = " ".join(
+        [
+            *(f"{error!s} {error!r}" for error in exception_graph),
+            *diagnostics,
+            rendered_traceback,
+        ]
+    )
+    assert message_id in boundary_text
+    assert "OperationalError" in boundary_text
+    assert "message_exchange_write_failed" in boundary_text
+    for canary in canaries:
+        assert canary not in boundary_text
+
+
+def test_full_capture_column_matches_blob_provenance(db):
+    mid = _seed_message(db)
+    capture = ExchangeCapture(
+        run_tag="full", seq=0, created_at="t", provider="p", model="m", endpoint=None,
+        request={}, response={}, status="complete", usage_json=None, omitted_keys=(),
+        capture_detail=CaptureDetail.FULL,
+    )
+    db.append_message_exchanges_local(mid, [{
+        "run_tag": capture.run_tag, "seq": capture.seq, "status": capture.status,
+        "abandoned": False, "capture_detail": capture.capture_detail.value,
+        "capture_blob": capture_to_blob(capture), "created_at": capture.created_at,
+    }])
+    stored = db.get_message_exchanges(mid)[0]
+    assert stored["capture_detail"] == "full"
+    assert capture_from_storage(
+        stored["capture_blob"], stored["capture_detail"]
+    ).capture_detail is CaptureDetail.FULL
+
+
 def test_upsert_idempotent_and_updates_in_place(db):
     mid = _seed_message(db)
     row = {"run_tag": "r1", "seq": 0, "status": "complete", "abandoned": False,
@@ -99,6 +201,195 @@ def test_hard_delete_cascades(db):
         count = cursor.execute(
             "SELECT COUNT(*) FROM message_exchanges").fetchone()[0]
     assert count == 0
+
+
+def test_full_capture_queries_use_capture_detail_index_without_stats(db):
+    connection = db.get_connection()
+    assert connection.execute(
+        "SELECT 1 FROM sqlite_master WHERE type='table' AND name='sqlite_stat1'"
+    ).fetchone() is None, (
+        "the plan must match production's no-ANALYZE state, not a test-only "
+        "sqlite_stat1-assisted plan"
+    )
+
+    conversation_id = db.add_conversation({"title": "target"})
+    message_id = db.add_message(
+        {
+            "conversation_id": conversation_id,
+            "sender": "assistant",
+            "content": "captured",
+        }
+    )
+    db.append_message_exchanges_local(
+        message_id,
+        [
+            {
+                "run_tag": "full",
+                "seq": 0,
+                "status": "complete",
+                "abandoned": False,
+                "capture_detail": "full",
+                "capture_blob": b"full",
+                "created_at": "t",
+            }
+        ],
+    )
+
+    queries = (
+        """
+        SELECT exchange.message_id, exchange.run_tag, exchange.seq
+          FROM message_exchanges AS exchange
+          JOIN messages AS message ON message.id = exchange.message_id
+         WHERE message.conversation_id = ?
+           AND exchange.capture_detail = 'full'
+        """,
+        """
+        DELETE FROM message_exchanges
+         WHERE capture_detail = 'full'
+           AND message_id IN (
+               SELECT id FROM messages WHERE conversation_id = ?
+           )
+        """,
+    )
+    for query in queries:
+        plan = " | ".join(
+            str(row[-1])
+            for row in connection.execute(
+                "EXPLAIN QUERY PLAN " + query, (conversation_id,)
+            )
+        )
+        assert plan, "an empty query plan would make the index assertion vacuous"
+        assert CAPTURE_DETAIL_INDEX in plan
+
+
+def test_full_exchange_purge_scopes_by_conversation_including_deleted_messages(db):
+    conversation_id = db.add_conversation({"title": "target"})
+    other_conversation_id = db.add_conversation({"title": "other"})
+    message_ids = [
+        db.add_message(
+            {"conversation_id": conversation_id, "sender": "assistant", "content": name}
+        )
+        for name in ("active", "off-path", "abandoned", "soft-deleted")
+    ]
+    other_message_id = db.add_message(
+        {
+            "conversation_id": other_conversation_id,
+            "sender": "assistant",
+            "content": "other",
+        }
+    )
+    with db.transaction() as cursor:
+        cursor.execute(
+            "UPDATE messages SET deleted = 1, usage_json = ? WHERE id = ?",
+            ('{"total_tokens":7}', message_ids[-1]),
+        )
+
+    for index, message_id in enumerate((*message_ids, other_message_id)):
+        db.append_message_exchanges_local(
+            message_id,
+            [
+                {
+                    "run_tag": f"safe-{index}",
+                    "seq": 0,
+                    "status": "complete",
+                    "abandoned": index == 2,
+                    "capture_detail": "safe",
+                    "capture_blob": f"safe-{index}".encode(),
+                    "created_at": "t",
+                },
+                {
+                    "run_tag": f"full-{index}",
+                    "seq": 0,
+                    "status": "complete",
+                    "abandoned": index == 2,
+                    "capture_detail": "full",
+                    "capture_blob": f"full-{index}".encode(),
+                    "created_at": "t",
+                },
+            ],
+        )
+
+    assert db.list_full_exchange_keys_for_conversation(conversation_id) == {
+        (message_id, f"full-{index}", 0)
+        for index, message_id in enumerate(message_ids)
+    }
+    assert db.delete_full_exchanges_for_conversation(conversation_id) == 4
+
+    for index, message_id in enumerate(message_ids):
+        assert [row["run_tag"] for row in db.get_message_exchanges(message_id)] == [
+            f"safe-{index}"
+        ]
+    assert len(db.get_message_exchanges(other_message_id)) == 2
+    with db.transaction() as cursor:
+        row = cursor.execute(
+            "SELECT deleted, usage_json FROM messages WHERE id = ?", (message_ids[-1],)
+        ).fetchone()
+    assert tuple(row) == (1, '{"total_tokens":7}')
+
+
+def test_full_exchange_delete_rolls_back_atomically(db):
+    message_id = _seed_message(db)
+    rows = [
+        {
+            "run_tag": run_tag,
+            "seq": 0,
+            "status": "complete",
+            "abandoned": False,
+            "capture_detail": "full",
+            "capture_blob": blob,
+            "created_at": "t",
+        }
+        for run_tag, blob in (("first", b"one"), ("second", b"two"))
+    ]
+    db.append_message_exchanges_local(message_id, rows)
+    conversation_id = db.get_message_by_id(message_id)["conversation_id"]
+    with db.transaction() as cursor:
+        cursor.execute(
+            """
+            CREATE TEMP TRIGGER fail_second_full_delete
+            BEFORE DELETE ON message_exchanges
+            WHEN OLD.run_tag = 'second'
+            BEGIN
+                SELECT RAISE(ABORT, 'injected delete failure');
+            END
+            """
+        )
+
+    with pytest.raises(Exception, match="injected delete failure"):
+        db.delete_full_exchanges_for_conversation(conversation_id)
+
+    assert [
+        (row["run_tag"], row["capture_blob"])
+        for row in db.get_message_exchanges(message_id)
+    ] == [("first", b"one"), ("second", b"two")]
+
+
+def test_full_exchange_delete_rolls_back_when_staged_inventory_changed(db):
+    message_id = _seed_message(db)
+    db.append_message_exchanges_local(
+        message_id,
+        [
+            {
+                "run_tag": "full",
+                "seq": 0,
+                "status": "complete",
+                "abandoned": False,
+                "capture_detail": "full",
+                "capture_blob": b"full",
+                "created_at": "t",
+            }
+        ],
+    )
+    conversation_id = db.get_message_by_id(message_id)["conversation_id"]
+
+    with pytest.raises(Exception, match="inventory changed"):
+        db.delete_full_exchanges_for_conversation(
+            conversation_id, expected_count=2
+        )
+
+    assert [row["run_tag"] for row in db.get_message_exchanges(message_id)] == [
+        "full"
+    ]
 
 
 def test_schema_version_is_at_least_43(db):

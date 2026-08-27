@@ -12,6 +12,7 @@ from collections import OrderedDict, deque
 from dataclasses import dataclass, field, fields, is_dataclass, replace
 from datetime import datetime, timezone
 from enum import Enum
+from types import MappingProxyType
 from typing import TYPE_CHECKING, Any, Callable, Iterable, Mapping, Protocol, Sequence
 from uuid import uuid4
 
@@ -102,7 +103,13 @@ from tldw_chatbook.Chat.console_turn_preparation import (
 from tldw_chatbook.Chat.console_transaction_contribution import (
     ConsoleTransactionContribution,
 )
-from tldw_chatbook.Chat.console_exchange_capture import capture_to_blob
+from tldw_chatbook.Chat.console_exchange_capture import CaptureDetail, capture_to_blob
+from tldw_chatbook.Chat.console_capture_policy_repository import (
+    CapturePolicyReadResult,
+    CapturePolicyReadStatus,
+    CapturePolicyWriteStatus,
+    ConsoleCapturePolicyRepository,
+)
 from tldw_chatbook.Chat.console_roleplay_identity import (
     ConsolePresentationContext,
     effective_user_display_name,
@@ -696,6 +703,43 @@ class ContinuationDurabilityResult:
     reason: str
 
 
+class CapturePolicyStaleError(RuntimeError):
+    """A capture-policy write lost its process-local revision race."""
+
+
+class CapturePurgeStaleError(RuntimeError):
+    """A staged capture purge lost its process-local revision race."""
+
+
+@dataclass(frozen=True, slots=True)
+class CapturePolicyState:
+    """Process-local capture policy owned by one Console session."""
+
+    next_detail: CaptureDetail | None
+    conversation_detail: CaptureDetail | None
+    next_revision: int
+    policy_revision: int
+    capture_revision: int
+    save_pending: bool
+
+
+@dataclass(frozen=True, slots=True)
+class StagedCapturePurge:
+    """Precomputed live/cache replacements for one Full-capture purge."""
+
+    session_id: str
+    conversation_id: str | None
+    expected_revision: int
+    durable_keys: frozenset[tuple[str, str, int]]
+    message_swaps: tuple[tuple[ConsoleChatMessage, tuple["ExchangeCapture", ...]], ...]
+    blob_cache: tuple[
+        tuple[str, Mapping[tuple[str, int, str], bytes]], ...
+    ]
+    abandoned_tags: tuple[tuple[str, frozenset[str]], ...]
+    capture_revisions: tuple[tuple[ConsoleChatSession, int], ...]
+    removed_count: int
+
+
 def _utc_now_iso() -> str:
     return datetime.now(timezone.utc).isoformat()
 
@@ -752,6 +796,11 @@ class ConsoleChatSession:
     #: Live opaque identity for the one-shot slot. Every write, including
     #: clearing or re-arming the same text, advances this token.
     one_shot_prefill_revision: int = 0
+    capture_detail_override: CaptureDetail | None = None
+    next_capture_detail: CaptureDetail | None = None
+    next_capture_detail_revision: int = 0
+    capture_revision: int = 0
+    capture_policy_save_pending: bool = False
     #: RAG retrieval scope (task-9) for a not-yet-persisted session -- see
     #: ``SessionScopeHolder``. ``persist_session_if_needed`` flushes it
     #: through to durable storage exactly once, at first persistence.
@@ -957,6 +1006,15 @@ class ConsoleChatStore:
         self._active_session_epoch = 0
         self._speech_preference_epoch_sequence = 0
         self._sessions: dict[str, ConsoleChatSession] = {}
+        self._capture_policy_revision = 0
+        self._capture_policy_lock = threading.RLock()
+        self._capture_policy_mutation: object | None = None
+        capture_policy_db = getattr(persistence, "db", None)
+        self.capture_policy_repository = (
+            ConsoleCapturePolicyRepository(capture_policy_db)
+            if capture_policy_db is not None
+            else None
+        )
         # Task 13: one app-lifetime, process-memory preparation owner per
         # session.  This state deliberately belongs to the store rather than
         # a mounted Console screen so navigation cannot lose or duplicate a
@@ -1091,6 +1149,8 @@ class ConsoleChatStore:
         # disappears some OTHER way is not itself proof this cache's entry
         # for it goes away too.
         self._exchange_blob_cache: dict[str, dict[tuple[str, int, str], bytes]] = {}
+        self._capture_quiescence_lock = threading.RLock()
+        self._capture_quiescent_sessions: set[str] = set()
         # Ephemeral fence for issued speech snapshots. It deliberately lives
         # outside ConsoleChatMessage so it is neither persisted nor restored.
         self._message_speech_revisions: dict[str, int] = {}
@@ -1646,6 +1706,7 @@ class ConsoleChatStore:
             activate=activate,
         )
         session.persisted_conversation_id = str(persisted_conversation_id)
+        self.hydrate_session_capture_policy(session.id)
         self._hydrate_dispatch_recovery(
             session.id,
             str(persisted_conversation_id),
@@ -4154,6 +4215,7 @@ class ConsoleChatStore:
         session = self._session_or_raise(session_id)
         session.persisted_conversation_id = identity.conversation_id
         session.title = identity.title
+        self._flush_staged_capture_policy(session)
 
     def session_settings(self, session_id: str) -> ConsoleSessionSettings | None:
         """Return in-memory settings for a native Console session."""
@@ -4359,6 +4421,378 @@ class ConsoleChatStore:
     def session_one_shot_prefill(self, session_id: str) -> str | None:
         """Return the armed one-shot response prefill for a session, if any."""
         return self._session_or_raise(session_id).one_shot_prefill
+
+    def capture_policy_state(self, session_id: str) -> CapturePolicyState:
+        """Return one immutable session policy view and the shared revision."""
+        with self._capture_policy_lock:
+            session = self._session_or_raise(session_id)
+            return CapturePolicyState(
+                next_detail=session.next_capture_detail,
+                conversation_detail=session.capture_detail_override,
+                next_revision=session.next_capture_detail_revision,
+                policy_revision=self._capture_policy_revision,
+                capture_revision=session.capture_revision,
+                save_pending=session.capture_policy_save_pending,
+            )
+
+    def capture_revision(self, session_id: str) -> int:
+        """Return the current Full-capture invalidation revision."""
+        return self._session_or_raise(session_id).capture_revision
+
+    def begin_capture_quiescence(self, session_id: str) -> bool:
+        """Block exchange attachment/flush for one live session."""
+        with self._capture_quiescence_lock:
+            self._session_or_raise(session_id)
+            if session_id in self._capture_quiescent_sessions:
+                return False
+            self._capture_quiescent_sessions.add(session_id)
+            return True
+
+    def capture_quiescent(self, session_id: str) -> bool:
+        """Return whether one live session currently rejects capture writers."""
+        with self._capture_quiescence_lock:
+            return session_id in self._capture_quiescent_sessions
+
+    def end_capture_quiescence(self, session_id: str) -> None:
+        """Release one session's exchange writer fence."""
+        with self._capture_quiescence_lock:
+            self._capture_quiescent_sessions.discard(session_id)
+
+    def stage_full_capture_purge(self, session_id: str) -> StagedCapturePurge:
+        """Build every replacement needed after a durable Full-row delete."""
+        session = self._session_or_raise(session_id)
+        conversation_id = session.persisted_conversation_id
+        durable_keys: frozenset[tuple[str, str, int]] = frozenset()
+        if not session.ephemeral and conversation_id is not None:
+            reader = getattr(
+                self.persistence, "list_full_exchange_keys_for_conversation", None
+            )
+            if not callable(reader):
+                raise RuntimeError("Full capture inventory is unavailable.")
+            durable_keys = frozenset(reader(conversation_id))
+
+        seen: set[int] = set()
+        messages: list[ConsoleChatMessage] = []
+        for message in self._nodes_by_session.get(session_id, {}).values():
+            if id(message) not in seen:
+                seen.add(id(message))
+                messages.append(message)
+        for _owner, marker in self._tool_markers_by_session.get(session_id, ()):
+            if id(marker) not in seen:
+                seen.add(id(marker))
+                messages.append(marker)
+
+        message_swaps: list[
+            tuple[ConsoleChatMessage, tuple["ExchangeCapture", ...]]
+        ] = []
+        live_full_keys: set[tuple[str, str, int]] = set()
+        remaining_run_tags: dict[str, set[str]] = {}
+        remaining_capture_keys: dict[str, set[tuple[str, int, str]]] = {}
+        for message in messages:
+            exchanges = tuple(
+                capture
+                for capture in message.exchanges
+                if capture.capture_detail is not CaptureDetail.FULL
+            )
+            persisted_id = message.persisted_message_id or message.id
+            live_full_keys.update(
+                (persisted_id, capture.run_tag, capture.seq)
+                for capture in message.exchanges
+                if capture.capture_detail is CaptureDetail.FULL
+            )
+            if exchanges != message.exchanges:
+                message_swaps.append((message, exchanges))
+            remaining_run_tags[message.id] = {capture.run_tag for capture in exchanges}
+            remaining_capture_keys[message.id] = {
+                (capture.run_tag, capture.seq, capture.status)
+                for capture in exchanges
+            }
+
+        blob_cache = tuple(
+            (
+                message.id,
+                MappingProxyType(
+                    {
+                        key: blob
+                        for key, blob in self._exchange_blob_cache[message.id].items()
+                        if key in remaining_capture_keys[message.id]
+                    }
+                ),
+            )
+            for message in messages
+            if message.id in self._exchange_blob_cache
+        )
+        abandoned_tags = tuple(
+            (
+                message.id,
+                frozenset(
+                    self._abandoned_exchange_run_tags[message.id]
+                    & remaining_run_tags[message.id]
+                ),
+            )
+            for message in messages
+            if message.id in self._abandoned_exchange_run_tags
+        )
+        capture_revisions = ((session, session.capture_revision + 1),)
+        return StagedCapturePurge(
+            session_id=session_id,
+            conversation_id=conversation_id,
+            expected_revision=session.capture_revision,
+            durable_keys=durable_keys,
+            message_swaps=tuple(message_swaps),
+            blob_cache=blob_cache,
+            abandoned_tags=abandoned_tags,
+            capture_revisions=capture_revisions,
+            removed_count=len(durable_keys | live_full_keys),
+        )
+
+    def commit_full_capture_purge(self, stage: StagedCapturePurge) -> int:
+        """Delete durable Full rows, then publish only staged assignments."""
+        session = self._session_or_raise(stage.session_id)
+        if session.capture_revision != stage.expected_revision:
+            raise CapturePurgeStaleError()
+        if not session.ephemeral and stage.conversation_id is not None:
+            deleter = getattr(
+                self.persistence, "delete_full_exchanges_for_conversation", None
+            )
+            if not callable(deleter):
+                raise RuntimeError("Full capture deletion is unavailable.")
+            deleter(
+                stage.conversation_id,
+                expected_count=len(stage.durable_keys),
+            )
+        for message_id, cache in stage.blob_cache:
+            self._exchange_blob_cache[message_id] = cache
+        for message_id, tags in stage.abandoned_tags:
+            self._abandoned_exchange_run_tags[message_id] = tags
+        for message, exchanges in stage.message_swaps:
+            message.exchanges = exchanges
+        for target_session, revision in stage.capture_revisions:
+            target_session.capture_revision = revision
+        return stage.removed_count
+
+    def hydrate_session_capture_policy(self, session_id: str) -> CapturePolicyReadResult:
+        """Hydrate a persisted conversation override into process-local state."""
+        with self._capture_policy_lock:
+            session = self._session_or_raise(session_id)
+            repository = self.capture_policy_repository
+            if session.persisted_conversation_id is None:
+                return CapturePolicyReadResult(CapturePolicyReadStatus.ABSENT, None)
+            if repository is None:
+                result = CapturePolicyReadResult(
+                    CapturePolicyReadStatus.UNAVAILABLE_OR_CORRUPT,
+                    None,
+                )
+            else:
+                try:
+                    result = repository.read(session.persisted_conversation_id)
+                except Exception:
+                    result = CapturePolicyReadResult(
+                        CapturePolicyReadStatus.UNAVAILABLE_OR_CORRUPT,
+                        None,
+                    )
+            if result.status is CapturePolicyReadStatus.FOUND:
+                if result.policy is None:
+                    result = CapturePolicyReadResult(
+                        CapturePolicyReadStatus.UNAVAILABLE_OR_CORRUPT,
+                        None,
+                    )
+                else:
+                    session.capture_detail_override = result.policy.detail
+                    session.capture_policy_save_pending = False
+            elif result.status is CapturePolicyReadStatus.ABSENT:
+                session.capture_detail_override = None
+                session.capture_policy_save_pending = False
+            else:
+                session.capture_detail_override = CaptureDetail.SAFE
+                session.capture_policy_save_pending = True
+            return result
+
+    def _flush_staged_capture_policy(self, session: ConsoleChatSession) -> None:
+        """Best-effort flush of an ephemeral policy after identity publication."""
+        if session.capture_detail_override is None:
+            return
+        repository = self.capture_policy_repository
+        if repository is None or session.persisted_conversation_id is None:
+            session.capture_policy_save_pending = True
+            return
+        result = repository.replace(
+            session.persisted_conversation_id,
+            session.capture_detail_override,
+        )
+        session.capture_policy_save_pending = result.status not in {
+            CapturePolicyWriteStatus.STORED,
+            CapturePolicyWriteStatus.UNCHANGED,
+        }
+
+    def set_session_next_capture_detail(
+        self,
+        session_id: str,
+        detail: CaptureDetail | None,
+        *,
+        expected_policy_revision: int,
+    ) -> tuple[CaptureDetail | None, int, int]:
+        """Arm or disarm a next-send detail behind the shared revision fence."""
+        if detail is not None and not isinstance(detail, CaptureDetail):
+            raise TypeError("detail must be CaptureDetail or None")
+        with self._capture_policy_lock:
+            session = self._session_or_raise(session_id)
+            if (
+                self._capture_policy_mutation is not None
+                or self._capture_policy_revision != expected_policy_revision
+            ):
+                raise CapturePolicyStaleError
+            session.next_capture_detail = detail
+            session.next_capture_detail_revision += 1
+            self._capture_policy_revision += 1
+            return (
+                session.next_capture_detail,
+                session.next_capture_detail_revision,
+                self._capture_policy_revision,
+            )
+
+    def consume_session_next_capture_detail(
+        self,
+        session_id: str,
+        *,
+        expected_next_revision: int,
+    ) -> bool:
+        """Clear only the exact next-send slot captured by admission."""
+        with self._capture_policy_lock:
+            session = self._session_or_raise(session_id)
+            if session.next_capture_detail_revision != expected_next_revision:
+                return False
+            session.next_capture_detail = None
+            session.next_capture_detail_revision += 1
+            self._capture_policy_revision += 1
+            return True
+
+    def replace_session_capture_override(
+        self,
+        session_id: str,
+        detail: CaptureDetail | None,
+        *,
+        expected_policy_revision: int,
+        save_pending: bool = False,
+    ) -> int:
+        """Replace future conversation detail behind the shared revision fence."""
+        if detail is not None and not isinstance(detail, CaptureDetail):
+            raise TypeError("detail must be CaptureDetail or None")
+        with self._capture_policy_lock:
+            session = self._session_or_raise(session_id)
+            if (
+                self._capture_policy_mutation is not None
+                or self._capture_policy_revision != expected_policy_revision
+            ):
+                raise CapturePolicyStaleError
+            session.capture_detail_override = detail
+            session.capture_policy_save_pending = bool(save_pending)
+            self._capture_policy_revision += 1
+            return self._capture_policy_revision
+
+    def disarm_all_next_capture_details(self) -> int:
+        """Disarm every live one-shot after the global kill switch turns off."""
+        with self._capture_policy_lock:
+            if self._capture_policy_mutation is not None:
+                raise CapturePolicyStaleError
+            changed = False
+            for session in self._sessions.values():
+                if session.next_capture_detail is None:
+                    continue
+                session.next_capture_detail = None
+                session.next_capture_detail_revision += 1
+                changed = True
+            if changed:
+                self._capture_policy_revision += 1
+            return self._capture_policy_revision
+
+    def advance_capture_policy_revision(
+        self,
+        *,
+        expected_policy_revision: int,
+        disarm_next: bool = False,
+    ) -> int:
+        """Advance the shared fence for a non-session policy mutation."""
+        with self._capture_policy_lock:
+            if (
+                self._capture_policy_mutation is not None
+                or self._capture_policy_revision != expected_policy_revision
+            ):
+                raise CapturePolicyStaleError
+            if disarm_next:
+                for session in self._sessions.values():
+                    if session.next_capture_detail is None:
+                        continue
+                    session.next_capture_detail = None
+                    session.next_capture_detail_revision += 1
+            self._capture_policy_revision += 1
+            return self._capture_policy_revision
+
+    def reserve_capture_policy_mutation(
+        self, *, expected_policy_revision: int
+    ) -> object:
+        """Reserve the shared policy owner before an external durable write."""
+        with self._capture_policy_lock:
+            if (
+                self._capture_policy_mutation is not None
+                or self._capture_policy_revision != expected_policy_revision
+            ):
+                raise CapturePolicyStaleError
+            token = object()
+            self._capture_policy_mutation = token
+            self._capture_policy_revision += 1
+            return token
+
+    def publish_reserved_capture_safe(
+        self,
+        token: object,
+        *,
+        session_id: str,
+        save_pending: bool,
+    ) -> int:
+        """Publish an explicit Safe override while retaining mutation ownership."""
+        with self._capture_policy_lock:
+            if self._capture_policy_mutation is not token:
+                raise CapturePolicyStaleError
+            session = self._session_or_raise(session_id)
+            session.capture_detail_override = CaptureDetail.SAFE
+            session.capture_policy_save_pending = bool(save_pending)
+            return self._capture_policy_revision
+
+    def finish_capture_policy_mutation(
+        self,
+        token: object,
+        *,
+        session_id: str | None = None,
+        detail: CaptureDetail | None = None,
+        save_pending: bool = False,
+        disarm_next: bool = False,
+    ) -> int:
+        """Publish a reserved durable mutation and release its owner."""
+        with self._capture_policy_lock:
+            if self._capture_policy_mutation is not token:
+                raise CapturePolicyStaleError
+            try:
+                if session_id is not None:
+                    session = self._session_or_raise(session_id)
+                    session.capture_detail_override = detail
+                    session.capture_policy_save_pending = bool(save_pending)
+                if disarm_next:
+                    for session in self._sessions.values():
+                        if session.next_capture_detail is not None:
+                            session.next_capture_detail = None
+                            session.next_capture_detail_revision += 1
+                return self._capture_policy_revision
+            finally:
+                self._capture_policy_mutation = None
+
+    def abandon_capture_policy_mutation(self, token: object) -> int:
+        """Release a failed reserved mutation without publishing policy state."""
+        with self._capture_policy_lock:
+            if self._capture_policy_mutation is not token:
+                raise CapturePolicyStaleError
+            self._capture_policy_mutation = None
+            return self._capture_policy_revision
 
     def set_session_one_shot_prefill(
         self, session_id: str, prefill: str | None
@@ -7902,7 +8336,15 @@ class ConsoleChatStore:
         is keyed the same way, so a repeat flush of the same key is always
         harmless.
         """
+        with self._capture_quiescence_lock:
+            self._attach_message_exchanges_locked(message_id, captures)
+
+    def _attach_message_exchanges_locked(
+        self, message_id: str, captures: Sequence["ExchangeCapture"]
+    ) -> None:
         message = self._message_or_raise(message_id)
+        if self._message_session_index[message_id] in self._capture_quiescent_sessions:
+            return
         abandoned = message.id in self._variant_restored_message_ids
         merged = {(c.run_tag, c.seq): c for c in message.exchanges}
         for capture in captures:
@@ -7916,9 +8358,11 @@ class ConsoleChatStore:
             sorted(merged.values(), key=lambda c: (c.run_tag, c.seq))
         )
         if abandoned:
-            self._abandoned_exchange_run_tags.setdefault(message.id, set()).update(
-                c.run_tag for c in captures
-            )
+            abandoned_tags = self._abandoned_exchange_run_tags.get(message.id)
+            if not isinstance(abandoned_tags, set):
+                abandoned_tags = set(abandoned_tags or ())
+                self._abandoned_exchange_run_tags[message.id] = abandoned_tags
+            abandoned_tags.update(c.run_tag for c in captures)
         if message.status not in {"pending", "streaming"}:
             self._persist_exchanges_only(message)
 
@@ -9526,6 +9970,13 @@ class ConsoleChatStore:
         or nothing to write bails out silently rather than falling back to
         ``_persist_existing_message``.
         """
+        with self._capture_quiescence_lock:
+            self._persist_exchanges_only_locked(message)
+
+    def _persist_exchanges_only_locked(self, message: ConsoleChatMessage) -> None:
+        session_id = self._message_session_index.get(message.id)
+        if session_id in self._capture_quiescent_sessions:
+            return
         if self.persistence is None:
             return
         if message.persisted_message_id is None or not message.exchanges:
@@ -9552,7 +10003,10 @@ class ConsoleChatStore:
             # "stopped" snapshot superseded by a later non-"stopped"
             # capture, which is a STATUS change and so is naturally a cache
             # miss (a different key) rather than a stale hit.
-            blob_cache = self._exchange_blob_cache.setdefault(message.id, {})
+            blob_cache = self._exchange_blob_cache.get(message.id)
+            if not isinstance(blob_cache, dict):
+                blob_cache = dict(blob_cache or ())
+                self._exchange_blob_cache[message.id] = blob_cache
             current_keys: set[tuple[str, int, str]] = set()
             rows = []
             for c in message.exchanges:
@@ -9568,6 +10022,7 @@ class ConsoleChatStore:
                         "seq": c.seq,
                         "status": c.status,
                         "abandoned": c.run_tag in abandoned_tags,
+                        "capture_detail": c.capture_detail.value,
                         "capture_blob": blob,
                         "created_at": c.created_at,
                     }
@@ -9579,7 +10034,10 @@ class ConsoleChatStore:
                 del blob_cache[stale_key]
             writer(message_id=message.persisted_message_id, rows=rows)
         except Exception as exc:
-            logger.bind(message_id=message.id, error=repr(exc)).warning(
+            logger.bind(
+                message_id=message.id,
+                error_type=type(exc).__name__,
+            ).warning(
                 "exchange_flush_failed"
             )
 

@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import contextlib
 from dataclasses import dataclass
+from types import SimpleNamespace
 
 import pytest
 from textual.app import App, ComposeResult
@@ -19,6 +20,7 @@ from textual.containers import VerticalScroll
 from textual.widgets import DataTable, Input, Static
 
 from tldw_chatbook.Chat.provider_usage import ProviderUsage
+from tldw_chatbook.Chat.console_exchange_capture import CaptureDetail
 from tldw_chatbook.Chat.trajectory import (
     TrajectoryRecord,
     TrajectorySnapshot,
@@ -588,6 +590,27 @@ def test_footer_hints_match_bindings_exactly() -> None:
     assert hint_keys == binding_keys, (
         f"Footer hints {hint_keys} are not 1:1 with BINDINGS {binding_keys}"
     )
+
+
+def test_live_trace_title_shows_frozen_and_future_capture_detail() -> None:
+    policy = SimpleNamespace(
+        enabled=True,
+        effective=SimpleNamespace(detail=CaptureDetail.FULL),
+        active_run_detail=CaptureDetail.SAFE,
+    )
+    bindings = SimpleNamespace(read=lambda: policy)
+    screen = TrajectoryScreen(base_snapshot(), capture_policy_bindings=bindings)
+
+    title = screen._title_text()
+    assert "Future exchange capture: Full · c Change" in title
+    assert "Active run frozen at Safe" in title
+
+
+def test_imported_trace_capture_policy_is_explicitly_unavailable() -> None:
+    screen = TrajectoryScreen(base_snapshot(), shared_trace=True)
+
+    assert "Capture policy unavailable for imported Trace" in screen._title_text()
+    assert screen.check_action("capture_policy", ()) is False
 
 
 def test_inspector_renders_feedback_payload_not_a_phantom_tool() -> None:
