@@ -1,10 +1,10 @@
 # ADR-093: Ship immutable tiktoken tables for offline runtime use
 
-Status: Accepted
+Status: Proposed — blocked on encoding-table redistribution evidence
 
 Date: 2026-08-27
 
-Related Task: [TASK-2526](../tasks/task-2526%20-%20tiktoken-is-not-a-declared-dependency.md)
+Related Task: [TASK-2526](../tasks/task-2526%20-%20Ship-tiktoken-and-its-encoding-tables-for-offline-token-estimates.md)
 
 Related Spec: [Offline tiktoken Runtime Assets](../../Docs/superpowers/specs/2026-08-27-offline-tiktoken-runtime-assets-design.md)
 
@@ -27,25 +27,51 @@ test workload.
 
 ## Decision
 
+This technical decision is not accepted for implementation until the
+redistribution gate in item 3 is satisfied or a narrower design is approved.
+
 1. GPT-2's two data-gym files and the r50k, p50k, cl100k, and o200k BPE tables
    are reviewed application runtime assets under
    `tldw_chatbook/assets/tiktoken_cache/`.
 2. The files retain tiktoken's native `sha1(source URL)` cache names. A checked
-   manifest records readable names, source URLs, tiktoken's expected content
-   hashes, and the update procedure.
-3. The exact reviewed inventory ships in both source and wheel artifacts. The
-   installed package is an immutable read owner under ADR-032; Chatbook never
-   seeds, repairs, or writes these assets at runtime.
-4. At package import, Chatbook uses `setdefault` to point
-   `TIKTOKEN_CACHE_DIR` at the bundled directory. This is early enough for both
-   token estimates and direct chunking-engine imports.
-5. A caller-supplied `TIKTOKEN_CACHE_DIR` remains authoritative. That override
-   may intentionally restore tiktoken's writable-cache and download behavior.
-6. The default bundle is closed and deterministic. A new encoding requires an
-   explicit Chatbook asset update; absent encodings follow the consuming
-   caller's existing error or approximation policy rather than silently
-   expanding the runtime network surface.
-7. Tests and production use one asset inventory. Core-dependency tests never
+   manifest pins tiktoken `0.14.0`, readable names, source URLs, expected
+   content hashes, constructor/cache API assumptions, and the update procedure.
+   The core dependency is exactly pinned to the same reviewed version.
+3. Each table requires a documented redistribution basis before it can ship.
+   Tiktoken's MIT package license is not treated as permission for separately
+   hosted BPE blobs by inference alone. In
+   [tiktoken issue #92](https://github.com/openai/tiktoken/issues/92#issuecomment-1497875652),
+   an OpenAI collaborator stated that the repository license applies to the
+   encoding files. A follow-up requested the statement in the license or
+   another non-issue artifact, and no such clarification is visible there. The
+   Chatbook repository owner has not yet accepted the issue comment alone as
+   sufficient release evidence. The GPT-2 pair has a clear
+   [`openai/gpt-2` MIT source](https://github.com/openai/gpt-2/blob/master/LICENSE),
+   while the release evidence for r50k, p50k, cl100k, and o200k remains
+   unaccepted. Source URLs and hashes prove provenance and integrity, not
+   redistribution permission. Once accepted, the exact tables, manifest,
+   notices, and compatibility conclusion are mandatory in source and wheel
+   artifacts.
+4. The installed package is an immutable read owner under ADR-032. The
+   canonical release checker requires the exact cache inventory, rejects
+   unexpected cache entries, and verifies source-built and sdist-rebuilt wheels
+   from read-only installed trees outside the checkout.
+5. At package import, when neither supported cache environment variable was
+   supplied, Chatbook points `TIKTOKEN_CACHE_DIR` at the bundle and replaces
+   tiktoken's reviewed `read_file_cached` seam with a bundled-only reader. The
+   reader verifies the requested table and hash and rejects missing, corrupt,
+   or unmanifested data before any fetch, delete, directory creation, or write.
+6. A pre-import caller-supplied `TIKTOKEN_CACHE_DIR` or legacy
+   `DATA_GYM_CACHE_DIR` bypasses the guard and remains byte-for-byte
+   authoritative, intentionally restoring upstream writable-cache/download
+   behavior.
+7. The default bundle is closed and deterministic. A new encoding requires an
+   explicit Chatbook asset update. Token estimates log the load failure and use
+   their existing character approximation; the `Chunk_Lib` tokens method keeps
+   ADR-073's real-tokenizer probe and raises before word-approximate chunks.
+   Direct vendored-engine imports retain upstream fallback behavior and are not
+   the supported Chatbook chunking boundary; vendored files remain unmodified.
+8. Tests and production use one asset inventory. Core-dependency tests never
    skip when `tiktoken` is missing, and tier-specific fallback tests isolate the
    global estimate cache before changing tokenizer availability.
 
@@ -70,14 +96,19 @@ solve the user-visible offline runtime gap.
 
 ## Consequences
 
-- Distribution size grows by the reviewed table inventory, roughly eight
+If this proposal passes the redistribution gate and is accepted:
+
+- Distribution size will grow by the reviewed table inventory, roughly eight
   megabytes.
-- Standard token estimates and GPT-2 token chunking no longer require first-use
+- Standard token estimates and GPT-2 token chunking will no longer require first-use
   network access.
-- The application package sets one additional process environment default, but
-  never overrides an explicit caller value.
-- New tiktoken encodings do not become available merely by upgrading the
+- The application package will set one additional process environment default, but
+  never overrides a pre-import explicit caller value.
+- The design intentionally depends on tiktoken's reviewed internal load seam;
+  dependency upgrades require a compatibility and asset audit before widening
+  the exact pin.
+- New tiktoken encodings will not become available merely by upgrading the
   dependency; the asset inventory must be reviewed and updated in the same
   change.
-- The existing character estimator remains the degraded path when `tiktoken`
+- The existing character estimator will remain the degraded path when `tiktoken`
   itself is unavailable.

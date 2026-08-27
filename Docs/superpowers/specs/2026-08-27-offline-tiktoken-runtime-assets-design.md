@@ -1,6 +1,6 @@
 # Offline tiktoken Runtime Assets Design
 
-**Task:** [TASK-2526](../../../backlog/tasks/task-2526%20-%20tiktoken-is-not-a-declared-dependency.md)
+**Task:** [TASK-2526](../../../backlog/tasks/task-2526%20-%20Ship-tiktoken-and-its-encoding-tables-for-offline-token-estimates.md)
 
 **Decision:** [ADR-093](../../../backlog/decisions/093-offline-tiktoken-runtime-assets.md)
 
@@ -9,6 +9,9 @@
 Make real token estimates and token-based chunking work without network access
 in a normal Chatbook installation, while preserving an explicit user cache
 override and the existing no-`tiktoken` character fallback.
+
+**Status:** Paused. No runtime assets, dependency pin, loader guard, packaging
+check, or production/test change described below has been implemented.
 
 ## Context
 
@@ -23,7 +26,27 @@ also explicitly maps legacy models to `p50k_base` and `r50k_base`, so a complete
 runtime inventory must include those tables even though the current test sample
 did not request them.
 
-## Chosen Design
+## Proposed Design
+
+### Redistribution gate
+
+Implementation is blocked on documenting redistribution permission for every
+bundled table. The MIT license in the `tiktoken` repository clearly covers the
+Python package, but it does not explicitly identify the separately hosted BPE
+table blobs as licensed works. OpenAI's public tiktoken issue #92 records the
+[question and a collaborator's answer](https://github.com/openai/tiktoken/issues/92#issuecomment-1497875652)
+that the repository license applies to the encoding files. A follow-up asked
+for that statement in the repository license or another non-issue artifact;
+no such clarification is visible in the issue. The Chatbook repository owner
+has not yet accepted the issue comment alone as sufficient release evidence.
+The GPT-2 vocabulary pair has a clear
+[MIT source in `openai/gpt-2`](https://github.com/openai/gpt-2/blob/master/LICENSE);
+that evidence does not automatically cover r50k, p50k, cl100k, or o200k.
+
+No non-GPT-2 table may be copied into a release artifact until the repository
+owner records a defensible redistribution basis. Source URLs and integrity
+hashes establish provenance, not permission. If that basis cannot be
+established, the design must be narrowed and re-approved before implementation.
 
 ### Immutable cache ownership
 
@@ -33,31 +56,69 @@ entries. The directory is a tiktoken-native cache: each filename remains
 `sha1(source URL)`. A human-readable manifest records encoding name, source URL,
 tiktoken's expected SHA-256, and opaque cache filename.
 
-The exact six binary files and manifest are declared in `pyproject.toml` and
-`MANIFEST.in`. They are immutable installed-distribution resources under
-ADR-032; Chatbook never writes beneath its package root.
+The exact six binary files and manifest will be declared in `pyproject.toml`
+and `MANIFEST.in`. The canonical `Packaging/check_manifest.py` contract will
+also require every table, manifest, and notice, and reject unexpected entries
+under the cache prefix. They will be immutable installed-distribution resources
+under ADR-032; Chatbook will never write beneath its package root.
+
+The manifest will pin tiktoken `0.14.0`, the constructor URL and expected
+SHA-256 for every table, and the GPT-2 two-file hashes. `pyproject.toml` will
+pin the same reviewed dependency version because the design relies on tiktoken's
+`read_file_cached(blobpath, expected_hash)` seam, cache-key algorithm, and model
+registry. An upgrade must re-audit those APIs, constructors, URLs, hashes, and
+model-to-encoding mappings before changing the pin.
+
+After the redistribution gate is satisfied, the application ships the exact
+required notices and an asset-provenance record naming each source, hash, and
+redistribution basis. Packaging checks make those records mandatory in sdist
+and wheel. Compatibility with Chatbook's AGPL-3.0-or-later distribution must be
+documented rather than inferred from tiktoken's package license.
 
 ### Runtime selection
 
-`tldw_chatbook/__init__.py` sets `TIKTOKEN_CACHE_DIR` to the bundled directory
-with `os.environ.setdefault`. This happens before any Chatbook submodule can
-load a tiktoken encoding and covers both `Utils/token_counter.py` and direct
-imports of the vendored chunking engine.
+At package import, a small `Utils/tiktoken_runtime.py` bootstrap will first record
+whether `TIKTOKEN_CACHE_DIR` or legacy `DATA_GYM_CACHE_DIR` was supplied by the
+caller. If either exists, it does nothing: tiktoken retains its upstream
+writable-cache and download behavior byte-for-byte.
 
-An environment value supplied before package import, including a custom
-writable cache, remains authoritative. The default path never downloads: an
-encoding absent from the reviewed bundle fails tiktoken resolution and follows
-the caller's existing error/fallback policy. Supporting a new encoding requires
-an intentional asset and manifest update or an explicit cache override.
+With no override, the bootstrap will point `TIKTOKEN_CACHE_DIR` at the bundled
+directory and replace tiktoken `0.14.0`'s internal `read_file_cached` seam with
+a bundled-only reader. The reader derives the native SHA-1 cache key from the
+requested URL, reads that exact package file, verifies tiktoken's supplied
+SHA-256, and returns bytes. Missing, corrupt, or unmanifested entries raise a
+specific runtime error before any fetch, delete, directory creation, or write.
+This happens before any Chatbook submodule can load an encoding and covers both
+`Utils/token_counter.py` and direct vendored-engine imports.
+
+The guard is installed only for the default bundle. Supporting a new encoding
+requires an intentional asset/manifest update or a pre-import explicit cache
+override. Import-time tests pin the tiktoken seam signature so an incompatible
+dependency cannot silently bypass the guard.
+
+### Failure matrix
+
+| Condition | Token estimates | `Chunk_Lib` tokens method | Direct vendored engine |
+|---|---|---|---|
+| `tiktoken` library absent | Existing conservative character estimate | Existing real-tokenizer probe may use installed Transformers; otherwise raises `ChunkingError` before approximate chunks | Upstream engine behavior is unchanged and may select Transformers or its word fallback; it is not the supported Chatbook service boundary |
+| Bundled table missing/corrupt | Guard raises before I/O; `get_tiktoken_encoding` logs and the existing OpenAI character approximation is returned | Probe may use installed Transformers; otherwise ADR-073 raises `ChunkingError` | Upstream engine may select Transformers or its word fallback; no fetch or package mutation occurs |
+| Unknown model with a supported table | Existing cl100k model fallback remains real tokenization | Engine's existing cl100k fallback remains real tokenization | Same upstream cl100k behavior |
+| New encoding absent from bundle | Same explicit logged approximation as a missing table | Same fail-closed compatibility behavior | Same upstream fallback behavior, without network |
+| Explicit pre-import cache override | Original tiktoken cache/download/error behavior | Existing real-tokenizer enforcement | Original upstream engine behavior |
+
+The direct engine is vendored internals, not the public Chatbook chunking
+contract; ADR-073's no-word-approximation guarantee remains enforced at the
+`Chunk_Lib` compatibility/service boundary. This task does not edit vendored
+engine files.
 
 ### Test ownership
 
-`Tests/conftest.py` points its cache guard at the same runtime asset directory;
+`Tests/conftest.py` will point its cache guard at the same runtime asset directory;
 there is no second test-only copy. The existing cache-integrity test expands to
 all six entries and continues proving that tokenization succeeds while the
 network guard is active.
 
-`Tests/Chat/test_token_counter.py` stops skipping the real tokenizer test when
+`Tests/Chat/test_token_counter.py` will stop skipping the real tokenizer test when
 the core dependency is absent. Character-fallback tests explicitly disable
 both tokenizer tiers and clear `_ESTIMATE_CACHE` before and after the tier
 override. This fixes the clean-dev baseline failure without changing production
@@ -65,10 +126,19 @@ cache behavior: the failure came from a test that claimed to exercise fallback
 while actually using tiktoken, then leaked that cached result into the next
 fixture.
 
-Installed-distribution coverage verifies that the exact files exist in both
+Installed-distribution coverage will verify that the exact files exist in both
 sdist and wheel, imports Chatbook without a cache override, prohibits network
 reads, and successfully loads every supported encoding from the installed
-package.
+package. Missing- and corrupt-entry mutations prove zero fetches, zero package
+tree changes, and an explicit error. Separate subprocesses prove both package
+and direct-engine imports install the guard before encoding resolution, while a
+pre-set override remains unchanged.
+
+Artifact tests will cover both a source-built wheel and a wheel rebuilt from the
+sdist. Each is installed outside the checkout, made read-only, and exercised
+with checkout paths excluded so source files cannot satisfy missing assets.
+Wheel and PKG-INFO metadata must retain the exact mandatory
+`tiktoken==0.14.0` requirement.
 
 ## Alternatives Considered
 
@@ -91,9 +161,12 @@ Test observation alone cannot prove coverage for models absent from the sample.
 ## Documentation and Compatibility
 
 The user guide will state that standard tokenization is offline and bundled,
-that `TIKTOKEN_CACHE_DIR` overrides the bundle, and that newly introduced
-encodings require a Chatbook update or explicit cache configuration. No config
-schema, database migration, UI setting, or new dependency is introduced.
+that pre-import `TIKTOKEN_CACHE_DIR`/`DATA_GYM_CACHE_DIR` overrides the bundle,
+and that newly introduced encodings require a Chatbook update or explicit cache
+configuration. The asset manifest documents the upstream version, source URLs,
+expected hashes, redistribution notices, and repeatable update procedure. No
+config schema, database migration, or UI setting is introduced; the existing
+dependency becomes exactly pinned to its reviewed runtime contract.
 
 ## Verification
 
@@ -101,7 +174,11 @@ schema, database migration, UI setting, or new dependency is introduced.
 - Run focused token-counter and vendored-cache tests.
 - Run focused chunking token-strategy tests using GPT-2.
 - Build sdist and wheel, inspect the exact asset inventory, and tokenize from
-  the installed wheel with network access prohibited.
+  both source-built and sdist-rebuilt installed wheels with network access
+  prohibited and the package tree read-only.
+- Mutation-prove missing/corrupt assets, unexpected artifact entries, required
+  notices, explicit override authority, dependency metadata, and checkout
+  isolation.
 - Run Ruff on changed Python files and `git diff --check`.
 
 ## ADR Check
