@@ -149,3 +149,70 @@ async def test_compaction_reaches_a_terminal_answer_when_the_gateway_hangs():
     assert ok is False
     assert message, "a blocked compaction must say something actionable"
     assert "_" not in message, f"raw internal code leaked: {message!r}"
+
+
+# ---------------------------------------------------------------------------
+# Qodo review of PR #2131 (bug): bounding continuation replay made
+# _resolve_for_send_bounded return a not-ready stand-in instead of raising,
+# and the caller's single combined condition relabelled that timeout as
+# "Prepared destination changed." — the wrong reason, and it threw away the
+# recovery guidance the bound exists to deliver.
+# ---------------------------------------------------------------------------
+
+
+def _resolution(**kwargs):
+    from types import SimpleNamespace
+
+    return SimpleNamespace(**kwargs)
+
+
+def test_prepared_continuation_surfaces_timeout_copy_not_destination_changed():
+    controller = ConsoleChatController(
+        store=ConsoleChatStore(), provider_gateway=_HangingGateway()
+    )
+    timeout_copy = (
+        "Provider validation timed out. Check the server or your connection, "
+        "then try again."
+    )
+    copy = controller._prepared_continuation_block_copy(
+        _resolution(ready=False, visible_copy=timeout_copy),
+        expected_destination=object(),
+    )
+    assert "timed out" in copy, f"timeout guidance was discarded: {copy!r}"
+    assert "destination changed" not in copy.lower()
+
+
+def test_prepared_continuation_not_ready_without_copy_still_explains_itself():
+    controller = ConsoleChatController(
+        store=ConsoleChatStore(), provider_gateway=_HangingGateway()
+    )
+    copy = controller._prepared_continuation_block_copy(
+        _resolution(ready=False, visible_copy=""), expected_destination=object()
+    )
+    assert copy, "a blocked continuation must always say something"
+    assert "_" not in copy, f"raw internal code leaked: {copy!r}"
+
+
+def test_prepared_continuation_still_reports_a_real_destination_change():
+    controller = ConsoleChatController(
+        store=ConsoleChatStore(), provider_gateway=_HangingGateway()
+    )
+    copy = controller._prepared_continuation_block_copy(
+        _resolution(ready=True, resolved_destination=object()),
+        expected_destination=object(),
+    )
+    assert copy == "Prepared destination changed."
+
+
+def test_prepared_continuation_allows_an_unchanged_destination():
+    from tldw_chatbook.Chat.console_chat_controller import ConsoleResolvedDestination
+
+    controller = ConsoleChatController(
+        store=ConsoleChatStore(), provider_gateway=_HangingGateway()
+    )
+    destination = ConsoleResolvedDestination.__new__(ConsoleResolvedDestination)
+    copy = controller._prepared_continuation_block_copy(
+        _resolution(ready=True, resolved_destination=destination),
+        expected_destination=destination,
+    )
+    assert copy == "", f"an unchanged destination must proceed, got {copy!r}"

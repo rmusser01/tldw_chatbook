@@ -4600,6 +4600,38 @@ class ConsoleChatController:
         self._preparation_outcomes[preparation_id] = outcome
         return await self._continue_prepared_submission(preparation_id)
 
+    def _prepared_continuation_block_copy(
+        self, resolution: object, expected_destination: object
+    ) -> str:
+        """Why a prepared continuation must not proceed, or "" to proceed.
+
+        Qodo review of PR #2131: bounding this path made the resolver
+        RETURN a not-ready stand-in on timeout rather than raise, and the
+        caller's single combined condition reported every such case as
+        "Prepared destination changed." — the wrong reason, and it dropped
+        the recovery guidance the bound exists to deliver. Not-ready and
+        destination-changed are now distinct answers; both remain
+        retryable (the pause kind's action set is unchanged).
+
+        Args:
+            resolution: The gateway resolution (or the bounded stand-in).
+            expected_destination: The destination frozen at preparation.
+
+        Returns:
+            User-facing refusal copy, or "" when the continuation may run.
+        """
+        if not getattr(resolution, "ready", False):
+            return self._blocked_visible_copy(
+                str(getattr(resolution, "visible_copy", "") or "").strip()
+            )
+        destination = getattr(resolution, "resolved_destination", None)
+        if (
+            not isinstance(destination, ConsoleResolvedDestination)
+            or destination != expected_destination
+        ):
+            return "Prepared destination changed."
+        return ""
+
     async def _continue_prepared_submission(
         self, preparation_id: str
     ) -> ConsoleSubmitResult:
@@ -4620,18 +4652,15 @@ class ConsoleChatController:
                 self._preparation_by_id(preparation_id),
                 "Prepared destination could not be verified.",
             )
-        destination = getattr(resolution, "resolved_destination", None)
-        if (
-            not getattr(resolution, "ready", False)
-            or not isinstance(destination, ConsoleResolvedDestination)
-            or destination != preparation.execution_context.resolved_destination
-        ):
+        block_copy = self._prepared_continuation_block_copy(
+            resolution, preparation.execution_context.resolved_destination
+        )
+        if block_copy:
             self._pause_prepared_commit(
                 preparation_id, ConsolePreparationPauseKind.DESTINATION_CHANGED
             )
             return self._prepared_action_refusal(
-                self._preparation_by_id(preparation_id),
-                "Prepared destination changed.",
+                self._preparation_by_id(preparation_id), block_copy
             )
         current = self._preparation_by_id(preparation_id)
         if current is not None and current.state is ConsoleTurnPreparationState.PAUSED:

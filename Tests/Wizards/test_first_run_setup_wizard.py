@@ -12918,3 +12918,86 @@ async def test_show_all_rebuilds_keep_the_selected_theme_and_card_pressed():
         card_pressed = appearance.query_one("#setup-splash-choice", RadioSet).pressed_button
         assert card_pressed is not None, "no card row pressed after show-all"
         assert getattr(card_pressed, "_card_name", "") == chosen_card_name
+
+
+# ---------------------------------------------------------------------------
+# Qodo review of PR #2131 (testability): the consent test above stubs
+# request_model_catalog_refresh, so it only proves SummaryStep.commit calls
+# *a* callback. These exercise the real boundary — the container's forwarder
+# and the app's public seam — including the dispatch configuration that
+# makes the wizard path and the Console modal mutually exclusive.
+# ---------------------------------------------------------------------------
+
+
+def test_refresh_model_catalogs_now_dispatches_the_shared_exclusive_worker():
+    from tldw_chatbook.app import TldwCli
+    from tldw_chatbook.Constants import MODEL_CATALOG_REFRESH_WORKER_GROUP
+
+    calls: list[dict] = []
+
+    class _App:
+        _startup_model_catalog_refresh_scheduled = False
+
+        def run_worker(self, work, **kwargs):
+            calls.append({"work": work, **kwargs})
+
+        async def _refresh_model_catalogs(self):  # pragma: no cover - identity only
+            return None
+
+        refresh_model_catalogs_now = (
+            TldwCli.refresh_model_catalogs_now  # the real implementation
+        )
+
+    app = _App()
+    app.refresh_model_catalogs_now()
+
+    assert len(calls) == 1, "consent must dispatch exactly one refresh"
+    dispatched = calls[0]
+    assert dispatched["work"] == app._refresh_model_catalogs
+    assert dispatched["exclusive"] is True
+    # Same group as the Console modal's allow path, so the two can never
+    # run concurrently — and it comes from the shared constant, not a
+    # hand-typed string.
+    assert dispatched["group"] == MODEL_CATALOG_REFRESH_WORKER_GROUP
+    # The startup path must not then queue a second refresh this launch.
+    assert app._startup_model_catalog_refresh_scheduled is True
+
+
+@pytest.mark.asyncio
+async def test_summary_consent_reaches_the_app_seam_through_the_real_chain():
+    """No stubbed forwarder: Summary -> container -> app_instance."""
+    from textual.widgets import Checkbox
+
+    reached: list[str] = []
+
+    class _AppInstance:
+        app_config: dict = {}
+
+        def refresh_model_catalogs_now(self) -> None:
+            reached.append("app")
+
+    wizard = _summary_wizard_mock()
+    wizard.app_instance = _AppInstance()
+    # The real forwarder, bound to our fake container.
+    wizard.request_model_catalog_refresh = (
+        SetupWizardContainer.request_model_catalog_refresh.__get__(wizard)
+    )
+    step = SummaryStep(
+        wizard=wizard,
+        config=WizardStepConfig(id="summary", title="Summary", step_number=9),
+        load_config=lambda: {
+            "api_settings": {"openai": {"api_key": "sk-x"}},
+            "chat_defaults": {"provider": "OpenAI", "model": "gpt-5.6-terra"},
+        },
+        rag_deps_installed=lambda: False,
+    )
+    app = _StepHost(step)
+    async with app.run_test(size=(120, 40)) as pilot:
+        await pilot.pause()
+        step.on_show()
+        await pilot.pause(0.2)
+        step.query_one("#setup-summary-model-catalog-consent", Checkbox).value = True
+        ok, error = await step.commit()
+        assert ok, error
+
+    assert reached == ["app"], "consent never reached the app's refresh seam"
