@@ -554,16 +554,38 @@ class ShadowRepo:
                 f":(literal,exclude){rel}" for rel in nested_unexcludable
             )
             self._run(*add_args)
-            if exact_paths:
-                late_oversize = self._drop_new_force_paths_over_cap(exact_paths)
-                self.last_oversize_excluded = tuple(
-                    dict.fromkeys((*self.last_oversize_excluded, *late_oversize))
-                )
             for rel in unexcludable:
                 self._run(
                     "rm", "--cached", "--ignore-unmatch", "--quiet", "--", rel,
                     check=False,
                 )
+            if force_paths:
+                final_paths = self._exact_force_paths(force_paths)
+                if final_paths:
+                    tip = self.tip()
+                    new_final_paths = {
+                        rel
+                        for rel in final_paths
+                        if not tip
+                        or not self._z_tokens(
+                            "ls-tree",
+                            "-z",
+                            "--name-only",
+                            tip,
+                            "--",
+                            f":(literal){rel}",
+                        )
+                    }
+                    self._run("update-index", "--add", "--", *final_paths)
+                    late_oversize = self._drop_new_force_paths_over_cap(final_paths)
+                    included = new_final_paths.difference(late_oversize)
+                    self.last_oversize_excluded = tuple(
+                        rel
+                        for rel in dict.fromkeys(
+                            (*self.last_oversize_excluded, *late_oversize)
+                        )
+                        if rel not in included
+                    )
             had_tip = self.tip() is not None
             if had_tip:
                 staged = self._run("diff", "--cached", "--quiet", check=False)
@@ -704,7 +726,15 @@ class ShadowRepo:
             exact_paths = self._exact_force_paths(paths)
             if exact_paths:
                 self._run("update-index", "--add", "--", *exact_paths)
-                self._drop_new_force_paths_over_cap(exact_paths)
+                removed = self._drop_new_force_paths_over_cap(exact_paths)
+                if removed:
+                    paths_text = ", ".join(removed)
+                    raise ChangeTrackingError(
+                        (
+                            "forced path exceeds change-tracking size cap: "
+                            f"{paths_text}"
+                        )[:400]
+                    )
 
     # -- low-level restore (full revert semantics live in TASK-1974) -------
 
