@@ -129,14 +129,29 @@ SkillReaderMode = Literal["overview", "edit", "trust", "files"]
 
 
 def coerce_skill_reader_mode(value: Any) -> SkillReaderMode:
-    """Return a supported Skills work-pane mode, defaulting to Overview."""
+    """Return a supported Skills work-pane mode, defaulting to Overview.
+
+    Args:
+        value: Candidate reader-mode value.
+
+    Returns:
+        The supported mode, or ``"overview"`` for an unsupported value.
+    """
     if value in {"edit", "trust", "files"}:
         return value
     return "overview"
 
 
 def skill_review_identity_line(active_review: Mapping[str, Any] | None) -> str:
-    """Identify the exact trust-service snapshot currently under review."""
+    """Identify the exact trust-service snapshot currently under review.
+
+    Args:
+        active_review: Trust-service review snapshot, when one is active.
+
+    Returns:
+        The review generation and digest label, or an empty string when the
+        snapshot has no valid identity.
+    """
     if not isinstance(active_review, Mapping):
         return ""
     generation = active_review.get("manifest_generation")

@@ -579,6 +579,15 @@ class LibrarySkillsTrustHeader(Vertical):
         confirming_reset: bool,
         **kwargs: Any,
     ) -> None:
+        """Initialize the retained Skills trust header.
+
+        Args:
+            has_skills: Whether any Skills are available.
+            blocked_count: Number of Skills currently blocked by trust policy.
+            trust_posture: Aggregate trust-store posture.
+            confirming_reset: Whether to show the destructive reset confirmation.
+            **kwargs: Additional arguments forwarded to ``Vertical``.
+        """
         super().__init__(**kwargs)
         self.has_skills = has_skills
         self.blocked_count = blocked_count
@@ -587,7 +596,11 @@ class LibrarySkillsTrustHeader(Vertical):
         self.styles.height = "auto"
 
     def compose(self) -> ComposeResult:
-        """Render only the posture-dependent header controls."""
+        """Render only the posture-dependent header controls.
+
+        Returns:
+            The trust summary, action, and optional reset controls.
+        """
         if not self.has_skills:
             return
         header = skill_trust_header_line(self.trust_posture, self.blocked_count)
@@ -643,7 +656,14 @@ class LibrarySkillsTrustHeader(Vertical):
         trust_posture: str,
         confirming_reset: bool,
     ) -> None:
-        """Apply a posture result while leaving sibling Skill rows mounted."""
+        """Apply a posture result while leaving sibling Skill rows mounted.
+
+        Args:
+            has_skills: Whether any Skills are available.
+            blocked_count: Number of Skills currently blocked by trust policy.
+            trust_posture: Aggregate trust-store posture.
+            confirming_reset: Whether to show the destructive reset confirmation.
+        """
         values = (has_skills, blocked_count, trust_posture, confirming_reset)
         if values == (
             self.has_skills,

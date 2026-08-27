@@ -30,6 +30,12 @@ class LibrarySkillWorkPane(LibrarySkillsListCanvas):
         reader_mode: SkillReaderMode | str = "overview",
         **kwargs: Any,
     ) -> None:
+        """Initialize the retained Skills work pane.
+
+        Args:
+            reader_mode: Initial Overview, Edit, Trust, or Files projection.
+            **kwargs: Additional arguments forwarded to the Skills list canvas.
+        """
         super().__init__(
             show_editor_trust=False,
             show_editor_files=False,
@@ -40,7 +46,11 @@ class LibrarySkillWorkPane(LibrarySkillsListCanvas):
         self.styles.min_width = 0
 
     def compose(self) -> ComposeResult:
-        """Compose the active task, load state, or explicit reader mode."""
+        """Compose the active task, load state, or explicit reader mode.
+
+        Returns:
+            The widgets for import, loading, empty, or active reader content.
+        """
         if self.import_open:
             yield Static(
                 "Import skills",
@@ -157,7 +167,12 @@ class LibrarySkillWorkPane(LibrarySkillsListCanvas):
         reader_mode: SkillReaderMode | str = "overview",
         **kwargs: Any,
     ) -> None:
-        """Apply the current work projection and recompose only on change."""
+        """Apply the current work projection and recompose only on change.
+
+        Args:
+            reader_mode: Requested Overview, Edit, Trust, or Files projection.
+            **kwargs: Additional state forwarded to the Skills list canvas.
+        """
         requested = coerce_skill_reader_mode(reader_mode)
         if requested == self.reader_mode and all(
             getattr(self, key, object()) == value for key, value in kwargs.items()
