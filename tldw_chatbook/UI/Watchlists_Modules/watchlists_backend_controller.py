@@ -5,6 +5,8 @@ from typing import Any
 
 from loguru import logger
 
+from ...Subscriptions.watchlist_item_page import WatchlistItemPage
+
 
 class WatchlistsBackendController:
     """Route watchlist operations to the active local/server authority."""
@@ -82,6 +84,46 @@ class WatchlistsBackendController:
             self.scope_service.list_items(runtime_backend=backend, **kwargs)
         )
         return [dict(item) for item in list(result or [])]
+
+    async def list_reader_items_page(
+        self, *, runtime_backend: str | None = None, **kwargs: Any
+    ) -> WatchlistItemPage:
+        """Return the typed Reader page without shape coercion.
+
+        Args:
+            runtime_backend: Target backend, normalized before routing.
+            **kwargs: Reader query arguments for the scope service.
+
+        Returns:
+            The exact typed page returned by the scope service.
+        """
+        backend = self._normalize_backend(runtime_backend)
+        return await self._maybe_await(
+            self.scope_service.list_reader_items_page(
+                runtime_backend=backend, **kwargs
+            )
+        )
+
+    async def count_reader_item_arrivals(
+        self, *, runtime_backend: str | None = None, **kwargs: Any
+    ) -> int:
+        """Return the number of matching items newer than the Reader snapshot.
+
+        Args:
+            runtime_backend: Target backend, normalized before routing.
+            **kwargs: Reader query arguments for the scope service.
+
+        Returns:
+            Number of matching arrivals.
+        """
+        backend = self._normalize_backend(runtime_backend)
+        return int(
+            await self._maybe_await(
+                self.scope_service.count_reader_item_arrivals(
+                    runtime_backend=backend, **kwargs
+                )
+            )
+        )
 
     async def create_source(self, *, runtime_backend: str | None = None, payload: dict[str, Any]) -> dict[str, Any]:
         backend = self._normalize_backend(runtime_backend)

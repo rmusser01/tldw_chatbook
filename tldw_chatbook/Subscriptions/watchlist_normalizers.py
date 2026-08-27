@@ -575,6 +575,7 @@ def normalize_watchlist_item(source: str, row: Mapping[str, Any]) -> dict[str, A
         "created_at": row.get("created_at"),
         "updated_at": row.get("updated_at"),
         "published_date": row.get("published_date"),
+        "effective_date": row.get("effective_date"),
         # Phase D reader fields. Originally added because `get_new_items` was
         # `SELECT i.*` and these were already on the row but this dict simply
         # was not carrying them (title-only downstream regardless of what

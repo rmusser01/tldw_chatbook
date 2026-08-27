@@ -38,6 +38,7 @@ from .watchlist_normalizers import (
     normalize_watchlist_item,
     normalize_watchlist_run,
 )
+from .watchlist_item_page import WatchlistItemCursor, WatchlistItemPage
 
 
 _ALERT_CONDITION_TYPES = frozenset(
@@ -625,6 +626,119 @@ class LocalWatchlistsService:
         )
         normalized = [normalize_watchlist_item("local", row) for row in rows]
         return normalized[int(offset) : int(offset) + int(limit)]
+
+    async def list_reader_items_page(
+        self,
+        *,
+        source_id: Any = None,
+        status: str | None = None,
+        limit: int = 50,
+        run_id: Any = None,
+        watchlist_id: Any = None,
+        unassigned_only: bool = False,
+        statuses: list[str] | None = None,
+        is_flagged: bool | None = None,
+        search: str | None = None,
+        since: str | None = None,
+        snapshot_max_item_id: int | None = None,
+        after: WatchlistItemCursor | None = None,
+    ) -> WatchlistItemPage:
+        """Return one normalized page from the local Reader snapshot.
+
+        Args:
+            source_id: Optional subscription scope.
+            status: Optional single status scope.
+            limit: Maximum rows in the page.
+            run_id: Optional producing-run scope.
+            watchlist_id: Optional watchlist scope.
+            unassigned_only: Whether to include only unassigned sources.
+            statuses: Optional multiple-status scope.
+            is_flagged: Optional starred-state scope.
+            search: Optional full-text terms.
+            since: Optional effective-date floor.
+            snapshot_max_item_id: Existing snapshot high-water.
+            after: Optional continuation cursor.
+
+        Returns:
+            A typed page whose item rows use the local watchlist shape.
+        """
+        db = self._db()
+        page = await run_db_off_loop(
+            db,
+            db.get_reader_items_page,
+            subscription_id=int(source_id) if source_id is not None else None,
+            status=status if status else None,
+            limit=int(limit),
+            run_id=int(run_id) if run_id is not None else None,
+            watchlist_id=int(watchlist_id) if watchlist_id is not None else None,
+            unassigned_only=bool(unassigned_only),
+            statuses=list(statuses) if statuses is not None else None,
+            is_flagged=is_flagged,
+            search=search,
+            since=since,
+            snapshot_max_item_id=snapshot_max_item_id,
+            after=after,
+        )
+        return WatchlistItemPage(
+            items=tuple(
+                normalize_watchlist_item("local", row) for row in page.items
+            ),
+            has_more=page.has_more,
+            snapshot_max_item_id=page.snapshot_max_item_id,
+            snapshot_count=page.snapshot_count,
+            next_cursor=page.next_cursor,
+        )
+
+    async def count_reader_item_arrivals(
+        self,
+        *,
+        snapshot_max_item_id: int,
+        source_id: Any = None,
+        status: str | None = None,
+        run_id: Any = None,
+        watchlist_id: Any = None,
+        unassigned_only: bool = False,
+        statuses: list[str] | None = None,
+        is_flagged: bool | None = None,
+        search: str | None = None,
+        since: str | None = None,
+    ) -> int:
+        """Count matching local Reader items created after a snapshot.
+
+        Args:
+            snapshot_max_item_id: Snapshot high-water that arrivals exceed.
+            source_id: Optional subscription scope.
+            status: Optional single status scope.
+            run_id: Optional producing-run scope.
+            watchlist_id: Optional watchlist scope.
+            unassigned_only: Whether to include only unassigned sources.
+            statuses: Optional multiple-status scope.
+            is_flagged: Optional starred-state scope.
+            search: Optional full-text terms.
+            since: Optional effective-date floor.
+
+        Returns:
+            Number of matching rows created after the high-water.
+        """
+        db = self._db()
+        return int(
+            await run_db_off_loop(
+                db,
+                db.count_reader_item_arrivals,
+                snapshot_max_item_id=int(snapshot_max_item_id),
+                subscription_id=int(source_id) if source_id is not None else None,
+                status=status if status else None,
+                run_id=int(run_id) if run_id is not None else None,
+                watchlist_id=(
+                    int(watchlist_id) if watchlist_id is not None else None
+                ),
+                unassigned_only=bool(unassigned_only),
+                statuses=list(statuses) if statuses is not None else None,
+                is_flagged=is_flagged,
+                search=search,
+                since=since,
+            )
+        )
 
     async def create_source(self, payload: Mapping[str, Any]) -> dict[str, Any]:
         local_type = self._local_type_for_source_type(payload.get("source_type"))

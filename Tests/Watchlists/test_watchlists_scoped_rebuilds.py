@@ -24,6 +24,7 @@ from contextlib import asynccontextmanager
 from collections import Counter
 from datetime import datetime, timedelta, timezone
 import threading
+from unittest.mock import AsyncMock
 
 import pytest
 from textual.containers import VerticalScroll
@@ -32,7 +33,7 @@ from textual.css.query import NoMatches
 from textual.widgets import Button, DataTable, ListView
 
 from Tests.UI.app_factory import _build_test_app
-from Tests.UI.test_destination_shells import DestinationHarness
+from Tests.UI.test_destination_shells import DestinationHarness, _static_text
 from tldw_chatbook.Subscriptions.item_persist import persist_subscription_item
 from tldw_chatbook.Subscriptions.briefing_cast import dump_roster
 from tldw_chatbook.UI.Screens.watchlists_collections_screen import (
@@ -183,6 +184,19 @@ async def _settle(pilot, host) -> None:
     await pilot.pause()
     await host.workers.wait_for_complete()
     await pilot.pause()
+
+
+async def _mount_failed_reader_return(screen, pilot, host, scope):
+    """Commit a management scope, then mount its failed Reader retry state."""
+    original_list_page = screen._controller.list_reader_items_page
+    screen.active_section = "sources"
+    await _settle(pilot, host)
+    screen._request_tree_scope(scope)
+    failed_list_page = AsyncMock(side_effect=RuntimeError("offline"))
+    screen._controller.list_reader_items_page = failed_list_page
+    screen.active_section = "items"
+    await _settle(pilot, host)
+    return original_list_page, failed_list_page
 
 
 # --------------------------------------------------------------------------
@@ -2139,7 +2153,7 @@ async def test_items_anchor_is_abandoned_once_when_query_context_changes(
 
         screen._items_search_query = "definitely-not-a-story"
         screen._reset_items_paging_for_context(loading=True)
-        await screen._load_items(target_page_index=0)
+        await screen._replace_items_snapshot(reason="search")
 
         scheduled: list[float] = []
         original_set_timer = screen.set_timer
@@ -2154,6 +2168,182 @@ async def test_items_anchor_is_abandoned_once_when_query_context_changes(
 
         assert screen._items_view_anchor_id is None
         assert 0.01 not in scheduled
+
+
+async def test_management_scope_invalidates_reader_return_to_read_failure_is_honest():
+    """A failed return never relabels rows parked under the prior scope."""
+    app = _build_test_app()
+    watchlist_id = _seed(app, items=2)
+    async with _open(app, watchlist_id) as (screen, pilot, host):
+        await _settle(pilot, host)
+        assert screen._loaded_items
+        open_item = screen._loaded_items[0]
+        screen._selected_content_item = open_item
+        content = screen.query_one("#watchlists-content-pane", ContentPane)
+        content.item = open_item
+
+        screen.active_section = "sources"
+        await _settle(pilot, host)
+        committed = TreeScope(kind="unassigned")
+        screen._request_tree_scope(committed)
+
+        assert screen.tree_scope == committed
+        assert screen._items_snapshot is None
+        assert screen._loaded_items == []
+        assert screen._selected_content_item is None
+
+        screen._controller.list_reader_items_page = AsyncMock(
+            side_effect=RuntimeError("offline")
+        )
+        screen.active_section = "items"
+        await _settle(pilot, host)
+
+        pane = screen.query_one("#watchlists-items-pane", ArticleListPane)
+        assert screen.tree_scope == committed
+        assert screen._items_snapshot is None
+        assert screen._loaded_items == []
+        assert screen._items_snapshot_count == 0
+        assert screen._items_pending_arrivals == 0
+        assert screen._selected_content_item is None
+        assert pane.items == []
+        assert pane.new_items_note == ""
+        assert pane.page_loading is False
+        assert pane.display is False
+        assert _static_text(
+            screen.query_one("#watchlists-items-retry-state")
+        ) == "Couldn't load Unassigned. Retry to load Feed Items."
+        retry = screen.query_one("#watchlists-items-retry-button", Button)
+        assert str(retry.label) == "Retry"
+        assert retry.disabled is False
+        assert "No matching items" not in host.export_screenshot()
+        assert screen.query_one("#watchlists-content-pane", ContentPane).item is None
+
+
+async def test_reader_retry_copy_renders_hostile_scope_label_literally():
+    app = _build_test_app()
+    watchlist_id = _seed(app)
+    hostile_label = "[bold]Unbalanced watchlist"
+    app.watchlist_bundle_service.rename(watchlist_id, hostile_label)
+
+    async with _open(app, watchlist_id) as (screen, pilot, host):
+        await _settle(pilot, host)
+        scope = TreeScope(kind="watchlist", watchlist_id=watchlist_id)
+        await _mount_failed_reader_return(screen, pilot, host, scope)
+
+        state = screen.query_one("#watchlists-items-retry-state")
+        expected = f"Couldn't load {hostile_label}. Retry to load Feed Items."
+        assert _static_text(state) == expected
+        rendered = state.render()
+        assert getattr(rendered, "plain", str(rendered)) == expected
+
+
+async def test_reader_retry_click_successfully_publishes_committed_scope():
+    app = _build_test_app()
+    watchlist_id = _seed(app)
+    async with _open(app, watchlist_id) as (screen, pilot, host):
+        await _settle(pilot, host)
+        original, _failed = await _mount_failed_reader_return(
+            screen, pilot, host, TreeScope(kind="all")
+        )
+        successful_retry = AsyncMock(side_effect=original)
+        screen._controller.list_reader_items_page = successful_retry
+
+        screen.query_one("#watchlists-items-retry-button", Button).press()
+        await _settle(pilot, host)
+
+        successful_retry.assert_awaited_once()
+        assert screen._items_snapshot is not None
+        assert screen._loaded_items
+        assert screen.query_one("#watchlists-items-pane", ArticleListPane).display
+        with pytest.raises(NoMatches):
+            screen.query_one("#watchlists-items-retry-state")
+
+
+async def test_reader_retry_repeated_failure_retains_scoped_retry_authority():
+    app = _build_test_app()
+    watchlist_id = _seed(app)
+    async with _open(app, watchlist_id) as (screen, pilot, host):
+        await _settle(pilot, host)
+        _original, failed = await _mount_failed_reader_return(
+            screen, pilot, host, TreeScope(kind="unassigned")
+        )
+
+        screen.query_one("#watchlists-items-retry-button", Button).press()
+        await _settle(pilot, host)
+
+        assert failed.await_count == 2
+        assert _static_text(
+            screen.query_one("#watchlists-items-retry-state")
+        ) == "Couldn't load Unassigned. Retry to load Feed Items."
+        assert screen.query_one(
+            "#watchlists-items-retry-button", Button
+        ).disabled is False
+
+
+async def test_reader_retry_rapid_presses_coalesce_around_one_producer():
+    app = _build_test_app()
+    watchlist_id = _seed(app)
+    async with _open(app, watchlist_id) as (screen, pilot, host):
+        await _settle(pilot, host)
+        original, _failed = await _mount_failed_reader_return(
+            screen, pilot, host, TreeScope(kind="all")
+        )
+        started = asyncio.Event()
+        release = asyncio.Event()
+
+        async def controlled_retry(**kwargs):
+            started.set()
+            await release.wait()
+            return await original(**kwargs)
+
+        retry_loader = AsyncMock(side_effect=controlled_retry)
+        screen._controller.list_reader_items_page = retry_loader
+        retry = screen.query_one("#watchlists-items-retry-button", Button)
+
+        retry.press()
+        retry.press()
+        await asyncio.wait_for(started.wait(), timeout=2)
+        await pilot.pause()
+
+        assert retry_loader.await_count == 1
+        assert screen._items_retry_message is not None
+        assert screen.query_one(
+            "#watchlists-items-retry-button", Button
+        ).disabled is True
+
+        release.set()
+        await _settle(pilot, host)
+        assert retry_loader.await_count == 1
+        assert screen._items_snapshot is not None
+        with pytest.raises(NoMatches):
+            screen.query_one("#watchlists-items-retry-state")
+
+
+async def test_reader_retry_scheduling_failure_keeps_retry_available(monkeypatch):
+    app = _build_test_app()
+    watchlist_id = _seed(app)
+    async with _open(app, watchlist_id) as (screen, pilot, host):
+        await _settle(pilot, host)
+        await _mount_failed_reader_return(
+            screen, pilot, host, TreeScope(kind="unassigned")
+        )
+
+        monkeypatch.setattr(
+            screen,
+            "run_worker",
+            lambda *args, **kwargs: (_ for _ in ()).throw(
+                RuntimeError("worker scheduling failed")
+            ),
+        )
+        screen.query_one("#watchlists-items-retry-button", Button).press()
+        await pilot.pause()
+
+        assert _static_text(
+            screen.query_one("#watchlists-items-retry-state")
+        ) == "Couldn't load Unassigned. Retry to load Feed Items."
+        assert screen.query_one(
+            "#watchlists-items-retry-button", Button
+        ).disabled is False
 
 
 async def test_layout_persist_scheduler_and_thread_handoff_failures_are_retryable(
