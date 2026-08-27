@@ -59,7 +59,7 @@ class RunProgressTick(Message):
 class RerunRunRequested(Message):
     """Posted when the user requests re-running a source/job."""
 
-    def __init__(self, runtime_backend: str, target_id: Any, name: str) -> None:
+    def __init__(self, *, runtime_backend: str, target_id: Any, name: str) -> None:
         self.runtime_backend = runtime_backend
         self.target_id = target_id
         self.name = name
@@ -117,7 +117,9 @@ class RunsPane(RecomposeCaptureGuard, Vertical):
             operation_key in self.busy_operation_keys
             or operation_key in self.rerun_operation_keys
         )
-        rerun_origin = operation_key is not None and operation_key in self.rerun_operation_keys
+        rerun_origin = (
+            operation_key is not None and operation_key in self.rerun_operation_keys
+        )
         rerun_label = (
             "Re-running..."
             if rerun_origin
@@ -531,7 +533,9 @@ class RunsPane(RecomposeCaptureGuard, Vertical):
             operation_key in self.busy_operation_keys
             or operation_key in self.rerun_operation_keys
         )
-        rerun_origin = operation_key is not None and operation_key in self.rerun_operation_keys
+        rerun_origin = (
+            operation_key is not None and operation_key in self.rerun_operation_keys
+        )
         cancel_button.disabled = not can_cancel
         rerun_button.disabled = not can_rerun or rerun_busy
         rerun_button.label = (
@@ -590,7 +594,11 @@ class RunsPane(RecomposeCaptureGuard, Vertical):
             target_id, name = self._rerun_target_and_name(run, self.runtime_backend)
             if self._has_rerun_target(target_id):
                 self.post_message(
-                    RerunRunRequested(self.runtime_backend, target_id, name)
+                    RerunRunRequested(
+                        runtime_backend=self.runtime_backend,
+                        target_id=target_id,
+                        name=name,
+                    )
                 )
         elif button_id == "runs-refresh-button":
             self.post_message(RefreshRunsRequested())
