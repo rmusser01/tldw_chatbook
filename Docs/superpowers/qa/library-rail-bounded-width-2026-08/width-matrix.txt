@@ -1,4 +1,4 @@
-Task 22301 production width matrix — detached tmux PTY evidence
+TASK-22857 production width matrix — detached tmux PTY evidence
 Status: TARGETED AUTOMATED + DETACHED-PTY UAT COMPLETE; FULL SWEEP NOT OPTED IN
 Branch checkpoint: 2283283fd89e9bb67a10f33e74d8653ce2111582
 Date prepared: 2026-08-26

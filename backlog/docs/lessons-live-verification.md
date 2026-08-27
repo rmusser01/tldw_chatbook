@@ -90,7 +90,7 @@ verify those bindings by reading `BINDINGS` in the code instead.
 
 ## A route-activated geometry test does not prove the untouched startup state
 
-**TASK-22301, 2026-08-26.** The production-styled Library width matrix passed at
+**TASK-22857, 2026-08-26.** The production-styled Library width matrix passed at
 235, 170, 120, 100, 80, and 60 columns, but its ordinary-route setup selected
 Prompts before measuring geometry. Detached tmux UAT entered a fresh Library
 landing without selecting a row and found that the legacy graduated landing

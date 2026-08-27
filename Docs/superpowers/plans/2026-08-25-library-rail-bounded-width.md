@@ -19,7 +19,7 @@
 ## Task 0: Record the executable plan in Backlog before production work
 
 **Files:**
-- Modify: `backlog/tasks/task-22301 - Bound-Library-rail-width-across-modes.md`
+- Modify: `backlog/tasks/task-22857 - Bound-Library-rail-width-across-modes.md`
 - Add: `Docs/superpowers/plans/2026-08-25-library-rail-bounded-width.md`
 
 - [ ] **Step 1: Add the concise in-task Implementation Plan**
@@ -27,13 +27,13 @@
 Run:
 
 ```bash
-backlog task edit 22301 --plan "1. Add a pure shared 3:13 bounded rail-width policy and exact custom-width resolver.\n2. Make adaptive readers consume one projected or custom requested rail width in every branch.\n3. Apply reversible equality-guarded ordinary rail contracts from one normalized settings snapshot.\n4. Add the route-general below-64 single-stage layout and one guarded pinned Library return action.\n5. Lock production box-model geometry, accessibility, and resize no-work behavior with mounted tests.\n6. Align fresh/reset defaults, Settings copy, and user documentation without migrating stored widths.\n7. Run targeted static/test verification and approved real-PTY UAT, then close the task.\n\nADR required: yes\nADR path: backlog/decisions/086-library-adaptive-reader-shell.md\nReason: ADR-086 owns the long-lived cross-route Library responsive shell contract and has been amended for this change."
+backlog task edit 22857 --plan "1. Add a pure shared 3:13 bounded rail-width policy and exact custom-width resolver.\n2. Make adaptive readers consume one projected or custom requested rail width in every branch.\n3. Apply reversible equality-guarded ordinary rail contracts from one normalized settings snapshot.\n4. Add the route-general below-64 single-stage layout and one guarded pinned Library return action.\n5. Lock production box-model geometry, accessibility, and resize no-work behavior with mounted tests.\n6. Align fresh/reset defaults, Settings copy, and user documentation without migrating stored widths.\n7. Run targeted static/test verification and approved real-PTY UAT, then close the task.\n\nADR required: yes\nADR path: backlog/decisions/086-library-adaptive-reader-shell.md\nReason: ADR-086 owns the long-lived cross-route Library responsive shell contract and has been amended for this change."
 ```
 
 - [ ] **Step 2: Verify Backlog rendered the plan and ADR block correctly**
 
 ```bash
-backlog task 22301 --plain
+backlog task 22857 --plain
 ```
 
 Expected: status is `In Progress`, the seven-step `Implementation Plan` is present after Acceptance Criteria, and the amended ADR path is explicit.
@@ -41,7 +41,7 @@ Expected: status is `In Progress`, the seven-step `Implementation Plan` is prese
 - [ ] **Step 3: Commit the approved design/plan checkpoint**
 
 ```bash
-git add 'backlog/tasks/task-22301 - Bound-Library-rail-width-across-modes.md' Docs/superpowers/plans/2026-08-25-library-rail-bounded-width.md
+git add 'backlog/tasks/task-22857 - Bound-Library-rail-width-across-modes.md' Docs/superpowers/plans/2026-08-25-library-rail-bounded-width.md
 git commit -m "docs(library): plan bounded rail implementation"
 ```
 
@@ -551,7 +551,7 @@ git commit -m "docs(library): explain bounded rail preferences"
 **Files:**
 - Create: `Docs/superpowers/qa/library-rail-bounded-width-2026-08/README.md`
 - Create: `Docs/superpowers/qa/library-rail-bounded-width-2026-08/width-matrix.txt`
-- Modify: `backlog/tasks/task-22301 - Bound-Library-rail-width-across-modes.md`
+- Modify: `backlog/tasks/task-22857 - Bound-Library-rail-width-across-modes.md`
 - Modify only if this task produced a reusable incident: `backlog/docs/lessons-testing-evidence.md` or `backlog/docs/lessons-live-verification.md`
 
 - [ ] **Step 1: Run focused static analysis**
@@ -587,7 +587,7 @@ Expected when approved: PASS, or any failure is rerun and documented with exact 
 
 - [ ] **Step 4: Exercise the production app in isolated real PTYs at the six approved widths**
 
-Create a scratch profile outside the repository and launch the real module from this worktree with one unique tmux session per width: `tldw22301-235`, `-170`, `-120`, `-100`, `-80`, and `-60`. Substitute the literal width/height in both tmux and `stty` (do not leave `WIDTH`/`HEIGHT` placeholders at execution time):
+Create a scratch profile outside the repository and launch the real module from this worktree with one unique tmux session per width: `tldw22301-235`, `-170`, `-120`, `-100`, `-80`, and `-60`. These historical identifiers predate the task's renumber to TASK-22857 and intentionally remain unchanged. Substitute the literal width/height in both tmux and `stty` (do not leave `WIDTH`/`HEIGHT` placeholders at execution time):
 
 ```bash
 /usr/bin/env -i TLDW_TEST_MODE=1 HOME=/tmp/tldw-task22301/home XDG_DATA_HOME=/tmp/tldw-task22301/xdg-data XDG_CONFIG_HOME=/tmp/tldw-task22301/xdg-config TLDW_CONFIG_PATH=/tmp/tldw-task22301/config.toml HF_HUB_OFFLINE=1 TRANSFORMERS_OFFLINE=1 PYTHON_KEYRING_BACKEND=keyring.backends.null.Keyring PYTHONPATH=/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.worktrees/library-rail-bounded-width PATH=/usr/bin:/bin:/usr/sbin:/sbin:/opt/homebrew/bin LANG=en_US.UTF-8 tmux -L tldw22301 new-session -d -x 235 -y 52 -s tldw22301-235 '/bin/zsh -c "stty cols 235 rows 52; exec /Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/bin/python -m tldw_chatbook.app"'
@@ -617,15 +617,15 @@ git diff origin/dev...HEAD -- tldw_chatbook/Library tldw_chatbook/Widgets/Librar
 
 Check for width constants duplicated outside the pure policy, stale fixed 28 behavior, hand-edited generated CSS, resize-time service/config work, hidden-pane focus, dishonest Escape/footer/F1 copy, and route omissions.
 
-- [ ] **Step 6: Close TASK-22301 only after evidence is complete**
+- [ ] **Step 6: Close TASK-22857 only after evidence is complete**
 
 Update the task file so all seven acceptance criteria are checked. Add concise Implementation Notes covering approach, files, testing, PTY evidence, trade-offs, and the amended ADR. Add a lessons entry only if implementation produced a new reproducible incident that generalizes beyond this task.
 
 Then run:
 
 ```bash
-backlog task edit 22301 -s Done --notes "Implemented the shared bounded-fractional Library rail policy, reversible ordinary and adaptive adapters, guarded narrow-terminal return path, Settings/docs alignment, production geometry coverage, and real-PTY UAT. ADR: backlog/decisions/086-library-adaptive-reader-shell.md"
-git add 'backlog/tasks/task-22301 - Bound-Library-rail-width-across-modes.md' Docs/superpowers/qa/library-rail-bounded-width-2026-08
+backlog task edit 22857 -s Done --notes "Implemented the shared bounded-fractional Library rail policy, reversible ordinary and adaptive adapters, guarded narrow-terminal return path, Settings/docs alignment, production geometry coverage, and real-PTY UAT. ADR: backlog/decisions/086-library-adaptive-reader-shell.md"
+git add 'backlog/tasks/task-22857 - Bound-Library-rail-width-across-modes.md' Docs/superpowers/qa/library-rail-bounded-width-2026-08
 git commit -m "chore(library): close bounded rail task"
 ```
 

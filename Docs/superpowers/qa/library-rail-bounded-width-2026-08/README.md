@@ -3,7 +3,7 @@
 Status: **targeted automated gates and detached-PTY UAT complete; full repository
 sweep not run because no user opt-in was received**
 
-This directory records Task 22301 verification against the approved design and
+This directory records TASK-22857 verification against the approved design and
 ADR-086. Initial evidence was gathered from `codex/library-rail-bounded-width`
 at `bd4da97d1e0bece92f9c4375ed172da7b94f7c86` on 2026-08-26. Final static and
 changed-test evidence was gathered at
@@ -205,7 +205,7 @@ worktree, `python3.12`, and `dead=0`.
 
 After final capture, `tmux -L tldw22301 kill-server` terminated all six
 sessions. A subsequent `has-session` check reported the server/socket absent,
-and process inspection found no surviving Task 22301 app or tmux process (only
+and process inspection found no surviving task-scoped app or tmux process (only
 the inspection command itself).
 
 Pointer activation remains production-mounted Pilot coverage unless a real SGR

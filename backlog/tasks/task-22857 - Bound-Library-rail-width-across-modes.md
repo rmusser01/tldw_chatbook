@@ -1,5 +1,5 @@
 ---
-id: TASK-22301
+id: TASK-22857
 title: Bound Library rail width across modes
 status: Done
 assignee:
@@ -32,6 +32,16 @@ Keep the persistent Library navigation rail visually stable across every Library
 - [x] #6 Production-styled tests cover the exact projection and sub-24 escape oracles, wide/compact box-model inputs, initial/settled mount, every enumerated route and state-aware emergency return, Notes Navigator/work/explicit-priority adaptive branches, scoped recompose, equality-guarded live resize, custom compression/restoration boundaries, and specified 235-, 170-, 120-, 100-, 80-, and 60-column geometry states without resize-time data/config work.
 - [x] #7 Library Settings copy, defaults, ADR-086, the adaptive-reader design, and user documentation describe bounded fractional defaults separately from explicit 24–48-cell custom widths.
 <!-- AC:END -->
+
+## Renumbering provenance
+
+This task was originally filed as TASK-22301. While its PR was still unmerged,
+the canonical `dev` branch claimed TASK-22301 for the citation-boundary test
+task. Under the repository's older-canonical-arrival rule, this later unmerged
+claim moved to TASK-22857 on 2026-08-26 after a live sweep of remote refs and
+local worktrees. All task-owned references moved with it. Historical detached
+PTY socket, session, and scratch-path identifiers retain `22301` because they
+name the evidence that was actually captured before the renumber.
 
 ## Implementation Plan
 
