@@ -4,7 +4,7 @@ The production-CSS Textual harness completed successfully against the real
 Library screen and isolated Prompt databases on 2026-08-26, including a fresh
 post-review run. The driver imported the package from the
 `library-prompts-reader` worktree and used the final scratch profile rooted at
-`/private/tmp/task22033-qodo-full.vUtAA0`.
+`/private/tmp/task22033-qodo-final-fixed.p9Lm2R`.
 
 ## Verified journeys
 

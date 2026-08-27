@@ -1860,7 +1860,9 @@ def _sync_library_canvas(
                 prompt_work.sync_state(**prompt_work_kwargs)
                 screen._sync_library_prompts_reader_layout_from_shell()
             except Exception:
-                logger.debug("Library prompts work-pane sync failed.")
+                logger.opt(exception=True).debug(
+                    "Library prompts work-pane sync failed."
+                )
                 if (
                     follow_up_canvas is prompt_work
                     or allow_screen_fallback
@@ -1886,14 +1888,16 @@ def _sync_library_canvas(
         # gone; the coupling itself is recorded in the task file's residuals.
 
     except Exception:
-        logger.debug(f"Library {kind} canvas sync failed.")
+        logger.opt(exception=True).debug(f"Library {kind} canvas sync failed.")
         if kind == "prompts" and prompt_work is not None:
             try:
                 prompt_work.sync_state(**prompt_work_kwargs)
                 screen._sync_library_prompts_reader_layout_from_shell()
                 prompt_work_recovered = True
             except Exception:
-                logger.debug("Library prompts recovery work-pane sync failed.")
+                logger.opt(exception=True).debug(
+                    "Library prompts recovery work-pane sync failed."
+                )
         # task-21116 review, M3: a targeted canvas projection detaches the
         # canvas host's child for the duration of its remove/mount await.
         # Any sync landing inside that window cannot find its canvas and
@@ -5414,7 +5418,9 @@ class LibraryScreen(BaseAppScreen):
             LIBRARY_ROW_BROWSE_MEDIA,
             LIBRARY_ROW_BROWSE_CONVERSATIONS,
             LIBRARY_ROW_BROWSE_NOTES,
+            LIBRARY_ROW_BROWSE_PROMPTS,
             LIBRARY_ROW_CREATE_NOTE,
+            LIBRARY_ROW_CREATE_PROMPT,
         }
 
     def _advance_library_stage_interaction(self) -> int:

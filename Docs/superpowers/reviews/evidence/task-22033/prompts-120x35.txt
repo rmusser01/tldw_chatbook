@@ -32,4 +32,4 @@
 │      │                                                      │                       Use in Console                   │
 │      └──────────────────────────────────────────────────────┘                        More actions                    │
 └──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┘
-  / focus search | F6 next pane | esc back to list | F1 help · Ctrl+P palette · Ctrl+Q quit
+  / focus search | F6 next pane | esc focus rail | F1 help · Ctrl+P palette · Ctrl+Q quit

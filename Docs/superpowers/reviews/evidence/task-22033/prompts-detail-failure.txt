@@ -3,33 +3,33 @@
 ────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
  Library | Local
 ┌──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┐
-│ ┌──────────────────────────┐          Couldn't load the selected Prompt. Check the local Library and retry. Still    │
-│ │ Navigation               │          showing “Release assistant” while “Incident assistant” remains selected.       │
-│ │     Import…              │               Retry                                                                     │
-│ │ ▊▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▎  │            ○ ‹ Back to list                                                             │
-│ │ ▊ Search Library…     ▎  │          Name                                                                           │
-│ │ ▊▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▎  │          ▊▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▎  │
-│ │                          │          ▊ Release assistant                                                         ▎  │
-│ │ ───────────────────────  │          ▊▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▎  │
-│ │  Browse            ▾     │                                                                                         │
-│ │    Media (0)             │          Description                                                                    │
-│ │    Conversations (0)     │          ▊▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▎  │
-│ │    Notes (0+)            │          ▊ Prepares release notes                                                    ▎  │
-│ │  ▸ Prompts (2) — reuse   │          ▊▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▎  │
-│ │    Skills (0)            │<--- --->                                                                              ▃ │
-│ │    Collections           │               Basic           Advanced           Info                                   │
-│ │    Search / RAG          │          This prompt requires compatibility or conversion controls.                     │
-│ │ ───────────────────────  │          Prompt · Local · structured format                                             │
-│ │  Create            ▾     │          ▊▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▎   │
-│ │    New note              │          ▊▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▎  │
-│ │    New prompt            │          ▊ release, summary                                                          ▎  │
-│ │    New skill             │          ▊▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▎  │
-│ │ ───────────────────────  │                                                                                         │
-│ │  Study             ▾     │          Author                                                                         │
-│ │    Study decks           │          ▊▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▎  │
-│ │                          │          ▊ Ada                                                                       ▎  │
-│ │    Flashcards            │                                                                                         │
-│ │                          │                                          Use in Console                                 │
-│ └──────────────────────────┘                                           More actions                                  │
+│ ┌──────────────────────┐          Couldn't load the selected Prompt. Check the local Library and retry. Still        │
+│ │ Navigation           │          showing “Release assistant” while “Incident assistant” remains selected.           │
+│ │     Import…          │               Retry                                                                         │
+│ │ ▊▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▎  │            ○ ‹ Back to list                                                                 │
+│ │ ▊ Search Library… ▎  │          Name                                                                               │
+│ │ ▊▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▎  │          ▊▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▎  │
+│ │                      │          ▊ Release assistant                                                             ▎  │
+│ │ ───────────────────  │          ▊▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▎  │
+│ │  Browse        ▾     │                                                                                             │
+│ │    Media (0)         │          Description                                                                        │
+│ │    Chats (0)         │          ▊▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▎  │
+│ │    Notes (0+)        │          ▊ Prepares release notes                                                        ▎  │
+│ │  ▸ Prompts (2)       │          ▊▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▎  │
+│ │    Skills (0)        │<--- --->                                                                                  ▃ │
+│ │    Collections       │               Basic           Advanced           Info                                       │
+│ │    Search / RAG      │          This prompt requires compatibility or conversion controls.                         │
+│ │ ───────────────────  │          Prompt · Local · structured format                                                 │
+│ │  Create        ▾     │          ▊▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▎   │
+│ │    New note          │          ▊▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▎  │
+│ │    New prompt        │          ▊ release, summary                                                              ▎  │
+│ │    New skill       ▅ │          ▊▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▎  │
+│ │ ───────────────────  │                                                                                             │
+│ │  Study         ▾     │          Author                                                                             │
+│ │    Study decks       │          ▊▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▎  │
+│ │                      │          ▊ Ada                                                                           ▎  │
+│ │    Flashcards        │                                                                                             │
+│ │                      │                                            Use in Console                                   │
+│ └──────────────────────┘                                             More actions                                    │
 └──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┘
-  / focus search | F6 next pane | esc back to list | F1 help · Ctrl+P palette · Ctrl+Q quit
+  / focus search | F6 next pane | esc focus rail | F1 help · Ctrl+P palette · Ctrl+Q quit

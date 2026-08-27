@@ -13,25 +13,25 @@
     "items": {
       "height": 43,
       "width": 40,
-      "x": 35,
+      "x": 36,
       "y": 5
     },
     "items_grip": {
       "height": 43,
       "width": 5,
-      "x": 75,
+      "x": 76,
       "y": 5
     },
     "library": {
       "height": 43,
-      "width": 28,
+      "width": 29,
       "x": 2,
       "y": 5
     },
     "library_grip": {
       "height": 43,
       "width": 5,
-      "x": 30,
+      "x": 31,
       "y": 5
     },
     "shell": {
@@ -42,8 +42,8 @@
     },
     "work": {
       "height": 43,
-      "width": 78,
-      "x": 80,
+      "width": 77,
+      "x": 81,
       "y": 5
     }
   },
