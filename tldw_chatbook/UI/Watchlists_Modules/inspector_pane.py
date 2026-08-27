@@ -777,12 +777,23 @@ class InspectorPane(RecomposeCaptureGuard, Vertical):
             return []
         labels = list(self.breadcrumb_labels or [])
 
+        parent_scope = TreeScope(kind="watchlist", watchlist_id=scope.watchlist_id)
+        if scope.kind == "source":
+            parent_scope = {
+                "all": TreeScope(kind="all"),
+                "unassigned": TreeScope(kind="unassigned"),
+                "unread": TreeScope(kind="unread"),
+                "watchlist": TreeScope(
+                    kind="watchlist", watchlist_id=scope.watchlist_id
+                ),
+            }.get(scope.parent_context, parent_scope)
+
         levels = [
             _Level(
-                kind="watchlist",
+                kind=parent_scope.kind,
                 label=labels[0] if labels else f"Watchlist {scope.watchlist_id}",
                 entity=None,
-                target_scope=TreeScope(kind="watchlist", watchlist_id=scope.watchlist_id),
+                target_scope=parent_scope,
             )
         ]
         if scope.kind == "source":
@@ -791,11 +802,7 @@ class InspectorPane(RecomposeCaptureGuard, Vertical):
                     kind="source",
                     label=labels[1] if len(labels) > 1 else f"Source {scope.source_id}",
                     entity=None,
-                    target_scope=TreeScope(
-                        kind="source",
-                        watchlist_id=scope.watchlist_id,
-                        source_id=scope.source_id,
-                    ),
+                    target_scope=scope,
                 )
             )
         return levels

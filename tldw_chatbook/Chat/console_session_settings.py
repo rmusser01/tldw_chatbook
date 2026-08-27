@@ -981,15 +981,13 @@ def build_console_context_estimate(
     """Estimate current context tokens for display in Console settings.
 
     Args:
-        staged_text: The staged evidence text a send would actually carry
-            (task-6) -- e.g. the joined snippets of staged, prompt-eligible
-            evidence references. Passed in by the caller so this builder
-            stays pure (no I/O, no bundle parsing here); blank/whitespace
-            text contributes nothing, matching how an unset staged context
-            already behaves. Folded into `used_tokens` as one additional
-            message so the context estimate stops silently reporting zero
-            for content it is about to send -- `staged_source_count` still
-            drives only the label's "; N sources staged" suffix, unchanged.
+        staged_text: Canonical formatted pre-authority evidence used for cost
+            estimation (task-6). Passed in by the caller so this builder stays
+            pure (no I/O, no bundle parsing here); blank/whitespace text
+            contributes nothing. Authoritative send capture may shrink this
+            context after rechecking local authority. Folded into `used_tokens`
+            as one additional message; `staged_source_count` still drives only
+            the label's "; N sources staged" suffix, unchanged.
     """
     model_name = _string_value(model)
     if not model_name:

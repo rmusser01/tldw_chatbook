@@ -4370,12 +4370,12 @@ class ChatScreen(BaseAppScreen):
             # task-6: staged evidence used to move only the label's "; N
             # sources staged" suffix (`staged_source_count` above) while
             # `used_tokens` silently reported zero for content the send
-            # will actually carry. `console_prompted_evidence_text` reads
-            # the same in-memory, zero-I/O staged bundle
+            # is likely to carry. `console_prompted_evidence_text` reads
+            # the same in-memory, zero-I/O staged bundle and produces the
+            # formatted pre-authority estimate
             # `_current_console_workspace_context` already parses above --
-            # no extra DB round trip -- and applies the exact filter the
-            # send path applies, so the estimate stays true without
-            # simulating a send.
+            # no extra DB round trip. The actual send may shrink this after
+            # its authority check.
             staged_text=console_prompted_evidence_text(
                 self._pending_console_launch_context
             ),
@@ -5334,8 +5334,8 @@ class ChatScreen(BaseAppScreen):
         1. ``citation_repair_contract.allowed_ordinals`` -- one ordinal per
            FORMATTED prompt entry, so this is the exact count, and the
            capture attaches the contract to every context-bearing return.
-        2. :func:`console_prompted_source_count` -- the same
-           available-and-local filter applied to the bundle, used when the
+        2. :func:`console_prompted_source_count` -- a best-effort formatted
+           pre-authority estimate used only when the authoritative repair
            contract could not be built.
 
         Args:
@@ -6645,8 +6645,9 @@ class ChatScreen(BaseAppScreen):
             # the cost chip entirely -- `ConsoleStagedSource` carries no
             # text, so a session with zero messages but several staged
             # sources (even a 942 KB one) showed "0 tok". Feed the same
-            # prompt-eligible staged text the context estimate now counts
-            # (`console_prompted_evidence_text`, pure/zero-I/O) in as one
+            # formatted pre-authority staged-text estimate the context
+            # estimate now counts (`console_prompted_evidence_text`,
+            # pure/zero-I/O) in as one
             # more transcript row satisfying `build_cost_snapshot`'s
             # duck-typed contract (`.role`/`.content`/`.usage`) with
             # `usage=None` -- it prices through the ESTIMATED-row branch,

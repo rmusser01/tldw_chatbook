@@ -1049,7 +1049,7 @@ async def test_reader_empty_state_uses_the_approved_copy() -> None:
     async with app.run_test():
         empty = app.query_one("#content-empty", Static)
 
-        assert str(empty.renderable) == "Select a feed item to display it here."
+        assert str(empty.renderable) == "Select a feed to display it here."
 
 
 @pytest.mark.asyncio

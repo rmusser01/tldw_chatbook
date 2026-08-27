@@ -13,7 +13,7 @@ import threading
 import webbrowser
 from collections.abc import Callable, Collection, Mapping, Sequence
 from contextlib import nullcontext
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Literal
@@ -210,6 +210,7 @@ from ..Watchlists_Modules.watchlist_tree import (
     ALL_SOURCES_BUCKET,
     STARRED_BUCKET,
     TODAY_BUCKET,
+    AggregateRootKind,
     AddSourceToWatchlistRequested,
     CreateWatchlistRequested,
     DeleteWatchlistRequested,
@@ -307,6 +308,10 @@ _NON_READ_STATE_STATUSES: frozenset[str] = frozenset({"ingested", "ignored", "er
 #: are a Runs-tab concern, so neither belongs in the article list.
 _READER_ALL_STATUSES: tuple[str, ...] = ("new", "reviewed", "ingested")
 _ITEMS_PAGE_SIZE = 50
+_UNREAD_CONTEXT_FILTER_REASON = "All Unread always shows unread items."
+_INDIVIDUAL_FEED_SELECTION_DISABLED = (
+    "Individual feed selection is available in Read or the Local backend."
+)
 
 
 def _normalize_items_status_filter(value: Any) -> str:
@@ -452,6 +457,30 @@ class SectionViewIntent:
     layout: RegionLayout
     items_factory: Callable[[], Widget]
     header_factory: Callable[[], Widget]
+
+
+@dataclass(frozen=True)
+class TreeDataSnapshot:
+    """One complete, generation-checked left-rail data publication.
+
+    Args:
+        watchlists: Watchlist rows rendered in the rail.
+        all_source_rows: Every source row available to aggregate roots.
+        unassigned_source_rows: Source rows with no watchlist membership.
+        counts: Aggregate and watchlist item counts keyed by bucket id.
+        source_counts: Item counts keyed by source id.
+        failures: Snapshot branches that retained their last known value.
+        watchlist_source_ids: Successfully loaded membership ids for the
+            watchlists needed by navigation reconciliation.
+    """
+
+    watchlists: tuple[dict[str, Any], ...]
+    all_source_rows: tuple[dict[str, Any], ...]
+    unassigned_source_rows: tuple[dict[str, Any], ...]
+    counts: dict[int, dict[str, int]]
+    source_counts: dict[int, dict[str, int]]
+    failures: frozenset[str] = frozenset()
+    watchlist_source_ids: dict[int, frozenset[int]] = field(default_factory=dict)
 
 
 def watchlist_delete_consequence(source_count: int) -> str:
@@ -912,11 +941,13 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
         # reader out from under a user who hadn't touched Items at all.
         self._selected_content_item: dict[str, Any] | None = None
         self._read_recovery_active = False
-        # Left-rail tree inputs (Task 4): loaded together by `_load_tree_data`
-        # in exactly three queries (`list_watchlists`,
-        # `get_watchlist_item_counts`, `get_source_item_counts`),
-        # never one per node -- see that method's docstring.
+        # Left-rail tree inputs. Aggregate source rows are deliberately
+        # separate from `_loaded_sources`, whose management-table page may be
+        # capped; expanding All Sources must always reveal the complete
+        # navigation snapshot.
         self._tree_watchlists: list[dict[str, Any]] = []
+        self._tree_all_source_rows: list[dict[str, Any]] = []
+        self._tree_unassigned_source_rows: list[dict[str, Any]] = []
         self._tree_counts: dict[int, dict[str, int]] = {}
         # Per-source totals/unread for the tree's source badges (Task 8 of
         # the reader-first plan); loaded with the rest, rendered there.
@@ -934,8 +965,13 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
         # rather than screen reactives: nothing on the screen needs to watch
         # them, and `_breadcrumb_labels`/`_source_create_draft` already
         # establish that shape for screen-mirrored pane state.
-        self._tree_expanded: frozenset[int] = frozenset()
+        self._tree_expanded_root_kinds: frozenset[AggregateRootKind] = frozenset()
+        self._tree_expanded_watchlist_ids: frozenset[int] = frozenset()
         self._tree_active_tag: str | None = None
+        self._tree_load_generation = 0
+        self._tree_snapshot = TreeDataSnapshot((), (), (), {}, {})
+        self._tree_snapshot_failures: frozenset[str] = frozenset()
+        self._tree_failure_episode_active = False
         # task-895: one tree write (each of which owns a modal dialog) at a
         # time -- see `_start_tree_write` for why this is a guard rather
         # than `run_worker(exclusive=True)`.
@@ -1359,52 +1395,163 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
         # which states both halves of that cache's behaviour.
         self._request_surface_refresh(self._SURFACE_INSPECTOR)
 
-    @work(exclusive=True, group="wc_tree")
-    async def _load_tree_data(self) -> None:
-        """Load the left-rail tree's three inputs: watchlists and counts.
+    @staticmethod
+    def _read_tree_data_snapshot(
+        service: WatchlistBundleService | None,
+        previous: TreeDataSnapshot,
+        today_floor_iso: str,
+        reconciliation_watchlist_ids: frozenset[int],
+    ) -> TreeDataSnapshot:
+        """Read one tree snapshot on a worker thread, retaining failed branches.
 
-        Exactly three queries total, never one per node: `list_watchlists()`
-        for the watchlist rows themselves, `get_watchlist_item_counts()`
-        for every bucket's total/unread counts, and
-        `get_source_item_counts()` for every source's, each in a single
-        statement. All three
-        are reached through `WatchlistBundleService` (Task 1) rather than a
-        second accessor onto `SubscriptionsDB` directly.
+        Args:
+            service: Local watchlist service, if available.
+            previous: Last successfully published branch values.
+            today_floor_iso: Local-day floor used by the Today count.
+            reconciliation_watchlist_ids: Watchlists whose membership is
+                required to validate pending or committed contextual scopes.
 
-        Notifies on failure (task-876), matching every sibling loader on
-        this screen (`_load_sources`, `_load_runs`, `_load_notifications`,
-        ...): without this, a real database failure rendered identically to
-        "you have zero watchlists" -- two empty roots and no message, since
-        the tree is its own only error surface.
+        Returns:
+            A complete snapshot ready for generation-checked publication.
         """
+        failures: set[str] = set()
+
+        def read_branch(name: str, reader: Callable[[], Any], fallback: Any) -> Any:
+            try:
+                return reader()
+            except Exception:
+                failures.add(name)
+                logger.opt(exception=True).debug(
+                    "Failed to load watchlists tree branch: {}.", name
+                )
+                return fallback
+
+        if service is None:
+            failures.update(
+                {"watchlists", "all_sources", "unassigned_sources", "counts", "source_counts"}
+            )
+            return TreeDataSnapshot(
+                previous.watchlists,
+                previous.all_source_rows,
+                previous.unassigned_source_rows,
+                previous.counts,
+                previous.source_counts,
+                frozenset(failures),
+                previous.watchlist_source_ids,
+            )
+
+        watchlists = tuple(
+            dict(row)
+            for row in read_branch(
+                "watchlists", service.list_watchlists, previous.watchlists
+            )
+        )
+        all_source_rows = tuple(
+            dict(row)
+            for row in read_branch(
+                "all_sources", service.list_all_source_rows, previous.all_source_rows
+            )
+        )
+        unassigned_source_rows = tuple(
+            dict(row)
+            for row in read_branch(
+                "unassigned_sources",
+                service.list_unassigned_source_rows,
+                previous.unassigned_source_rows,
+            )
+        )
+
+        def read_counts() -> dict[int, dict[str, int]]:
+            counts = {
+                int(bucket): dict(values)
+                for bucket, values in service.get_watchlist_item_counts().items()
+            }
+            starred = service.get_flagged_items_count()
+            counts[STARRED_BUCKET] = {"total": starred, "unread": starred}
+            today = service.get_unread_items_count_since(today_floor_iso)
+            counts[TODAY_BUCKET] = {"total": today, "unread": today}
+            return counts
+
+        counts = read_branch("counts", read_counts, previous.counts)
+        source_counts = read_branch(
+            "source_counts", lambda: service.get_source_item_counts(), previous.source_counts
+        )
+        watchlist_source_ids: dict[int, frozenset[int]] = {}
+        for watchlist_id in reconciliation_watchlist_ids:
+            try:
+                watchlist_source_ids[watchlist_id] = frozenset(
+                    int(source_id) for source_id in service.list_sources(watchlist_id)
+                )
+            except Exception:
+                failures.add("watchlist_memberships")
+                logger.opt(exception=True).debug(
+                    "Failed to load Watchlists tree membership."
+                )
+                previous_ids = previous.watchlist_source_ids.get(watchlist_id)
+                if previous_ids is not None:
+                    watchlist_source_ids[watchlist_id] = previous_ids
+        return TreeDataSnapshot(
+            watchlists,
+            all_source_rows,
+            unassigned_source_rows,
+            {int(bucket): dict(values) for bucket, values in counts.items()},
+            {int(source_id): dict(values) for source_id, values in source_counts.items()},
+            frozenset(failures),
+            watchlist_source_ids,
+        )
+
+    @work(group="wc_tree")
+    async def _load_tree_data(self) -> None:
+        """Acquire and publish the complete left-rail snapshot off-loop."""
         if self.active_section == "items" and self.runtime_backend != "local":
             self._items_page_loading = False
             self._push_items_pager_state()
             return
 
+        self._tree_load_generation += 1
+        generation = self._tree_load_generation
+        service = self._watchlist_bundle_service()
+        previous = self._tree_snapshot
+        reconciliation_watchlist_ids = frozenset(
+            int(scope.watchlist_id)
+            for scope in (self._pending_tree_scope, self.tree_scope)
+            if scope is not None
+            and scope.kind == "source"
+            and scope.parent_context == "watchlist"
+            and scope.watchlist_id is not None
+        )
+        snapshot = await asyncio.to_thread(
+            self._read_tree_data_snapshot,
+            service,
+            previous,
+            self._today_floor_iso(),
+            reconciliation_watchlist_ids,
+        )
+        if generation != self._tree_load_generation:
+            return
+
+        self._tree_snapshot = snapshot
+        self._tree_watchlists = [dict(row) for row in snapshot.watchlists]
+        self._tree_all_source_rows = [dict(row) for row in snapshot.all_source_rows]
+        self._tree_unassigned_source_rows = [
+            dict(row) for row in snapshot.unassigned_source_rows
+        ]
+        self._tree_counts = {
+            bucket: dict(values) for bucket, values in snapshot.counts.items()
+        }
+        self._tree_source_counts = {
+            source_id: dict(values)
+            for source_id, values in snapshot.source_counts.items()
+        }
+        self._tree_snapshot_failures = snapshot.failures
         notify = getattr(self.app_instance, "notify", None)
-        try:
-            service = self._watchlist_bundle_service()
-            self._tree_watchlists = service.list_watchlists()
-            # Copy before inserting: the service's own mapping is its
-            # return-value contract, and the Starred smart feed's badge
-            # (TASK-3072) is a tree-only bucket -- it rides this mapping so
-            # every existing counts refresh updates it too.
-            counts = dict(service.get_watchlist_item_counts())
-            starred = service.get_flagged_items_count()
-            counts[STARRED_BUCKET] = {"total": starred, "unread": starred}
-            # TASK-3791 plan task 4: the Today badge rides the same mapping
-            # -- unread items at/after local midnight, so the badge and the
-            # node's page answer the same question.
-            today = service.get_unread_items_count_since(self._today_floor_iso())
-            counts[TODAY_BUCKET] = {"total": today, "unread": today}
-            self._tree_counts = counts
-            self._tree_source_counts = service.get_source_item_counts()
-        except Exception:
-            logger.opt(exception=True).debug("Failed to load watchlists tree data.")
-            self._tree_watchlists, self._tree_counts, self._tree_source_counts = [], {}, {}
+        if snapshot.failures and not self._tree_failure_episode_active:
+            self._tree_failure_episode_active = True
             if callable(notify):
                 notify("Failed to load watchlists.", severity="error")
+        elif not snapshot.failures:
+            self._tree_failure_episode_active = False
+        self._reconcile_tree_navigation(snapshot)
         # Re-resolve the Inspector's breadcrumb against what was just loaded
         # (task-895). `_resolve_breadcrumb_labels` reads `_tree_watchlists`,
         # and until this task nothing could change that list while a scope
@@ -1522,50 +1669,40 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
     def _resolve_breadcrumb_labels(self, scope: TreeScope) -> list[str]:
         """Display names for `scope`'s ancestor chain, for the Inspector.
 
-        Called once from `_apply_tree_scope` -- itself invoked from a real
-        tree click (`_on_tree_scope_changed`) and a breadcrumb promotion
-        (`handle_breadcrumb_scope_selected`), both discrete, user-driven
-        events -- never from a render path, so this is not a query-per-render:
-        the watchlist name costs nothing (`_tree_watchlists` is already
-        loaded by `_load_tree_data`), and a source name costs exactly the one
-        `list_source_rows` JOIN the tree itself already uses to expand a
-        watchlist, only when the scope actually names a source.
+        Both levels resolve from the screen-owned tree snapshot, so the same
+        feed remains visibly distinct under All Sources, Unassigned, All
+        Unread, and a created watchlist without issuing a per-occurrence DB
+        query.
         """
-        if scope.kind not in ("watchlist", "source") or scope.watchlist_id is None:
+        if scope.kind == "watchlist" and scope.watchlist_id is not None:
+            return [self._watchlist_display_name(scope.watchlist_id)]
+        if scope.kind != "source" or scope.source_id is None:
             return []
 
-        labels = [
-            next(
-                (
-                    str(watchlist.get("name"))
-                    for watchlist in self._tree_watchlists
-                    if int(watchlist.get("id", -1)) == int(scope.watchlist_id)
-                ),
-                f"Watchlist {scope.watchlist_id}",
+        parent_labels = {
+            "all": "All Sources",
+            "unassigned": "Unassigned",
+            "unread": "All Unread",
+        }
+        if scope.parent_context == "watchlist" or (
+            scope.parent_context is None and scope.watchlist_id is not None
+        ):
+            parent_label = (
+                self._watchlist_display_name(scope.watchlist_id)
+                if scope.watchlist_id is not None
+                else "Watchlist"
             )
-        ]
-
-        if scope.kind == "source" and scope.source_id is not None:
-            source_label = f"Source {scope.source_id}"
-            service = self._watchlist_bundle_service()
-            if service is not None:
-                try:
-                    rows = service.list_source_rows(scope.watchlist_id)
-                    source_label = next(
-                        (
-                            str(row.get("name"))
-                            for row in rows
-                            if int(row.get("id", -1)) == int(scope.source_id)
-                        ),
-                        source_label,
-                    )
-                except Exception:
-                    logger.opt(exception=True).debug(
-                        "Failed to resolve breadcrumb source name."
-                    )
-            labels.append(source_label)
-
-        return labels
+        else:
+            parent_label = parent_labels.get(scope.parent_context, "All Sources")
+        source_label = next(
+            (
+                str(row.get("name"))
+                for row in self._tree_all_source_rows
+                if int(row.get("id", -1)) == int(scope.source_id)
+            ),
+            f"Source {scope.source_id}",
+        )
+        return [parent_label, source_label]
 
     def _apply_local_wc_snapshot(
         self,
@@ -1871,13 +2008,106 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
                 if recovering
                 else self._load_source_rows_for_tree
             ),
-            expanded=frozenset() if recovering else self._tree_expanded,
+            expanded=(
+                frozenset() if recovering else self._tree_expanded_watchlist_ids
+            ),
+            expanded_root_kinds=(
+                frozenset() if recovering else self._tree_expanded_root_kinds
+            ),
             active_tag=None if recovering else self._tree_active_tag,
             active_scope=self.tree_scope,
             write_disabled_reason=self._tree_write_disabled_reason(),
+            selection_disabled_reason=self._tree_selection_disabled_reason(),
             source_counts={} if recovering else self._tree_source_counts,
+            all_source_rows=[] if recovering else self._tree_all_source_rows,
+            unassigned_source_rows=(
+                [] if recovering else self._tree_unassigned_source_rows
+            ),
+            unread_pin_source_id=self._unread_pin_source_id(),
             id="wl-tree",
         )
+
+    @staticmethod
+    def _unread_source_id(scope: TreeScope | None) -> int | None:
+        """Return the contextual All Unread source owned by ``scope``."""
+        if (
+            scope is not None
+            and scope.kind == "source"
+            and scope.parent_context == "unread"
+        ):
+            return scope.source_id
+        return None
+
+    def _unread_pin_source_id(self) -> int | None:
+        """Keep pending or committed All Unread authority present at zero."""
+        return self._unread_source_id(
+            self._pending_tree_scope
+        ) or self._unread_source_id(self.tree_scope)
+
+    def _set_pending_tree_scope(self, scope: TreeScope | None) -> None:
+        """Update pending authority and repaint only if its zero pin moves."""
+        prior_pin = self._unread_pin_source_id()
+        self._pending_tree_scope = scope
+        if (
+            scope is None
+            and self._unread_pin_source_id() != prior_pin
+            and self._dom_is_live
+        ):
+            self._request_surface_refresh(self._SURFACE_RAIL)
+
+    def _reconciled_tree_scope(
+        self,
+        scope: TreeScope,
+        snapshot: TreeDataSnapshot,
+    ) -> TreeScope:
+        """Return ``scope`` or its nearest parent in the new tree snapshot."""
+        watchlist_ids = {int(row["id"]) for row in snapshot.watchlists}
+        if scope.kind == "watchlist":
+            if scope.watchlist_id not in watchlist_ids:
+                return TreeScope(kind="all")
+            return scope
+        if scope.kind != "source" or scope.source_id is None:
+            return scope
+
+        source_id = int(scope.source_id)
+        all_source_ids = {int(row["id"]) for row in snapshot.all_source_rows}
+        if source_id not in all_source_ids:
+            return TreeScope(kind="all")
+        if scope.parent_context == "unassigned":
+            unassigned_ids = {
+                int(row["id"]) for row in snapshot.unassigned_source_rows
+            }
+            if source_id not in unassigned_ids:
+                return TreeScope(kind="unassigned")
+        elif scope.parent_context == "watchlist":
+            watchlist_id = scope.watchlist_id
+            if watchlist_id is None or watchlist_id not in watchlist_ids:
+                return TreeScope(kind="all")
+            member_ids = snapshot.watchlist_source_ids.get(watchlist_id)
+            if member_ids is None:
+                return scope
+            if source_id not in member_ids:
+                return TreeScope(kind="watchlist", watchlist_id=watchlist_id)
+        return scope
+
+    def _reconcile_tree_navigation(self, snapshot: TreeDataSnapshot) -> None:
+        """Discard invalid pending scope and reconcile committed authority."""
+        pending = self._pending_tree_scope
+        if (
+            pending is not None
+            and self._reconciled_tree_scope(pending, snapshot) != pending
+        ):
+            self._set_pending_tree_scope(None)
+            self._items_snapshot_generation += 1
+            self._items_pending_query_key = None
+            self._items_inflight_replacement = None
+            self._items_inflight_continuation = None
+            self._items_page_loading = False
+            self._push_items_pager_state()
+
+        committed = self._reconciled_tree_scope(self.tree_scope, snapshot)
+        if committed != self.tree_scope and self._pending_tree_scope is None:
+            self._request_tree_scope(committed)
 
     def _tree_write_disabled_reason(
         self, *, runtime_backend: str | None = None
@@ -1909,6 +2139,12 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
             return WC_SERVER_WRITE_RECOVERY.disabled_tooltip
         if self._watchlist_bundle_service() is None:
             return WC_SERVICE_UNAVAILABLE_COPY
+        return None
+
+    def _tree_selection_disabled_reason(self) -> str | None:
+        """Why contextual feed children cannot commit on this surface."""
+        if self.runtime_backend == "server" and self.active_section != "items":
+            return _INDIVIDUAL_FEED_SELECTION_DISABLED
         return None
 
     def _load_source_rows_for_tree(self, watchlist_id: int) -> list[dict[str, Any]]:
@@ -1953,23 +2189,23 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
         """
         if self.active_section == "items" and self._read_recovery_active:
             return []
-        service = self._watchlist_bundle_service()
-        if service is None:
-            return []
         scope = self.tree_scope
         try:
             if scope.kind == "watchlist" and scope.watchlist_id is not None:
-                return service.list_source_rows(scope.watchlist_id)
+                service = self._watchlist_bundle_service()
+                return [] if service is None else service.list_source_rows(scope.watchlist_id)
             if scope.kind == "source" and scope.source_id is not None:
-                rows = (
-                    service.list_source_rows(scope.watchlist_id)
-                    if scope.watchlist_id is not None
-                    else service.list_all_source_rows()
-                )
+                if scope.parent_context == "unassigned":
+                    rows = self._tree_unassigned_source_rows
+                elif scope.watchlist_id is not None:
+                    service = self._watchlist_bundle_service()
+                    rows = [] if service is None else service.list_source_rows(scope.watchlist_id)
+                else:
+                    rows = self._tree_all_source_rows
                 return [r for r in rows if int(r["id"]) == int(scope.source_id)]
             if scope.kind == "unassigned":
-                return service.list_unassigned_source_rows()
-            return service.list_all_source_rows()
+                return [dict(row) for row in self._tree_unassigned_source_rows]
+            return [dict(row) for row in self._tree_all_source_rows]
         except Exception:
             logger.opt(exception=True).debug("Failed to resolve scoped source rows.")
             return []
@@ -2071,8 +2307,16 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
                 f"Watchlist {scope.watchlist_id}",
             )
         if scope.kind == "source":
+            labels = self._resolve_breadcrumb_labels(scope)
             if rows:
-                return str(rows[0].get("name"))
+                source_label = str(rows[0].get("name"))
+                return (
+                    f"{labels[0]} / {source_label}"
+                    if labels
+                    else source_label
+                )
+            if len(labels) == 2:
+                return " / ".join(labels)
             if scope.source_id is not None:
                 return f"Source {scope.source_id}"
         return "All sources"
@@ -2395,8 +2639,9 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
             # goes through `_normalize_items_status_filter` (TASK-3072): the
             # mirror can still hold a pre-reader per-status value, which the
             # two-option Select would reject.
-            items_pane.status_filter = _normalize_items_status_filter(
-                self._items_status_filter
+            items_pane.status_filter = self._effective_items_status_filter()
+            items_pane.status_filter_disabled_reason = (
+                self._items_filter_disabled_reason()
             )
             items_pane.search_query = self._items_search_query
             items_pane.selected_item = self._selected_content_item
@@ -3702,6 +3947,7 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
         event where "where the user is" and "what ancestry the Inspector may
         claim" genuinely agree. They part company again in `_select_entity`.
         """
+        prior_unread_pin = self._unread_pin_source_id()
         self._breadcrumb_labels = self._resolve_breadcrumb_labels(scope)
         self.selected_entity = None
         self.selected_source = None
@@ -3710,6 +3956,9 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
         self._clear_pane_selections()
         self.selected_scope = scope
         self.tree_scope = scope
+        self._sync_tree_navigation_authority()
+        if self._unread_pin_source_id() != prior_unread_pin and self._dom_is_live:
+            self._request_surface_refresh(self._SURFACE_RAIL)
 
     def _scope_display_label(self, scope: TreeScope) -> str:
         """Return the unescaped user-facing label for an explicit scope."""
@@ -3725,6 +3974,8 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
             return self._watchlist_display_name(scope.watchlist_id)
         if scope.kind == "source" and scope.source_id is not None:
             labels = self._resolve_breadcrumb_labels(scope)
+            if len(labels) == 2:
+                return f"{labels[1]} under {labels[0]}"
             return labels[-1] if labels else f"Source {scope.source_id}"
         return "All Sources"
 
@@ -3776,14 +4027,14 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
     def _commit_management_tree_scope(self, scope: TreeScope) -> None:
         """Commit non-Read navigation and invalidate parked Reader state."""
         with self.app.batch_update():
-            self._pending_tree_scope = None
+            self._set_pending_tree_scope(None)
             self._apply_tree_scope(scope)
             self._invalidate_parked_reader(loading=False)
 
     def _request_tree_scope(self, scope: TreeScope) -> None:
         """Request Read navigation, or commit management navigation now."""
         if self.active_section == "items" and self.runtime_backend == "local":
-            self._pending_tree_scope = scope
+            self._set_pending_tree_scope(scope)
             self._supersede_items_query_intent(scope=scope)
             try:
                 self.query_one("#wl-tree", WatchlistTree).active_scope = (
@@ -3849,11 +4100,13 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
     def handle_tree_expansion_changed(self, event: TreeExpansionChanged) -> None:
         """Mirror the rail's expansion onto the screen (Finding 2).
 
-        See `_tree_expanded` in `__init__` for why this cannot live on the
-        tree widget, and `_build_tree_pane` for where it is seeded back.
+        See the two `_tree_expanded_*` fields in `__init__` for why this
+        cannot live on the tree widget, and `_build_tree_pane` for where both
+        independent sets are seeded back.
         """
         event.stop()
-        self._tree_expanded = event.expanded
+        self._tree_expanded_root_kinds = event.expanded_root_kinds
+        self._tree_expanded_watchlist_ids = event.expanded_watchlist_ids
 
     @on(TreeTagFilterChanged)
     def handle_tree_tag_filter_changed(self, event: TreeTagFilterChanged) -> None:
@@ -4424,10 +4677,8 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
         # are in view" cannot disagree. An in-place push on the pane's own
         # reactive, not a region rebuild -- see `_push_scoped_sources_to_pane`.
         self._push_scoped_sources_to_pane()
-        try:
-            self.query_one("#wl-tree", WatchlistTree).active_scope = self.tree_scope
-        except NoMatches:
-            pass
+        self._sync_tree_navigation_authority()
+        self._sync_items_filter_authority()
         if self.active_section == "artifacts":
             # Artifacts is the one section whose entire subject is the tree
             # scope: a briefing belongs to exactly one watchlist. Moving the
@@ -4439,6 +4690,25 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
             self.run_worker(
                 self._load_briefings(), exclusive=True, group="wl-briefings-load"
             )
+
+    def _sync_tree_navigation_authority(self) -> None:
+        """Push contextual selection availability into the mounted rail."""
+        try:
+            tree = self.query_one("#wl-tree", WatchlistTree)
+        except NoMatches:
+            return
+        reason = self._tree_selection_disabled_reason()
+        tree.selection_disabled_reason = reason
+        tree.active_scope = None if reason is not None else self.tree_scope
+
+    def _sync_items_filter_authority(self) -> None:
+        """Show the committed effective filter while preserving preference."""
+        try:
+            pane = self.query_one("#watchlists-items-pane", ArticleListPane)
+        except NoMatches:
+            return
+        pane.status_filter = self._effective_items_status_filter()
+        pane.status_filter_disabled_reason = self._items_filter_disabled_reason()
 
     def _refresh_centre_header_for_scope(self) -> None:
         """Queue a centre-header rebuild so the scoped summary follows the
@@ -4972,6 +5242,7 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
             self._pending_navigation_run_id = None
             self._pending_navigation_run_backend = None
         if self.is_mounted:
+            self._sync_tree_navigation_authority()
             if self.active_section == "items" and self.runtime_backend != "local":
                 self._enter_server_read_recovery()
             token = self._next_layout_request_token()
@@ -5131,6 +5402,7 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
             )
         except NoMatches:
             pass
+        self._sync_tree_navigation_authority()
         # Review wave, I1: and into the Inspector, which carries the same
         # verb. Pushed from here rather than left to the next rebuild for
         # exactly the reason the tree push above documents -- nothing
@@ -9877,6 +10149,33 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
             return {"status": "new"}
         return {"statuses": list(_READER_ALL_STATUSES)}
 
+    @staticmethod
+    def _scope_forces_unread(scope: TreeScope) -> bool:
+        """Whether a committed or candidate scope owns the Unread filter."""
+        return scope.kind == "unread" or (
+            scope.kind == "source" and scope.parent_context == "unread"
+        )
+
+    def _effective_items_status_filter(
+        self, scope: TreeScope | None = None
+    ) -> str:
+        """Return visible/query filter without mutating the manual choice."""
+        candidate = self.tree_scope if scope is None else scope
+        if self._scope_forces_unread(candidate):
+            return "unread"
+        return _normalize_items_status_filter(self._items_status_filter)
+
+    def _items_filter_disabled_reason(
+        self, scope: TreeScope | None = None
+    ) -> str | None:
+        """Explain the temporary filter override for contextual Unread."""
+        candidate = self.tree_scope if scope is None else scope
+        return (
+            _UNREAD_CONTEXT_FILTER_REASON
+            if self._scope_forces_unread(candidate)
+            else None
+        )
+
     def _items_page_key(
         self,
         *,
@@ -9888,6 +10187,7 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
         return (
             self.runtime_backend,
             scope.kind,
+            scope.parent_context,
             scope.watchlist_id,
             scope.source_id,
             _normalize_items_status_filter(status),
@@ -9920,7 +10220,17 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
         if scope.kind == "today":
             return {"since": self._today_floor_iso()}
         if scope.kind == "source" and scope.source_id is not None:
-            return {"source_id": scope.source_id}
+            query: dict[str, Any] = {"source_id": scope.source_id}
+            if scope.parent_context == "unassigned":
+                query["unassigned_only"] = True
+            elif scope.parent_context == "unread":
+                query["status"] = "new"
+            elif (
+                scope.parent_context == "watchlist"
+                and scope.watchlist_id is not None
+            ):
+                query["watchlist_id"] = scope.watchlist_id
+            return query
         if scope.kind == "watchlist" and scope.watchlist_id is not None:
             return {"watchlist_id": scope.watchlist_id}
         if scope.kind == "unassigned":
@@ -10032,14 +10342,16 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
         """Freeze one candidate Reader query from explicit screen intent."""
         candidate_scope = self.tree_scope if scope is None else scope
         candidate_status = (
-            self._items_status_filter if status is None else status
+            self._effective_items_status_filter(candidate_scope)
+            if status is None
+            else status
         )
         candidate_search = self._items_search_query if search is None else search
         kwargs = {
             **self._items_status_kwargs(candidate_status),
             **self._items_scope_query(candidate_scope),
         }
-        if candidate_scope.kind == "unread":
+        if "status" in kwargs:
             kwargs.pop("statuses", None)
         normalized_search = candidate_search.strip()
         if normalized_search:
@@ -10066,7 +10378,7 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
     ) -> None:
         """Park old rows while immediately invalidating older query work."""
         if scope is None:
-            self._pending_tree_scope = None
+            self._set_pending_tree_scope(None)
         query = self._reader_item_query(scope=scope)
         self._items_snapshot_generation += 1
         self._items_pending_query_key = query.context_key
@@ -10228,7 +10540,7 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
                     except NoMatches:
                         pass
                     if self._pending_tree_scope == scope:
-                        self._pending_tree_scope = None
+                        self._set_pending_tree_scope(None)
                 self._push_items_pager_state()
                 self._restore_items_view_state()
                 if had_retry_state:
@@ -10249,7 +10561,7 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
                 if clear_reader_on_commit and scope is not None:
                     self._notify_pending_scope_failure(scope)
                     if self._pending_tree_scope == scope:
-                        self._pending_tree_scope = None
+                        self._set_pending_tree_scope(None)
                 elif reason == "return_to_read":
                     self._show_items_retry_state()
             return result
@@ -10258,7 +10570,7 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
                 self._items_page_loading = False
                 self._push_items_pager_state()
                 if self._pending_tree_scope == scope:
-                    self._pending_tree_scope = None
+                    self._set_pending_tree_scope(None)
             raise
         except Exception as exc:
             if self._items_request_is_current(generation, query_key):
@@ -10276,7 +10588,7 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
                 elif callable(notify):
                     notify("Failed to load watchlist items.", severity="error")
                 if self._pending_tree_scope == scope:
-                    self._pending_tree_scope = None
+                    self._set_pending_tree_scope(None)
             return False
         finally:
             if not completion.done():
@@ -11040,11 +11352,13 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
             self._push_items_pager_state()
             return
         incoming = _normalize_items_status_filter(event.status_filter)
-        status_changed = incoming != _normalize_items_status_filter(
+        forced = self._scope_forces_unread(self.tree_scope)
+        status_changed = not forced and incoming != _normalize_items_status_filter(
             self._items_status_filter
         )
         query_changed = event.search_query != self._items_search_query
-        self._items_status_filter = incoming
+        if not forced:
+            self._items_status_filter = incoming
         self._items_search_query = event.search_query
         if status_changed:
             self._supersede_items_query_intent()
