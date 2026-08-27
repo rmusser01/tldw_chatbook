@@ -72,6 +72,22 @@ filter completed **128 passed, 460 deselected** in 67.30s. Scoped Ruff lint pass
 all 12 changed implementation/test files. Pytest again emitted only the documented
 post-success temporary-directory cleanup warnings.
 
+## Review fix round 2
+
+One further Priority-1 persistence gap was reproduced with structured atomic-mutation
+outcomes. RED: 4 of 5 new cases failed because result objects were treated as truthy
+booleans and the worker still called the boolean Settings adapter. GREEN: all 5 passed.
+The worker now calls the already-imported atomic mutation primitive and sends its
+ConfigMutationResult to the drain. A completed file replacement becomes the confirmed
+disk/restart baseline even when cache publication fails; the UI keeps its optimistic
+value, reports the partial refresh failure, and drains any newer desired value. This
+includes the stale partial-write case where the newer desired value equals the old
+pre-write baseline. A successful no-op is confirmed, while a conflict or failure
+before replacement rolls back to the last confirmed baseline.
+
+The affected Settings filter completed **17 passed, 368 deselected** in 10.36s.
+Scoped Ruff lint and diff-check passed on the two changed implementation/test files.
+
 ## Architecture and deviation
 
 ADR-090 is the governing accepted decision; Task 3 introduces no additional

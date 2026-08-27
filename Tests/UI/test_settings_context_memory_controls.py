@@ -102,7 +102,23 @@ def test_thinking_history_default_normalizes_only_optional_values(
 
 
 @pytest.mark.asyncio
-async def test_show_model_thinking_is_canonical_immediate_and_rolls_back() -> None:
+@pytest.mark.parametrize(
+    "mutation",
+    [
+        ConfigMutationResult(False, False, "before_replace"),
+        ConfigMutationResult(
+            False,
+            False,
+            None,
+            conflict=True,
+            conflict_reason="identity_changed",
+        ),
+    ],
+    ids=["before-replace", "conflict"],
+)
+async def test_show_model_thinking_is_canonical_immediate_and_rolls_back(
+    mutation: ConfigMutationResult,
+) -> None:
     app = _build_test_app()
     app.app_config = {"console": {"show_model_thinking": False}}
     captured: list[tuple[bool, int]] = []
@@ -147,7 +163,7 @@ async def test_show_model_thinking_is_canonical_immediate_and_rolls_back() -> No
             assert len(refreshes) == 1
 
             screen._apply_thinking_visibility_persist_result(
-                False,
+                mutation,
                 True,
                 1,
             )
@@ -159,6 +175,41 @@ async def test_show_model_thinking_is_canonical_immediate_and_rolls_back() -> No
             assert len(refreshes) == 2
             result = screen.query_one("#settings-console-behavior-result", Static)
             assert "prior setting was restored" in _static_text(result)
+
+
+@pytest.mark.asyncio
+async def test_thinking_visibility_successful_noop_confirms_optimistic_value() -> None:
+    """Catches treating a structured no-op as a failed write."""
+
+    app = _build_test_app()
+    app.app_config = {"console": {"show_model_thinking": False}}
+
+    host = DestinationHarness(app, "settings")
+    with patch.object(
+        SettingsScreen,
+        "_settings_persist_thinking_visibility",
+        new=lambda _screen, _value, _revision: None,
+    ):
+        async with host.run_test(size=(110, 40)) as pilot:
+            await pilot.app.workers.wait_for_complete()
+            screen = _active_destination_screen(host)
+            screen._select_category(SettingsCategoryId.CONSOLE_BEHAVIOR.value)
+            await pilot.pause()
+            toggle = screen.query_one("#settings-console-show-model-thinking", Checkbox)
+
+            toggle.value = True
+            await pilot.pause()
+            screen._apply_thinking_visibility_persist_result(
+                ConfigMutationResult(False, False, None),
+                True,
+                1,
+            )
+
+            assert screen._thinking_visibility_confirmed_value is True
+            assert app.app_config["console"]["show_model_thinking"] is True
+            assert toggle.value is True
+            result = screen.query_one("#settings-console-behavior-result", Static)
+            assert "visibility saved" in _static_text(result).lower()
 
 
 @pytest.mark.asyncio
@@ -207,10 +258,22 @@ async def test_thinking_visibility_write_drain_coalesces_and_rolls_back_latest_f
             assert app.app_config["console"]["show_model_thinking"] is False
             assert writes == [(True, 1)]
 
-            screen._apply_thinking_visibility_persist_result(True, True, 1)
+            screen._apply_thinking_visibility_persist_result(
+                ConfigMutationResult(True, False, "cache_reload"),
+                True,
+                1,
+            )
             assert writes == [(True, 1), (False, 2)]
+            assert screen._thinking_visibility_confirmed_value is True
+            result = screen.query_one("#settings-console-behavior-result", Static)
+            assert "saved" in _static_text(result).lower()
+            assert "refresh" in _static_text(result).lower()
 
-            screen._apply_thinking_visibility_persist_result(False, False, 2)
+            screen._apply_thinking_visibility_persist_result(
+                ConfigMutationResult(False, False, "before_replace"),
+                False,
+                2,
+            )
             await pilot.pause()
 
             assert app.app_config["console"]["show_model_thinking"] is True
@@ -221,7 +284,11 @@ async def test_thinking_visibility_write_drain_coalesces_and_rolls_back_latest_f
             assert "prior setting was restored" in _static_text(result)
 
             # A stale/out-of-order callback cannot change the confirmed disk view.
-            screen._apply_thinking_visibility_persist_result(True, True, 1)
+            screen._apply_thinking_visibility_persist_result(
+                ConfigMutationResult(True, False, "cache_reload"),
+                True,
+                1,
+            )
             assert app.app_config["console"]["show_model_thinking"] is True
             assert writes == [(True, 1), (False, 2)]
 
@@ -237,20 +304,23 @@ async def test_thinking_visibility_overlapping_failure_matches_restart_value() -
     writes: list[bool] = []
     persisted = {"show_model_thinking": False}
 
-    class FakeAdapter:
-        def save_sections(self, sections) -> bool:
-            value = bool(sections["console"]["show_model_thinking"])
-            writes.append(value)
-            if len(writes) == 1:
-                first_started.set()
-                if not release_first.wait(2):
-                    return False
-                persisted["show_model_thinking"] = value
-                return True
-            return False
+    def fake_mutation(sections) -> ConfigMutationResult:
+        value = bool(sections["console"]["show_model_thinking"])
+        writes.append(value)
+        if len(writes) == 1:
+            first_started.set()
+            if not release_first.wait(2):
+                return ConfigMutationResult(False, False, "before_replace")
+            persisted["show_model_thinking"] = value
+            return ConfigMutationResult(True, True, None)
+        return ConfigMutationResult(False, False, "before_replace")
 
     host = DestinationHarness(app, "settings")
-    with patch.object(settings_screen_module, "SettingsConfigAdapter", FakeAdapter):
+    with patch.object(
+        settings_screen_module,
+        "apply_settings_mutation_to_cli_config",
+        new=fake_mutation,
+    ):
         async with host.run_test(size=(110, 40)) as pilot:
             await pilot.app.workers.wait_for_complete()
             screen = _active_destination_screen(host)

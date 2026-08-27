@@ -22669,7 +22669,7 @@ class SettingsScreen(BaseAppScreen):
 
     def _apply_thinking_visibility_persist_result(
         self,
-        saved: bool,
+        mutation: ConfigMutationResult,
         next_value: bool,
         revision: int,
     ) -> None:
@@ -22678,15 +22678,30 @@ class SettingsScreen(BaseAppScreen):
         if self._thinking_visibility_in_flight != (next_value, revision):
             return
         self._thinking_visibility_in_flight = None
-        if saved:
+        successful_noop = (
+            not mutation.file_replaced
+            and not mutation.conflict
+            and mutation.failure_phase is None
+        )
+        if mutation.file_replaced or successful_noop:
             self._thinking_visibility_confirmed_value = next_value
-            if self._thinking_visibility_desired_value != next_value:
-                self._start_thinking_visibility_persist_if_idle()
+            if mutation.file_replaced and not mutation.caches_reloaded:
+                self._console_behavior_result = (
+                    "Model thinking visibility was saved, but live settings "
+                    "could not be refreshed."
+                )
+                self._set_static_text(
+                    "#settings-console-behavior-result",
+                    self._console_behavior_result,
+                )
+                self.app.notify(self._console_behavior_result, severity="error")
             else:
                 self._console_behavior_result = "Model thinking visibility saved."
                 self._set_static_text(
                     "#settings-console-behavior-result", self._console_behavior_result
                 )
+            if self._thinking_visibility_desired_value != next_value:
+                self._start_thinking_visibility_persist_if_idle()
             return
         if revision != self._thinking_visibility_write_revision:
             if (
@@ -22736,12 +22751,12 @@ class SettingsScreen(BaseAppScreen):
         next_value: bool,
         revision: int,
     ) -> None:
-        saved = SettingsConfigAdapter().save_sections(
+        mutation = apply_settings_mutation_to_cli_config(
             {"console": {"show_model_thinking": next_value}}
         )
         self.app.call_from_thread(
             self._apply_thinking_visibility_persist_result,
-            saved,
+            mutation,
             next_value,
             revision,
         )

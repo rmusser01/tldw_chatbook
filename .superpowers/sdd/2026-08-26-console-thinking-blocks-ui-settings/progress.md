@@ -120,4 +120,14 @@ mis-default, and legacy rapid-toggle worker signature/state mismatch. GREEN evid
 5 effective-policy cases, 2 direct store/runtime-default cases, 2 deterministic
 coalescing/restart-equivalent persistence cases, and the final affected filter at
 128 passed/460 deselected in 67.30s. Scoped Ruff passed all 12 changed Python/test
-files. Existing ADR-090 governs; no new ADR is required. Commit pending.
+files. Existing ADR-090 governs; no new ADR is required. Commit `f23d0f51fe`.
+
+Task 3 review fix round 2: the visibility drain now consumes the structured
+ConfigMutationResult from the existing atomic settings mutation primitive rather than
+the boolean adapter. A replaced file is the confirmed disk baseline even if cache
+publication fails, so partial failure keeps the optimistic UI, reports the refresh
+error, and schedules a corrective latest write when needed; no-op success confirms,
+while conflict/before-replace failure rolls back. RED was 4 failed/1 passed (the pass
+was accidental object truthiness); GREEN was 5 passed. The affected thinking Settings
+filter was 17 passed/368 deselected in 10.36s; scoped Ruff and diff-check passed.
+Existing ADR-090 governs; no new ADR is required. Round complete.
