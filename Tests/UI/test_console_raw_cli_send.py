@@ -81,6 +81,7 @@ def _controller(
     restore_stash: Any | None = None,
     append_local_error: Any | None = None,
     marshal_to_ui: Any | None = None,
+    refusal_stash_bank: dict[str, list[ConsoleDraftStash]] | None = None,
 ):
     restored: list[tuple[str | None, ConsoleDraftStash]] = []
     errors: list[tuple[str | None, str]] = []
@@ -118,6 +119,8 @@ def _controller(
             callback(*args)
 
         marshal_to_ui = default_marshal_to_ui
+    if refusal_stash_bank is None:
+        refusal_stash_bank = {}
 
     controller = ConsoleRawCliController(
         raw_cli_runtime=lambda: runtime,
@@ -125,6 +128,7 @@ def _controller(
         persisted_leaf_anchor=lambda session_id: anchor,
         selected_local_root=read_selected,
         private_scratch_root=read_scratch,
+        refusal_stash_bank=refusal_stash_bank,
         restore_stash=restore_stash,
         append_local_error=append_local_error,
         append_store_marker=lambda *args, **kwargs: None,

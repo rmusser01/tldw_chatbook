@@ -1548,6 +1548,7 @@ def build_console_controllers(
                 screen._console_runtime().scratch_spaces.snapshot(session_id).root
             )
         ),
+        refusal_stash_bank=screen._console_runtime().raw_cli_refusal_stash_bank,
         restore_stash=(
             lambda session_id, stash: restore_refused_raw_cli_stash(
                 session_id,

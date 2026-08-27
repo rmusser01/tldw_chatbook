@@ -64,6 +64,7 @@ class ConsoleRawCliController:
         persisted_leaf_anchor: Callable[[str], str | None],
         selected_local_root: Callable[[str], Path | None],
         private_scratch_root: Callable[[str], Path],
+        refusal_stash_bank: dict[str, list[Any]],
         restore_stash: Callable[[str | None, ConsoleDraftStash], bool],
         append_local_error: Callable[[str | None, str], None],
         append_store_marker: Callable[..., Any],
@@ -78,6 +79,7 @@ class ConsoleRawCliController:
         self._persisted_leaf_anchor = persisted_leaf_anchor
         self._selected_local_root = selected_local_root
         self._private_scratch_root = private_scratch_root
+        self._banked_stashes_by_session = refusal_stash_bank
         self._restore_stash = restore_stash
         self._append_local_error = append_local_error
         # Task 7/8 consume these already-wired boundaries; Task 6 must not
@@ -88,7 +90,6 @@ class ConsoleRawCliController:
         self._run_log_access = run_log_access
         self._start_worker = start_worker
         self._marshal_to_ui = marshal_to_ui
-        self._banked_stashes_by_session: dict[str, list[ConsoleDraftStash]] = {}
 
     def start_user_command(self, stash: ConsoleDraftStash) -> bool:
         """Start one trusted raw stash in its own non-exclusive thread worker."""

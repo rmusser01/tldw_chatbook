@@ -27,6 +27,7 @@ import threading
 from pathlib import Path
 
 import pytest
+from textual.events import Key
 
 from Tests.UI.app_factory import _build_test_app
 from Tests.UI.test_console_fleet_wake_wiring import _attach_real_dbs
@@ -47,6 +48,10 @@ from tldw_chatbook.UI.Console_Modules.fleet import (
 )
 from tldw_chatbook.UI.Navigation.main_navigation import NavigateToScreen
 from tldw_chatbook.UI.Screens.chat_screen import ChatScreen
+from tldw_chatbook.Widgets.Console.console_composer_bar import (
+    ConsoleComposerBar,
+    classify_console_raw_draft,
+)
 
 #: Constructor calls that must exist in exactly one place: the runtime.
 #: `ConsoleProviderGateway(` is deliberately NOT here -- the Personas
@@ -106,6 +111,21 @@ async def test_leaving_console_preserves_live_session_scratch(tmp_path):
     assert snapshot.root.is_dir()
     await runtime.dispose()
     assert not snapshot.root.exists()
+
+
+@pytest.mark.asyncio
+async def test_raw_cli_refusal_bank_survives_leave_and_clears_on_dispose():
+    runtime = ConsoleRuntime(type("App", (), {})())
+    stash = object()
+    bank = runtime.raw_cli_refusal_stash_bank
+    bank["session-a"] = [stash]
+
+    assert await runtime.leave_console() is True
+    assert runtime.raw_cli_refusal_stash_bank is bank
+    assert bank == {"session-a": [stash]}
+
+    await runtime.dispose()
+    assert bank == {}
 
 
 @pytest.mark.asyncio
@@ -349,6 +369,61 @@ async def test_second_console_visit_reuses_the_runtime(tmp_path):
         assert controller_two.notify_run_outcome.__self__ is chat_two, (
             "a hook is still bound to the previous, unmounted screen"
         )
+
+
+@pytest.mark.asyncio
+async def test_post_unmount_raw_refusal_restores_on_second_console_visit(tmp_path):
+    app = _build_test_app()
+    _attach_real_dbs(app, tmp_path)
+    _configure_native_ready_console(app)
+
+    async with app.run_test(size=(160, 48)) as pilot:
+        chat = ChatScreen(app)
+        await app.push_screen(chat)
+        app._initial_screen_pushed = True
+        app.current_tab = "chat"
+        await pilot.pause()
+        await _wait_for_selector(chat, pilot, "#console-native-composer")
+
+        store = chat._ensure_console_chat_store()
+        origin_session_id = store.active_session_id
+        assert origin_session_id is not None
+        runtime = chat._console_runtime()
+        controller_a = chat._raw_cli
+
+        source = ConsoleComposerBar()
+        assert source.handle_console_key(Key("exclamation_mark", "!")) is True
+        assert source.handle_console_key(Key("space", " ")) is True
+        source.insert_pasted_text("pwd")
+        stash = source.stash_draft_for_send()
+        assert stash is not None
+
+        await app.handle_screen_navigation(NavigateToScreen("library"))
+        await pilot.pause()
+        assert chat not in app.screen_stack
+
+        controller_a._append_local_error = lambda _session_id, _text: None
+        controller_a._refuse(origin_session_id, stash, "test refusal")
+        assert runtime.raw_cli_refusal_stash_bank[origin_session_id][0] is stash
+
+        await app.handle_screen_navigation(NavigateToScreen("chat"))
+        await pilot.pause()
+        chat_two = app.screen
+        assert isinstance(chat_two, ChatScreen)
+        await _wait_for_selector(chat_two, pilot, "#console-native-composer")
+
+        assert chat_two._console_runtime() is runtime
+        assert chat_two._raw_cli is not controller_a
+        composer = chat_two.query_one("#console-native-composer", ConsoleComposerBar)
+        restored = composer.stash_draft_for_send()
+        assert restored is not None
+        assert restored.segments == stash.segments
+        assert restored.raw_cli_prefix_typed is True
+        assert restored.has_paste is True
+        classified = classify_console_raw_draft(restored)
+        assert classified.kind == "raw"
+        assert classified.text == "pwd"
+        assert runtime.raw_cli_refusal_stash_bank == {}
 
 
 @pytest.mark.asyncio
@@ -835,6 +910,7 @@ async def test_app_fences_console_then_drains_buddy_before_profile_teardown(
     app._audio_cpp_artifact_lease_coordinator = None
     app.audio_cpp_model_install_owner = AsyncOwner()
     app._shutdown_notes_sync_runtime = no_op_lifecycle
+    app._shutdown_raw_cli_runtime = no_op_lifecycle
     app._shutdown_console_image_edits = later_lifecycle
     app._shutdown_console_runtime = shutdown_console_runtime
     app._shutdown_file_notes_session_owner = later_lifecycle
