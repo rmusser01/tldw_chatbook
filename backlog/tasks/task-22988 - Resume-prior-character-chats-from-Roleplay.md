@@ -4,7 +4,7 @@ title: Resume prior character chats from Roleplay
 status: In Progress
 assignee: []
 created_date: '2026-08-26 15:14'
-updated_date: '2026-08-27 05:55'
+updated_date: '2026-08-27 07:09'
 labels:
   - roleplay
   - console
@@ -81,4 +81,6 @@ Final rebase/required-check follow-up: rebased onto origin/dev 6bed8d6f. Generat
 Merge-candidate rebase follow-up: rebased onto origin/dev c6218918. The joined console_chat_store conflict preserves both exact Resume rollback and upstream semantic-capture policy hydration; generated CSS and the reviewed diagnostic inventory were regenerated from the combined tree. The repository's six derived-artifact checks, backlog ID guard, Ruff across all changed Python/test files, and diff checks pass. The focused gate recorded 1,201 passes; its only three failures are unchanged origin/dev tests that still import CONSOLE_REALTIME_EMPTY_TRANSCRIPT_PLACEHOLDER from chat_screen after upstream moved that constant to Console_Modules.realtime. The two unaffected long UI shards passed 300/300 and 376/376. The task was renumbered from TASK-22507 to TASK-22988 under the older-arrival rule after the rebase introduced the already-landed semantic-capture TASK-22507. All ten Qodo findings remain addressed and their review threads resolved. ADR check remains unchanged: ADR-046 applies and no new ADR is required.
 
 Final merge-window refresh: while the required run for c6218918 was queued, origin/dev advanced to 9f7b914a (citation tests and backlog documentation only). Rebased cleanly onto 9f7b914a. Post-rebase evidence: all six required derived-artifact commands passed; Resume startup navigation passed 17/17; the Roleplay conversation-focused workbench subset passed 37/37; metadata/hydration/resume/workspace paths passed 156/157, with the sole failure being the unchanged origin/dev test_console_resume_active_path import of CONSOLE_REALTIME_EMPTY_TRANSCRIPT_PLACEHOLDER from its pre-refactor chat_screen location. The feature source paths had no conflict or upstream semantic change.
+
+Final queue refresh: required run 33044126646 for the prior head was externally cancelled after 58 minutes with zero steps or logs. origin/dev then advanced through 40ba8fe7 and 37dda3ca. The final rebase onto 37dda3ca preserved the upstream Console review/selection-controller extraction; its sole conflict was the generated production diagnostic inventory, which was regenerated from the combined source tree. Post-rebase verification passed: Resume startup navigation 17/17; Roleplay conversation workbench 37/37; Console workspace tests; upstream controller-wiring and review-selection tests; all six required derived-artifact commands; Ruff across all 22 changed Python/test files; and git diff --check. All ten Qodo findings remain addressed and resolved. ADR check remains unchanged: ADR-046 applies and no new ADR is required.
 <!-- SECTION:NOTES:END -->
