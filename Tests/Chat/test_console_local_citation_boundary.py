@@ -2703,20 +2703,23 @@ def _assert_user_citation_repair_cancel(
     assert append_call["kwargs"]["persist"] is (persistence is not None)
 
     if persistence is not None:
+        # COMMITTED ORDER, not call order (TASK-22301). The cancel row is
+        # parented to the assistant row, so it must land after it -- and the
+        # durable path never reaches `create_message`, so call order cannot
+        # observe this at all. `message_rows` is ordered by rowid.
+        rows = persistence.message_rows()
         assistant_write = _first((
-            call
-            for call in persistence.create_calls
-            if call["sender"] == ConsoleMessageRole.ASSISTANT.value
-        ), what="persistence create CALL")
+            row
+            for row in rows
+            if row["sender"] == ConsoleMessageRole.ASSISTANT.value
+        ), what="committed ASSISTANT row")
         system_write = _first((
-            call
-            for call in persistence.create_calls
-            if call["sender"] == ConsoleMessageRole.SYSTEM.value
-            and call["content"] == "Citation repair canceled by user."
-        ), what="persistence create CALL")
-        assert persistence.create_calls.index(
-            assistant_write
-        ) < persistence.create_calls.index(system_write)
+            row
+            for row in rows
+            if row["sender"] == ConsoleMessageRole.SYSTEM.value
+            and row["content"] == "Citation repair canceled by user."
+        ), what="committed cancel SYSTEM row")
+        assert rows.index(assistant_write) < rows.index(system_write)
         assert system_write["parent_message_id"] == assistant.persisted_message_id
 
 
@@ -3082,14 +3085,23 @@ async def test_citation_repair_cancel_row_persistence_failure_is_fail_soft(
         for call in persistence.create_attempts
         if call["sender"] == ConsoleMessageRole.SYSTEM.value
     ), what="persistence create ATTEMPT")
-    assert persistence.create_attempts.index(
-        _first((
-            call
-            for call in persistence.create_attempts
-            if call["sender"] == ConsoleMessageRole.ASSISTANT.value
-        ), what="persistence create ATTEMPT")
-    ) < persistence.create_attempts.index(cancel_attempt)
+    # TASK-22301: the ordering used to be an index comparison inside
+    # `create_attempts`. That cannot work now -- the cancel row still goes
+    # through `append_message(persist=True)` and so through `create_message`,
+    # but the ASSISTANT row is written by the durable checkpoint's raw SQL and
+    # never appears there. Comparing indices across two different seams is
+    # meaningless.
+    #
+    # Parentage is the stronger claim anyway: the cancel row names the
+    # assistant row as its parent, which cannot hold unless that row was
+    # committed first. Assert that, plus that the assistant row really exists.
     assert cancel_attempt["parent_message_id"] == assistant.persisted_message_id
+    assert any(
+        row["message_id"] == assistant.persisted_message_id
+        for row in persistence.message_rows(
+            sender=ConsoleMessageRole.ASSISTANT.value
+        )
+    ), "the cancel row was parented to an ASSISTANT row that was never committed"
 
     if agent:
         assert bridge is not None
