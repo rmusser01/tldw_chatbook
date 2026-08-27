@@ -1,6 +1,6 @@
 # ADR-092: Console live-child WRITE paths cross exact change boundaries
 
-Status: Proposed
+Status: Accepted
 Date: 2026-08-26
 Related Task: [TASK-15671](../tasks/task-15671%20-%20The-.gitignore-force-add-carve-out-does-not-extend-to-a-survivor-window.md)
 Related Spec: [Ignored survivor-write tracking](../../Docs/superpowers/specs/2026-08-26-task-15671-ignored-survivor-write-tracking-design.md)

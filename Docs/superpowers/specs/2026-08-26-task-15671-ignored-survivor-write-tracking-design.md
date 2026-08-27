@@ -1,7 +1,7 @@
 # TASK-15671: Ignored survivor-write tracking — Design
 
 Date: 2026-08-26
-Status: Ready for user review
+Status: Implemented
 Task: TASK-15671
 Governed by: ADR-089, ADR-092
 

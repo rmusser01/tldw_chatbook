@@ -5,7 +5,7 @@ status: In Progress
 assignee:
   - '@codex'
 created_date: '2026-08-11 21:30'
-updated_date: '2026-08-27 04:03'
+updated_date: '2026-08-27 15:16'
 labels:
   - console
   - change-review
@@ -17,19 +17,20 @@ priority: medium
 ## Description
 
 <!-- SECTION:DESCRIPTION:BEGIN -->
-Change tracking force-adds paths an agent touched even when .gitignore would hide them, so an agent writing to an ignored path (`.env` is the canonical case) still shows up for review. PR 3a-1 Task 6c's survivor window passes no `touched_paths` when it closes, so that carve-out does not apply to changes a sub-agent makes AFTER its turn: an ignored path written by a survivor surfaces inside its own turn's window and not after it. Closing this requires carrying a bounded projection of attributed child WRITE paths across the existing exact Git boundaries, including pending and inherited survivors; the gap is named in the code at `_close_post_turn_change_window` rather than half-built.
+Change tracking force-adds paths an agent touched even when `.gitignore` would hide them, so an agent writing to an ignored path still shows up for review. The survivor window previously had no equivalent input, allowing an ignored path written after the parent turn to escape that survivor's review card. The fix carries a bounded projection of attributed child WRITE paths across the existing exact Git boundaries, including pending and inherited survivors, without adding durable storage or a filesystem watcher.
 <!-- SECTION:DESCRIPTION:END -->
 
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
-- [ ] #1 A survivor writing to a .gitignore'd path has that write surfaced in its own survivor window
-- [ ] #2 The turn window's existing force-add behaviour is unchanged
-- [ ] #3 A test writes an ignored path from a post-turn child and fails when the carve-out is absent
-- [ ] #4 The gap comment at _close_post_turn_change_window is removed rather than reworded
+- [x] #1 A survivor writing to a .gitignore'd path has that write surfaced in its own survivor window
+- [x] #2 The turn window's existing force-add behaviour is unchanged
+- [x] #3 A test writes an ignored path from a post-turn child and fails when the carve-out is absent
+- [x] #4 The gap comment at _close_post_turn_change_window is removed rather than reworded
 <!-- AC:END -->
 
 ## Implementation Plan
 
+<!-- SECTION:PLAN:BEGIN -->
 1. Add a production-shaped RED regression that executes the real `write_file`
    tool from a child only after its parent turn returns and proves a new ignored
    file is absent from survivor review on current `dev`.
@@ -56,3 +57,35 @@ Approved design:
 
 Detailed implementation plan:
 `Docs/superpowers/plans/2026-08-26-task-15671-ignored-survivor-write-tracking-implementation.md`
+<!-- SECTION:PLAN:END -->
+
+## Implementation Notes
+
+<!-- SECTION:NOTES:BEGIN -->
+- Added a bridge-local child WRITE-path projection covering pending, live,
+  inherited, and E-in-flight children. State remains bounded to owner identity,
+  run IDs, scope counts, and normalized paths; no schema or file-content cache
+  was introduced.
+- Added an exact successor-boundary claim and shared close-completion handoff.
+  Survivor E and successor B remain abutting, concurrent closers share one
+  outcome, and a timeout fails change tracking closed instead of inventing an
+  overlapping review window.
+- Extended baseline and end snapshots to force-add eligible recorded paths
+  atomically. Supplied-SHA closure preserves the supplied commit while priming
+  the shadow index for the next fresh snapshot.
+- Added production-shaped and race-focused coverage for ignored post-turn
+  writes, pending and inherited children, B/E ownership, concurrent close,
+  oversize/refusal behavior, and injected failures.
+- Focused evidence before final rebase: `Tests/Chat/test_change_turn_tracking.py`
+  passed 88 tests; `Tests/Workspaces/test_change_tracking.py` plus
+  `Tests/Workspaces/test_change_bounds.py` passed 62 tests; scoped Ruff,
+  `compileall`, and `git diff --check` passed.
+- The adjacent Chat aggregate has two baseline-only failures in
+  `test_child_run_scope_ordering.py` and `test_fleet_settle_fanout.py`: both
+  monkeypatch `_persist` with the old `(self, run_id, outcome)` signature while
+  current `origin/dev` calls `_persist(run_id, outcome, durable_handle_ids)`.
+  The task-focused module does not fail.
+- Governance: [ADR-092](../decisions/092-console-live-child-write-path-boundaries.md),
+  [design](../../Docs/superpowers/specs/2026-08-26-task-15671-ignored-survivor-write-tracking-design.md),
+  and [implementation plan](../../Docs/superpowers/plans/2026-08-26-task-15671-ignored-survivor-write-tracking-implementation.md).
+<!-- SECTION:NOTES:END -->
