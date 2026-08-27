@@ -2287,6 +2287,37 @@ def test_release_checker_rejects_duplicate_sdist_member_names(
     assert "PKG-INFO" in output
 
 
+@pytest.mark.parametrize("member_kind", ["metadata", "tiktoken-cache"])
+def test_release_checker_rejects_duplicate_wheel_member_names(
+    built_distributions: BuiltDistributions,
+    tmp_path: Path,
+    member_kind: str,
+) -> None:
+    dist_dir = tmp_path / "dist"
+    shutil.copytree(built_distributions.dist_dir, dist_dir)
+    wheel = next(dist_dir.glob("*.whl"))
+    with zipfile.ZipFile(wheel, "a") as archive:
+        if member_kind == "metadata":
+            target = next(
+                name
+                for name in archive.namelist()
+                if name.endswith(".dist-info/METADATA")
+            )
+            payload = archive.read(target)
+        else:
+            target = f"{TIKTOKEN_CACHE_PREFIX}manifest.json"
+            payload = b"corrupt duplicate"
+        with pytest.warns(UserWarning, match="Duplicate name"):
+            archive.writestr(target, payload)
+
+    result = _run_manifest_checker(built_distributions, dist_dir, tmp_path)
+    output = result.stdout + result.stderr
+
+    assert result.returncode == 1
+    assert "duplicate" in output.lower()
+    assert target in output
+
+
 def test_migration_expectations_are_derived_not_enumerated() -> None:
     """The expectations must come from reality, or they cannot catch drift."""
     assert SOURCE_MIGRATION_PATHS, "no migration scripts found in the checkout"

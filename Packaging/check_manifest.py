@@ -258,9 +258,19 @@ def _sdist_tiktoken_members(path: Path) -> tuple[set[str], list[str]]:
     return members, errors
 
 
-def _wheel_members(path: Path) -> set[str]:
+def _wheel_members(path: Path) -> tuple[set[str], list[str]]:
+    errors: list[str] = []
     with zipfile.ZipFile(path) as archive:
-        return {name for name in archive.namelist() if not name.endswith("/")}
+        names = archive.namelist()
+    seen: set[str] = set()
+    duplicates: set[str] = set()
+    for name in names:
+        if name in seen:
+            duplicates.add(name)
+        seen.add(name)
+    for duplicate in sorted(duplicates):
+        errors.append(f"wheel: duplicate archive member: {duplicate}")
+    return {name for name in names if not name.endswith("/")}, errors
 
 
 def _wheel_tiktoken_members(path: Path) -> tuple[set[str], list[str]]:
@@ -508,8 +518,9 @@ def check_distribution(dist_dir: Path = Path("dist")) -> bool:
     sdist = sdists[0]
     wheel = wheels[0]
     sdist_members, sdist_errors = _sdist_members(sdist)
-    wheel_members = _wheel_members(wheel)
+    wheel_members, wheel_errors = _wheel_members(wheel)
     errors.extend(sdist_errors)
+    errors.extend(wheel_errors)
     sdist_tiktoken_members, sdist_tiktoken_errors = _sdist_tiktoken_members(sdist)
     errors.extend(sdist_tiktoken_errors)
     wheel_tiktoken_members, wheel_tiktoken_errors = _wheel_tiktoken_members(wheel)
