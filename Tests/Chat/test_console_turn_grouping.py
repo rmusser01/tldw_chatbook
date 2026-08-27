@@ -6,15 +6,22 @@ from dataclasses import FrozenInstanceError
 import pytest
 
 from tldw_chatbook.Chat.console_chat_models import (
+    ConsoleActivityPresentation,
     ConsoleChatMessage,
     ConsoleMessageRole,
     ConsoleMessageStatus,
 )
 from tldw_chatbook.Chat.console_turn_grouping import (
     ConsoleAssistantTurn,
+    ConsoleThinkingActivityRef,
     ConsoleTranscriptUnit,
     group_console_transcript_messages,
+    ordered_assistant_activities,
     visual_messages,
+)
+from tldw_chatbook.Chat.thinking_blocks import (
+    DisplayableThinkingBlock,
+    ThinkingEnvelope,
 )
 
 
@@ -261,3 +268,120 @@ def test_projection_value_objects_are_frozen() -> None:
         turn.activities = ()  # type: ignore[misc]
     with pytest.raises(FrozenInstanceError):
         unit.assistant_turn = None  # type: ignore[misc]
+
+
+def _thinking_block(block_id: str, round_ordinal: int) -> DisplayableThinkingBlock:
+    return DisplayableThinkingBlock(
+        block_id=block_id,
+        round_ordinal=round_ordinal,
+        provider="local_vllm",
+        model="thinking-model",
+        protocol="openai_chat",
+        source_format="start_anchored_think",
+        status="complete",
+        text=f"thinking round {round_ordinal}",
+    )
+
+
+def _activity(message_id: str, kind: str, label: str) -> ConsoleChatMessage:
+    return ConsoleChatMessage(
+        role=ConsoleMessageRole.TOOL,
+        content=label,
+        id=message_id,
+        activity_presentation=ConsoleActivityPresentation(
+            kind,
+            label,
+            "done",  # type: ignore[arg-type]
+        ),
+    )
+
+
+def _ordered_ids(
+    activities: tuple[ConsoleChatMessage | ConsoleThinkingActivityRef, ...],
+) -> list[str]:
+    return [
+        activity.activity_id
+        if isinstance(activity, ConsoleThinkingActivityRef)
+        else activity.id
+        for activity in activities
+    ]
+
+
+def test_ordered_activities_place_each_model_block_before_its_round_marker() -> None:
+    assistant = _message(
+        ConsoleMessageRole.ASSISTANT,
+        "Answer",
+        message_id="a1",
+    )
+    assistant.thinking = ThinkingEnvelope(
+        (_thinking_block("block-0", 0), _thinking_block("block-1", 1))
+    )
+    planning_0 = _activity("planning-0", "thinking", "Thinking")
+    tool_0 = _activity("tool-0", "tool", "fs_read")
+    planning_1 = _activity("planning-1", "thinking", "Thinking")
+    tool_1 = _activity("tool-1", "tool", "fs_write")
+
+    ordered = ordered_assistant_activities(
+        ConsoleAssistantTurn(
+            assistant,
+            (planning_0, tool_0, planning_1, tool_1),
+        ),
+        session_id="session-1",
+    )
+
+    assert [
+        activity.block_id
+        if isinstance(activity, ConsoleThinkingActivityRef)
+        else activity.id
+        for activity in ordered
+    ] == [
+        "block-0",
+        "planning-0",
+        "tool-0",
+        "block-1",
+        "planning-1",
+        "tool-1",
+    ]
+
+
+def test_ordered_activities_fallback_interleaves_rounds_without_round_markers() -> None:
+    assistant = _message(
+        ConsoleMessageRole.ASSISTANT,
+        "Answer",
+        message_id="a1",
+    )
+    assistant.thinking = ThinkingEnvelope(
+        (_thinking_block("block-0", 0), _thinking_block("block-1", 1))
+    )
+    tool_0 = _activity("tool-0", "tool", "fs_read")
+    tool_1 = _activity("tool-1", "tool", "fs_write")
+
+    ordered = ordered_assistant_activities(
+        ConsoleAssistantTurn(assistant, (tool_0, tool_1)),
+        session_id="session-1",
+    )
+
+    assert [
+        activity.block_id
+        if isinstance(activity, ConsoleThinkingActivityRef)
+        else activity.id
+        for activity in ordered
+    ] == ["block-0", "tool-0", "block-1", "tool-1"]
+
+
+def test_ordered_activities_without_evidence_preserve_tool_identity_and_order() -> None:
+    assistant = _message(
+        ConsoleMessageRole.ASSISTANT,
+        "Answer",
+        message_id="a1",
+    )
+    first = _activity("tool-0", "tool", "fs_read")
+    second = _activity("tool-1", "tool", "fs_write")
+
+    ordered = ordered_assistant_activities(
+        ConsoleAssistantTurn(assistant, (first, second)),
+        session_id="session-1",
+    )
+
+    assert ordered == (first, second)
+    assert _ordered_ids(ordered) == ["tool-0", "tool-1"]

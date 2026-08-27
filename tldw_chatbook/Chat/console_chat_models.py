@@ -258,7 +258,11 @@ ConsoleActivityKind = Literal[
     "warning",
     "activity",
 ]
-ConsoleActivityStatus = Literal["success", "blocked", "failed", "done"]
+ConsoleActivityStatus = Literal[
+    "success", "blocked", "failed", "done", "live", "stopped", "unavailable"
+]
+
+PROPRIETARY_THINKING_NOTICE = "Proprietary thinking obfuscated - not available"
 
 _CONSOLE_ACTIVITY_KINDS = frozenset(
     {
@@ -272,7 +276,9 @@ _CONSOLE_ACTIVITY_KINDS = frozenset(
         "activity",
     }
 )
-_CONSOLE_ACTIVITY_STATUSES = frozenset({"success", "blocked", "failed", "done"})
+_CONSOLE_ACTIVITY_STATUSES = frozenset(
+    {"success", "blocked", "failed", "done", "live", "stopped", "unavailable"}
+)
 
 
 CONSOLE_DISPATCH_UNRECONSTRUCTABLE_REASON = (
@@ -554,6 +560,17 @@ class ConsoleActivityPresentation:
             )
         if self.status not in _CONSOLE_ACTIVITY_STATUSES:
             raise ValueError("activity status is invalid")
+
+
+@dataclass(frozen=True, slots=True)
+class ConsoleThinkingActivityRef:
+    """Trusted UI identity and owner lookup for one supported thinking block."""
+
+    activity_id: str
+    assistant_message_id: str
+    block_id: str
+    label: str
+    status: ConsoleActivityStatus
 
 
 CONSOLE_GLOBAL_WORKSPACE_ID = "global"
