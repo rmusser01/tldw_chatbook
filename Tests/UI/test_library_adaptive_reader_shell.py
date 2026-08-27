@@ -56,11 +56,13 @@ class _ProbeApp(ConsolidatedCSSApp):
         *,
         focusable_content: bool = False,
         work_disabled: bool = False,
+        outside_action: bool = False,
     ) -> None:
         super().__init__()
         self.layout = layout or _layout()
         self.focusable_content = focusable_content
         self.work_disabled = work_disabled
+        self.outside_action = outside_action
         self.toggles: list[str] = []
         self.resize_messages = 0
 
@@ -90,6 +92,8 @@ class _ProbeApp(ConsolidatedCSSApp):
             id="probe-shell",
         )
         yield shell
+        if self.outside_action:
+            yield Button("Outside action", id="probe-outside-action")
 
     @on(PaneToggleRequested)
     def _capture_toggle(self, event: PaneToggleRequested) -> None:
@@ -376,6 +380,104 @@ async def test_responsive_reopen_never_steals_focus_from_work():
         work_action.focus()
         await pilot.pause()
         shell.sync_layout(_layout())
+        await pilot.pause()
+
+        assert work_action.has_focus
+        assert not remembered.has_focus
+
+
+@pytest.mark.asyncio
+async def test_hidden_shell_manual_reopen_leaves_reachable_focus_alone():
+    app = _ProbeApp(focusable_content=True, outside_action=True)
+
+    async with app.run_test(size=(160, 30)) as pilot:
+        await pilot.pause()
+        shell = app.query_one("#probe-shell", LibraryAdaptiveReaderShell)
+        remembered = shell.query_one("#probe-library-secondary", Button)
+        outside_action = app.query_one("#probe-outside-action", Button)
+        remembered.focus()
+        await pilot.pause()
+
+        shell.sync_layout(_layout(library_open=False))
+        await pilot.pause()
+        outside_action.focus()
+        shell.display = False
+        await pilot.pause()
+        assert outside_action.has_focus
+        assert remembered not in app.screen.focus_chain
+
+        shell.sync_layout(_layout(), manual_reopen="library")
+        await pilot.pause()
+
+        assert outside_action.has_focus
+        assert not remembered.has_focus
+        assert not remembered.is_on_screen
+
+
+@pytest.mark.asyncio
+async def test_manual_reopen_fallback_includes_focusable_pane_root():
+    app = _ProbeApp(focusable_content=True)
+
+    async with app.run_test(size=(160, 30)) as pilot:
+        await pilot.pause()
+        shell = app.query_one("#probe-shell", LibraryAdaptiveReaderShell)
+        work_action = shell.query_one("#probe-work-action", Button)
+        shell.library.can_focus = True
+        for control in shell.library.query(Button):
+            control.disabled = True
+        work_action.focus()
+        shell.sync_layout(_layout(library_open=False))
+        await pilot.pause()
+        assert work_action.has_focus
+
+        shell.sync_layout(_layout(), manual_reopen="library")
+        await pilot.pause()
+
+        assert shell.library in app.screen.focus_chain
+        assert shell.library.has_focus
+
+
+@pytest.mark.asyncio
+async def test_manual_reopen_on_already_open_pane_does_not_steal_work_focus():
+    app = _ProbeApp(focusable_content=True)
+
+    async with app.run_test(size=(160, 30)) as pilot:
+        await pilot.pause()
+        shell = app.query_one("#probe-shell", LibraryAdaptiveReaderShell)
+        remembered = shell.query_one("#probe-library-secondary", Button)
+        work_action = shell.query_one("#probe-work-action", Button)
+        remembered.focus()
+        await pilot.pause()
+        work_action.focus()
+        await pilot.pause()
+
+        shell.sync_layout(_layout(), manual_reopen="library")
+        await pilot.pause()
+
+        assert work_action.has_focus
+        assert not remembered.has_focus
+
+
+@pytest.mark.asyncio
+async def test_manual_reopen_on_still_closed_pane_does_not_steal_work_focus():
+    app = _ProbeApp(focusable_content=True)
+
+    async with app.run_test(size=(160, 30)) as pilot:
+        await pilot.pause()
+        shell = app.query_one("#probe-shell", LibraryAdaptiveReaderShell)
+        remembered = shell.query_one("#probe-library-secondary", Button)
+        work_action = shell.query_one("#probe-work-action", Button)
+        remembered.focus()
+        await pilot.pause()
+        shell.sync_layout(_layout(library_open=False))
+        await pilot.pause()
+        work_action.focus()
+        await pilot.pause()
+
+        shell.sync_layout(
+            _layout(library_open=False),
+            manual_reopen="library",
+        )
         await pilot.pause()
 
         assert work_action.has_focus

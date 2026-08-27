@@ -151,22 +151,19 @@ class LibraryAdaptiveReaderShell(Horizontal):
                 self._last_focused_descendant[pane_name] = target
                 return
 
-    @staticmethod
-    def _is_valid_focus_target(pane: Widget, target: Widget | None) -> bool:
-        """Return whether ``target`` is a displayed focusable pane descendant."""
-        if (
-            target is None
-            or not target.is_mounted
-            or pane not in target.ancestors
-            or not target.focusable
-        ):
-            return False
-        for node in target.ancestors_with_self:
-            if isinstance(node, Widget) and not node.display:
-                return False
-            if node is pane:
-                return True
-        return False
+    def _pane_focus_chain(self, pane: Widget) -> list[Widget]:
+        """Return currently reachable pane targets in Textual focus order."""
+        if not self.is_mounted:
+            return []
+        return [
+            target
+            for target in self.app.screen.focus_chain
+            if target is pane or pane in target.ancestors
+        ]
+
+    def _is_valid_focus_target(self, pane: Widget, target: Widget | None) -> bool:
+        """Return whether ``target`` is currently reachable within ``pane``."""
+        return target is not None and target in self._pane_focus_chain(pane)
 
     def sync_layout(
         self,
@@ -175,15 +172,17 @@ class LibraryAdaptiveReaderShell(Horizontal):
         manual_reopen: PaneName | None = None,
     ) -> None:
         """Patch pane display and exact cell widths in place."""
+        previous_layout = self.effective_layout
         self.effective_layout = layout
         focused = self.app.focused if self.is_mounted else None
         evacuation_target: Widget | None = None
         manual_reopen_pane: Widget | None = None
-        for pane_name, pane, grip, open, width in (
+        for pane_name, pane, grip, was_open, open, width in (
             (
                 "library",
                 self.library,
                 self.library_grip,
+                previous_layout.library_open,
                 layout.library_open,
                 layout.library_width,
             ),
@@ -191,6 +190,7 @@ class LibraryAdaptiveReaderShell(Horizontal):
                 "items",
                 self.items,
                 self.items_grip,
+                previous_layout.items_open,
                 layout.items_open,
                 layout.items_width,
             ),
@@ -210,7 +210,7 @@ class LibraryAdaptiveReaderShell(Horizontal):
             pane.styles.max_width = width
             pane.styles.height = "100%"
             grip.sync_open(open)
-            if open and manual_reopen == pane_name:
+            if not was_open and open and manual_reopen == pane_name:
                 manual_reopen_pane = pane
         self.work.display = True
         self.work.styles.width = "1fr"
@@ -219,15 +219,9 @@ class LibraryAdaptiveReaderShell(Horizontal):
         if evacuation_target is not None:
             evacuation_target.focus(scroll_visible=False)
         elif manual_reopen_pane is not None:
+            focus_chain = self._pane_focus_chain(manual_reopen_pane)
             target = self._last_focused_descendant[manual_reopen]
-            if not self._is_valid_focus_target(manual_reopen_pane, target):
-                target = next(
-                    (
-                        candidate
-                        for candidate in manual_reopen_pane.walk_children(Widget)
-                        if self._is_valid_focus_target(manual_reopen_pane, candidate)
-                    ),
-                    None,
-                )
+            if target not in focus_chain:
+                target = next(iter(focus_chain), None)
             if target is not None:
                 target.focus(scroll_visible=False)
