@@ -65,6 +65,7 @@ def bare(tmp_path: Path) -> Path:
         check=True,
         capture_output=True,
     )
+    _git(bare_root, "symbolic-ref", "HEAD", "refs/heads/main")
     return bare_root
 
 

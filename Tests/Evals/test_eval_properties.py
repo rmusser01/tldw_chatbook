@@ -662,7 +662,6 @@ class TestConcurrencyProperties:
         """Test that concurrent task creation maintains uniqueness."""
         import threading
         import tempfile
-        import os
 
         # Filter out names that would be empty after cleaning
         cleaned_names = []
@@ -680,47 +679,45 @@ class TestConcurrencyProperties:
         # Use unique names to avoid duplicates after cleaning
         task_names = list(set(cleaned_names))
 
-        # Use a temporary file database for thread safety
-        with tempfile.NamedTemporaryFile(suffix=".db", delete=False) as f:
-            temp_path = str(Path(f.name).resolve())
-
-        try:
+        # Keep the database below a private directory. A direct file under
+        # Linux's shared sticky /tmp is intentionally rejected by EvalsDB.
+        with tempfile.TemporaryDirectory() as temp_dir:
+            temp_path = str(Path(temp_dir) / "evals.db")
             temp_db = EvalsDB(db_path=temp_path, client_id="test_client")
+            try:
+                created_ids = []
+                errors = []
 
-            created_ids = []
-            errors = []
+                def create_task(name):
+                    try:
+                        task_id = temp_db.create_task(
+                            name=name,
+                            description=f"Concurrent test task {name}",
+                            task_type="question_answer",
+                            config_format="custom",
+                            config_data={"name": name},
+                        )
+                        created_ids.append(task_id)
+                    except Exception as e:
+                        errors.append(e)
 
-            def create_task(name):
-                try:
-                    task_id = temp_db.create_task(
-                        name=name,
-                        description=f"Concurrent test task {name}",
-                        task_type="question_answer",
-                        config_format="custom",
-                        config_data={"name": name},
-                    )
-                    created_ids.append(task_id)
-                except Exception as e:
-                    errors.append(e)
+                # Create tasks concurrently
+                threads = []
+                for name in task_names:
+                    thread = threading.Thread(target=create_task, args=(name,))
+                    threads.append(thread)
+                    thread.start()
 
-            # Create tasks concurrently
-            threads = []
-            for name in task_names:
-                thread = threading.Thread(target=create_task, args=(name,))
-                threads.append(thread)
-                thread.start()
+                # Wait for all threads to complete
+                for thread in threads:
+                    thread.join()
 
-            # Wait for all threads to complete
-            for thread in threads:
-                thread.join()
-
-            # Should have no errors and all IDs should be unique
-            assert len(errors) == 0
-            assert len(created_ids) == len(task_names)
-            assert len(set(created_ids)) == len(created_ids)
-        finally:
-            # Clean up
-            os.unlink(temp_path)
+                # Should have no errors and all IDs should be unique
+                assert len(errors) == 0
+                assert len(created_ids) == len(task_names)
+                assert len(set(created_ids)) == len(created_ids)
+            finally:
+                temp_db.close()
 
     @given(st.lists(sample_data_strategy(), min_size=1, max_size=20))
     @settings(max_examples=5, deadline=None)

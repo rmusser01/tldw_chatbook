@@ -9846,7 +9846,7 @@ async def test_summary_step_renders_rows_from_read_back():
     async with app.run_test(size=(120, 40)) as pilot:
         await pilot.pause()
         step.on_show()
-        await pilot.pause()
+        await app.workers.wait_for_complete()
         rendered = str(step.query_one("#setup-summary-rows", Static).render())
         assert "Provider" in rendered
         assert "✓" in rendered and "✗" in rendered
@@ -12755,7 +12755,7 @@ async def test_summary_consent_checkbox_persists_answer_on_commit(allowed):
     async with app.run_test(size=(120, 40)) as pilot:
         await pilot.pause()
         step.on_show()
-        await pilot.pause(0.2)
+        await app.workers.wait_for_complete()
         box = step.query_one("#setup-summary-model-catalog-consent", Checkbox)
         assert not box.has_class("hidden"), "unanswered consent must be offered"
         assert box.value is False, "consent defaults to OFF (deny-by-default)"

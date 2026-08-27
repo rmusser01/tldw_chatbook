@@ -12543,9 +12543,27 @@ UPDATE db_schema_version
         try:
             # IMMEDIATE: hot messages writer; see add_message's scoping comment.
             with self.transaction(immediate=True) as conn:
+                available_columns = self._messages_table_columns()
+                provider_column = (
+                    "provider_continuation_json"
+                    if "provider_continuation_json" in available_columns
+                    else "NULL AS provider_continuation_json"
+                )
+                thinking_column = (
+                    "thinking_blocks_json"
+                    if "thinking_blocks_json" in available_columns
+                    else "NULL AS thinking_blocks_json"
+                )
+                private_clears = "".join(
+                    f", {column} = NULL"
+                    for column in sorted(
+                        available_columns
+                        & {"thinking_blocks_json", "provider_continuation_json"}
+                    )
+                )
                 current = conn.execute(
                     "SELECT conversation_id, version, deleted, role, content, "
-                    "provider_continuation_json, thinking_blocks_json "
+                    f"{provider_column}, {thinking_column} "
                     "FROM messages WHERE id = ?",
                     (message_id,),
                 ).fetchone()
@@ -12638,7 +12656,7 @@ UPDATE db_schema_version
                         conn, tuple(row["id"] for row in descendant_rows)
                     )
                     conn.execute(
-                        """
+                        f"""
                         WITH RECURSIVE descendants(id) AS (
                             SELECT id
                               FROM messages
@@ -12653,9 +12671,7 @@ UPDATE db_schema_version
                                AND child.conversation_id = ?
                         )
                         UPDATE messages
-                           SET deleted = 1,
-                               thinking_blocks_json = NULL,
-                               provider_continuation_json = NULL,
+                           SET deleted = 1{private_clears},
                                last_modified = ?,
                                version = version + 1,
                                client_id = ?
@@ -13273,7 +13289,18 @@ UPDATE db_schema_version
         now = self._get_current_utc_timestamp_iso()
         next_version_val = expected_version + 1
 
-        query = "UPDATE messages SET deleted = 1, thinking_blocks_json = NULL, provider_continuation_json = NULL, last_modified = ?, version = ?, client_id = ? WHERE id = ? AND version = ? AND deleted = 0"
+        private_columns = self._messages_table_columns() & {
+            "thinking_blocks_json",
+            "provider_continuation_json",
+        }
+        private_clears = "".join(
+            f", {column} = NULL" for column in sorted(private_columns)
+        )
+        query = (
+            f"UPDATE messages SET deleted = 1{private_clears}, "
+            "last_modified = ?, version = ?, client_id = ? "
+            "WHERE id = ? AND version = ? AND deleted = 0"
+        )
         params = (now, next_version_val, self.client_id, message_id, expected_version)
 
         try:
@@ -13354,6 +13381,13 @@ UPDATE db_schema_version
         cleared with the deleted generation before the tombstone commits.
         """
         now = self._get_current_utc_timestamp_iso()
+        private_clears = "".join(
+            f", {column} = NULL"
+            for column in sorted(
+                self._messages_table_columns()
+                & {"thinking_blocks_json", "provider_continuation_json"}
+            )
+        )
         # IMMEDIATE: hot messages writer; see add_message's scoping comment.
         with self.transaction(immediate=True) as conn:
             current = conn.execute(
@@ -13399,7 +13433,7 @@ UPDATE db_schema_version
                 conn, tuple(row["id"] for row in rows)
             )
             conn.execute(
-                """
+                f"""
                 WITH RECURSIVE subtree(id) AS (
                     SELECT id FROM messages
                      WHERE id = ? AND conversation_id = ? AND deleted = 0
@@ -13411,9 +13445,7 @@ UPDATE db_schema_version
                        AND child.conversation_id = ?
                 )
                 UPDATE messages
-                   SET deleted = 1,
-                       thinking_blocks_json = NULL,
-                       provider_continuation_json = NULL,
+                   SET deleted = 1{private_clears},
                        last_modified = ?,
                        version = version + 1,
                        client_id = ?
@@ -13490,6 +13522,16 @@ UPDATE db_schema_version
     ) -> dict[str, tuple[int, str]]:
         """Capture content-free delete proofs before a tombstone clears thinking."""
         if not message_ids:
+            return {}
+        required_columns = {
+            "provider_continuation_json",
+            "thinking_blocks_json",
+            "assistant_generation_state",
+        }
+        if not required_columns <= self._messages_table_columns():
+            # Historical migration fixtures exercise the real production
+            # writers against their genuinely older schemas. Those schemas
+            # predate the content-free Sync-v2 delete proof and cannot emit it.
             return {}
         placeholders = ",".join("?" for _ in message_ids)
         rows = conn.execute(
@@ -16878,14 +16920,23 @@ UPDATE db_schema_version
                 and role != "assistant"
             ):
                 return None
-            if (
-                state is not None
-                and state.value == "continuation_active"
-                and not has_active_continuation
-            ) or (
-                intent_state is not None
-                and intent_state.value == "continuation_active"
-                and not has_active_continuation
+            # A current-schema tombstone clears its private continuation and
+            # thinking owners before commit. Its trigger-authored intent can
+            # therefore retain the last generation-state label without the
+            # sidecar that made that state live. The captured base hash is the
+            # authoritative pre-delete proof; only legacy tombstones need the
+            # surviving row fields to reconstruct it.
+            if base_payload_hash is None and (
+                (
+                    state is not None
+                    and state.value == "continuation_active"
+                    and not has_active_continuation
+                )
+                or (
+                    intent_state is not None
+                    and intent_state.value == "continuation_active"
+                    and not has_active_continuation
+                )
             ):
                 return None
             expected_intent = {

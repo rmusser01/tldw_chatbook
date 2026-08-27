@@ -1929,10 +1929,11 @@ class ConsoleChatStore:
         """Read one normalized conversation-owned replay preference."""
 
         persistence = self.persistence
-        if persistence is None or persistence.db is None:
+        db = getattr(persistence, "db", None)
+        if db is None:
             return "auto"
         try:
-            conversation = persistence.db.get_conversation_by_id(conversation_id)
+            conversation = db.get_conversation_by_id(conversation_id)
         except Exception:
             logger.warning("thinking_history_policy_read_failed")
             return "auto"
