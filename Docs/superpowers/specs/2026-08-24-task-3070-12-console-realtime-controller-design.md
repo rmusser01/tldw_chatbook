@@ -82,6 +82,11 @@ realtime ownership/count projections unchanged; three additional Watchlists
 TASK-494 diagnostics bring the aggregate inventory to 538 owners, 1,244 TASK-492
 calls, 7,363 TASK-494 calls, and 8 sink files.
 
+The latest delivery base `6bed8d6f59` changes only Library rail behavior,
+configuration, styling, documentation, and tests in this scope. It leaves the
+Console source, realtime ownership/count projections, and diagnostic inventory
+unchanged.
+
 ## Goals
 
 1. Give the 56 reviewed realtime policy methods one explicit, non-DOM owner.
