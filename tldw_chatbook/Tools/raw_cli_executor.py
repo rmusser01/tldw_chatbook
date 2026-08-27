@@ -177,8 +177,14 @@ def resolve_shell_argv(
     for shell_name in candidates:
         executable = executable_lookup(shell_name)
         if executable:
-            if not (posixpath.isabs(executable) or ntpath.isabs(executable)):
-                path_module = ntpath if platform_name == "nt" else posixpath
+            if platform_name == "nt":
+                drive, tail = ntpath.splitdrive(executable)
+                is_absolute = bool(drive) and tail.startswith(("/", "\\"))
+                path_module = ntpath
+            else:
+                is_absolute = posixpath.isabs(executable)
+                path_module = posixpath
+            if not is_absolute:
                 executable = path_module.abspath(executable)
             break
     else:

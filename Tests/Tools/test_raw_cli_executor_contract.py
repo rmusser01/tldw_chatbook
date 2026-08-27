@@ -3,7 +3,6 @@
 from dataclasses import FrozenInstanceError, fields, is_dataclass
 import importlib
 import importlib.util
-import ntpath
 from pathlib import Path
 from types import SimpleNamespace
 from typing import get_args
@@ -218,15 +217,16 @@ def test_bash_argv_disables_profiles(raw_cli):
 
 @pytest.mark.parametrize("executable", ["pwsh", "powershell"])
 def test_powershell_argv_disables_profiles(raw_cli, executable):
+    executable_path = rf"C:\Tools\{executable}.exe"
     argv = _required(raw_cli, "resolve_shell_argv")(
         "powershell",
         "Write-Output hello",
-        executable_lookup=_lookup({executable: f"/tools/{executable}"}),
+        executable_lookup=_lookup({executable: executable_path}),
         platform_name="nt",
     )
 
     assert argv == (
-        f"/tools/{executable}",
+        executable_path,
         "-NoLogo",
         "-NoProfile",
         "-NonInteractive",
@@ -316,9 +316,15 @@ def test_relative_posix_shell_lookup_is_made_absolute_at_lookup_time(
 
 
 def test_relative_windows_shell_lookup_uses_windows_path_semantics(
-    raw_cli, tmp_path, monkeypatch
+    raw_cli, monkeypatch
 ):
-    monkeypatch.chdir(tmp_path)
+    expanded = r"C:\resolved\tools\pwsh.exe"
+    expanded_paths = []
+    monkeypatch.setattr(
+        raw_cli.ntpath,
+        "abspath",
+        lambda path: expanded_paths.append(path) or expanded,
+    )
 
     argv = _required(raw_cli, "resolve_shell_argv")(
         "powershell",
@@ -327,15 +333,64 @@ def test_relative_windows_shell_lookup_uses_windows_path_semantics(
         platform_name="nt",
     )
 
-    assert argv[0] == ntpath.abspath(r"tools\pwsh.exe")
-    assert ntpath.isabs(argv[0])
+    assert expanded_paths == [r"tools\pwsh.exe"]
+    assert argv[0] == expanded
+
+
+def test_windows_absolute_path_is_expanded_under_posix_semantics(raw_cli, monkeypatch):
+    expanded = "/resolved/C:\\Tools\\bash.exe"
+    expanded_paths = []
+    monkeypatch.setattr(
+        raw_cli.posixpath,
+        "abspath",
+        lambda path: expanded_paths.append(path) or expanded,
+    )
+
+    argv = _required(raw_cli, "resolve_shell_argv")(
+        "bash",
+        "echo hello",
+        executable_lookup=_lookup({"bash": r"C:\Tools\bash.exe"}),
+        platform_name="posix",
+    )
+
+    assert expanded_paths == [r"C:\Tools\bash.exe"]
+    assert argv[0] == expanded
+
+
+@pytest.mark.parametrize(
+    "executable",
+    [r"/tools/pwsh.exe", r"\tools\pwsh.exe", r"C:tools\pwsh.exe"],
+)
+def test_non_fully_qualified_windows_path_is_expanded(raw_cli, monkeypatch, executable):
+    expanded = r"C:\resolved\tools\pwsh.exe"
+    expanded_paths = []
+    monkeypatch.setattr(
+        raw_cli.ntpath,
+        "abspath",
+        lambda path: expanded_paths.append(path) or expanded,
+    )
+
+    argv = _required(raw_cli, "resolve_shell_argv")(
+        "powershell",
+        "Write-Output hello",
+        executable_lookup=_lookup({"pwsh": executable}),
+        platform_name="nt",
+    )
+
+    assert expanded_paths == [executable]
+    assert argv[0] == expanded
 
 
 @pytest.mark.parametrize(
     "executable",
     [r"C:\Tools\pwsh.exe", r"\\server\share\pwsh.exe"],
 )
-def test_absolute_windows_shell_lookup_is_preserved(raw_cli, executable):
+def test_absolute_windows_shell_lookup_is_preserved(raw_cli, monkeypatch, executable):
+    monkeypatch.setattr(
+        raw_cli.ntpath,
+        "abspath",
+        lambda path: pytest.fail(f"unexpected expansion of {path}"),
+    )
     argv = _required(raw_cli, "resolve_shell_argv")(
         "powershell",
         "Write-Output hello",
