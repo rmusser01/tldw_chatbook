@@ -64,12 +64,16 @@ class _ForkVersionPersistence:
 
     def __init__(self) -> None:
         self.conversation_version = 7
+        self.active_leaf_by_conversation: dict[str, str | None] = {}
         self.message_versions: dict[str, int] = {}
         self.message_bodies: dict[str, str] = {}
         self.citation_states: dict[str, str] = {}
 
     def get_conversation_version(self, _conversation_id: str) -> int:
         return self.conversation_version
+
+    def get_console_fork_active_leaf(self, conversation_id: str) -> str | None:
+        return self.active_leaf_by_conversation.get(conversation_id)
 
     def get_message_version(self, message_id: str) -> int | None:
         return self.message_versions.get(message_id)
@@ -235,6 +239,10 @@ def _fork_store(
                 if parent_id is not None
                 else None
             )
+        active_leaf = store._active_leaf_by_session[session.id]
+        persistence.active_leaf_by_conversation["conversation-1"] = (
+            store._nodes_by_session[session.id][active_leaf].persisted_message_id
+        )
     return (
         store,
         persistence,
@@ -1249,6 +1257,41 @@ def test_issue_fork_fence_uses_only_the_canonical_active_prefix() -> None:
     assert store.get_message(selected.id).variants.current.id == selected_variant_before
 
 
+def test_durable_fork_fences_saved_database_leaf_before_unsaved_live_tail() -> None:
+    store, persistence, session, _, _, _, selected, after = _fork_store(durable=True)
+    selected_persisted_id = store.get_message(selected.id).persisted_message_id
+    assert selected_persisted_id is not None
+    persistence.active_leaf_by_conversation["conversation-1"] = selected_persisted_id
+    unsaved_tail = store._nodes_by_session[session.id][after.id]
+    unsaved_tail.persisted_message_id = None
+
+    eligibility = store.fork_eligibility(selected.id)
+    fence = store.issue_fork_fence(selected.id)
+    snapshot = store.stage_fork_snapshot(
+        fence,
+        title="Independent fork",
+        fork_session_id="fork-session",
+        fork_conversation_id="fork-conversation",
+    )
+
+    assert eligibility.eligible is True
+    assert fence.source_active_leaf_persisted_message_id == selected_persisted_id
+    assert snapshot.source_active_leaf_persisted_message_id == selected_persisted_id
+    assert after.id not in {
+        message.source_native_message_id for message in snapshot.messages
+    }
+
+
+def test_durable_fork_rejects_boundary_outside_database_active_lineage() -> None:
+    store, persistence, _, _, _, later_answer, selected, _ = _fork_store(durable=True)
+    persistence.active_leaf_by_conversation["conversation-1"] = store.get_message(
+        later_answer.id
+    ).persisted_message_id
+
+    with pytest.raises(ValueError, match="active leaf"):
+        store.issue_fork_fence(selected.id)
+
+
 def test_issue_fork_fence_captures_the_exact_image_selection_tuple() -> None:
     store, _, session, _, _, _, selected, _ = _fork_store(generated_image=True)
     selection = _image_selection(
@@ -1510,7 +1553,7 @@ def test_validate_fork_fence_rechecks_every_captured_source_field(mutation) -> N
     else:
         persistence.message_versions[selected_live.persisted_message_id] += 1
 
-    if mutation in {"status", "turn", "selected_variant", "persisted_id"}:
+    if mutation in {"status", "turn", "selected_variant"}:
         assert store.fork_eligibility(selected.id).eligible is True
     assert store.validate_fork_fence(fence, image_selections=(selection,)) is False
 
@@ -1846,6 +1889,7 @@ def test_stage_fork_marks_active_video_provenance_unavailable_for_tombstone() ->
         persistence.message_bodies[live.persisted_message_id] = live.content
     video_source_id = store._nodes_by_session[session.id][video.id].persisted_message_id
     assert video_source_id is not None
+    persistence.active_leaf_by_conversation["conversation-1"] = video_source_id
     persistence.citation_states[video_source_id] = "active_required"
 
     snapshot = store.stage_fork_snapshot(
@@ -3144,6 +3188,10 @@ def test_durable_fork_registration_hydrates_seeded_policy_before_cas(
                 message_id=message.persisted_message_id,
                 parent_message_id=message.persisted_parent_id,
             )
+        db.set_conversation_active_leaf(
+            conversation_id,
+            snapshot.messages[-1].persisted_message_id,
+        )
 
         store = ConsoleChatStore(persistence=service)
         session = store.register_fork_snapshot(snapshot, activate=False)

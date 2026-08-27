@@ -67,6 +67,7 @@ from tldw_chatbook.Video_Generation.video_metadata import VideoGenerationMetadat
 
 logger = _logger.bind(module="ChatPersistenceService")
 _ASSISTANT_AUTHORITY_UNSET = cast(Optional[str], object())
+CONSOLE_FORK_SOURCE_LINEAGE_MAX_DEPTH = 10_000
 
 
 @dataclass(frozen=True, slots=True)
@@ -187,6 +188,14 @@ class ChatPersistenceService:
         if type(version) is not int or version < 1 or type(body) is not str:
             return None
         return version, body
+
+    def get_console_fork_active_leaf(self, conversation_id: str) -> str | None:
+        """Return the canonical durable active leaf used by a fork fence."""
+
+        if type(conversation_id) is not str or not conversation_id:
+            return None
+        active_leaf = self.db.get_conversation_active_leaf(conversation_id)
+        return active_leaf if type(active_leaf) is str and active_leaf else None
 
     def get_console_fork_citation_state(
         self,
@@ -956,6 +965,30 @@ class ChatPersistenceService:
                 raise RuntimeError("Console fork source changed.")
             previous_source_id = message.source_persisted_message_id
         if previous_source_id != snapshot.source_boundary_persisted_message_id:
+            raise RuntimeError("Console fork source changed.")
+        active_lineage_id = snapshot.source_active_leaf_persisted_message_id
+        seen: set[str] = set()
+        for _ in range(CONSOLE_FORK_SOURCE_LINEAGE_MAX_DEPTH):
+            if active_lineage_id in seen or not active_lineage_id:
+                raise RuntimeError("Console fork source changed.")
+            seen.add(active_lineage_id)
+            active_row = cursor.execute(
+                """
+                SELECT conversation_id, parent_message_id, deleted
+                FROM messages WHERE id = ?
+                """,
+                (active_lineage_id,),
+            ).fetchone()
+            if (
+                active_row is None
+                or active_row["conversation_id"] != source_id
+                or active_row["deleted"]
+            ):
+                raise RuntimeError("Console fork source changed.")
+            if active_lineage_id == previous_source_id:
+                break
+            active_lineage_id = active_row["parent_message_id"]
+        else:
             raise RuntimeError("Console fork source changed.")
         return source["root_id"], source_id, previous_source_id
 

@@ -669,6 +669,9 @@ class ConsoleChatPersistence(Protocol):
     ) -> tuple[int, str] | None:
         """Return one exact persisted source revision/body pair for a fork fence."""
 
+    def get_console_fork_active_leaf(self, conversation_id: str) -> str | None:
+        """Return the canonical durable active leaf used by a fork fence."""
+
     def get_conversation_version(self, conversation_id: str) -> int | None:
         """Return the current positive durable conversation row version."""
 
@@ -4925,6 +4928,46 @@ class ConsoleChatStore:
             raise ValueError("Saved conversation version is unavailable.")
         return version
 
+    def _fork_database_active_leaf(
+        self,
+        session_id: str,
+        boundary_message_id: str,
+    ) -> str:
+        session = self._sessions[session_id]
+        conversation_id = session.persisted_conversation_id
+        reader = getattr(self.persistence, "get_console_fork_active_leaf", None)
+        if conversation_id is None or not callable(reader):
+            raise ValueError("Saved active leaf is unavailable.")
+        active_leaf_id = reader(conversation_id)
+        if type(active_leaf_id) is not str or not active_leaf_id:
+            raise ValueError("Saved active leaf is unavailable.")
+        active_path = self.active_path_message_ids(session_id)
+        boundary_index = active_path.index(boundary_message_id)
+        try:
+            leaf_index = next(
+                index
+                for index, native_id in enumerate(active_path)
+                if self._nodes_by_session[session_id][native_id].persisted_message_id
+                == active_leaf_id
+            )
+        except StopIteration as exc:
+            raise ValueError("Saved active leaf lineage is unavailable.") from exc
+        if leaf_index < boundary_index:
+            raise ValueError("Saved active leaf lineage is unavailable.")
+        previous_id = self._nodes_by_session[session_id][
+            boundary_message_id
+        ].persisted_message_id
+        for native_id in active_path[boundary_index + 1 : leaf_index + 1]:
+            message = self._nodes_by_session[session_id][native_id]
+            if (
+                type(message.persisted_message_id) is not str
+                or not message.persisted_message_id
+                or message.parent_message_id != previous_id
+            ):
+                raise ValueError("Saved active leaf lineage is unavailable.")
+            previous_id = message.persisted_message_id
+        return active_leaf_id
+
     def _fork_lineage_entry(
         self,
         session_id: str,
@@ -5010,6 +5053,11 @@ class ConsoleChatStore:
                     False,
                     "Every message through the selected boundary must be saved before forking.",
                 )
+        if durable:
+            try:
+                self._fork_database_active_leaf(session_id, message_id)
+            except (KeyError, TypeError, ValueError) as exc:
+                return ConsoleForkEligibility(False, str(exc))
         try:
             self._fork_configuration_fingerprint(
                 self._fork_configuration_snapshot(session),
@@ -5045,14 +5093,9 @@ class ConsoleChatStore:
         ):
             raise ValueError("Console fork image selection is unavailable.")
         configuration = self._fork_configuration_snapshot(session)
-        active_leaf = self._active_leaf_by_session.get(session.id)
         active_leaf_persisted_id = (
-            self._nodes_by_session[session.id][active_leaf].persisted_message_id
-            if active_leaf is not None
-            else None
+            self._fork_database_active_leaf(session.id, message_id) if durable else None
         )
-        if durable and not active_leaf_persisted_id:
-            raise ValueError("Saved active leaf is unavailable.")
         return ConsoleForkFence(
             source_session_id=session.id,
             source_conversation_id=session.persisted_conversation_id,
@@ -5120,10 +5163,9 @@ class ConsoleChatStore:
             ):
                 return False
             durable = durability == "durable"
-            active_leaf = self._active_leaf_by_session.get(session.id)
             active_leaf_persisted_id = (
-                self._nodes_by_session[session.id][active_leaf].persisted_message_id
-                if active_leaf is not None
+                self._fork_database_active_leaf(session.id, fence.boundary_message_id)
+                if durable
                 else None
             )
             if (

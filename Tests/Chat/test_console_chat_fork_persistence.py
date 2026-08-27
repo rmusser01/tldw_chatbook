@@ -15,6 +15,7 @@ from Tests.Chat.test_citation_trace_repository import (
     _identity,
     _sealed_write,
 )
+import tldw_chatbook.Chat.chat_persistence_service as chat_persistence_service
 from tldw_chatbook.Chat.chat_conversation_service import ChatConversationService
 from tldw_chatbook.Chat.chat_persistence_service import ChatPersistenceService
 from tldw_chatbook.Chat.citation_provenance_runtime import (
@@ -33,7 +34,11 @@ from tldw_chatbook.Chat.console_chat_fork import (
     ConsoleForkProjectedMessage,
     ConsoleForkProjectedVideoTombstone,
 )
-from tldw_chatbook.Chat.console_chat_models import ConsoleMessageRole
+from tldw_chatbook.Chat.console_chat_models import (
+    ConsoleMessageRole,
+    MessageAttachment,
+)
+from tldw_chatbook.Chat.console_chat_store import ConsoleChatStore
 from tldw_chatbook.Chat.console_conversation_hydration import (
     console_messages_from_conversation_tree,
 )
@@ -228,6 +233,42 @@ def _png_bytes(color: tuple[int, int, int]) -> bytes:
     buffer = BytesIO()
     PILImage.new("RGB", (2, 2), color).save(buffer, format="PNG")
     return buffer.getvalue()
+
+
+def _persist_store_source(
+    db: CharactersRAGDB,
+    store: ConsoleChatStore,
+    session_id: str,
+) -> None:
+    db.add_conversation({"id": "source", "root_id": "root", "title": "Source"})
+    session = store._sessions[session_id]
+    session.persisted_conversation_id = "source"
+    nodes = tuple(store._nodes_by_session[session_id].values())
+    for index, message in enumerate(nodes, start=1):
+        message.persisted_message_id = f"source-message-{index}"
+    for message in nodes:
+        native_parent = store._native_parent_by_message[message.id]
+        persisted_parent = (
+            store._nodes_by_session[session_id][native_parent].persisted_message_id
+            if native_parent is not None
+            else None
+        )
+        message.parent_message_id = persisted_parent
+        db.add_message(
+            {
+                "id": message.persisted_message_id,
+                "conversation_id": "source",
+                "parent_message_id": persisted_parent,
+                "sender": message.role.value,
+                "content": message.content,
+                "client_id": db.client_id,
+            }
+        )
+    active_native = store._active_leaf_by_session[session_id]
+    db.set_conversation_active_leaf(
+        "source",
+        store._nodes_by_session[session_id][active_native].persisted_message_id,
+    )
 
 
 def _snapshot_with_generated_images(
@@ -577,6 +618,101 @@ def test_cursor_scoped_source_recheck_rejects_post_fence_races(
             {"content": content},
             expected_version=source["version"],
         )
+
+    with pytest.raises(RuntimeError, match="source changed"):
+        _commit(service, snapshot)
+
+    assert db.get_conversation_by_id("fork") is None
+
+
+def _snapshot_with_post_boundary_active_leaf(
+    db: CharactersRAGDB,
+    *,
+    tail_length: int = 1,
+) -> ConsoleChatForkSnapshot:
+    snapshot = _snapshot(db)
+    parent_id = "source-assistant"
+    for index in range(tail_length):
+        message_id = f"source-tail-{index}"
+        db.add_message(
+            {
+                "id": message_id,
+                "conversation_id": "source",
+                "parent_message_id": parent_id,
+                "sender": "user" if index % 2 == 0 else "assistant",
+                "content": f"Post-boundary {index}",
+                "client_id": db.client_id,
+            }
+        )
+        parent_id = message_id
+    db.set_conversation_active_leaf("source", parent_id)
+    return replace(
+        snapshot,
+        source_conversation_version=db.get_conversation_by_id("source")["version"],
+        source_active_leaf_persisted_message_id=parent_id,
+    )
+
+
+@pytest.mark.parametrize(
+    "mutation",
+    ("reparent", "missing", "deleted", "cross-conversation", "cycle"),
+)
+def test_active_leaf_lineage_recheck_rejects_post_fence_corruption(
+    tmp_path,
+    mutation,
+) -> None:
+    db = CharactersRAGDB(
+        tmp_path / f"active-lineage-{mutation}.db",
+        client_id="fork-test",
+    )
+    service = ChatPersistenceService(db)
+    snapshot = _snapshot_with_post_boundary_active_leaf(db)
+    if mutation == "cross-conversation":
+        db.add_conversation({"id": "other", "root_id": "other-root", "title": "Other"})
+    source_before = db.get_conversation_by_id("source")
+    with db.transaction() as cursor:
+        if mutation == "reparent":
+            cursor.execute(
+                "UPDATE messages SET parent_message_id = ? WHERE id = ?",
+                ("source-user", "source-tail-0"),
+            )
+        elif mutation == "missing":
+            cursor.execute("DELETE FROM messages WHERE id = ?", ("source-tail-0",))
+        elif mutation == "deleted":
+            cursor.execute(
+                "UPDATE messages SET deleted = 1 WHERE id = ?",
+                ("source-tail-0",),
+            )
+        elif mutation == "cross-conversation":
+            cursor.execute(
+                "UPDATE messages SET conversation_id = ? WHERE id = ?",
+                ("other", "source-tail-0"),
+            )
+        else:
+            cursor.execute(
+                "UPDATE messages SET parent_message_id = id WHERE id = ?",
+                ("source-tail-0",),
+            )
+
+    with pytest.raises(RuntimeError, match="source changed"):
+        _commit(service, snapshot)
+
+    source_after = db.get_conversation_by_id("source")
+    assert source_after["version"] == source_before["version"]
+    assert source_after["active_leaf_message_id"] == "source-tail-0"
+    assert db.get_conversation_by_id("fork") is None
+
+
+def test_active_leaf_lineage_recheck_is_bounded(tmp_path, monkeypatch) -> None:
+    db = CharactersRAGDB(tmp_path / "active-lineage-depth.db", client_id="fork-test")
+    service = ChatPersistenceService(db)
+    snapshot = _snapshot_with_post_boundary_active_leaf(db, tail_length=3)
+    monkeypatch.setattr(
+        chat_persistence_service,
+        "CONSOLE_FORK_SOURCE_LINEAGE_MAX_DEPTH",
+        2,
+        raising=False,
+    )
 
     with pytest.raises(RuntimeError, match="source changed"):
         _commit(service, snapshot)
@@ -1049,47 +1185,117 @@ def test_durable_reload_preserves_terminal_status_and_position_zero_label(
     assert restored.attachment_label == "kept-position-zero.png"
 
 
-def test_video_tombstone_persists_only_regeneration_metadata(tmp_path) -> None:
-    db = CharactersRAGDB(tmp_path / "video.db", client_id="fork-test")
-    service = ChatPersistenceService(db)
-    snapshot = _snapshot_with_generated_images(db)
-    first, second = snapshot.messages
-    tombstone = ConsoleForkProjectedVideoTombstone(
-        owner_native_message_id=second.native_message_id,
-        owner_persisted_message_id=second.persisted_message_id,
-        source_fingerprint="a" * 64,
-        prompt="animate",
-        negative_prompt="",
-        backend="minimax",
-        model="video-test",
-        seed=7,
-        duration_seconds=3.0,
-        fps=24.0,
-        width=640,
-        height=360,
-        ratio="16:9",
-        source_image_message_id="fork-user",
-        container="mp4",
+@pytest.mark.parametrize("source_inside_snapshot", (True, False))
+def test_video_reference_round_trips_from_store_projection(
+    tmp_path,
+    source_inside_snapshot,
+) -> None:
+    db = CharactersRAGDB(
+        tmp_path / f"video-{source_inside_snapshot}.db",
+        client_id="fork-test",
     )
-    snapshot = replace(
-        snapshot,
-        messages=(
-            first,
-            replace(
-                second,
-                content="[video unavailable] The generated video expired; regenerate to recreate it.",
-                video_tombstone=tombstone,
+    service = ChatPersistenceService(db)
+    store = ConsoleChatStore(persistence=service)
+    session = store.create_session(
+        title="Video source",
+        settings=ConsoleSessionSettings(provider="openai", model="gpt-test"),
+    )
+    if source_inside_snapshot:
+        source_image = store.append_message(
+            session.id,
+            role=ConsoleMessageRole.USER,
+            content="Animate this image",
+            attachments=(
+                MessageAttachment(
+                    _png_bytes((0, 255, 0)),
+                    "image/png",
+                    "source.png",
+                    0,
+                ),
             ),
+        )
+    else:
+        root = store.append_message(
+            session.id,
+            role=ConsoleMessageRole.USER,
+            content="Choose a branch",
+        )
+        source_image = store.append_message(
+            session.id,
+            role=ConsoleMessageRole.ASSISTANT,
+            content="Excluded image branch",
+            attachments=(
+                MessageAttachment(
+                    _png_bytes((0, 255, 0)),
+                    "image/png",
+                    "excluded-source.png",
+                    0,
+                ),
+            ),
+        )
+        store.create_sibling(
+            source_image.id,
+            role=ConsoleMessageRole.ASSISTANT,
+            content="Selected branch",
+        )
+        assert root.id in store.active_path_message_ids(session.id)
+    video = store.append_video_message(
+        session.id,
+        video_metadata=VideoGenerationMetadata(
+            name="source-video-key",
+            prompt="animate",
+            backend="minimax",
+            model="video-test",
+            source_image_message_id=source_image.id,
         ),
     )
+    _persist_store_source(db, store, session.id)
+
+    snapshot = store.stage_fork_snapshot(
+        store.issue_fork_fence(video.id),
+        title="Forked video",
+        fork_session_id="fork-session",
+        fork_conversation_id="fork",
+    )
+    projected_video = snapshot.messages[-1]
+    assert projected_video.video_tombstone is not None
+    projected_source = next(
+        (
+            message
+            for message in snapshot.messages
+            if message.source_native_message_id == source_image.id
+        ),
+        None,
+    )
+    expected_source_id = (
+        projected_source.persisted_message_id if projected_source is not None else None
+    )
+    assert projected_video.video_tombstone.source_image_message_id == expected_source_id
 
     _commit(service, snapshot)
 
-    row = db.get_message_by_id("fork-assistant")
+    tree = ChatConversationService(db).get_conversation_tree("fork")
+    hydrated = console_messages_from_conversation_tree(tree, db=db)
+    restored_video = next(message for message in hydrated if message.video_metadata)
+    assert restored_video.video_metadata is not None
+    assert restored_video.video_metadata.source_image_message_id == expected_source_id
+    if projected_source is not None:
+        restored_source = next(
+            message
+            for message in hydrated
+            if message.persisted_message_id == projected_source.persisted_message_id
+        )
+        assert restored_source.attachments
+        assert (
+            restored_video.video_metadata.source_image_message_id
+            == restored_source.persisted_message_id
+        )
+
+    row = db.get_message_by_id(projected_video.persisted_message_id)
     assert row["image_data"] is None
     metadata = VideoGenerationMetadata.from_json(row["metadata_json"])
     assert metadata is not None
-    assert metadata.name == "forked-video-native-fork-assistant"
-    assert metadata.source_image_message_id == "fork-user"
+    assert metadata.name == f"forked-video-{projected_video.native_message_id}"
+    assert metadata.source_image_message_id == expected_source_id
     assert "path" not in row["metadata_json"]
     assert "store" not in row["metadata_json"]
