@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import threading
 import time
+from unittest.mock import AsyncMock
 
 import pytest
 from textual.app import App
@@ -18,10 +19,16 @@ from Tests.UI.test_settings_category_sweep import _click_settings_category
 from Tests.UI.test_settings_configuration_hub import StyledSettingsDestinationHarness
 import tldw_chatbook.UI.Screens.settings_screen as settings_screen_module
 from tldw_chatbook.config import RuntimeConfigSnapshot
+from tldw_chatbook.UI.Navigation.audio_cpp_model_handoff import (
+    AudioCppModelLibraryRequest,
+)
 from tldw_chatbook.UI.Navigation.main_navigation import NavigateToScreen
 from tldw_chatbook.UI.Screens.settings_config_models import SettingsCategoryId
 from tldw_chatbook.UI.Screens.settings_screen import SettingsScreen
 from tldw_chatbook.Widgets.confirmation_dialog import ConfirmationDialog
+from tldw_chatbook.Widgets.Settings_Widgets.speech_tts_settings_panel import (
+    SpeechTTSSettingsPanel,
+)
 
 
 RAW_CLI_DISCLOSURE = (
@@ -630,7 +637,10 @@ async def test_pending_raw_cli_save_preserves_a_newer_clean_draft(monkeypatch):
 
 @pytest.mark.asyncio
 async def test_pending_raw_cli_save_vetoes_real_navigation_until_arrival(monkeypatch):
-    app = _build_test_app(config_overrides={"console": {"raw_cli_permitted": False}})
+    app = _build_test_app(
+        configured_default="settings",
+        config_overrides={"console": {"raw_cli_permitted": False}},
+    )
     loaded_config = dict(app.app_config)
     loaded_config["console"] = dict(app.app_config["console"])
     loaded_config["console"]["raw_cli_permitted"] = True
@@ -653,22 +663,37 @@ async def test_pending_raw_cli_save_vetoes_real_navigation_until_arrival(monkeyp
     async with app.run_test(size=(120, 35)) as pilot:
         await _wait_until(
             pilot,
-            lambda: getattr(app, "_initial_screen_pushed", False),
+            lambda: isinstance(app.screen, SettingsScreen),
             timeout=3,
         )
-        await app.handle_screen_navigation(NavigateToScreen("settings"))
         screen = app.screen
         assert isinstance(screen, SettingsScreen)
+        flush_outcomes: list[bool] = []
+        real_flush = screen.flush_pending_work
+
+        async def tracked_flush() -> bool:
+            outcome = await real_flush()
+            flush_outcomes.append(outcome)
+            return outcome
+
+        monkeypatch.setattr(screen, "flush_pending_work", tracked_flush)
         assert screen._start_raw_cli_save(True) is True
         await _wait_until(pilot, save_started.is_set)
 
         try:
-            await app.handle_screen_navigation(NavigateToScreen("home"))
+            request = AudioCppModelLibraryRequest("raw-save-route", 1)
+            app._audio_cpp_settings_model_library_request = request
+            screen._speech_tts_model_library_route_token = request.token
+            screen.post_message(
+                NavigateToScreen(
+                    "llm",
+                    {"view": "curated", "consumer": "audio_cpp"},
+                )
+            )
+            await _wait_until(pilot, lambda: flush_outcomes == [False])
             assert app.screen is screen
             assert screen.is_mounted
 
-            await app.handle_screen_navigation(NavigateToScreen("settings"))
-            assert app.screen is screen
             assert screen._start_raw_cli_save(True) is False
             assert save_calls == [True]
         finally:
@@ -679,14 +704,31 @@ async def test_pending_raw_cli_save_vetoes_real_navigation_until_arrival(monkeyp
                 timeout=3,
             )
 
-        await app.handle_screen_navigation(NavigateToScreen("home"))
-        assert app.screen is not screen
-        assert type(app.screen).__name__ == "HomeScreen"
+        screen.query_one("#settings-category-speech-tts", Button).press()
+        await _wait_until(
+            pilot,
+            lambda: bool(screen.query("#settings-speech-tts-panel")),
+            timeout=8,
+        )
+        panel = screen.query_one(
+            "#settings-speech-tts-panel",
+            SpeechTTSSettingsPanel,
+        )
+        panel.confirm_leave = AsyncMock(return_value=False)
 
-        await app.handle_screen_navigation(NavigateToScreen("settings"))
-        assert isinstance(app.screen, SettingsScreen)
-        assert app.screen is not screen
-        assert app.screen._raw_cli_save_pending is False
+        screen.post_message(NavigateToScreen("home"))
+        await _wait_until(pilot, lambda: len(flush_outcomes) == 2)
+        assert flush_outcomes == [False, False]
+        assert panel.confirm_leave.await_count == 1
+        assert app.screen is screen
+        assert screen.is_mounted
+
+        panel.confirm_leave.return_value = True
+        screen.post_message(NavigateToScreen("home"))
+        await _wait_until(pilot, lambda: app.screen is not screen, timeout=3)
+        assert type(app.screen).__name__ == "HomeScreen"
+        assert flush_outcomes == [False, False, True]
+        assert panel.confirm_leave.await_count == 2
         assert save_calls == [True]
 
 

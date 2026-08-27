@@ -17187,6 +17187,11 @@ class SettingsScreen(BaseAppScreen):
     async def flush_pending_work(self) -> bool:
         """Protect pending Settings work before dismissal."""
 
+        attempt = (
+            self._speech_tts_navigation_attempts.pop(0)
+            if self._speech_tts_navigation_attempts
+            else None
+        )
         if getattr(self, "_raw_cli_save_pending", False):
             self.app.notify(
                 "Raw CLI unlock save is still in progress; staying in Settings.",
@@ -17194,11 +17199,6 @@ class SettingsScreen(BaseAppScreen):
             )
             return False
 
-        attempt = (
-            self._speech_tts_navigation_attempts.pop(0)
-            if self._speech_tts_navigation_attempts
-            else None
-        )
         expected = getattr(
             self.app_instance,
             "_audio_cpp_settings_model_library_request",
