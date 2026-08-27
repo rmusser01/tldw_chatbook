@@ -206,6 +206,41 @@ def test_snapshot_force_path_keeps_committed_file_that_grows_over_cap(
     assert repo.last_oversize_excluded == (target.name,)
 
 
+def test_force_path_growth_after_scan_is_disclosed_when_post_add_drops_it(
+    tracker, root, monkeypatch
+):
+    from tldw_chatbook.Workspaces import change_bounds
+
+    monkeypatch.setenv("TLDW_CHANGE_REVIEW_MAX_FILE_BYTES", "32")
+    target = root / "ignored-race.bin"
+    (root / ".gitignore").write_text(f"{target.name}\n")
+    handle = tracker.begin_turn([root])
+    handle.await_baseline()
+    target.write_bytes(b"small")
+    original_scan = change_bounds.scan_root
+    grew = False
+
+    def grow_after_scan(*args, **kwargs):
+        nonlocal grew
+        scan = original_scan(*args, **kwargs)
+        if not grew and Path(args[0]).resolve() == root.resolve():
+            assert scan.oversized == ()
+            target.write_bytes(b"x" * 33)
+            grew = True
+        return scan
+
+    monkeypatch.setattr(change_bounds, "scan_root", grow_after_scan)
+    records = tracker.end_turn(handle, touched_paths=[str(target)])
+
+    assert grew
+    assert len(records) == 1
+    record = records[0]
+    assert record.files_changed == 0
+    assert record.untracked_oversize == 1
+    repo = tracker.service.repo_for_root(root)
+    assert repo.file_bytes(record.end_sha, target.name) is None
+
+
 def test_snapshot_force_path_file_to_directory_swap_never_stages_descendants(
     tracker, root
 ):

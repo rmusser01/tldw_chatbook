@@ -432,8 +432,10 @@ class ShadowRepo:
             exact_paths.append(relative.as_posix())
         return exact_paths
 
-    def _drop_new_force_paths_over_cap(self, paths: Sequence[str]) -> None:
-        """Remove newly indexed force paths whose staged blobs exceed the cap."""
+    def _drop_new_force_paths_over_cap(
+        self, paths: Sequence[str]
+    ) -> tuple[str, ...]:
+        """Remove and return newly indexed force paths over the size cap."""
         from tldw_chatbook.Workspaces.change_bounds import (
             DEFAULT_MAX_FILE_BYTES,
             change_review_setting,
@@ -441,6 +443,7 @@ class ShadowRepo:
 
         cap = change_review_setting("max_file_bytes", DEFAULT_MAX_FILE_BYTES)
         tip = self.tip()
+        removed: list[str] = []
         for rel in paths:
             literal = f":(literal){rel}"
             if tip and self._z_tokens(
@@ -458,6 +461,8 @@ class ShadowRepo:
             size = int(str(self._run("cat-file", "-s", fields[1]).stdout))
             if size > cap:
                 self._run("update-index", "--force-remove", "--", rel)
+                removed.append(rel)
+        return tuple(removed)
 
     def snapshot(self, message: str, *, force_paths: Sequence[str] = ()) -> str:
         """Stage everything and commit if anything changed; return the tip.
@@ -550,7 +555,10 @@ class ShadowRepo:
             )
             self._run(*add_args)
             if exact_paths:
-                self._drop_new_force_paths_over_cap(exact_paths)
+                late_oversize = self._drop_new_force_paths_over_cap(exact_paths)
+                self.last_oversize_excluded = tuple(
+                    dict.fromkeys((*self.last_oversize_excluded, *late_oversize))
+                )
             for rel in unexcludable:
                 self._run(
                     "rm", "--cached", "--ignore-unmatch", "--quiet", "--", rel,
