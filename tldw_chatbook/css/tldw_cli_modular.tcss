@@ -6578,6 +6578,11 @@ ConsoleBoundedSection {
     color: $ds-text-muted;
 }
 
+#console-composer-collapsed-status.console-raw-cli-danger {
+    color: $ds-status-error;
+    text-style: bold;
+}
+
 #console-collapsed-stop-generation {
     width: 8;
     min-width: 8;

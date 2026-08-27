@@ -539,14 +539,30 @@ async def test_raw_cli_collapsed_state_retains_danger_label_and_one_row_geometry
 
     async with host.run_test(size=(120, 20)) as pilot:
         composer = host.query_one("#console-native-composer", ConsoleComposerBar)
-        composer.focus()
-        await pilot.pause()
-        _type_raw_cli_prefix(composer)
         composer.set_collapsed(True)
         await pilot.pause()
 
         collapsed = composer.query_one("#console-composer-collapsed")
         status = composer.query_one("#console-composer-collapsed-status", Static)
+        ordinary_presentation = (
+            status.styles.color,
+            status.styles.background,
+            status.styles.text_style.bold,
+        )
+
+        composer.set_collapsed(False)
+        composer.focus()
+        await pilot.pause()
+        _type_raw_cli_prefix(composer)
+        await pilot.pause()
+        semantic_error_color = composer.query_one(
+            "#console-raw-cli-status", Static
+        ).styles.color
+        assert semantic_error_color != ordinary_presentation[0]
+
+        composer.set_collapsed(True)
+        await pilot.pause()
+
         expand = composer.query_one("#console-composer-expand", Button)
         expand.focus()
         await pilot.pause()
@@ -557,6 +573,10 @@ async def test_raw_cli_collapsed_state_retains_danger_label_and_one_row_geometry
         assert collapsed.has_class("console-raw-cli-danger")
         assert status.has_class("console-raw-cli-danger")
         assert status.has_class("console-voice-status-error")
+        assert status.styles.color == semantic_error_color
+        assert status.styles.color != ordinary_presentation[0]
+        assert status.styles.background == ordinary_presentation[1]
+        assert status.styles.text_style.bold
         assert composer.region.height == 1
         assert collapsed.region.height == 1
         assert status.region.height == 1
@@ -569,6 +589,11 @@ async def test_raw_cli_collapsed_state_retains_danger_label_and_one_row_geometry
         assert not collapsed.has_class("console-raw-cli-danger")
         assert not status.has_class("console-raw-cli-danger")
         assert not status.has_class("console-voice-status-error")
+        assert (
+            status.styles.color,
+            status.styles.background,
+            status.styles.text_style.bold,
+        ) == ordinary_presentation
         assert composer.region.height == 1
         assert collapsed.region.height == 1
         assert status.region.height == 1
