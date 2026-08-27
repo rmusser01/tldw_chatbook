@@ -374,11 +374,13 @@ class _OutputAccumulator:
 
     def record_output(self) -> str:
         """Read the bounded private spool without exposing its path."""
-        self._spool.flush()
-        self._spool.seek(0)
-        return self._spool.read(self._max_record_bytes).decode(
-            "utf-8", errors="replace"
-        )
+        try:
+            self._spool.flush()
+            self._spool.seek(0)
+            payload = self._spool.read(self._max_record_bytes)
+        except (OSError, ValueError):
+            raise OSError("raw CLI output spool I/O failed") from None
+        return payload.decode("utf-8", errors="replace")
 
     def _accept(
         self,
@@ -404,7 +406,10 @@ class _OutputAccumulator:
         )
         if record_text:
             encoded_record = record_text.encode("utf-8")
-            self._spool.write(encoded_record)
+            try:
+                self._spool.write(encoded_record)
+            except (OSError, ValueError):
+                raise OSError("raw CLI output spool I/O failed") from None
             self._record_bytes += len(encoded_record)
 
         newly_truncated = preview_truncated or record_truncated
@@ -517,6 +522,7 @@ def _raw_cli_worker_entry(
     admission_event: Any,
     launch_event: Any,
     abort_event: Any,
+    shell_exited_event: Any,
     output_queue: Any,
 ) -> None:
     """Enter containment, await admission, then run exactly one shell."""
@@ -563,6 +569,7 @@ def _raw_cli_worker_entry(
         for reader in readers:
             reader.start()
         exit_code = shell_process.wait()
+        shell_exited_event.set()
         for reader in readers:
             reader.join()
         terminal = ("terminal", "exited", exit_code, argv[0])
@@ -608,6 +615,52 @@ def _safe_close(value: Any | None) -> None:
         value.close()
     except (OSError, ValueError):
         pass
+
+
+def _close_parent_queue(output_queue: Any) -> None:
+    """Close parent queue handles without waiting on a terminated writer."""
+    try:
+        output_queue.cancel_join_thread()
+    except (AttributeError, OSError, ValueError):
+        pass
+    try:
+        output_queue.close()
+    except (OSError, ValueError):
+        pass
+    _safe_close(getattr(output_queue, "_reader", None))
+    _safe_close(getattr(output_queue, "_writer", None))
+
+
+class _LaunchCommit:
+    """Monotonically commit launch and timestamp it inside the runtime lock."""
+
+    def __init__(self, tree: ExecutorProcessTree, launch_event: Any) -> None:
+        self._tree = tree
+        self._launch_event = launch_event
+        self._lock = threading.Lock()
+        self._committed = threading.Event()
+        self._closed = False
+        self._started_at: float | None = None
+
+    def __call__(self) -> None:
+        with self._lock:
+            if self._closed or self._started_at is not None or not self._tree.admitted:
+                return
+            self._started_at = time.monotonic()
+            self._launch_event.set()
+            self._committed.set()
+
+    @property
+    def started_at(self) -> float | None:
+        with self._lock:
+            return self._started_at
+
+    def wait(self, timeout: float) -> bool:
+        return self._committed.wait(timeout)
+
+    def close(self) -> None:
+        with self._lock:
+            self._closed = True
 
 
 class _DiskSpoolOwner:
@@ -707,6 +760,8 @@ class RawShellExecutor:
         output_queue: Any | None = None
         abort_event: Any | None = None
         launch_event: Any | None = None
+        launch_commit: _LaunchCommit | None = None
+        shell_exited_event: Any | None = None
         started_at: float | None = None
         cleanup_proven = True
         resolved_shell = request.shell
@@ -717,6 +772,7 @@ class RawShellExecutor:
             admission_event = self._context.Event()
             launch_event = self._context.Event()
             abort_event = self._context.Event()
+            shell_exited_event = self._context.Event()
             output_queue = self._context.Queue(maxsize=_RAW_OUTPUT_QUEUE_SIZE)
             process = self._context.Process(
                 target=_raw_cli_worker_entry,
@@ -726,6 +782,7 @@ class RawShellExecutor:
                     admission_event,
                     launch_event,
                     abort_event,
+                    shell_exited_event,
                     output_queue,
                 ),
                 name=f"raw-cli-{request.invocation_id}",
@@ -767,18 +824,39 @@ class RawShellExecutor:
                     cleanup_proven,
                 )
 
-            try:
-                tree = ExecutorProcessTree(process, admission_event, identity)
-                admitted = admit_worker(tree, launch_event.set)
-            except Exception:
-                admitted = False
-            if (
-                admitted is not True
-                or tree is None
-                or not tree.admitted
-                or not launch_event.is_set()
-            ):
-                terminal_state = "containment_unavailable"
+            tree = ExecutorProcessTree(process, admission_event, identity)
+            launch_commit = _LaunchCommit(tree, launch_event)
+            admission_done = threading.Event()
+
+            def run_admission() -> None:
+                try:
+                    admit_worker(tree, launch_commit)
+                except Exception:
+                    pass
+                finally:
+                    admission_done.set()
+
+            threading.Thread(
+                target=run_admission,
+                name=f"raw-cli-admission-{request.invocation_id}",
+                daemon=True,
+            ).start()
+            admission_deadline = time.monotonic() + _RAW_STARTUP_TIMEOUT_SECONDS
+            while not launch_commit.wait(_RAW_QUEUE_POLL_SECONDS):
+                if cancel_event.is_set():
+                    terminal_state = "cancelled"
+                    break
+                if admission_done.is_set() or not _process_is_alive(process):
+                    terminal_state = "containment_unavailable"
+                    break
+                if time.monotonic() >= admission_deadline:
+                    terminal_state = "containment_unavailable"
+                    break
+            else:
+                started_at = launch_commit.started_at
+
+            if started_at is None:
+                launch_commit.close()
                 abort_event.set()
                 cleanup_proven = (
                     _cleanup_tree(tree, terminate=True)
@@ -795,7 +873,6 @@ class RawShellExecutor:
                     cleanup_proven,
                 )
 
-            started_at = time.monotonic()
             terminal_state, exit_code, resolved_shell, triggered = self._consume(
                 request,
                 process,
@@ -805,10 +882,10 @@ class RawShellExecutor:
                 on_event,
                 started_at,
                 resolved_shell,
+                shell_exited_event,
             )
             if triggered:
                 cleanup_proven = _cleanup_tree(tree, terminate=True)
-                self._drain_after_stop(output_queue, accumulator, on_event)
             else:
                 cleanup_proven = _cleanup_tree(tree, terminate=False)
             accumulator.finish_all(on_event)
@@ -822,6 +899,8 @@ class RawShellExecutor:
                 cleanup_proven,
             )
         finally:
+            if launch_commit is not None:
+                launch_commit.close()
             if abort_event is not None:
                 abort_event.set()
             if tree is not None:
@@ -831,11 +910,7 @@ class RawShellExecutor:
             _safe_close(identity_receive)
             _safe_close(identity_send)
             if output_queue is not None:
-                try:
-                    output_queue.close()
-                    output_queue.join_thread()
-                except (OSError, ValueError):
-                    pass
+                _close_parent_queue(output_queue)
             spool_owner.close()
 
     @staticmethod
@@ -872,6 +947,7 @@ class RawShellExecutor:
         on_event: Callable[[RawCliStreamEvent], None],
         started_at: float,
         resolved_shell: str,
+        shell_exited_event: Any,
     ) -> tuple[RawCliTerminalState, int | None, str, bool]:
         dead_empty_polls = 0
         while True:
@@ -898,29 +974,13 @@ class RawShellExecutor:
 
             if not _process_is_alive(process):
                 continue
-            if cancel_event.is_set():
+            if cancel_event.is_set() and not shell_exited_event.is_set():
                 return "cancelled", None, resolved_shell, True
-            if time.monotonic() - started_at >= request.timeout_seconds:
+            if (
+                time.monotonic() - started_at >= request.timeout_seconds
+                and not shell_exited_event.is_set()
+            ):
                 return "timed_out", None, resolved_shell, True
-
-    @staticmethod
-    def _drain_after_stop(
-        output_queue: Any,
-        accumulator: _OutputAccumulator,
-        on_event: Callable[[RawCliStreamEvent], None],
-    ) -> None:
-        empty_polls = 0
-        while empty_polls < 2:
-            try:
-                message = output_queue.get(timeout=_RAW_QUEUE_POLL_SECONDS)
-            except queue.Empty:
-                empty_polls += 1
-                continue
-            empty_polls = 0
-            if message[0] == "output":
-                accumulator.consume(message[1], message[2], on_event)
-            elif message[0] == "stream_end":
-                accumulator.finish(message[1], on_event)
 
     @staticmethod
     def _result(

@@ -276,6 +276,127 @@ def test_runtime_admission_commits_under_lock_then_disarm_cancels(
     assert workers and workers[0].is_alive() is False
 
 
+@pytest.mark.parametrize("callback_outcome", ["false", "raise"])
+def test_launch_commit_is_monotonic_when_callback_later_refuses_or_raises(
+    tmp_path: Path,
+    callback_outcome: str,
+) -> None:
+    marker = tmp_path / f"committed-{callback_outcome}"
+
+    def admit(tree: ExecutorProcessTree, commit_launch: Any) -> bool:
+        tree.admit()
+        commit_launch()
+        if callback_outcome == "raise":
+            raise RuntimeError("failure after launch commit")
+        return False
+
+    result = _executor().execute(
+        _request(
+            tmp_path,
+            _python_command(f"from pathlib import Path; Path({str(marker)!r}).touch()"),
+        ),
+        cancel_event=threading.Event(),
+        on_event=lambda _event: None,
+        admit_worker=admit,
+    )
+
+    assert result.terminal_state == "exited"
+    assert result.exit_code == 0
+    assert marker.exists()
+
+
+def test_timeout_runs_from_launch_commit_while_admission_callback_blocks(
+    tmp_path: Path,
+) -> None:
+    committed = threading.Event()
+    release_callback = threading.Event()
+    callback_finished = threading.Event()
+    results: list[Any] = []
+
+    def admit(tree: ExecutorProcessTree, commit_launch: Any) -> bool:
+        tree.admit()
+        commit_launch()
+        committed.set()
+        try:
+            release_callback.wait(30.0)
+            return True
+        finally:
+            callback_finished.set()
+
+    thread = threading.Thread(
+        target=lambda: results.append(
+            _executor().execute(
+                _request(
+                    tmp_path,
+                    _python_command("import threading; threading.Event().wait(120)"),
+                    timeout_seconds=0.1,
+                ),
+                cancel_event=threading.Event(),
+                on_event=lambda _event: None,
+                admit_worker=admit,
+            )
+        )
+    )
+    thread.start()
+    try:
+        assert committed.wait(5.0)
+        thread.join(5.0)
+        assert thread.is_alive() is False
+    finally:
+        release_callback.set()
+        thread.join(5.0)
+
+    assert results[0].terminal_state == "timed_out"
+    assert callback_finished.wait(5.0)
+
+
+def test_closed_admission_cannot_be_committed_late_after_cancellation(
+    tmp_path: Path,
+) -> None:
+    callback_waiting = threading.Event()
+    release_callback = threading.Event()
+    callback_finished = threading.Event()
+    cancel_event = threading.Event()
+    marker = tmp_path / "late-commit-must-not-launch"
+    results: list[Any] = []
+
+    def admit(tree: ExecutorProcessTree, commit_launch: Any) -> bool:
+        callback_waiting.set()
+        try:
+            release_callback.wait(30.0)
+            tree.admit()
+            commit_launch()
+            return True
+        finally:
+            callback_finished.set()
+
+    thread = threading.Thread(
+        target=lambda: results.append(
+            _executor().execute(
+                _request(
+                    tmp_path,
+                    _python_command(
+                        f"from pathlib import Path; Path({str(marker)!r}).touch()"
+                    ),
+                ),
+                cancel_event=cancel_event,
+                on_event=lambda _event: None,
+                admit_worker=admit,
+            )
+        )
+    )
+    thread.start()
+    assert callback_waiting.wait(5.0)
+    cancel_event.set()
+    thread.join(5.0)
+    assert thread.is_alive() is False
+
+    release_callback.set()
+    assert callback_finished.wait(5.0)
+    assert results[0].terminal_state == "cancelled"
+    assert marker.exists() is False
+
+
 def test_worker_needs_parent_commit_after_containment_admission(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -318,6 +439,7 @@ def test_worker_needs_parent_commit_after_containment_admission(
             containment_admission,
             launch_commit,
             abort,
+            threading.Event(),
             OutputQueue(),
         ),
     )
@@ -447,7 +569,7 @@ def test_timeout_and_cancellation_share_idempotent_tree_cleanup(
     assert all(owner.closed for owner in spool_owners)
 
 
-def test_execution_timeout_clock_starts_only_after_admission(
+def test_execution_timeout_clock_is_anchored_at_launch_commit(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -478,8 +600,8 @@ def test_execution_timeout_clock_starts_only_after_admission(
         admit_worker=admit_after_clock_jump,
     )
 
-    assert result.terminal_state == "exited"
-    assert result.exit_code == 0
+    assert result.terminal_state == "timed_out"
+    assert result.exit_code is None
 
 
 @pytest.mark.parametrize("trigger", ["cancelled", "timed_out"])
@@ -597,6 +719,72 @@ def test_output_flood_is_drained_bounded_and_truncated_without_deadlock(
     assert result.cleanup_proven is True
 
 
+def test_saturated_output_cancellation_never_reads_queue_after_forced_stop(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    cancel_event = threading.Event()
+    saw_output = threading.Event()
+
+    def forbidden_post_stop_read(*_args: Any, **_kwargs: Any) -> None:
+        raise AssertionError("terminated multiprocessing queue was read")
+
+    monkeypatch.setattr(
+        raw_cli.RawShellExecutor,
+        "_drain_after_stop",
+        forbidden_post_stop_read,
+        raising=False,
+    )
+
+    def cancel_on_output(event: Any) -> None:
+        if event.text and not saw_output.is_set():
+            saw_output.set()
+            cancel_event.set()
+
+    command = _python_command(
+        "import os; chunk=b'x'*8192; "
+        "[(os.write(1,chunk),os.write(2,chunk)) for _ in range(4096)]"
+    )
+    result = _executor().execute(
+        _request(tmp_path, command),
+        cancel_event=cancel_event,
+        on_event=cancel_on_output,
+        admit_worker=_admit,
+    )
+
+    assert saw_output.is_set()
+    assert result.terminal_state == "cancelled"
+    assert result.cleanup_proven is True
+
+
+def test_parent_queue_finalization_never_joins_a_terminated_writer() -> None:
+    calls: list[str] = []
+
+    class Handle:
+        def __init__(self, name: str) -> None:
+            self._name = name
+
+        def close(self) -> None:
+            calls.append(self._name)
+
+    class Queue:
+        _reader = Handle("reader")
+        _writer = Handle("writer")
+
+        def cancel_join_thread(self) -> None:
+            calls.append("cancel_join_thread")
+
+        def close(self) -> None:
+            calls.append("close")
+
+        def join_thread(self) -> None:
+            raise AssertionError("parent queue finalization must stay bounded")
+
+    raw_cli._close_parent_queue(Queue())
+
+    assert calls == ["cancel_join_thread", "close", "reader", "writer"]
+
+
 def test_worker_coalesces_small_writes_before_bounded_ipc() -> None:
     class BytePipe:
         def __init__(self) -> None:
@@ -657,6 +845,64 @@ def test_late_cancel_after_worker_exit_cannot_replace_exited_result(
     assert cancel_event.is_set()
     assert result.terminal_state == "exited"
     assert result.exit_code == 0
+
+
+def test_shell_exit_wins_cancel_while_terminal_payload_is_still_flushing(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    real_event = multiprocessing.context.BaseContext.Event
+    process_events: list[Any] = []
+    all_events_created = threading.Event()
+
+    def recording_event(context: Any) -> Any:
+        event = real_event(context)
+        process_events.append(event)
+        if len(process_events) == 4:
+            all_events_created.set()
+        return event
+
+    monkeypatch.setattr(multiprocessing.context.BaseContext, "Event", recording_event)
+    cancel_event = threading.Event()
+    callback_blocked = threading.Event()
+    release_callback = threading.Event()
+    blocked_once = False
+    results: list[Any] = []
+
+    def hold_first_output(_event: Any) -> None:
+        nonlocal blocked_once
+        if not blocked_once:
+            blocked_once = True
+            callback_blocked.set()
+            release_callback.wait(30.0)
+
+    thread = threading.Thread(
+        target=lambda: results.append(
+            _executor().execute(
+                _request(
+                    tmp_path,
+                    _python_command("import os; os.write(1, b'x' * (150 * 1024))"),
+                ),
+                cancel_event=cancel_event,
+                on_event=hold_first_output,
+                admit_worker=_admit,
+            )
+        )
+    )
+    thread.start()
+    try:
+        assert all_events_created.wait(5.0)
+        assert callback_blocked.wait(5.0)
+        shell_exited = process_events[3]
+        assert shell_exited.wait(5.0)
+        cancel_event.set()
+    finally:
+        release_callback.set()
+    thread.join(10.0)
+
+    assert thread.is_alive() is False
+    assert results[0].terminal_state == "exited"
+    assert results[0].exit_code == 0
 
 
 def test_streaming_sanitizer_handles_control_sequences_split_across_chunks() -> None:
@@ -728,6 +974,50 @@ def test_posix_spool_is_anonymous_disk_backed_and_mode_0600() -> None:
 
     owner.close()
     assert owner.closed is True
+
+
+@pytest.mark.skipif(os.name != "posix", reason="POSIX unlink-before-write evidence")
+def test_posix_spool_name_is_absent_before_sensitive_output_write(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    real_mkstemp = tempfile.mkstemp
+    real_accept = raw_cli._OutputAccumulator._accept
+    spool_paths: list[Path] = []
+    checked_before_write = threading.Event()
+
+    def local_mkstemp(*_args: Any, **_kwargs: Any) -> tuple[int, str]:
+        descriptor, path = real_mkstemp(dir=tmp_path)
+        spool_paths.append(Path(path))
+        return descriptor, path
+
+    def assert_pathless_then_accept(
+        accumulator: Any,
+        stream: Any,
+        text: str,
+        on_event: Any,
+    ) -> None:
+        if text and not checked_before_write.is_set():
+            assert spool_paths
+            assert spool_paths[0].exists() is False
+            checked_before_write.set()
+        real_accept(accumulator, stream, text, on_event)
+
+    monkeypatch.setattr(tempfile, "mkstemp", local_mkstemp)
+    monkeypatch.setattr(
+        raw_cli._OutputAccumulator, "_accept", assert_pathless_then_accept
+    )
+
+    result = _executor().execute(
+        _request(tmp_path, _python_command("print('sensitive output')")),
+        cancel_event=threading.Event(),
+        on_event=lambda _event: None,
+        admit_worker=_admit,
+    )
+
+    assert result.terminal_state == "exited"
+    assert checked_before_write.is_set()
+    assert spool_paths[0].exists() is False
 
 
 @pytest.mark.skipif(os.name != "nt", reason="native Windows disk-spool evidence")
@@ -891,6 +1181,58 @@ def test_disk_spool_close_retries_when_first_close_fails_before_closing(
 
     assert result.terminal_state == "exited"
     assert close_attempts == 2
+    assert underlying.closed is True
+    assert owner.closed is True
+    assert workers and workers[0].is_alive() is False
+
+
+@pytest.mark.parametrize("failing_operation", ["write", "flush", "read"])
+def test_spool_io_failures_are_pathless_and_settle_process_ownership(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    failing_operation: str,
+) -> None:
+    private_path = "/private/raw-cli-sensitive-spool"
+    underlying = tempfile.TemporaryFile(mode="w+b")
+    workers: list[Any] = []
+
+    class FailingSpool:
+        def __getattr__(self, name: str) -> Any:
+            return getattr(underlying, name)
+
+        def write(self, payload: bytes) -> int:
+            if failing_operation == "write":
+                raise OSError(f"write failed at {private_path}")
+            return underlying.write(payload)
+
+        def flush(self) -> None:
+            if failing_operation == "flush":
+                raise OSError(f"flush failed at {private_path}")
+            underlying.flush()
+
+        def read(self, size: int = -1) -> bytes:
+            if failing_operation == "read":
+                raise OSError(f"read failed at {private_path}")
+            return underlying.read(size)
+
+    owner = raw_cli._DiskSpoolOwner(FailingSpool())
+    monkeypatch.setattr(raw_cli, "_open_spool", lambda *_args: owner)
+
+    def admit(tree: ExecutorProcessTree, commit_launch: Any) -> bool:
+        workers.append(tree._process)
+        tree.admit()
+        commit_launch()
+        return True
+
+    with pytest.raises(OSError, match="raw CLI output spool I/O failed") as error:
+        _executor().execute(
+            _request(tmp_path, _python_command("print('sensitive output')")),
+            cancel_event=threading.Event(),
+            on_event=lambda _event: None,
+            admit_worker=admit,
+        )
+
+    assert private_path not in str(error.value)
     assert underlying.closed is True
     assert owner.closed is True
     assert workers and workers[0].is_alive() is False
