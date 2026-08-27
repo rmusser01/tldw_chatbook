@@ -203,6 +203,124 @@ assert importlib.util.find_spec("PIL") is None
 assert importlib.util.find_spec("tldw_chatbook") is None
 print("curated-build-tools-ok")
 """
+INSTALLED_TIKTOKEN_PROBE = r"""
+from pathlib import Path
+import os
+
+assert "TIKTOKEN_CACHE_DIR" not in os.environ
+assert "DATA_GYM_CACHE_DIR" not in os.environ
+route = os.environ["TIKTOKEN_IMPORT_ROUTE"]
+if route == "package-first":
+    import tldw_chatbook
+elif route == "direct-engine-first":
+    from tldw_chatbook.Chunking.engine.strategies.tokens import TiktokenTokenizer
+else:
+    raise AssertionError(route)
+
+import tiktoken
+import tiktoken.load
+import tiktoken.registry
+import tldw_chatbook
+from tldw_chatbook.Utils import tiktoken_runtime
+
+expected_target = Path(os.environ["EXPECTED_TARGET"]).resolve(strict=True)
+package_root = Path(tldw_chatbook.__file__).resolve(strict=True).parent
+assert package_root.is_relative_to(expected_target), (package_root, expected_target)
+cache_dir = Path(os.environ["TIKTOKEN_CACHE_DIR"]).resolve(strict=True)
+assert cache_dir == package_root / "assets" / "tiktoken_cache"
+assert tiktoken.load.read_file_cached is tiktoken_runtime._read_bundled_file
+
+def fail_network(*_args, **_kwargs):
+    raise AssertionError("installed tiktoken probe attempted an upstream read")
+
+tiktoken.load.read_file = fail_network
+tiktoken.registry.ENCODINGS.clear()
+for encoding_name in (
+    "gpt2",
+    "r50k_base",
+    "p50k_base",
+    "cl100k_base",
+    "o200k_base",
+):
+    assert tiktoken.get_encoding(encoding_name).encode("installed offline probe")
+if route == "direct-engine-first":
+    assert TiktokenTokenizer("gpt2").encode("direct engine probe")
+print(f"installed-tiktoken-{route}-ok")
+"""
+INSTALLED_TIKTOKEN_FAILURE_PROBE = r"""
+from pathlib import Path
+import builtins
+import os
+
+assert "TIKTOKEN_CACHE_DIR" not in os.environ
+assert "DATA_GYM_CACHE_DIR" not in os.environ
+import tldw_chatbook
+import tiktoken.load
+import tiktoken.registry
+from loguru import logger
+from tldw_chatbook.Utils import tiktoken_runtime
+
+expected_target = Path(os.environ["EXPECTED_TARGET"]).resolve(strict=True)
+package_root = Path(tldw_chatbook.__file__).resolve(strict=True).parent
+assert package_root.is_relative_to(expected_target), (package_root, expected_target)
+assert Path(os.environ["TIKTOKEN_CACHE_DIR"]).resolve(strict=True) == (
+    package_root / "assets" / "tiktoken_cache"
+)
+assert tiktoken.load.read_file_cached is tiktoken_runtime._read_bundled_file
+
+def fail_network(*_args, **_kwargs):
+    raise AssertionError("failed installed bundle attempted an upstream read")
+
+tiktoken.load.read_file = fail_network
+url = "https://openaipublic.blob.core.windows.net/gpt-2/encodings/main/vocab.bpe"
+expected_hash = "1ce1664773c50f3e0cc8842619a93edc4624525b728b188a9e0be33b7726adc5"
+try:
+    tiktoken_runtime._read_bundled_file(url, expected_hash)
+except tiktoken_runtime.BundledTiktokenAssetError:
+    pass
+else:
+    raise AssertionError("direct bundled read accepted missing/corrupt data")
+
+from tldw_chatbook.Utils import token_counter
+
+tiktoken.registry.ENCODINGS.clear()
+token_counter.clear_estimate_cache()
+token_counter.CUSTOM_TOKENIZERS_AVAILABLE = False
+messages = []
+sink = logger.add(messages.append, format="{message}", level="ERROR")
+try:
+    text = "abcdefghijklmnop"
+    estimate = token_counter.estimate_tokens(text, model="gpt2", provider="openai")
+finally:
+    logger.remove(sink)
+    token_counter.clear_estimate_cache()
+assert estimate == int(len(text) * token_counter.TOKENS_PER_CHAR_ESTIMATES["openai"])
+assert any("Error getting tiktoken encoding" in str(message) for message in messages)
+
+real_import = builtins.__import__
+def block_transformers(name, *args, **kwargs):
+    if name == "transformers" or name.startswith("transformers."):
+        raise ImportError("transformers disabled by installed failure probe")
+    return real_import(name, *args, **kwargs)
+
+builtins.__import__ = block_transformers
+from tldw_chatbook.Chunking import Chunk_Lib
+from tldw_chatbook.Chunking.engine.strategies.tokens import TokenChunkingStrategy
+
+tiktoken.registry.ENCODINGS.clear()
+TokenChunkingStrategy._failed_tokenizers.discard("gpt2")
+try:
+    Chunk_Lib.improved_chunking_process(
+        "one two three four five",
+        {"method": "tokens", "max_size": 4, "overlap": 0},
+        tokenizer_name_or_path="gpt2",
+    )
+except Chunk_Lib.ChunkingError as error:
+    assert "tiktoken" in str(error)
+else:
+    raise AssertionError("tokens chunking returned a word approximation")
+print("installed-tiktoken-failure-routes-ok")
+"""
 INSTALLED_PROBE = r"""
 from pathlib import Path
 import ast
@@ -2095,6 +2213,90 @@ def test_installed_wheel_loaders_entry_points_and_assets_are_immutable(
         "Error handling CSS file",
     ):
         assert forbidden not in observed_text
+
+
+@pytest.mark.parametrize("wheel_source", ["source", "sdist"])
+@pytest.mark.parametrize(
+    "import_route",
+    ["package-first", "direct-engine-first"],
+)
+def test_installed_tiktoken_bundle_is_offline_and_immutable(
+    built_distributions: BuiltDistributions,
+    sdist_wheel: SdistWheel,
+    tmp_path: Path,
+    wheel_source: str,
+    import_route: str,
+) -> None:
+    wheel, build_source_root = (
+        (built_distributions.wheel, built_distributions.source_root)
+        if wheel_source == "source"
+        else (sdist_wheel.wheel, sdist_wheel.source_root)
+    )
+    target = tmp_path / "target"
+    state_root = tmp_path / "state"
+    run_root = tmp_path / "run"
+    state_root.mkdir(mode=0o700)
+    run_root.mkdir()
+    _install_wheel_path(wheel, target)
+    env = _private_child_env(state_root, target, build_source_root)
+    assert "TIKTOKEN_CACHE_DIR" not in env
+    assert "DATA_GYM_CACHE_DIR" not in env
+    env["TIKTOKEN_IMPORT_ROUTE"] = import_route
+
+    with _read_only_installed_tree(target):
+        result = _run_child(
+            [sys.executable, "-c", INSTALLED_TIKTOKEN_PROBE],
+            run_root,
+            env,
+        )
+
+    assert f"installed-tiktoken-{import_route}-ok" in result.stdout
+
+
+@pytest.mark.parametrize("wheel_source", ["source", "sdist"])
+@pytest.mark.parametrize("mutation", ["missing", "corrupt"])
+def test_installed_tiktoken_bundle_missing_or_corrupt_falls_back_without_writes(
+    built_distributions: BuiltDistributions,
+    sdist_wheel: SdistWheel,
+    tmp_path: Path,
+    wheel_source: str,
+    mutation: str,
+) -> None:
+    wheel, build_source_root = (
+        (built_distributions.wheel, built_distributions.source_root)
+        if wheel_source == "source"
+        else (sdist_wheel.wheel, sdist_wheel.source_root)
+    )
+    target = tmp_path / "target"
+    state_root = tmp_path / "state"
+    run_root = tmp_path / "run"
+    state_root.mkdir(mode=0o700)
+    run_root.mkdir()
+    _install_wheel_path(wheel, target)
+    asset = (
+        target
+        / "tldw_chatbook"
+        / "assets"
+        / "tiktoken_cache"
+        / "6d1cbeee0f20b3d9449abfede4726ed8212e3aee"
+    )
+    assert asset.is_file(), "the installed wheel did not contain the reviewed GPT-2 table"
+    if mutation == "missing":
+        asset.unlink()
+    else:
+        asset.write_bytes(b"corrupt installed tiktoken table")
+
+    env = _private_child_env(state_root, target, build_source_root)
+    assert "TIKTOKEN_CACHE_DIR" not in env
+    assert "DATA_GYM_CACHE_DIR" not in env
+    with _read_only_installed_tree(target):
+        result = _run_child(
+            [sys.executable, "-c", INSTALLED_TIKTOKEN_FAILURE_PROBE],
+            run_root,
+            env,
+        )
+
+    assert "installed-tiktoken-failure-routes-ok" in result.stdout
 
 
 @pytest.mark.skipif(
