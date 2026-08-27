@@ -43,7 +43,7 @@ Establish the fail-closed catalog contract that distinguishes Console-only Watch
 1. Add failing descriptor, external-publication, read-only filtering, and approval-card behavior tests.
 2. Implement required LocalToolExposure and LocalApprovalEffect metadata and derive external publication from descriptors.
 3. Carry code-owned effects into pending calls and render plain-language approval effects without changing authorization semantics.
-4. Update ADR-032 and Console tool documentation.
+4. Verify ADR-032's already-present approved addendum and update Console tool documentation.
 5. Run the task-targeted pytest, Ruff, documentation contract, and diff checks; self-review and independently review the task.
 
 ADR required: yes

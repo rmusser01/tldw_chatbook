@@ -959,6 +959,8 @@ async def _show_production_approval_batch(
 class _ControllerCardsHarness(ConsolidatedCSSApp):
     """Production task-card hierarchy with the real consolidated stylesheet."""
 
+    CSS_PATH = str(_BUNDLED_STYLESHEET)
+
     def compose(self) -> ComposeResult:
         yield ChatTaskCards(id="console-task-surface")
 
@@ -967,6 +969,9 @@ class _ControllerCardsHarness(ConsolidatedCSSApp):
 async def test_descriptor_effects_reach_the_mounted_production_approval_card(tmp_path):
     """A controller-marshaled local descriptor reaches the real card unchanged."""
     app = _ControllerCardsHarness()
+    assert _BUNDLED_STYLESHEET.resolve() in {
+        path.resolve() for path in app.css_path
+    }
     async with app.run_test(size=(200, 40)) as pilot:
         cards = app.query_one(ChatTaskCards)
         gate = LocalToolProvider(
