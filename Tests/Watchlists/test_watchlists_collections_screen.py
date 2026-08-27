@@ -512,9 +512,15 @@ async def test_server_backed_read_recovers_through_the_normal_local_load_path(
     async def blocked_local_load(**_kwargs):
         local_load_entered.set()
         await release_local_load.wait()
-        return local_rows
+        return WatchlistItemPage(
+            items=tuple(local_rows),
+            has_more=False,
+            snapshot_max_item_id=7,
+            snapshot_count=1,
+            next_cursor=None,
+        )
 
-    controller.list_items = AsyncMock(side_effect=blocked_local_load)
+    controller.list_reader_items_page = AsyncMock(side_effect=blocked_local_load)
     controller.check_all = AsyncMock(return_value={"checked": 0, "failed": []})
     app = _build_test_app()
     bundle = app.watchlist_bundle_service
@@ -543,7 +549,7 @@ async def test_server_backed_read_recovers_through_the_normal_local_load_path(
         selector.value = "server"
         await pilot.pause(0.3)
         await host.workers.wait_for_complete()
-        controller.list_items.reset_mock()
+        controller.list_reader_items_page.reset_mock()
         controller.check_all.reset_mock()
         for spy in count_spies:
             spy.reset_mock()
@@ -571,7 +577,7 @@ async def test_server_backed_read_recovers_through_the_normal_local_load_path(
         await pilot.pause(0.5)
         await host.workers.wait_for_complete()
 
-        controller.list_items.assert_not_awaited()
+        controller.list_reader_items_page.assert_not_awaited()
         controller.check_all.assert_not_awaited()
         for name, spy in zip(
             (
@@ -609,13 +615,13 @@ async def test_server_backed_read_recovers_through_the_normal_local_load_path(
         assert screen.runtime_backend == "local"
         assert selector.value == "local"
         assert selector.disabled is True
-        assert controller.list_items.await_count == 1, (
+        assert controller.list_reader_items_page.await_count == 1, (
             screen._items_page_loading,
             screen._items_inflight_page_load,
             screen._items_load_generation,
             screen._loaded_items,
         )
-        assert "search" not in controller.list_items.await_args.kwargs
+        assert "search" not in controller.list_reader_items_page.await_args.kwargs
         assert [
             item["title"]
             for item in screen.query_one(
@@ -639,8 +645,17 @@ async def test_failed_switch_to_local_retries_the_normal_load_path() -> None:
         "url": "https://example.com/9",
         "created_at": "2026-08-23T12:00:00+00:00",
     }
-    controller.list_items = AsyncMock(
-        side_effect=[RuntimeError("local read failed"), [local_row]]
+    controller.list_reader_items_page = AsyncMock(
+        side_effect=[
+            RuntimeError("local read failed"),
+            WatchlistItemPage(
+                items=(local_row,),
+                has_more=False,
+                snapshot_max_item_id=9,
+                snapshot_count=1,
+                next_cursor=None,
+            ),
+        ]
     )
     app = _build_test_app()
     bundle = app.watchlist_bundle_service
@@ -670,7 +685,7 @@ async def test_failed_switch_to_local_retries_the_normal_load_path() -> None:
         screen.active_section = "items"
         await pilot.pause(0.4)
         await host.workers.wait_for_complete()
-        controller.list_items.assert_not_awaited()
+        controller.list_reader_items_page.assert_not_awaited()
 
         screen.query_one("#watchlists-switch-local", Button).press()
         await host.workers.wait_for_complete()
@@ -678,7 +693,7 @@ async def test_failed_switch_to_local_retries_the_normal_load_path() -> None:
 
         assert screen.runtime_backend == "local"
         assert selector.value == "local"
-        controller.list_items.assert_awaited_once()
+        controller.list_reader_items_page.assert_awaited_once()
         assert screen.query("#watchlists-read-local-only")
         assert screen.query_one("#watchlists-switch-local", Button).disabled is False
         assert screen.query("#watchlists-read-local-only-copy")
@@ -690,13 +705,16 @@ async def test_failed_switch_to_local_retries_the_normal_load_path() -> None:
         failed_render = host.export_screenshot()
         assert "Recovery local watchlist" not in failed_render
         assert "Recovery local source" not in failed_render
-        assert "Failed to load watchlist items." in str(app.notify.call_args.args[0])
+        assert screen._items_retry_message == (
+            "Couldn't load All Sources. Retry to load Feed Items."
+        )
+        app.notify.assert_not_called()
 
         screen.query_one("#watchlists-switch-local", Button).press()
         await host.workers.wait_for_complete()
         await pilot.pause()
 
-        assert controller.list_items.await_count == 2
+        assert controller.list_reader_items_page.await_count == 2
         assert not screen.query("#watchlists-read-local-only")
         assert screen.query("#watchlists-content-pane")
         assert [
