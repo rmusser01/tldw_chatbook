@@ -76,6 +76,12 @@ and all ownership/count projections unchanged; its three additional TASK-492
 diagnostics bring the aggregate delivery inventory to 538 owners, 1,244 TASK-492
 calls, 7,360 TASK-494 calls, and 8 sink files.
 
+The subsequent delivery base `0bde972ca8` changes only Watchlists behavior and the
+generated diagnostic inventory in this scope. It leaves the Console source and all
+realtime ownership/count projections unchanged; three additional Watchlists
+TASK-494 diagnostics bring the aggregate inventory to 538 owners, 1,244 TASK-492
+calls, 7,363 TASK-494 calls, and 8 sink files.
+
 ## Goals
 
 1. Give the 56 reviewed realtime policy methods one explicit, non-DOM owner.
