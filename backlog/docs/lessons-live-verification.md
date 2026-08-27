@@ -189,6 +189,23 @@ confirmed cross-profile writer or actor until causality is demonstrated.
 
 ---
 
+## A configured data root is not necessarily the database's final parent (TASK-22453, 2026-08-27)
+
+**What happened.** Roleplay pagination UAT set `[paths].data_dir` to a disposable
+root and seeded `tldw_chatbook_ChaChaNotes.db` directly beneath it. The app opened
+`<data_dir>/default_user/tldw_chatbook_ChaChaNotes.db` instead, populated its normal
+starter characters, and honestly reported no saved conversations for the selected
+card. Both databases were scratch-only, so the isolation boundary held, but the
+fixture targeted a plausible path rather than the production-resolved path and
+produced a false product failure.
+
+**What to do.** Before seeding a live scratch database, launch once or call the
+same profile-aware path resolver production uses, then verify the exact open file
+with `lsof` (or an equivalent read-only probe). A configured root proves the
+storage boundary; it does not prove the final filename or profile namespace.
+
+---
+
 ## A schema bump is a one-way door for every OTHER worktree on this machine (2026-08-04)
 
 **What happened.** task-2364 added `messages.metadata_json` and moved

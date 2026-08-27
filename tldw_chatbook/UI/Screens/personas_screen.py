@@ -262,6 +262,7 @@ from ...Widgets.Persona_Widgets.personas_pane_messages import (
     EditCharacterRequested,
     EditorContentChanged,
     EditPersonaProfileRequested,
+    OlderConversationsRequested,
     PersonaProfileEditCancelled,
     PersonaProfileSaveRequested,
     PreviewConfigureProviderRequested,
@@ -4667,8 +4668,7 @@ class PersonasScreen(BaseAppScreen):
                 group="inspector-avatar",
                 exclusive=True,
             )
-            await inspector.show_conversations_loading()
-            self.conversations.load_conversations(entity_id)
+            await self.conversations.load_conversations(entity_id)
         else:
             inspector.set_avatar_thumbnail(None)
             # F-036: a server character with no saved conversations gets the
@@ -6342,6 +6342,20 @@ class PersonasScreen(BaseAppScreen):
         await self._run_guarded(
             lambda: self.conversations.open_conversation(conversation_id)
         )
+
+    @on(OlderConversationsRequested)
+    async def _handle_older_conversations_requested(
+        self, message: OlderConversationsRequested
+    ) -> None:
+        message.stop()
+        if (
+            self.state.active_mode != "characters"
+            or self.state.runtime_source != "local"
+            or self.state.selected_entity_kind != "character"
+            or self.state.selected_entity_id is None
+        ):
+            return
+        await self.conversations.request_older_conversations()
 
     @on(Button.Pressed, "#personas-conversation-back")
     def _handle_conversation_back(self, event: Button.Pressed) -> None:
