@@ -10,7 +10,7 @@ Make real token estimates and token-based chunking work without network access
 in a normal Chatbook installation, while preserving an explicit user cache
 override and the existing no-`tiktoken` character fallback.
 
-**Status:** Approved for implementation. The repository owner accepts the
+**Status:** Implemented and verified. The repository owner accepts the
 upstream collaborator's statement that tiktoken's MIT license covers the
 encoding files as sufficient redistribution evidence.
 
@@ -47,21 +47,23 @@ redistribution permission.
 
 ### Immutable cache ownership
 
-Move TASK-21968's four cache entries from `Tests/fixtures/` into
-`tldw_chatbook/assets/tiktoken_cache/` and add the `p50k_base` and `r50k_base`
-entries. The directory is a tiktoken-native cache: each filename remains
+The runtime bundle contains TASK-21968's four former test cache entries plus
+the `p50k_base` and `r50k_base` entries under
+`tldw_chatbook/assets/tiktoken_cache/`. The directory is a tiktoken-native
+cache: each filename remains
 `sha1(source URL)`. A human-readable manifest records encoding name, source URL,
 tiktoken's expected SHA-256, and opaque cache filename.
 
-The exact six binary files and manifest will be declared in `pyproject.toml`
-and `MANIFEST.in`. The canonical `Packaging/check_manifest.py` contract will
-also require every table, manifest, and notice, and reject unexpected entries
-under the cache prefix. They will be immutable installed-distribution resources
-under ADR-032; Chatbook will never write beneath its package root.
+The exact six binary files plus manifest, license, and notice are declared in
+`pyproject.toml` and `MANIFEST.in`. The canonical
+`Packaging/check_manifest.py` contract requires all nine entries and rejects
+unexpected entries under the cache prefix. They are immutable
+installed-distribution resources under ADR-032; Chatbook never writes beneath
+its package root.
 
-The manifest will pin tiktoken `0.14.0`, the constructor URL and expected
-SHA-256 for every table, and the GPT-2 two-file hashes. `pyproject.toml` will
-pin the same reviewed dependency version because the design relies on tiktoken's
+The manifest pins tiktoken `0.14.0`, the constructor URL and expected
+SHA-256 for every table, and the GPT-2 two-file hashes. `pyproject.toml` pins
+the same reviewed dependency version because the design relies on tiktoken's
 `read_file_cached(blobpath, expected_hash)` seam, cache-key algorithm, and model
 registry. An upgrade must re-audit those APIs, constructors, URLs, hashes, and
 model-to-encoding mappings before changing the pin.
@@ -73,13 +75,13 @@ with Chatbook's AGPL-3.0-or-later distribution.
 
 ### Runtime selection
 
-At package import, a small `Utils/tiktoken_runtime.py` bootstrap will first record
-whether `TIKTOKEN_CACHE_DIR` or legacy `DATA_GYM_CACHE_DIR` was supplied by the
-caller. If either exists, it does nothing: tiktoken retains its upstream
-writable-cache and download behavior byte-for-byte.
+At package import, `Utils/tiktoken_runtime.py` first checks whether
+`TIKTOKEN_CACHE_DIR` or legacy `DATA_GYM_CACHE_DIR` was supplied by the caller.
+If either exists, it returns before importing tiktoken: tiktoken retains its
+upstream writable-cache and download behavior byte-for-byte.
 
-With no override, the bootstrap will point `TIKTOKEN_CACHE_DIR` at the bundled
-directory and replace tiktoken `0.14.0`'s internal `read_file_cached` seam with
+With no override, the bootstrap points `TIKTOKEN_CACHE_DIR` at the bundled
+directory and replaces tiktoken `0.14.0`'s internal `read_file_cached` seam with
 a bundled-only reader. The reader derives the native SHA-1 cache key from the
 requested URL, reads that exact package file, verifies tiktoken's supplied
 SHA-256, and returns bytes. Missing, corrupt, or unmanifested entries raise a
@@ -109,13 +111,12 @@ engine files.
 
 ### Test ownership
 
-`Tests/conftest.py` will remove its test-only cache override; normal package
-bootstrap will select the same runtime asset directory in tests and production,
-with no second test-only copy. The existing cache-integrity test expands to all
-six entries and continues proving that tokenization succeeds while the network
-guard is active.
+`Tests/conftest.py` has no test-only cache override; normal package bootstrap
+selects the same runtime asset directory in tests and production, with no
+second test-only copy. The cache-integrity test covers all six entries and
+proves that tokenization succeeds while the network guard is active.
 
-`Tests/Chat/test_token_counter.py` will stop skipping the real tokenizer test when
+`Tests/Chat/test_token_counter.py` does not skip the real tokenizer test when
 the core dependency is absent. Character-fallback tests explicitly disable
 both tokenizer tiers and clear `_ESTIMATE_CACHE` before and after the tier
 override. This fixes the clean-dev baseline failure without changing production
@@ -123,7 +124,7 @@ cache behavior: the failure came from a test that claimed to exercise fallback
 while actually using tiktoken, then leaked that cached result into the next
 fixture.
 
-Installed-distribution coverage will verify that the exact files exist in both
+Installed-distribution coverage verifies that the exact files exist in both
 sdist and wheel, imports Chatbook without a cache override, prohibits network
 reads, and successfully loads every supported encoding from the installed
 package. Missing- and corrupt-entry mutations prove zero fetches, zero package
@@ -136,6 +137,20 @@ sdist. Each is installed outside the checkout, made read-only, and exercised
 with checkout paths excluded so source files cannot satisfy missing assets.
 Wheel and PKG-INFO metadata must retain the exact mandatory
 `tiktoken==0.14.0` requirement.
+
+### Portable release archives
+
+The release checker validates extraction safety before trusting archive
+contents. Wheel and sdist names must be canonical relative POSIX paths and
+unique by both exact spelling and case-folded extraction path. Absolute and
+drive-qualified paths, backslashes, dot/parent segments, repeated separators,
+trailing-slash aliases, control and Windows-invalid characters, components
+ending in a dot or space, and reserved Windows device stems are rejected. The
+device table includes COM1-9/LPT1-9 and the COM¹/²/³ and LPT¹/²/³ aliases,
+including names with extensions. Sdist entries are restricted to regular files
+and directories, and wheel cache entries must be regular files, preventing
+links or duplicate/alias members from replacing validated metadata or cache
+assets during extraction.
 
 ## Alternatives Considered
 
@@ -167,16 +182,31 @@ dependency becomes exactly pinned to its reviewed runtime contract.
 
 ## Verification
 
-- Mutation-prove the real-token and fallback tests independently.
-- Run focused token-counter and vendored-cache tests.
-- Run focused chunking token-strategy tests using GPT-2.
-- Build sdist and wheel, inspect the exact asset inventory, and tokenize from
-  both source-built and sdist-rebuilt installed wheels with network access
-  prohibited and the package tree read-only.
-- Mutation-prove missing/corrupt assets, unexpected artifact entries, required
-  notices, explicit override authority, dependency metadata, and checkout
-  isolation.
-- Run Ruff on changed Python files and `git diff --check`.
+Token/runtime/chunking evidence is run without a keyword filter so every test in
+the four behavior-owning files executes:
+
+```bash
+/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/bin/python -m pytest -q \
+  Tests/Chat/test_token_counter.py \
+  Tests/test_tiktoken_vendored_cache.py \
+  Tests/Chunking/test_tokens_offsets.py \
+  Tests/Chunking/test_chunk_lib_shim.py
+```
+
+Packaging evidence is a separate selection. It builds the sdist and source
+wheel, rebuilds a wheel from the sdist, checks the exact inventory and metadata,
+exercises read-only/offline/missing/corrupt paths, and runs the complete release
+checker hardening matrix:
+
+```bash
+/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/bin/python -m pytest -q \
+  Tests/Packaging/test_installed_distribution.py \
+  -k 'tiktoken or built_artifacts_match_distribution_contract or release_checker'
+```
+
+Completion also requires Ruff over every changed Python file, `py_compile` on
+the loader and checker, and `git diff --check`. A full repository suite is not
+part of this focused gate without separate owner opt-in.
 
 ## ADR Check
 

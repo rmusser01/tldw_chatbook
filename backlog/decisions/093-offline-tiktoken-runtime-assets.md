@@ -4,6 +4,8 @@ Status: Accepted
 
 Date: 2026-08-27
 
+Implementation Status: Implemented and verified by TASK-2526
+
 Related Task: [TASK-2526](../tasks/task-2526%20-%20Ship-tiktoken-and-its-encoding-tables-for-offline-token-estimates.md)
 
 Related Spec: [Offline tiktoken Runtime Assets](../../Docs/superpowers/specs/2026-08-27-offline-tiktoken-runtime-assets-design.md)
@@ -47,7 +49,12 @@ test workload.
 4. The installed package is an immutable read owner under ADR-032. The
    canonical release checker requires the exact cache inventory, rejects
    unexpected cache entries, and verifies source-built and sdist-rebuilt wheels
-   from read-only installed trees outside the checkout.
+   from read-only installed trees outside the checkout. It also enforces a
+   portable extraction contract: archive names are canonical relative POSIX
+   paths, unique by exact and case-folded extraction identity, and free of
+   links, unsafe member types, dot/parent/drive aliases, Windows-invalid
+   components, trailing-dot/space aliases, and reserved device stems (including
+   superscript-digit COM/LPT forms).
 5. At package import, when neither supported cache environment variable was
    supplied, Chatbook points `TIKTOKEN_CACHE_DIR` at the bundle and replaces
    tiktoken's reviewed `read_file_cached` seam with a bundled-only reader. The
@@ -66,6 +73,12 @@ test workload.
 8. Tests and production use one asset inventory. Core-dependency tests never
    skip when `tiktoken` is missing, and tier-specific fallback tests isolate the
    global estimate cache before changing tokenizer availability.
+9. An encoding or dependency upgrade is a single reviewed operation. Review
+   the constructor URLs and hashes, model registry, `read_file_cached` seam,
+   and SHA-1 URL-key algorithm; download each source; verify its SHA-256 against
+   the constructor; then update the exact nine-entry inventory, manifest,
+   license, notice, packaging declarations, and offline/read-only mutation
+   evidence before changing the `tiktoken==0.14.0` contract.
 
 ## Alternatives Considered
 
