@@ -12087,9 +12087,11 @@ class ChatScreen(BaseAppScreen):
             region.sync_recovery()
         if transcript is not None:
             selected_id = transcript.selected_message_id
+            selected_fork_eligibility = None
             if selected_id is not None:
+                selected_fork_eligibility = self._console_fork_eligibility(selected_id)
                 transcript.set_fork_eligibilities(
-                    {selected_id: self._console_fork_eligibility(selected_id)}
+                    {selected_id: selected_fork_eligibility}
                 )
             transcript.set_presentation_context(self._console_presentation_context())
             # Turn file card spec: keeps the mounted transcript's provider
@@ -12221,6 +12223,7 @@ class ChatScreen(BaseAppScreen):
             refresh_key = (
                 id(transcript),
                 self._native_console_transcript_fingerprint(messages),
+                (selected_id, selected_fork_eligibility),
                 image_signature,
                 card_signature,
                 video_signature,

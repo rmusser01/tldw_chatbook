@@ -88,6 +88,7 @@ class ConsoleMessageMoreMenu(Vertical):
         self._opener_button_id = opener_button_id
         self._owner = owner
         self._anchor = (screen_x, screen_y)
+        self._claimed = False
         _LIVE_MORE_MENUS.add(self)
 
     @property
@@ -144,7 +145,7 @@ class ConsoleMessageMoreMenu(Vertical):
                 exclusive=True,
             )
             return
-        if event.key not in {"up", "down"}:
+        if event.key not in {"up", "down", "tab", "shift+tab"}:
             return
         event.stop()
         event.prevent_default()
@@ -152,15 +153,22 @@ class ConsoleMessageMoreMenu(Vertical):
         if not buttons:
             return
         focused = next((button for button in buttons if button.has_focus), buttons[0])
-        step = 1 if event.key == "down" else -1
+        step = 1 if event.key in {"down", "tab"} else -1
         buttons[(buttons.index(focused) + step) % len(buttons)].focus()
 
     @on(Button.Pressed)
     def _choose(self, event: Button.Pressed) -> None:
         event.stop()
         action_id = getattr(event.button, "console_action_id", None)
-        if not isinstance(action_id, str) or action_id not in self.action_ids:
+        if (
+            self._claimed
+            or not isinstance(action_id, str)
+            or action_id not in self.action_ids
+        ):
             return
+        self._claimed = True
+        for button in self.query(Button):
+            button.disabled = True
         self._owner.call_later(
             self._owner.choose_captured_message_more_action,
             self.message_id,

@@ -71,9 +71,9 @@ class ConsoleGenerationCardSpec:
         variant_count: Total number of generated variants for this message.
         meta: Generation metadata for the browsed variant
             (``message.generation_metadata[browsed_index]``).
-        mode: Inline image render mode for the browsed variant
-            ("pixels" or "graphics" -- a card is never "hidden"; the
-            screen simply omits hidden-mode messages from the spec map).
+        mode: Inline image render mode for the browsed variant. ``hidden``
+            keeps a minimal card with only its View control so the user can
+            cycle back to a rendered mode.
         pixels: Prebuilt ``rich_pixels.Pixels`` for "pixels" mode, or
             ``None`` when not yet decoded or mode is "graphics".
         pil: Decoded PIL image for "graphics" mode, or ``None`` when not
@@ -84,7 +84,7 @@ class ConsoleGenerationCardSpec:
     browsed_index: int
     variant_count: int
     meta: GenerationVariantMeta
-    mode: Literal["pixels", "graphics"]
+    mode: Literal["pixels", "graphics", "hidden"]
     pixels: "Pixels | None" = None
     pil: "PILImage.Image | None" = None
 
@@ -281,17 +281,29 @@ class ConsoleGenerationCard(Vertical):
             classes="console-generation-card",
         )
         self.spec = spec
-        self.actions = actions if actions is not None else self._default_actions(spec)
+        resolved_actions = (
+            actions if actions is not None else self._default_actions(spec)
+        )
+        self.actions = (
+            tuple(
+                action
+                for action in resolved_actions
+                if action.action_id == "toggle-image-view"
+            )
+            if spec.mode == "hidden"
+            else resolved_actions
+        )
         self.border_title = CARD_TITLE
         self.styles.border = ("round", CARD_BORDER_COLOR)
 
     def compose(self) -> ComposeResult:
-        yield _generation_card_image_widget(self.spec)
-        yield Static(
-            generation_card_details_table(self.spec),
-            id=f"console-generation-card-details-{self.spec.message_id}",
-            classes="console-generation-card-details",
-        )
+        if self.spec.mode != "hidden":
+            yield _generation_card_image_widget(self.spec)
+            yield Static(
+                generation_card_details_table(self.spec),
+                id=f"console-generation-card-details-{self.spec.message_id}",
+                classes="console-generation-card-details",
+            )
         if self.actions:
             buttons = []
             for action in self.actions:

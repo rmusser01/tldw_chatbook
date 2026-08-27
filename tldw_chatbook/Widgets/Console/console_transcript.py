@@ -6223,7 +6223,10 @@ class ConsoleTranscript(VerticalScroll):
                     _TranscriptRow(
                         key=f"video-card:{message.id}",
                         kind="video-card",
-                        signature=video_card_signature(video_spec),
+                        signature=(
+                            video_card_signature(video_spec),
+                            self._media_action_signature(message),
+                        ),
                         message=message,
                         video_card_spec=video_spec,
                     )
@@ -6235,7 +6238,10 @@ class ConsoleTranscript(VerticalScroll):
                     _TranscriptRow(
                         key=f"generation-card:{message.id}",
                         kind="generation-card",
-                        signature=generation_card_signature(card_spec),
+                        signature=(
+                            generation_card_signature(card_spec),
+                            self._media_action_signature(message),
+                        ),
                         message=message,
                         generation_card_spec=card_spec,
                     )
@@ -7525,6 +7531,18 @@ class ConsoleTranscript(VerticalScroll):
                 )
             )
         return ("actions", message.id, tuple(actions))
+
+    def _media_action_signature(self, message: ConsoleChatMessage) -> tuple:
+        """Return stable render state for actions injected into a media card."""
+        return tuple(
+            (
+                action.action_id,
+                action.label,
+                action.enabled,
+                action.disabled_reason or "",
+            )
+            for action in self._action_groups(message).media
+        )
 
     def _action_guide(self, message: ConsoleChatMessage) -> str:
         """Return the legend naming row actions and the header speech action.

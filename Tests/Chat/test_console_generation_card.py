@@ -293,6 +293,18 @@ def test_image_specs_exclude_card_messages():
     assert plain_message.id in specs
 
 
+def test_hidden_generation_message_keeps_card_spec_for_view_control():
+    screen = _bare_screen()
+    message = _generation_message(variant_count=3)
+    state, _cache = screen._ensure_console_image_view()
+    default_mode = screen._console_image_default_mode
+    state.set_mode(message.id, "hidden", default=default_mode)
+
+    specs = screen._image._build_generation_card_specs([message])
+
+    assert specs[message.id].mode == "hidden"
+
+
 # --- 4. Details block renders every field -------------------------------------
 
 
@@ -330,6 +342,24 @@ def test_generation_card_owns_image_actions():
         "toggle-image-view",
         "save-image",
     ]
+
+
+def test_hidden_generation_card_exposes_only_view_control():
+    card = ConsoleGenerationCard(
+        _card_spec(
+            "gen-hidden",
+            browsed_index=1,
+            variant_count=3,
+            mode="hidden",
+            decoded=False,
+        )
+    )
+
+    children = list(card.compose())
+
+    assert [action.action_id for action in card.actions] == ["toggle-image-view"]
+    assert len(children) == 1
+    assert children[0].has_class("console-media-card-actions")
 
 
 def test_generation_card_details_text_omits_model_row_when_absent():

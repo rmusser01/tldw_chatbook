@@ -2203,6 +2203,32 @@ async def test_console_more_choice_keeps_captured_target_after_selection_race(
 
 
 @pytest.mark.asyncio
+async def test_console_more_choice_claims_first_activation_only(monkeypatch):
+    app = TranscriptHarness(css_path=str(_BUNDLE))
+
+    async with app.run_test(size=(80, 24)) as pilot:
+        transcript = app.query_one(ConsoleTranscript)
+        await pilot.click("#console-message-m2")
+        await pilot.click("#console-message-action-more-m2")
+        await _wait_for_selector(app, pilot, "#console-message-more-delete")
+        captured = []
+
+        async def choose(message_id, action_id, *, opener_button_id):
+            captured.append((message_id, action_id, opener_button_id))
+
+        monkeypatch.setattr(transcript, "choose_captured_message_more_action", choose)
+        menu = app.query_one("#console-message-more-menu")
+        delete = app.query_one("#console-message-more-delete", Button)
+
+        delete.press()
+        delete.press()
+        await pilot.pause()
+
+        assert captured == [("m2", "delete", "console-message-action-more-m2")]
+        assert all(button.disabled for button in menu.query(Button))
+
+
+@pytest.mark.asyncio
 async def test_console_more_keyboard_traversal_skips_disabled_and_restores_opener():
     app = TranscriptHarness(css_path=str(_BUNDLE))
 
@@ -2228,6 +2254,33 @@ async def test_console_more_keyboard_traversal_skips_disabled_and_restores_opene
 
         assert not app.query("#console-message-more-menu")
         assert app.query_one("#console-message-action-more-m2").has_focus
+
+
+@pytest.mark.asyncio
+async def test_console_more_tab_traversal_stays_inside_menu_at_80_columns():
+    app = TranscriptHarness(css_path=str(_BUNDLE))
+
+    async with app.run_test(size=(80, 24)) as pilot:
+        await pilot.click("#console-message-m2")
+        await pilot.click("#console-message-action-more-m2")
+        await _wait_for_selector(app, pilot, "#console-message-more-menu")
+
+        save = app.query_one("#console-message-more-save-as", Button)
+        helpful = app.query_one("#console-message-more-feedback-up", Button)
+        delete = app.query_one("#console-message-more-delete", Button)
+        assert save.has_focus
+
+        await pilot.press("tab")
+        assert helpful.has_focus
+        assert app.query("#console-message-more-menu")
+
+        await pilot.press("shift+tab")
+        assert save.has_focus
+        await pilot.press("shift+tab")
+        assert delete.has_focus
+        await pilot.press("tab")
+        assert save.has_focus
+        assert app.query("#console-message-more-menu")
 
 
 @pytest.mark.asyncio
@@ -2417,6 +2470,72 @@ async def test_console_media_card_actions_fit_reference_terminals(size, media_ki
         assert all(
             button.content_region.width >= len(button.label.plain) for button in buttons
         )
+
+
+@pytest.mark.asyncio
+async def test_console_hidden_generation_card_keeps_view_reachable_at_80_columns():
+    app = MutableTranscriptHarness(css_path=str(_BUNDLE))
+
+    async with app.run_test(size=(80, 24)) as pilot:
+        transcript = app.query_one(ConsoleTranscript)
+        message = _generation_message(variant_count=3, message_id="hidden-image")
+        transcript.set_messages([message])
+        transcript.set_generation_card_specs(
+            {
+                message.id: ConsoleGenerationCardSpec(
+                    message_id=message.id,
+                    browsed_index=1,
+                    variant_count=3,
+                    meta=message.generation_metadata[1],
+                    mode="hidden",
+                )
+            }
+        )
+        await transcript.refresh_messages()
+        await pilot.pause()
+
+        card = app.query_one(f"#console-generation-card-{message.id}")
+        buttons = list(card.query(".console-media-card-action"))
+        assert [button.console_action_id for button in buttons] == ["toggle-image-view"]
+        assert [button.label.plain for button in buttons] == ["View"]
+        assert not card.query(f"#console-generation-card-image-{message.id}")
+        assert not card.query(f"#console-generation-card-details-{message.id}")
+        assert transcript.max_scroll_x == 0
+        assert all(
+            0 <= button.region.x < button.region.right <= 80 for button in buttons
+        )
+
+
+@pytest.mark.asyncio
+async def test_console_generation_card_reconciles_save_eligibility_change():
+    app = MutableTranscriptHarness(css_path=str(_BUNDLE))
+    ephemeral = True
+
+    async with app.run_test(size=(80, 24)) as pilot:
+        app.screen._console_active_session_is_ephemeral = lambda: ephemeral
+        transcript = app.query_one(ConsoleTranscript)
+        message = _generation_message(variant_count=1, message_id="save-state-image")
+        spec = ConsoleGenerationCardSpec(
+            message_id=message.id,
+            browsed_index=0,
+            variant_count=1,
+            meta=message.generation_metadata[0],
+            mode="pixels",
+        )
+        transcript.set_messages([message])
+        transcript.set_generation_card_specs({message.id: spec})
+        await transcript.refresh_messages()
+        await pilot.pause()
+
+        save = app.query_one(f"#console-message-action-save-image-{message.id}", Button)
+        assert save.disabled
+
+        ephemeral = False
+        await transcript.refresh_messages()
+        await pilot.pause()
+
+        save = app.query_one(f"#console-message-action-save-image-{message.id}", Button)
+        assert not save.disabled
 
 
 @pytest.mark.asyncio

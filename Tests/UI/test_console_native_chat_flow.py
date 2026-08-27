@@ -51,6 +51,7 @@ from tldw_chatbook.Chat.console_chat_models import (
     GenerationVariantMeta,
 )
 from tldw_chatbook.Chat.console_chat_store import ConsoleChatSession, ConsoleChatStore
+from tldw_chatbook.Chat.console_chat_fork import ConsoleForkEligibility
 from tldw_chatbook.Chat.console_turn_grouping import project_thinking_activities
 from tldw_chatbook.Chat.thinking_blocks import (
     DisplayableThinkingBlock,
@@ -5801,6 +5802,42 @@ async def test_console_more_menu_click_away_closes_without_action():
 
 
 @pytest.mark.asyncio
+async def test_console_more_delete_double_activation_stops_at_confirmation():
+    app = _build_test_app()
+    host = ConsoleHarness(app)
+
+    async with host.run_test(size=(160, 48)) as pilot:
+        console = host.screen_stack[-1]
+        await _wait_for_selector(console, pilot, "#console-native-transcript")
+        store = console._ensure_console_chat_store()
+        session = store.ensure_session()
+        message = store.append_message(
+            session.id,
+            role=ConsoleMessageRole.ASSISTANT,
+            content="answer",
+        )
+        await console._sync_native_console_chat_ui()
+        transcript = console.query_one(ConsoleTranscript)
+        transcript.select_message(message.id)
+        await console._sync_native_console_chat_ui()
+        opener = console.query_one(f"#console-message-action-more-{message.id}", Button)
+        opener.press()
+        await _wait_for_selector(console, pilot, "#console-message-more-delete")
+        delete = console.query_one("#console-message-more-delete", Button)
+
+        delete.press()
+        delete.press()
+        await pilot.pause()
+
+        assert store.messages_for_session(session.id) == [message]
+        assert console._last_console_action.action_id == "delete"
+        assert (
+            console._last_console_action.visible_copy
+            == "Press Delete again to remove this message."
+        )
+
+
+@pytest.mark.asyncio
 async def test_console_selected_message_delete_action_removes_message_from_transcript():
     app = _build_test_app()
     host = ConsoleHarness(app)
@@ -6206,6 +6243,43 @@ async def test_console_sync_skips_transcript_refresh_when_messages_unchanged(
         store.add_variant(message.id, "updated answer")
         await console._sync_native_console_chat_ui()
         assert refresh_calls == baseline_refresh_calls + 1
+
+
+@pytest.mark.asyncio
+async def test_console_sync_reconciles_hydrated_fork_eligibility(monkeypatch):
+    app = _build_test_app()
+    host = ConsoleHarness(app)
+    eligibility = ConsoleForkEligibility(False, "Fork policy is still loading.")
+
+    async with host.run_test(size=(160, 48)) as pilot:
+        console = host.screen_stack[-1]
+        await _wait_for_selector(console, pilot, "#console-native-transcript")
+        monkeypatch.setattr(
+            console, "_console_fork_eligibility", lambda _message_id: eligibility
+        )
+        store = console._ensure_console_chat_store()
+        session = store.ensure_session()
+        message = store.append_message(
+            session.id,
+            role=ConsoleMessageRole.ASSISTANT,
+            content="answer",
+        )
+        await console._sync_native_console_chat_ui()
+
+        transcript = console.query_one(ConsoleTranscript)
+        transcript.select_message(message.id)
+        await console._sync_native_console_chat_ui()
+        await pilot.pause()
+        selector = f"#console-message-action-fork-{message.id}"
+        fork = console.query_one(selector, Button)
+        assert fork.disabled
+        assert fork.tooltip == "Fork policy is still loading."
+
+        eligibility = ConsoleForkEligibility(True)
+        await console._sync_native_console_chat_ui()
+        await pilot.pause()
+
+        assert not console.query_one(selector, Button).disabled
 
 
 @pytest.mark.asyncio

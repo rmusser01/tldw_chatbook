@@ -322,8 +322,6 @@ class ConsoleImageController:
             if not metadata:
                 continue
             mode = state.mode_for(message.id, default=default_mode)
-            if mode == "hidden":
-                continue
             browsed_index = browse.get(message.id, 0)
             if not 0 <= browsed_index < len(metadata):
                 browsed_index = 0
@@ -349,6 +347,8 @@ class ConsoleImageController:
         by_id = {message.id: message for message in messages}
         pending: list[tuple[str, bytes]] = []
         for message_id, spec in card_specs.items():
+            if spec.mode == "hidden":
+                continue
             message = by_id.get(message_id)
             attachments = getattr(message, "attachments", ()) or () if message else ()
             if not 0 <= spec.browsed_index < len(attachments):
