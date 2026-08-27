@@ -1,11 +1,11 @@
 ---
 id: TASK-22860
 title: Migrate durable briefing provenance and atomic Watchlists claims
-status: In Progress
+status: Done
 assignee:
   - '@codex'
 created_date: '2026-08-27 04:14'
-updated_date: '2026-08-27 06:56'
+updated_date: '2026-08-27 08:09'
 labels:
   - watchlists
   - briefings
@@ -55,15 +55,11 @@ Reason: ADR-032's approved addendum already owns durable Watchlists receipt/prov
 ## Implementation Notes
 
 <!-- SECTION:NOTES:BEGIN -->
-Implemented the inline Subscriptions v1-to-v2 migration under one explicit `BEGIN IMMEDIATE`, rebuilding briefing provenance as immutable ordered snapshots and reconciling duplicate active receipts before installing partial unique indexes. Added database-owned accept/start/terminal transitions for source runs and briefings, and moved successful briefing provenance plus `complete` publication into one transaction with publication last.
+Implemented the inline Subscriptions v1-to-v2 migration under one explicit BEGIN IMMEDIATE. Fresh databases create v2 directly with one schema_version row; historical v1 upgrades rebuild immutable ordered briefing provenance, copy sanitized legacy snapshots (including normalized effective dates), reconcile duplicate active receipts deterministically, create partial unique indexes, and update the version last. Injected failures restore the exact v1 table/index/version state.
 
-The historical migration fixture is explicit v1 DDL for the migration-owned tables, not a relabelled current database. Coverage proves upgrade rollback, read-only non-mutation, deterministic reconciliation, idempotent reopen, sanitized/deletion-surviving provenance, two-owner claim races, guarded late transitions, and first-seen citation/selection order. Existing briefing tests were updated where v2 intentionally makes duplicate active briefings impossible.
+Added DB-owned source-run and briefing claim acceptance/start/terminal APIs. They resolve only exact unique-claim conflicts under the same reserved write transaction, re-raise other integrity errors, release claims on terminal states, and prevent late overwrite. Scope and scheduler honor acquisition ownership; losers observe the durable winner with bounded monotonic backoff and cannot execute, record failure, or mutate winner/source accounting on timeout or cancellation.
 
-ADR required: yes
-ADR path: `backlog/decisions/032-local-agent-tool-permission-boundary.md`
-Reason: Implemented the existing ADR-032 durable receipt/provenance authority; no new architectural decision was introduced.
+Successful briefing publication now snapshots selection and first-seen citation order before a guarded final complete update in the same transaction. Provenance remains ordered and readable after live source/item edits or deletion.
 
-Verification: 104 Subscriptions DB migration/readiness tests, 62 briefing selection/service tests, and 36 local Watchlists service tests passed. Ruff passed for every touched Python/test file and `git diff --check` passed. One pre-existing Requests dependency-version warning remains. No full repository suite was run, per task scope.
-
-Controller review gate: implementation is not accepted until a fresh independent review approves the exact task diff; status was returned to In Progress after the implementation commit.
+ADR required: yes; existing backlog/decisions/032-local-agent-tool-permission-boundary.md applies. No new ADR, dependency, or split migration asset. Fresh controller verification: 277 targeted migration/briefing/local/scope/scheduler tests passed; Ruff and git diff --check passed. Independent review approved with no findings. The known Requests dependency-version warning remains; no full repository suite ran. All verification databases were temporary/in-memory; the user Subscriptions database was not opened or mutated.
 <!-- SECTION:NOTES:END -->
