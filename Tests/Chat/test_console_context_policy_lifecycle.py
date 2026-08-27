@@ -1,5 +1,9 @@
 from __future__ import annotations
 
+from types import SimpleNamespace
+
+import pytest
+
 from tldw_chatbook.Chat.chat_persistence_service import ChatPersistenceService
 from tldw_chatbook.Chat.console_chat_store import ConsoleChatSession, ConsoleChatStore
 from tldw_chatbook.Chat.console_context_policy import (
@@ -187,6 +191,35 @@ def test_thinking_history_policy_survives_durable_hydration(tmp_path) -> None:
     reopened_db.close_connection()
 
 
+def test_thinking_history_policy_setter_stages_then_persists(tmp_path) -> None:
+    db = CharactersRAGDB(tmp_path / "thinking-policy-setter.db", client_id="setter")
+    store = ConsoleChatStore(persistence=ChatPersistenceService(db))
+    session = store.create_session(thinking_history_policy="auto")
+
+    staged, staged_ok = store.set_session_thinking_history_policy(session.id, "include")
+    assert staged_ok is True
+    assert staged.persisted_conversation_id is None
+    assert store.session_thinking_history_policy(session.id) == "include"
+
+    conversation_id = store.persist_session_if_needed(session.id)
+    assert conversation_id is not None
+    updated, persisted = store.set_session_thinking_history_policy(
+        session.id, "exclude"
+    )
+    assert persisted is True
+    assert updated.thinking_history_policy == "exclude"
+    assert db.get_conversation_by_id(conversation_id)["thinking_history_policy"] == (
+        "exclude"
+    )
+
+
+def test_thinking_history_policy_setter_rejects_required() -> None:
+    store = ConsoleChatStore()
+    session = store.create_session()
+    with pytest.raises(ValueError, match="auto, include, or exclude"):
+        store.set_session_thinking_history_policy(session.id, "required")
+
+
 def test_screen_state_round_trip_preserves_thinking_history_policy() -> None:
     controller = ConsoleSessionController.__new__(ConsoleSessionController)
     original = ConsoleChatSession(thinking_history_policy="include")
@@ -198,3 +231,40 @@ def test_screen_state_round_trip_preserves_thinking_history_policy() -> None:
 
     assert restored.thinking_history_policy == "include"
     assert invalid.thinking_history_policy == "auto"
+
+
+@pytest.mark.asyncio
+async def test_new_conversation_copies_resolved_thinking_default_once() -> None:
+    controller = ConsoleSessionController.__new__(ConsoleSessionController)
+    created = SimpleNamespace(id="new-session")
+    controller._capture_console_draft_switch_snapshot = lambda: None
+    controller._refresh_console_library_policy_defaults = lambda: None
+    controller._active_console_session_settings = lambda: None
+    controller._default_console_session_settings = lambda: SimpleNamespace(
+        provider="llama_cpp",
+        model="model-a",
+    )
+    controller._ensure_console_chat_controller_fn = lambda: SimpleNamespace(
+        new_session=lambda **_kwargs: created
+    )
+    policy_writes: list[tuple[str, str]] = []
+    controller._chat_store_accessor = lambda: SimpleNamespace(
+        set_session_thinking_history_policy=lambda session_id, policy: (
+            policy_writes.append((session_id, policy))
+        )
+    )
+    controller._provider_readiness_app_config_fn = lambda: {
+        "console": {"thinking_history_policy_default": "exclude"}
+    }
+    controller._invalidate_persisted_rows_cache_fn = lambda: None
+
+    async def _sync() -> None:
+        return None
+
+    controller._sync_native_console_chat_ui_fn = _sync
+    controller._sync_temporary_chip_fn = lambda: None
+    controller._focus_composer_if_needed_fn = lambda **_kwargs: None
+
+    await controller._create_native_console_session_from_active_context()
+
+    assert policy_writes == [("new-session", "exclude")]

@@ -10284,6 +10284,23 @@ def test_threshold_field_has_focused_guidance():
     assert all("No field-specific guidance" not in value for _, value in rows)
 
 
+def test_model_thinking_visibility_has_search_guidance_and_device_ownership():
+    app = _build_test_app()
+    screen = SettingsScreen(app)
+    screen._active_settings_field_id = "settings-console-show-model-thinking"
+
+    rows = screen._console_behavior_field_guidance_rows()
+    ownership = screen._ownership_record(SettingsCategoryId.CONSOLE_BEHAVIOR)
+
+    assert screen._top_field_match(
+        "model thinking", SettingsCategoryId.CONSOLE_BEHAVIOR
+    ) == ("settings-console-show-model-thinking", "Show model thinking")
+    assert ("Saved as", "console.show_model_thinking") in rows
+    assert any("Presentation only" in value for _, value in rows)
+    assert "console.show_model_thinking" in ownership.owns_config_sections
+    assert "console.thinking_history_policy_default" in ownership.owns_config_sections
+
+
 @pytest.mark.asyncio
 async def test_numeric_labels_carry_units():
     """'Threshold 50' and friends were unit-less mystery numerics; the

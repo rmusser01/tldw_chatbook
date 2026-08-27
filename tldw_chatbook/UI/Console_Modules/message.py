@@ -2203,6 +2203,14 @@ class ConsoleMessageController:
             )
             return
         can_resend = message.role is ConsoleMessageRole.USER
+        clears_generation_provenance = bool(
+            message.role is ConsoleMessageRole.ASSISTANT
+            and (
+                message.thinking is not None
+                or message.opaque_thinking_json is not None
+                or message.provider_continuation is not None
+            )
+        )
 
         def _apply_edit(result: ConsoleEditResult | None) -> None:
             if result is None:
@@ -2250,7 +2258,11 @@ class ConsoleMessageController:
             )
 
         await self.push_screen(
-            ConsoleEditMessageModal(content=content, can_resend=can_resend),
+            ConsoleEditMessageModal(
+                content=content,
+                can_resend=can_resend,
+                clears_generation_provenance=clears_generation_provenance,
+            ),
             callback=_apply_edit,
         )
 

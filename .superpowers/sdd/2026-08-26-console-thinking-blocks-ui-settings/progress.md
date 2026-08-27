@@ -90,3 +90,16 @@ fix-specific ownership/Inspector controls plus 62 disclosure/manual/lazy/ordinar
 interaction controls; all passed, with Ruff and `git diff --check` clean. Task 2 is
 complete after one bounded review-fix round. Existing ADR-090 remains the governing
 decision; this task introduced no additional architectural decision.
+
+Task 3: canonical F9 now owns a default-on device-local thinking visibility toggle
+with immediate refresh and failed-write rollback. The existing Context & memory modal
+owns conversation Auto/Include/Exclude replay policy, effective Required copy, and a
+bounded new-conversation-default action. Fresh sessions copy the resolved default;
+Assistant edit copy explicitly names generation provenance loss. The planned
+foundation policy seam was absent at base, so the parent-approved implementation adds
+only the minimal conversation-owned store/`ChatPersistenceService` getter/setter.
+Focused GREEN evidence: 21 Settings, 66 lifecycle/edit, 3 mounted visibility, and 2
+default-copy tests; scoped Ruff lint and `git diff --check` passed. Existing ADR-090
+governs; no new ADR is required. The exact plan filter also reached 117/118 with one
+unchanged project-instruction DOM-parent assertion that reproduced alone and is outside
+Task 3 ownership. Report: `task-3-report.md`.

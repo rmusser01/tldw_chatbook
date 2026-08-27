@@ -392,6 +392,75 @@ async def test_no_actual_evidence_mounts_no_thinking_disclosure() -> None:
         assert not list(transcript.query(ConsoleActivityDisclosure))
 
 
+@pytest.mark.asyncio
+async def test_visibility_gate_hides_only_thinking_and_restores_it_collapsed() -> None:
+    app = ThinkingTranscriptHarness()
+    assistant = _assistant(
+        content="Public answer",
+        status="complete",
+        blocks=(_displayable("captured thinking"),),
+    )
+    tool = ConsoleChatMessage(
+        role=ConsoleMessageRole.TOOL,
+        content="preview",
+        tool_output_full="full tool result",
+        id="tool-keeps-state",
+        activity_presentation=ConsoleActivityPresentation("tool", "fs_read", "success"),
+    )
+
+    async with app.run_test(size=(100, 28)):
+        transcript = app.query_one(ConsoleTranscript)
+        transcript.set_messages([assistant, tool], session_id="session-a")
+        await transcript.refresh_messages()
+        disclosure = _disclosure(transcript, assistant)
+        turn = transcript.query_one(ConsoleAssistantTurnWidget)
+        answer = turn.answer_widget
+        transcript.toggle_tool_output(tool.id)
+        transcript.select_message(disclosure.activity_message_id)
+
+        transcript.set_model_thinking_visible(False)
+        await transcript.refresh_messages()
+
+        selector = f"#console-activity-disclosure-{_activity_id(assistant)}"
+        assert not list(transcript.query(selector))
+        assert transcript.query_one(ConsoleAssistantTurnWidget) is turn
+        assert turn.answer_widget is answer
+        assert transcript.selected_message_id is None
+        assert tool.id in transcript._expanded_tool_output_ids
+        assert transcript.thinking_detail_text(_activity_id(assistant)) == (
+            "captured thinking"
+        )
+
+        transcript.set_model_thinking_visible(True)
+        await transcript.refresh_messages()
+
+        restored = _disclosure(transcript, assistant)
+        assert not restored.expanded
+        assert transcript.query_one(ConsoleAssistantTurnWidget) is turn
+        assert turn.answer_widget is answer
+        assert tool.id in transcript._expanded_tool_output_ids
+
+
+@pytest.mark.asyncio
+async def test_hidden_live_thinking_resumes_its_pending_expanded_lifecycle() -> None:
+    app = ThinkingTranscriptHarness()
+    live = _assistant(blocks=(_displayable("live private chain"),))
+
+    async with app.run_test(size=(100, 28)):
+        transcript = app.query_one(ConsoleTranscript)
+        transcript.set_model_thinking_visible(False)
+        transcript.set_messages([live], session_id="session-a")
+        await transcript.refresh_messages()
+        assert not list(
+            transcript.query(f"#console-activity-disclosure-{_activity_id(live)}")
+        )
+
+        transcript.set_model_thinking_visible(True)
+        await transcript.refresh_messages()
+
+        assert _disclosure(transcript, live).expanded
+
+
 def test_collapsed_inspector_resolves_full_thinking_without_changing_answer() -> None:
     transcript = ConsoleTranscript()
     assistant = _assistant(

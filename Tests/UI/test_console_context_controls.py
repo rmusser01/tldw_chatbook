@@ -63,7 +63,12 @@ def _memory() -> ConsoleMemoryRecord:
     )
 
 
-def _state(*, memory: ConsoleMemoryRecord | None = None):
+def _state(
+    *,
+    memory: ConsoleMemoryRecord | None = None,
+    thinking_policy: str = "auto",
+    required_reason: str | None = None,
+):
     return build_console_context_control_state(
         settings=_settings(),
         estimate=ConsoleSettingsContextEstimate(
@@ -76,6 +81,8 @@ def _state(*, memory: ConsoleMemoryRecord | None = None):
         request_overhead_tokens=10_000,
         safety_margin_tokens=2_000,
         active_memory=memory,
+        thinking_history_policy=thinking_policy,
+        thinking_history_required_reason=required_reason,
     )
 
 
@@ -227,6 +234,92 @@ async def test_full_modal_has_stable_views_and_saves_conversation_policy() -> No
         is ContextCompactionMode.AUTOMATIC
     )
     assert app.result.context_policy_overrides.custom_budget_tokens == 70_000
+    assert app.result.thinking_history_policy == "auto"
+
+
+@pytest.mark.asyncio
+async def test_thinking_history_required_preserves_saved_value_and_disables_edit() -> (
+    None
+):
+    app = _ContextHarness()
+    state = _state(
+        thinking_policy="exclude",
+        required_reason="Active provider continuation must be replayed.",
+    )
+    async with app.run_test(size=(120, 42)) as pilot:
+        await app.push_screen(
+            ConsoleSettingsModal(
+                settings=_settings(),
+                app_config={"api_settings": {"llama_cpp": {}}},
+                providers_models={"llama_cpp": ["model-a"]},
+                context_estimate=ConsoleSettingsContextEstimate(
+                    42_000, 100_000, "42,000 / 100,000 tokens"
+                ),
+                context_state=state,
+                can_save=True,
+                focus_context=True,
+            ),
+            callback=app.capture,
+        )
+        select = app.screen.query_one(
+            "#console-context-thinking-history-policy", Select
+        )
+        assert select.value == "exclude"
+        assert select.disabled
+        effective = str(
+            app.screen.query_one(
+                "#console-context-thinking-history-effective", Static
+            ).renderable
+        )
+        assert "Effective: Required" in effective
+        assert "provider continuation" in effective
+        await pilot.click("#console-settings-cancel")
+
+
+@pytest.mark.asyncio
+async def test_thinking_history_default_write_is_bounded_and_live_for_new_chats(
+    monkeypatch,
+) -> None:
+    from tldw_chatbook.Widgets.Console import console_settings_modal as modal_module
+
+    writes: list[dict[str, dict[str, object]]] = []
+    monkeypatch.setattr(
+        modal_module,
+        "save_settings_to_cli_config",
+        lambda sections: writes.append(sections) or True,
+    )
+    app_config: dict[str, object] = {"api_settings": {"llama_cpp": {}}}
+    app = _ContextHarness()
+    async with app.run_test(size=(120, 42)) as pilot:
+        await app.push_screen(
+            ConsoleSettingsModal(
+                settings=_settings(),
+                app_config=app_config,
+                providers_models={"llama_cpp": ["model-a"]},
+                context_estimate=ConsoleSettingsContextEstimate(
+                    42_000, 100_000, "42,000 / 100,000 tokens"
+                ),
+                context_state=_state(thinking_policy="auto"),
+                can_save=True,
+                focus_context=True,
+            ),
+            callback=app.capture,
+        )
+        app.screen.query_one(
+            "#console-context-thinking-history-policy", Select
+        ).value = "exclude"
+        app.screen.query_one(
+            "#console-context-thinking-history-save-default", Button
+        ).press()
+        await pilot.pause()
+
+        assert isinstance(app.screen, ConsoleSettingsModal)
+        status = app.screen.query_one("#console-context-action-status", Static)
+        assert "new conversations only" in str(status.renderable)
+        await pilot.click("#console-settings-cancel")
+
+    assert writes == [{"console": {"thinking_history_policy_default": "exclude"}}]
+    assert app_config["console"] == {"thinking_history_policy_default": "exclude"}
 
 
 @pytest.mark.asyncio

@@ -64,6 +64,10 @@ from tldw_chatbook.Chat.console_session_settings import (
     resolve_effective_chat_configuration,
     validate_console_session_settings,
 )
+from tldw_chatbook.Chat.thinking_blocks import (
+    ThinkingHistoryPolicy,
+    normalize_thinking_history_policy,
+)
 from tldw_chatbook.Utils.input_validation import validate_text_input
 from tldw_chatbook.Utils.input_validation import validate_url
 from tldw_chatbook.UI.character_display_text import sanitize_character_display_label
@@ -109,6 +113,7 @@ class ConsoleSettingsResult:
     settings: ConsoleSessionSettings
     user_display_name_override: str | None
     context_policy_overrides: ConsoleContextPolicyOverrides | None = None
+    thinking_history_policy: ThinkingHistoryPolicy | None = None
 
 
 # (label, input id, accepted-values placeholder) - placeholders mirror the
@@ -1028,6 +1033,39 @@ class ConsoleSettingsModal(
                         )
 
                     with Vertical(classes="console-settings-modal-section"):
+                        yield Static(
+                            "Thinking history replay", classes="destination-section"
+                        )
+                        with Horizontal(classes="console-settings-modal-row"):
+                            yield self._modal_label("History policy")
+                            yield Select(
+                                [
+                                    ("Auto", "auto"),
+                                    ("Include", "include"),
+                                    ("Exclude", "exclude"),
+                                ],
+                                value=self._context_state.thinking_history.saved_policy,
+                                id="console-context-thinking-history-policy",
+                                classes="console-settings-control",
+                                allow_blank=False,
+                                disabled=(
+                                    self._context_state.thinking_history.effective_label
+                                    == "Required"
+                                ),
+                            )
+                        yield Static(
+                            self._thinking_history_effective_copy(),
+                            id="console-context-thinking-history-effective",
+                            classes="console-settings-modal-row",
+                            markup=False,
+                        )
+                        yield Button(
+                            "Save as default for new conversations",
+                            id="console-context-thinking-history-save-default",
+                            disabled=not self._can_save,
+                        )
+
+                    with Vertical(classes="console-settings-modal-section"):
                         yield Static("Current memory", classes="destination-section")
                         yield Static(
                             self._memory_metadata_label(),
@@ -1728,7 +1766,47 @@ class ConsoleSettingsModal(
             settings=draft,
             user_display_name_override=user_display_name_override,
             context_policy_overrides=context_overrides,
+            thinking_history_policy=normalize_thinking_history_policy(
+                self._select_value_text(
+                    self.query_one(
+                        "#console-context-thinking-history-policy", Select
+                    ).value
+                )
+            ),
         )
+
+    def _thinking_history_effective_copy(self) -> str:
+        state = self._context_state.thinking_history
+        if state.effective_label == "Required":
+            return f"Effective: Required — {state.required_reason}"
+        return f"Effective: {state.effective_label}"
+
+    @on(Button.Pressed, "#console-context-thinking-history-save-default")
+    async def _save_thinking_history_default(self, event: Button.Pressed) -> None:
+        """Persist only the new-conversation default without dismissing."""
+
+        event.stop()
+        policy = normalize_thinking_history_policy(
+            self._select_value_text(
+                self.query_one("#console-context-thinking-history-policy", Select).value
+            )
+        )
+        try:
+            saved = await asyncio.to_thread(
+                save_settings_to_cli_config,
+                {"console": {"thinking_history_policy_default": policy}},
+            )
+        except Exception:
+            saved = False
+        status = self.query_one("#console-context-action-status", Static)
+        if saved:
+            if isinstance(self._app_config, dict):
+                console = self._app_config.setdefault("console", {})
+                if isinstance(console, dict):
+                    console["thinking_history_policy_default"] = policy
+            status.update(f"{policy.title()} will be used for new conversations only.")
+        else:
+            status.update("Could not save the new-conversation thinking default.")
 
     def _default_persist_sections(
         self,

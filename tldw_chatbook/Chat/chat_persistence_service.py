@@ -209,6 +209,25 @@ class ChatPersistenceService:
         """Persist local sparse context-policy overrides without sync writes."""
         return self.context_repository.save_policy(conversation_id, overrides)
 
+    def update_conversation_thinking_history_policy(
+        self,
+        *,
+        conversation_id: str,
+        policy: str,
+    ) -> bool:
+        """Persist one normalized conversation-owned thinking replay policy."""
+
+        version = self.get_conversation_version(conversation_id)
+        if version is None:
+            return False
+        return bool(
+            self.db.update_conversation(
+                conversation_id,
+                {"thinking_history_policy": policy},
+                expected_version=version,
+            )
+        )
+
     @staticmethod
     def derive_conversation_title(
         *,

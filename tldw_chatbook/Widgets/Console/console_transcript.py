@@ -2778,6 +2778,7 @@ class ConsoleTranscript(VerticalScroll):
         #: Trusted model-activity identity/owner projection for the current
         #: session. Full thinking text stays in the Assistant envelope.
         self._thinking_activity_refs: dict[str, ConsoleThinkingActivityRef] = {}
+        self._show_model_thinking = True
         self._pending_thinking_auto_collapse: set[str] = set()
         self._manual_thinking_disclosures: set[str] = set()
         self._closed_live_thinking_blocks: set[tuple[str, str]] = set()
@@ -4190,6 +4191,27 @@ class ConsoleTranscript(VerticalScroll):
         ):
             return None
         return current.block_id
+
+    def set_model_thinking_visible(self, visible: bool) -> bool:
+        """Apply the presentation-only thinking gate without replacing turns."""
+
+        visible = bool(visible)
+        if visible == self._show_model_thinking:
+            return False
+        self._show_model_thinking = visible
+        thinking_ids = set(self._thinking_activity_refs)
+        if visible:
+            self._expanded_tool_output_ids.update(
+                self._pending_thinking_auto_collapse & thinking_ids
+            )
+        else:
+            self._expanded_tool_output_ids.difference_update(thinking_ids)
+            self._manual_thinking_disclosures.difference_update(thinking_ids)
+            if self.selected_message_id in thinking_ids:
+                self.selected_message_id = None
+        if self.is_mounted:
+            self.call_later(self.refresh_messages)
+        return True
 
     def set_image_specs(self, specs: Mapping[str, ConsoleImageRowSpec]) -> None:
         """Replace the prebuilt inline-image row payloads keyed by message ID.
@@ -6282,6 +6304,12 @@ class ConsoleTranscript(VerticalScroll):
                 turn,
                 live_block_id=self._live_thinking_block_id(turn),
             )
+            if not self._show_model_thinking:
+                activity_items = tuple(
+                    item
+                    for item in activity_items
+                    if not isinstance(item, ConsoleThinkingActivityRef)
+                )
             activity_ids = tuple(
                 item.id if isinstance(item, ConsoleChatMessage) else item.activity_id
                 for item in activity_items

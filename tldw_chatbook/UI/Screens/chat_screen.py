@@ -2249,6 +2249,20 @@ class ChatScreen(BaseAppScreen):
         )
         return normalize_console_transcript_style(raw_value)
 
+    def _show_model_thinking(self) -> bool:
+        """Return the live device-local thinking presentation preference."""
+
+        app_config = getattr(self.app_instance, "app_config", {}) or {}
+        console = (
+            app_config.get("console", {}) if isinstance(app_config, Mapping) else {}
+        )
+        raw = (
+            console.get("show_model_thinking", True)
+            if isinstance(console, Mapping)
+            else True
+        )
+        return raw if type(raw) is bool else True
+
     def _console_message_presentation(
         self, message: ConsoleChatMessage
     ) -> ConsoleMessagePresentation:
@@ -2323,6 +2337,18 @@ class ChatScreen(BaseAppScreen):
                 if not policy_persisted:
                     self.app_instance.notify(
                         "Context policy applied in memory but could not be saved.",
+                        severity="warning",
+                    )
+            if result.thinking_history_policy is not None:
+                _session, thinking_persisted = (
+                    store.set_session_thinking_history_policy(
+                        session_id,
+                        result.thinking_history_policy,
+                    )
+                )
+                if not thinking_persisted:
+                    self.app_instance.notify(
+                        "Thinking history policy applied in memory but could not be saved.",
                         severity="warning",
                     )
             _session, persisted = store.set_session_user_display_name_override(
@@ -2697,6 +2723,7 @@ class ChatScreen(BaseAppScreen):
                     self._console_presentation_context(),
                     force=True,
                 )
+                transcript.set_model_thinking_visible(self._show_model_thinking())
         return True
 
     def _consume_pending_console_identity_refresh(self) -> bool:
@@ -4364,6 +4391,20 @@ class ChatScreen(BaseAppScreen):
             overrides=overrides,
             global_overrides=global_overrides,
             active_memory=memory,
+            thinking_history_policy=(
+                store.session_thinking_history_policy(session_id)
+                if session_id is not None
+                else "auto"
+            ),
+            thinking_history_required_reason=(
+                "Active provider continuation must be replayed for this model."
+                if session_id is not None
+                and any(
+                    getattr(message.provider_continuation, "state", None) == "active"
+                    for message in store.messages_for_session(session_id)
+                )
+                else None
+            ),
         )
 
     def _build_console_settings_summary_state(self) -> ConsoleSettingsSummaryState:
@@ -12146,6 +12187,7 @@ class ChatScreen(BaseAppScreen):
             if self._pending_console_swipe_selection is not None:
                 transcript.pending_selection_id = self._pending_console_swipe_selection
                 self._pending_console_swipe_selection = None
+            transcript.set_model_thinking_visible(self._show_model_thinking())
             transcript.set_messages(
                 messages,
                 session_id=self._ensure_console_chat_store().active_session_id,

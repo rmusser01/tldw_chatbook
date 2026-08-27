@@ -20,6 +20,11 @@ from ...Chat.console_context_policy import (
     merge_context_policy,
 )
 from ...model_capabilities import ModelCapabilities
+from ...config import coerce_bool_setting
+from ...Chat.thinking_blocks import (
+    ThinkingHistoryPolicy,
+    normalize_thinking_history_policy,
+)
 from ...Utils.token_counter import get_table_model_token_limit
 
 
@@ -36,6 +41,27 @@ CONTEXT_MEMORY_CONFIG_KEYS = (
     "compaction_failure_behavior",
     "compaction_carry_forward_mode",
 )
+
+
+def load_show_model_thinking(
+    console_config: Mapping[str, object] | None,
+) -> bool:
+    """Resolve the device-local presentation toggle, defaulting safely on."""
+
+    raw = (console_config or {}).get("show_model_thinking", True)
+    if type(raw) is not bool:
+        return True
+    return coerce_bool_setting(raw, True)
+
+
+def load_thinking_history_policy_default(
+    console_config: Mapping[str, object] | None,
+) -> ThinkingHistoryPolicy:
+    """Resolve the optional replay policy copied into new conversations."""
+
+    return normalize_thinking_history_policy(
+        (console_config or {}).get("thinking_history_policy_default")
+    )
 
 
 @dataclass(frozen=True, slots=True)

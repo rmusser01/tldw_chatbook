@@ -655,6 +655,14 @@ class ConsoleChatPersistence(Protocol):
     ) -> bool:
         """Persist a changed system prompt for an already-saved conversation."""
 
+    def update_conversation_thinking_history_policy(
+        self,
+        *,
+        conversation_id: str,
+        policy: ThinkingHistoryPolicy,
+    ) -> bool:
+        """Persist one conversation-owned optional thinking replay policy."""
+
     def update_conversation_roleplay_context(
         self,
         *,
@@ -4548,6 +4556,45 @@ class ConsoleChatStore:
     ) -> ConsoleContextPolicyOverrides:
         """Return sparse conversation-owned context-policy overrides."""
         return self._session_or_raise(session_id).context_policy_overrides
+
+    def session_thinking_history_policy(self, session_id: str) -> ThinkingHistoryPolicy:
+        """Return the saved optional thinking replay policy for one session."""
+
+        return self._session_or_raise(session_id).thinking_history_policy
+
+    def set_session_thinking_history_policy(
+        self,
+        session_id: str,
+        policy: object,
+    ) -> tuple[ConsoleChatSession, bool]:
+        """Stage and, when durable, persist one conversation-owned policy."""
+
+        if type(policy) is not str or policy not in {"auto", "include", "exclude"}:
+            raise ValueError(
+                "Thinking history policy must be auto, include, or exclude."
+            )
+        normalized = normalize_thinking_history_policy(policy)
+        session = self._session_or_raise(session_id)
+        session.thinking_history_policy = normalized
+        self._bump_payload_revision(session_id)
+        if session.persisted_conversation_id is None or self.persistence is None:
+            return session, True
+        writer = getattr(
+            self.persistence, "update_conversation_thinking_history_policy", None
+        )
+        if not callable(writer):
+            return session, False
+        try:
+            persisted = bool(
+                writer(
+                    conversation_id=session.persisted_conversation_id,
+                    policy=normalized,
+                )
+            )
+        except Exception:
+            logger.error("Failed to persist Console thinking history policy.")
+            persisted = False
+        return session, persisted
 
     def set_session_context_policy_overrides(
         self,

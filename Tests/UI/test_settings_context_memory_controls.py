@@ -5,7 +5,7 @@ from pathlib import Path
 from unittest.mock import patch
 
 import pytest
-from textual.widgets import Button, Input, Select, Static
+from textual.widgets import Button, Checkbox, Input, Select, Static
 
 import tldw_chatbook
 from Tests.UI.test_destination_shells import (
@@ -17,6 +17,8 @@ from tldw_chatbook.Chat import provider_setup_persistence as provider_persistenc
 from tldw_chatbook.config import ConfigMutationResult
 from tldw_chatbook.UI.Screens.settings_config_models import SettingsCategoryId
 from tldw_chatbook.UI.Screens.settings_context_memory import (
+    load_show_model_thinking,
+    load_thinking_history_policy_default,
     load_context_memory_values,
     model_context_window_save_entry,
     model_context_window_state,
@@ -59,6 +61,103 @@ def _capture_provider_atomic_writes(monkeypatch):
         writer,
     )
     return calls
+
+
+@pytest.mark.parametrize(
+    ("console_config", "expected"),
+    [
+        ({}, True),
+        ({"show_model_thinking": False}, False),
+        ({"show_model_thinking": "invalid"}, True),
+    ],
+)
+def test_model_thinking_visibility_defaults_on_and_fails_safe(
+    console_config: dict[str, object], expected: bool
+) -> None:
+    assert load_show_model_thinking(console_config) is expected
+
+
+@pytest.mark.parametrize(
+    ("raw", "expected"),
+    [
+        (None, "auto"),
+        ("required", "auto"),
+        ("auto", "auto"),
+        ("include", "include"),
+        ("exclude", "exclude"),
+    ],
+)
+def test_thinking_history_default_normalizes_only_optional_values(
+    raw: object, expected: str
+) -> None:
+    assert (
+        load_thinking_history_policy_default(
+            {} if raw is None else {"thinking_history_policy_default": raw}
+        )
+        == expected
+    )
+
+
+@pytest.mark.asyncio
+async def test_show_model_thinking_is_canonical_immediate_and_rolls_back() -> None:
+    app = _build_test_app()
+    app.app_config = {"console": {"show_model_thinking": False}}
+    captured: list[tuple[bool, bool, int]] = []
+    refreshes: list[int] = []
+
+    def _capture_persist(
+        _screen: SettingsScreen,
+        next_value: bool,
+        previous: bool,
+        revision: int,
+    ) -> None:
+        captured.append((next_value, previous, revision))
+
+    host = DestinationHarness(app, "settings")
+    with (
+        patch.object(
+            SettingsScreen,
+            "_settings_persist_thinking_visibility",
+            new=_capture_persist,
+        ),
+        patch.object(
+            SettingsScreen,
+            "_signal_console_appearance_refresh",
+            new=lambda _screen: refreshes.append(1),
+        ),
+    ):
+        async with host.run_test(size=(110, 40)) as pilot:
+            await pilot.app.workers.wait_for_complete()
+            screen = _active_destination_screen(host)
+            screen._select_category(SettingsCategoryId.CONSOLE_BEHAVIOR.value)
+            await pilot.pause()
+
+            toggle = screen.query_one("#settings-console-show-model-thinking", Checkbox)
+            assert toggle.value is False
+            assert str(toggle.label) == "Show model thinking (Off)"
+
+            toggle.value = True
+            await pilot.pause()
+
+            assert app.app_config["console"]["show_model_thinking"] is True
+            assert str(toggle.label) == "Show model thinking (On)"
+            assert captured == [(True, False, 1)]
+            assert len(refreshes) == 1
+
+            screen._apply_thinking_visibility_persist_result(
+                False,
+                True,
+                False,
+                1,
+            )
+            await pilot.pause()
+
+            assert app.app_config["console"]["show_model_thinking"] is False
+            assert toggle.value is False
+            assert str(toggle.label) == "Show model thinking (Off)"
+            assert len(refreshes) == 2
+            result = screen.query_one("#settings-console-behavior-result", Static)
+            assert "prior setting was restored" in _static_text(result)
 
 
 def test_context_memory_defaults_and_saved_overrides_share_policy_contract() -> None:

@@ -3149,6 +3149,8 @@ shutdown_grace_seconds = 120.0
 
 [console]
 collapse_large_pastes = true  # Display large pasted chunks compactly in Console composer
+show_model_thinking = true  # Presentation only; capture and replay are unchanged
+thinking_history_policy_default = "auto"  # auto, include, exclude for new conversations
 stack_collapsed_rail_labels = false  # Use compact stacked labels on collapsed Console rails
 rail_layout_scope = "global"  # Share Console rail disclosure across workspaces; use "workspace" for per-workspace layouts
 assistant_library_access_default = false  # New Console sessions block assistant Library access
