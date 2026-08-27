@@ -43,10 +43,10 @@ Detailed plan: [2026-08-27-task-22453-older-roleplay-conversations-implementatio
 ## Implementation Notes
 
 - Added stable local seek pagination ordered by `(last_modified, id)` while preserving legacy offset callers and normalizing mixed SQLite timestamp formats.
-- Added a 20-row Roleplay browse controller with a 21st-row sentinel, exact cursor/attempt ownership, deduplication, stale-result suppression, and atomic retry recovery when DB or inspector rendering fails.
+- Added a 20-row Roleplay browse controller with a 21st-row sentinel, exact cursor/attempt ownership, deduplication, stale-result suppression, and atomic retry recovery when DB or inspector rendering fails. Raw seek boundaries now advance across duplicate-shadow pages so ordering-key changes cannot hide unchanged older rows; a four-hop per-attempt budget yields back to an actionable Load tail if duplicate-only boundaries keep moving.
 - Added append-only inspector rows with keyboard-accessible loading, retry, load-more, empty, and exhausted tails; every appended row retains the existing read-only preview plus Resume chat, Send to Console draft, and Open in Library actions.
-- Regenerated the consolidated widget CSS from the inspector source and verified bundle synchronization. Targeted verification passed: 10 DB tests, 78 inspector tests, 375 workbench tests, Ruff, and diff integrity.
-- Isolated live TUI acceptance loaded 45 scratch conversations as 20 + 20 + 5 using F6, arrows, and Enter, reached **All conversations shown.**, and opened the oldest preview with the full action hierarchy. Real config/data, tracked CSS, and worktree fingerprints were byte-identical afterward.
+- Regenerated the consolidated widget CSS from the inspector source and verified bundle synchronization. Targeted verification passed: 10 DB tests, 78 inspector tests, 378 workbench tests, Ruff across all eight changed Python/test files, CSS artifact synchronization, and working-tree/branch diff integrity.
+- Isolated live TUI acceptance loaded 45 scratch conversations as 20 + 20 + 5, reached **All conversations shown.**, and opened the oldest preview with the full action hierarchy. Real config/data and tracked CSS retained their baseline hashes; the scratch app exited cleanly.
 
 ADR required: no
 ADR path: N/A
