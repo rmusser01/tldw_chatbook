@@ -78,6 +78,12 @@ SAMIRA_RESOURCE_PATHS = {
     for label in SAMIRA_REACTION_LABELS
 }
 TIKTOKEN_CACHE_PREFIX = "tldw_chatbook/assets/tiktoken_cache/"
+WINDOWS_INVALID_COMPONENT_CHARS = frozenset('<>:"\\|?*')
+WINDOWS_RESERVED_COMPONENTS = frozenset(
+    {"con", "prn", "aux", "nul"}
+    | {f"com{number}" for number in range(1, 10)}
+    | {f"lpt{number}" for number in range(1, 10)}
+)
 TIKTOKEN_RESOURCE_PATHS = {
     f"{TIKTOKEN_CACHE_PREFIX}{name}"
     for name in (
@@ -216,6 +222,18 @@ def runtime_migration_paths(module_source: str) -> set[str]:
     return {f"{MIGRATIONS_PREFIX}{name}" for name in names}
 
 
+def _is_portable_archive_component(component: str) -> bool:
+    device_stem = component.split(".", 1)[0].rstrip(" ").casefold()
+    return not (
+        component.endswith((".", " "))
+        or any(
+            character in WINDOWS_INVALID_COMPONENT_CHARS or ord(character) < 32
+            for character in component
+        )
+        or device_stem in WINDOWS_RESERVED_COMPONENTS
+    )
+
+
 def _archive_name_errors(label: str, names: list[str]) -> list[str]:
     errors: list[str] = []
     seen: set[str] = set()
@@ -242,6 +260,11 @@ def _archive_name_errors(label: str, names: list[str]) -> list[str]:
             or name != canonical
         ):
             errors.append(f"{label}: non-canonical archive path: {name}")
+        if any(
+            not _is_portable_archive_component(component)
+            for component in posix_path.parts
+        ):
+            errors.append(f"{label}: non-portable archive path: {name}")
     for duplicate in sorted(duplicates):
         errors.append(f"{label}: duplicate archive member: {duplicate}")
     return errors

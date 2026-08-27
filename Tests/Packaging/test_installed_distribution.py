@@ -2603,6 +2603,110 @@ def test_release_checker_rejects_sdist_links_globally(
     assert link in output
 
 
+@pytest.mark.parametrize("archive_kind", ["sdist", "wheel"])
+@pytest.mark.parametrize("suffix", [".", " "])
+def test_release_checker_rejects_metadata_trailing_dot_or_space_alias(
+    built_distributions: BuiltDistributions,
+    tmp_path: Path,
+    archive_kind: str,
+    suffix: str,
+) -> None:
+    dist_dir = tmp_path / "dist"
+    shutil.copytree(built_distributions.dist_dir, dist_dir)
+    if archive_kind == "sdist":
+        sdist = next(dist_dir.glob("*.tar.gz"))
+        rewritten = sdist.with_name(f"{sdist.name}.rewritten")
+        with (
+            tarfile.open(sdist, "r:gz") as source,
+            tarfile.open(rewritten, "w:gz") as destination,
+        ):
+            members = source.getmembers()
+            target = next(
+                member
+                for member in members
+                if member.isfile() and member.name.split("/", 1)[-1] == "PKG-INFO"
+            )
+            target_stream = source.extractfile(target)
+            assert target_stream is not None
+            payload = _weaken_tiktoken_requirement(
+                target_stream.read().decode("utf-8")
+            )
+            for member in members:
+                stream = source.extractfile(member) if member.isfile() else None
+                destination.addfile(member, stream)
+            alias = f"{target.name}{suffix}"
+            added = tarfile.TarInfo(alias)
+            added.size = len(payload)
+            destination.addfile(added, BytesIO(payload))
+        rewritten.replace(sdist)
+    else:
+        wheel = next(dist_dir.glob("*.whl"))
+        with zipfile.ZipFile(wheel, "a") as archive:
+            target = next(
+                name
+                for name in archive.namelist()
+                if name.endswith(".dist-info/METADATA")
+            )
+            payload = _weaken_tiktoken_requirement(
+                archive.read(target).decode("utf-8")
+            )
+            alias = f"{target}{suffix}"
+            archive.writestr(alias, payload)
+
+    result = _run_manifest_checker(built_distributions, dist_dir, tmp_path)
+    output = result.stdout + result.stderr
+
+    assert result.returncode == 1
+    assert "non-portable archive path" in output
+    assert alias in output
+
+
+@pytest.mark.parametrize("archive_kind", ["sdist", "wheel"])
+def test_release_checker_enforces_portable_archive_components(
+    built_distributions: BuiltDistributions,
+    tmp_path: Path,
+    archive_kind: str,
+) -> None:
+    dist_dir = tmp_path / "dist"
+    shutil.copytree(built_distributions.dist_dir, dist_dir)
+    unsafe = (
+        "extra/invalid?.txt",
+        "extra/control\x01.txt",
+        "extra/CON.txt",
+        f"{TIKTOKEN_CACHE_PREFIX}manifest.json.",
+    )
+    if archive_kind == "sdist":
+        sdist = next(dist_dir.glob("*.tar.gz"))
+        rewritten = sdist.with_name(f"{sdist.name}.rewritten")
+        with (
+            tarfile.open(sdist, "r:gz") as source,
+            tarfile.open(rewritten, "w:gz") as destination,
+        ):
+            members = source.getmembers()
+            for member in members:
+                stream = source.extractfile(member) if member.isfile() else None
+                destination.addfile(member, stream)
+            root = members[0].name.split("/", 1)[0]
+            unsafe = tuple(f"{root}/{name}" for name in unsafe)
+            for name in unsafe:
+                added = tarfile.TarInfo(name)
+                added.size = len(b"unsafe")
+                destination.addfile(added, BytesIO(b"unsafe"))
+        rewritten.replace(sdist)
+    else:
+        with zipfile.ZipFile(next(dist_dir.glob("*.whl")), "a") as archive:
+            for name in unsafe:
+                archive.writestr(name, b"unsafe")
+
+    result = _run_manifest_checker(built_distributions, dist_dir, tmp_path)
+    output = result.stdout + result.stderr
+
+    assert result.returncode == 1
+    assert "non-portable archive path" in output
+    for name in unsafe:
+        assert name in output
+
+
 def test_migration_expectations_are_derived_not_enumerated() -> None:
     """The expectations must come from reality, or they cannot catch drift."""
     assert SOURCE_MIGRATION_PATHS, "no migration scripts found in the checkout"
