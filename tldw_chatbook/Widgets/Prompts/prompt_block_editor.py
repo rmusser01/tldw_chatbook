@@ -1191,6 +1191,10 @@ class PromptBlockEditor(Vertical):
         target.focus()
         self.scroll_to_widget(target, animate=False)
 
+    def focus_first_error(self) -> None:
+        """Focus and reveal the first invalid block field, when present."""
+        self._focus_first_error()
+
     def action_apply(self) -> None:
         """Attempt Apply and focus the first blocking field when invalid."""
         self._request_apply()

@@ -374,6 +374,7 @@ def test_library_reader_settings_generation_uses_one_read_only_snapshot(
             "media_reader": {"items_open": False, "items_width": 47},
             "conversations_reader": {"items_open": True, "items_width": 39},
             "notes_reader": {"items_open": False, "items_width": 38},
+            "prompts_reader": {"items_open": True, "items_width": 41},
         }
     )
     screen = LibraryScreen(app)
@@ -407,12 +408,14 @@ def test_library_reader_settings_generation_uses_one_read_only_snapshot(
             screen._library_media_reader_preferences,
             screen._library_conversation_reader_preferences,
             screen._library_notes_reader_preferences,
+            screen._library_prompts_reader_preferences,
         )
     }
     assert shared == {(False, True, 35)}
     assert screen._library_media_reader_preferences.items_open is False
     assert screen._library_conversation_reader_preferences.items_open is True
     assert screen._library_notes_reader_preferences.items_open is False
+    assert screen._library_prompts_reader_preferences.items_open is True
 
 
 @pytest.mark.asyncio
@@ -4292,7 +4295,6 @@ async def test_library_ordinary_emergency_route_matrix_focus_and_return() -> Non
     host = LibraryProductionCSSHarness(app)
 
     ordinary_rows = (
-        LIBRARY_ROW_BROWSE_PROMPTS,
         LIBRARY_ROW_BROWSE_SKILLS,
         LIBRARY_ROW_BROWSE_COLLECTIONS,
         LIBRARY_ROW_BROWSE_SEARCH,
@@ -4427,6 +4429,7 @@ def test_library_emergency_escape_binding_follows_specific_guards() -> None:
         (LIBRARY_ROW_BROWSE_MEDIA, "#library-media-reader-shell"),
         (LIBRARY_ROW_BROWSE_CONVERSATIONS, "#library-conversations-reader-shell"),
         (LIBRARY_ROW_BROWSE_NOTES, "#library-notes-reader-shell"),
+        (LIBRARY_ROW_BROWSE_PROMPTS, "#library-prompts-reader-shell"),
     ),
 )
 async def test_adaptive_routes_never_receive_ordinary_emergency_geometry(
@@ -4475,7 +4478,7 @@ async def test_adaptive_routes_never_receive_ordinary_emergency_geometry(
         assert ("width", "13fr") not in writes
         assert ("min_width", "40") not in writes
 
-        await screen._select_library_rail_row(LIBRARY_ROW_BROWSE_PROMPTS)
+        await screen._select_library_rail_row(LIBRARY_ROW_BROWSE_SKILLS)
         await _wait_for_condition(
             pilot,
             lambda: screen._library_emergency_stage == "canvas-only",
@@ -5431,7 +5434,6 @@ async def test_library_route_matrix_keeps_default_ordinary_rail_edge_stable() ->
         landing_width = landing_rail.region.width
         landing_edge = landing_rail.region.right
         ordinary_rows = (
-            LIBRARY_ROW_BROWSE_PROMPTS,
             LIBRARY_ROW_BROWSE_SKILLS,
             LIBRARY_ROW_BROWSE_COLLECTIONS,
             LIBRARY_ROW_BROWSE_SEARCH,
@@ -5464,6 +5466,7 @@ async def test_library_route_matrix_keeps_default_ordinary_rail_edge_stable() ->
                 "#library-conversations-reader-shell",
             ),
             (LIBRARY_ROW_BROWSE_NOTES, "#library-notes-reader-shell"),
+            (LIBRARY_ROW_BROWSE_PROMPTS, "#library-prompts-reader-shell"),
         ):
             await screen._select_library_rail_row(row_id)
             shell = await _wait_for_selector(screen, pilot, selector)
@@ -5599,8 +5602,8 @@ async def test_library_production_width_matrix_ordinary(
     async with host.run_test(size=(terminal_width, 48)) as pilot:
         screen = _active_library_screen(host)
         await _wait_for_library_shell(screen, pilot)
-        await screen._select_library_rail_row(LIBRARY_ROW_BROWSE_PROMPTS)
-        await _wait_for_selector(screen, pilot, "#library-prompts-canvas")
+        await screen._select_library_rail_row(LIBRARY_ROW_BROWSE_SKILLS)
+        await _wait_for_selector(screen, pilot, "#library-skills-canvas")
         await pilot.pause()
         shell = screen.query_one("#library-shell-grid")
         rail = screen.query_one("#library-rail", LibraryRail)
@@ -5697,17 +5700,18 @@ def test_library_production_width_matrix_normalizes_persisted_custom_widths(
     app.app_config.setdefault("library", {})["reader"] = reader
     screen = LibraryScreen(app)
 
-    shared, media, conversations, notes = (
+    shared, media, conversations, notes, prompts = (
         screen._load_library_reader_preference_snapshot()
     )
 
     assert shared.library_width == expected_width
     assert {
-        preferences.library_width for preferences in (media, conversations, notes)
+        preferences.library_width
+        for preferences in (media, conversations, notes, prompts)
     } == {expected_width}
     assert all(
         preferences.custom_widths_enabled
-        for preferences in (shared, media, conversations, notes)
+        for preferences in (shared, media, conversations, notes, prompts)
     )
 
 
@@ -5752,8 +5756,8 @@ async def test_library_production_width_matrix_custom_preferences(
         await _wait_for_library_shell(screen, pilot)
         persistence = AsyncMock(wraps=screen._persist_library_reader_preference)
         monkeypatch.setattr(screen, "_persist_library_reader_preference", persistence)
-        await screen._select_library_rail_row(LIBRARY_ROW_BROWSE_PROMPTS)
-        await _wait_for_selector(screen, pilot, "#library-prompts-canvas")
+        await screen._select_library_rail_row(LIBRARY_ROW_BROWSE_SKILLS)
+        await _wait_for_selector(screen, pilot, "#library-skills-canvas")
         shell = screen.query_one("#library-shell-grid")
         assert shell.content_region.width == expected_content_width
 
@@ -5959,15 +5963,15 @@ async def test_library_resize_geometry_high_frequency_does_no_non_layout_work(
     async with host.run_test(size=(235, 48)) as pilot:
         screen = _active_library_screen(host)
         await _wait_for_library_shell(screen, pilot)
-        await screen._select_library_rail_row(LIBRARY_ROW_BROWSE_PROMPTS)
-        await _wait_for_selector(screen, pilot, "#library-prompts-canvas")
+        await screen._select_library_rail_row(LIBRARY_ROW_BROWSE_SKILLS)
+        await _wait_for_selector(screen, pilot, "#library-skills-canvas")
         await screen.workers.wait_for_complete()
         await pilot.pause()
         rail = screen.query_one("#library-rail", LibraryRail)
         canvas = screen.query_one("#library-canvas")
         with monkeypatch.context() as resize_patches:
             probes = _task6_install_resize_probes(
-                screen, resize_patches, "_request_library_prompts_browse"
+                screen, resize_patches, "_refresh_library_skills_trust_posture"
             )
             for width, expected_rail in (
                 (88, 48),

@@ -1930,12 +1930,12 @@ class PromptEditorState:
     capabilities: PromptSourceCapabilities | None = None
 
 
-PromptEditorMode = Literal["basic", "advanced"]
+PromptEditorMode = Literal["basic", "advanced", "info"]
 
 
 def coerce_prompt_editor_mode(value: object) -> PromptEditorMode:
     """Return the stored Prompt editor mode, defaulting invalid values to Basic."""
-    return "advanced" if value == "advanced" else "basic"
+    return value if value in {"basic", "advanced", "info"} else "basic"
 
 
 def prompt_basic_unavailable_reason(
