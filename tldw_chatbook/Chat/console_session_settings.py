@@ -264,9 +264,13 @@ def parse_persisted_console_session_settings(
         return None
     for name in required_float | optional_float:
         if values[name] is not None:
-            if not math.isfinite(float(values[name])):
+            try:
+                normalized = float(values[name])
+            except OverflowError:
                 return None
-            values[name] = float(values[name])
+            if not math.isfinite(normalized):
+                return None
+            values[name] = normalized
     try:
         settings = ConsoleSessionSettings(**values)
     except TypeError:

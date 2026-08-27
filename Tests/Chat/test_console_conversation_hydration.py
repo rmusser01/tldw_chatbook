@@ -219,6 +219,38 @@ def test_resume_structurally_invalid_settings_fall_back_as_one_snapshot(
     assert restored == base
 
 
+@pytest.mark.parametrize(
+    "field",
+    (
+        "temperature",
+        "top_p",
+        "min_p",
+        "presence_penalty",
+        "frequency_penalty",
+    ),
+)
+def test_resume_oversized_float_settings_fall_back_as_one_snapshot(
+    field: str,
+) -> None:
+    base = ConsoleSessionSettings(provider="base", model="safe-model")
+    persisted = {
+        **ConsoleSessionSettings(provider="openai", model="gpt-test").__dict__,
+        field: 10**400,
+    }
+
+    restored = apply_resume_settings_overrides(
+        base,
+        {
+            "system_prompt": None,
+            "metadata": json.dumps(
+                {"console_session_settings": {"version": 1, **persisted}}
+            ),
+        },
+    )
+
+    assert restored == base
+
+
 #: Deliberately awkward: two branches off one root, a truly-empty node in
 #: the middle of a branch (its child must re-parent through it), a system
 #: prompt, roleplay metadata and a pinned prefill.
