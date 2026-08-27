@@ -4961,18 +4961,14 @@ class ConsoleAgentBridge:
             # records are then logged instead of stored (nothing to attach
             # them to), and the exception still propagates unchanged.
             if change_handle is not None:
+                # PR3a-1 Task 6c: close the EARLIER turn's survivor
+                # window before this turn's E. A timed-out close waiter
+                # cannot prove that close-time priming finished, so this
+                # turn must fail closed instead of overtaking it.
+                if not self._close_post_turn_change_window(conversation_id):
+                    change_handle = None
+            if change_handle is not None:
                 try:
-                    # PR3a-1 Task 6c: close the EARLIER turn's survivor
-                    # window (if its children are still going and nothing
-                    # closed it yet) -- so its record lands here rather
-                    # than waiting on a child that need never finish, and
-                    # in the transcript position resume re-derives it in.
-                    # It ends at THIS turn's baseline shas, bound by
-                    # the pre-B successor claim at turn start, so the two
-                    # windows abut on one sha: a survivor's write lands in
-                    # exactly one of them, never in the crack between and
-                    # never on both cards.
-                    self._close_post_turn_change_window(conversation_id)
                     _steps = outcome.steps if "outcome" in locals() else []
                     _current_live_handles = service.live_subagent_handles()
                     _current_state_pending = bool(_current_live_handles)
@@ -5532,7 +5528,7 @@ class ConsoleAgentBridge:
                 return
         self._close_post_turn_change_window(conversation_id)
 
-    def _close_post_turn_change_window(self, conversation_id: str) -> None:
+    def _close_post_turn_change_window(self, conversation_id: str) -> bool:
         """Close this conversation's survivor window and record it.
 
         The first caller marks the window closing. Later callers wait for
@@ -5553,11 +5549,15 @@ class ConsoleAgentBridge:
 
         Args:
             conversation_id: The conversation whose window to close.
+
+        Returns:
+            ``False`` only when a competing close did not finish within
+            the boundary wait; otherwise ``True``.
         """
         with self._change_window_lock:
             window = self._post_turn_change_windows.get(conversation_id)
             if window is None:
-                return
+                return True
             if window.closing:
                 close_done = window.close_done
                 owner = False
@@ -5578,11 +5578,11 @@ class ConsoleAgentBridge:
                     "change_review: post-turn close wait timed out; "
                     "continuing without tracking this boundary"
                 )
-            return
+            return completed
 
         try:
             if self._change_tracker is None:
-                return
+                return True
             end_shas = None
             if successor_claim is not None:
                 try:
@@ -5597,7 +5597,7 @@ class ConsoleAgentBridge:
                         "change_review: successor claim did not attach; "
                         "boundary changes are untracked"
                     )
-                    return
+                    return True
                 if (
                     not successor_claim.failed
                     and successor_claim.handle is not None
@@ -5621,7 +5621,7 @@ class ConsoleAgentBridge:
                 end_shas=end_shas,
             )
             if not records:
-                return
+                return True
             self._record_change_snapshots(
                 run_id=window.run_id,
                 records=records,
@@ -5643,6 +5643,7 @@ class ConsoleAgentBridge:
                 if self._post_turn_change_windows.get(conversation_id) is window:
                     self._post_turn_change_windows.pop(conversation_id, None)
             window.close_done.set()
+        return True
 
     def _record_change_snapshots(
         self, *, run_id: str, records: list, kind: str

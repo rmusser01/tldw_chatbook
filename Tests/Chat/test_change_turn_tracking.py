@@ -3719,6 +3719,121 @@ def test_successor_e_waits_for_close_time_index_priming(
     assert not db.change_snapshots_for_run(old_run_id)
 
 
+def test_successor_e_waiter_timeout_disables_turn_tracking(
+    tmp_path, root, tracker, monkeypatch
+):
+    monkeypatch.setattr(
+        console_agent_bridge_module,
+        "_CHANGE_BOUNDARY_WAIT_SECONDS",
+        0.01,
+    )
+    target = root / "timeout-before-prime.txt"
+    expected = b"created after successor B\n"
+    (root / ".gitignore").write_text(f"{target.name}\n")
+    gateway = _BlockingParentGateway()
+    bridge, db, store, session, aid = _bridge_with(tmp_path, gateway, tracker)
+    old_run_id = db.create_run(conversation_id="conv-1", agent_kind="primary")
+    old_turn = tracker.begin_turn([root])
+    old_turn.await_baseline()
+    tracker.end_turn(old_turn)
+    follow_on = tracker.continuation(old_turn)
+    assert follow_on is not None
+
+    state = _ChildChangeState(
+        owner_key="old-owner",
+        touched_paths={str(target)},
+    )
+    close_done = _WaitRecordingEvent()
+    window = _PostTurnChangeWindow(
+        run_id=old_run_id,
+        session_id=session.id,
+        handle=follow_on,
+        child_states=(state,),
+        close_done=close_done,
+    )
+    bridge._post_turn_change_windows["conv-1"] = window
+
+    real_begin = tracker.begin_turn
+    real_end = tracker.end_turn
+    successor_handle: dict[str, object] = {}
+    close_owned = threading.Event()
+    release_close = threading.Event()
+    successor_e_called = threading.Event()
+
+    def capture_successor_b(roots, touched_paths=()):
+        handle = real_begin(roots, touched_paths=touched_paths)
+        successor_handle["value"] = handle
+        return handle
+
+    def block_close_before_priming(handle, *args, **kwargs):
+        if handle is window.handle:
+            assert kwargs.get("end_shas") is not None
+            close_owned.set()
+            assert release_close.wait(5), "first-owner close was never released"
+        elif handle is successor_handle.get("value"):
+            successor_e_called.set()
+        return real_end(handle, *args, **kwargs)
+
+    monkeypatch.setattr(tracker, "begin_turn", capture_successor_b)
+    monkeypatch.setattr(tracker, "end_turn", block_close_before_priming)
+    errors: list[BaseException] = []
+    result: list[object] = []
+
+    def run_successor() -> None:
+        try:
+            result.append(_run(bridge, session, aid, root))
+        except BaseException as exc:  # noqa: BLE001 -- asserted on test thread
+            errors.append(exc)
+
+    def close_old_window() -> None:
+        try:
+            bridge._close_post_turn_change_window("conv-1")
+        except BaseException as exc:  # noqa: BLE001 -- asserted on test thread
+            errors.append(exc)
+
+    successor_thread = threading.Thread(
+        target=run_successor,
+        name="successor-e-timeout",
+    )
+    closer = threading.Thread(
+        target=close_old_window,
+        name="blocked-close-owner",
+    )
+    successor_thread.start()
+    try:
+        assert gateway.entered.wait(5), "successor never entered its provider"
+        successor = successor_handle["value"]
+        successor.await_baseline()
+        target.write_bytes(expected)
+
+        closer.start()
+        assert close_owned.wait(5), "first-owner close never reached priming"
+        gateway.release.set()
+        assert close_done.wait_started.wait(5), (
+            "successor E never waited on the first-owner close"
+        )
+        successor_thread.join(5)
+        assert not successor_thread.is_alive(), (
+            "successor reply did not survive the boundary timeout"
+        )
+        assert not successor_e_called.is_set(), (
+            "successor E tracking overtook unfinished close-time priming"
+        )
+    finally:
+        gateway.release.set()
+        release_close.set()
+        successor_thread.join(10)
+        closer.join(10)
+
+    assert not successor_thread.is_alive()
+    assert not closer.is_alive()
+    assert errors == []
+    run_id, outcome = result[0]
+    assert outcome.status == "done"
+    assert not db.change_snapshots_for_run(run_id)
+    assert close_done.is_set()
+
+
 def test_claim_and_close_failures_release_waiters_without_breaking_runs(
     tmp_path, root, tracker, monkeypatch
 ):
