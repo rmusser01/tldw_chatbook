@@ -199,6 +199,8 @@ Run only the targeted commands listed below. Do not run the full suite unless th
 
 - Modify: `tldw_chatbook/Widgets/Library/library_file_notes_workspace.py`
 - Modify: `tldw_chatbook/UI/Screens/library_screen.py`
+- Modify: `tldw_chatbook/css/components/_agentic_terminal.tcss`
+- Modify: `tldw_chatbook/css/tldw_cli_modular.tcss`
 - Modify: `Tests/UI/test_library_file_notes_workspace.py`
 - Modify: `Tests/UI/test_library_file_notes_git.py`
 - Modify: `Tests/UI/test_library_notes_reader.py`
@@ -211,6 +213,8 @@ Run only the targeted commands listed below. Do not run the full suite unless th
   - `Tests/UI/test_library_file_notes_workspace.py::test_folder_files_builds_shared_adaptive_reader_roles`
   - `Tests/UI/test_library_file_notes_workspace.py::test_folder_files_shared_shell_retains_state_across_breakpoints`
   - `Tests/UI/test_library_file_notes_workspace.py::test_notes_authority_round_trip_retains_both_workspaces`
+  - `Tests/UI/test_library_file_notes_workspace.py::test_folder_files_routes_rail_descendants_to_visible_authority`
+  - `Tests/UI/test_library_file_notes_workspace.py::test_folder_files_low_height_rail_scrolls_to_last_action`
 
   Add production-shell pilots proving that Folder Files has exactly one `LibraryAdaptiveReaderShell` with this mapping:
 
@@ -304,7 +308,7 @@ Run only the targeted commands listed below. Do not run the full suite unless th
 - [ ] **Step 8: Commit the shell migration.**
 
   ```bash
-  git add tldw_chatbook/Widgets/Library/library_file_notes_workspace.py tldw_chatbook/UI/Screens/library_screen.py Tests/UI/test_library_file_notes_workspace.py Tests/UI/test_library_file_notes_git.py Tests/UI/test_library_notes_reader.py
+  git add tldw_chatbook/Widgets/Library/library_file_notes_workspace.py tldw_chatbook/UI/Screens/library_screen.py tldw_chatbook/css/components/_agentic_terminal.tcss tldw_chatbook/css/tldw_cli_modular.tcss Tests/UI/test_library_file_notes_workspace.py Tests/UI/test_library_file_notes_git.py Tests/UI/test_library_notes_reader.py
   git commit -m "refactor(library): share adaptive shell with Folder Files"
   ```
 
