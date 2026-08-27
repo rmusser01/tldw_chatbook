@@ -69,6 +69,7 @@ class RawCliRuntime:
         self._executor = executor if executor is not None else RawShellExecutor()
         self._shutdown_timeout_seconds = float(shutdown_timeout_seconds)
         self._lock = threading.RLock()
+        self._admission_lock = threading.Lock()
         self._shutdown_call_lock = threading.Lock()
         self._armed = False
         self._shutdown_started = False
@@ -136,15 +137,25 @@ class RawCliRuntime:
             tree: ExecutorProcessTree,
             commit_launch: Callable[[], None],
         ) -> bool:
-            with self._lock:
-                if (
-                    self._shutdown_started
-                    or self._active_invocations.get(request.invocation_id) is not active
-                    or not self._latest_permitted_locked()
-                    or not self._armed
-                ):
+            def authority_allows_launch() -> bool:
+                with self._lock:
+                    return not (
+                        self._shutdown_started
+                        or self._active_invocations.get(request.invocation_id)
+                        is not active
+                        or not self._latest_permitted_locked()
+                        or not self._armed
+                    )
+
+            with self._admission_lock:
+                if not authority_allows_launch():
                     return False
                 tree.admit()
+                # This second gate is the launch-authorization linearization point.
+                # Disarm/shutdown can mutate state while containment admission waits;
+                # Task 2's commit atomically orders launch against their cancel signal.
+                if not authority_allows_launch():
+                    return False
                 commit_launch()
                 return True
 

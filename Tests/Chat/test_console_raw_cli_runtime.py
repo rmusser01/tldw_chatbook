@@ -109,6 +109,49 @@ class _WaitingAdmissionExecutor:
         return _result(request, state)
 
 
+class _BlockingTreeAdmissionExecutor:
+    """Block inside containment admission until the test releases it."""
+
+    def __init__(self) -> None:
+        self.admission_started = threading.Event()
+        self.release_admission = threading.Event()
+        self.cancel_event: threading.Event | None = None
+        self.committed = False
+        self.calls = 0
+
+    def execute(
+        self,
+        request: RawCliRequest,
+        *,
+        cancel_event: threading.Event,
+        on_event: Any,
+        admit_worker: Any,
+    ) -> RawCliResult:
+        del on_event
+        self.calls += 1
+        self.cancel_event = cancel_event
+        owner = self
+
+        class Tree:
+            def admit(self) -> None:
+                owner.admission_started.set()
+                assert owner.release_admission.wait(2.0), (
+                    "test did not release containment admission"
+                )
+
+        def commit_launch() -> None:
+            owner.committed = True
+
+        admit_worker(Tree(), commit_launch)
+        if self.committed:
+            state = "exited"
+        elif cancel_event.is_set():
+            state = "cancelled"
+        else:
+            state = "containment_unavailable"
+        return _result(request, state)
+
+
 class _ActiveExecutor:
     """Admit each invocation and remain active until cancellation arrives."""
 
@@ -318,57 +361,45 @@ def test_disarm_before_admission_keeps_launch_gate_closed(
     assert results[0].terminal_state == "containment_unavailable"
 
 
-def test_admission_and_launch_commit_share_runtime_lock(
+def test_disarm_during_stalled_admission_returns_and_prevents_launch_commit(
     raw_runtime_module: Any,
     tmp_path: Path,
 ) -> None:
-    runtime_class = _required(raw_runtime_module, "RawCliRuntime")
-    disarm_started = threading.Event()
-    disarm_finished = threading.Event()
-    committed = threading.Event()
-    disarm_thread: list[threading.Thread] = []
-
-    class LockProbeExecutor:
-        def execute(
-            self,
-            request: RawCliRequest,
-            *,
-            cancel_event: threading.Event,
-            on_event: Any,
-            admit_worker: Any,
-        ) -> RawCliResult:
-            del on_event
-
-            class Tree:
-                def admit(self) -> None:
-                    thread = threading.Thread(target=run_disarm)
-                    disarm_thread.append(thread)
-                    thread.start()
-                    assert disarm_started.wait(2.0)
-                    assert disarm_finished.wait(0.02) is False
-
-            def commit_launch() -> None:
-                assert disarm_finished.is_set() is False
-                committed.set()
-
-            admit_worker(Tree(), commit_launch)
-            assert cancel_event.wait(2.0)
-            return _result(request, "cancelled")
-
-    runtime = runtime_class(lambda: True, executor=LockProbeExecutor())
+    executor = _BlockingTreeAdmissionExecutor()
+    runtime = _required(raw_runtime_module, "RawCliRuntime")(
+        lambda: True,
+        executor=executor,
+    )
     runtime.arm()
+    results: list[RawCliResult] = []
+    execute_thread = threading.Thread(
+        target=lambda: results.append(
+            runtime.execute(_request(tmp_path), lambda _event: None)
+        )
+    )
+    execute_thread.start()
+    assert executor.admission_started.wait(2.0)
 
-    def run_disarm() -> None:
-        disarm_started.set()
-        runtime.disarm()
-        disarm_finished.set()
+    disarm_results: list[tuple[str, ...]] = []
+    disarm_thread = threading.Thread(
+        target=lambda: disarm_results.append(runtime.disarm())
+    )
+    disarm_thread.start()
+    disarm_thread.join(0.2)
+    returned_before_release = not disarm_thread.is_alive()
+    cancellation_signalled = bool(
+        executor.cancel_event is not None and executor.cancel_event.is_set()
+    )
 
-    result = runtime.execute(_request(tmp_path), lambda _event: None)
-    disarm_thread[0].join(2.0)
+    executor.release_admission.set()
+    disarm_thread.join(2.0)
+    execute_thread.join(2.0)
 
-    assert committed.is_set()
-    assert disarm_finished.is_set()
-    assert result.terminal_state == "cancelled"
+    assert returned_before_release is True
+    assert disarm_results == [("raw-1",)]
+    assert cancellation_signalled is True
+    assert executor.committed is False
+    assert results[0].terminal_state == "cancelled"
 
 
 def test_disarm_clears_session_grants_and_cancels_every_active_invocation(
@@ -463,6 +494,65 @@ def test_shutdown_is_idempotent_bounded_and_prevents_new_work(
     thread.join(2.0)
     assert thread.is_alive() is False
     assert results[0].terminal_state == "exited"
+
+
+def test_shutdown_is_bounded_while_containment_admission_is_stalled(
+    raw_runtime_module: Any,
+    tmp_path: Path,
+) -> None:
+    executor = _BlockingTreeAdmissionExecutor()
+    runtime = _required(raw_runtime_module, "RawCliRuntime")(
+        lambda: True,
+        executor=executor,
+        shutdown_timeout_seconds=0.03,
+    )
+    runtime.arm()
+    results: list[RawCliResult] = []
+    execute_thread = threading.Thread(
+        target=lambda: results.append(
+            runtime.execute(_request(tmp_path), lambda _event: None)
+        )
+    )
+    execute_thread.start()
+    assert executor.admission_started.wait(2.0)
+
+    shutdown_results: list[Any] = []
+    shutdown_thread = threading.Thread(
+        target=lambda: shutdown_results.append(runtime.shutdown())
+    )
+    shutdown_thread.start()
+    shutdown_thread.join(0.2)
+    returned_before_release = not shutdown_thread.is_alive()
+    if returned_before_release:
+        arm_reason = runtime.arm().reason
+        refused_state = runtime.execute(
+            _request(tmp_path, invocation_id="raw-after-shutdown"),
+            lambda _event: None,
+        ).terminal_state
+    else:
+        arm_reason = None
+        refused_state = None
+    cancellation_signalled = bool(
+        executor.cancel_event is not None and executor.cancel_event.is_set()
+    )
+
+    executor.release_admission.set()
+    shutdown_thread.join(2.0)
+    execute_thread.join(2.0)
+
+    assert returned_before_release is True
+    assert shutdown_results == [
+        _required(raw_runtime_module, "RawCliShutdownResult")(
+            cancelled_invocation_ids=("raw-1",),
+            unfinished_invocation_ids=("raw-1",),
+        )
+    ]
+    assert arm_reason == "shutdown"
+    assert refused_state == "refused"
+    assert cancellation_signalled is True
+    assert executor.calls == 1
+    assert executor.committed is False
+    assert results[0].terminal_state == "cancelled"
 
 
 def test_terminal_result_wins_over_late_disarm_and_cancel(
