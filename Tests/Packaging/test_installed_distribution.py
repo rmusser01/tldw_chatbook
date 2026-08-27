@@ -2252,6 +2252,41 @@ def test_release_checker_reads_root_pkg_info_not_nested_decoy(
     assert TIKTOKEN_REQUIREMENT in result.stdout + result.stderr
 
 
+def test_release_checker_rejects_duplicate_sdist_member_names(
+    built_distributions: BuiltDistributions,
+    tmp_path: Path,
+) -> None:
+    dist_dir = tmp_path / "dist"
+    shutil.copytree(built_distributions.dist_dir, dist_dir)
+    sdist = next(dist_dir.glob("*.tar.gz"))
+    rewritten = sdist.with_name(f"{sdist.name}.rewritten")
+    with (
+        tarfile.open(sdist, "r:gz") as source,
+        tarfile.open(rewritten, "w:gz") as destination,
+    ):
+        for member in source.getmembers():
+            stream = source.extractfile(member) if member.isfile() else None
+            payload = stream.read() if stream is not None else None
+            destination.addfile(
+                member,
+                BytesIO(payload) if payload is not None else None,
+            )
+            if member.isfile() and member.name.split("/", 1)[-1] == "PKG-INFO":
+                assert payload is not None
+                weakened = _weaken_tiktoken_requirement(payload.decode("utf-8"))
+                duplicate = tarfile.TarInfo(member.name)
+                duplicate.size = len(weakened)
+                destination.addfile(duplicate, BytesIO(weakened))
+    rewritten.replace(sdist)
+
+    result = _run_manifest_checker(built_distributions, dist_dir, tmp_path)
+    output = result.stdout + result.stderr
+
+    assert result.returncode == 1
+    assert "duplicate" in output.lower()
+    assert "PKG-INFO" in output
+
+
 def test_migration_expectations_are_derived_not_enumerated() -> None:
     """The expectations must come from reality, or they cannot catch drift."""
     assert SOURCE_MIGRATION_PATHS, "no migration scripts found in the checkout"

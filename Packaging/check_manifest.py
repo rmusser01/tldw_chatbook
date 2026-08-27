@@ -219,7 +219,16 @@ def runtime_migration_paths(module_source: str) -> set[str]:
 def _sdist_members(path: Path) -> tuple[set[str], list[str]]:
     errors: list[str] = []
     with tarfile.open(path, "r:gz") as archive:
-        files = [member.name for member in archive.getmembers() if member.isfile()]
+        archive_members = archive.getmembers()
+    seen: set[str] = set()
+    duplicates: set[str] = set()
+    for member in archive_members:
+        if member.name in seen:
+            duplicates.add(member.name)
+        seen.add(member.name)
+    for duplicate in sorted(duplicates):
+        errors.append(f"source distribution: duplicate archive member: {duplicate}")
+    files = [member.name for member in archive_members if member.isfile()]
     roots = {name.split("/", 1)[0] for name in files}
     if len(roots) != 1:
         errors.append(
