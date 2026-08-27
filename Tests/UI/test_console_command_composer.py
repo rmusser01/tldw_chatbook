@@ -7,12 +7,12 @@ from types import SimpleNamespace
 from unittest.mock import AsyncMock, Mock
 
 import pytest
-from textual.app import App
 
 # Harness apps load the consolidated widget CSS the real app loads
 # (TASK-15450); without it the widgets under test mount unstyled.
-from Tests.UI.consolidated_css import ConsolidatedCSSApp
-from textual.widgets import Button, Input
+from Tests.UI.consolidated_css import BUNDLED_STYLESHEET, ConsolidatedCSSApp
+from textual.events import Key
+from textual.widgets import Button, Input, Static
 
 from Tests.UI.test_console_native_chat_flow import (
     CapturingGateway,
@@ -42,6 +42,8 @@ from tldw_chatbook.UI.Navigation.pending_handoff_store import (
 from tldw_chatbook.UI.Console_Modules.prompts import ConsolePromptsController
 from tldw_chatbook.UI.Screens.chat_screen import ChatScreen
 from tldw_chatbook.Widgets.Console import ConsoleCommandPopup, ConsoleComposerBar
+from tldw_chatbook.Widgets.Console import console_composer_bar as composer_module
+from tldw_chatbook.Widgets.Console.console_composer_bar import ConsoleDraftStash
 from tldw_chatbook.Widgets.Console.console_prompt_picker_modal import (
     FILTER_INPUT_ID,
     ROW_ID_PREFIX,
@@ -139,6 +141,223 @@ class _StagedPromptConsoleHarness(ConsolidatedCSSApp):
             _library_prompt_application(console, "staged on mount"),
         )
         await self.push_screen(console)
+
+
+class _RawCliComposerHarness(ConsolidatedCSSApp):
+    CSS_PATH = [str(BUNDLED_STYLESHEET)]
+
+    def compose(self):
+        yield ConsoleComposerBar(id="console-native-composer")
+
+
+def _type_raw_cli_prefix(composer: ConsoleComposerBar) -> None:
+    assert composer.handle_console_key(Key("exclamation_mark", "!")) is True
+    assert composer.handle_console_key(Key("space", " ")) is True
+
+
+def _raw_draft(kind: str, text: str):
+    return composer_module.ConsoleRawDraft(kind, text)
+
+
+@pytest.mark.unit
+@pytest.mark.parametrize(
+    ("text", "trusted", "expected"),
+    [
+        ("", False, ("chat", "")),
+        ("hello", False, ("chat", "hello")),
+        ("! ", True, ("raw", "")),
+        ("! pwd", True, ("raw", "pwd")),
+        ("! pwd", False, ("chat", "! pwd")),
+        (r"\! pwd", True, ("escaped_chat", "! pwd")),
+    ],
+)
+def test_raw_cli_classifier_is_pure_and_escape_takes_precedence(
+    text: str,
+    trusted: bool,
+    expected: tuple[str, str],
+) -> None:
+    stash = ConsoleDraftStash(
+        segments=[],
+        text=text,
+        has_paste=False,
+        raw_cli_prefix_typed=trusted,
+    )
+
+    assert composer_module.classify_console_raw_draft(stash) == _raw_draft(*expected)
+
+
+@pytest.mark.unit
+def test_raw_cli_physical_prefix_at_offsets_zero_and_one_creates_trusted_stash() -> (
+    None
+):
+    composer = ConsoleComposerBar()
+
+    _type_raw_cli_prefix(composer)
+    stash = composer.stash_draft_for_send()
+
+    assert stash is not None
+    assert stash.raw_cli_prefix_typed is True
+    assert composer_module.classify_console_raw_draft(stash) == _raw_draft("raw", "")
+    assert composer.draft_text() == ""
+    assert composer._raw_cli_prefix_typed is False
+
+
+@pytest.mark.unit
+@pytest.mark.parametrize("source", ["paste", "programmatic"])
+def test_raw_cli_pasted_or_programmatic_prefix_never_creates_trust(source: str) -> None:
+    composer = ConsoleComposerBar()
+    if source == "paste":
+        composer.insert_pasted_text("! pwd")
+    else:
+        composer.load_draft("! pwd")
+
+    stash = composer.stash_draft_for_send()
+
+    assert stash is not None
+    assert stash.raw_cli_prefix_typed is False
+    assert composer_module.classify_console_raw_draft(stash) == _raw_draft(
+        "chat", "! pwd"
+    )
+
+
+@pytest.mark.unit
+def test_raw_cli_typed_prefix_then_pasted_body_remains_trusted_despite_paste() -> None:
+    composer = ConsoleComposerBar()
+    _type_raw_cli_prefix(composer)
+
+    composer.insert_pasted_text("printf hello")
+    stash = composer.stash_draft_for_send()
+
+    assert stash is not None
+    assert stash.has_paste is True
+    assert stash.raw_cli_prefix_typed is True
+    assert composer_module.classify_console_raw_draft(stash) == _raw_draft(
+        "raw", "printf hello"
+    )
+
+
+@pytest.mark.unit
+@pytest.mark.parametrize(
+    "mutation",
+    [
+        lambda composer: composer.delete_left(),
+        lambda composer: (composer.move_cursor_left(), composer.delete_left()),
+        lambda composer: (composer.move_cursor_home(), composer.delete_right()),
+        lambda composer: (composer.move_cursor_home(), composer.insert_text("x")),
+        lambda composer: (
+            composer.select_all_draft(),
+            composer.insert_text("! replacement"),
+        ),
+        lambda composer: composer.load_draft("! replacement"),
+    ],
+)
+def test_raw_cli_edit_delete_move_or_replace_of_prefix_clears_trust(mutation) -> None:
+    composer = ConsoleComposerBar()
+    _type_raw_cli_prefix(composer)
+
+    mutation(composer)
+    stash = composer.stash_draft_for_send()
+
+    assert stash is not None
+    assert stash.raw_cli_prefix_typed is False
+    assert composer_module.classify_console_raw_draft(stash).kind != "raw"
+
+
+@pytest.mark.unit
+def test_raw_cli_refused_stash_restore_preserves_exact_trusted_payload() -> None:
+    composer = ConsoleComposerBar()
+    _type_raw_cli_prefix(composer)
+    composer.insert_pasted_text("pwd")
+    refused = composer.stash_draft_for_send()
+    assert refused is not None
+
+    composer.insert_text(" typed after refusal")
+    composer.restore_stashed_draft(refused)
+    restored = composer.stash_draft_for_send()
+
+    assert restored is not None
+    assert restored.raw_cli_prefix_typed is True
+    assert composer_module.classify_console_raw_draft(restored) == _raw_draft(
+        "raw", "pwd typed after refusal"
+    )
+
+
+@pytest.mark.unit
+def test_raw_cli_undo_redo_and_history_shaped_replacements_never_mint_trust() -> None:
+    composer = ConsoleComposerBar()
+    composer.insert_text("! ")
+    assert composer._raw_cli_prefix_typed is False
+
+    composer.clear_draft(record_history=True)
+    assert composer.undo() is True
+    assert composer.draft_text() == "! "
+    assert composer._raw_cli_prefix_typed is False
+    assert composer.redo() is True
+    assert composer._raw_cli_prefix_typed is False
+
+    trusted = ConsoleComposerBar()
+    _type_raw_cli_prefix(trusted)
+    trusted.insert_text("pwd")
+    assert trusted.undo() is True
+    assert trusted._raw_cli_prefix_typed is False
+    assert trusted.redo() is True
+    assert trusted.draft_text().startswith("! ")
+    assert trusted._raw_cli_prefix_typed is False
+
+
+@pytest.mark.asyncio
+async def test_raw_cli_visible_send_consumes_same_trusted_stash_as_enter() -> None:
+    app = _build_test_app()
+    _configure_native_ready_console(app)
+    host = ConsoleHarness(app)
+
+    async with host.run_test(size=(160, 48)) as pilot:
+        console = host.screen_stack[-1]
+        await _wait_for_selector(console, pilot, "#console-native-composer")
+        composer = console.query_one("#console-native-composer", ConsoleComposerBar)
+        _type_raw_cli_prefix(composer)
+        composer.insert_pasted_text("pwd")
+        dispatch = AsyncMock(return_value=True)
+        console._dispatch_console_draft_send = dispatch
+
+        console.query_one("#console-send-message", Button).press()
+        await pilot.pause()
+
+        stash = dispatch.await_args.kwargs["stash"]
+        assert stash is not None
+        assert stash.raw_cli_prefix_typed is True
+        assert composer_module.classify_console_raw_draft(stash) == _raw_draft(
+            "raw", "pwd"
+        )
+        assert composer.draft_text() == ""
+        assert composer._raw_cli_prefix_typed is False
+
+
+@pytest.mark.asyncio
+async def test_raw_cli_trusted_state_is_text_labeled_danger_without_geometry_shift() -> (
+    None
+):
+    host = _RawCliComposerHarness()
+
+    async with host.run_test(size=(120, 20)) as pilot:
+        composer = host.query_one("#console-native-composer", ConsoleComposerBar)
+        composer.focus()
+        await pilot.pause()
+        original_region = composer.region
+        original_focus = host.focused
+
+        _type_raw_cli_prefix(composer)
+        await pilot.pause()
+
+        status = composer.query_one("#console-raw-cli-status", Static)
+        assert str(status.renderable) == "RAW CLI · HOST ACCESS"
+        assert composer.has_class("console-raw-cli-danger")
+        assert status.has_class("console-raw-cli-danger")
+        assert status.has_class("console-voice-status-error")
+        assert status.region.height == 1
+        assert composer.region.width == original_region.width
+        assert composer.region.height == original_region.height
+        assert host.focused is original_focus
 
 
 def _recipe_record() -> dict[str, object]:
