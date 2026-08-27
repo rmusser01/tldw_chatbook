@@ -39294,8 +39294,11 @@ class LibraryScreen(BaseAppScreen):
         remounts a brand-new ``#library-search-input``; without this, focus
         silently falls back to the screen after every search.
         """
+        rail = self._active_library_rail()
+        if rail is None:
+            return
         try:
-            self.query_one("#library-search-input", Input).focus()
+            rail.query_one("#library-search-input", Input).focus()
         except (NoMatches, QueryError):
             pass
 

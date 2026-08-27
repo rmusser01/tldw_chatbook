@@ -1247,6 +1247,130 @@ async def test_notes_authority_round_trip_retains_both_workspaces(
     await workspace.shutdown()
 
 
+@pytest.mark.asyncio
+async def test_folder_files_routes_rail_descendants_to_visible_authority(
+    tmp_path: Path,
+) -> None:
+    """Files shortcuts and rail actions never resolve hidden Database children."""
+    root = tmp_path / "notes"
+    root.mkdir()
+    workspace = LibraryFileNotesWorkspace(
+        root=root,
+        replica_path=tmp_path / "replica.sqlite",
+        poll_interval=10,
+    )
+    app = _build_test_app()
+    _seed_conversations(app, _two_conversations(), notes=[])
+    screen = LibraryScreen(app, file_notes_workspace_factory=lambda: workspace)
+
+    async with LibraryHarness(app, screen=screen).run_test(size=(160, 45)) as pilot:
+        await _wait_for_library_shell(screen, pilot)
+        await screen._select_library_rail_row(LIBRARY_ROW_BROWSE_NOTES)
+        await _wait_until(
+            pilot,
+            lambda: bool(screen.query("#library-notes-source-files")),
+            "Notes source chooser did not mount",
+        )
+        database_rail = screen.query_one("#library-rail")
+        screen.query_one("#library-notes-source-files", Button).press()
+        await _wait_until(
+            pilot,
+            lambda: workspace.initialized and workspace.is_mounted,
+            "Folder Files did not mount",
+        )
+
+        files_rail = workspace._reader_shell.library
+        database_search = database_rail.query_one("#library-search-input", Input)
+        files_search = files_rail.query_one("#library-search-input", Input)
+        tree = workspace.query_one("#file-notes-tree", Tree)
+        screen.set_focus(tree)
+        await pilot.press("/")
+        await pilot.pause()
+        assert screen.focused is files_search
+        assert screen.focused is not database_search
+
+        database_details = database_rail.query_one("#library-rail-section-body-details")
+        files_details = files_rail.query_one("#library-rail-section-body-details")
+        database_details_open = database_details.display
+        files_details_open = files_details.display
+        files_details_toggle = files_rail.query_one(
+            "#console-rail-section-toggle-library-details", Button
+        )
+        files_details_toggle.press()
+        await pilot.pause()
+        assert files_details.display is not files_details_open
+        assert database_details.display is database_details_open
+
+        screen._focus_library_rail_action(
+            "#console-rail-section-toggle-library-details"
+        )
+        assert screen.focused is files_details_toggle
+
+        screen._focus_library_rail_action("#library-ingest-top-button")
+        assert screen.focused is files_rail.query_one(
+            "#library-ingest-top-button", Button
+        )
+
+        screen._focus_library_rail_action("#library-rail-explore-all")
+        assert screen.focused is not None
+        assert files_rail in screen.focused.ancestors_with_self
+        assert database_rail not in screen.focused.ancestors_with_self
+
+    await workspace.shutdown()
+
+
+@pytest.mark.asyncio
+async def test_folder_files_low_height_rail_scrolls_to_last_action(
+    tmp_path: Path,
+) -> None:
+    """The retained Files rail exposes its lower actions in a short viewport."""
+    root = tmp_path / "notes"
+    root.mkdir()
+    workspace = LibraryFileNotesWorkspace(
+        root=root,
+        replica_path=tmp_path / "replica.sqlite",
+        poll_interval=10,
+    )
+    app = _build_test_app()
+    app.app_config.setdefault("library", {}).setdefault("rail_state", {})[
+        "sections"
+    ] = {"details_open": True}
+    _seed_conversations(app, _two_conversations(), notes=[])
+    screen = LibraryScreen(app, file_notes_workspace_factory=lambda: workspace)
+
+    async with LibraryHarness(app, screen=screen).run_test(size=(160, 18)) as pilot:
+        await _wait_for_library_shell(screen, pilot)
+        await screen._select_library_rail_row(LIBRARY_ROW_BROWSE_NOTES)
+        await _wait_until(
+            pilot,
+            lambda: bool(screen.query("#library-notes-source-files")),
+            "Notes source chooser did not mount",
+        )
+        screen.query_one("#library-notes-source-files", Button).press()
+        await _wait_until(
+            pilot,
+            lambda: workspace.initialized and workspace.is_mounted,
+            "Folder Files did not mount",
+        )
+
+        files_rail = workspace._reader_shell.library
+        last_action = files_rail.query_one("#library-use-in-console", Button)
+        assert files_rail.query_one("#library-rail-section-body-details").display
+        assert files_rail.max_scroll_y > 0
+        assert files_rail.show_vertical_scrollbar is True
+
+        files_rail.scroll_end(animate=False)
+        await pilot.pause()
+        await pilot.pause()
+        rail_bottom = files_rail.region.y + files_rail.region.height
+        assert files_rail.region.y <= last_action.region.y
+        assert last_action.region.y + last_action.region.height <= rail_bottom
+        screen.set_focus(last_action)
+        assert screen.focused is last_action
+
+    await workspace.shutdown()
+
+
 @pytest.mark.parametrize(
     ("return_path", "size"),
     (
