@@ -373,6 +373,7 @@ def fs_only_specs(workspace):
 def _padding_specs(count: int):
     """Inert local specs used to pad a registry past the disclosure threshold."""
     from tldw_chatbook.Agents.local_tool_provider import LocalToolSpec
+    from tldw_chatbook.Agents.local_tool_provider import LocalToolExposure
 
     return [
         LocalToolSpec(
@@ -380,6 +381,8 @@ def _padding_specs(count: int):
             description=f"Inert padding spec {i} (test only).",
             parameters={"type": "object", "properties": {}},
             handler=lambda args: "noop",
+            exposure=LocalToolExposure.CONSOLE_ONLY,
+            approval_effects=(),
         )
         for i in range(count)
     ]

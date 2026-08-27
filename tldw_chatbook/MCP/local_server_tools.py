@@ -42,7 +42,10 @@ from typing import Any, Callable, NamedTuple
 from loguru import logger
 
 from tldw_chatbook.Agents.agent_models import ToolResult
-from tldw_chatbook.Agents.local_tool_provider import LocalToolProvider
+from tldw_chatbook.Agents.local_tool_provider import (
+    LocalToolExposure,
+    LocalToolProvider,
+)
 from tldw_chatbook.config import get_subscriptions_db_path
 from tldw_chatbook.DB.Subscriptions_DB import (
     SubscriptionsDB,
@@ -199,20 +202,21 @@ def _local_agent_tool_registrations(
 ) -> list[LocalToolRegistration]:
     """Build the binding-ready registration list for a provider's catalog.
 
-    One registration per catalog entry. The server composition supplies no
-    Console ``SessionTodoStore``, so all four task tools and the retired
-    ``todo_write`` are already absent. Each handler returns the exact
-    ``ToolResult`` from ``provider.invoke`` for the gateway to classify.
+    One registration per descriptor explicitly marked for Console and
+    external MCP publication. Each handler returns the exact ``ToolResult``
+    from ``provider.invoke`` for the gateway to classify.
     """
     registrations: list[LocalToolRegistration] = []
-    for entry in provider.list_catalog():
-        schema = provider.load_schema(entry.id)
+    for spec in provider.specs_for_exposure(
+        LocalToolExposure.CONSOLE_AND_EXTERNAL_MCP
+    ):
+        schema = provider.load_schema(spec.name)
         registrations.append(
             LocalToolRegistration(
                 name=schema.name,
                 description=schema.description,
                 parameters=schema.parameters,
-                handler=_make_registration_handler(provider, entry.id),
+                handler=_make_registration_handler(provider, spec.name),
             )
         )
     return registrations

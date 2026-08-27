@@ -114,6 +114,18 @@ appears above the transcript:
   "path outside private scratch and bound Workspace folders; will fail even
   if approved" — means the file path will be rejected regardless of your
   decision.
+- Some local-tool rows also state their code-owned effects: they may read
+  private local data, modify local data, access the network, or incur LLM
+  usage costs. These labels come from the registered tool descriptor, never
+  from model-supplied arguments. They explain what approval covers; they do
+  not grant authorization or replace the permission decision.
+
+A tool's catalog exposure, authorization, risk tags, and approval effects are
+separate. Exposure controls whether the descriptor is available in Console
+only or may also be published to external MCP. Authorization is still the
+per-tool permission state, definition-hash guard, and master kill switch. Risk
+tags enforce permission-store floors; approval effects are human-facing call
+explanations only.
 
 An armed approval card does not expire — the run waits for your decision
 however long you take. Stopping the run or closing the session withdraws a
@@ -1260,7 +1272,9 @@ third policy-gated writing tool in the `library_*` namespace
 ### Watchlists evidence tools
 
 The same local-tools group provides `watchlists_search_items` and
-`watchlists_get_item`. Results are local-first: both tools read the local
+`watchlists_get_item`. They are Console-only descriptors: an external MCP
+client never receives either article-search or item-detail tool, even if its
+local permission record is Allow. Results are local-first: both tools read the local
 Watchlists database, and server Watchlists search is not yet supported. In
 server mode they return a non-retryable unsupported result and do not search
 the local database. Its logical fields are explicit: `status` is `unsupported`,

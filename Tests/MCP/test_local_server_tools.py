@@ -541,6 +541,16 @@ def test_granted_tool_registration_handler_executes(monkeypatch, workspace, stor
     assert executor.calls == [("fs_read", {"path": "hello.txt"}, "read")]
 
 
+def test_console_only_watchlists_tool_is_never_externally_registered(
+    workspace, store
+):
+    """A persistent Allow cannot widen a Console-only descriptor's exposure."""
+    provider = build_server_local_provider(workspace, store)
+    _grant(store, provider, "watchlists_search_items")
+
+    assert "watchlists_search_items" not in _registrations(provider)
+
+
 def test_ask_state_handler_returns_tool_result(workspace, store):
     # fs_write with nothing granted -> ask default -> external refusal.
     provider = build_server_local_provider(workspace, store)
@@ -615,24 +625,10 @@ async def test_flag_on_registers_local_tool_names(monkeypatch, tmp_path):
     assert "fs_write" in names
     assert "git_status" in names
     assert "web_fetch" in names
-    assert "watchlists_search_items" in names
-    assert "watchlists_get_item" in names
+    assert "watchlists_search_items" not in names
+    assert "watchlists_get_item" not in names
     assert "todo_write" not in names
     assert TASK_TOOL_NAMES.isdisjoint(names)
-
-    provider = build_server_local_provider(
-        tmp_path, MCPPermissionStore(tmp_path / "mcp_permissions.json")
-    )
-    expected = {
-        name: provider.load_schema(f"local:{name}").parameters
-        for name in ("watchlists_search_items", "watchlists_get_item")
-    }
-    published = {
-        descriptor["name"]: descriptor["inputSchema"]
-        for descriptor in await server.mcp.list_tools(_context())
-        if descriptor["name"] in expected
-    }
-    assert published == expected
 
 
 @pytest.mark.asyncio

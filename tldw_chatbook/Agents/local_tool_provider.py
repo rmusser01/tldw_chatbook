@@ -13,6 +13,7 @@ import json
 import threading
 from contextlib import contextmanager
 from dataclasses import dataclass
+from enum import StrEnum
 from pathlib import Path
 from typing import (
     TYPE_CHECKING,
@@ -161,6 +162,22 @@ _MAX_ERROR_CHARS = 300
 # ceiling -- their explicit, documented choice.
 
 
+class LocalToolExposure(StrEnum):
+    """Where a local descriptor may be published."""
+
+    CONSOLE_AND_EXTERNAL_MCP = "console_and_external_mcp"
+    CONSOLE_ONLY = "console_only"
+
+
+class LocalApprovalEffect(StrEnum):
+    """Code-owned action effects shown on a pending approval row."""
+
+    PRIVATE_READ = "private_read"
+    MUTATES_LOCAL = "mutates_local"
+    NETWORK = "network"
+    LLM_SPEND = "llm_spend"
+
+
 @dataclass(frozen=True)
 class LocalToolSpec:
     """One local tool: schema plus its sync handler (args dict -> text).
@@ -219,7 +236,24 @@ class LocalToolSpec:
     description: str
     parameters: dict
     handler: Callable[[dict], str]
+    exposure: LocalToolExposure
+    approval_effects: tuple[LocalApprovalEffect, ...]
     tags: tuple[str, ...] = ()
+
+    def __post_init__(self) -> None:
+        """Fail closed when descriptor policy is missing or not code-owned."""
+        if not isinstance(self.exposure, LocalToolExposure):
+            raise ValueError("LocalToolSpec exposure must be a LocalToolExposure")
+        if (
+            not isinstance(self.approval_effects, tuple)
+            or not all(
+                isinstance(effect, LocalApprovalEffect)
+                for effect in self.approval_effects
+            )
+        ):
+            raise ValueError(
+                "LocalToolSpec approval_effects must be LocalApprovalEffect values"
+            )
 
 
 def _fit_result(text: str) -> str:
@@ -335,7 +369,7 @@ class LocalToolProvider:
             selected_specs = [
                 spec
                 for spec in selected_specs
-                if spec.name not in {"fs_write", "fs_edit", "fs_patch"}
+                if LocalApprovalEffect.MUTATES_LOCAL not in spec.approval_effects
             ]
         self._specs = {s.name: s for s in selected_specs}
         self._resolve_state = resolve_state or (
@@ -496,6 +530,19 @@ class LocalToolProvider:
             registered or listed.
         """
         return [self.hub_tool_for(name) for name in self._specs]
+
+    def specs_for_exposure(
+        self, exposure: LocalToolExposure
+    ) -> tuple[LocalToolSpec, ...]:
+        """Return descriptors carrying exactly the requested exposure."""
+        return tuple(
+            spec for spec in self._specs.values() if spec.exposure is exposure
+        )
+
+    def approval_effects_for(self, tool_id: str) -> tuple[LocalApprovalEffect, ...]:
+        """Return the code-owned effects for one registered local tool."""
+        name = tool_id.split(":", 1)[1] if ":" in tool_id else tool_id
+        return self._specs[name].approval_effects
 
     def path_targets(
         self, tool_id: str, args: Mapping[str, Any]
@@ -737,6 +784,7 @@ class LocalToolProvider:
             server_label=LOCAL_SERVER_LABEL,
             arguments=args,
             reason=reason,
+            effects=self._specs[name].approval_effects,
         )
         return gate, False
 
@@ -1205,6 +1253,8 @@ def _default_specs(
             handler=lambda args: workspace_executor.execute(
                 "fs_list", args, intent="read"
             ),
+            exposure=LocalToolExposure.CONSOLE_AND_EXTERNAL_MCP,
+            approval_effects=(LocalApprovalEffect.PRIVATE_READ,),
             tags=(),
         ),
         LocalToolSpec(
@@ -1232,6 +1282,8 @@ def _default_specs(
             handler=lambda args: workspace_executor.execute(
                 "fs_read", args, intent="read"
             ),
+            exposure=LocalToolExposure.CONSOLE_AND_EXTERNAL_MCP,
+            approval_effects=(LocalApprovalEffect.PRIVATE_READ,),
             tags=(),
         ),
         LocalToolSpec(
@@ -1254,6 +1306,8 @@ def _default_specs(
             handler=lambda args: workspace_executor.execute(
                 "fs_write", args, intent="write"
             ),
+            exposure=LocalToolExposure.CONSOLE_AND_EXTERNAL_MCP,
+            approval_effects=(LocalApprovalEffect.MUTATES_LOCAL,),
             tags=("mutates",),
         ),
         LocalToolSpec(
@@ -1285,6 +1339,8 @@ def _default_specs(
             handler=lambda args: workspace_executor.execute(
                 "fs_edit", args, intent="write"
             ),
+            exposure=LocalToolExposure.CONSOLE_AND_EXTERNAL_MCP,
+            approval_effects=(LocalApprovalEffect.MUTATES_LOCAL,),
             tags=("mutates",),
         ),
         LocalToolSpec(
@@ -1319,6 +1375,8 @@ def _default_specs(
             handler=lambda args: workspace_executor.execute(
                 "fs_patch", args, intent="write"
             ),
+            exposure=LocalToolExposure.CONSOLE_AND_EXTERNAL_MCP,
+            approval_effects=(LocalApprovalEffect.MUTATES_LOCAL,),
             tags=("mutates",),
         ),
         LocalToolSpec(
@@ -1342,6 +1400,8 @@ def _default_specs(
             handler=lambda args: workspace_executor.execute(
                 "fs_glob", args, intent="read"
             ),
+            exposure=LocalToolExposure.CONSOLE_AND_EXTERNAL_MCP,
+            approval_effects=(LocalApprovalEffect.PRIVATE_READ,),
             tags=(),
         ),
         LocalToolSpec(
@@ -1371,6 +1431,8 @@ def _default_specs(
             handler=lambda args: workspace_executor.execute(
                 "fs_grep", args, intent="read"
             ),
+            exposure=LocalToolExposure.CONSOLE_AND_EXTERNAL_MCP,
+            approval_effects=(LocalApprovalEffect.PRIVATE_READ,),
             tags=(),
         ),
         # git_* (phase 3b-ii): read-only over a fixed, allowlisted argv
@@ -1396,6 +1458,8 @@ def _default_specs(
             handler=lambda args: workspace_executor.execute(
                 "git_status", args, intent="read"
             ),
+            exposure=LocalToolExposure.CONSOLE_AND_EXTERNAL_MCP,
+            approval_effects=(LocalApprovalEffect.PRIVATE_READ,),
             tags=(),
         ),
         LocalToolSpec(
@@ -1435,6 +1499,8 @@ def _default_specs(
             handler=lambda args: workspace_executor.execute(
                 "git_diff", args, intent="read"
             ),
+            exposure=LocalToolExposure.CONSOLE_AND_EXTERNAL_MCP,
+            approval_effects=(LocalApprovalEffect.PRIVATE_READ,),
             tags=(),
         ),
         LocalToolSpec(
@@ -1461,6 +1527,8 @@ def _default_specs(
             handler=lambda args: workspace_executor.execute(
                 "git_log", args, intent="read"
             ),
+            exposure=LocalToolExposure.CONSOLE_AND_EXTERNAL_MCP,
+            approval_effects=(LocalApprovalEffect.PRIVATE_READ,),
             tags=(),
         ),
         LocalToolSpec(
@@ -1492,6 +1560,8 @@ def _default_specs(
             handler=lambda args: workspace_executor.execute(
                 "git_blame", args, intent="read"
             ),
+            exposure=LocalToolExposure.CONSOLE_AND_EXTERNAL_MCP,
+            approval_effects=(LocalApprovalEffect.PRIVATE_READ,),
             tags=(),
         ),
         LocalToolSpec(
@@ -1508,6 +1578,8 @@ def _default_specs(
             handler=lambda args: workspace_executor.execute(
                 "git_branches", args, intent="read"
             ),
+            exposure=LocalToolExposure.CONSOLE_AND_EXTERNAL_MCP,
+            approval_effects=(LocalApprovalEffect.PRIVATE_READ,),
             tags=(),
         ),
         LocalToolSpec(
@@ -1539,6 +1611,8 @@ def _default_specs(
             handler=lambda args: web_fetch(
                 args["url"], max_bytes=args.get("max_bytes", FETCH_MAX_BYTES)
             ),
+            exposure=LocalToolExposure.CONSOLE_AND_EXTERNAL_MCP,
+            approval_effects=(LocalApprovalEffect.NETWORK,),
             # network-classed: default ask comes from the permission store's
             # global default; read-only, so no risk tags.
             tags=(),
@@ -1571,6 +1645,8 @@ def _default_specs(
                 search_engine=args.get("search_engine", SEARCH_DEFAULT_ENGINE),
                 result_count=args.get("result_count", SEARCH_DEFAULT_RESULT_COUNT),
             ),
+            exposure=LocalToolExposure.CONSOLE_AND_EXTERNAL_MCP,
+            approval_effects=(LocalApprovalEffect.NETWORK,),
             tags=(),  # network-classed, read-only: no risk tags
         ),
         LocalToolSpec(
@@ -1618,6 +1694,8 @@ def _default_specs(
                 max_depth=args.get("max_depth", CRAWL_DEFAULT_MAX_DEPTH),
                 sitemap_url=args.get("sitemap_url"),
             ),
+            exposure=LocalToolExposure.CONSOLE_AND_EXTERNAL_MCP,
+            approval_effects=(LocalApprovalEffect.NETWORK,),
             # network-classed: default ask from the permission store's global
             # default; read-only, so no risk tags.
             tags=(),
@@ -1696,6 +1774,8 @@ def _default_specs(
                 "additionalProperties": False,
             },
             handler=watchlists_service.search_items,
+            exposure=LocalToolExposure.CONSOLE_ONLY,
+            approval_effects=(LocalApprovalEffect.PRIVATE_READ,),
             tags=(),
         ),
         LocalToolSpec(
@@ -1718,6 +1798,8 @@ def _default_specs(
                 "additionalProperties": False,
             },
             handler=watchlists_service.get_item,
+            exposure=LocalToolExposure.CONSOLE_ONLY,
+            approval_effects=(LocalApprovalEffect.PRIVATE_READ,),
             tags=(),
         ),
     ]
@@ -1754,6 +1836,8 @@ def _default_specs(
                         "additionalProperties": False,
                     },
                     handler=_make_todo_create_handler(todo_store, on_todo_change),
+                    exposure=LocalToolExposure.CONSOLE_ONLY,
+                    approval_effects=(LocalApprovalEffect.MUTATES_LOCAL,),
                     tags=("mutates",),
                 ),
                 LocalToolSpec(
@@ -1803,6 +1887,8 @@ def _default_specs(
                         "additionalProperties": False,
                     },
                     handler=_make_todo_update_handler(todo_store, on_todo_change),
+                    exposure=LocalToolExposure.CONSOLE_ONLY,
+                    approval_effects=(LocalApprovalEffect.MUTATES_LOCAL,),
                     tags=("mutates",),
                 ),
                 LocalToolSpec(
@@ -1815,6 +1901,8 @@ def _default_specs(
                         "additionalProperties": False,
                     },
                     handler=_make_todo_get_handler(todo_store),
+                    exposure=LocalToolExposure.CONSOLE_ONLY,
+                    approval_effects=(LocalApprovalEffect.PRIVATE_READ,),
                     tags=(),
                 ),
                 LocalToolSpec(
@@ -1830,6 +1918,8 @@ def _default_specs(
                         "additionalProperties": False,
                     },
                     handler=_make_todo_list_handler(todo_store),
+                    exposure=LocalToolExposure.CONSOLE_ONLY,
+                    approval_effects=(LocalApprovalEffect.PRIVATE_READ,),
                     tags=(),
                 ),
             ]
@@ -1901,6 +1991,11 @@ def _default_specs(
                     args["question"],
                     engine=args.get("engine"),
                     max_results=args.get("max_results"),
+                ),
+                exposure=LocalToolExposure.CONSOLE_AND_EXTERNAL_MCP,
+                approval_effects=(
+                    LocalApprovalEffect.NETWORK,
+                    LocalApprovalEffect.LLM_SPEND,
                 ),
                 # network-classed: default ask from the permission store's
                 # global default, same as web_fetch/web_search/web_crawl;

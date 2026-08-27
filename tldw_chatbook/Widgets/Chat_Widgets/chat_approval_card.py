@@ -68,6 +68,26 @@ def _is_raw_shell_row(call: Mapping[str, Any]) -> bool:
         and call.get("tool_name") == _RAW_SHELL_TOOL_NAME
     )
 
+_EFFECT_LABELS: dict[str, str] = {
+    "private_read": "may read private local data",
+    "mutates_local": "may modify local data",
+    "network": "may access the network",
+    "llm_spend": "may incur LLM usage costs",
+}
+
+
+def format_approval_effects(entry: Mapping[str, Any]) -> str:
+    """Render code-owned effects for an approval row without inspecting args."""
+    effects = entry.get("effects")
+    if not isinstance(effects, (list, tuple)):
+        return ""
+    labels = [
+        _EFFECT_LABELS[str(effect)]
+        for effect in effects
+        if str(effect) in _EFFECT_LABELS
+    ]
+    return f"Effects: {'; '.join(labels)}" if labels else ""
+
 
 def _options_for_row(call: Mapping[str, Any]) -> list[tuple[str, str]]:
     """Decision options for one row, honoring an optional ``options`` key.
@@ -773,6 +793,15 @@ class ChatApprovalCard(Container):
                         classes="approval-row-args",
                     )
                 ]
+            effect_copy = format_approval_effects(entry)
+            if effect_copy:
+                detail_children.append(
+                    Static(
+                        effect_copy,
+                        markup=False,
+                        classes="approval-row-effects",
+                    )
+                )
             if single_row:
                 fast_approve = Button(
                     "Run once" if _is_raw_shell_row(entry) else "Approve once",

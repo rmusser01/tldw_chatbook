@@ -18,7 +18,10 @@ from tldw_chatbook.Agents.local_tool_provider import (
     LOCAL_KILL_SWITCH_REFUSAL,
     LOCAL_ROOT_CHANGED_REFUSAL,
     LOCAL_TIMEOUT_REFUSAL,
+    LocalApprovalEffect,
+    LocalToolExposure,
     LocalToolProvider,
+    LocalToolSpec,
 )
 from tldw_chatbook.Agents.run_context import use_run_id
 from tldw_chatbook.Agents.session_todo_store import (
@@ -387,6 +390,77 @@ def test_catalog_lists_default_specs_with_local_ids(tmp_path):
     assert entries[0].name == "fs_list" and entries[0].source == "local"
     schema = p.load_schema("local:fs_list")
     assert schema.parameters["required"] == ["path"]
+
+
+def test_local_tool_spec_rejects_missing_or_unknown_exposure_and_effect():
+    """Descriptors must carry code-owned publication and approval metadata."""
+    kwargs = {
+        "name": "example",
+        "description": "Example.",
+        "parameters": {},
+        "handler": lambda _args: "ok",
+        "tags": (),
+    }
+    with pytest.raises(TypeError, match="exposure"):
+        LocalToolSpec(**kwargs)
+    with pytest.raises(ValueError, match="exposure"):
+        LocalToolSpec(
+            **kwargs,
+            exposure="external" ,
+            approval_effects=(LocalApprovalEffect.PRIVATE_READ,),
+        )
+    with pytest.raises(ValueError, match="approval_effects"):
+        LocalToolSpec(
+            **kwargs,
+            exposure=LocalToolExposure.CONSOLE_ONLY,
+            approval_effects=("unbounded",),
+        )
+
+
+def test_catalog_exposure_and_effects_are_explicit_and_queryable(tmp_path):
+    provider = make_provider(root=tmp_path)
+
+    assert {
+        spec.name
+        for spec in provider.specs_for_exposure(LocalToolExposure.CONSOLE_ONLY)
+    } == {"watchlists_search_items", "watchlists_get_item"}
+    assert provider.approval_effects_for("fs_read") == (
+        LocalApprovalEffect.PRIVATE_READ,
+    )
+    assert provider.approval_effects_for("web_fetch") == (
+        LocalApprovalEffect.NETWORK,
+    )
+    assert provider.approval_effects_for("fs_write") == (
+        LocalApprovalEffect.MUTATES_LOCAL,
+    )
+
+
+def test_read_only_provider_omits_future_watchlists_mutations_by_effect(tmp_path):
+    specs = [
+        LocalToolSpec(
+            name="fs_read",
+            description="Read.",
+            parameters={},
+            handler=lambda _args: "ok",
+            exposure=LocalToolExposure.CONSOLE_AND_EXTERNAL_MCP,
+            approval_effects=(LocalApprovalEffect.PRIVATE_READ,),
+        ),
+        LocalToolSpec(
+            name="watchlists_create_sources",
+            description="Create sources.",
+            parameters={},
+            handler=lambda _args: "ok",
+            exposure=LocalToolExposure.CONSOLE_ONLY,
+            approval_effects=(LocalApprovalEffect.MUTATES_LOCAL,),
+            tags=("mutates",),
+        ),
+    ]
+
+    provider = LocalToolProvider(
+        workspace_root=tmp_path, specs=specs, allow_write=False
+    )
+
+    assert {entry.name for entry in provider.list_catalog()} == {"fs_read"}
 
 
 def test_catalog_lists_fs_read_with_paging_params(tmp_path):
@@ -1112,6 +1186,8 @@ def test_private_root_locator_is_redacted_before_error_length_cap(tmp_path):
                 description="fails with a long private locator",
                 parameters={},
                 handler=fail,
+                exposure=LocalToolExposure.CONSOLE_ONLY,
+                approval_effects=(),
             )
         ],
         result_redaction_root=private_root,
@@ -1334,7 +1410,12 @@ def _big_provider(text, tmp_path):
         workspace_root=tmp_path,
         specs=[
             LocalToolSpec(
-                name="big", description="big", parameters={}, handler=lambda args: text
+                name="big",
+                description="big",
+                parameters={},
+                handler=lambda args: text,
+                exposure=LocalToolExposure.CONSOLE_ONLY,
+                approval_effects=(),
             )
         ],
         resolve_state=lambda hub: ALLOW,
@@ -1375,7 +1456,14 @@ def test_empty_exception_message_becomes_nonempty_error(tmp_path):
     p = LocalToolProvider(
         workspace_root=tmp_path,
         specs=[
-            LocalToolSpec(name="boom", description="b", parameters={}, handler=boom)
+            LocalToolSpec(
+                name="boom",
+                description="b",
+                parameters={},
+                handler=boom,
+                exposure=LocalToolExposure.CONSOLE_ONLY,
+                approval_effects=(),
+            )
         ],
         resolve_state=lambda hub: ALLOW,
     )

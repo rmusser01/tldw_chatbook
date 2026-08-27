@@ -135,6 +135,9 @@ class MCPPendingCall:
     warning: str = ""
     #: Optional plain-text explanation of a broader approval scope.
     scope_notice: str = ""
+    #: Code-owned action effects supplied by local descriptors. Existing
+    #: MCP and builtin callers intentionally retain the empty default.
+    effects: tuple[str, ...] = ()
 
 
 def _has_non_text_content(value: Any) -> bool:

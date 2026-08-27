@@ -27,7 +27,7 @@ transactions, Textual approval cards, pytest/pytest-asyncio/jsonschema.
 external MCP publication, and existing Watchlists reads. The addendum records
 the new exposure/effect contract and Console-only private/mutating boundary.
 
-## TASK-22859 — Define Watchlists Console tool exposure and approval effects
+## Task 1 — TASK-22859: Define Watchlists Console tool exposure and approval effects
 
 ### Files
 
@@ -155,7 +155,7 @@ git add backlog/decisions/032-local-agent-tool-permission-boundary.md backlog/ta
 git commit -m "feat: define Watchlists tool exposure boundary"
 ```
 
-## TASK-22860 — Migrate durable provenance and atomic claims
+## Task 2 — TASK-22860: Migrate durable provenance and atomic claims
 
 ### Files
 
@@ -303,7 +303,7 @@ git add tldw_chatbook/DB/Subscriptions_DB.py tldw_chatbook/Subscriptions/briefin
 git commit -m "feat: migrate durable briefing provenance"
 ```
 
-## TASK-22861 — Expose bounded receipt and briefing queries
+## Task 3 — TASK-22861: Expose bounded receipt and briefing queries
 
 ### Files
 

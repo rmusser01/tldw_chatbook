@@ -14,6 +14,7 @@ import tldw_chatbook.Chat.console_chat_controller as controller_mod
 from tldw_chatbook.Agents.agent_models import ToolCall
 from tldw_chatbook.Agents.local_tool_provider import (
     LOCAL_AUTHORITY_UNAVAILABLE_REFUSAL,
+    LocalApprovalEffect,
     LocalToolProvider,
 )
 from tldw_chatbook.Agents.run_context import use_run_id
@@ -96,6 +97,13 @@ def test_hook_gates_ask_calls_in_one_batch(tmp_path):
     assert len(seen) == 1 and len(seen[0]) == 2  # ONE round trip for the batch
     assert verdicts == {"fs_list": "proceed"}
     assert p._stamps == {(RUN, "fs_list"): "approve_once"}
+
+
+def test_local_pending_gate_carries_descriptor_owned_effects(tmp_path):
+    gate = provider(ASK, tmp_path).pending_gate_for("fs_list", {"path": "."})
+
+    assert gate is not None
+    assert gate.effects == (LocalApprovalEffect.PRIVATE_READ,)
 
 
 def test_hook_skips_non_ask_calls(tmp_path):

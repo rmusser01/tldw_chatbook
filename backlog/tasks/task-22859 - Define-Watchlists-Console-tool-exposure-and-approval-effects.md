@@ -1,10 +1,11 @@
 ---
 id: TASK-22859
 title: Define Watchlists Console tool exposure and approval effects
-status: To Do
-assignee: []
+status: In Progress
+assignee:
+  - '@codex'
 created_date: '2026-08-27 04:14'
-updated_date: '2026-08-27 04:16'
+updated_date: '2026-08-27 04:58'
 labels:
   - watchlists
   - console
@@ -12,8 +13,10 @@ labels:
   - security
 dependencies: []
 references:
-  - Docs/superpowers/specs/2026-08-26-console-driven-watchlists-workflow-uat-remediation-design.md
-  - Docs/superpowers/plans/2026-08-27-watchlists-agent-boundary-and-provenance.md
+  - >-
+    Docs/superpowers/specs/2026-08-26-console-driven-watchlists-workflow-uat-remediation-design.md
+  - >-
+    Docs/superpowers/plans/2026-08-27-watchlists-agent-boundary-and-provenance.md
   - backlog/decisions/032-local-agent-tool-permission-boundary.md
 priority: high
 ---
@@ -26,10 +29,30 @@ Establish the fail-closed catalog contract that distinguishes Console-only Watch
 
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
-- [ ] #1 Every local tool descriptor declares an explicit Console/external-MCP exposure value; missing or invalid exposure prevents provider construction.
-- [ ] #2 Approval-effect metadata is code-owned and distinguishes private read, local mutation, network access, and possible LLM spend without relying on model-supplied arguments or unenforced risk tags.
-- [ ] #3 Console composition can register every approved Watchlists read/command descriptor, while external MCP publishes only bounded source, collection, operation, and briefing-receipt metadata descriptors even when a Console-only article or briefing tool has a persisted Allow.
-- [ ] #4 Read-only project bindings and `allow_write=False` omit all mutating Watchlists commands as well as filesystem writes.
-- [ ] #5 Catalog, permission, definition-hash, kill-switch, and external-publication tests pin the fail-closed contract and retain ADR-032 refusal behavior.
-- [ ] #6 ADR-032 and local-tool documentation describe the exposure/effect boundary without implying that descriptor exposure grants authorization.
+- [x] #1 Every local tool descriptor declares an explicit Console/external-MCP exposure value; missing or invalid exposure prevents provider construction.
+- [x] #2 Approval-effect metadata is code-owned and distinguishes private read, local mutation, network access, and possible LLM spend without relying on model-supplied arguments or unenforced risk tags.
+- [x] #3 Console composition can register every approved Watchlists read/command descriptor, while external MCP publishes only bounded source, collection, operation, and briefing-receipt metadata descriptors even when a Console-only article or briefing tool has a persisted Allow.
+- [x] #4 Read-only project bindings and `allow_write=False` omit all mutating Watchlists commands as well as filesystem writes.
+- [x] #5 Catalog, permission, definition-hash, kill-switch, and external-publication tests pin the fail-closed contract and retain ADR-032 refusal behavior.
+- [x] #6 ADR-032 and local-tool documentation describe the exposure/effect boundary without implying that descriptor exposure grants authorization.
 <!-- AC:END -->
+
+## Implementation Plan
+
+<!-- SECTION:PLAN:BEGIN -->
+1. Add failing descriptor, external-publication, read-only filtering, and approval-card behavior tests.
+2. Implement required LocalToolExposure and LocalApprovalEffect metadata and derive external publication from descriptors.
+3. Carry code-owned effects into pending calls and render plain-language approval effects without changing authorization semantics.
+4. Update ADR-032 and Console tool documentation.
+5. Run the task-targeted pytest, Ruff, documentation contract, and diff checks; self-review and independently review the task.
+
+ADR required: yes
+ADR path: backlog/decisions/032-local-agent-tool-permission-boundary.md
+Reason: ADR-032 owns the synthetic local principal, approval semantics, and external MCP publication boundary; this task implements its approved addendum.
+<!-- SECTION:PLAN:END -->
+
+## Implementation Notes
+
+- Added fail-closed local descriptor exposure and approval-effect metadata; external MCP now derives publication from descriptor exposure.
+- Approval rows render code-owned effects without inspecting arguments, and read-only providers exclude every local mutation effect.
+- Repaired the stale Console review-hook fixture using the current complete execution-context constructor; ADR-032's approved TASK-22859 addendum already records this boundary.
