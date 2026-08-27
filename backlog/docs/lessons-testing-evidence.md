@@ -9191,3 +9191,30 @@ once layout settles. Each of these was written after the fact and each reds on
 its bug — verified by reintroducing all three. A test harness that yields the
 widget straight into the App gives it the screen's whole box, which is exactly
 the geometry the bug does not live in.
+
+## A clean rebase can orphan an import, and only a full-suite A/B sees it
+
+**TASK-22500, 2026-08-27.** The branch stopped importing `VerticalScroll` in
+`library_screen.py` — legitimately, since its reader body became a `Container`
+and the scroller lookups moved to `body.scroller`. While it was in review, dev
+added `_capture_library_emergency_restore_receipt`, which uses `VerticalScroll`
+in three places. Neither side touched the other's lines, so `git rebase`
+reported no conflict and produced a tree that raises `NameError` from
+`on_resize` on any Library route with emergency geometry.
+
+**Cost: 79 failing shell tests, not one of them a reader test.** Every gate the
+branch had been running stayed green — the affected-surface suite (89 passed),
+`preflight.sh`, and the reader tests — because none of them mount the
+notes/emergency routes that reach that line. The earlier "no new failures"
+result was true, but it was measured against the OLD merge base and stopped
+being evidence the moment dev moved.
+
+**What to do.** After rebasing onto a base that has moved, a targeted suite is
+not evidence. Run the full suite of the area you touched on BOTH your branch
+and a pristine worktree at the new merge base, and diff the FAILURE NAME SETS —
+counts alone lie, because this repo's shell suite carries ~97 pre-existing
+failures and `pytest-randomly` reshuffles them per run (two runs of the same
+tree gave 174 and 175). Use `-p no:randomly` on both sides or the sets are not
+comparable. Sampling is not enough either: five sampled failures all reproduced
+on base and pointed at "dev's problem", while the set diff exposed 79 that were
+ours. There is no undefined-name linter in this repo's CI to catch this class.
