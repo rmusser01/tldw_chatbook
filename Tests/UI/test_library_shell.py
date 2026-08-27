@@ -16169,17 +16169,17 @@ async def test_library_conversation_id_context_opens_off_page_conversation() -> 
         await pilot.pause()
 
         assert screen._library_selected_row_id == LIBRARY_ROW_BROWSE_CONVERSATIONS
-        assert screen._library_conversation_page == 2
+        assert screen._library_conversation_page == 7
         assert (
             str(screen.query_one("#library-conversations-page-status").renderable)
-            == "21-40 of 45 · Page 2 of 3"
+            == "121-140 of 250 · Page 7 of 13"
         )
         page_ids = [
             screen._conversation_record_id(record, index)
             for index, record in enumerate(screen._conversation_records())
         ]
         assert page_ids == [
-            record["conversation_id"] for record in conversations[20:40]
+            record["conversation_id"] for record in conversations[120:140]
         ]
         assert page_ids[4] == target["conversation_id"]
         assert len(page_ids) == 20
@@ -16196,7 +16196,7 @@ async def test_library_conversation_id_context_opens_off_page_conversation() -> 
         )
         assert (
             screen._library_conversation_reader_selected_metadata.get("title")
-            == "Conversation 025"
+            == "Conversation 125"
         )
 
 

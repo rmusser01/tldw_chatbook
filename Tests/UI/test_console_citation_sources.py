@@ -481,6 +481,12 @@ def _bare_screen(
     # controller's kwargs (TASK-21381).
     stub_fleet_controller(screen, context="_bare_screen")
     screen._console_chat_store = _FakeStore(messages)
+    # This shell bypasses ChatScreen.__init__, so install the state owner
+    # before assigning through the controller-backed compatibility properties.
+    screen._review_selection = SimpleNamespace(
+        annotation_previews={},
+        annotation_loaded_conversation=None,
+    )
     screen._console_citation_counts = {}
     screen._console_annotation_previews = {}
     screen._console_annotation_loaded_conversation = None

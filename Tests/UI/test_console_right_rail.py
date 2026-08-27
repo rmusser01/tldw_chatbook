@@ -28,6 +28,7 @@ from contextlib import asynccontextmanager
 from dataclasses import replace
 import importlib
 import threading
+import time
 from types import SimpleNamespace
 
 import pytest
@@ -111,14 +112,17 @@ async def _wait_for_right_rail_condition(
     predicate,
     *,
     description: str | Callable[[], str],
-    attempts: int = 30,
+    timeout: float = 5.0,
 ) -> None:
-    """Bound asynchronous rail reconciliation by observable state."""
+    """Bound asynchronous rail reconciliation by observable state and time."""
 
-    for _ in range(attempts):
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline:
         if predicate():
             return
-        await pilot.pause()
+        await pilot.pause(0.02)
+    if predicate():
+        return
     detail = description() if callable(description) else description
     pytest.fail(f"Timed out waiting for {detail}")
 
