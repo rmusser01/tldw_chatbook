@@ -1,8 +1,8 @@
 # Raw and Virtual CLI Design
 
 **Date:** 2026-08-26
-**Status:** Design approved in conversation; pending written-spec review
-**Related task:** TASK-18926
+**Status:** Approved
+**Related tasks:** TASK-18926, TASK-22509, TASK-22510, TASK-22512
 **ADR required:** yes
 **ADR path:** `backlog/decisions/093-raw-and-virtual-cli-execution-boundaries.md`
 **Reason:** This reverses the raw-shell portion of ADR-033 and establishes new
@@ -158,6 +158,9 @@ launch.
 - `auto` on POSIX resolves Bash first and POSIX `sh` second.
 - `auto` on Windows resolves PowerShell (`pwsh`, then Windows PowerShell) first
   and CMD second.
+- Direct user `! ` commands use `auto` in v1. Explicit shell selection belongs
+  to the shared executor contract and the model `shell_exec` schema; v1 adds no
+  second composer prefix grammar or persisted user-shell preference.
 - Explicit selectors fail clearly when unavailable. Windows Bash is supported
   only when an ordinary `bash` executable is discoverable; v1 does not add WSL
   path translation.
@@ -269,7 +272,10 @@ tool messages. Durability uses `AgentRunsDB` without a schema migration:
 The exact command and bounded sanitized output live in the local run record and
 may be reconstructed into the TOOL marker on resume. Provider-history builders
 continue to consume only conversation tree nodes, so these markers never enter
-the next model request.
+the next model request. User-command run logs use a dedicated app-private root
+that is not registered with model-facing run-log search, slice, or statistics
+tools; `local_command` records are model-excluded even when an agent can search
+its own ordinary run logs.
 
 Generic diagnostic logs record only invocation id, shell, timing, byte counts,
 and outcome. They never record command text or output.
