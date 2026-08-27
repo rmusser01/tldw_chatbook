@@ -4,6 +4,7 @@ import configparser
 from contextlib import contextmanager
 from email.parser import Parser
 import hashlib
+from io import BytesIO
 from importlib import metadata
 import json
 import os
@@ -147,6 +148,22 @@ SAMIRA_RESOURCE_PATHS = {
     f"{SAMIRA_RESOURCE_ROOT}/expressions/{label}.webp"
     for label in SAMIRA_REACTION_LABELS
 }
+TIKTOKEN_CACHE_PREFIX = "tldw_chatbook/assets/tiktoken_cache/"
+TIKTOKEN_RESOURCE_PATHS = frozenset(
+    f"{TIKTOKEN_CACHE_PREFIX}{name}"
+    for name in (
+        "0ea1e91bbb3a60f729a8dc8f777fd2fc07cd8df4",
+        "6c7ea1a7e38e3a7f062df639a5b80947f075ffe6",
+        "6d1cbeee0f20b3d9449abfede4726ed8212e3aee",
+        "9b5ad71b2ce5302211f9c61530b329a4922fc6a4",
+        "ec7223a39ce59f226a68acc30dc1af2788490e15",
+        "fb374d419588a4632f3f557e76b4b70aebbca790",
+        "LICENSE.txt",
+        "NOTICE.txt",
+        "manifest.json",
+    )
+)
+TIKTOKEN_REQUIREMENT = "tiktoken==0.14.0"
 AUDIO_CPP_ARTIFACT_MANIFEST_PATH = "tldw_chatbook/TTS/audio_cpp_artifact_manifest.json"
 AUDIO_CPP_ARTIFACT_REPOSITORY = "audio-cpp/audio.cpp-gguf"
 AUDIO_CPP_ARTIFACT_COMMIT = "597048d9a920592808d7d4e2acd7b9c4596a143a"
@@ -1711,7 +1728,7 @@ def test_built_artifacts_match_distribution_contract(
         "tldw_chatbook/Third_Party/textual_fspicker/LICENSE",
         *APACHE_SUBTREE_LICENSE_PATHS,
         AUDIO_CPP_ARTIFACT_MANIFEST_PATH,
-    } | SAMIRA_RESOURCE_PATHS
+    } | SAMIRA_RESOURCE_PATHS | TIKTOKEN_RESOURCE_PATHS
     required_wheel = {
         "tldw_chatbook/css/tldw_cli_modular.tcss",
         "tldw_chatbook/Config_Files/rag_pipelines.toml",
@@ -1720,13 +1737,16 @@ def test_built_artifacts_match_distribution_contract(
         "tldw_chatbook/Third_Party/textual_fspicker/LICENSE",
         *APACHE_SUBTREE_LICENSE_PATHS,
         AUDIO_CPP_ARTIFACT_MANIFEST_PATH,
-    } | SAMIRA_RESOURCE_PATHS
+    } | SAMIRA_RESOURCE_PATHS | TIKTOKEN_RESOURCE_PATHS
     assert not required_sdist - sdist_members
     assert not required_wheel - wheel_members
     for members in (sdist_members, wheel_members):
         assert {
             name for name in members if name.startswith(f"{SAMIRA_RESOURCE_ROOT}/")
         } == SAMIRA_RESOURCE_PATHS
+        assert {
+            name for name in members if name.startswith(TIKTOKEN_CACHE_PREFIX)
+        } == TIKTOKEN_RESOURCE_PATHS
 
     retired_modules = {
         "tldw_chatbook/Audio/transcription_history.py",
@@ -1793,6 +1813,12 @@ def test_built_artifacts_match_distribution_contract(
     assert sdist_metadata["Metadata-Version"] == "2.4"
     assert sdist_metadata["License-Expression"] == "AGPL-3.0-or-later"
     assert "LICENSE" in (sdist_metadata.get_all("License-File") or [])
+    for artifact_metadata in (metadata, sdist_metadata):
+        assert [
+            requirement
+            for requirement in artifact_metadata.get_all("Requires-Dist") or []
+            if requirement.casefold().startswith("tiktoken")
+        ] == [TIKTOKEN_REQUIREMENT]
     assert any(name.endswith(".dist-info/licenses/LICENSE") for name in wheel_members)
     assert dict(entry_points["console_scripts"]) == {
         "tldw-cli": "tldw_chatbook.cli:main_cli_runner",
@@ -1997,6 +2023,120 @@ def test_release_checker_rejects_missing_samira_reaction(
 
     assert result.returncode == 1
     assert missing in result.stdout + result.stderr
+
+
+@pytest.mark.parametrize("archive_kind", ["wheel", "sdist"])
+@pytest.mark.parametrize("missing", sorted(TIKTOKEN_RESOURCE_PATHS))
+def test_release_checker_rejects_missing_tiktoken_asset(
+    built_distributions: BuiltDistributions,
+    tmp_path: Path,
+    archive_kind: str,
+    missing: str,
+) -> None:
+    dist_dir = _dist_dir_without(
+        built_distributions,
+        tmp_path,
+        drop_from_wheel=[missing] if archive_kind == "wheel" else (),
+        drop_from_sdist=[missing] if archive_kind == "sdist" else (),
+    )
+
+    result = _run_manifest_checker(built_distributions, dist_dir, tmp_path)
+
+    assert result.returncode == 1
+    assert missing in result.stdout + result.stderr
+
+
+@pytest.mark.parametrize("archive_kind", ["wheel", "sdist"])
+def test_release_checker_rejects_unexpected_tiktoken_asset(
+    built_distributions: BuiltDistributions,
+    tmp_path: Path,
+    archive_kind: str,
+) -> None:
+    dist_dir = tmp_path / "dist"
+    shutil.copytree(built_distributions.dist_dir, dist_dir)
+    unexpected = f"{TIKTOKEN_CACHE_PREFIX}unexpected"
+    if archive_kind == "wheel":
+        with zipfile.ZipFile(next(dist_dir.glob("*.whl")), "a") as archive:
+            archive.writestr(unexpected, b"unexpected")
+    else:
+        sdist = next(dist_dir.glob("*.tar.gz"))
+        rewritten = sdist.with_name(f"{sdist.name}.rewritten")
+        with (
+            tarfile.open(sdist, "r:gz") as source,
+            tarfile.open(rewritten, "w:gz") as destination,
+        ):
+            members = source.getmembers()
+            for member in members:
+                stream = source.extractfile(member) if member.isfile() else None
+                destination.addfile(member, stream)
+            root = members[0].name.split("/", 1)[0]
+            added = tarfile.TarInfo(f"{root}/{unexpected}")
+            payload = b"unexpected"
+            added.size = len(payload)
+            destination.addfile(added, BytesIO(payload))
+        rewritten.replace(sdist)
+
+    result = _run_manifest_checker(built_distributions, dist_dir, tmp_path)
+
+    assert result.returncode == 1
+    assert unexpected in result.stdout + result.stderr
+
+
+@pytest.mark.parametrize("archive_kind", ["wheel", "sdist"])
+def test_release_checker_rejects_nonexact_tiktoken_requirement(
+    built_distributions: BuiltDistributions,
+    tmp_path: Path,
+    archive_kind: str,
+) -> None:
+    dist_dir = tmp_path / "dist"
+    shutil.copytree(built_distributions.dist_dir, dist_dir)
+
+    def weaken_requirement(metadata_text: str) -> bytes:
+        weakened, replacements = re.subn(
+            r"(?m)^Requires-Dist: tiktoken[^\r\n]*$",
+            "Requires-Dist: tiktoken>=0.14.0",
+            metadata_text,
+        )
+        assert replacements == 1
+        return weakened.encode("utf-8")
+
+    if archive_kind == "wheel":
+        wheel = next(dist_dir.glob("*.whl"))
+        rewritten = wheel.with_suffix(".rewritten")
+        with (
+            zipfile.ZipFile(wheel) as source,
+            zipfile.ZipFile(rewritten, "w") as destination,
+        ):
+            for member in source.infolist():
+                payload = source.read(member.filename)
+                if member.filename.endswith(".dist-info/METADATA"):
+                    payload = weaken_requirement(payload.decode("utf-8"))
+                destination.writestr(member, payload)
+        rewritten.replace(wheel)
+    else:
+        sdist = next(dist_dir.glob("*.tar.gz"))
+        rewritten = sdist.with_name(f"{sdist.name}.rewritten")
+        with (
+            tarfile.open(sdist, "r:gz") as source,
+            tarfile.open(rewritten, "w:gz") as destination,
+        ):
+            for member in source.getmembers():
+                stream = source.extractfile(member) if member.isfile() else None
+                payload = stream.read() if stream is not None else None
+                if member.isfile() and member.name.endswith("/PKG-INFO"):
+                    assert payload is not None
+                    payload = weaken_requirement(payload.decode("utf-8"))
+                    member.size = len(payload)
+                destination.addfile(
+                    member,
+                    BytesIO(payload) if payload is not None else None,
+                )
+        rewritten.replace(sdist)
+
+    result = _run_manifest_checker(built_distributions, dist_dir, tmp_path)
+
+    assert result.returncode == 1
+    assert TIKTOKEN_REQUIREMENT in result.stdout + result.stderr
 
 
 def test_migration_expectations_are_derived_not_enumerated() -> None:

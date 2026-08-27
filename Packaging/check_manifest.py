@@ -76,6 +76,22 @@ SAMIRA_RESOURCE_PATHS = {
     f"{SAMIRA_RESOURCE_ROOT}/expressions/{label}.webp"
     for label in SAMIRA_REACTION_LABELS
 }
+TIKTOKEN_CACHE_PREFIX = "tldw_chatbook/assets/tiktoken_cache/"
+TIKTOKEN_RESOURCE_PATHS = {
+    f"{TIKTOKEN_CACHE_PREFIX}{name}"
+    for name in (
+        "0ea1e91bbb3a60f729a8dc8f777fd2fc07cd8df4",
+        "6c7ea1a7e38e3a7f062df639a5b80947f075ffe6",
+        "6d1cbeee0f20b3d9449abfede4726ed8212e3aee",
+        "9b5ad71b2ce5302211f9c61530b329a4922fc6a4",
+        "ec7223a39ce59f226a68acc30dc1af2788490e15",
+        "fb374d419588a4632f3f557e76b4b70aebbca790",
+        "LICENSE.txt",
+        "NOTICE.txt",
+        "manifest.json",
+    )
+}
+TIKTOKEN_REQUIREMENT = "tiktoken==0.14.0"
 
 REQUIRED_SDIST_PATHS = {
     "LICENSE",
@@ -96,7 +112,7 @@ REQUIRED_SDIST_PATHS = {
     # Apache-2.0 re-licensed subtrees whose modules ship (task-19860 review).
     "tldw_chatbook/LLM_Calls/LICENSE",
     "tldw_chatbook/tldw_api/LICENSE",
-} | SAMIRA_RESOURCE_PATHS
+} | SAMIRA_RESOURCE_PATHS | TIKTOKEN_RESOURCE_PATHS
 
 REQUIRED_WHEEL_PATHS = {
     "tldw_chatbook/__init__.py",
@@ -109,7 +125,7 @@ REQUIRED_WHEEL_PATHS = {
     # Apache-2.0 re-licensed subtrees whose modules ship (task-19860 review).
     "tldw_chatbook/LLM_Calls/LICENSE",
     "tldw_chatbook/tldw_api/LICENSE",
-} | SAMIRA_RESOURCE_PATHS
+} | SAMIRA_RESOURCE_PATHS | TIKTOKEN_RESOURCE_PATHS
 
 REQUIRED_SDIST_GLOBS = {
     "tldw_chatbook/css/*.tcss",
@@ -313,6 +329,16 @@ def _validate_content(
             f"unexpected={sorted(samira_members - SAMIRA_RESOURCE_PATHS)}"
         )
 
+    tiktoken_members = {
+        name for name in members if name.startswith(TIKTOKEN_CACHE_PREFIX)
+    }
+    if tiktoken_members != TIKTOKEN_RESOURCE_PATHS:
+        errors.append(
+            f"{label}: tiktoken cache resources differ; "
+            f"missing={sorted(TIKTOKEN_RESOURCE_PATHS - tiktoken_members)}, "
+            f"unexpected={sorted(tiktoken_members - TIKTOKEN_RESOURCE_PATHS)}"
+        )
+
     template_store_paths = {
         name for name in members if name.startswith(CHUNKING_TEMPLATES_PREFIX)
     }
@@ -390,6 +416,16 @@ def _validate_metadata(
             )
         if "LICENSE" not in (metadata.get_all("License-File") or []):
             errors.append(f"{label}: missing License-File: LICENSE")
+        tiktoken_requirements = [
+            requirement
+            for requirement in metadata.get_all("Requires-Dist") or []
+            if re.match(r"(?i)^tiktoken(?=$|\s|[<>=!~;\[])", requirement)
+        ]
+        if tiktoken_requirements != [TIKTOKEN_REQUIREMENT]:
+            errors.append(
+                f"{label}: expected exactly Requires-Dist: {TIKTOKEN_REQUIREMENT}; "
+                f"found {tiktoken_requirements}"
+            )
 
     if not entry_points.has_section("console_scripts"):
         errors.append("wheel entry_points.txt: missing [console_scripts]")
