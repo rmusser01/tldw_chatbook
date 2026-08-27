@@ -13,7 +13,7 @@ import threading
 import webbrowser
 from collections.abc import Callable, Collection, Mapping, Sequence
 from contextlib import nullcontext
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Literal
@@ -461,7 +461,18 @@ class SectionViewIntent:
 
 @dataclass(frozen=True)
 class TreeDataSnapshot:
-    """One complete, generation-checked left-rail data publication."""
+    """One complete, generation-checked left-rail data publication.
+
+    Args:
+        watchlists: Watchlist rows rendered in the rail.
+        all_source_rows: Every source row available to aggregate roots.
+        unassigned_source_rows: Source rows with no watchlist membership.
+        counts: Aggregate and watchlist item counts keyed by bucket id.
+        source_counts: Item counts keyed by source id.
+        failures: Snapshot branches that retained their last known value.
+        watchlist_source_ids: Successfully loaded membership ids for the
+            watchlists needed by navigation reconciliation.
+    """
 
     watchlists: tuple[dict[str, Any], ...]
     all_source_rows: tuple[dict[str, Any], ...]
@@ -469,6 +480,7 @@ class TreeDataSnapshot:
     counts: dict[int, dict[str, int]]
     source_counts: dict[int, dict[str, int]]
     failures: frozenset[str] = frozenset()
+    watchlist_source_ids: dict[int, frozenset[int]] = field(default_factory=dict)
 
 
 def watchlist_delete_consequence(source_count: int) -> str:
@@ -1388,8 +1400,20 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
         service: WatchlistBundleService | None,
         previous: TreeDataSnapshot,
         today_floor_iso: str,
+        reconciliation_watchlist_ids: frozenset[int],
     ) -> TreeDataSnapshot:
-        """Read one tree snapshot on a worker thread, retaining failed branches."""
+        """Read one tree snapshot on a worker thread, retaining failed branches.
+
+        Args:
+            service: Local watchlist service, if available.
+            previous: Last successfully published branch values.
+            today_floor_iso: Local-day floor used by the Today count.
+            reconciliation_watchlist_ids: Watchlists whose membership is
+                required to validate pending or committed contextual scopes.
+
+        Returns:
+            A complete snapshot ready for generation-checked publication.
+        """
         failures: set[str] = set()
 
         def read_branch(name: str, reader: Callable[[], Any], fallback: Any) -> Any:
@@ -1413,6 +1437,7 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
                 previous.counts,
                 previous.source_counts,
                 frozenset(failures),
+                previous.watchlist_source_ids,
             )
 
         watchlists = tuple(
@@ -1451,6 +1476,20 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
         source_counts = read_branch(
             "source_counts", lambda: service.get_source_item_counts(), previous.source_counts
         )
+        watchlist_source_ids: dict[int, frozenset[int]] = {}
+        for watchlist_id in reconciliation_watchlist_ids:
+            try:
+                watchlist_source_ids[watchlist_id] = frozenset(
+                    int(source_id) for source_id in service.list_sources(watchlist_id)
+                )
+            except Exception:
+                failures.add("watchlist_memberships")
+                logger.opt(exception=True).debug(
+                    "Failed to load Watchlists tree membership."
+                )
+                previous_ids = previous.watchlist_source_ids.get(watchlist_id)
+                if previous_ids is not None:
+                    watchlist_source_ids[watchlist_id] = previous_ids
         return TreeDataSnapshot(
             watchlists,
             all_source_rows,
@@ -1458,6 +1497,7 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
             {int(bucket): dict(values) for bucket, values in counts.items()},
             {int(source_id): dict(values) for source_id, values in source_counts.items()},
             frozenset(failures),
+            watchlist_source_ids,
         )
 
     @work(group="wc_tree")
@@ -1472,11 +1512,20 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
         generation = self._tree_load_generation
         service = self._watchlist_bundle_service()
         previous = self._tree_snapshot
+        reconciliation_watchlist_ids = frozenset(
+            int(scope.watchlist_id)
+            for scope in (self._pending_tree_scope, self.tree_scope)
+            if scope is not None
+            and scope.kind == "source"
+            and scope.parent_context == "watchlist"
+            and scope.watchlist_id is not None
+        )
         snapshot = await asyncio.to_thread(
             self._read_tree_data_snapshot,
             service,
             previous,
             self._today_floor_iso(),
+            reconciliation_watchlist_ids,
         )
         if generation != self._tree_load_generation:
             return
@@ -2034,18 +2083,8 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
             watchlist_id = scope.watchlist_id
             if watchlist_id is None or watchlist_id not in watchlist_ids:
                 return TreeScope(kind="all")
-            service = self._watchlist_bundle_service()
-            if service is None:
-                return scope
-            try:
-                member_ids = {
-                    int(row["id"])
-                    for row in service.list_source_rows(int(watchlist_id))
-                }
-            except Exception:
-                logger.opt(exception=True).debug(
-                    "Failed to reconcile Watchlists tree membership."
-                )
+            member_ids = snapshot.watchlist_source_ids.get(watchlist_id)
+            if member_ids is None:
                 return scope
             if source_id not in member_ids:
                 return TreeScope(kind="watchlist", watchlist_id=watchlist_id)
@@ -2067,8 +2106,8 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
             self._push_items_pager_state()
 
         committed = self._reconciled_tree_scope(self.tree_scope, snapshot)
-        if committed != self.tree_scope:
-            self._apply_tree_scope(committed)
+        if committed != self.tree_scope and self._pending_tree_scope is None:
+            self._request_tree_scope(committed)
 
     def _tree_write_disabled_reason(
         self, *, runtime_backend: str | None = None

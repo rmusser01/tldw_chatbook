@@ -1288,20 +1288,16 @@ def test_contextual_scope_reconciliation_chooses_nearest_existing_parent(
     members: set[int],
     expected: TreeScope,
 ) -> None:
-    app = Mock()
-    service = Mock()
-    service.list_source_rows.return_value = [
-        {"id": source_id, "name": f"Feed {source_id}"}
-        for source_id in members
-    ]
-    app.watchlist_bundle_service = service
-    screen = WatchlistsCollectionsScreen(app)
+    screen = WatchlistsCollectionsScreen(Mock())
     snapshot = collections_module.TreeDataSnapshot(
         tuple({"id": watchlist_id, "name": f"List {watchlist_id}"} for watchlist_id in watchlists),
         tuple({"id": source_id, "name": f"Feed {source_id}"} for source_id in all_ids),
         tuple({"id": source_id, "name": f"Feed {source_id}"} for source_id in unassigned_ids),
         {},
         {},
+        watchlist_source_ids={
+            watchlist_id: frozenset(members) for watchlist_id in watchlists
+        },
     )
 
     assert screen._reconciled_tree_scope(scope, snapshot) == expected
@@ -1365,6 +1361,114 @@ def test_membership_reconciliation_failure_preserves_contextual_scope() -> None:
     )
 
     assert screen._reconciled_tree_scope(scope, snapshot) == scope
+
+
+def test_membership_reconciliation_uses_worker_snapshot_without_service_io() -> None:
+    app = Mock()
+    app.watchlist_bundle_service.list_source_rows.return_value = []
+    screen = WatchlistsCollectionsScreen(app)
+    scope = TreeScope(
+        kind="source",
+        source_id=9,
+        watchlist_id=7,
+        parent_context="watchlist",
+    )
+    snapshot = collections_module.TreeDataSnapshot(
+        ({"id": 7, "name": "List 7"},),
+        ({"id": 9, "name": "Feed 9"},),
+        (),
+        {},
+        {},
+        watchlist_source_ids={7: frozenset()},
+    )
+
+    assert screen._reconciled_tree_scope(scope, snapshot) == TreeScope(
+        kind="watchlist", watchlist_id=7
+    )
+    app.watchlist_bundle_service.list_source_rows.assert_not_called()
+
+
+def test_committed_read_scope_reconciliation_requests_atomic_fallback() -> None:
+    screen = WatchlistsCollectionsScreen(Mock())
+    committed = TreeScope(
+        kind="source",
+        source_id=9,
+        parent_context="unassigned",
+    )
+    screen.__dict__["_reactive_tree_scope"] = committed
+    screen.__dict__["_reactive_active_section"] = "items"
+    screen.__dict__["_reactive_runtime_backend"] = "local"
+    screen._request_tree_scope = Mock()
+    screen._apply_tree_scope = Mock()
+    snapshot = collections_module.TreeDataSnapshot(
+        (),
+        ({"id": 9, "name": "Feed 9"},),
+        (),
+        {},
+        {},
+    )
+
+    screen._reconcile_tree_navigation(snapshot)
+
+    fallback = TreeScope(kind="unassigned")
+    assert screen.tree_scope == committed
+    screen._request_tree_scope.assert_called_once_with(fallback)
+    screen._apply_tree_scope.assert_not_called()
+
+
+@pytest.mark.parametrize(
+    ("scope", "expected"),
+    (
+        (
+            TreeScope(kind="source", source_id=9, parent_context="all"),
+            [
+                TreeScope(kind="all"),
+                TreeScope(kind="source", source_id=9, parent_context="all"),
+            ],
+        ),
+        (
+            TreeScope(kind="source", source_id=9, parent_context="unassigned"),
+            [
+                TreeScope(kind="unassigned"),
+                TreeScope(
+                    kind="source", source_id=9, parent_context="unassigned"
+                ),
+            ],
+        ),
+        (
+            TreeScope(kind="source", source_id=9, parent_context="unread"),
+            [
+                TreeScope(kind="unread"),
+                TreeScope(kind="source", source_id=9, parent_context="unread"),
+            ],
+        ),
+        (
+            TreeScope(
+                kind="source",
+                source_id=9,
+                watchlist_id=7,
+                parent_context="watchlist",
+            ),
+            [
+                TreeScope(kind="watchlist", watchlist_id=7),
+                TreeScope(
+                    kind="source",
+                    source_id=9,
+                    watchlist_id=7,
+                    parent_context="watchlist",
+                ),
+            ],
+        ),
+    ),
+)
+def test_inspector_contextual_source_breadcrumb_targets_preserve_parent(
+    scope: TreeScope, expected: list[TreeScope]
+) -> None:
+    pane = InspectorPane()
+    pane.set_reactive(InspectorPane.scope, scope)
+    pane.set_reactive(InspectorPane.breadcrumb_labels, ["Parent", "Feed Nine"])
+
+    assert [level.target_scope for level in pane._scope_levels()] == expected
 
 
 def test_server_management_disables_only_individual_feed_navigation():

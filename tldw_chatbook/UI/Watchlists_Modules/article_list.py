@@ -705,7 +705,11 @@ class ArticleListPane(RecomposeCaptureGuard, Vertical):
         self._post_filter_changed()
 
     def watch_status_filter_disabled_reason(self, reason: str | None) -> None:
-        """Lock the status control while a contextual scope owns it."""
+        """Lock the status control while a contextual scope owns it.
+
+        Args:
+            reason: Disabled-state explanation, or ``None`` to unlock.
+        """
         try:
             select = self.query_one("#items-status-select", Select)
         except NoMatches:

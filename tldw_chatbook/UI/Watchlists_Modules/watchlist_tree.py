@@ -45,7 +45,14 @@ AggregateRootKind = Literal["all", "unassigned", "unread"]
 
 @dataclass(frozen=True)
 class TreeScope:
-    """What the user has selected, as the panes need to understand it."""
+    """What the user has selected, as the panes need to understand it.
+
+    Args:
+        kind: Selected aggregate, watchlist, source, or smart-feed kind.
+        watchlist_id: Selected watchlist or contextual source parent id.
+        source_id: Selected source id.
+        parent_context: Parent occurrence that qualifies a source selection.
+    """
 
     kind: Literal["all", "unassigned", "watchlist", "source", "starred", "unread", "today"]
     watchlist_id: int | None = None
@@ -69,6 +76,10 @@ class TreeExpansionChanged(Message):
     calls on every full recompose (a section switch, a tree-data reload, a
     local-snapshot apply), so a brand new `WatchlistTree` is constructed and
     pane-local expansion would silently collapse under the user.
+
+    Args:
+        expanded_root_kinds: Independently expanded aggregate roots.
+        expanded_watchlist_ids: Independently expanded watchlist nodes.
     """
 
     def __init__(
@@ -656,7 +667,11 @@ class WatchlistTree(Vertical):
     # --- interaction ---
 
     def watch_expanded(self, expanded: frozenset[int]) -> None:
-        """Tell the owning screen what is open, so it survives a recompose."""
+        """Tell the owning screen what is open, so it survives a recompose.
+
+        Args:
+            expanded: Expanded watchlist ids.
+        """
         if self.is_mounted:
             self.post_message(
                 TreeExpansionChanged(self.expanded_root_kinds, expanded)
@@ -665,19 +680,31 @@ class WatchlistTree(Vertical):
     def watch_expanded_root_kinds(
         self, expanded_root_kinds: frozenset[AggregateRootKind]
     ) -> None:
-        """Mirror independently expanded aggregate parents to the screen."""
+        """Mirror independently expanded aggregate parents to the screen.
+
+        Args:
+            expanded_root_kinds: Expanded aggregate root kinds.
+        """
         if self.is_mounted:
             self.post_message(
                 TreeExpansionChanged(expanded_root_kinds, self.expanded)
             )
 
     def watch_active_tag(self, tag: str | None) -> None:
-        """Tell the owning screen the tag filter, for the same reason."""
+        """Tell the owning screen the tag filter, for the same reason.
+
+        Args:
+            tag: Active tag filter, or ``None`` when cleared.
+        """
         if self.is_mounted:
             self.post_message(TreeTagFilterChanged(tag))
 
     def watch_active_scope(self, scope: TreeScope | None) -> None:
-        """Move the active marker in place so scope commits retain focus."""
+        """Move the active marker in place so scope commits retain focus.
+
+        Args:
+            scope: Committed navigation scope, or ``None``.
+        """
         if not self.is_mounted:
             return
         self._sync_scope_action_controls(scope)
