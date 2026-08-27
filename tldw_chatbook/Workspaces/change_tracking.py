@@ -421,16 +421,24 @@ class ShadowRepo:
                 continue
             if resolved.is_dir():
                 continue
-            ancestor = resolved.parent
-            while ancestor != self.root:
-                marker = ancestor / ".git"
-                if marker.is_file() or marker.is_dir():
-                    break
-                ancestor = ancestor.parent
-            if ancestor != self.root:
+            if self._nested_owner(resolved) is not None:
                 continue
             exact_paths.append(relative.as_posix())
         return exact_paths
+
+    def _nested_owner(self, path: Path) -> str | None:
+        """Return the nearest in-root ancestor carrying a Git marker."""
+        ancestor = path.parent
+        while ancestor != self.root:
+            try:
+                relative = ancestor.relative_to(self.root)
+            except ValueError:
+                return None
+            marker = ancestor / ".git"
+            if marker.is_file() or marker.is_dir():
+                return relative.as_posix()
+            ancestor = ancestor.parent
+        return None
 
     def _drop_new_force_paths_over_cap(
         self, paths: Sequence[str]
@@ -586,10 +594,23 @@ class ShadowRepo:
                     exact_paths, final_paths
                 )
                 if final_paths:
+                    self._run("update-index", "--add", "--", *final_paths)
+                    post_stage_paths = self._exact_force_paths(final_paths)
+                    late_unsafe = self._drop_new_force_paths_no_longer_safe(
+                        final_paths, post_stage_paths
+                    )
+                    late_nested = tuple(
+                        owner
+                        for rel in late_unsafe
+                        if (owner := self._nested_owner(self.root / rel)) is not None
+                    )
+                    self.last_nested_repos = tuple(
+                        dict.fromkeys((*self.last_nested_repos, *late_nested))
+                    )
                     tip = self.tip()
                     new_final_paths = {
                         rel
-                        for rel in final_paths
+                        for rel in post_stage_paths
                         if not tip
                         or not self._z_tokens(
                             "ls-tree",
@@ -600,8 +621,9 @@ class ShadowRepo:
                             f":(literal){rel}",
                         )
                     }
-                    self._run("update-index", "--add", "--", *final_paths)
-                    late_oversize = self._drop_new_force_paths_over_cap(final_paths)
+                    late_oversize = self._drop_new_force_paths_over_cap(
+                        post_stage_paths
+                    )
                     included = new_final_paths.difference(late_oversize)
                     self.last_oversize_excluded = tuple(
                         rel

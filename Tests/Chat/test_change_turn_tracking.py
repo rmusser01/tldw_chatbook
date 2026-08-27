@@ -482,7 +482,7 @@ def test_force_add_carveout_for_tool_touched_ignored_paths(tracker, root):
     )
 
 
-def test_snapshot_force_path_drops_file_when_nested_marker_appears(
+def test_snapshot_force_path_drops_file_when_nested_marker_appears_during_final_restage(
     tracker, root, monkeypatch
 ):
     child = root / "late-child"
@@ -497,21 +497,25 @@ def test_snapshot_force_path_drops_file_when_nested_marker_appears(
     repo = tracker.service.repo_for_root(root)
     original_run = type(repo)._run
     marker_created = threading.Event()
+    exact_stages = 0
 
     def create_marker_before_index(self, *args, **kwargs):
+        nonlocal exact_stages
         if (
             self.root == root.resolve()
-            and not marker_created.is_set()
             and args[:2] == ("update-index", "--add")
         ):
-            (child / ".git").mkdir()
-            marker_created.set()
+            exact_stages += 1
+            if exact_stages == 2:
+                (child / ".git").mkdir()
+                marker_created.set()
         return original_run(self, *args, **kwargs)
 
     monkeypatch.setattr(type(repo), "_run", create_marker_before_index)
     records = tracker.end_turn(handle, touched_paths=[str(target)])
 
     assert marker_created.is_set()
+    assert exact_stages == 2
     assert len(records) == 1
     record = records[0]
     assert record.files_changed == 0
