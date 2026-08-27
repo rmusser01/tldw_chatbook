@@ -1,10 +1,10 @@
 ---
 id: TASK-2525
 title: Console context/cost estimate has three small modelling gaps
-status: In Progress
+status: Done
 assignee: []
 created_date: '2026-08-06 02:21'
-updated_date: '2026-08-27 14:22'
+updated_date: '2026-08-27 14:55'
 labels:
   - console
   - rag
@@ -44,16 +44,16 @@ modelling gaps between what the estimate counts and what the send actually assem
 
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
-- [ ] #1 The context/cost estimate accounts for the per-source header + separator overhead `format_local_evidence_
+- [x] #1 The context/cost estimate accounts for the per-source header + separator overhead `format_local_evidence_
       context` adds (either by including a fixed/estimated per-source overhead, or by computing the estimate
       through the same formatting function used at send time), OR the estimate's docstring/UX copy is updated to
       state the known under-count explicitly if not fixed
-- [ ] #2 The estimate does not silently over-count past `EVIDENCE_ENTRIES_PER_PROMPT_MAX` staged sources — either
+- [x] #2 The estimate does not silently over-count past `EVIDENCE_ENTRIES_PER_PROMPT_MAX` staged sources — either
       it caps its own count at the same limit, or this is explicitly documented as a known, safe-direction
       divergence
-- [ ] #3 `console_prompted_source_count` and `console_prompted_evidence_text`'s shared `source_owner == "local"`
+- [x] #3 `console_prompted_source_count` and `console_prompted_evidence_text`'s shared `source_owner == "local"`
       eligibility predicate is extracted into one helper both functions call, so the two can no longer drift
-- [ ] #4 Existing tests for both functions (`Tests/UI/test_console_staged_evidence_strip.py`,
+- [x] #4 Existing tests for both functions (`Tests/UI/test_console_staged_evidence_strip.py`,
       `Tests/Chat/test_console_session_settings.py`) stay green
 <!-- AC:END -->
 
@@ -69,3 +69,15 @@ ADR required: no
 ADR path: N/A
 Reason: Routine parity bug fix reusing existing normalization, authority, and formatting boundaries.
 <!-- SECTION:PLAN:END -->
+
+## Implementation Notes
+
+<!-- SECTION:NOTES:BEGIN -->
+Aligned Console context/cost estimates with the send path by sharing canonical EvidenceReference normalization and prompt formatting. The zero-I/O estimator now includes source headers and separators, excludes noncanonical references, and applies the 64-entry cap; send-time authority remains authoritative and may shrink the pre-authority estimate.
+
+Files: tldw_chatbook/RAG_Search/local_citation_capture.py, tldw_chatbook/Event_Handlers/Chat_Events/chat_rag_events.py, tldw_chatbook/Chat/console_display_state.py, tldw_chatbook/UI/Screens/chat_screen.py, Tests/RAG/test_local_citation_capture.py, and Tests/UI/test_console_staged_evidence_strip.py.
+
+Verification: Ruff passed on all changed Python files; git diff --check passed; 6 focused RAG capture/authority tests passed; 7 prompted/staged estimator tests passed; the exact pre-send context-estimate test passed; and 8 existing Chat context-estimate tests passed. Full suite was not run per repository guidance.
+
+Tradeoff: estimates intentionally avoid authority I/O and remain formatted pre-authority previews; the send path rechecks authority and fails closed. ADR required: no. ADR path: N/A. Reason: routine parity fix reusing existing boundaries. No new generalizable lesson was produced.
+<!-- SECTION:NOTES:END -->
