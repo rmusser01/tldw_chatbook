@@ -173,6 +173,41 @@ async def test_local_watchlists_service_persists_run_queue_state(tmp_path):
 
 
 @pytest.mark.asyncio
+async def test_run_lifecycle_uses_database_owned_claim_transitions(tmp_path):
+    db = SubscriptionsDB(tmp_path / "subscriptions.db", "test")
+    service = LocalWatchlistsService(db_factory=lambda: db)
+    source = await service.create_source(
+        {
+            "name": "Feed",
+            "url": "https://example.com/feed.xml",
+            "source_type": "rss",
+        }
+    )
+    accepted: list[int] = []
+    terminal: list[tuple[int, str]] = []
+    original_accept = db.accept_watchlist_run
+    original_transition = db.transition_watchlist_run
+
+    def accept(source_id: int, *, created_at: str):
+        accepted.append(source_id)
+        return original_accept(source_id, created_at=created_at)
+
+    def transition(run_id: int, *, status: str, **kwargs):
+        terminal.append((run_id, status))
+        return original_transition(run_id, status=status, **kwargs)
+
+    db.accept_watchlist_run = accept
+    db.transition_watchlist_run = transition
+
+    launched = await service.launch_run(source_id=source["source_id"])
+    cancelled = await service.cancel_run(launched["run_id"])
+
+    assert accepted == [source["source_id"]]
+    assert terminal == [(launched["run_id"], "cancelled")]
+    assert cancelled["status"] == "cancelled"
+
+
+@pytest.mark.asyncio
 async def test_local_watchlists_service_exposes_sync_home_run_snapshot(tmp_path):
     db = SubscriptionsDB(tmp_path / "subscriptions.db", "test")
     service = LocalWatchlistsService(db_factory=lambda: db)

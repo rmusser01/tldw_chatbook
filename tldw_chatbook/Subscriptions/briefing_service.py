@@ -27,10 +27,10 @@ ignores the instruction would otherwise turn a stated truncation into a
 silent one, which is precisely the failure the cap was designed not to have.
 
 Zombie recovery (`fail_interrupted_briefings`) lives here but is *not*
-called by `generate_briefing`: the caller runs it before invoking generation
-(and on Artifacts load), because the guard it unwedges -- one generation per
-watchlist at a time -- is the caller's guard. Folding it into generation
-would make the service both the thing being guarded and the guard.
+called by `generate_briefing`: startup reconciles abandoned durable claims
+before invoking generation (and on Artifacts load). The database partial
+index is the cross-process authority; the in-process set below remains an
+execution optimization.
 
 Egress, stated plainly (spec §Egress): building the prompt sends item
 titles, excerpts and diffs to whichever provider is configured. That is the
@@ -49,12 +49,13 @@ import asyncio
 import inspect
 import re
 from contextlib import contextmanager
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import TYPE_CHECKING, Any, Callable, Collection, Iterator, Mapping, Sequence
 
 from loguru import logger
 
 from ..Chat.Chat_Functions import chat_api_call, extract_response_content
+from ..DB.Subscriptions_DB import BriefingProvenanceRow
 from .briefing_selection import (
     MODE_AUTO_FEATURED,
     VALID_MODES,
@@ -596,32 +597,6 @@ async def _invoke_chat(
     return result
 
 
-def _write_junction(
-    db: "SubscriptionsDB",
-    briefing_id: int,
-    selection: BriefingSelection,
-) -> None:
-    """Record which items this briefing covered, and which were featured.
-
-    Written before the status flips to `complete`, so a crash between the
-    two leaves a `generating` row whose junction rows the selection
-    exclusion already ignores (its allowlist is `('complete', 'empty')`) --
-    and which recovery then fails honestly. The reverse order would briefly
-    publish a complete briefing that covered nothing.
-    """
-    with db.transaction() as conn:
-        for item in selection.items:
-            conn.execute(
-                "INSERT OR REPLACE INTO briefing_items "
-                "(briefing_id, item_id, featured) VALUES (?, ?, ?)",
-                (
-                    briefing_id,
-                    item["item_id"],
-                    1 if item["item_id"] in selection.featured_ids else 0,
-                ),
-            )
-
-
 # --- Sync DB work, grouped for `asyncio.to_thread` (whole-branch review ----
 # fix 1) -----------------------------------------------------------------
 #
@@ -639,10 +614,18 @@ def _write_junction(
 
 def _start_generation(
     db: "SubscriptionsDB", watchlist_id: int, preset_id: int | None, now: datetime | None
-) -> tuple[int, str, int | None, BriefingSelection, dict[str, Any] | None]:
+) -> tuple[
+    int,
+    str,
+    int | None,
+    BriefingSelection | None,
+    dict[str, Any] | None,
+    dict[str, Any] | None,
+]:
     """Everything before the chat call: insert the row, resolve the mode,
     read the prior watermark, select, and resolve the preset (if any).
-    Returns `(briefing_id, mode, prior_watermark, selection, preset)`.
+    Returns the accepted id and setup values, plus an existing durable winner
+    when another database owner already holds the claim.
 
     The preset lookup is grouped into this same `to_thread` hop (spec #2
     phase 2a) rather than given its own -- one more plain SQLite read costs
@@ -653,12 +636,17 @@ def _start_generation(
     return value alone, but it doesn't need to: both mean "proceed on
     defaults."
     """
-    briefing_id = db.insert_briefing(watchlist_id, status=STATUS_GENERATING)
+    receipt = db.accept_briefing(
+        watchlist_id, created_at=datetime.now(timezone.utc).isoformat()
+    )
+    briefing_id = int(receipt["id"])
+    if not receipt.pop("_claim_acquired"):
+        return briefing_id, "", None, None, None, receipt
     mode = _selection_mode(db, watchlist_id)
     prior_watermark = db.latest_completed_watermark(watchlist_id)
     selection = select_briefing_items(db, watchlist_id, mode=mode, now=now)
     preset = db.get_briefing_preset(preset_id) if preset_id is not None else None
-    return briefing_id, mode, prior_watermark, selection, preset
+    return briefing_id, mode, prior_watermark, selection, preset, None
 
 
 def _finish_empty(
@@ -670,7 +658,7 @@ def _finish_empty(
     selection: BriefingSelection,
 ) -> dict[str, Any]:
     """Record the empty-window outcome and read the finished row back."""
-    db.update_briefing(
+    row = db.transition_briefing(
         briefing_id,
         status=STATUS_EMPTY,
         item_count=0,
@@ -681,7 +669,7 @@ def _finish_empty(
         selection_mode=mode,
         preset_id=preset_id,
     )
-    return db.get_briefing(briefing_id)
+    return row or db.get_briefing(briefing_id)
 
 
 def _finish_success(
@@ -694,26 +682,48 @@ def _finish_success(
     selection: BriefingSelection,
     body: str,
 ) -> dict[str, Any]:
-    """Write the junction rows, flip the row to `complete`, and read it back.
-
-    Junction rows first, status flip second -- see `_write_junction`'s own
-    docstring for why the order is load-bearing.
-    """
-    _write_junction(db, briefing_id, selection)
-    db.update_briefing(
+    """Atomically snapshot provenance and publish the completed briefing."""
+    body_markdown = _append_overflow(body, selection.overflow_count)
+    citation_positions = {
+        item_id: position
+        for position, item_id in enumerate(extract_citation_ids(body_markdown))
+    }
+    sources: dict[int, dict[str, Any] | None] = {}
+    provenance: list[BriefingProvenanceRow] = []
+    for position, item in enumerate(selection.items):
+        source_id = item.get("source_id")
+        if source_id is not None and source_id not in sources:
+            sources[source_id] = db.get_subscription(source_id)
+        source = sources.get(source_id) or {}
+        item_id = int(item["item_id"])
+        provenance.append(
+            BriefingProvenanceRow(
+                item_id=item_id,
+                selection_position=position,
+                citation_position=citation_positions.get(item_id),
+                featured=item_id in selection.featured_ids,
+                cited=item_id in citation_positions,
+                item_title=item.get("title"),
+                item_url=item.get("url"),
+                item_published_date=item.get("published_date"),
+                item_created_at=item.get("created_at"),
+                source_id=source_id,
+                source_name=item.get("source_name"),
+                source_type=item.get("source_type"),
+                source_url=source.get("source"),
+            )
+        )
+    return db.complete_briefing(
         briefing_id,
-        status=STATUS_COMPLETE,
-        body_markdown=_append_overflow(body, selection.overflow_count),
-        item_count=len(selection.items),
-        featured_count=len(selection.featured_ids),
-        overflow_count=selection.overflow_count,
+        body_markdown=body_markdown,
+        model_used=model_used,
         covers_through_item_id=covers_through,
         covers_from_ts=selection.covers_from_ts,
         selection_mode=mode,
         preset_id=preset_id,
-        model_used=model_used,
+        overflow_count=selection.overflow_count,
+        provenance=provenance,
     )
-    return db.get_briefing(briefing_id)
 
 
 def _finish_failure(
@@ -730,7 +740,7 @@ def _finish_failure(
     reached the user covered nothing, so the next attempt re-selects the
     same items. The spec's named invariant.
     """
-    db.update_briefing(
+    row = db.transition_briefing(
         briefing_id,
         status=STATUS_FAILED,
         error=message,
@@ -738,7 +748,7 @@ def _finish_failure(
         preset_id=preset_id,
         model_used=model_used,
     )
-    return db.get_briefing(briefing_id)
+    return row or db.get_briefing(briefing_id)
 
 
 async def generate_briefing(
@@ -815,9 +825,17 @@ async def generate_briefing(
     running, defeating the whole point of the claim.
     """
     with _claim_briefing(watchlist_id):
-        briefing_id, mode, prior_watermark, selection, preset = await asyncio.to_thread(
-            _start_generation, db, watchlist_id, preset_id, now
-        )
+        (
+            briefing_id,
+            mode,
+            prior_watermark,
+            selection,
+            preset,
+            existing,
+        ) = await asyncio.to_thread(_start_generation, db, watchlist_id, preset_id, now)
+        if existing is not None:
+            return existing
+        assert selection is not None
         # Task-1812, AC #3: record the row THIS claim is now writing, as the
         # very next statement after the `to_thread` hop above returns (no
         # `await` in between) -- so nothing else on this event loop can
@@ -960,14 +978,10 @@ def fail_interrupted_briefings(
             claim registry itself. Defaults to `()`, so every pre-phase-4
             caller is unchanged.
 
-            Prior to task-1812 this was watchlist-scoped (`active_briefing_
-            claims()`), which over-protected: a genuine crash-zombie row
-            left by an earlier process can coexist with a freshly-claimed
-            live row for the SAME watchlist (the crash predates the claim),
-            and a watchlist-scoped `exclude` shielded both rows, not just
-            the live one. Scoping to the row's own id fixes that: only the
-            actual live row survives, and a same-watchlist zombie is swept
-            exactly as if no claim existed at all.
+            Prior to the durable partial index this was watchlist-scoped
+            (`active_briefing_claims()`), which could over-protect duplicate
+            historical rows. V2 prevents new duplicates; row scoping remains
+            the precise compatibility behavior for reconciliation.
         exclude_watchlists: Watchlist ids to spare even though a row reads
             `generating`, regardless of that row's own id (whole-branch
             review, `chore/briefings-residuals-1810-1812`, Important 1).

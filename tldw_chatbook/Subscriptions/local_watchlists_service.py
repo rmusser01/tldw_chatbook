@@ -1191,26 +1191,9 @@ class LocalWatchlistsService:
 
     @staticmethod
     def _insert_queued_run(db: SubscriptionsDB, source_id: int, now: str) -> int:
-        """Insert one `queued` run row and return its id (task-15463 hop body)."""
-        with db.transaction() as conn:
-            cursor = conn.cursor()
-            cursor.execute(
-                """
-                INSERT INTO local_watchlist_runs (
-                    source_id, job_id, status, stats_json, created_at, updated_at
-                )
-                VALUES (?, ?, ?, ?, ?, ?)
-                """,
-                (
-                    source_id,
-                    source_id,
-                    "queued",
-                    json.dumps({"source_id": source_id}),
-                    now,
-                    now,
-                ),
-            )
-            return cursor.lastrowid
+        """Accept one database-owned source claim and return its durable id."""
+        receipt = db.accept_watchlist_run(source_id, created_at=now)
+        return int(receipt["id"])
 
     async def execute_run(self, run_id: Any) -> dict[str, Any]:
         """Execute a queued local watchlist run and persist its observed result.
@@ -1559,17 +1542,15 @@ class LocalWatchlistsService:
         here with zero rows updated is an UPDATE that matched nothing, so
         there is nothing for either path to undo.
         """
-        with db.transaction() as conn:
-            cursor = conn.cursor()
-            cursor.execute(
-                """
-                UPDATE local_watchlist_runs
-                SET status = ?, finished_at = ?, stats_json = ?, error_msg = ?, log_text = ?, updated_at = ?
-                WHERE id = ?
-                """,
-                (status, now, stats_json, error_msg, log_text, now, run_id),
-            )
-            return cursor.rowcount
+        row = db.transition_watchlist_run(
+            run_id,
+            status=status,
+            finished_at=now,
+            stats_json=stats_json,
+            error_msg=error_msg,
+            log_text=log_text,
+        )
+        return int(row is not None)
 
     async def get_run_detail(self, run_id: Any, **_: Any) -> dict[str, Any]:
         return await self.get_run(run_id)
@@ -1592,17 +1573,12 @@ class LocalWatchlistsService:
     @staticmethod
     def _cancel_run_row(db: SubscriptionsDB, run_id: int, now: str) -> int:
         """Mark one run cancelled; returns rows updated (task-19562 B hop body)."""
-        with db.transaction() as conn:
-            cursor = conn.cursor()
-            cursor.execute(
-                """
-                UPDATE local_watchlist_runs
-                SET status = ?, finished_at = ?, updated_at = ?
-                WHERE id = ?
-                """,
-                ("cancelled", now, now, run_id),
-            )
-            return cursor.rowcount
+        row = db.transition_watchlist_run(
+            run_id,
+            status="cancelled",
+            finished_at=now,
+        )
+        return int(row is not None)
 
     async def record_run_result(
         self,
@@ -1957,18 +1933,8 @@ class LocalWatchlistsService:
 
     def _mark_run_started(self, db: SubscriptionsDB, run_id: int) -> None:
         now = self._utc_now()
-        with db.transaction() as conn:
-            cursor = conn.cursor()
-            cursor.execute(
-                """
-                UPDATE local_watchlist_runs
-                SET status = ?, started_at = COALESCE(started_at, ?), updated_at = ?
-                WHERE id = ?
-                """,
-                ("running", now, now, run_id),
-            )
-            if cursor.rowcount == 0:
-                raise KeyError(f"Watchlist run not found: {run_id}")
+        if db.mark_watchlist_run_started(run_id, started_at=now) is None:
+            raise RuntimeError(f"Watchlist run is no longer queued: {run_id}")
 
     async def _execute_subscription(
         self,

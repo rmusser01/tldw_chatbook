@@ -28,10 +28,12 @@ import threading
 import time
 import weakref
 from contextlib import closing, contextmanager
+from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import List, Dict, Any, Optional, Sequence, TYPE_CHECKING, Union
 from urllib.parse import urlparse, urlunparse
+from urllib.parse import urlsplit, urlunsplit
 
 # Third-Party Libraries
 from loguru import logger
@@ -46,6 +48,71 @@ from ..Utils.fts5_match_forms import quote_fts5_token
 
 if TYPE_CHECKING:
     from ..Subscriptions.watchlist_item_page import WatchlistItemCursor, WatchlistItemPage
+
+
+_CURRENT_SCHEMA_VERSION = 2
+
+INTERRUPTED_RUN_ERROR = (
+    "Interrupted: the application stopped before this run finished."
+)
+INTERRUPTED_BRIEFING_ERROR = "interrupted"
+
+SUBSCRIPTIONS_V1_TO_V2_SQL = """
+CREATE TABLE briefing_items (
+    briefing_id INTEGER NOT NULL REFERENCES briefings(id) ON DELETE CASCADE,
+    item_id INTEGER NOT NULL,
+    live_item_id INTEGER REFERENCES subscription_items(id) ON DELETE SET NULL,
+    selection_position INTEGER,
+    citation_position INTEGER,
+    featured INTEGER NOT NULL DEFAULT 0,
+    cited INTEGER NOT NULL DEFAULT 0,
+    item_title TEXT,
+    item_url TEXT,
+    item_published_date TEXT,
+    item_created_at TEXT,
+    source_id INTEGER,
+    source_name TEXT,
+    source_type TEXT,
+    source_url TEXT,
+    provenance_version INTEGER NOT NULL,
+    PRIMARY KEY (briefing_id, item_id)
+)
+"""
+
+
+def _sanitize_provenance_url(value: object) -> str | None:
+    """Strip credentials, query, and fragment from one HTTP(S) snapshot URL."""
+    if not isinstance(value, str) or not value:
+        return None
+    try:
+        parsed = urlsplit(value)
+        hostname = parsed.hostname
+        if parsed.scheme.casefold() not in {"http", "https"} or not hostname:
+            return None
+        host = f"[{hostname}]" if ":" in hostname else hostname
+        netloc = host if parsed.port is None else f"{host}:{parsed.port}"
+        return urlunsplit((parsed.scheme.casefold(), netloc, parsed.path, "", ""))
+    except ValueError:
+        return None
+
+
+@dataclass(frozen=True)
+class BriefingProvenanceRow:
+    """One selected item's immutable snapshot at briefing publication."""
+
+    item_id: int
+    selection_position: int
+    citation_position: int | None
+    featured: bool
+    cited: bool
+    item_title: str | None
+    item_url: str | None
+    item_published_date: str | None
+    item_created_at: str | None
+    source_id: int | None
+    source_name: str | None
+    source_type: str | None
+    source_url: str | None
 
 
 #: Fallback `auto_pause_threshold` when the config value is missing or
@@ -369,7 +436,7 @@ _ITEM_ID_LOOKUP_CHUNK_SIZE = 500
 class SubscriptionsDB(BaseDB):
     """Database operations for subscription management."""
 
-    _CURRENT_SCHEMA_VERSION = 1
+    _CURRENT_SCHEMA_VERSION = _CURRENT_SCHEMA_VERSION
 
     _AGENT_READ_REQUIRED_COLUMNS = {
         "subscriptions": frozenset(
@@ -547,6 +614,12 @@ class SubscriptionsDB(BaseDB):
         """
         try:
             conn = self.conn
+            versions = [
+                int(row[0])
+                for row in conn.execute("SELECT version FROM schema_version")
+            ]
+            if versions != [_CURRENT_SCHEMA_VERSION]:
+                raise SubscriptionsDBUnavailableError()
             for table, required_columns in self._AGENT_READ_REQUIRED_COLUMNS.items():
                 columns = {
                     row[1] for row in conn.execute(f"PRAGMA table_xinfo({table})")
@@ -587,6 +660,17 @@ class SubscriptionsDB(BaseDB):
         fix (e.g. a shared-cache ``file::memory:?cache=shared`` URI plus a
         dedicated keepalive connection).
         """
+        conn = self.conn
+        has_version_table = conn.execute(
+            "SELECT 1 FROM sqlite_schema WHERE type = 'table' AND name = 'schema_version'"
+        ).fetchone()
+        if has_version_table:
+            versions = [int(row[0]) for row in conn.execute("SELECT version FROM schema_version")]
+            if versions == [1]:
+                self._migrate_from_v1_to_v2(conn)
+            elif versions != [_CURRENT_SCHEMA_VERSION]:
+                raise SubscriptionError("Unsupported subscriptions schema version")
+
         with self.transaction() as conn:
             conn.executescript("""
             PRAGMA foreign_keys = ON;
@@ -595,7 +679,7 @@ class SubscriptionsDB(BaseDB):
             CREATE TABLE IF NOT EXISTS schema_version (
                 version INTEGER PRIMARY KEY NOT NULL
             );
-            INSERT OR IGNORE INTO schema_version (version) VALUES (1);
+            INSERT OR IGNORE INTO schema_version (version) VALUES (2);
             
             -- Unified subscription table with enhanced features
             CREATE TABLE IF NOT EXISTS subscriptions (
@@ -861,6 +945,93 @@ class SubscriptionsDB(BaseDB):
             """)
         conn.executescript(SITE_CONFIGS_DDL)
         self._ensure_watchlists_schema(conn)
+
+    def _migrate_from_v1_to_v2(self, conn: sqlite3.Connection | None = None) -> None:
+        """Atomically rebuild durable briefing provenance and active claims."""
+        conn = conn or self.conn
+        if conn.in_transaction:
+            conn.commit()
+        conn.execute("BEGIN IMMEDIATE")
+        try:
+            conn.execute("ALTER TABLE briefing_items RENAME TO briefing_items_v1")
+            conn.execute(SUBSCRIPTIONS_V1_TO_V2_SQL)
+            legacy_rows = conn.execute(
+                "SELECT bi.briefing_id, bi.item_id, bi.featured, "
+                "i.id AS live_item_id, i.title AS item_title, i.url AS item_url, "
+                "i.published_date AS item_published_date, i.created_at AS item_created_at, "
+                "s.id AS source_id, s.name AS source_name, s.type AS source_type, "
+                "s.source AS source_url "
+                "FROM briefing_items_v1 bi "
+                "LEFT JOIN subscription_items i ON i.id = bi.item_id "
+                "LEFT JOIN subscriptions s ON s.id = i.subscription_id "
+                "ORDER BY bi.briefing_id, bi.item_id"
+            ).fetchall()
+            for row in legacy_rows:
+                conn.execute(
+                    "INSERT INTO briefing_items "
+                    "(briefing_id, item_id, live_item_id, featured, cited, "
+                    "item_title, item_url, item_published_date, item_created_at, "
+                    "source_id, source_name, source_type, source_url, provenance_version) "
+                    "VALUES (?, ?, ?, ?, 0, ?, ?, ?, ?, ?, ?, ?, ?, 1)",
+                    (
+                        row["briefing_id"],
+                        row["item_id"],
+                        row["live_item_id"],
+                        int(bool(row["featured"])),
+                        row["item_title"],
+                        _sanitize_provenance_url(row["item_url"]),
+                        row["item_published_date"],
+                        row["item_created_at"],
+                        row["source_id"],
+                        row["source_name"],
+                        row["source_type"],
+                        _sanitize_provenance_url(row["source_url"]),
+                    ),
+                )
+            conn.execute("DROP TABLE briefing_items_v1")
+            conn.execute(
+                "CREATE INDEX idx_briefing_items_item ON briefing_items(item_id)"
+            )
+            conn.execute(
+                "UPDATE local_watchlist_runs AS older "
+                "SET status = 'failed', error_msg = ?, "
+                "finished_at = COALESCE(finished_at, updated_at) "
+                "WHERE status IN ('queued', 'running') AND EXISTS ("
+                "SELECT 1 FROM local_watchlist_runs AS newer "
+                "WHERE newer.source_id = older.source_id "
+                "AND newer.status IN ('queued', 'running') "
+                "AND (newer.created_at > older.created_at "
+                "OR (newer.created_at = older.created_at AND newer.id > older.id)))",
+                (INTERRUPTED_RUN_ERROR,),
+            )
+            conn.execute(
+                "UPDATE briefings AS older SET status = 'failed', error = ? "
+                "WHERE status = 'generating' AND EXISTS ("
+                "SELECT 1 FROM briefings AS newer "
+                "WHERE newer.watchlist_id = older.watchlist_id "
+                "AND newer.status = 'generating' "
+                "AND (newer.created_at > older.created_at "
+                "OR (newer.created_at = older.created_at AND newer.id > older.id)))",
+                (INTERRUPTED_BRIEFING_ERROR,),
+            )
+            conn.execute(
+                "CREATE UNIQUE INDEX uq_local_watchlist_runs_active_source "
+                "ON local_watchlist_runs(source_id) "
+                "WHERE status IN ('queued', 'running')"
+            )
+            conn.execute(
+                "CREATE UNIQUE INDEX uq_briefings_generating_watchlist "
+                "ON briefings(watchlist_id) WHERE status = 'generating'"
+            )
+            conn.execute("DELETE FROM schema_version")
+            conn.execute(
+                "INSERT INTO schema_version (version) VALUES (?)",
+                (_CURRENT_SCHEMA_VERSION,),
+            )
+            conn.commit()
+        except Exception:
+            conn.rollback()
+            raise
 
     def _ensure_watchlists_schema(self, conn=None):
         """Idempotent migration for watchlists screen schema additions."""
@@ -1267,14 +1438,10 @@ class SubscriptionsDB(BaseDB):
                 updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
             )
         """)
-        cursor.execute("""
-            CREATE TABLE IF NOT EXISTS briefing_items (
-                briefing_id INTEGER NOT NULL REFERENCES briefings(id) ON DELETE CASCADE,
-                item_id     INTEGER NOT NULL REFERENCES subscription_items(id) ON DELETE CASCADE,
-                featured BOOLEAN DEFAULT 0,
-                PRIMARY KEY (briefing_id, item_id)
-            )
-        """)
+        if not cursor.execute(
+            "SELECT 1 FROM sqlite_schema WHERE type = 'table' AND name = 'briefing_items'"
+        ).fetchone():
+            cursor.execute(SUBSCRIPTIONS_V1_TO_V2_SQL)
         cursor.execute(
             "CREATE INDEX IF NOT EXISTS idx_briefings_watchlist_status "
             "ON briefings(watchlist_id, status)"
@@ -1282,6 +1449,15 @@ class SubscriptionsDB(BaseDB):
         cursor.execute(
             "CREATE INDEX IF NOT EXISTS idx_briefing_items_item "
             "ON briefing_items(item_id)"
+        )
+        cursor.execute(
+            "CREATE UNIQUE INDEX IF NOT EXISTS uq_local_watchlist_runs_active_source "
+            "ON local_watchlist_runs(source_id) "
+            "WHERE status IN ('queued', 'running')"
+        )
+        cursor.execute(
+            "CREATE UNIQUE INDEX IF NOT EXISTS uq_briefings_generating_watchlist "
+            "ON briefings(watchlist_id) WHERE status = 'generating'"
         )
 
         # Briefing presets + scripts (spec #2 phase 2a): a preset is a named,
@@ -3885,6 +4061,171 @@ class SubscriptionsDB(BaseDB):
             ).fetchone()
         return int(row[0]) if row else None
 
+    def accept_watchlist_run(
+        self, source_id: int, *, created_at: str
+    ) -> Dict[str, Any]:
+        """Insert one queued source receipt or return its active winner."""
+        try:
+            with self.transaction() as conn:
+                cursor = conn.execute(
+                    "INSERT INTO local_watchlist_runs "
+                    "(source_id, job_id, status, stats_json, created_at, updated_at) "
+                    "VALUES (?, ?, 'queued', ?, ?, ?)",
+                    (
+                        source_id,
+                        source_id,
+                        json.dumps({"source_id": source_id}),
+                        created_at,
+                        created_at,
+                    ),
+                )
+                row = conn.execute(
+                    "SELECT * FROM local_watchlist_runs WHERE id = ?",
+                    (cursor.lastrowid,),
+                ).fetchone()
+                receipt = dict(row)
+                receipt["_claim_acquired"] = True
+                return receipt
+        except sqlite3.IntegrityError:
+            with self.transaction() as conn:
+                winner = conn.execute(
+                    "SELECT * FROM local_watchlist_runs "
+                    "WHERE source_id = ? AND status IN ('queued', 'running') "
+                    "ORDER BY created_at DESC, id DESC LIMIT 1",
+                    (source_id,),
+                ).fetchone()
+            if winner is not None:
+                receipt = dict(winner)
+                receipt["_claim_acquired"] = False
+                return receipt
+            raise
+
+    def transition_watchlist_run(
+        self,
+        run_id: int,
+        *,
+        status: str,
+        finished_at: str,
+        stats_json: str | None = None,
+        error_msg: str | None = None,
+        log_text: str | None = None,
+    ) -> Dict[str, Any] | None:
+        """Guardedly terminalize an active source receipt, releasing its claim."""
+        if status in {"queued", "running"}:
+            raise ValueError("Terminal run status required")
+        with self.transaction() as conn:
+            updated = conn.execute(
+                "UPDATE local_watchlist_runs SET status = ?, finished_at = ?, "
+                "stats_json = COALESCE(?, stats_json), error_msg = ?, log_text = ?, "
+                "updated_at = ? WHERE id = ? AND status IN ('queued', 'running')",
+                (
+                    status,
+                    finished_at,
+                    stats_json,
+                    error_msg,
+                    log_text,
+                    finished_at,
+                    run_id,
+                ),
+            )
+            if updated.rowcount != 1:
+                return None
+            row = conn.execute(
+                "SELECT * FROM local_watchlist_runs WHERE id = ?", (run_id,)
+            ).fetchone()
+            return dict(row) if row is not None else None
+
+    def mark_watchlist_run_started(
+        self, run_id: int, *, started_at: str
+    ) -> Dict[str, Any] | None:
+        """Guardedly move one queued receipt to running without releasing it."""
+        with self.transaction() as conn:
+            updated = conn.execute(
+                "UPDATE local_watchlist_runs SET status = 'running', "
+                "started_at = COALESCE(started_at, ?), updated_at = ? "
+                "WHERE id = ? AND status = 'queued'",
+                (started_at, started_at, run_id),
+            )
+            if updated.rowcount != 1:
+                return None
+            row = conn.execute(
+                "SELECT * FROM local_watchlist_runs WHERE id = ?", (run_id,)
+            ).fetchone()
+            return dict(row) if row is not None else None
+
+    def accept_briefing(
+        self, watchlist_id: int, *, created_at: str
+    ) -> Dict[str, Any]:
+        """Insert one generating briefing or return its durable active winner."""
+        try:
+            with self.transaction() as conn:
+                cursor = conn.execute(
+                    "INSERT INTO briefings "
+                    "(watchlist_id, status, created_at, updated_at) "
+                    "VALUES (?, 'generating', ?, ?)",
+                    (watchlist_id, created_at, created_at),
+                )
+                row = conn.execute(
+                    "SELECT * FROM briefings WHERE id = ?", (cursor.lastrowid,)
+                ).fetchone()
+                receipt = dict(row)
+                receipt["_claim_acquired"] = True
+                return receipt
+        except sqlite3.IntegrityError:
+            with self.transaction() as conn:
+                winner = conn.execute(
+                    "SELECT * FROM briefings "
+                    "WHERE watchlist_id = ? AND status = 'generating' "
+                    "ORDER BY created_at DESC, id DESC LIMIT 1",
+                    (watchlist_id,),
+                ).fetchone()
+            if winner is not None:
+                receipt = dict(winner)
+                receipt["_claim_acquired"] = False
+                return receipt
+            raise
+
+    def transition_briefing(
+        self, briefing_id: int, *, status: str, error: str | None = None, **fields: Any
+    ) -> Dict[str, Any] | None:
+        """Guardedly terminalize one generating briefing, releasing its claim."""
+        if status == "generating":
+            raise ValueError("Terminal briefing status required")
+        allowed_fields = {
+            "covers_through_item_id",
+            "covers_from_ts",
+            "selection_mode",
+            "preset_id",
+            "model_used",
+            "body_markdown",
+            "item_count",
+            "featured_count",
+            "overflow_count",
+            "updated_at",
+        }
+        for key in fields:
+            if key not in allowed_fields or not validate_identifier(key, "column name"):
+                raise ValueError(f"transition_briefing: invalid field {key!r}")
+        assignments = ["status = ?", "error = ?"]
+        values: list[Any] = [status, error]
+        assignments.extend(f"{key} = ?" for key in fields)
+        values.extend(fields.values())
+        if "updated_at" not in fields:
+            assignments.append("updated_at = CURRENT_TIMESTAMP")
+        values.append(briefing_id)
+        with self.transaction() as conn:
+            updated = conn.execute(
+                f"UPDATE briefings SET {', '.join(assignments)} "
+                "WHERE id = ? AND status = 'generating'",
+                values,
+            )
+            if updated.rowcount != 1:
+                return None
+            row = conn.execute(
+                "SELECT * FROM briefings WHERE id = ?", (briefing_id,)
+            ).fetchone()
+            return dict(row) if row is not None else None
+
     def insert_briefing(self, watchlist_id: int, status: str = "generating") -> int:
         """Create a new `briefings` row for a watchlist.
 
@@ -3966,6 +4307,77 @@ class SubscriptionsDB(BaseDB):
                 f"UPDATE briefings SET {set_clause}{extra} WHERE id = ?",
                 values,
             )
+
+    def complete_briefing(
+        self,
+        briefing_id: int,
+        *,
+        body_markdown: str,
+        model_used: str,
+        covers_through_item_id: int | None,
+        covers_from_ts: str | None,
+        selection_mode: str,
+        preset_id: int | None,
+        overflow_count: int,
+        provenance: Sequence[BriefingProvenanceRow],
+    ) -> Dict[str, Any]:
+        """Atomically snapshot provenance and publish one completed briefing."""
+        with self.transaction() as conn:
+            for row in provenance:
+                live_item = conn.execute(
+                    "SELECT id FROM subscription_items WHERE id = ?", (row.item_id,)
+                ).fetchone()
+                conn.execute(
+                    "INSERT INTO briefing_items "
+                    "(briefing_id, item_id, live_item_id, selection_position, "
+                    "citation_position, featured, cited, item_title, item_url, "
+                    "item_published_date, item_created_at, source_id, source_name, "
+                    "source_type, source_url, provenance_version) "
+                    "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 2)",
+                    (
+                        briefing_id,
+                        row.item_id,
+                        row.item_id if live_item is not None else None,
+                        row.selection_position,
+                        row.citation_position,
+                        int(row.featured),
+                        int(row.cited),
+                        row.item_title,
+                        _sanitize_provenance_url(row.item_url),
+                        row.item_published_date,
+                        row.item_created_at,
+                        row.source_id,
+                        row.source_name,
+                        row.source_type,
+                        _sanitize_provenance_url(row.source_url),
+                    ),
+                )
+            updated = conn.execute(
+                "UPDATE briefings SET status = 'complete', error = NULL, "
+                "body_markdown = ?, model_used = ?, covers_through_item_id = ?, "
+                "covers_from_ts = ?, selection_mode = ?, preset_id = ?, "
+                "item_count = ?, featured_count = ?, overflow_count = ?, "
+                "updated_at = CURRENT_TIMESTAMP "
+                "WHERE id = ? AND status = 'generating'",
+                (
+                    body_markdown,
+                    model_used,
+                    covers_through_item_id,
+                    covers_from_ts,
+                    selection_mode,
+                    preset_id,
+                    len(provenance),
+                    sum(row.featured for row in provenance),
+                    overflow_count,
+                    briefing_id,
+                ),
+            )
+            if updated.rowcount != 1:
+                raise ValueError("Briefing is not generating")
+            published = conn.execute(
+                "SELECT * FROM briefings WHERE id = ?", (briefing_id,)
+            ).fetchone()
+            return dict(published)
 
     def get_briefing(self, briefing_id: int) -> Optional[Dict[str, Any]]:
         """Fetch one `briefings` row by id.

@@ -137,6 +137,9 @@ def test_read_only_uses_dedicated_owner_and_only_safe_connection_pragmas(
 
     db = SubscriptionsDB(path, client_id="agent", read_only=True)
     db.assert_agent_read_ready()
+    assert [tuple(row) for row in db.conn.execute(
+        "SELECT version FROM schema_version"
+    )] == [(2,)]
 
     assert calls == [
         (
