@@ -4,7 +4,7 @@ title: Resume prior character chats from Roleplay
 status: In Progress
 assignee: []
 created_date: '2026-08-26 15:14'
-updated_date: '2026-08-27 07:09'
+updated_date: '2026-08-27 07:15'
 labels:
   - roleplay
   - console
@@ -83,4 +83,6 @@ Merge-candidate rebase follow-up: rebased onto origin/dev c6218918. The joined c
 Final merge-window refresh: while the required run for c6218918 was queued, origin/dev advanced to 9f7b914a (citation tests and backlog documentation only). Rebased cleanly onto 9f7b914a. Post-rebase evidence: all six required derived-artifact commands passed; Resume startup navigation passed 17/17; the Roleplay conversation-focused workbench subset passed 37/37; metadata/hydration/resume/workspace paths passed 156/157, with the sole failure being the unchanged origin/dev test_console_resume_active_path import of CONSOLE_REALTIME_EMPTY_TRANSCRIPT_PLACEHOLDER from its pre-refactor chat_screen location. The feature source paths had no conflict or upstream semantic change.
 
 Final queue refresh: required run 33044126646 for the prior head was externally cancelled after 58 minutes with zero steps or logs. origin/dev then advanced through 40ba8fe7 and 37dda3ca. The final rebase onto 37dda3ca preserved the upstream Console review/selection-controller extraction; its sole conflict was the generated production diagnostic inventory, which was regenerated from the combined source tree. Post-rebase verification passed: Resume startup navigation 17/17; Roleplay conversation workbench 37/37; Console workspace tests; upstream controller-wiring and review-selection tests; all six required derived-artifact commands; Ruff across all 22 changed Python/test files; and git diff --check. All ten Qodo findings remain addressed and resolved. ADR check remains unchanged: ADR-046 applies and no new ADR is required.
+
+Latest-dev overlap refresh: origin/dev advanced to e6b17b9b with the wizard follow-ups and closing-a-chat owner-change fix. Rebased onto e6b17b9b; generated CSS and production diagnostic conflicts were resolved by rebuilding from the combined sources. Post-rebase evidence: the combined persistence/store/hydration/metadata/new close-owner gate recorded 400 passes, with only the two unchanged origin/dev placeholder-import failures; Resume navigation/workspace passed 117/117; Roleplay conversation workbench passed 37/37; all six required derived-artifact commands, Ruff, backlog ID validation, and git diff --check passed. The newly landed close-during-postcommit-owner regression is included in the 400 passes. All ten Qodo findings remain resolved; ADR-046 still governs this boundary and no new ADR is required.
 <!-- SECTION:NOTES:END -->
