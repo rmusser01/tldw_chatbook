@@ -49,8 +49,9 @@ def _executor() -> Any:
     return executor_type()
 
 
-def _admit(tree: ExecutorProcessTree) -> bool:
+def _admit(tree: ExecutorProcessTree, commit_launch: Any) -> bool:
     tree.admit()
+    commit_launch()
     return True
 
 
@@ -118,7 +119,7 @@ def test_spawned_worker_reports_identity_and_waits_for_admission_before_shell(
     marker = tmp_path / "shell-started"
     identities: list[WorkerContainmentIdentity] = []
 
-    def admit(tree: ExecutorProcessTree) -> bool:
+    def admit(tree: ExecutorProcessTree, commit_launch: Any) -> bool:
         identity = tree._identity
         assert type(identity) is WorkerContainmentIdentity
         assert identity.pid == tree._process.pid
@@ -127,6 +128,7 @@ def test_spawned_worker_reports_identity_and_waits_for_admission_before_shell(
         assert marker.exists() is False
         identities.append(identity)
         tree.admit()
+        commit_launch()
         return True
 
     command = _python_command(
@@ -154,7 +156,7 @@ def test_failed_or_exceptional_admission_kills_waiting_worker_without_shell(
     marker = tmp_path / "must-not-launch"
     captured_processes: list[Any] = []
 
-    def refuse(tree: ExecutorProcessTree) -> bool:
+    def refuse(tree: ExecutorProcessTree, _commit_launch: Any) -> bool:
         captured_processes.append(tree._process)
         assert marker.exists() is False
         tree.admit()
@@ -177,6 +179,98 @@ def test_failed_or_exceptional_admission_kills_waiting_worker_without_shell(
     assert marker.exists() is False
     assert captured_processes and captured_processes[0].is_alive() is False
     assert _spool_paths(spool_directory) == []
+
+
+def test_runtime_recheck_refusal_keeps_launch_gate_closed(
+    tmp_path: Path,
+) -> None:
+    runtime_lock = threading.Lock()
+    authority = {"armed": True}
+    callback_waiting = threading.Event()
+    marker = tmp_path / "revocation-won"
+    results: list[Any] = []
+
+    def admit(tree: ExecutorProcessTree, commit_launch: Any) -> bool:
+        callback_waiting.set()
+        with runtime_lock:
+            if not authority["armed"]:
+                return False
+            tree.admit()
+            commit_launch()
+            return True
+
+    runtime_lock.acquire()
+    thread = threading.Thread(
+        target=lambda: results.append(
+            _executor().execute(
+                _request(
+                    tmp_path,
+                    _python_command(
+                        f"from pathlib import Path; Path({str(marker)!r}).touch()"
+                    ),
+                ),
+                cancel_event=threading.Event(),
+                on_event=lambda _event: None,
+                admit_worker=admit,
+            )
+        )
+    )
+    thread.start()
+    try:
+        assert callback_waiting.wait(5.0)
+        authority["armed"] = False
+    finally:
+        runtime_lock.release()
+    thread.join(10.0)
+
+    assert thread.is_alive() is False
+    assert results[0].terminal_state == "containment_unavailable"
+    assert marker.exists() is False
+
+
+def test_runtime_admission_commits_under_lock_then_disarm_cancels(
+    tmp_path: Path,
+) -> None:
+    runtime_lock = threading.Lock()
+    cancel_event = threading.Event()
+    launched = threading.Event()
+    actions: list[tuple[str, bool]] = []
+    workers: list[Any] = []
+    results: list[Any] = []
+
+    def admit(tree: ExecutorProcessTree, commit_launch: Any) -> bool:
+        with runtime_lock:
+            workers.append(tree._process)
+            tree.admit()
+            actions.append(("admit", runtime_lock.locked()))
+            commit_launch()
+            commit_launch()
+            actions.append(("commit", runtime_lock.locked()))
+            return True
+
+    command = _python_command(
+        "import threading; print('launched', flush=True); threading.Event().wait(120)"
+    )
+    thread = threading.Thread(
+        target=lambda: results.append(
+            _executor().execute(
+                _request(tmp_path, command),
+                cancel_event=cancel_event,
+                on_event=lambda event: launched.set() if event.text else None,
+                admit_worker=admit,
+            )
+        )
+    )
+    thread.start()
+    assert launched.wait(5.0)
+    with runtime_lock:
+        cancel_event.set()
+    thread.join(10.0)
+
+    assert thread.is_alive() is False
+    assert actions == [("admit", True), ("commit", True)]
+    assert results[0].terminal_state == "cancelled"
+    assert workers and workers[0].is_alive() is False
 
 
 def test_worker_needs_parent_commit_after_containment_admission(
@@ -360,8 +454,12 @@ def test_execution_timeout_clock_starts_only_after_admission(
         SimpleNamespace(monotonic=lambda: clock.value),
     )
 
-    def admit_after_clock_jump(tree: ExecutorProcessTree) -> bool:
+    def admit_after_clock_jump(
+        tree: ExecutorProcessTree,
+        commit_launch: Any,
+    ) -> bool:
         tree.admit()
+        commit_launch()
         clock.value = 1000.0
         return True
 
@@ -534,9 +632,10 @@ def test_late_cancel_after_worker_exit_cannot_replace_exited_result(
     cancel_event = threading.Event()
     worker: list[Any] = []
 
-    def admit(tree: ExecutorProcessTree) -> bool:
+    def admit(tree: ExecutorProcessTree, commit_launch: Any) -> bool:
         worker.append(tree._process)
         tree.admit()
+        commit_launch()
         return True
 
     def cancel_after_worker_exit(event: Any) -> None:
@@ -670,9 +769,10 @@ def test_spool_and_process_are_cleaned_when_event_callback_raises(
 ) -> None:
     worker: list[Any] = []
 
-    def admit(tree: ExecutorProcessTree) -> bool:
+    def admit(tree: ExecutorProcessTree, commit_launch: Any) -> bool:
         worker.append(tree._process)
         tree.admit()
+        commit_launch()
         return True
 
     def fail_callback(_event: Any) -> None:
@@ -690,6 +790,52 @@ def test_spool_and_process_are_cleaned_when_event_callback_raises(
         )
 
     assert worker and worker[0].is_alive() is False
+    assert _spool_paths(spool_directory) == []
+
+
+def test_spool_unlink_survives_close_failure_and_process_cleanup(
+    tmp_path: Path,
+    spool_directory: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    created: list[Path] = []
+    workers: list[Any] = []
+    real_open_spool = raw_cli._open_spool
+
+    class CloseFailingSpool:
+        def __init__(self, spool: Any, path: str) -> None:
+            self._spool = spool
+            self._path = path
+
+        def __getattr__(self, name: str) -> Any:
+            return getattr(self._spool, name)
+
+        def close(self) -> None:
+            self._spool.close()
+            raise OSError(f"synthetic close failure at {self._path}")
+
+    def open_failing_spool() -> tuple[Any, str]:
+        spool, path = real_open_spool()
+        created.append(Path(path))
+        return CloseFailingSpool(spool, path), path
+
+    def admit(tree: ExecutorProcessTree, commit_launch: Any) -> bool:
+        workers.append(tree._process)
+        tree.admit()
+        commit_launch()
+        return True
+
+    monkeypatch.setattr(raw_cli, "_open_spool", open_failing_spool)
+    result = _executor().execute(
+        _request(tmp_path, _python_command("print('close failure')")),
+        cancel_event=threading.Event(),
+        on_event=lambda _event: None,
+        admit_worker=admit,
+    )
+
+    assert result.terminal_state == "exited"
+    assert created and created[0].exists() is False
+    assert workers and workers[0].is_alive() is False
     assert _spool_paths(spool_directory) == []
 
 

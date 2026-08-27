@@ -630,6 +630,19 @@ def _open_spool() -> tuple[BinaryIO, str]:
         raise
 
 
+def _close_spool(spool: BinaryIO, path: str) -> None:
+    """Close and remove the private spool without exposing its path."""
+    try:
+        spool.close()
+    except OSError:
+        pass
+    finally:
+        try:
+            os.unlink(path)
+        except OSError:
+            pass
+
+
 def _cleanup_tree(tree: ExecutorProcessTree, *, terminate: bool) -> bool:
     """Run bounded tree cleanup and convert missing death proof to ``False``."""
     try:
@@ -650,7 +663,7 @@ class RawShellExecutor:
         *,
         cancel_event: Any,
         on_event: Callable[[RawCliStreamEvent], None],
-        admit_worker: Callable[[ExecutorProcessTree], bool],
+        admit_worker: Callable[[ExecutorProcessTree, Callable[[], None]], bool],
     ) -> RawCliResult:
         """Validate, admit, stream, and finalize exactly one shell invocation."""
         validate_raw_cli_request(request)
@@ -729,10 +742,15 @@ class RawShellExecutor:
 
             try:
                 tree = ExecutorProcessTree(process, admission_event, identity)
-                admitted = admit_worker(tree)
+                admitted = admit_worker(tree, launch_event.set)
             except Exception:
                 admitted = False
-            if admitted is not True or tree is None or not tree.admitted:
+            if (
+                admitted is not True
+                or tree is None
+                or not tree.admitted
+                or not launch_event.is_set()
+            ):
                 terminal_state = "containment_unavailable"
                 abort_event.set()
                 cleanup_proven = (
@@ -751,7 +769,6 @@ class RawShellExecutor:
                 )
 
             started_at = time.monotonic()
-            launch_event.set()
             terminal_state, exit_code, resolved_shell, triggered = self._consume(
                 request,
                 process,
@@ -792,11 +809,7 @@ class RawShellExecutor:
                     output_queue.join_thread()
                 except (OSError, ValueError):
                     pass
-            spool.close()
-            try:
-                os.unlink(spool_name)
-            except FileNotFoundError:
-                pass
+            _close_spool(spool, spool_name)
 
     @staticmethod
     def _receive_identity(
