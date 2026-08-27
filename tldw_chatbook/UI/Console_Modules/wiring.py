@@ -934,6 +934,11 @@ def build_console_controllers(
             lambda: screen._ensure_console_chat_controller()
         ),
         composer_accessor=lambda: screen._console_composer_or_none(),
+        restore_banked_raw_cli_stashes=(
+            lambda session_id, composer: screen._raw_cli.restore_banked_stashes(
+                session_id, composer
+            )
+        ),
         effective_console_provider_model=(
             lambda: screen._effective_console_provider_model()
         ),
@@ -1547,8 +1552,10 @@ def build_console_controllers(
             lambda session_id, stash: restore_refused_raw_cli_stash(
                 session_id,
                 stash,
-                store=screen._ensure_console_chat_store(),
                 composer=screen._console_composer_or_none(),
+                active_session_id=(
+                    screen._ensure_console_chat_store().active_session_id
+                ),
                 visible_session_id=screen._console_visible_draft_session_id,
             )
         ),

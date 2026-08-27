@@ -12954,11 +12954,6 @@ class ChatScreen(BaseAppScreen):
         # keypress; the mouse path still reads the live draft here.
         stash = self._console_pending_send_stash
         self._console_pending_send_stash = None
-        composer = self._console_composer_or_none()
-        if stash is None and composer is not None:
-            stash = composer.stash_raw_cli_draft_for_send()
-            if stash is None and composer.draft_text().startswith(r"\! "):
-                stash = composer.stash_draft_for_send()
         if stash is not None:
             raw_draft = classify_console_raw_draft(stash)
             if raw_draft.kind == "raw":
@@ -12966,6 +12961,18 @@ class ChatScreen(BaseAppScreen):
                 return False
             if raw_draft.kind == "escaped_chat":
                 stash = unescape_console_raw_chat_stash(stash)
+        composer = self._console_composer_or_none()
+        if stash is None and composer is not None:
+            stash = composer.stash_raw_cli_draft_for_send()
+            if stash is None and composer.draft_text().startswith(r"\! "):
+                stash = composer.stash_draft_for_send()
+            if stash is not None:
+                raw_draft = classify_console_raw_draft(stash)
+                if raw_draft.kind == "raw":
+                    self._raw_cli.start_user_command(stash)
+                    return False
+                if raw_draft.kind == "escaped_chat":
+                    stash = unescape_console_raw_chat_stash(stash)
         if composer is None:
             try:
                 composer = self.query_one(

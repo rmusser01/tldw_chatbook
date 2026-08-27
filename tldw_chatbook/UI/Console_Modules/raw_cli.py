@@ -40,27 +40,17 @@ def restore_refused_raw_cli_stash(
     session_id: str | None,
     stash: ConsoleDraftStash,
     *,
-    store: Any,
     composer: Any | None,
+    active_session_id: str | None,
     visible_session_id: str | None,
-) -> None:
-    """Restore locally when visible, otherwise prepend to the origin draft."""
-    if session_id is None:
-        if composer is not None:
-            composer.restore_stashed_draft(stash)
-        return
-    if composer is not None and visible_session_id == session_id:
-        composer.restore_stashed_draft(stash)
-        try:
-            store.set_session_draft(session_id, composer.draft_text())
-        except KeyError:
-            pass
-        return
-    try:
-        current = store.session_draft(session_id)
-        store.set_session_draft(session_id, stash.text + current)
-    except KeyError:
-        return
+) -> bool:
+    """Restore only when the composer unambiguously belongs to the origin."""
+    if composer is None:
+        return False
+    if active_session_id != session_id or visible_session_id != session_id:
+        return False
+    composer.restore_stashed_draft(stash)
+    return True
 
 
 class ConsoleRawCliController:
@@ -74,7 +64,7 @@ class ConsoleRawCliController:
         persisted_leaf_anchor: Callable[[str], str | None],
         selected_local_root: Callable[[str], Path | None],
         private_scratch_root: Callable[[str], Path],
-        restore_stash: Callable[[str | None, ConsoleDraftStash], None],
+        restore_stash: Callable[[str | None, ConsoleDraftStash], bool],
         append_local_error: Callable[[str | None, str], None],
         append_store_marker: Callable[..., Any],
         update_store_marker: Callable[..., Any],
@@ -98,6 +88,7 @@ class ConsoleRawCliController:
         self._run_log_access = run_log_access
         self._start_worker = start_worker
         self._marshal_to_ui = marshal_to_ui
+        self._banked_stashes_by_session: dict[str, list[ConsoleDraftStash]] = {}
 
     def start_user_command(self, stash: ConsoleDraftStash) -> bool:
         """Start one trusted raw stash in its own non-exclusive thread worker."""
@@ -203,9 +194,18 @@ class ConsoleRawCliController:
         stash: ConsoleDraftStash,
         message: str,
     ) -> bool:
-        self._restore_stash(session_id, stash)
+        restored = self._restore_stash(session_id, stash)
+        if not restored and session_id is not None:
+            self._banked_stashes_by_session.setdefault(session_id, []).append(stash)
         self._append_local_error(session_id, message)
         return False
+
+    def restore_banked_stashes(self, session_id: str, composer: Any) -> int:
+        """Prepend exact refused stashes once their origin is reconciled."""
+        stashes = self._banked_stashes_by_session.pop(session_id, [])
+        for stash in reversed(stashes):
+            composer.restore_stashed_draft(stash)
+        return len(stashes)
 
 
 __all__ = ["ConsoleRawCliController", "restore_refused_raw_cli_stash"]

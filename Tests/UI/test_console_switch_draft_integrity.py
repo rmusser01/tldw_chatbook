@@ -12,6 +12,7 @@ the swap then runs exactly as a later sync pass would.
 """
 
 import pytest
+from textual.events import Key
 
 from Tests.UI.test_console_native_chat_flow import _select_llamacpp_console
 from Tests.UI.test_destination_shells import _build_test_app, _wait_for_selector
@@ -19,6 +20,9 @@ from Tests.UI.test_product_maturity_gate1_core_loop_screen_adaptation import (
     ConsoleHarness,
 )
 from tldw_chatbook.Widgets.Console import ConsoleComposerBar
+from tldw_chatbook.Widgets.Console.console_composer_bar import (
+    classify_console_raw_draft,
+)
 
 
 async def _settle_window_swap(console, pilot, *, type_during_window: str):
@@ -89,3 +93,61 @@ async def test_console_switch_without_typing_swaps_drafts_exactly_as_before():
 
         assert composer.draft_text() == ""
         assert store.session_draft(session_a.id) == "old draft"
+
+
+@pytest.mark.asyncio
+async def test_raw_refusal_during_switch_settle_preserves_both_session_drafts():
+    app = _build_test_app()
+    app.chat_api_provider_value = "llama_cpp"
+    app.chat_api_model_value = "test-model"
+    host = ConsoleHarness(app)
+
+    async with host.run_test(size=(160, 48)) as pilot:
+        console = host.screen_stack[-1]
+        await _wait_for_selector(console, pilot, "#console-native-composer")
+        _select_llamacpp_console(console)
+
+        store = console._ensure_console_chat_store()
+        session_a = store.ensure_session(title="Chat A")
+        composer = console.query_one("#console-native-composer", ConsoleComposerBar)
+        composer.focus()
+        await pilot.pause()
+        console._session._sync_console_session_draft()
+
+        assert composer.handle_console_key(Key("exclamation_mark", "!")) is True
+        assert composer.handle_console_key(Key("space", " ")) is True
+        composer.insert_pasted_text("pwd")
+        raw_stash = composer.stash_draft_for_send()
+        assert raw_stash is not None
+
+        console._console_sync_in_progress = True
+        try:
+            await console._session._create_native_console_session_from_active_context()
+            composer.insert_text("b-suffix")
+        finally:
+            console._console_sync_in_progress = False
+
+        session_b_id = store.active_session_id
+        assert session_b_id != session_a.id
+        assert console._console_visible_draft_session_id == session_a.id
+
+        console._raw_cli._refuse(session_a.id, raw_stash, "test refusal")
+        assert composer.draft_text() == "b-suffix"
+        assert store.session_draft(session_a.id) == ""
+
+        console._session._sync_console_session_draft()
+        assert composer.draft_text() == "b-suffix"
+
+        console._session._capture_console_draft_switch_snapshot()
+        store.switch_session(session_a.id)
+        console._session._sync_console_session_draft()
+
+        restored = composer.stash_draft_for_send()
+        assert store.session_draft(session_b_id) == "b-suffix"
+        assert restored is not None
+        assert restored.raw_cli_prefix_typed is True
+        assert restored.has_paste is True
+        assert restored.segments == raw_stash.segments
+        classified = classify_console_raw_draft(restored)
+        assert classified.kind == "raw"
+        assert classified.text == "pwd"

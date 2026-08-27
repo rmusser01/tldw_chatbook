@@ -18,6 +18,7 @@ from tldw_chatbook.UI.Screens.chat_screen import ChatScreen
 from tldw_chatbook.Widgets.Console.console_composer_bar import (
     ConsoleComposerBar,
     ConsoleDraftStash,
+    classify_console_raw_draft,
 )
 from textual.events import Key
 
@@ -34,6 +35,16 @@ def _stash(
         has_paste=has_paste,
         raw_cli_prefix_typed=trusted,
     )
+
+
+def _physical_raw_stash(command: str) -> ConsoleDraftStash:
+    composer = ConsoleComposerBar()
+    assert composer.handle_console_key(Key("exclamation_mark", "!")) is True
+    assert composer.handle_console_key(Key("space", " ")) is True
+    composer.insert_pasted_text(command)
+    stash = composer.stash_draft_for_send()
+    assert stash is not None
+    return stash
 
 
 class _Runtime:
@@ -92,8 +103,9 @@ def _controller(
     if restore_stash is None:
         def default_restore_stash(
             session_id: str | None, stash: ConsoleDraftStash
-        ) -> None:
+        ) -> bool:
             restored.append((session_id, stash))
+            return True
 
         restore_stash = default_restore_stash
     if append_local_error is None:
@@ -348,6 +360,20 @@ class _Composer:
         return None
 
 
+def test_refusal_restore_requires_active_and_visible_origin_ownership() -> None:
+    stash = _stash("! pwd")
+    composer = _Composer("session b")
+
+    assert restore_refused_raw_cli_stash(
+        None,
+        stash,
+        composer=composer,
+        active_session_id="session-b",
+        visible_session_id="session-b",
+    ) is False
+    assert composer.restored == []
+
+
 def _route_screen(stash: ConsoleDraftStash):
     composer = _Composer(stash.text)
     raw_calls: list[ConsoleDraftStash] = []
@@ -389,6 +415,7 @@ async def test_trusted_raw_stash_is_intercepted_before_slash_attachment_and_queu
         raise AssertionError("raw command reached a model-send seam")
 
     screen.query_one = lambda *_args, **_kwargs: forbidden()
+    screen._console_composer_or_none = forbidden
     screen._console_pending_image_attachment = forbidden
     screen._console_command_registry.parse = lambda _text: forbidden()
     screen._dispatch_console_draft_send = lambda *_args, **_kwargs: forbidden()
@@ -461,7 +488,7 @@ async def test_workbench_send_consumes_existing_physical_raw_provenance() -> Non
     assert composer.draft_text() == ""
 
 
-def test_delayed_refusal_banks_origin_draft_without_leaking_after_session_switch(
+def test_hidden_session_refusal_banks_exact_stash_until_reconciled(
     tmp_path: Path,
 ) -> None:
     class RefusingRuntime(_Runtime):
@@ -482,48 +509,56 @@ def test_delayed_refusal_banks_origin_draft_without_leaking_after_session_switch
                 cleanup_proven=True,
             )
 
-    class Store:
-        drafts = {"session-a": "", "session-b": "visible b"}
-
-        def session_draft(self, session_id: str) -> str:
-            return self.drafts[session_id]
-
-        def set_session_draft(self, session_id: str, draft: str) -> None:
-            self.drafts[session_id] = draft
-
-    visible_composer = _Composer("visible b")
-    fake_screen = SimpleNamespace(
-        _console_visible_draft_session_id="session-a",
-        _ensure_console_chat_store=lambda: Store(),
-        _console_composer_or_none=lambda: visible_composer,
-    )
     marshalled: list[tuple[Any, tuple[Any, ...]]] = []
     runtime = RefusingRuntime()
     controller, _restored, errors, workers, _selected, _scratch = _controller(
         tmp_path,
         runtime,
         active_session_id=lambda: "session-a",
-        restore_stash=lambda session_id, stash: (
-            restore_refused_raw_cli_stash(
-                session_id,
-                stash,
-                store=fake_screen._ensure_console_chat_store(),
-                composer=fake_screen._console_composer_or_none(),
-                visible_session_id=fake_screen._console_visible_draft_session_id,
-            )
-        ),
+        restore_stash=lambda _session_id, _stash: False,
         marshal_to_ui=lambda callback, *args: marshalled.append((callback, args)),
     )
-    stash = _stash("! pwd")
+    stash = _physical_raw_stash("pwd")
 
     assert controller.start_user_command(stash) is True
-    Store.drafts["session-a"] = "newer a"
-    fake_screen._console_visible_draft_session_id = "session-b"
     workers[0][0]()
     callback, args = marshalled.pop()
     callback(*args)
 
-    assert Store.drafts["session-a"] == "! pwdnewer a"
-    assert Store.drafts["session-b"] == "visible b"
-    assert visible_composer.restored == []
+    reconciled = ConsoleComposerBar()
+    reconciled.load_draft("newer a")
+    assert controller.restore_banked_stashes("session-a", reconciled) == 1
+    restored = reconciled.stash_draft_for_send()
+
+    assert restored is not None
+    assert restored.text == "! pwdnewer a"
+    assert restored.raw_cli_prefix_typed is True
+    assert restored.has_paste is True
+    assert restored.segments[: len(stash.segments)] == stash.segments
+    classified = classify_console_raw_draft(restored)
+    assert classified.kind == "raw"
+    assert classified.text == "pwdnewer a"
     assert errors[0][0] == "session-a"
+
+
+def test_hidden_session_refusal_bank_restores_multiple_stashes_in_order(
+    tmp_path: Path,
+) -> None:
+    runtime = _Runtime(permitted=False, armed=False)
+    controller, _restored, _errors, _workers, _selected, _scratch = _controller(
+        tmp_path,
+        runtime,
+        active_session_id=lambda: "session-a",
+        restore_stash=lambda _session_id, _stash: False,
+    )
+    first = _physical_raw_stash("first")
+    second = _physical_raw_stash("second")
+
+    assert controller.start_user_command(first) is False
+    assert controller.start_user_command(second) is False
+
+    reconciled = ConsoleComposerBar()
+    reconciled.load_draft("tail")
+    assert controller.restore_banked_stashes("session-a", reconciled) == 2
+    assert reconciled.draft_text() == "! first! secondtail"
+    assert controller.restore_banked_stashes("session-a", reconciled) == 0
