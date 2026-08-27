@@ -246,6 +246,7 @@ class ConsoleMessageActionService:
             "speak",
             "speak-stop",
             "edit",
+            "view-original-attempt",
             "fork",
             "regenerate",
             "retry",

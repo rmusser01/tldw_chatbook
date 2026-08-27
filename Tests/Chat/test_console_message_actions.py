@@ -916,6 +916,61 @@ def test_original_attempt_action_is_explicit_and_precedes_regenerate():
     assert "View original attempt" not in service.plain_action_row(message)
 
 
+def test_original_attempt_remains_in_the_primary_action_group() -> None:
+    message = ConsoleChatMessage(
+        role=ConsoleMessageRole.ASSISTANT,
+        content="Repaired answer [S1]",
+        id="assistant-repaired",
+    )
+
+    groups = ConsoleMessageActionService().action_groups(
+        message,
+        original_attempt_available=True,
+    )
+
+    assert tuple(action.action_id for action in groups.primary) == (
+        "copy",
+        "speak",
+        "edit",
+        "view-original-attempt",
+        "fork",
+        "regenerate",
+        "continue",
+        "more",
+    )
+    assert tuple(action.action_id for action in groups.overflow) == (
+        "save-as",
+        "feedback-up",
+        "feedback-down",
+        "delete",
+    )
+    assert groups.media == ()
+
+
+def test_original_attempt_remains_in_selected_row_actions() -> None:
+    message = ConsoleChatMessage(
+        role=ConsoleMessageRole.ASSISTANT,
+        content="Repaired answer [S1]",
+        id="assistant-repaired",
+    )
+
+    actions = ConsoleMessageActionService().selected_row_actions(
+        message,
+        original_attempt_available=True,
+    )
+
+    assert tuple(action.action_id for action in actions) == (
+        "copy",
+        "speak",
+        "edit",
+        "view-original-attempt",
+        "fork",
+        "regenerate",
+        "continue",
+        "more",
+    )
+
+
 @pytest.mark.parametrize(
     "message",
     (

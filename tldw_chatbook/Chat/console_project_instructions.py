@@ -5,7 +5,7 @@ from __future__ import annotations
 import hashlib
 import json
 import unicodedata
-from dataclasses import dataclass, replace
+from dataclasses import dataclass
 from ipaddress import ip_address
 from urllib.parse import urlsplit, urlunsplit
 
@@ -74,9 +74,31 @@ def sanitize_fork_project_instruction_state(
 
     Returns:
         The same declarative selection with a fresh notice boundary.
+
+    Raises:
+        TypeError: If the source or any scalar control field is malformed.
     """
 
-    return replace(source, project_instruction_notice_key=None)
+    if type(source) is not ProjectInstructionControlState:
+        raise TypeError("source must be ProjectInstructionControlState")
+    if type(source.project_instructions_enabled) is not bool:
+        raise TypeError("project_instructions_enabled must be a bool")
+    for field_name in (
+        "working_folder_binding_id",
+        "working_folder_locator_fingerprint",
+        "project_instruction_notice_key",
+    ):
+        value = getattr(source, field_name)
+        if value is not None and type(value) is not str:
+            raise TypeError(f"{field_name} must be a string or None")
+    return ProjectInstructionControlState(
+        project_instructions_enabled=source.project_instructions_enabled,
+        working_folder_binding_id=source.working_folder_binding_id,
+        working_folder_locator_fingerprint=(
+            source.working_folder_locator_fingerprint
+        ),
+        project_instruction_notice_key=None,
+    )
 
 
 def encode_project_context_json(state: ProjectInstructionControlState) -> str:

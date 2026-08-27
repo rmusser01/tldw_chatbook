@@ -32,6 +32,7 @@ from tldw_chatbook.Chat.console_project_instructions import (
 )
 from tldw_chatbook.Chat.console_session_settings import ConsoleSessionSettings
 from tldw_chatbook.Chat.console_speech_preferences import ConsoleSpeechPreferences
+from tldw_chatbook.Chat.rag_scope import RagScope, ScopeItem
 
 
 def _configuration_snapshot() -> ConsoleForkConfigurationSnapshot:
@@ -98,6 +99,37 @@ def test_fork_project_instruction_state_clears_only_source_notice_authority() ->
         source,
         project_instruction_notice_key=None,
     )
+
+
+def test_fork_project_instruction_sanitizer_rejects_nested_authority_state() -> None:
+    source = ProjectInstructionControlState(
+        project_instructions_enabled=True,
+        working_folder_binding_id={"permission_state": "allow"},  # type: ignore[arg-type]
+    )
+
+    with pytest.raises(TypeError, match="working_folder_binding_id"):
+        sanitize_fork_project_instruction_state(source)
+
+
+def test_fork_project_instruction_sanitizer_rejects_cycles() -> None:
+    cycle: dict[str, object] = {}
+    cycle["scratch_state"] = cycle
+    source = ProjectInstructionControlState(
+        project_instructions_enabled=True,
+        working_folder_locator_fingerprint=cycle,  # type: ignore[arg-type]
+    )
+
+    with pytest.raises(TypeError, match="working_folder_locator_fingerprint"):
+        sanitize_fork_project_instruction_state(source)
+
+
+def test_fork_project_instruction_sanitizer_requires_an_exact_boolean() -> None:
+    source = ProjectInstructionControlState(
+        project_instructions_enabled=1,  # type: ignore[arg-type]
+    )
+
+    with pytest.raises(TypeError, match="project_instructions_enabled"):
+        sanitize_fork_project_instruction_state(source)
 
 
 def test_fork_records_are_frozen_slotted_contracts() -> None:
@@ -303,6 +335,85 @@ def test_fork_fingerprint_rejects_source_notice_authority() -> None:
 
     with pytest.raises(ValueError, match="notice authority"):
         console_chat_fork.fingerprint_console_fork_configuration(source_authority)
+
+
+def test_fork_fingerprint_rejects_nested_project_authority_state() -> None:
+    configuration = replace(
+        _configuration_snapshot(),
+        project_instruction_state=ProjectInstructionControlState(
+            project_instructions_enabled=True,
+            working_folder_binding_id={"permission_state": "allow"},  # type: ignore[arg-type]
+        ),
+    )
+
+    with pytest.raises(TypeError, match="working_folder_binding_id"):
+        console_chat_fork.fingerprint_console_fork_configuration(configuration)
+
+
+def test_fork_fingerprint_rejects_cycles_before_canonical_json() -> None:
+    cycle: dict[str, object] = {}
+    cycle["scratch_state"] = cycle
+    configuration = replace(
+        _configuration_snapshot(),
+        workspace_id=cycle,  # type: ignore[arg-type]
+    )
+
+    with pytest.raises(TypeError, match="workspace_id"):
+        console_chat_fork.fingerprint_console_fork_configuration(configuration)
+
+
+@pytest.mark.parametrize(
+    "configuration",
+    (
+        replace(
+            _configuration_snapshot(),
+            settings=replace(_configuration_snapshot().settings, streaming=1),  # type: ignore[arg-type]
+        ),
+        replace(
+            _configuration_snapshot(),
+            rag_scope=RagScope(
+                items=[ScopeItem("note", "7")],  # type: ignore[arg-type]
+                updated_at="2026-08-26T00:00:00Z",
+            ),
+        ),
+        replace(
+            _configuration_snapshot(),
+            library_policy=ConsoleLibraryPolicyCandidate(
+                auto_retrieve="never",  # type: ignore[arg-type]
+                assistant_access=ConsoleAssistantLibraryAccess.BLOCKED,
+            ),
+        ),
+    ),
+)
+def test_fork_configuration_fingerprint_rejects_malformed_nested_leaf_types(
+    configuration,
+) -> None:
+    with pytest.raises(TypeError, match="Fork configuration"):
+        console_chat_fork.fingerprint_console_fork_configuration(configuration)
+
+
+@pytest.mark.parametrize(
+    "image_selection",
+    (
+        ConsoleForkImageSelectionFence(
+            native_message_id="message-1",
+            selected_position=True,  # type: ignore[arg-type]
+            browse_revision=1,
+            attachment_meta_fingerprint="sha256:attachment",
+        ),
+        ConsoleForkImageSelectionFence(
+            native_message_id="message-1",
+            selected_position=0,
+            browse_revision=1,
+            attachment_meta_fingerprint={"raw_path": "/tmp/image"},  # type: ignore[arg-type]
+        ),
+    ),
+)
+def test_fork_image_selection_fingerprint_rejects_malformed_leaf_types(
+    image_selection,
+) -> None:
+    with pytest.raises(TypeError, match="Fork image selection"):
+        console_chat_fork.fingerprint_console_fork_image_selection(image_selection)
 
 
 def test_generic_fork_payload_fingerprint_is_not_public() -> None:

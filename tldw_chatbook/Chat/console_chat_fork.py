@@ -12,14 +12,26 @@ from tldw_chatbook.Chat.console_chat_models import (
     ConsoleMessageStatus,
     derive_console_session_title,
 )
-from tldw_chatbook.Chat.console_context_policy import ConsoleContextPolicyOverrides
-from tldw_chatbook.Chat.console_library_policy import ConsoleLibraryPolicyCandidate
+from tldw_chatbook.Chat.console_context_policy import (
+    CompactionFailureBehavior,
+    ConsoleContextPolicyOverrides,
+    ContextBudgetMode,
+    ContextCarryForwardMode,
+    ContextCompactionMode,
+    ContextCompactionRepresentation,
+)
+from tldw_chatbook.Chat.console_library_policy import (
+    ConsoleAssistantLibraryAccess,
+    ConsoleAutoRetrieve,
+    ConsoleLibraryPolicyCandidate,
+)
 from tldw_chatbook.Chat.console_project_instructions import (
     ProjectInstructionControlState,
+    sanitize_fork_project_instruction_state,
 )
 from tldw_chatbook.Chat.console_session_settings import ConsoleSessionSettings
 from tldw_chatbook.Chat.console_speech_preferences import ConsoleSpeechPreferences
-from tldw_chatbook.Chat.rag_scope import RagScope
+from tldw_chatbook.Chat.rag_scope import RagScope, ScopeItem
 
 
 CONSOLE_FORK_TITLE_MAX_LENGTH = 60
@@ -195,20 +207,117 @@ def fingerprint_console_fork_configuration(
 
     if type(configuration) is not ConsoleForkConfigurationSnapshot:
         raise TypeError("Expected ConsoleForkConfigurationSnapshot.")
+    _require_exact_field_types(
+        "Fork configuration",
+        configuration,
+        {
+            "workspace_id": (str,),
+            "runtime_backend": (str,),
+            "assistant_kind": (str, type(None)),
+            "assistant_id": (str, type(None)),
+            "assistant_authority_id": (str, type(None)),
+            "persona_memory_mode": (str, type(None)),
+            "character_id": (int, type(None)),
+            "character_name": (str, type(None)),
+            "user_display_name_override": (str, type(None)),
+            "character_system_template": (str, type(None)),
+        },
+    )
     if type(configuration.settings) is not ConsoleSessionSettings:
         raise TypeError("Fork settings must be ConsoleSessionSettings.")
+    _require_exact_field_types(
+        "Fork configuration settings",
+        configuration.settings,
+        {
+            "provider": (str,),
+            "model": (str, type(None)),
+            "base_url": (str, type(None)),
+            "temperature": (int, float),
+            "top_p": (int, float),
+            "min_p": (int, float, type(None)),
+            "top_k": (int, type(None)),
+            "max_tokens": (int, type(None)),
+            "seed": (int, type(None)),
+            "presence_penalty": (int, float, type(None)),
+            "frequency_penalty": (int, float, type(None)),
+            "reasoning_effort": (str, type(None)),
+            "reasoning_summary": (str, type(None)),
+            "verbosity": (str, type(None)),
+            "thinking_effort": (str, type(None)),
+            "thinking_budget_tokens": (int, type(None)),
+            "streaming": (bool,),
+            "character_label": (str,),
+            "system_prompt": (str, type(None)),
+            "source": (str,),
+            "pinned_prefill": (str, type(None)),
+        },
+    )
     if configuration.settings.pinned_prefill is not None:
         raise ValueError("Fork configuration must clear pinned prefill.")
     if type(configuration.rag_scope) not in {RagScope, type(None)}:
         raise TypeError("Fork RAG scope must be RagScope or None.")
+    if configuration.rag_scope is not None:
+        _require_exact_field_types(
+            "Fork configuration RAG scope",
+            configuration.rag_scope,
+            {
+                "items": (tuple,),
+                "updated_at": (str,),
+                "empty_is_scoped": (bool,),
+            },
+        )
+        for item in configuration.rag_scope.items:
+            if type(item) is not ScopeItem:
+                raise TypeError("Fork configuration RAG items must be ScopeItem.")
+            _require_exact_field_types(
+                "Fork configuration RAG item",
+                item,
+                {"source_type": (str,), "source_id": (str,)},
+            )
     if type(configuration.context_policy_overrides) is not ConsoleContextPolicyOverrides:
         raise TypeError(
             "Fork context policy must be ConsoleContextPolicyOverrides."
         )
+    _require_exact_field_types(
+        "Fork configuration context policy",
+        configuration.context_policy_overrides,
+        {
+            "budget_mode": (ContextBudgetMode, type(None)),
+            "custom_budget_tokens": (int, type(None)),
+            "compaction_mode": (ContextCompactionMode, type(None)),
+            "compaction_representation": (
+                ContextCompactionRepresentation,
+                type(None),
+            ),
+            "trigger_ratio": (int, float, type(None)),
+            "target_ratio": (int, float, type(None)),
+            "summary_max_tokens": (int, type(None)),
+            "failure_behavior": (CompactionFailureBehavior, type(None)),
+            "carry_forward_mode": (ContextCarryForwardMode, type(None)),
+        },
+    )
     if type(configuration.library_policy) is not ConsoleLibraryPolicyCandidate:
         raise TypeError("Fork library policy must be ConsoleLibraryPolicyCandidate.")
+    _require_exact_field_types(
+        "Fork configuration library policy",
+        configuration.library_policy,
+        {
+            "auto_retrieve": (ConsoleAutoRetrieve,),
+            "assistant_access": (ConsoleAssistantLibraryAccess,),
+        },
+    )
     if type(configuration.speech_preferences) is not ConsoleSpeechPreferences:
         raise TypeError("Fork speech preferences must be ConsoleSpeechPreferences.")
+    _require_exact_field_types(
+        "Fork configuration speech preferences",
+        configuration.speech_preferences,
+        {
+            "auto_speak": (bool,),
+            "paused": (bool,),
+            "consent_destination": (str, type(None)),
+            "consent_version": (int,),
+        },
+    )
     project_state = configuration.project_instruction_state
     if type(project_state) is not ProjectInstructionControlState:
         raise TypeError(
@@ -216,6 +325,7 @@ def fingerprint_console_fork_configuration(
         )
     if project_state.project_instruction_notice_key is not None:
         raise ValueError("Fork configuration must clear source notice authority.")
+    project_state = sanitize_fork_project_instruction_state(project_state)
 
     settings = configuration.settings
     rag_scope = configuration.rag_scope
@@ -298,6 +408,16 @@ def fingerprint_console_fork_image_selection(
 
     if type(image_selection) is not ConsoleForkImageSelectionFence:
         raise TypeError("Expected ConsoleForkImageSelectionFence.")
+    _require_exact_field_types(
+        "Fork image selection",
+        image_selection,
+        {
+            "native_message_id": (str,),
+            "selected_position": (int,),
+            "browse_revision": (int,),
+            "attachment_meta_fingerprint": (str,),
+        },
+    )
     return _fingerprint_console_fork_payload(
         "image-selection",
         {
@@ -330,6 +450,18 @@ def _fingerprint_console_fork_payload(purpose: str, payload: object) -> str:
     return hashlib.sha256(
         _CONSOLE_FORK_FINGERPRINT_DOMAIN + purpose.encode("ascii") + b"\0" + canonical
     ).hexdigest()
+
+
+def _require_exact_field_types(
+    contract: str,
+    value: object,
+    field_types: dict[str, tuple[type, ...]],
+) -> None:
+    """Reject containers and bool-as-int values in typed fingerprint leaves."""
+
+    for field_name, allowed_types in field_types.items():
+        if type(getattr(value, field_name)) not in allowed_types:
+            raise TypeError(f"{contract} {field_name} has an invalid type.")
 
 
 def _validate_canonical_json(value: object) -> None:
