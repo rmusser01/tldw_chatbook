@@ -146,3 +146,7 @@ resolved: no unreachable transcript guard or synthetic owner remains. The trajec
 validator stays the only Task 2 production change, and its narrow ADR-067-compatible
 contract remains approved. The reviewer found no remaining correctness, privacy,
 maintainability, test-quality, or YAGNI issue.
+
+Task 3 (2026-08-27): dispatched joined lifecycle/backend-refusal integration and user
+documentation. Root retains ownership of the isolated live Console verification and
+Backlog closeout after independent specification and code-quality reviews.
