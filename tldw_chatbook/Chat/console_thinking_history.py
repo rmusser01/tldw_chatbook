@@ -93,7 +93,16 @@ def effective_thinking_history_policy(
     *,
     continuation_required: bool = False,
 ) -> EffectiveThinkingHistoryPolicy:
-    """Resolve the effective replay policy without changing the saved value."""
+    """Resolve the effective replay policy without changing the saved value.
+
+    Args:
+        policy: Saved preference to normalize as Auto, Include, or Exclude.
+        continuation_required: Whether provider continuation requires replay.
+
+    Returns:
+        Required when continuation demands replay; otherwise the normalized
+        saved preference.
+    """
 
     saved = normalize_thinking_history_policy(policy)
     return "required" if continuation_required else saved
@@ -125,7 +134,23 @@ def resolve_thinking_history(
     sidecars: tuple[ProviderThinkingSidecar, ...] = (),
     continuation_required: bool = False,
 ) -> ResolvedThinkingHistory:
-    """Resolve optional replay without changing its saved conversation policy."""
+    """Resolve optional replay without changing its saved conversation policy.
+
+    Args:
+        target: Frozen provider and model compatibility facts for this send.
+        policy: Saved conversation replay preference to normalize.
+        sidecars: Canonical thinking envelopes paired with assistant owners.
+        continuation_required: Whether provider continuation requires replay.
+
+    Returns:
+        The saved and effective policies plus compatible owner groups.
+
+    Raises:
+        TypeError: If the target or a sidecar is not canonical.
+        ValueError: If more than one sidecar claims the same owner.
+        ThinkingHistorySerializationError: If Include requires replay of a
+            block that cannot be serialized safely for the selected target.
+    """
 
     if not isinstance(target, ThinkingReplayTarget):
         raise TypeError("target must be a ThinkingReplayTarget.")
@@ -177,7 +202,20 @@ def serialize_start_anchored_thinking(
     visible_answer: object,
     group: ThinkingOwnerGroup,
 ) -> str:
-    """Return exact local chat-template source encoding for one owner."""
+    """Return exact local chat-template source encoding for one owner.
+
+    Args:
+        visible_answer: Visible assistant answer to place after thinking.
+        group: Compatible start-anchored blocks owned by that answer.
+
+    Returns:
+        The local chat-template source containing thinking followed by the
+        visible answer.
+
+    Raises:
+        ThinkingHistorySerializationError: If the answer is not text or a
+            block cannot be serialized safely as start-anchored thinking.
+    """
 
     if type(visible_answer) is not str:
         raise ThinkingHistorySerializationError(_SERIALIZATION_ERROR)

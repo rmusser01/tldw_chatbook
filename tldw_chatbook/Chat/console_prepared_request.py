@@ -216,7 +216,19 @@ def attach_thinking_history(
     thinking_policy: ThinkingHistoryPolicy,
     effective_thinking_policy: EffectiveThinkingHistoryPolicy,
 ) -> PreparedConsoleRequest:
-    """Attach resolved thinking to exact owners in an existing semantic request."""
+    """Attach resolved thinking to exact owners in a semantic request.
+
+    Args:
+        request: Immutable provider-neutral request to update.
+        groups: Resolved thinking groups keyed by assistant message owner.
+        owner_key: Temporary message field containing the owner identifier.
+        thinking_policy: Saved conversation replay preference.
+        effective_thinking_policy: Replay policy effective for this request.
+
+    Returns:
+        A new request with thinking groups attached to their exact owners and
+        the temporary owner fields removed.
+    """
 
     by_owner = {group.owner_message_id: group for group in groups}
 

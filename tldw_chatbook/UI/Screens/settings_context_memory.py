@@ -46,7 +46,14 @@ CONTEXT_MEMORY_CONFIG_KEYS = (
 def load_show_model_thinking(
     console_config: Mapping[str, object] | None,
 ) -> bool:
-    """Resolve the device-local presentation toggle, defaulting safely on."""
+    """Resolve the device-local presentation toggle, defaulting safely on.
+
+    Args:
+        console_config: Optional Console settings mapping.
+
+    Returns:
+        The saved boolean toggle, or ``True`` when missing or invalid.
+    """
 
     raw = (console_config or {}).get("show_model_thinking", True)
     if type(raw) is not bool:
@@ -57,7 +64,14 @@ def load_show_model_thinking(
 def load_thinking_history_policy_default(
     console_config: Mapping[str, object] | None,
 ) -> ThinkingHistoryPolicy:
-    """Resolve the optional replay policy copied into new conversations."""
+    """Resolve the optional replay policy copied into new conversations.
+
+    Args:
+        console_config: Optional Console settings mapping.
+
+    Returns:
+        The normalized Auto, Include, or Exclude default.
+    """
 
     return normalize_thinking_history_policy(
         (console_config or {}).get("thinking_history_policy_default")
