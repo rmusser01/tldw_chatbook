@@ -1,6 +1,6 @@
 # ADR-093: Ship immutable tiktoken tables for offline runtime use
 
-Status: Proposed — blocked on encoding-table redistribution evidence
+Status: Accepted
 
 Date: 2026-08-27
 
@@ -27,9 +27,6 @@ test workload.
 
 ## Decision
 
-This technical decision is not accepted for implementation until the
-redistribution gate in item 3 is satisfied or a narrower design is approved.
-
 1. GPT-2's two data-gym files and the r50k, p50k, cl100k, and o200k BPE tables
    are reviewed application runtime assets under
    `tldw_chatbook/assets/tiktoken_cache/`.
@@ -37,21 +34,16 @@ redistribution gate in item 3 is satisfied or a narrower design is approved.
    manifest pins tiktoken `0.14.0`, readable names, source URLs, expected
    content hashes, constructor/cache API assumptions, and the update procedure.
    The core dependency is exactly pinned to the same reviewed version.
-3. Each table requires a documented redistribution basis before it can ship.
-   Tiktoken's MIT package license is not treated as permission for separately
-   hosted BPE blobs by inference alone. In
+3. Tiktoken's MIT license applies to the encoding files. In
    [tiktoken issue #92](https://github.com/openai/tiktoken/issues/92#issuecomment-1497875652),
    an OpenAI collaborator stated that the repository license applies to the
-   encoding files. A follow-up requested the statement in the license or
-   another non-issue artifact, and no such clarification is visible there. The
-   Chatbook repository owner has not yet accepted the issue comment alone as
-   sufficient release evidence. The GPT-2 pair has a clear
+   encoding files, and the Chatbook repository owner accepts that statement as
+   sufficient redistribution evidence. The GPT-2 pair also has a clear
    [`openai/gpt-2` MIT source](https://github.com/openai/gpt-2/blob/master/LICENSE),
-   while the release evidence for r50k, p50k, cl100k, and o200k remains
-   unaccepted. Source URLs and hashes prove provenance and integrity, not
-   redistribution permission. Once accepted, the exact tables, manifest,
-   notices, and compatibility conclusion are mandatory in source and wheel
-   artifacts.
+   and the exact tables, manifest, license, clarification link, and provenance
+   notice are mandatory in source and wheel artifacts. Source URLs and hashes
+   prove provenance and integrity; the preserved MIT terms and upstream
+   clarification supply the redistribution permission.
 4. The installed package is an immutable read owner under ADR-032. The
    canonical release checker requires the exact cache inventory, rejects
    unexpected cache entries, and verifies source-built and sdist-rebuilt wheels
@@ -96,19 +88,17 @@ solve the user-visible offline runtime gap.
 
 ## Consequences
 
-If this proposal passes the redistribution gate and is accepted:
-
-- Distribution size will grow by the reviewed table inventory, roughly eight
+- Distribution size grows by the reviewed table inventory, roughly eight
   megabytes.
-- Standard token estimates and GPT-2 token chunking will no longer require first-use
+- Standard token estimates and GPT-2 token chunking no longer require first-use
   network access.
-- The application package will set one additional process environment default, but
+- The application package sets one additional process environment default, but
   never overrides a pre-import explicit caller value.
 - The design intentionally depends on tiktoken's reviewed internal load seam;
   dependency upgrades require a compatibility and asset audit before widening
   the exact pin.
-- New tiktoken encodings will not become available merely by upgrading the
+- New tiktoken encodings do not become available merely by upgrading the
   dependency; the asset inventory must be reviewed and updated in the same
   change.
-- The existing character estimator will remain the degraded path when `tiktoken`
+- The existing character estimator remains the degraded path when `tiktoken`
   itself is unavailable.

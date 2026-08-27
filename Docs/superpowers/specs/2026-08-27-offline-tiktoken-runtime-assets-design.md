@@ -10,8 +10,9 @@ Make real token estimates and token-based chunking work without network access
 in a normal Chatbook installation, while preserving an explicit user cache
 override and the existing no-`tiktoken` character fallback.
 
-**Status:** Paused. No runtime assets, dependency pin, loader guard, packaging
-check, or production/test change described below has been implemented.
+**Status:** Approved for implementation. The repository owner accepts the
+upstream collaborator's statement that tiktoken's MIT license covers the
+encoding files as sufficient redistribution evidence.
 
 ## Context
 
@@ -26,27 +27,23 @@ also explicitly maps legacy models to `p50k_base` and `r50k_base`, so a complete
 runtime inventory must include those tables even though the current test sample
 did not request them.
 
-## Proposed Design
+## Chosen Design
 
-### Redistribution gate
+### Redistribution basis
 
-Implementation is blocked on documenting redistribution permission for every
-bundled table. The MIT license in the `tiktoken` repository clearly covers the
-Python package, but it does not explicitly identify the separately hosted BPE
-table blobs as licensed works. OpenAI's public tiktoken issue #92 records the
+The MIT license in the `tiktoken` repository covers the Python package and the
+encoding files. OpenAI's public tiktoken issue #92 records the
 [question and a collaborator's answer](https://github.com/openai/tiktoken/issues/92#issuecomment-1497875652)
-that the repository license applies to the encoding files. A follow-up asked
-for that statement in the repository license or another non-issue artifact;
-no such clarification is visible in the issue. The Chatbook repository owner
-has not yet accepted the issue comment alone as sufficient release evidence.
+that the repository license applies to those files. The Chatbook repository
+owner accepts that upstream statement as the redistribution basis.
 The GPT-2 vocabulary pair has a clear
-[MIT source in `openai/gpt-2`](https://github.com/openai/gpt-2/blob/master/LICENSE);
-that evidence does not automatically cover r50k, p50k, cl100k, or o200k.
+[MIT source in `openai/gpt-2`](https://github.com/openai/gpt-2/blob/master/LICENSE)
+as an additional provenance record.
 
-No non-GPT-2 table may be copied into a release artifact until the repository
-owner records a defensible redistribution basis. Source URLs and integrity
-hashes establish provenance, not permission. If that basis cannot be
-established, the design must be narrowed and re-approved before implementation.
+The bundle will preserve tiktoken's MIT license, the collaborator's
+clarification link, exact source URLs, and integrity hashes. The latter prove
+provenance and integrity; the license and upstream clarification supply the
+redistribution permission.
 
 ### Immutable cache ownership
 
@@ -69,11 +66,10 @@ pin the same reviewed dependency version because the design relies on tiktoken's
 registry. An upgrade must re-audit those APIs, constructors, URLs, hashes, and
 model-to-encoding mappings before changing the pin.
 
-After the redistribution gate is satisfied, the application ships the exact
-required notices and an asset-provenance record naming each source, hash, and
-redistribution basis. Packaging checks make those records mandatory in sdist
-and wheel. Compatibility with Chatbook's AGPL-3.0-or-later distribution must be
-documented rather than inferred from tiktoken's package license.
+The application ships the exact required notices and an asset-provenance record
+naming each source, hash, and redistribution basis. Packaging checks make those
+records mandatory in sdist and wheel. The preserved MIT terms are compatible
+with Chatbook's AGPL-3.0-or-later distribution.
 
 ### Runtime selection
 
@@ -113,10 +109,11 @@ engine files.
 
 ### Test ownership
 
-`Tests/conftest.py` will point its cache guard at the same runtime asset directory;
-there is no second test-only copy. The existing cache-integrity test expands to
-all six entries and continues proving that tokenization succeeds while the
-network guard is active.
+`Tests/conftest.py` will remove its test-only cache override; normal package
+bootstrap will select the same runtime asset directory in tests and production,
+with no second test-only copy. The existing cache-integrity test expands to all
+six entries and continues proving that tokenization succeeds while the network
+guard is active.
 
 `Tests/Chat/test_token_counter.py` will stop skipping the real tokenizer test when
 the core dependency is absent. Character-fallback tests explicitly disable

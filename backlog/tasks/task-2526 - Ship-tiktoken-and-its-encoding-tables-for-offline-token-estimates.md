@@ -1,10 +1,10 @@
 ---
 id: TASK-2526
 title: Ship tiktoken and its encoding tables for offline token estimates
-status: To Do
+status: In Progress
 assignee: []
 created_date: '2026-08-06 02:22'
-updated_date: '2026-08-27 18:56'
+updated_date: '2026-08-27 19:23'
 labels:
   - packaging
   - tokens
@@ -27,9 +27,10 @@ a normal installation performs real subword tokenization without network
 access. Preserve explicit `TIKTOKEN_CACHE_DIR` authority and the existing
 character fallback for environments where `tiktoken` is genuinely absent.
 
-Implementation is currently gated on documenting redistribution permission for
-the separately hosted non-GPT-2 BPE tables. Tiktoken's package license, source
-URLs, and hashes do not by themselves establish that permission.
+An OpenAI collaborator confirmed that tiktoken's MIT repository license applies
+to the encoding files, and the repository owner accepts that statement as the
+redistribution basis. The bundle must preserve the license, clarification link,
+source URLs, and hashes.
 
 Baseline investigation on 2026-08-27 also found that the old fallback test did
 not actually select the fallback tier when `tiktoken` was installed. Its real
@@ -42,10 +43,9 @@ fixture. The task must make those tier-specific tests explicit and cache-clean.
 - [ ] #1 `tiktoken==0.14.0` is a mandatory reviewed base dependency and its
       absence fails the standard tokenizer test instead of silently skipping
       it; built metadata retains that exact requirement.
-- [ ] #2 After a defensible redistribution basis is documented for each asset,
-      the exact GPT-2, r50k, p50k, cl100k, and o200k tables requested by
+- [ ] #2 The exact GPT-2, r50k, p50k, cl100k, and o200k tables requested by
       Chatbook and its chunking engine ship in both the wheel and source
-      distribution.
+      distribution with the accepted redistribution evidence.
 - [ ] #3 With no explicit cache override, source and installed-distribution
       tokenization uses a guarded immutable bundle; missing/corrupt entries make
       zero fetch attempts and cannot mutate the package tree.
@@ -64,20 +64,26 @@ fixture. The task must make those tier-specific tests explicit and cache-clean.
       sdist-rebuilt wheels from a read-only installed tree.
 <!-- AC:END -->
 
-## Design
+## Implementation Plan
 
-- [Proposed design (licensing-gated)](../../Docs/superpowers/specs/2026-08-27-offline-tiktoken-runtime-assets-design.md)
-- [ADR-093](../decisions/093-offline-tiktoken-runtime-assets.md)
+1. Add red tests for the closed runtime bundle, explicit override authority,
+   immutable failure behavior, and every supported encoding.
+2. Add the minimal import-time tiktoken loader guard and the reviewed six-file
+   cache inventory with manifest, MIT license, and provenance notice.
+3. Pin `tiktoken==0.14.0`; extend package data, source distribution, metadata,
+   and canonical release-checker contracts with exact-inventory rejection.
+4. Fix the existing token-counter fallback test isolation without changing the
+   production estimate cache contract.
+5. Prove source-built and sdist-rebuilt wheels tokenize offline from read-only
+   installed trees, including missing/corrupt and unexpected-entry mutations.
+6. Run focused tests, static checks, artifact verification, independent review,
+   and complete the task documentation before opening the PR.
 
-## Blocker
+Detailed plan: [Offline tiktoken Runtime Assets Implementation Plan](../../Docs/superpowers/plans/2026-08-27-offline-tiktoken-runtime-assets.md)
 
-Paused on 2026-08-27 by owner direction. Preserve the full offline-tokenization
-goal and do not implement the narrower GPT-2-only fallback design. Resume only
-after a defensible redistribution basis is documented for the separately
-hosted r50k, p50k, cl100k, and o200k tables. An OpenAI collaborator stated in
-[tiktoken issue #92](https://github.com/openai/tiktoken/issues/92#issuecomment-1497875652)
-that the repository license applies to the encoding files; a follow-up asked
-for that statement in the repository license or another non-issue artifact.
-The Chatbook repository owner has not yet accepted the issue comment alone as
-sufficient release evidence. Source URLs and integrity hashes are not by
-themselves redistribution permission.
+ADR required: yes
+
+ADR path: `backlog/decisions/093-offline-tiktoken-runtime-assets.md`
+
+Reason: this changes the dependency runtime, package-data inventory, network
+policy, redistribution record, and immutable installed-asset boundary.
