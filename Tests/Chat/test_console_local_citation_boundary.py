@@ -3,7 +3,9 @@ from __future__ import annotations
 import asyncio
 import gc
 import logging
-from uuid import uuid4
+import pathlib
+import shutil
+import tempfile
 import threading
 import time
 import weakref
@@ -97,10 +99,8 @@ def _first(matches, *, what: str):
 
 
 #: Every `_ReadyCitationPersistence` opened during a test, so its database
-#: connections can be closed afterwards rather than left to the garbage
-#: collector. A shared-cache in-memory database lives exactly as long as one
-#: connection to it stays open, so leaking connections leaks memory for the
-#: whole session (Qodo review of #2128).
+#: connections can be closed and its temp directory removed, rather than left
+#: to the garbage collector and to /tmp (Qodo review of #2128).
 _OPEN_PERSISTENCES: list["_ReadyCitationPersistence"] = []
 
 
@@ -116,6 +116,7 @@ def _close_citation_persistences():
             persistence.db.close_connection()
         except Exception:  # pragma: no cover - cleanup must not mask failures
             pass
+        shutil.rmtree(persistence._db_dir, ignore_errors=True)
 
 
 class _RequestBuilder:
@@ -260,22 +261,25 @@ class _ReadyCitationPersistence:
 
     def __init__(self) -> None:
         self.create_calls: list[dict[str, Any]] = []
-        # IN-MEMORY, but with a SHARED CACHE and a unique name.
+        # FILE-backed in a temp directory, deliberately, with cleanup.
         #
-        # A plain ":memory:" does not work here: `CharactersRAGDB` opens a
-        # THREAD-LOCAL connection and TASK-22205 offloads durable DB calls to a
-        # worker thread, so that worker gets its OWN empty database and writes
-        # made there are invisible to assertions on this thread. Measured:
-        # citation traces wrote successfully and `rag_citation_traces` still
-        # read 0 rows.
+        # ":memory:" cannot work here: `CharactersRAGDB` opens a THREAD-LOCAL
+        # connection and TASK-22205 offloads durable DB calls to a worker
+        # thread, so that worker gets its OWN empty database and writes made
+        # there are invisible to assertions on this thread. Measured: citation
+        # traces wrote successfully and `rag_citation_traces` still read 0 rows.
         #
-        # A shared-cache URI keeps the database in memory (no temp files, no
-        # cleanup) while making it visible across threads. The uuid keeps each
-        # instance isolated -- a shared cache is keyed by NAME, so a fixed name
-        # would silently join every test to one database.
-        self._db_name = f"citation-boundary-{uuid4().hex}"
+        # A shared-cache in-memory URI would solve that in principle, but
+        # `CharactersRAGDB` never passes `uri=True` to `sqlite3.connect`, so a
+        # "file:...?mode=memory&cache=shared" string is taken as a LITERAL
+        # FILENAME -- it silently creates a file with `?` and `:` in its name,
+        # which is illegal on Windows. That was tried and reverted here.
+        #
+        # The temp directory is removed by the autouse fixture below, which is
+        # what keeps this from leaking (Qodo review of #2128).
+        self._db_dir = tempfile.mkdtemp(prefix="citation-boundary-")
         self.db = CharactersRAGDB(
-            f"file:{self._db_name}?mode=memory&cache=shared", "citation-boundary"
+            pathlib.Path(self._db_dir) / "boundary.sqlite", "citation-boundary"
         )
         _OPEN_PERSISTENCES.append(self)
         # The old fake hard-coded `canonical_citation_writes_ready = True`. The
