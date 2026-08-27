@@ -2,7 +2,7 @@
 
 **Date:** 2026-08-26
 
-**Status:** Approved for implementation
+**Status:** Implemented and verified
 
 **Task:** `TASK-23088`
 
@@ -759,6 +759,19 @@ chat, forks from a middle USER and ASSISTANT message, renames one fork, switches
 all tabs, restarts for durable reload, and confirms the source did not change. It need
 not contact a provider; deterministic seeded conversation data is stronger evidence
 for the clone boundary.
+
+### Implementation verification (2026-08-27)
+
+The completed feature is covered by the provider-free production-shaped journey in
+`Tests/integration/test_console_chat_fork_flow.py`. It mounts the production Console
+screen and consolidated stylesheet against a fresh temporary HOME/XDG profile and
+file-backed SQLite database, renders the modal at `120x35` and `80x24`, exercises
+keyboard and pointer fork paths, renames a fork, switches among source and fork tabs,
+promotes a temporary fork, and restarts against the same database for durable reload.
+The journey proves exact USER and ASSISTANT prefixes, ancestry, source immutability,
+fresh authority, citation and attachment behavior, generated-image selection, video
+tombstones, and privacy-safe snapshots, notices, and diagnostics without contacting a
+provider. The complete Task 7 targeted regression set passed: 663 tests.
 
 ## Documentation and rollout
 

@@ -1985,7 +1985,9 @@ class ConsoleSessionController:
             includes_citations=any(
                 message.citation_presentation is not None for message in messages
             ),
-            contains_video=any(message.video_metadata is not None for message in messages),
+            contains_video=any(
+                message.video_metadata is not None for message in messages
+            ),
         )
 
     def request_console_chat_fork(self, message_id: str) -> None:
@@ -2034,9 +2036,7 @@ class ConsoleSessionController:
             fence=fence,
             fork_session_id=str(uuid.uuid4()),
             fork_conversation_id=(
-                None
-                if fence.source_durability == "temporary"
-                else str(uuid.uuid4())
+                None if fence.source_durability == "temporary" else str(uuid.uuid4())
             ),
             modal=modal,
             title=title,
@@ -2111,7 +2111,9 @@ class ConsoleSessionController:
         return await asyncio.to_thread(call)
 
     @staticmethod
-    def _fork_conversation_kwargs(snapshot: ConsoleChatForkSnapshot) -> dict[str, object]:
+    def _fork_conversation_kwargs(
+        snapshot: ConsoleChatForkSnapshot,
+    ) -> dict[str, object]:
         configuration = snapshot.configuration
         global_scope = configuration.workspace_id == CONSOLE_GLOBAL_WORKSPACE_ID
         return {
