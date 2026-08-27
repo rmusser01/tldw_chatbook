@@ -70,13 +70,13 @@ class _FakeWindowsApi:
         assign_error: bool = False,
         active_process_counts: tuple[int, ...] = (0,),
         query_error: bool = False,
-        close_error: bool = False,
+        close_failures: int = 0,
     ) -> None:
         self.calls = calls
         self.assign_error = assign_error
         self.active_process_counts = active_process_counts
         self.query_error = query_error
-        self.close_error = close_error
+        self.close_failures = close_failures
 
     def create_kill_on_close_job(self) -> int:
         self.calls.append("create_job")
@@ -102,7 +102,8 @@ class _FakeWindowsApi:
 
     def close_handle(self, job_handle: int) -> None:
         self.calls.append(("close_job", job_handle))
-        if self.close_error:
+        if self.close_failures:
+            self.close_failures -= 1
             raise OSError("close failed")
 
 
@@ -555,11 +556,13 @@ def test_windows_job_timeout_quarantines_and_releases_owned_handle() -> None:
     assert calls.count(("close_job", 99)) == 1
 
 
-def test_windows_job_close_failure_is_unproven_and_not_retried() -> None:
+def test_windows_job_close_failure_retains_ownership_until_one_successful_retry() -> (
+    None
+):
     calls: list[object] = []
     process = _FakeProcess(calls)
     admission = _RecordingEvent(calls)
-    api = _FakeWindowsApi(calls, close_error=True)
+    api = _FakeWindowsApi(calls, close_failures=1)
     identity = WorkerContainmentIdentity(pid=process.pid, process_group_id=None)
     tree = ExecutorProcessTree(
         process,
@@ -574,9 +577,16 @@ def test_windows_job_close_failure_is_unproven_and_not_retried() -> None:
 
     assert tree.terminate_tree(term_timeout=0.2, kill_timeout=0.3) is False
     assert tree.quarantined is True
-    assert tree._job_handle == 0
-    assert tree.terminate_tree(term_timeout=4.0, kill_timeout=5.0) is False
+    assert tree._job_handle == 99
     assert calls.count(("close_job", 99)) == 1
+
+    assert tree.close() is False
+    assert tree._job_handle == 0
+    assert calls.count(("close_job", 99)) == 2
+
+    assert tree.terminate_tree(term_timeout=4.0, kill_timeout=5.0) is False
+    assert tree.close() is False
+    assert calls.count(("close_job", 99)) == 2
 
 
 def test_cleanup_serializes_late_windows_admission_and_closes_job_once() -> None:

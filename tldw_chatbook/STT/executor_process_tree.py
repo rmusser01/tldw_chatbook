@@ -308,6 +308,11 @@ class ExecutorProcessTree:
 
         with self._lock:
             if self._closed:
+                if self._job_handle:
+                    try:
+                        self._close_job_handle()
+                    except OSError:
+                        self._quarantined = True
                 return not self._quarantined
             self._admitted = False
             self._closed = True
@@ -427,6 +432,11 @@ class ExecutorProcessTree:
 
         with self._lock:
             if self._closed:
+                if self._job_handle:
+                    try:
+                        self._close_job_handle()
+                    except OSError:
+                        self._quarantined = True
                 return not self._quarantined
             return self.terminate_tree()
 
@@ -444,8 +454,8 @@ class ExecutorProcessTree:
             if not self._job_handle:
                 return
             job_handle = self._job_handle
-            self._job_handle = 0
             self._windows_api.close_handle(job_handle)
+            self._job_handle = 0
 
 
 __all__ = [
