@@ -2,12 +2,15 @@ from __future__ import annotations
 
 from copy import deepcopy
 from pathlib import Path
+import asyncio
+import threading
 from unittest.mock import patch
 
 import pytest
 from textual.widgets import Button, Checkbox, Input, Select, Static
 
 import tldw_chatbook
+import tldw_chatbook.UI.Screens.settings_screen as settings_screen_module
 from Tests.UI.test_destination_shells import (
     DestinationHarness,
     _active_destination_screen,
@@ -102,16 +105,15 @@ def test_thinking_history_default_normalizes_only_optional_values(
 async def test_show_model_thinking_is_canonical_immediate_and_rolls_back() -> None:
     app = _build_test_app()
     app.app_config = {"console": {"show_model_thinking": False}}
-    captured: list[tuple[bool, bool, int]] = []
+    captured: list[tuple[bool, int]] = []
     refreshes: list[int] = []
 
     def _capture_persist(
         _screen: SettingsScreen,
         next_value: bool,
-        previous: bool,
         revision: int,
     ) -> None:
-        captured.append((next_value, previous, revision))
+        captured.append((next_value, revision))
 
     host = DestinationHarness(app, "settings")
     with (
@@ -141,13 +143,12 @@ async def test_show_model_thinking_is_canonical_immediate_and_rolls_back() -> No
 
             assert app.app_config["console"]["show_model_thinking"] is True
             assert str(toggle.label) == "Show model thinking (On)"
-            assert captured == [(True, False, 1)]
+            assert captured == [(True, 1)]
             assert len(refreshes) == 1
 
             screen._apply_thinking_visibility_persist_result(
                 False,
                 True,
-                False,
                 1,
             )
             await pilot.pause()
@@ -158,6 +159,121 @@ async def test_show_model_thinking_is_canonical_immediate_and_rolls_back() -> No
             assert len(refreshes) == 2
             result = screen.query_one("#settings-console-behavior-result", Static)
             assert "prior setting was restored" in _static_text(result)
+
+
+@pytest.mark.asyncio
+async def test_thinking_visibility_write_drain_coalesces_and_rolls_back_latest_failure() -> (
+    None
+):
+    """Catches overlapping workers persisting stale visibility after rapid toggles."""
+
+    app = _build_test_app()
+    app.app_config = {"console": {"show_model_thinking": False}}
+    writes: list[tuple[bool, int]] = []
+    refreshes: list[int] = []
+
+    def _capture_persist(
+        _screen: SettingsScreen,
+        value: bool,
+        revision: int,
+    ) -> None:
+        writes.append((value, revision))
+
+    host = DestinationHarness(app, "settings")
+    with (
+        patch.object(
+            SettingsScreen,
+            "_settings_persist_thinking_visibility",
+            new=_capture_persist,
+        ),
+        patch.object(
+            SettingsScreen,
+            "_signal_console_appearance_refresh",
+            new=lambda _screen: refreshes.append(1),
+        ),
+    ):
+        async with host.run_test(size=(110, 40)) as pilot:
+            await pilot.app.workers.wait_for_complete()
+            screen = _active_destination_screen(host)
+            screen._select_category(SettingsCategoryId.CONSOLE_BEHAVIOR.value)
+            await pilot.pause()
+            toggle = screen.query_one("#settings-console-show-model-thinking", Checkbox)
+
+            toggle.value = True
+            await pilot.pause()
+            toggle.value = False
+            await pilot.pause()
+
+            assert app.app_config["console"]["show_model_thinking"] is False
+            assert writes == [(True, 1)]
+
+            screen._apply_thinking_visibility_persist_result(True, True, 1)
+            assert writes == [(True, 1), (False, 2)]
+
+            screen._apply_thinking_visibility_persist_result(False, False, 2)
+            await pilot.pause()
+
+            assert app.app_config["console"]["show_model_thinking"] is True
+            assert toggle.value is True
+            assert str(toggle.label) == "Show model thinking (On)"
+            assert len(refreshes) == 3
+            result = screen.query_one("#settings-console-behavior-result", Static)
+            assert "prior setting was restored" in _static_text(result)
+
+            # A stale/out-of-order callback cannot change the confirmed disk view.
+            screen._apply_thinking_visibility_persist_result(True, True, 1)
+            assert app.app_config["console"]["show_model_thinking"] is True
+            assert writes == [(True, 1), (False, 2)]
+
+
+@pytest.mark.asyncio
+async def test_thinking_visibility_overlapping_failure_matches_restart_value() -> None:
+    """Proves a failed latest write leaves disk and optimistic state aligned."""
+
+    app = _build_test_app()
+    app.app_config = {"console": {"show_model_thinking": False}}
+    first_started = threading.Event()
+    release_first = threading.Event()
+    writes: list[bool] = []
+    persisted = {"show_model_thinking": False}
+
+    class FakeAdapter:
+        def save_sections(self, sections) -> bool:
+            value = bool(sections["console"]["show_model_thinking"])
+            writes.append(value)
+            if len(writes) == 1:
+                first_started.set()
+                if not release_first.wait(2):
+                    return False
+                persisted["show_model_thinking"] = value
+                return True
+            return False
+
+    host = DestinationHarness(app, "settings")
+    with patch.object(settings_screen_module, "SettingsConfigAdapter", FakeAdapter):
+        async with host.run_test(size=(110, 40)) as pilot:
+            await pilot.app.workers.wait_for_complete()
+            screen = _active_destination_screen(host)
+            screen._select_category(SettingsCategoryId.CONSOLE_BEHAVIOR.value)
+            await pilot.pause()
+            toggle = screen.query_one("#settings-console-show-model-thinking", Checkbox)
+
+            toggle.value = True
+            assert await asyncio.to_thread(first_started.wait, 2)
+            toggle.value = False
+            await pilot.pause()
+
+            assert writes == [True]
+            release_first.set()
+            await pilot.app.workers.wait_for_complete()
+            await pilot.app.workers.wait_for_complete()
+            await pilot.pause()
+
+            assert writes == [True, False]
+            assert persisted["show_model_thinking"] is True
+            assert app.app_config["console"]["show_model_thinking"] is True
+            assert toggle.value is True
+            assert load_show_model_thinking(persisted) is True
 
 
 def test_context_memory_defaults_and_saved_overrides_share_policy_contract() -> None:

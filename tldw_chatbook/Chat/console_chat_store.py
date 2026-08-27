@@ -174,6 +174,8 @@ if TYPE_CHECKING:
 #: Maximum number of attachments a Console session may stage before send.
 MAX_PENDING_ATTACHMENTS = 5
 
+_OMITTED_THINKING_HISTORY_POLICY = object()
+
 TerminalCitationFinalizer = Callable[[str], SealedCitationWrite | None]
 
 
@@ -1051,6 +1053,7 @@ class ConsoleChatStore:
         library_policy_defaults_provider: (
             Callable[[], ConsoleLibraryPolicyDefaults] | None
         ) = None,
+        thinking_history_policy_default_provider: Callable[[], object] | None = None,
         library_policy_coordinator: ConsoleLibraryPolicyCoordinator | None = None,
     ) -> None:
         """Initialize the Console chat store.
@@ -1079,6 +1082,9 @@ class ConsoleChatStore:
                 scope row) use this hook to stay in sync instead of reading
                 stale/absent cache state. Never called when nothing was
                 held, or when the flush itself raised.
+            thinking_history_policy_default_provider: Optional live reader for
+                the policy copied into each newly created session. Explicit and
+                restored policies bypass this reader.
         """
         self.persistence = persistence
         self.workspace_context = workspace_context or ConsoleWorkspaceContext()
@@ -1094,6 +1100,9 @@ class ConsoleChatStore:
             )
         )
         self._library_policy_defaults_provider = library_policy_defaults_provider
+        self._thinking_history_policy_default_provider = (
+            thinking_history_policy_default_provider
+        )
         repository = getattr(
             persistence,
             "console_library_policy_repository",
@@ -1400,7 +1409,7 @@ class ConsoleChatStore:
         workspace_id: str | None = None,
         settings: ConsoleSessionSettings | None = None,
         canonical_settings_baseline: ConsoleSessionSettings | None = None,
-        thinking_history_policy: object = None,
+        thinking_history_policy: object = _OMITTED_THINKING_HISTORY_POLICY,
         runtime_backend: str = "local",
         assistant_kind: str | None = "generic",
         assistant_id: str | None = "console",
@@ -1449,6 +1458,12 @@ class ConsoleChatStore:
             raise TypeError(
                 "library policy defaults provider must return "
                 "ConsoleLibraryPolicyDefaults"
+            )
+        if thinking_history_policy is _OMITTED_THINKING_HISTORY_POLICY:
+            thinking_history_policy = (
+                self._thinking_history_policy_default_provider()
+                if self._thinking_history_policy_default_provider is not None
+                else None
             )
         session = ConsoleChatSession(
             id=session_id or str(uuid4()),

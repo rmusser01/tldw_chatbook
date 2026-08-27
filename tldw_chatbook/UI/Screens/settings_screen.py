@@ -2577,6 +2577,10 @@ class SettingsScreen(BaseAppScreen):
         self._syncing_console_paste_toggle = False
         self._syncing_console_thinking_visibility = False
         self._thinking_visibility_write_revision = 0
+        initial_thinking_visibility = self._loaded_show_model_thinking()
+        self._thinking_visibility_desired_value = initial_thinking_visibility
+        self._thinking_visibility_confirmed_value = initial_thinking_visibility
+        self._thinking_visibility_in_flight: tuple[bool, int] | None = None
         self._syncing_console_rail_layout_scope = False
         self._syncing_console_rail_label_style = False
         self._syncing_console_defaults = False
@@ -19381,11 +19385,8 @@ class SettingsScreen(BaseAppScreen):
         event.checkbox.label = self._show_model_thinking_label()
         self._signal_console_appearance_refresh()
         self._thinking_visibility_write_revision += 1
-        self._settings_persist_thinking_visibility(
-            next_value,
-            previous,
-            self._thinking_visibility_write_revision,
-        )
+        self._thinking_visibility_desired_value = next_value
+        self._start_thinking_visibility_persist_if_idle()
 
     @on(Checkbox.Changed, "#settings-console-stack-collapsed-rail-labels")
     def handle_console_rail_label_style_changed(self, event: Checkbox.Changed) -> None:
@@ -22670,27 +22671,39 @@ class SettingsScreen(BaseAppScreen):
         self,
         saved: bool,
         next_value: bool,
-        previous: bool,
         revision: int,
     ) -> None:
-        """Keep the optimistic toggle or roll it back after a failed write."""
+        """Advance one serialized write and reconcile the latest desired value."""
 
-        if revision != self._thinking_visibility_write_revision:
+        if self._thinking_visibility_in_flight != (next_value, revision):
             return
+        self._thinking_visibility_in_flight = None
         if saved:
-            self._console_behavior_result = "Model thinking visibility saved."
-            self._set_static_text(
-                "#settings-console-behavior-result", self._console_behavior_result
-            )
+            self._thinking_visibility_confirmed_value = next_value
+            if self._thinking_visibility_desired_value != next_value:
+                self._start_thinking_visibility_persist_if_idle()
+            else:
+                self._console_behavior_result = "Model thinking visibility saved."
+                self._set_static_text(
+                    "#settings-console-behavior-result", self._console_behavior_result
+                )
             return
-        if self._loaded_show_model_thinking() == next_value:
-            self._console_settings()["show_model_thinking"] = previous
+        if revision != self._thinking_visibility_write_revision:
+            if (
+                self._thinking_visibility_desired_value
+                != self._thinking_visibility_confirmed_value
+            ):
+                self._start_thinking_visibility_persist_if_idle()
+            return
+        restored = self._thinking_visibility_confirmed_value
+        self._thinking_visibility_desired_value = restored
+        self._console_settings()["show_model_thinking"] = restored
         try:
             checkbox = self.query_one("#settings-console-show-model-thinking", Checkbox)
             self._syncing_console_thinking_visibility = True
             try:
                 with checkbox.prevent(Checkbox.Changed):
-                    checkbox.value = previous
+                    checkbox.value = restored
                 checkbox.label = self._show_model_thinking_label()
             finally:
                 self._syncing_console_thinking_visibility = False
@@ -22705,15 +22718,22 @@ class SettingsScreen(BaseAppScreen):
         )
         self.app.notify(self._console_behavior_result, severity="error")
 
-    @work(
-        exclusive=True,
-        group="settings-console-thinking-visibility",
-        thread=True,
-    )
+    def _start_thinking_visibility_persist_if_idle(self) -> None:
+        """Dispatch only the newest desired visibility when no write is active."""
+
+        if self._thinking_visibility_in_flight is not None:
+            return
+        next_value = self._thinking_visibility_desired_value
+        if next_value == self._thinking_visibility_confirmed_value:
+            return
+        revision = self._thinking_visibility_write_revision
+        self._thinking_visibility_in_flight = (next_value, revision)
+        self._settings_persist_thinking_visibility(next_value, revision)
+
+    @work(group="settings-console-thinking-visibility", thread=True)
     def _settings_persist_thinking_visibility(
         self,
         next_value: bool,
-        previous: bool,
         revision: int,
     ) -> None:
         saved = SettingsConfigAdapter().save_sections(
@@ -22723,7 +22743,6 @@ class SettingsScreen(BaseAppScreen):
             self._apply_thinking_visibility_persist_result,
             saved,
             next_value,
-            previous,
             revision,
         )
 

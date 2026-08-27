@@ -88,6 +88,17 @@ class ResolvedThinkingHistory:
     groups: tuple[ThinkingOwnerGroup, ...] = field(default=(), repr=False)
 
 
+def effective_thinking_history_policy(
+    policy: object,
+    *,
+    continuation_required: bool = False,
+) -> EffectiveThinkingHistoryPolicy:
+    """Resolve the effective replay policy without changing the saved value."""
+
+    saved = normalize_thinking_history_policy(policy)
+    return "required" if continuation_required else saved
+
+
 def _claims_local_compatibility(
     block: DisplayableThinkingBlock,
     target: ThinkingReplayTarget,
@@ -118,8 +129,9 @@ def resolve_thinking_history(
     if not isinstance(target, ThinkingReplayTarget):
         raise TypeError("target must be a ThinkingReplayTarget.")
     saved = normalize_thinking_history_policy(policy)
-    effective: EffectiveThinkingHistoryPolicy = (
-        "required" if continuation_required else saved
+    effective = effective_thinking_history_policy(
+        saved,
+        continuation_required=continuation_required,
     )
     if saved == "exclude":
         return ResolvedThinkingHistory(saved, effective)

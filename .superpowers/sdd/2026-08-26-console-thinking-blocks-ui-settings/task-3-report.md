@@ -38,6 +38,40 @@ continuation provenance that Save clears through the existing edit path.
 Pytest emitted post-success temporary-directory cleanup warnings for unrelated sync
 promotion fixtures; no Task 3 assertion failed in the completed focused runs.
 
+## Review fix round 1
+
+The first independent review found three Priority-1 gaps and all three were reproduced
+before implementation:
+
+- RED: three continuation-policy cases failed because the controller had no
+  effective-policy seam, and the UI builder rejected the new effective-policy input.
+  GREEN: 5 focused cases passed. The modal/popover now ask the existing provider
+  resolver for the actual frozen send target and reuse the controller's existing
+  continuation-group selector. One shared pure helper maps the saved optional value
+  plus compatible completed continuation groups to the effective value. Compatible
+  completed replay is Required; active recovery, incompatible history, a changed
+  target, and provider-resolution failure retain the saved Auto/Include/Exclude value.
+- RED: the store rejected the proposed live-default provider argument and the runtime
+  created Auto instead of the configured Exclude value. GREEN: 2 focused store/runtime
+  cases passed. ConsoleChatStore.create_session now reads one runtime-wired live
+  default on every omitted-policy creation, covering ordinary, character, workspace,
+  first-chat, and other callers through their shared store boundary. Explicit values
+  and restored durable values bypass the provider; legacy durable NULL remains Auto.
+  The one-path post-create setter and its duplicate UI resolver were removed.
+- RED: the rapid-toggle regression raised on the legacy worker signature and left the
+  optimistic value inconsistent. GREEN: the focused coalescing and worker-overlap
+  cases passed. Visibility persistence now has one in-flight writer, a newest desired
+  revision/value, and a confirmed persisted baseline. Completion drains only the
+  newest differing value; a latest failure rolls the checkbox, app config, label, and
+  transcript projection back to the confirmed baseline and emits the existing error.
+  The worker-overlap test also proves the surviving persisted value is the value a
+  restart loads.
+
+Final review-round verification: the exact affected Settings/Context/session/edit
+filter completed **128 passed, 460 deselected** in 67.30s. Scoped Ruff lint passed on
+all 12 changed implementation/test files. Pytest again emitted only the documented
+post-success temporary-directory cleanup warnings.
+
 ## Architecture and deviation
 
 ADR-090 is the governing accepted decision; Task 3 introduces no additional
@@ -46,6 +80,11 @@ base `450361d9cf`. With parent approval, Task 3 added only the missing conversat
 owned store getter/setter and direct `ChatPersistenceService` write-through parallel
 to existing context-policy overrides. No controller, dependency, binding, legacy
 settings surface, or footer hint was added.
+
+Review round 1 remains a direct implementation of ADR-090: it makes the UI's Required
+projection consume the existing provider/send ownership boundary, moves future-session
+default resolution to the store boundary that owns session creation, and serializes an
+already-existing device-local presentation write. No new ADR is required.
 
 ## Impeccable / Ponytail review
 

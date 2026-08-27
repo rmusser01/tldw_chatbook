@@ -67,7 +67,7 @@ def _state(
     *,
     memory: ConsoleMemoryRecord | None = None,
     thinking_policy: str = "auto",
-    required_reason: str | None = None,
+    effective_thinking_policy: str | None = None,
 ):
     return build_console_context_control_state(
         settings=_settings(),
@@ -82,7 +82,7 @@ def _state(
         safety_margin_tokens=2_000,
         active_memory=memory,
         thinking_history_policy=thinking_policy,
-        thinking_history_required_reason=required_reason,
+        thinking_history_effective_policy=effective_thinking_policy,
     )
 
 
@@ -244,7 +244,7 @@ async def test_thinking_history_required_preserves_saved_value_and_disables_edit
     app = _ContextHarness()
     state = _state(
         thinking_policy="exclude",
-        required_reason="Active provider continuation must be replayed.",
+        effective_thinking_policy="required",
     )
     async with app.run_test(size=(120, 42)) as pilot:
         await app.push_screen(
@@ -274,6 +274,24 @@ async def test_thinking_history_required_preserves_saved_value_and_disables_edit
         assert "Effective: Required" in effective
         assert "provider continuation" in effective
         await pilot.click("#console-settings-cancel")
+
+
+def test_thinking_history_required_copy_is_derived_from_effective_policy() -> None:
+    """Catches caller-provided reason text becoming a second policy resolver."""
+
+    state = build_console_context_control_state(
+        settings=_settings(),
+        estimate=ConsoleSettingsContextEstimate(
+            42_000, 100_000, "42,000 / 100,000 tokens"
+        ),
+        thinking_history_policy="exclude",
+        thinking_history_effective_policy="required",
+    )
+
+    assert state.thinking_history.saved_policy == "exclude"
+    assert state.thinking_history.effective_label == "Required"
+    assert state.thinking_history.required_reason is not None
+    assert "provider continuation" in state.thinking_history.required_reason.lower()
 
 
 @pytest.mark.asyncio

@@ -24,9 +24,17 @@ from tldw_chatbook.Chat.console_session_settings import (
     ConsoleSessionSettings,
     ConsoleSettingsContextEstimate,
 )
+from tldw_chatbook.Chat.console_thinking_history import (
+    EffectiveThinkingHistoryPolicy,
+)
 from tldw_chatbook.Chat.thinking_blocks import (
     ThinkingHistoryPolicy,
     normalize_thinking_history_policy,
+)
+
+
+_REQUIRED_THINKING_HISTORY_REASON = (
+    "Completed provider continuation history must be replayed for this model."
 )
 
 
@@ -120,7 +128,7 @@ def build_console_context_control_state(
     busy: bool = False,
     status_message: str = "",
     thinking_history_policy: object = None,
-    thinking_history_required_reason: str | None = None,
+    thinking_history_effective_policy: EffectiveThinkingHistoryPolicy | None = None,
 ) -> ConsoleContextControlState:
     """Build a UI snapshot from the current estimate and owned policy values.
 
@@ -153,10 +161,14 @@ def build_console_context_control_state(
         else estimate.token_limit_verified
     )
     saved_thinking_policy = normalize_thinking_history_policy(thinking_history_policy)
-    effective_thinking_label = (
-        "Required"
-        if thinking_history_required_reason
-        else saved_thinking_policy.title()
+    effective_thinking_policy = (
+        thinking_history_effective_policy or saved_thinking_policy
+    )
+    effective_thinking_label = effective_thinking_policy.title()
+    required_reason = (
+        _REQUIRED_THINKING_HISTORY_REASON
+        if effective_thinking_policy == "required"
+        else None
     )
     return ConsoleContextControlState(
         request_tokens=used,
@@ -177,7 +189,7 @@ def build_console_context_control_state(
         thinking_history=ThinkingHistoryControlState(
             saved_policy=saved_thinking_policy,
             effective_label=effective_thinking_label,
-            required_reason=thinking_history_required_reason,
+            required_reason=required_reason,
         ),
     )
 

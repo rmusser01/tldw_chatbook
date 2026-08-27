@@ -103,3 +103,21 @@ default-copy tests; scoped Ruff lint and `git diff --check` passed. Existing ADR
 governs; no new ADR is required. The exact plan filter also reached 117/118 with one
 unchanged project-instruction DOM-parent assertion that reproduced alone and is outside
 Task 3 ownership. Report: `task-3-report.md`.
+
+Task 3 review fix round 1: all three Priority-1 findings reproduced RED and closed.
+Effective Required now comes from the existing provider resolver plus the same
+continuation-target/group selector used by send, through one shared pure effective-
+policy helper; active recovery, incompatibility, changed targets, and unresolved
+providers retain the saved optional value. ConsoleChatStore owns one runtime-wired
+live thinking-history default provider consulted by every omitted-policy
+create_session; explicit/restored values win and legacy NULL hydration remains Auto,
+so the UI-only post-create setter/resolver was removed. Device visibility persistence
+is one serialized/coalescing drain with desired, confirmed, and in-flight revision
+state; latest failure restores checkbox/config/label/transcript to the confirmed disk
+baseline and reports the existing error. RED evidence: missing controller/builder seam
+(3 AttributeErrors plus one rejected keyword), rejected store provider/runtime Auto
+mis-default, and legacy rapid-toggle worker signature/state mismatch. GREEN evidence:
+5 effective-policy cases, 2 direct store/runtime-default cases, 2 deterministic
+coalescing/restart-equivalent persistence cases, and the final affected filter at
+128 passed/460 deselected in 67.30s. Scoped Ruff passed all 12 changed Python/test
+files. Existing ADR-090 governs; no new ADR is required. Commit pending.

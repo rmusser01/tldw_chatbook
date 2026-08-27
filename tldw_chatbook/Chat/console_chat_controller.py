@@ -314,7 +314,11 @@ from tldw_chatbook.Chat.console_provider_gateway import (
     ProviderThinkingDelta,
 )
 from tldw_chatbook.Chat.console_thinking_capture import ThinkingCapture
-from tldw_chatbook.Chat.console_thinking_history import ProviderThinkingSidecar
+from tldw_chatbook.Chat.console_thinking_history import (
+    EffectiveThinkingHistoryPolicy,
+    ProviderThinkingSidecar,
+    effective_thinking_history_policy,
+)
 from tldw_chatbook.Chat.thinking_blocks import (
     ThinkingEnvelope,
     ThinkingHistoryPolicy,
@@ -4388,6 +4392,35 @@ class ConsoleChatController:
         """Return whether the selected gateway exposes a replay translator."""
         return self._agent_bridge is not None and callable(
             getattr(self.provider_gateway, "expand_provider_continuation", None)
+        )
+
+    async def effective_thinking_history_policy_for_session(
+        self,
+        session_id: str,
+    ) -> EffectiveThinkingHistoryPolicy:
+        """Resolve modal replay state through the same target/group seam as send."""
+
+        saved = normalize_thinking_history_policy(
+            self.store.session_thinking_history_policy(session_id)
+        )
+        try:
+            resolution = await self.provider_gateway.resolve_for_send(
+                self._provider_selection_for_session(session_id)
+            )
+        except Exception:
+            return saved
+        if not getattr(resolution, "ready", False):
+            return saved
+        try:
+            sidecar, _target = self._provider_continuation_history_for_resolution(
+                session_id,
+                resolution,
+            )
+        except ContinuationConflictError:
+            return saved
+        return effective_thinking_history_policy(
+            saved,
+            continuation_required=bool(sidecar),
         )
 
     @property

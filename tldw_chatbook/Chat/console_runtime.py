@@ -129,6 +129,7 @@ from tldw_chatbook.Chat.console_library_policy import (
     ConsoleLibraryPolicyDefaults,
 )
 from tldw_chatbook.Chat.console_scratch_space import ConsoleScratchSpaceManager
+from tldw_chatbook.Chat.thinking_blocks import normalize_thinking_history_policy
 from tldw_chatbook.Persona_Buddy.console_adapter import PersonaBuddyConsoleAdapter
 from tldw_chatbook.config import coerce_bool_setting
 
@@ -163,6 +164,18 @@ def _current_library_policy_defaults(app: Any) -> ConsoleLibraryPolicyDefaults:
             )
             else ConsoleAssistantLibraryAccess.BLOCKED
         ),
+    )
+
+
+def _current_thinking_history_policy_default(app: Any) -> str:
+    """Read the optional replay default copied into the next new session."""
+
+    config = getattr(app, "app_config", None)
+    console = config.get("console", {}) if isinstance(config, Mapping) else {}
+    if not isinstance(console, Mapping):
+        console = {}
+    return normalize_thinking_history_policy(
+        console.get("thinking_history_policy_default")
     )
 
 __all__ = [
@@ -645,6 +658,9 @@ class ConsoleRuntime:
             ),
             library_policy_defaults_provider=lambda: _current_library_policy_defaults(
                 self._app
+            ),
+            thinking_history_policy_default_provider=lambda: (
+                _current_thinking_history_policy_default(self._app)
             ),
         )
         self._bind_view_hooks()

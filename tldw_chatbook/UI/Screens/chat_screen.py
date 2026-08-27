@@ -2180,6 +2180,9 @@ class ChatScreen(BaseAppScreen):
         session = store.switch_session(session_id)
         origin_system_prompt = settings.system_prompt
         context_estimate = self._active_console_settings_context_estimate()
+        effective_thinking_policy = (
+            await controller.effective_thinking_history_policy_for_session(session_id)
+        )
         modal = ConsoleSettingsModal(
             settings=settings,
             user_display_name_override=session.user_display_name_override,
@@ -2191,7 +2194,8 @@ class ChatScreen(BaseAppScreen):
             ),
             context_estimate=context_estimate,
             context_state=self._active_console_context_control_state(
-                estimate=context_estimate
+                estimate=context_estimate,
+                thinking_history_effective_policy=effective_thinking_policy,
             ),
             can_save=controller.run_state.is_send_allowed,
             focus_model=focus_model,
@@ -3141,11 +3145,22 @@ class ChatScreen(BaseAppScreen):
             settings.provider,
             current_model=settings.model,
         )
+        store = self._ensure_console_chat_store()
+        session_id = store.active_session_id
+        effective_thinking_policy = (
+            await self._ensure_console_chat_controller().effective_thinking_history_policy_for_session(
+                session_id
+            )
+            if session_id is not None
+            else "auto"
+        )
         self.app.push_screen(
             ConsoleModelPopover(
                 settings=settings,
                 providers_models=providers_models,
-                context_state=self._active_console_context_control_state(),
+                context_state=self._active_console_context_control_state(
+                    thinking_history_effective_policy=effective_thinking_policy,
+                ),
             ),
             callback=self._apply_console_model_popover_result,
         )
@@ -4368,6 +4383,7 @@ class ChatScreen(BaseAppScreen):
         self,
         *,
         estimate: ConsoleSettingsContextEstimate | None = None,
+        thinking_history_effective_policy: str | None = None,
     ) -> ConsoleContextControlState:
         """Build the shared quick/full context snapshot for the active session."""
         settings = self._session._ensure_active_console_session_settings()
@@ -4396,15 +4412,7 @@ class ChatScreen(BaseAppScreen):
                 if session_id is not None
                 else "auto"
             ),
-            thinking_history_required_reason=(
-                "Active provider continuation must be replayed for this model."
-                if session_id is not None
-                and any(
-                    getattr(message.provider_continuation, "state", None) == "active"
-                    for message in store.messages_for_session(session_id)
-                )
-                else None
-            ),
+            thinking_history_effective_policy=thinking_history_effective_policy,
         )
 
     def _build_console_settings_summary_state(self) -> ConsoleSettingsSummaryState:

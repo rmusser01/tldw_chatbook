@@ -2165,19 +2165,6 @@ class ConsoleSessionController:
             )
         )
 
-    def _default_thinking_history_policy(self) -> str:
-        """Resolve the device default copied only into new conversations."""
-
-        app_config = self._provider_readiness_app_config()
-        console_config = (
-            app_config.get("console", {}) if isinstance(app_config, Mapping) else {}
-        )
-        if not isinstance(console_config, Mapping):
-            return "auto"
-        return normalize_thinking_history_policy(
-            console_config.get("thinking_history_policy_default")
-        )
-
     async def _create_native_console_session_from_active_context(
         self, *, ephemeral: bool = False
     ) -> None:
@@ -2191,16 +2178,12 @@ class ConsoleSessionController:
         # to the new tab instead of clobbering it.
         self._capture_console_draft_switch_snapshot()
         self._refresh_console_library_policy_defaults()
-        session = self._ensure_console_chat_controller().new_session(
+        self._ensure_console_chat_controller().new_session(
             settings=(
                 self._active_console_session_settings()
                 or self._default_console_session_settings()
             ),
             ephemeral=ephemeral,
-        )
-        self._ensure_console_chat_store().set_session_thinking_history_policy(
-            session.id,
-            self._default_thinking_history_policy(),
         )
         # TASK-251: new-chat-tab handler -- invalidate so the browser's
         # "selected" row indicator picks up the new active session promptly.
