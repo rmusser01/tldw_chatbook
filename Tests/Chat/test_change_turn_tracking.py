@@ -482,6 +482,44 @@ def test_force_add_carveout_for_tool_touched_ignored_paths(tracker, root):
     )
 
 
+def test_snapshot_force_path_drops_file_when_nested_marker_appears(
+    tracker, root, monkeypatch
+):
+    child = root / "late-child"
+    child.mkdir()
+    target = child / "ignored-write.txt"
+    target_rel = target.relative_to(root).as_posix()
+    (root / ".gitignore").write_text(f"/{target_rel}\n")
+
+    handle = tracker.begin_turn([root])
+    handle.await_baseline()
+    target.write_text("must stay child-owned\n")
+    repo = tracker.service.repo_for_root(root)
+    original_run = type(repo)._run
+    marker_created = threading.Event()
+
+    def create_marker_before_index(self, *args, **kwargs):
+        if (
+            self.root == root.resolve()
+            and not marker_created.is_set()
+            and args[:2] == ("update-index", "--add")
+        ):
+            (child / ".git").mkdir()
+            marker_created.set()
+        return original_run(self, *args, **kwargs)
+
+    monkeypatch.setattr(type(repo), "_run", create_marker_before_index)
+    records = tracker.end_turn(handle, touched_paths=[str(target)])
+
+    assert marker_created.is_set()
+    assert len(records) == 1
+    record = records[0]
+    assert record.files_changed == 0
+    assert record.nested_repos == (child.name,)
+    assert str(repo._run("ls-files", "--", target_rel).stdout).strip() == ""
+    assert repo.file_bytes(record.end_sha, target_rel) is None
+
+
 def test_force_path_under_auto_registered_nested_repo_is_owned_only_by_child(
     tracker, root
 ):
@@ -637,6 +675,61 @@ def test_supplied_sha_force_add_over_cap_returns_error_with_exact_end(
     assert target.name in record.tracking_error
     assert len(record.tracking_error) <= 400
     assert str(repo._run("ls-files", "--", target.name).stdout).strip() == ""
+
+
+def test_supplied_sha_force_add_drops_path_when_nested_marker_appears(
+    tracker, root, monkeypatch
+):
+    child = root / "late-child"
+    child.mkdir()
+    target = child / "ignored-write.txt"
+    target_rel = target.relative_to(root).as_posix()
+    (root / ".gitignore").write_text(f"/{target_rel}\n")
+
+    parent = tracker.begin_turn([root])
+    parent.await_baseline()
+    assert tracker.end_turn(parent) == []
+    continuation = tracker.continuation(parent)
+    assert continuation is not None
+
+    (root / "boundary.txt").write_text("at supplied boundary\n")
+    successor = tracker.begin_turn([root])
+    successor.await_baseline()
+    key = str(root.resolve())
+    supplied = successor.baselines[key]
+    assert supplied != continuation.baselines[key]
+    target.write_text("must stay child-owned\n")
+    repo = tracker.service.repo_for_root(root)
+    original_run = type(repo)._run
+    marker_created = threading.Event()
+
+    def create_marker_before_index(self, *args, **kwargs):
+        if (
+            self.root == root.resolve()
+            and not marker_created.is_set()
+            and args[:2] == ("update-index", "--add")
+        ):
+            (child / ".git").mkdir()
+            marker_created.set()
+        return original_run(self, *args, **kwargs)
+
+    monkeypatch.setattr(type(repo), "_run", create_marker_before_index)
+    records = tracker.end_turn(
+        continuation,
+        touched_paths=[str(target)],
+        end_shas=successor.baselines,
+    )
+
+    assert marker_created.is_set()
+    assert continuation.end_shas[key] == supplied
+    assert len(records) == 1
+    record = records[0]
+    assert record.baseline_sha == continuation.baselines[key]
+    assert record.end_sha == supplied
+    assert "no longer safe" in record.tracking_error
+    assert len(record.tracking_error) <= 400
+    assert str(repo._run("ls-files", "--", target_rel).stdout).strip() == ""
+    assert repo.file_bytes(supplied, target_rel) is None
 
 
 def test_supplied_sha_survives_force_add_priming_failure(

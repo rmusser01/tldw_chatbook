@@ -464,6 +464,27 @@ class ShadowRepo:
                 removed.append(rel)
         return tuple(removed)
 
+    def _drop_new_force_paths_no_longer_safe(
+        self, staged_paths: Sequence[str], safe_paths: Sequence[str]
+    ) -> tuple[str, ...]:
+        """Remove newly indexed paths absent from the final safe set."""
+        safe = set(safe_paths)
+        tip = self.tip()
+        removed: list[str] = []
+        for rel in staged_paths:
+            if rel in safe:
+                continue
+            literal = f":(literal){rel}"
+            if tip and self._z_tokens(
+                "ls-tree", "-z", "--name-only", tip, "--", literal
+            ):
+                continue
+            if not self._z_tokens("ls-files", "--stage", "-z", "--", literal):
+                continue
+            self._run("update-index", "--force-remove", "--", rel)
+            removed.append(rel)
+        return tuple(removed)
+
     def snapshot(self, message: str, *, force_paths: Sequence[str] = ()) -> str:
         """Stage everything and commit if anything changed; return the tip.
 
@@ -561,6 +582,9 @@ class ShadowRepo:
                 )
             if force_paths:
                 final_paths = self._exact_force_paths(force_paths)
+                self._drop_new_force_paths_no_longer_safe(
+                    exact_paths, final_paths
+                )
                 if final_paths:
                     tip = self.tip()
                     new_final_paths = {
@@ -726,9 +750,21 @@ class ShadowRepo:
             exact_paths = self._exact_force_paths(paths)
             if exact_paths:
                 self._run("update-index", "--add", "--", *exact_paths)
-                removed = self._drop_new_force_paths_over_cap(exact_paths)
-                if removed:
-                    paths_text = ", ".join(removed)
+                final_paths = self._exact_force_paths(exact_paths)
+                unsafe = self._drop_new_force_paths_no_longer_safe(
+                    exact_paths, final_paths
+                )
+                oversized = self._drop_new_force_paths_over_cap(final_paths)
+                if unsafe:
+                    paths_text = ", ".join(unsafe)
+                    raise ChangeTrackingError(
+                        (
+                            "forced path is no longer safe at staging boundary: "
+                            f"{paths_text}"
+                        )[:400]
+                    )
+                if oversized:
+                    paths_text = ", ".join(oversized)
                     raise ChangeTrackingError(
                         (
                             "forced path exceeds change-tracking size cap: "
