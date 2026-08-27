@@ -139,6 +139,40 @@ class TestChatPersistenceService:
         )
         assert unproven["assistant_authority_id"] is None
 
+    def test_console_identity_validation_uses_destination_canonical_rules(
+        self,
+        db_instance: CharactersRAGDB,
+    ) -> None:
+        service = ChatPersistenceService(db_instance)
+        character_id = db_instance.add_character_card({"name": "Local character"})
+        authority_id = db_instance.get_local_authority_id()
+
+        assert service.validate_console_conversation_identity(
+            runtime_backend="local",
+            assistant_kind="character",
+            assistant_id=str(character_id),
+            assistant_authority_id=authority_id,
+            persona_memory_mode=None,
+            character_id=character_id,
+        ) == (
+            "local",
+            "character",
+            str(character_id),
+            character_id,
+            None,
+            authority_id,
+        )
+
+        with pytest.raises(ValueError, match="authority"):
+            service.validate_console_conversation_identity(
+                runtime_backend="local",
+                assistant_kind="character",
+                assistant_id=str(character_id),
+                assistant_authority_id=f"{authority_id}-mismatch",
+                persona_memory_mode=None,
+                character_id=character_id,
+            )
+
     def test_canonical_citation_writes_ready_requires_matching_ready_repository(
         self,
         db_instance: CharactersRAGDB,
@@ -1681,13 +1715,16 @@ class TestChatPersistenceService:
             expected_version=record["version"],
         )
 
-        assert service.update_conversation_system_prompt(
-            conversation_id=conversation_id,
-            system_prompt="Speak with Bravo.",
-            expected_roleplay_context=context,
-            expected_system_prompts=("Speak with Alpha.",),
-            allow_source_owned_repair=True,
-        ) is False
+        assert (
+            service.update_conversation_system_prompt(
+                conversation_id=conversation_id,
+                system_prompt="Speak with Bravo.",
+                expected_roleplay_context=context,
+                expected_system_prompts=("Speak with Alpha.",),
+                allow_source_owned_repair=True,
+            )
+            is False
+        )
         durable = db_instance.get_conversation_by_id(conversation_id)
         assert durable["system_prompt"] == "User-authored prompt."
         assert "console_roleplay_context" not in json.loads(durable["metadata"])
@@ -1718,18 +1755,21 @@ class TestChatPersistenceService:
             expected_version=current["version"],
         )
 
-        assert service.update_message_content(
-            message_id=message_id,
-            content="Hello Bravo.",
-            image_data=None,
-            image_mime_type=None,
-            metadata_json=MessageMetadata(
-                template_kind="character_greeting", template_source=source
-            ).to_json(),
-            expected_roleplay_template_source=source,
-            expected_message_contents=("Hello Alpha.",),
-            allow_source_owned_repair=True,
-        ) is False
+        assert (
+            service.update_message_content(
+                message_id=message_id,
+                content="Hello Bravo.",
+                image_data=None,
+                image_mime_type=None,
+                metadata_json=MessageMetadata(
+                    template_kind="character_greeting", template_source=source
+                ).to_json(),
+                expected_roleplay_template_source=source,
+                expected_message_contents=("Hello Alpha.",),
+                allow_source_owned_repair=True,
+            )
+            is False
+        )
         durable = db_instance.get_message_by_id(message_id)
         assert durable["content"] == "User-edited greeting."
         assert MessageMetadata.from_json(durable["metadata_json"]).template_kind == ""
@@ -1813,7 +1853,9 @@ class TestChatPersistenceService:
         ).fetchall()
         assert len(rows) == 1
         assert rows[0]["deleted"] == 0
-        assert db_instance.get_conversation_by_id(rows[0]["id"])["workspace_id"] == "ws-a"
+        assert (
+            db_instance.get_conversation_by_id(rows[0]["id"])["workspace_id"] == "ws-a"
+        )
 
     def test_fork_conversation_rejects_unresolved_workspace_scope_without_assert(
         self,
@@ -1946,9 +1988,7 @@ class TestChatPersistenceService:
         def _boom(message_id, rows):
             raise RuntimeError("metadata write failed")
 
-        monkeypatch.setattr(
-            db_instance, "set_message_generation_metadata", _boom
-        )
+        monkeypatch.setattr(db_instance, "set_message_generation_metadata", _boom)
         with pytest.raises(RuntimeError, match="metadata write failed"):
             service.create_message(
                 conversation_id=conv_id,

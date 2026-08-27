@@ -36,6 +36,7 @@ from tldw_chatbook.Chat.rag_scope import RagScope, ScopeItem
 
 CONSOLE_FORK_TITLE_MAX_LENGTH = 60
 CONSOLE_FORK_FINGERPRINT_JSON_MAX_BYTES = 64 * 1024
+_CONSOLE_FORK_IDENTITY_TEXT_MAX_BYTES = 256
 _CONSOLE_FORK_FINGERPRINT_DOMAIN = b"tldw_chatbook.console.chat-fork.v1\0"
 
 ConsoleForkDurability = Literal["temporary", "durable", "unsaved_persistable"]
@@ -245,6 +246,11 @@ def _validate_console_fork_configuration_identity(
     ):
         if value is not None and (not value or value != value.strip()):
             raise ValueError(f"Fork {field_name} must be canonical nonblank text.")
+        if (
+            value is not None
+            and len(value.encode("utf-8")) > _CONSOLE_FORK_IDENTITY_TEXT_MAX_BYTES
+        ):
+            raise ValueError(f"Fork {field_name} exceeds the persistence limit.")
     if character_id is not None and not 1 <= character_id <= 2**63 - 1:
         raise ValueError("Fork character_id must be a positive SQLite integer.")
 

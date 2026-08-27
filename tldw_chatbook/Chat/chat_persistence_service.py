@@ -254,6 +254,52 @@ class ChatPersistenceService:
             )
         return "New Chat"
 
+    def validate_console_conversation_identity(
+        self,
+        *,
+        runtime_backend: str,
+        assistant_kind: str | None,
+        assistant_id: str | None,
+        assistant_authority_id: str | None,
+        persona_memory_mode: str | None,
+        character_id: int | None,
+    ) -> tuple[str, str | None, str | None, int | None, str | None, str | None]:
+        """Require a Console identity to equal this database's canonical form.
+
+        Args:
+            runtime_backend: Exact local or server runtime value.
+            assistant_kind: Exact generic, character, persona, or null kind.
+            assistant_id: Exact stable assistant identifier.
+            assistant_authority_id: Exact destination authority identifier.
+            persona_memory_mode: Exact persona memory mode.
+            character_id: Exact local numeric character identifier.
+
+        Returns:
+            The database-normalized identity tuple when it equals the input.
+
+        Raises:
+            ValueError: If the database rejects or would normalize the identity.
+        """
+        normalized = self.db._normalize_conversation_identity(
+            runtime_backend=runtime_backend,
+            assistant_kind=assistant_kind,
+            assistant_id=assistant_id,
+            assistant_authority_id=assistant_authority_id,
+            persona_memory_mode=persona_memory_mode,
+            character_id=character_id,
+        )
+        candidate = (
+            runtime_backend,
+            assistant_kind,
+            assistant_id,
+            character_id,
+            persona_memory_mode,
+            assistant_authority_id,
+        )
+        if normalized != candidate:
+            raise ValueError("Console conversation identity is not canonical.")
+        return normalized
+
     def create_conversation(
         self,
         *,

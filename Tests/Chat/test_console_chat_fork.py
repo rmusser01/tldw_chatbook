@@ -434,6 +434,24 @@ _INVALID_FORK_IDENTITIES = (
         None,
         id="server-character-no-id",
     ),
+    pytest.param(
+        "server",
+        "generic",
+        "a" * 257,
+        None,
+        None,
+        None,
+        id="oversize-assistant-id",
+    ),
+    pytest.param(
+        "server",
+        "character",
+        "character-7",
+        "a" * 255 + "é",
+        None,
+        None,
+        id="oversize-multibyte-authority-id",
+    ),
 )
 
 
@@ -924,6 +942,138 @@ def test_invalid_persistence_identity_is_rejected_at_every_fork_boundary(
     with pytest.raises((TypeError, ValueError)):
         registration_store.register_fork_snapshot(snapshot, activate=False)
     assert registration_store.sessions() == []
+
+
+def test_local_character_fork_rejects_mismatched_destination_authority(
+    tmp_path,
+) -> None:
+    db = CharactersRAGDB(
+        tmp_path / "fork-authority.sqlite",
+        client_id="fork-authority",
+    )
+    try:
+        service = ChatPersistenceService(db)
+        character_id = db.add_character_card({"name": "Local character"})
+        local_authority = db.get_local_authority_id()
+        mismatched_authority = f"{local_authority}-mismatch"
+        store = ConsoleChatStore(persistence=service)
+        settings = ConsoleSessionSettings(provider="openai", model="gpt-test")
+
+        invalid_source = store.create_session(
+            title="Invalid source",
+            settings=settings,
+            runtime_backend="local",
+            assistant_kind="character",
+            assistant_id=str(character_id),
+            assistant_authority_id=mismatched_authority,
+            character_id=character_id,
+        )
+        store.append_message(
+            invalid_source.id,
+            role=ConsoleMessageRole.USER,
+            content="Question",
+        )
+        invalid_boundary = store.append_message(
+            invalid_source.id,
+            role=ConsoleMessageRole.ASSISTANT,
+            content="Answer",
+        )
+
+        assert store.fork_eligibility(invalid_boundary.id).eligible is False
+        with pytest.raises(ValueError):
+            store.issue_fork_fence(invalid_boundary.id)
+
+        valid_source = store.create_session(
+            title="Valid source",
+            settings=settings,
+            runtime_backend="local",
+            assistant_kind="character",
+            assistant_id=str(character_id),
+            assistant_authority_id=local_authority,
+            character_id=character_id,
+        )
+        store.append_message(
+            valid_source.id,
+            role=ConsoleMessageRole.USER,
+            content="Question",
+        )
+        valid_boundary = store.append_message(
+            valid_source.id,
+            role=ConsoleMessageRole.ASSISTANT,
+            content="Answer",
+        )
+        fence = store.issue_fork_fence(valid_boundary.id)
+        valid_source.assistant_authority_id = mismatched_authority
+
+        with pytest.raises(ValueError, match="source changed"):
+            store.stage_fork_snapshot(
+                fence,
+                title="Independent fork",
+                fork_session_id="staged-fork-session",
+                fork_conversation_id="staged-fork-conversation",
+            )
+
+        invalid_snapshot = replace(
+            _registration_snapshot(),
+            configuration=replace(
+                _configuration_snapshot(),
+                runtime_backend="local",
+                assistant_kind="character",
+                assistant_id=str(character_id),
+                assistant_authority_id=mismatched_authority,
+                persona_memory_mode=None,
+                character_id=character_id,
+            ),
+        )
+        with pytest.raises(ValueError):
+            store.register_fork_snapshot(invalid_snapshot, activate=False)
+        assert "fork-session" not in {session.id for session in store.sessions()}
+    finally:
+        db.close_connection()
+
+
+def test_local_character_fork_accepts_matching_destination_authority(tmp_path) -> None:
+    db = CharactersRAGDB(
+        tmp_path / "matching-fork-authority.sqlite",
+        client_id="matching-fork-authority",
+    )
+    try:
+        service = ChatPersistenceService(db)
+        character_id = db.add_character_card({"name": "Local character"})
+        local_authority = db.get_local_authority_id()
+        store = ConsoleChatStore(persistence=service)
+        source = store.create_session(
+            title="Valid source",
+            settings=ConsoleSessionSettings(provider="openai", model="gpt-test"),
+            runtime_backend="local",
+            assistant_kind="character",
+            assistant_id=str(character_id),
+            assistant_authority_id=local_authority,
+            character_id=character_id,
+        )
+        store.append_message(
+            source.id,
+            role=ConsoleMessageRole.USER,
+            content="Question",
+        )
+        boundary = store.append_message(
+            source.id,
+            role=ConsoleMessageRole.ASSISTANT,
+            content="Answer",
+        )
+
+        snapshot = store.stage_fork_snapshot(
+            store.issue_fork_fence(boundary.id),
+            title="Independent fork",
+            fork_session_id="fork-session",
+            fork_conversation_id="fork-conversation",
+        )
+        fork_session = store.register_fork_snapshot(snapshot, activate=False)
+
+        assert fork_session.assistant_authority_id == local_authority
+        assert fork_session.persisted_conversation_id == "fork-conversation"
+    finally:
+        db.close_connection()
 
 
 @pytest.mark.parametrize(
@@ -1506,28 +1656,63 @@ def test_stage_fork_snapshot_preserves_fenced_turn_grouping(
     assert (user_turn == assistant_turn) is shared_target_turn
 
 
-def test_stage_fork_snapshot_does_not_reread_turns_after_validation(
+@pytest.mark.parametrize(
+    "mutation",
+    ("turn", "attachment", "generation", "configuration", "role", "status"),
+)
+def test_stage_fork_snapshot_rejects_late_source_mutation(
+    mutation,
     monkeypatch,
 ) -> None:
     store, _, session, _, _, _, selected, _ = _fork_store()
     fence = store.issue_fork_fence(selected.id)
     original_validate = store.validate_fork_fence
+    calls = 0
+
+    class StatusText(str):
+        pass
 
     def validate_then_mutate(candidate, *, image_selections=()):
+        nonlocal calls
+        calls += 1
         valid = original_validate(candidate, image_selections=image_selections)
-        store._nodes_by_session[session.id][selected.id].turn_id = "late-live-turn"
+        if calls != 1:
+            return valid
+        selected_live = store._nodes_by_session[session.id][selected.id]
+        if mutation == "turn":
+            selected_live.turn_id = "late-live-turn"
+        elif mutation == "attachment":
+            selected_live.attachments = (
+                replace(selected_live.attachments[0], data=b"late-image"),
+            )
+        elif mutation == "generation":
+            selected_live.generation_metadata = (
+                replace(selected_live.generation_metadata[0], prompt="late prompt"),
+            )
+        elif mutation == "configuration":
+            session.user_display_name_override = "Late display name"
+        elif mutation == "role":
+            selected_live.role = selected_live.role.value  # type: ignore[assignment]
+        else:
+            selected_live.status = StatusText("complete")  # type: ignore[assignment]
         return valid
 
     monkeypatch.setattr(store, "validate_fork_fence", validate_then_mutate)
+    before_session_ids = tuple(item.id for item in store.sessions())
+    before_message_index = dict(store._message_session_index)
 
-    snapshot = store.stage_fork_snapshot(
-        fence,
-        title="Independent fork",
-        fork_session_id="fork-session",
-        fork_conversation_id="fork-conversation",
-    )
+    with pytest.raises(ValueError, match="source changed"):
+        store.stage_fork_snapshot(
+            fence,
+            title="Independent fork",
+            fork_session_id="fork-session",
+            fork_conversation_id="fork-conversation",
+        )
 
-    assert snapshot.messages[0].turn_id == snapshot.messages[1].turn_id
+    assert calls == 2
+    assert tuple(item.id for item in store.sessions()) == before_session_ids
+    assert store._message_session_index == before_message_index
+    assert "fork-session" not in store._nodes_by_session
 
 
 def test_configuration_snapshot_is_the_exact_sanitized_allowlist() -> None:

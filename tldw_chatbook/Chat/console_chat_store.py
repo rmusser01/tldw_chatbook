@@ -4638,6 +4638,29 @@ class ConsoleChatStore:
             ),
         )
 
+    def _fork_configuration_fingerprint(
+        self,
+        configuration: ConsoleForkConfigurationSnapshot,
+        *,
+        validate_destination: bool,
+    ) -> str:
+        fingerprint = fingerprint_console_fork_configuration(configuration)
+        validator = getattr(
+            self.persistence,
+            "validate_console_conversation_identity",
+            None,
+        )
+        if validate_destination and callable(validator):
+            validator(
+                runtime_backend=configuration.runtime_backend,
+                assistant_kind=configuration.assistant_kind,
+                assistant_id=configuration.assistant_id,
+                assistant_authority_id=configuration.assistant_authority_id,
+                persona_memory_mode=configuration.persona_memory_mode,
+                character_id=configuration.character_id,
+            )
+        return fingerprint
+
     @staticmethod
     def _fork_visible_selection(
         message: ConsoleChatMessage,
@@ -4811,7 +4834,8 @@ class ConsoleChatStore:
             return ConsoleForkEligibility(False, "Message is not on the active path.")
         prefix = active_ids[: active_ids.index(message_id) + 1]
         session = self._sessions[session_id]
-        durable = self._fork_durability(session) == "durable"
+        durability = self._fork_durability(session)
+        durable = durability == "durable"
         for native_id in prefix:
             message = nodes.get(native_id)
             if message is None or not self._fork_message_state_is_eligible(
@@ -4837,8 +4861,9 @@ class ConsoleChatStore:
                     "Every message through the selected boundary must be saved before forking.",
                 )
         try:
-            fingerprint_console_fork_configuration(
-                self._fork_configuration_snapshot(session)
+            self._fork_configuration_fingerprint(
+                self._fork_configuration_snapshot(session),
+                validate_destination=durability != "temporary",
             )
         except (TypeError, ValueError) as exc:
             return ConsoleForkEligibility(False, str(exc))
@@ -4891,7 +4916,10 @@ class ConsoleChatStore:
             source_durability=durability,
             source_title=session.title,
             source_configuration_fingerprint=(
-                fingerprint_console_fork_configuration(configuration)
+                self._fork_configuration_fingerprint(
+                    configuration,
+                    validate_destination=durability != "temporary",
+                )
             ),
             boundary_message_id=message_id,
             lineage=tuple(
@@ -4943,7 +4971,10 @@ class ConsoleChatStore:
                 return False
             configuration = self._fork_configuration_snapshot(session)
             if (
-                fingerprint_console_fork_configuration(configuration)
+                self._fork_configuration_fingerprint(
+                    configuration,
+                    validate_destination=durability != "temporary",
+                )
                 != fence.source_configuration_fingerprint
             ):
                 return False
@@ -5025,7 +5056,7 @@ class ConsoleChatStore:
                         owner_native_message_id=target_native,
                         owner_persisted_message_id=target_persisted,
                         position=target_position,
-                        data=attachment.data,
+                        data=bytes(attachment.data),
                         mime_type=attachment.mime_type,
                         display_name=attachment.display_name,
                     )
@@ -5072,7 +5103,12 @@ class ConsoleChatStore:
             )
             previous_native = target_native
             previous_persisted = target_persisted
-        return ConsoleChatForkSnapshot(
+        configuration = self._fork_configuration_snapshot(session)
+        configuration_fingerprint = self._fork_configuration_fingerprint(
+            configuration,
+            validate_destination=durable,
+        )
+        candidate = ConsoleChatForkSnapshot(
             fork_session_id=fork_session_id,
             fork_conversation_id=fork_conversation_id,
             title=normalized_title,
@@ -5083,9 +5119,19 @@ class ConsoleChatStore:
             ),
             durable=durable,
             messages=tuple(projected),
-            configuration=self._fork_configuration_snapshot(session),
+            configuration=configuration,
             citation_links=(),
         )
+        source_still_matches = self.validate_fork_fence(
+            fence,
+            image_selections=fence.image_selections,
+        )
+        if (
+            not source_still_matches
+            or configuration_fingerprint != fence.source_configuration_fingerprint
+        ):
+            raise ValueError("Console fork source changed.")
+        return candidate
 
     def register_fork_snapshot(
         self,
@@ -5109,7 +5155,10 @@ class ConsoleChatStore:
             raise ValueError("Fork session id already exists.")
         if normalize_fork_title(snapshot.title) != snapshot.title:
             raise ValueError("Fork title is not normalized.")
-        fingerprint_console_fork_configuration(snapshot.configuration)
+        self._fork_configuration_fingerprint(
+            snapshot.configuration,
+            validate_destination=snapshot.durable,
+        )
         existing_conversation_ids = {
             session.persisted_conversation_id
             for session in self._sessions.values()
