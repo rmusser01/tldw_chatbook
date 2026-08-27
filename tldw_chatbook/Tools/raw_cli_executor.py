@@ -44,7 +44,7 @@ RawCliTerminalState: TypeAlias = Literal[
 ]
 RawCliStream: TypeAlias = Literal["stdout", "stderr"]
 RawCliAdmissionCallback: TypeAlias = Callable[
-    [ExecutorProcessTree, Callable[[], None]], object
+    [ExecutorProcessTree, Callable[[], float | None]], object
 ]
 
 _SHELL_ENVIRONMENT_KEYS = (
@@ -708,16 +708,17 @@ class _LaunchCommit:
         self._closed = False
         self._started_at: float | None = None
 
-    def __call__(self) -> None:
+    def __call__(self) -> float | None:
         with self._lock:
             if self._cancel_event.is_set():
                 self._closed = True
-                return
+                return None
             if self._closed or self._started_at is not None or not self._tree.admitted:
-                return
+                return None
             self._started_at = time.monotonic()
             self._launch_event.set()
             self._committed.set()
+            return self._started_at
 
     def wait(self, timeout: float) -> bool:
         return self._committed.wait(timeout)

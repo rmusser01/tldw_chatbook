@@ -43,6 +43,7 @@ from tldw_chatbook.Chat.console_chat_models import (
     ConsoleRunState,
     ConsoleRunStatus,
 )
+from tldw_chatbook.Chat.console_chat_store import ConsoleChatStore
 from tldw_chatbook.Chat.console_dispatch_checkpoint import (
     ConsoleEgressClass,
     ConsoleResolvedDestination,
@@ -105,8 +106,17 @@ class _ImmediateRawRuntime:
         self.started = threading.Event()
         self.requests: list[Any] = []
 
-    def execute(self, request: Any, _on_event: Any) -> RawCliResult:
+    def execute(
+        self,
+        request: Any,
+        _on_event: Any,
+        *,
+        on_registered: Any,
+        on_started: Any,
+    ) -> RawCliResult:
         self.requests.append(request)
+        on_registered()
+        on_started(10.0)
         self.started.set()
         return RawCliResult(
             invocation_id=request.invocation_id,
@@ -136,6 +146,30 @@ def _message_rows(db) -> int:
     return int(
         db.get_connection().execute("SELECT COUNT(*) FROM messages").fetchone()[0]
     )
+
+
+def test_console_session_close_cancels_raw_invocations_before_store_removal() -> None:
+    store = ConsoleChatStore()
+    session = store.create_session(title="raw close")
+    observations: list[tuple[str, bool]] = []
+
+    def cancel_raw_cli_session(session_id: str) -> tuple[str, ...]:
+        observations.append(
+            (session_id, any(item.id == session_id for item in store.sessions()))
+        )
+        return ("raw-1",)
+
+    controller = ConsoleChatController(
+        store=store,
+        provider_gateway=SimpleNamespace(),
+        agent_runtime_enabled=False,
+        cancel_raw_cli_session=cancel_raw_cli_session,
+    )
+
+    controller.close_session(session.id)
+
+    assert observations == [(session.id, True)]
+    assert store.sessions() == []
 
 
 @pytest.mark.asyncio

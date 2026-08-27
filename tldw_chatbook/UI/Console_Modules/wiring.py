@@ -283,6 +283,65 @@ def _raw_cli_active_session_id(screen: Any) -> str:
     return str(screen._ensure_console_chat_store().ensure_session().id)
 
 
+def _raw_cli_projection_is_current(screen: Any, session_id: str) -> bool:
+    """Return whether this screen may project one raw marker update."""
+    try:
+        if screen.app.screen is not screen:
+            return False
+    except Exception:  # noqa: BLE001 -- detached fixtures have no projection
+        return False
+    if bool(getattr(screen, "_closing", False)) or bool(
+        getattr(screen, "_closed", False)
+    ):
+        return False
+    try:
+        store = screen._ensure_console_chat_store()
+        return store.active_session_id == session_id
+    except Exception:  # noqa: BLE001 -- projection is navigation-best-effort
+        return False
+
+
+async def _drain_raw_cli_projection(screen: Any) -> None:
+    """Drain dirty raw updates through one screen-owned projection worker."""
+    try:
+        while True:
+            screen._raw_cli_projection_dirty = False
+            session_id = getattr(screen, "_raw_cli_projection_session_id", None)
+            if not isinstance(session_id, str) or not _raw_cli_projection_is_current(
+                screen, session_id
+            ):
+                return
+            await screen._sync_native_console_chat_ui()
+            if not bool(getattr(screen, "_raw_cli_projection_dirty", False)):
+                return
+    finally:
+        screen._raw_cli_projection_in_flight = False
+
+
+def _schedule_raw_cli_projection(screen: Any, session_id: str) -> None:
+    """Coalesce raw marker updates into one live-screen projection worker."""
+    if not _raw_cli_projection_is_current(screen, session_id):
+        return
+    screen._raw_cli_projection_session_id = session_id
+    screen._raw_cli_projection_dirty = True
+    if bool(getattr(screen, "_raw_cli_projection_in_flight", False)):
+        return
+    screen._raw_cli_projection_in_flight = True
+    projection = _drain_raw_cli_projection(screen)
+    try:
+        screen.run_worker(
+            projection,
+            group="console-raw-cli-projection",
+            exit_on_error=False,
+        )
+    except Exception:  # noqa: BLE001 -- projection is navigation-best-effort
+        screen._raw_cli_projection_in_flight = False
+        screen._raw_cli_projection_dirty = False
+        close = getattr(projection, "close", None)
+        if callable(close):
+            close()
+
+
 def _raw_cli_persisted_leaf_anchor(screen: Any, session_id: str) -> str | None:
     """Capture the active leaf's durable id without turning it into authority."""
     store = screen._ensure_console_chat_store()
@@ -1589,6 +1648,9 @@ def build_console_controllers(
         start_worker=lambda work, **kwargs: screen.run_worker(work, **kwargs),
         marshal_to_ui=(
             lambda callback, *args: screen.app.call_from_thread(callback, *args)
+        ),
+        schedule_projection=(
+            lambda session_id: _schedule_raw_cli_projection(screen, session_id)
         ),
     )
     screen._prompt_queue = ConsolePromptQueueUIController(

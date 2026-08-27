@@ -5136,6 +5136,11 @@ class ChatScreen(BaseAppScreen):
                     self._session._build_console_turn_execution_context
                 ),
                 provider_config=self._provider_readiness_app_config,
+                cancel_raw_cli_session=getattr(
+                    getattr(self.app_instance, "raw_cli_runtime", None),
+                    "cancel_session",
+                    None,
+                ),
             )
         # task-15860: every screen-owned slot on the controller, the store
         # and the wake coordinator is (re)bound HERE, through the single
@@ -14472,6 +14477,30 @@ class ChatScreen(BaseAppScreen):
         under the original name for `on_button_pressed` and the
         pre-existing test suite's direct-call convention -- see
         `message.py`'s module docstring."""
+        button_id = event.button.id or ""
+        action_id = getattr(event.button, "console_action_id", None)
+        message_id = getattr(event.button, "console_message_id", None)
+        prefix = "console-message-action-raw-cli-stop-"
+        if action_id == "raw-cli-stop" or button_id.startswith(prefix):
+            if not isinstance(message_id, str):
+                message_id = button_id.removeprefix(prefix)
+            event.stop()
+            store = self._ensure_console_chat_store()
+            session_id = store.active_session_id
+            if session_id is None:
+                return True
+            marker = next(
+                (
+                    message
+                    for message in store.messages_for_session(session_id)
+                    if message.id == message_id
+                    and message.raw_cli_presentation is not None
+                ),
+                None,
+            )
+            if marker is not None:
+                self._raw_cli.stop_user_command(marker)
+            return True
         return await self._message.handle_console_message_action(event)
 
     def _console_fork_eligibility(self, message_id: str):

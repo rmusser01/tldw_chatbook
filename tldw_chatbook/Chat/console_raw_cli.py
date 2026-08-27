@@ -22,6 +22,8 @@ RAW_CLI_SHUTDOWN_TIMEOUT_SECONDS = 5.0
 
 RawCliArmReason: TypeAlias = Literal["armed", "locked", "shutdown"]
 RawCliEventSink: TypeAlias = Callable[[RawCliStreamEvent], None]
+RawCliRegisteredSink: TypeAlias = Callable[[], None]
+RawCliStartedSink: TypeAlias = Callable[[float], None]
 
 
 @dataclass(frozen=True, slots=True)
@@ -42,6 +44,7 @@ class RawCliShutdownResult:
 
 @dataclass(slots=True)
 class _ActiveInvocation:
+    console_session_id: str
     cancel_event: threading.Event
     done_event: threading.Event
 
@@ -112,13 +115,21 @@ class RawCliRuntime:
         self,
         request: RawCliRequest,
         on_event: RawCliEventSink,
+        *,
+        on_registered: RawCliRegisteredSink | None = None,
+        on_started: RawCliStartedSink | None = None,
     ) -> RawCliResult:
         """Synchronously execute one request through the guarded admission seam."""
         validate_raw_cli_request(request)
         if not callable(on_event):
             raise TypeError("on_event must be callable")
+        if on_registered is not None and not callable(on_registered):
+            raise TypeError("on_registered must be callable or None")
+        if on_started is not None and not callable(on_started):
+            raise TypeError("on_started must be callable or None")
 
         active = _ActiveInvocation(
+            console_session_id=request.console_session_id,
             cancel_event=threading.Event(),
             done_event=threading.Event(),
         )
@@ -135,7 +146,7 @@ class RawCliRuntime:
 
         def admit_worker(
             tree: ExecutorProcessTree,
-            commit_launch: Callable[[], None],
+            commit_launch: Callable[[], float | None],
         ) -> bool:
             def authority_allows_launch_locked() -> bool:
                 return not (
@@ -143,6 +154,7 @@ class RawCliRuntime:
                     or self._active_invocations.get(request.invocation_id) is not active
                     or not self._latest_permitted_locked()
                     or not self._armed
+                    or active.cancel_event.is_set()
                 )
 
             with self._admission_lock:
@@ -154,10 +166,19 @@ class RawCliRuntime:
                     # The second check and commit are the atomic launch boundary.
                     if not authority_allows_launch_locked():
                         return False
-                    commit_launch()
-                    return True
+                    started_at = commit_launch()
+                if started_at is None:
+                    return False
+                if on_started is not None:
+                    try:
+                        on_started(started_at)
+                    except Exception:
+                        pass
+                return True
 
         try:
+            if on_registered is not None:
+                on_registered()
             return self._executor.execute(
                 request,
                 cancel_event=active.cancel_event,
@@ -178,6 +199,23 @@ class RawCliRuntime:
                 return False
             active.cancel_event.set()
             return True
+
+    def cancel_session(self, session_id: str) -> tuple[str, ...]:
+        """Signal every active invocation owned by one Console session."""
+        with self._lock:
+            active = tuple(
+                sorted(
+                    (
+                        invocation_id,
+                        invocation,
+                    )
+                    for invocation_id, invocation in self._active_invocations.items()
+                    if invocation.console_session_id == session_id
+                )
+            )
+            for _invocation_id, invocation in active:
+                invocation.cancel_event.set()
+        return tuple(invocation_id for invocation_id, _invocation in active)
 
     def shutdown(self) -> RawCliShutdownResult:
         """Disarm, cancel active work, and wait only for the configured bound."""
@@ -248,5 +286,6 @@ __all__ = [
     "RawCliArmResult",
     "RawCliEventSink",
     "RawCliRuntime",
+    "RawCliStartedSink",
     "RawCliShutdownResult",
 ]

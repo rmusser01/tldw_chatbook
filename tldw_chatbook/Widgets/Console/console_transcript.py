@@ -26,6 +26,7 @@ from textual.geometry import Region
 from textual.message import Message
 from textual.message_pump import NoActiveAppError
 from textual.style import Style
+from textual.timer import Timer
 from textual.widget import Widget
 from textual.visual import VisualType
 from textual.widgets import Button, Markdown, Static
@@ -92,6 +93,7 @@ from tldw_chatbook.Widgets.Console.console_assistant_turn import (
     ConsoleActivityActivated,
     ConsoleActivityDisclosure,
     ConsoleAssistantTurnWidget,
+    raw_cli_status_copy,
 )
 from tldw_chatbook.Widgets.Console.console_selection import (
     SelectionManager,
@@ -1262,6 +1264,7 @@ class ConsoleMessageHeader(Horizontal):
         self._presentation = presentation
         self._speech_state = speech_state
         self._speech = resolve_console_header_speech(message, speech_state)
+        self._raw_cli_elapsed_timer: Timer | None = None
         classes = ["console-message-header"]
         if markdown:
             classes.append("console-markdown-header")
@@ -1285,7 +1288,43 @@ class ConsoleMessageHeader(Horizontal):
         return Content(self._speaker_label())
 
     def _speaker_label(self) -> str:
-        return _speaker_label(self._message, self._presentation)
+        label = _speaker_label(self._message, self._presentation)
+        raw_cli = self._message.raw_cli_presentation
+        if raw_cli is not None:
+            label += f" · {raw_cli_status_copy(raw_cli)}"
+        return label
+
+    def on_mount(self) -> None:
+        """Own elapsed-time repainting for this mounted raw command row."""
+        self._sync_raw_cli_timer()
+
+    def _tick_raw_cli_elapsed(self) -> None:
+        if self._message.raw_cli_presentation is None:
+            return
+        try:
+            speaker = self.query_one(".console-transcript-speaker-label", Static)
+        except NoMatches:
+            return
+        speaker.update(self._speaker_copy())
+
+    def _sync_raw_cli_timer(self) -> None:
+        timer = self._raw_cli_elapsed_timer
+        raw_cli = self._message.raw_cli_presentation
+        active = (
+            raw_cli is not None
+            and raw_cli.lifecycle_state in {"running", "stopping"}
+            and raw_cli.started_at_monotonic is not None
+        )
+        if active and timer is None:
+            self._raw_cli_elapsed_timer = self.set_interval(
+                0.1,
+                self._tick_raw_cli_elapsed,
+            )
+        elif active:
+            timer.resume()
+        elif timer is not None:
+            timer.stop()
+            self._raw_cli_elapsed_timer = None
 
     def _speech_controls(self, speech: ConsoleHeaderSpeechPresentation) -> Horizontal:
         assert speech.action is not None
@@ -1334,6 +1373,7 @@ class ConsoleMessageHeader(Horizontal):
             return
         speaker.set_classes(" ".join(_speaker_label_classes(presentation)))
         speaker.update(self._speaker_copy())
+        self._sync_raw_cli_timer()
         if prior_has_action != next_has_action:
             self.refresh(recompose=True)
             return
@@ -4921,6 +4961,11 @@ class ConsoleTranscript(VerticalScroll):
                     activity_presentation = activity.activity_presentation
                     if activity_presentation is None:
                         activity_header = "Activity · done"
+                    elif activity.raw_cli_presentation is not None:
+                        activity_header = (
+                            f"{activity_presentation.label} · "
+                            f"{raw_cli_status_copy(activity.raw_cli_presentation)}"
+                        )
                     else:
                         activity_header = (
                             f"{activity_presentation.label} · "
@@ -6403,6 +6448,11 @@ class ConsoleTranscript(VerticalScroll):
                         )
                     ),
                     (
+                        item.raw_cli_presentation
+                        if isinstance(item, ConsoleChatMessage)
+                        else None
+                    ),
+                    (
                         item.id
                         if isinstance(item, ConsoleChatMessage)
                         else item.activity_id
@@ -6864,6 +6914,11 @@ class ConsoleTranscript(VerticalScroll):
             action_widgets=components.action_widgets,
             detail_widgets=components.detail_widgets,
             detail_available=components.detail_available,
+            raw_cli_presentation=(
+                activity.raw_cli_presentation
+                if isinstance(activity, ConsoleChatMessage)
+                else None
+            ),
         )
         disclosure._console_action_signature = components.action_signature
         disclosure._console_detail_signature = components.detail_signature
@@ -6963,6 +7018,11 @@ class ConsoleTranscript(VerticalScroll):
                 components.presentation.status,
                 expanded=activity_id in self._expanded_tool_output_ids,
                 selected=activity_id == self.selected_message_id,
+                raw_cli_presentation=(
+                    activity.raw_cli_presentation
+                    if isinstance(activity, ConsoleChatMessage)
+                    else None
+                ),
             )
 
     def _build_assistant_turn_widget(self, row: _TranscriptRow) -> Widget:
@@ -7171,6 +7231,7 @@ class ConsoleTranscript(VerticalScroll):
             # token without it would hit this cache and the elapsed figure
             # would freeze at the first value it ever rendered.
             message.live_activity,
+            message.raw_cli_presentation,
             presentation.revision_token,
             self._console_speech_state(message.id),
         )
@@ -7417,6 +7478,9 @@ class ConsoleTranscript(VerticalScroll):
             # every display test still green. Named explicitly here so the
             # two renderers cannot silently depend on each other again.
             message.live_activity,
+            # Raw command lifecycle also lives only in the header. Include
+            # it explicitly so same-id updates reconcile that header.
+            message.raw_cli_presentation,
             presentation.revision_token,
             self._console_speech_state(message.id),
         )

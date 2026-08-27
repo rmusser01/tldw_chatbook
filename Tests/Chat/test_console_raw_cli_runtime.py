@@ -101,8 +101,9 @@ class _WaitingAdmissionExecutor:
             def admit(self) -> None:
                 owner.admitted = True
 
-        def commit_launch() -> None:
+        def commit_launch() -> float:
             owner.committed = True
+            return 1.0
 
         admit_worker(Tree(), commit_launch)
         state = "exited" if self.committed else "containment_unavailable"
@@ -139,8 +140,9 @@ class _BlockingTreeAdmissionExecutor:
                     "test did not release containment admission"
                 )
 
-        def commit_launch() -> None:
+        def commit_launch() -> float:
             owner.committed = True
+            return 1.0
 
         admit_worker(Tree(), commit_launch)
         if self.committed:
@@ -175,10 +177,11 @@ class _BlockingLaunchCommitExecutor:
             def admit(self) -> None:
                 return None
 
-        def commit_launch() -> None:
+        def commit_launch() -> float:
             owner.commit_started.set()
             assert owner.release_commit.wait(2.0), "test did not release launch commit"
             owner.committed = True
+            return 1.0
 
         admit_worker(Tree(), commit_launch)
         assert cancel_event.wait(2.0), "active invocation was not cancelled"
@@ -210,9 +213,10 @@ class _ActiveExecutor:
             def admit(self) -> None:
                 return None
 
-        def commit_launch() -> None:
+        def commit_launch() -> float:
             nonlocal committed
             committed = True
+            return 1.0
 
         admit_worker(Tree(), commit_launch)
         assert committed is True
@@ -250,7 +254,7 @@ class _HangingExecutor:
             def admit(self) -> None:
                 return None
 
-        admit_worker(Tree(), lambda: None)
+        admit_worker(Tree(), lambda: 1.0)
         self.started.set()
         assert self.release.wait(2.0), "test did not release hanging executor"
         return _result(request, "exited")
@@ -271,7 +275,37 @@ class _ImmediateExecutor:
             def admit(self) -> None:
                 return None
 
-        admit_worker(Tree(), lambda: None)
+        admit_worker(Tree(), lambda: 1.0)
+        return _result(request, "exited")
+
+
+class _StartedBoundaryExecutor:
+    """Report a deterministic launch timestamp only after tree admission."""
+
+    def __init__(self) -> None:
+        self.admitted = False
+        self.callback_saw_admission = False
+
+    def execute(
+        self,
+        request: RawCliRequest,
+        *,
+        cancel_event: threading.Event,
+        on_event: Any,
+        admit_worker: Any,
+    ) -> RawCliResult:
+        del cancel_event, on_event
+        owner = self
+
+        class Tree:
+            def admit(self) -> None:
+                owner.admitted = True
+
+        def commit_launch() -> float:
+            assert owner.admitted is True
+            return 123.5
+
+        admit_worker(Tree(), commit_launch)
         return _result(request, "exited")
 
 
@@ -291,6 +325,35 @@ def test_runtime_starts_unarmed_even_when_persistent_unlock_is_true(
         "refused"
     )
     assert executor.calls == 0
+
+
+def test_runtime_notifies_actual_start_only_after_containment_admission(
+    raw_runtime_module: Any,
+    tmp_path: Path,
+) -> None:
+    executor = _StartedBoundaryExecutor()
+    runtime = _required(raw_runtime_module, "RawCliRuntime")(
+        lambda: True,
+        executor=executor,
+    )
+    runtime.arm()
+    registered: list[str] = []
+    started: list[float] = []
+
+    result = runtime.execute(
+        _request(tmp_path),
+        lambda _event: None,
+        on_registered=lambda: registered.append("registered"),
+        on_started=lambda timestamp: (
+            setattr(executor, "callback_saw_admission", executor.admitted),
+            started.append(timestamp),
+        ),
+    )
+
+    assert result.terminal_state == "exited"
+    assert registered == ["registered"]
+    assert started == [123.5]
+    assert executor.callback_saw_admission is True
 
 
 def test_arm_refuses_until_saved_unlock_is_strictly_true(
@@ -519,6 +582,51 @@ def test_disarm_clears_session_grants_and_cancels_every_active_invocation(
         thread.join(2.0)
         assert thread.is_alive() is False
     assert sorted(result.terminal_state for result in results) == [
+        "cancelled",
+        "cancelled",
+    ]
+
+
+def test_cancel_session_signals_only_that_sessions_active_invocations(
+    raw_runtime_module: Any,
+    tmp_path: Path,
+) -> None:
+    executor = _ActiveExecutor(expected=3)
+    runtime = _required(raw_runtime_module, "RawCliRuntime")(
+        lambda: True,
+        executor=executor,
+    )
+    runtime.arm()
+    requests = (
+        _request(tmp_path, "raw-a", console_session_id="session-a"),
+        _request(tmp_path, "raw-b", console_session_id="session-a"),
+        _request(tmp_path, "raw-c", console_session_id="session-b"),
+    )
+    results: list[RawCliResult] = []
+    threads = [
+        threading.Thread(
+            target=lambda request=request: results.append(
+                runtime.execute(request, lambda _event: None)
+            )
+        )
+        for request in requests
+    ]
+    for thread in threads:
+        thread.start()
+    assert executor.all_started.wait(2.0)
+
+    assert runtime.cancel_session("session-a") == ("raw-a", "raw-b")
+    assert executor.cancel_events["raw-a"].is_set()
+    assert executor.cancel_events["raw-b"].is_set()
+    assert not executor.cancel_events["raw-c"].is_set()
+    assert runtime.cancel_session("missing") == ()
+
+    assert runtime.cancel("raw-c") is True
+    for thread in threads:
+        thread.join(2.0)
+        assert not thread.is_alive()
+    assert sorted(result.terminal_state for result in results) == [
+        "cancelled",
         "cancelled",
         "cancelled",
     ]

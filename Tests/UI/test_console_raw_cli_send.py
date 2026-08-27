@@ -54,8 +54,17 @@ class _Runtime:
         self.armed = armed
         self.requests: list[Any] = []
 
-    def execute(self, request: Any, _on_event: Any) -> RawCliResult:
+    def execute(
+        self,
+        request: Any,
+        _on_event: Any,
+        *,
+        on_registered: Any,
+        on_started: Any,
+    ) -> RawCliResult:
         self.requests.append(request)
+        on_registered()
+        on_started(10.0)
         return RawCliResult(
             invocation_id=request.invocation_id,
             caller=request.caller,
@@ -200,7 +209,15 @@ def test_raw_cli_controller_falls_back_to_private_scratch_once(tmp_path: Path) -
 
 def test_runtime_admission_refusal_marshals_restore_to_ui(tmp_path: Path) -> None:
     class RefusingRuntime(_Runtime):
-        def execute(self, request: Any, _on_event: Any) -> RawCliResult:
+        def execute(
+            self,
+            request: Any,
+            _on_event: Any,
+            *,
+            on_registered: Any,
+            on_started: Any,
+        ) -> RawCliResult:
+            del on_registered, on_started
             self.requests.append(request)
             return RawCliResult(
                 invocation_id=request.invocation_id,
@@ -245,8 +262,17 @@ def test_prelaunch_containment_unavailable_restores_draft_on_ui_thread(
     tmp_path: Path,
 ) -> None:
     class ContainmentRefusingRuntime(_Runtime):
-        def execute(self, request: Any, _on_event: Any) -> RawCliResult:
+        def execute(
+            self,
+            request: Any,
+            _on_event: Any,
+            *,
+            on_registered: Any,
+            on_started: Any,
+        ) -> RawCliResult:
+            del on_started
             self.requests.append(request)
+            on_registered()
             return RawCliResult(
                 invocation_id=request.invocation_id,
                 caller=request.caller,
@@ -287,8 +313,17 @@ def test_postlaunch_terminal_failure_does_not_restore_the_sent_draft(
     tmp_path: Path,
 ) -> None:
     class TimedOutRuntime(_Runtime):
-        def execute(self, request: Any, _on_event: Any) -> RawCliResult:
+        def execute(
+            self,
+            request: Any,
+            _on_event: Any,
+            *,
+            on_registered: Any,
+            on_started: Any,
+        ) -> RawCliResult:
             self.requests.append(request)
+            on_registered()
+            on_started(10.0)
             return RawCliResult(
                 invocation_id=request.invocation_id,
                 caller=request.caller,
@@ -499,7 +534,15 @@ def test_hidden_session_refusal_banks_exact_stash_until_reconciled(
     tmp_path: Path,
 ) -> None:
     class RefusingRuntime(_Runtime):
-        def execute(self, request: Any, _on_event: Any) -> RawCliResult:
+        def execute(
+            self,
+            request: Any,
+            _on_event: Any,
+            *,
+            on_registered: Any,
+            on_started: Any,
+        ) -> RawCliResult:
+            del on_registered, on_started
             self.requests.append(request)
             return RawCliResult(
                 invocation_id=request.invocation_id,
@@ -578,7 +621,15 @@ async def test_marshaled_raw_completion_after_runtime_dispose_is_fenced(
     completion: str,
 ) -> None:
     class CompletingRuntime(_Runtime):
-        def execute(self, request: Any, _on_event: Any) -> RawCliResult:
+        def execute(
+            self,
+            request: Any,
+            _on_event: Any,
+            *,
+            on_registered: Any,
+            on_started: Any,
+        ) -> RawCliResult:
+            del on_registered, on_started
             self.requests.append(request)
             if completion == "exception":
                 raise RuntimeError("test runtime failure")

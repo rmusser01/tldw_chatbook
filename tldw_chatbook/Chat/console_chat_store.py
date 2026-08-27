@@ -62,6 +62,7 @@ from tldw_chatbook.Chat.console_chat_models import (
     ConsoleWorkspaceContext,
     GenerationVariantMeta,
     MessageAttachment,
+    RawCliPresentation,
     console_dispatch_recovery_from_checkpoint,
 )
 from tldw_chatbook.Chat.console_chat_fork import (
@@ -177,6 +178,7 @@ from tldw_chatbook.Chat.provider_continuation import (
     read_provider_continuation_json,
     transition_provider_call,
 )
+
 from tldw_chatbook.Chat.rag_scope import RagScope, SessionScopeHolder, serialize_scope
 from tldw_chatbook.Sync_Interop.hashing import canonical_payload_hash
 from tldw_chatbook.TTS.profile_errors import ProfileValidationError
@@ -187,6 +189,29 @@ from tldw_chatbook.Video_Generation.video_store import (
     parse_video_marker,
     video_content_marker,
 )
+
+_MAX_RAW_CLI_MARKER_FIELD_BYTES = 64 * 1024
+_RAW_CLI_TERMINAL_STATES = frozenset(
+    {"exited", "timed_out", "cancelled", "cleanup_unproven", "failed"}
+)
+
+
+class RawCliMarkerTransitionError(ValueError):
+    """A raw marker update would regress lifecycle or change invocation."""
+
+
+def _validate_raw_cli_marker_text(field_name: str, value: object) -> None:
+    """Reject raw marker fields that exceed the in-memory store boundary."""
+    if value is None:
+        return
+    if type(value) is not str:
+        raise TypeError(f"{field_name} must be text or None")
+    try:
+        size = len(value.encode("utf-8"))
+    except UnicodeEncodeError as exc:
+        raise ValueError(f"{field_name} must be valid UTF-8 text") from exc
+    if size > _MAX_RAW_CLI_MARKER_FIELD_BYTES:
+        raise ValueError(f"{field_name} must be at most 64 KiB")
 
 if TYPE_CHECKING:
     # Annotation-only: ``from __future__ import annotations`` (top of file)
@@ -7012,6 +7037,8 @@ class ConsoleChatStore:
         metadata: "MessageMetadata | None" = None,
         activity_presentation: ConsoleActivityPresentation | None = None,
         activity_round_ordinal: int | None = None,
+        raw_cli_presentation: RawCliPresentation | None = None,
+        record_trajectory: bool = True,
         message_id: str | None = None,
     ) -> ConsoleChatMessage:
         """Append a message; scalar image kwargs become a one-item tuple.
@@ -7029,8 +7056,26 @@ class ConsoleChatStore:
         it is attached only to the in-memory message and never serialized.
         ``activity_round_ordinal`` carries the same marker's explicit model-
         round owner and is likewise session-only.
+
+        ``raw_cli_presentation`` is the narrower callback-free raw-command
+        display contract. ``record_trajectory=False`` is reserved for direct
+        user commands, which are local actions rather than agent tool calls.
         """
         self._session_or_raise(session_id)
+        if raw_cli_presentation is not None and (
+            type(raw_cli_presentation) is not RawCliPresentation
+            or role is not ConsoleMessageRole.TOOL
+        ):
+            raise ValueError("raw CLI presentation requires a TOOL marker")
+        if type(record_trajectory) is not bool:
+            raise TypeError("record_trajectory must be a boolean")
+        if not record_trajectory and raw_cli_presentation is None:
+            raise ValueError(
+                "record_trajectory=False requires a raw CLI presentation"
+            )
+        if raw_cli_presentation is not None:
+            _validate_raw_cli_marker_text("content", content)
+            _validate_raw_cli_marker_text("tool_output_full", tool_output_full)
         effective = tuple(attachments)
         if not effective and image_data is not None:
             effective = (
@@ -7085,6 +7130,7 @@ class ConsoleChatStore:
             metadata=metadata,
             activity_presentation=activity_presentation,
             activity_round_ordinal=activity_round_ordinal,
+            raw_cli_presentation=raw_cli_presentation,
         )
         self._set_message_attachments(message, effective)
         if attachment_label and effective and not effective[0].display_name:
@@ -7112,10 +7158,11 @@ class ConsoleChatStore:
             # Trajectory sidecar (schema v38): the marker itself is never
             # persisted, but its tool_call/tool_result records ARE -- keyed
             # to the anchor (parent assistant) message. Best-effort.
-            anchor_node = self._nodes_by_session.get(session_id, {}).get(anchor)
-            self._record_trajectory_tool_marker(
-                session_id, anchor_node, content, tool_output_full
-            )
+            if record_trajectory:
+                anchor_node = self._nodes_by_session.get(session_id, {}).get(anchor)
+                self._record_trajectory_tool_marker(
+                    session_id, anchor_node, content, tool_output_full
+                )
             return self._snapshot(message)
         old_leaf = self._active_leaf_by_session[session_id]
         self._register_tree_node(session_id, message, parent_native_id=old_leaf)
@@ -7678,6 +7725,98 @@ class ConsoleChatStore:
         message = self._message_or_raise(message_id)
         self._materialize_stream_buffer(message)
         return self._snapshot(message)
+
+    def update_tool_marker(
+        self,
+        session_id: str,
+        message_id: str,
+        **bounded_fields: object,
+    ) -> ConsoleChatMessage:
+        """Replace bounded display facts on one existing TOOL marker.
+
+        Args:
+            session_id: Session that owns the display-only marker.
+            message_id: Stable marker id to update.
+            **bounded_fields: Any of ``content``, ``tool_output_full``,
+                ``activity_presentation``, or ``raw_cli_presentation``.
+
+        Returns:
+            An immutable snapshot of the replacement marker.
+
+        Raises:
+            KeyError: If the session does not own the marker.
+            TypeError: If a bounded field has the wrong value type.
+            ValueError: If a caller tries to mutate any other field.
+        """
+        self._session_or_raise(session_id)
+        allowed = {
+            "content",
+            "tool_output_full",
+            "activity_presentation",
+            "raw_cli_presentation",
+        }
+        unknown = set(bounded_fields) - allowed
+        if unknown:
+            raise ValueError(
+                "tool marker updates accept only bounded display fields"
+            )
+        content = bounded_fields.get("content")
+        if "content" in bounded_fields and type(content) is not str:
+            raise TypeError("content must be text")
+        full = bounded_fields.get("tool_output_full")
+        if (
+            "tool_output_full" in bounded_fields
+            and full is not None
+            and type(full) is not str
+        ):
+            raise TypeError("tool_output_full must be text or None")
+        if "content" in bounded_fields:
+            _validate_raw_cli_marker_text("content", content)
+        if "tool_output_full" in bounded_fields:
+            _validate_raw_cli_marker_text("tool_output_full", full)
+        activity = bounded_fields.get("activity_presentation")
+        if (
+            "activity_presentation" in bounded_fields
+            and activity is not None
+            and type(activity) is not ConsoleActivityPresentation
+        ):
+            raise TypeError(
+                "activity_presentation must be ConsoleActivityPresentation or None"
+            )
+        raw = bounded_fields.get("raw_cli_presentation")
+        if (
+            "raw_cli_presentation" in bounded_fields
+            and raw is not None
+            and type(raw) is not RawCliPresentation
+        ):
+            raise TypeError(
+                "raw_cli_presentation must be RawCliPresentation or None"
+            )
+
+        markers = self._tool_markers_by_session.get(session_id, [])
+        for index, (anchor, marker) in enumerate(markers):
+            if marker.id != message_id:
+                continue
+            previous_raw = marker.raw_cli_presentation
+            if previous_raw is not None and "raw_cli_presentation" in bounded_fields:
+                if raw is None or raw.invocation_id != previous_raw.invocation_id:
+                    raise RawCliMarkerTransitionError(
+                        "raw CLI invocation identity cannot change"
+                    )
+                allowed = {
+                    "starting": {"running", "stopping"} | _RAW_CLI_TERMINAL_STATES,
+                    "running": {"running", "stopping"} | _RAW_CLI_TERMINAL_STATES,
+                    "stopping": {"stopping"} | _RAW_CLI_TERMINAL_STATES,
+                }.get(previous_raw.lifecycle_state, frozenset())
+                if raw.lifecycle_state not in allowed:
+                    raise RawCliMarkerTransitionError(
+                        "raw CLI lifecycle transition would regress"
+                    )
+            replacement = replace(marker, **bounded_fields)
+            markers[index] = (anchor, replacement)
+            self._recompute_active_path(session_id)
+            return self._snapshot(replacement)
+        raise KeyError(message_id)
 
     def issue_tts_message_speech_snapshot(
         self,
@@ -13670,6 +13809,7 @@ class ConsoleChatStore:
                 message,
                 citation_presentation=None,
                 activity_presentation=None,
+                raw_cli_presentation=None,
             )
             if restored.role is ConsoleMessageRole.TOOL:
                 self._message_session_index[restored.id] = session_id
@@ -13712,6 +13852,7 @@ class ConsoleChatStore:
                 node,
                 citation_presentation=None,
                 activity_presentation=None,
+                raw_cli_presentation=None,
             )
             if restored.role is ConsoleMessageRole.TOOL:
                 self._message_session_index[restored.id] = session_id

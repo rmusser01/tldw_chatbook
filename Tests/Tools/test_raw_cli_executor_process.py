@@ -408,10 +408,27 @@ def test_launch_commit_refuses_preexisting_cancellation() -> None:
         cancel_event,
     )
 
-    commit()
+    assert commit() is None
 
     assert commit.settle() is None
     assert launch_event.is_set() is False
+
+
+def test_launch_commit_returns_the_post_admission_timestamp(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    launch_event = threading.Event()
+    commit = raw_cli._LaunchCommit(
+        SimpleNamespace(admitted=True),
+        launch_event,
+        threading.Event(),
+    )
+    monkeypatch.setattr(raw_cli.time, "monotonic", lambda: 42.25)
+
+    assert commit() == 42.25
+    assert commit() is None
+    assert commit.settle() == 42.25
+    assert launch_event.is_set() is True
 
 
 def test_cancel_during_wait_refuses_delayed_launch_commit(
