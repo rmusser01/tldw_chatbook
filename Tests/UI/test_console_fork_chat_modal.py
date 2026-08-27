@@ -162,6 +162,50 @@ async def test_fork_modal_state_copy_stays_visible_above_actions(size):
 
 
 @pytest.mark.asyncio
+async def test_fork_modal_multiline_precommit_error_is_painted_at_smallest_size():
+    app = ConsolidatedCSSApp()
+    modal = ConsoleForkChatModal(_summary(), on_submit=lambda _: None)
+
+    async with app.run_test(size=(80, 24)) as pilot:
+        app.push_screen(modal)
+        await pilot.pause()
+
+        modal.show_precommit_error(
+            "Could not validate the fork.\nCheck the source chat and retry."
+        )
+        await pilot.pause()
+
+        status = modal.query_one("#console-fork-chat-status", Static)
+        painted = _painted_widget_text(modal, status)
+        assert "Could not validate the fork." in painted
+        assert "Check the source chat and retry." in painted
+        assert modal.query_one("#console-fork-chat-confirm", Button).has_focus
+
+
+@pytest.mark.asyncio
+async def test_fork_modal_created_identity_is_painted_at_smallest_size():
+    app = ConsolidatedCSSApp()
+    modal = ConsoleForkChatModal(_summary(), on_submit=lambda _: None)
+
+    async with app.run_test(size=(80, 24)) as pilot:
+        app.push_screen(modal)
+        await pilot.pause()
+
+        modal.show_created_not_opened(
+            title="My focused fork",
+            identity="saved chat 12",
+            detail="The saved fork exists but could not be opened.",
+        )
+        await pilot.pause()
+
+        status = modal.query_one("#console-fork-chat-status", Static)
+        painted = _painted_widget_text(modal, status)
+        assert "The saved fork exists but could not be opened." in painted
+        assert "Identity: saved chat 12." in " ".join(painted.split())
+        assert modal.query_one("#console-fork-chat-open", Button).has_focus
+
+
+@pytest.mark.asyncio
 async def test_fork_modal_temporary_disclosure_is_truthful():
     app = ConsolidatedCSSApp()
     modal = ConsoleForkChatModal(_summary(temporary=True), on_submit=lambda _: None)

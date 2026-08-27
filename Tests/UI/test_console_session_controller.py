@@ -852,6 +852,15 @@ async def test_cancelled_fork_validation_generation_cannot_publish_late_result()
         assert len(store.sessions()) == len(original_session_ids) + 1
         register.assert_called_once()
         activate.assert_awaited_once()
+        # Textual pops the modal from the stack before its scheduled screen
+        # replacement physically detaches it. Pin the terminal lifecycle
+        # boundary so test teardown cannot overlap the resumed chat recompose.
+        for _ in range(200):
+            if not second.is_attached:
+                break
+            await pilot.pause(0.01)
+        assert not second.is_attached
+        assert console._session._active_fork_request is None
 
 
 @pytest.mark.asyncio

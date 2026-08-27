@@ -458,6 +458,10 @@ class ConsoleForkChatModal(SafeModalDismissMixin, ModalScreen[None]):
             confirm.focus()
         else:
             close.focus()
+        content = self.query_one("#console-fork-chat-content", VerticalScroll)
+        self.call_after_refresh(
+            content.scroll_end, animate=False, immediate=True, force=True
+        )
 
     def show_stale_source(self) -> None:
         self.state = "stale_source"
@@ -485,6 +489,10 @@ class ConsoleForkChatModal(SafeModalDismissMixin, ModalScreen[None]):
         open_button.display = True
         open_button.disabled = False
         open_button.focus()
+        content = self.query_one("#console-fork-chat-content", VerticalScroll)
+        self.call_after_refresh(
+            content.scroll_end, animate=False, immediate=True, force=True
+        )
 
     def close_after_success(self) -> None:
         """Dismiss this exact mounted modal after controller-owned activation."""
