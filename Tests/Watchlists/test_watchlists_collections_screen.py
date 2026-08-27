@@ -1238,6 +1238,135 @@ def test_unread_context_forces_effective_filter_without_overwriting_manual_choic
     assert query.context_key[-2] == "unread"
 
 
+@pytest.mark.parametrize(
+    ("scope", "all_ids", "unassigned_ids", "watchlists", "members", "expected"),
+    (
+        (
+            TreeScope(kind="source", source_id=9, parent_context="all"),
+            set(),
+            set(),
+            {7},
+            {9},
+            TreeScope(kind="all"),
+        ),
+        (
+            TreeScope(kind="source", source_id=9, parent_context="unassigned"),
+            {9},
+            set(),
+            {7},
+            {9},
+            TreeScope(kind="unassigned"),
+        ),
+        (
+            TreeScope(
+                kind="source",
+                source_id=9,
+                watchlist_id=7,
+                parent_context="watchlist",
+            ),
+            {9},
+            set(),
+            {7},
+            set(),
+            TreeScope(kind="watchlist", watchlist_id=7),
+        ),
+        (
+            TreeScope(kind="source", source_id=9, parent_context="unread"),
+            {9},
+            set(),
+            {7},
+            set(),
+            TreeScope(kind="source", source_id=9, parent_context="unread"),
+        ),
+    ),
+)
+def test_contextual_scope_reconciliation_chooses_nearest_existing_parent(
+    scope: TreeScope,
+    all_ids: set[int],
+    unassigned_ids: set[int],
+    watchlists: set[int],
+    members: set[int],
+    expected: TreeScope,
+) -> None:
+    app = Mock()
+    service = Mock()
+    service.list_source_rows.return_value = [
+        {"id": source_id, "name": f"Feed {source_id}"}
+        for source_id in members
+    ]
+    app.watchlist_bundle_service = service
+    screen = WatchlistsCollectionsScreen(app)
+    snapshot = collections_module.TreeDataSnapshot(
+        tuple({"id": watchlist_id, "name": f"List {watchlist_id}"} for watchlist_id in watchlists),
+        tuple({"id": source_id, "name": f"Feed {source_id}"} for source_id in all_ids),
+        tuple({"id": source_id, "name": f"Feed {source_id}"} for source_id in unassigned_ids),
+        {},
+        {},
+    )
+
+    assert screen._reconciled_tree_scope(scope, snapshot) == expected
+
+
+def test_unread_zero_count_pin_follows_pending_then_committed_authority() -> None:
+    screen = WatchlistsCollectionsScreen(Mock())
+    committed = TreeScope(kind="source", source_id=7, parent_context="unread")
+    pending = TreeScope(kind="source", source_id=9, parent_context="unread")
+    screen.__dict__["_reactive_tree_scope"] = committed
+
+    screen._pending_tree_scope = pending
+    assert screen._unread_pin_source_id() == 9
+
+    screen._pending_tree_scope = TreeScope(kind="all")
+    assert screen._unread_pin_source_id() == 7
+
+    screen.__dict__["_reactive_tree_scope"] = TreeScope(kind="all")
+    assert screen._unread_pin_source_id() is None
+
+
+def test_invalid_pending_scope_is_discarded_without_committing_its_fallback() -> None:
+    screen = WatchlistsCollectionsScreen(Mock())
+    screen.__dict__["_reactive_tree_scope"] = TreeScope(kind="all")
+    screen._pending_tree_scope = TreeScope(
+        kind="source",
+        source_id=9,
+        parent_context="unassigned",
+    )
+    screen._items_snapshot_generation = 4
+    screen._items_page_loading = True
+    screen._apply_tree_scope = Mock()
+    snapshot = collections_module.TreeDataSnapshot((), (), (), {}, {})
+
+    screen._reconcile_tree_navigation(snapshot)
+
+    assert screen._pending_tree_scope is None
+    assert screen._items_snapshot_generation == 5
+    assert screen._items_page_loading is False
+    screen._apply_tree_scope.assert_not_called()
+
+
+def test_membership_reconciliation_failure_preserves_contextual_scope() -> None:
+    app = Mock()
+    app.watchlist_bundle_service.list_source_rows.side_effect = RuntimeError(
+        "membership unavailable"
+    )
+    screen = WatchlistsCollectionsScreen(app)
+    scope = TreeScope(
+        kind="source",
+        source_id=9,
+        watchlist_id=7,
+        parent_context="watchlist",
+    )
+    snapshot = collections_module.TreeDataSnapshot(
+        ({"id": 7, "name": "List 7"},),
+        ({"id": 9, "name": "Feed 9"},),
+        (),
+        {},
+        {},
+    )
+
+    assert screen._reconciled_tree_scope(scope, snapshot) == scope
+
+
 def test_server_management_disables_only_individual_feed_navigation():
     screen = WatchlistsCollectionsScreen(Mock())
     screen.__dict__["_reactive_runtime_backend"] = "server"
@@ -1610,6 +1739,87 @@ async def test_m_toggles_read_state_on_open_item():
         assert [r["id"] for r in db.get_new_items(status="reviewed", limit=10)] == [
             item_id
         ], "`m` on an unread item must mark it read"
+
+
+@pytest.mark.asyncio
+async def test_last_unread_item_keeps_contextual_feed_and_reader_pinned():
+    app = _build_test_app()
+    db = app.watchlist_bundle_service._db
+    source_id = db.add_subscription(
+        name="Only unread feed",
+        type="rss",
+        source="https://only-unread.example/feed",
+    )
+    _seed_item(db, source_id, "Last unread item")
+    host = DestinationHarness(app, "watchlists_collections")
+
+    async with host.run_test(size=(180, 50)) as pilot:
+        await host.workers.wait_for_complete()
+        screen = host.screen_stack[-1]
+        assert await _wait_until(
+            pilot,
+            lambda: bool(screen.query("#wl-tree-node-unread")),
+        )
+        await pilot.click("#wl-tree-expand-root-unread")
+        assert await _wait_until(
+            pilot,
+            lambda: bool(
+                screen.query(f"#wl-tree-node-source-unread-{source_id}")
+            ),
+        )
+        await pilot.click(f"#wl-tree-node-source-unread-{source_id}")
+        expected_scope = TreeScope(
+            kind="source",
+            source_id=source_id,
+            parent_context="unread",
+        )
+        assert await _wait_until(
+            pilot,
+            lambda: screen.tree_scope == expected_scope,
+        )
+        pane = screen.query_one("#watchlists-items-pane", ArticleListPane)
+        await _wait_for_items(pilot, pane)
+        row_id = pane.items[0]["id"]
+
+        pane.select_item_by_id(str(row_id))
+        assert await _wait_until(
+            pilot,
+            lambda: bool(db.get_new_items(status="reviewed", limit=10)),
+        )
+        content = screen.query_one("#watchlists-content-pane", ContentPane)
+        focused_before_refresh = screen.focused
+        reader_position_before_refresh = content.position
+        page_before_refresh = pane.page_number
+        assert await _wait_until(
+            pilot,
+            lambda: screen._tree_source_counts.get(source_id, {}).get("unread")
+            == 0,
+            ticks=140,
+        )
+
+        assert screen.query(f"#wl-tree-node-source-unread-{source_id}")
+        assert "unread" in screen._tree_expanded_root_kinds
+        assert screen.focused is focused_before_refresh
+        assert pane.page_number == page_before_refresh
+        assert content.position == reader_position_before_refresh
+        assert [row["id"] for row in screen._loaded_items] == [row_id]
+        assert screen._selected_content_item is not None
+        assert screen._selected_content_item["id"] == row_id
+        assert content.item is screen._selected_content_item
+
+        await pilot.press("m")
+        assert await _wait_until(
+            pilot,
+            lambda: bool(db.get_new_items(status="new", limit=10)),
+        )
+        await screen._load_tree_data().wait()
+        assert screen._tree_source_counts[source_id]["unread"] == 1
+        assert await _wait_until(
+            pilot,
+            lambda: bool(
+                screen.query(f"#wl-tree-node-source-unread-{source_id}")
+            ),
+        )
 
 
 @pytest.mark.asyncio

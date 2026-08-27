@@ -1502,6 +1502,7 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
                 notify("Failed to load watchlists.", severity="error")
         elif not snapshot.failures:
             self._tree_failure_episode_active = False
+        self._reconcile_tree_navigation(snapshot)
         # Re-resolve the Inspector's breadcrumb against what was just loaded
         # (task-895). `_resolve_breadcrumb_labels` reads `_tree_watchlists`,
         # and until this task nothing could change that list while a scope
@@ -1973,14 +1974,97 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
             unassigned_source_rows=(
                 [] if recovering else self._tree_unassigned_source_rows
             ),
-            unread_pin_source_id=(
-                self.tree_scope.source_id
-                if self.tree_scope.kind == "source"
-                and self.tree_scope.parent_context == "unread"
-                else None
-            ),
+            unread_pin_source_id=self._unread_pin_source_id(),
             id="wl-tree",
         )
+
+    @staticmethod
+    def _unread_source_id(scope: TreeScope | None) -> int | None:
+        """Return the contextual All Unread source owned by ``scope``."""
+        if (
+            scope is not None
+            and scope.kind == "source"
+            and scope.parent_context == "unread"
+        ):
+            return scope.source_id
+        return None
+
+    def _unread_pin_source_id(self) -> int | None:
+        """Keep pending or committed All Unread authority present at zero."""
+        return self._unread_source_id(
+            self._pending_tree_scope
+        ) or self._unread_source_id(self.tree_scope)
+
+    def _set_pending_tree_scope(self, scope: TreeScope | None) -> None:
+        """Update pending authority and repaint only if its zero pin moves."""
+        prior_pin = self._unread_pin_source_id()
+        self._pending_tree_scope = scope
+        if self._unread_pin_source_id() != prior_pin and self._dom_is_live:
+            self._request_surface_refresh(self._SURFACE_RAIL)
+
+    def _reconciled_tree_scope(
+        self,
+        scope: TreeScope,
+        snapshot: TreeDataSnapshot,
+    ) -> TreeScope:
+        """Return ``scope`` or its nearest parent in the new tree snapshot."""
+        watchlist_ids = {int(row["id"]) for row in snapshot.watchlists}
+        if scope.kind == "watchlist":
+            if scope.watchlist_id not in watchlist_ids:
+                return TreeScope(kind="all")
+            return scope
+        if scope.kind != "source" or scope.source_id is None:
+            return scope
+
+        source_id = int(scope.source_id)
+        all_source_ids = {int(row["id"]) for row in snapshot.all_source_rows}
+        if source_id not in all_source_ids:
+            return TreeScope(kind="all")
+        if scope.parent_context == "unassigned":
+            unassigned_ids = {
+                int(row["id"]) for row in snapshot.unassigned_source_rows
+            }
+            if source_id not in unassigned_ids:
+                return TreeScope(kind="unassigned")
+        elif scope.parent_context == "watchlist":
+            watchlist_id = scope.watchlist_id
+            if watchlist_id is None or watchlist_id not in watchlist_ids:
+                return TreeScope(kind="all")
+            service = self._watchlist_bundle_service()
+            if service is None:
+                return scope
+            try:
+                member_ids = {
+                    int(row["id"])
+                    for row in service.list_source_rows(int(watchlist_id))
+                }
+            except Exception:
+                logger.opt(exception=True).debug(
+                    "Failed to reconcile Watchlists tree membership."
+                )
+                return scope
+            if source_id not in member_ids:
+                return TreeScope(kind="watchlist", watchlist_id=watchlist_id)
+        return scope
+
+    def _reconcile_tree_navigation(self, snapshot: TreeDataSnapshot) -> None:
+        """Discard invalid pending scope and reconcile committed authority."""
+        pending = self._pending_tree_scope
+        if (
+            pending is not None
+            and self._reconciled_tree_scope(pending, snapshot) != pending
+        ):
+            self._set_pending_tree_scope(None)
+            self._items_snapshot_generation += 1
+            self._items_pending_query_key = None
+            self._items_inflight_replacement = None
+            self._items_inflight_continuation = None
+            self._items_page_loading = False
+            self._push_items_pager_state()
+
+        committed = self._reconciled_tree_scope(self.tree_scope, snapshot)
+        if committed != self.tree_scope:
+            self._apply_tree_scope(committed)
 
     def _tree_write_disabled_reason(
         self, *, runtime_backend: str | None = None
@@ -3820,6 +3904,7 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
         event where "where the user is" and "what ancestry the Inspector may
         claim" genuinely agree. They part company again in `_select_entity`.
         """
+        prior_unread_pin = self._unread_pin_source_id()
         self._breadcrumb_labels = self._resolve_breadcrumb_labels(scope)
         self.selected_entity = None
         self.selected_source = None
@@ -3828,6 +3913,8 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
         self._clear_pane_selections()
         self.selected_scope = scope
         self.tree_scope = scope
+        if self._unread_pin_source_id() != prior_unread_pin and self._dom_is_live:
+            self._request_surface_refresh(self._SURFACE_RAIL)
 
     def _scope_display_label(self, scope: TreeScope) -> str:
         """Return the unescaped user-facing label for an explicit scope."""
@@ -3896,14 +3983,14 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
     def _commit_management_tree_scope(self, scope: TreeScope) -> None:
         """Commit non-Read navigation and invalidate parked Reader state."""
         with self.app.batch_update():
-            self._pending_tree_scope = None
+            self._set_pending_tree_scope(None)
             self._apply_tree_scope(scope)
             self._invalidate_parked_reader(loading=False)
 
     def _request_tree_scope(self, scope: TreeScope) -> None:
         """Request Read navigation, or commit management navigation now."""
         if self.active_section == "items" and self.runtime_backend == "local":
-            self._pending_tree_scope = scope
+            self._set_pending_tree_scope(scope)
             self._supersede_items_query_intent(scope=scope)
             try:
                 self.query_one("#wl-tree", WatchlistTree).active_scope = (
@@ -10247,7 +10334,7 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
     ) -> None:
         """Park old rows while immediately invalidating older query work."""
         if scope is None:
-            self._pending_tree_scope = None
+            self._set_pending_tree_scope(None)
         query = self._reader_item_query(scope=scope)
         self._items_snapshot_generation += 1
         self._items_pending_query_key = query.context_key
@@ -10409,7 +10496,7 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
                     except NoMatches:
                         pass
                     if self._pending_tree_scope == scope:
-                        self._pending_tree_scope = None
+                        self._set_pending_tree_scope(None)
                 self._push_items_pager_state()
                 self._restore_items_view_state()
                 if had_retry_state:
@@ -10430,7 +10517,7 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
                 if clear_reader_on_commit and scope is not None:
                     self._notify_pending_scope_failure(scope)
                     if self._pending_tree_scope == scope:
-                        self._pending_tree_scope = None
+                        self._set_pending_tree_scope(None)
                 elif reason == "return_to_read":
                     self._show_items_retry_state()
             return result
@@ -10439,7 +10526,7 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
                 self._items_page_loading = False
                 self._push_items_pager_state()
                 if self._pending_tree_scope == scope:
-                    self._pending_tree_scope = None
+                    self._set_pending_tree_scope(None)
             raise
         except Exception as exc:
             if self._items_request_is_current(generation, query_key):
@@ -10457,7 +10544,7 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
                 elif callable(notify):
                     notify("Failed to load watchlist items.", severity="error")
                 if self._pending_tree_scope == scope:
-                    self._pending_tree_scope = None
+                    self._set_pending_tree_scope(None)
             return False
         finally:
             if not completion.done():
