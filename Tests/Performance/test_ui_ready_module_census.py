@@ -105,6 +105,17 @@ ABSENT_AT_READY_MODULES = (
     "tldw_chatbook.Chat.trajectory_export",
     "tldw_chatbook.UI.Widgets.trajectory_timeline",
     "tldw_chatbook.UI.Widgets.trace_filter_bar",
+    # TASK-23023: the Research_Workspace facade is lazy (PEP 562), so the
+    # screen-only members and the 26-model pydantic schema module
+    # `server_adapter` used to drag in for one integer stay off the whole
+    # first-paint window, not just off the import phase. NOT listed:
+    # local_adapter/server_adapter/quick_notes/contracts -- `TldwCli.
+    # __init__`'s `_wire_research_source_association` legitimately builds
+    # readiness adapters at construction, so those stay resident at ready.
+    "tldw_chatbook.Research_Workspace.controller",
+    "tldw_chatbook.Research_Workspace.layout_state",
+    "tldw_chatbook.Research_Workspace.overlay_store",
+    "tldw_chatbook.tldw_api.notes_workspace_schemas",
 )
 
 #: Anti-vacuity: if these are not resident, the boot did not actually mount

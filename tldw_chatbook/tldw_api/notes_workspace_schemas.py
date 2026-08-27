@@ -337,10 +337,14 @@ class WorkspaceNoteResponse(BaseModel):
     version: int = 1
 
 
-MAX_WORKSPACE_SOURCE_ROWS = 100
-# GET sources/status are unpaged owner projections. This finite bound covers
-# the public offset contract (10_000) plus one maximum page (100).
-MAX_WORKSPACE_SOURCE_OWNER_ROWS = 10_100
+# Re-imported from the stdlib-only limits module (TASK-23023) so
+# `Research_Workspace/server_adapter.py` can enforce the same bounds without
+# importing this pydantic module; one object per bound, no copy to drift.
+from tldw_chatbook.tldw_api.notes_workspace_limits import (  # noqa: E402
+    MAX_WORKSPACE_SOURCE_OWNER_ROWS,
+    MAX_WORKSPACE_SOURCE_ROWS,
+)
+
 MAX_WORKSPACE_SOURCE_ID_CHARS = 1024
 MAX_WORKSPACE_SOURCE_TITLE_CHARS = 1000
 MAX_WORKSPACE_SOURCE_TEXT_CHARS = 12_000

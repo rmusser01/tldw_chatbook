@@ -22,7 +22,7 @@ from tldw_chatbook.tldw_api.exceptions import (
     APIResponseError,
     AuthenticationError,
 )
-from tldw_chatbook.tldw_api.notes_workspace_schemas import (
+from tldw_chatbook.tldw_api.notes_workspace_limits import (
     MAX_WORKSPACE_SOURCE_OWNER_ROWS,
 )
 
