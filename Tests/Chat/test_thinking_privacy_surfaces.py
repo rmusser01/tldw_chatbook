@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import io
 import json
+import logging
 import shutil
 import zipfile
 from pathlib import Path
@@ -14,6 +15,7 @@ from tldw_chatbook.Character_Chat.Character_Chat_Lib import (
     export_conversation_to_text,
     load_chat_history_from_file_and_save_to_db,
 )
+import tldw_chatbook.Character_Chat.Character_Chat_Lib as character_chat_module
 from tldw_chatbook.Character_Chat.local_character_persona_service import (
     LocalCharacterPersonaService,
 )
@@ -61,6 +63,11 @@ RAW_PRIVATE = "RAW-PRIVATE-CONTINUATION-TASK2-CANARY"
 SENSITIVE_WARNING = (
     "This conversation export contains model thinking or private provider "
     "continuation. Treat it as sensitive conversation data."
+)
+PRIVATE_DIAGNOSTIC_CANARIES = (
+    DISPLAYABLE_THINKING,
+    RAW_PRIVATE,
+    PROPRIETARY_THINKING_NOTICE,
 )
 
 
@@ -127,6 +134,11 @@ def _assert_answer_only(value: object) -> None:
     assert DISPLAYABLE_THINKING not in text
     assert RAW_PRIVATE not in text
     assert PROPRIETARY_THINKING_NOTICE not in text
+
+
+def _assert_content_free_diagnostic(value: str) -> None:
+    for canary in PRIVATE_DIAGNOSTIC_CANARIES:
+        assert canary not in value
 
 
 def _seed_source(database_path: Path) -> tuple[str, str]:
@@ -444,9 +456,55 @@ def test_chatbook_archive_and_import_preserve_only_approved_sensitive_fields(
         destination.close_connection()
 
 
+def test_malformed_human_export_log_is_content_free_for_all_privacy_canaries(
+    caplog,
+) -> None:
+    malformed = {
+        "thinking_blocks_json": _canonical_thinking(),
+        "provider_continuation_json": _canonical_continuation(),
+        "thinking_warning": PROPRIETARY_THINKING_NOTICE,
+    }
+    serialized_input = json.dumps(malformed)
+    assert all(canary in serialized_input for canary in PRIVATE_DIAGNOSTIC_CANARIES)
+
+    with caplog.at_level(logging.WARNING):
+        payload, _ = generate_chat_history_content([malformed], None, None)
+
+    assert json.loads(payload)["history"] == []
+    assert "Unexpected item format" in caplog.text
+    _assert_content_free_diagnostic(caplog.text)
+
+
+def test_malformed_human_import_log_is_content_free_for_all_privacy_canaries() -> None:
+    complete = json.dumps(
+        {
+            "thinking_blocks_json": DISPLAYABLE_THINKING,
+            "provider_continuation_json": RAW_PRIVATE,
+            "thinking_warning": PROPRIETARY_THINKING_NOTICE,
+        }
+    )
+    malformed = complete[:-1].encode()
+    assert all(canary.encode() in malformed for canary in PRIVATE_DIAGNOSTIC_CANARIES)
+    diagnostics = io.StringIO()
+    sink_id = character_chat_module.logger.add(diagnostics, format="{message}")
+    database = CharactersRAGDB(":memory:", "thinking-privacy-malformed-import")
+    try:
+        assert load_chat_history_from_file_and_save_to_db(
+            database, io.BytesIO(malformed)
+        ) == (None, None)
+    finally:
+        character_chat_module.logger.remove(sink_id)
+        database.close_connection()
+
+    diagnostic = diagnostics.getvalue()
+    assert "operation=chat_history_import" in diagnostic
+    assert "category=JSONDecodeError" in diagnostic
+    _assert_content_free_diagnostic(diagnostic)
+
+
 def test_chatbook_rejects_proprietary_text_inside_thinking_without_echo() -> None:
     thinking = json.loads(_canonical_thinking())
-    thinking["blocks"][1]["text"] = RAW_PRIVATE
+    thinking["blocks"][1]["text"] = f"{RAW_PRIVATE}\n{PROPRIETARY_THINKING_NOTICE}"
     graph = {
         "messages": [
             {
@@ -466,8 +524,10 @@ def test_chatbook_rejects_proprietary_text_inside_thinking_without_echo() -> Non
         "active_leaf_message_id": "assistant-1",
         "selected_path_message_ids": ["assistant-1"],
     }
+    serialized_input = json.dumps(graph)
+    assert all(canary in serialized_input for canary in PRIVATE_DIAGNOSTIC_CANARIES)
 
     with pytest.raises(ValueError, match="Invalid V2 conversation graph") as caught:
         ChatbookImporter._validate_v2_conversation_graph(graph)
 
-    assert RAW_PRIVATE not in str(caught.value)
+    _assert_content_free_diagnostic(str(caught.value))

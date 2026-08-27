@@ -18,6 +18,10 @@ from tldw_chatbook.Chat.console_chat_models import (
     ConsoleThinkingActivityRef,
 )
 from tldw_chatbook.Chat.console_turn_grouping import project_thinking_activities
+from tldw_chatbook.Chat.provider_continuation import (
+    ContinuationRound,
+    ProviderContinuationCheckpoint,
+)
 from tldw_chatbook.Chat.thinking_blocks import (
     DisplayableThinkingBlock,
     ProprietaryThinkingBlock,
@@ -503,6 +507,7 @@ def test_collapsed_inspector_resolves_full_thinking_without_changing_answer() ->
 def test_plain_transcript_omits_thinking_refs_but_keeps_planning_and_tools(
     monkeypatch,
 ) -> None:
+    raw_continuation = "RAW-CONTINUATION-TRANSCRIPT-CANARY"
     transcript = ConsoleTranscript()
     assistant = _assistant(
         content="VISIBLE-ANSWER-CANARY",
@@ -510,6 +515,25 @@ def test_plain_transcript_omits_thinking_refs_but_keeps_planning_and_tools(
         blocks=(
             _displayable("DISPLAYABLE-THINKING-CANARY"),
             replace(_proprietary(), round_ordinal=1),
+        ),
+    )
+    assistant = replace(
+        assistant,
+        provider_continuation=ProviderContinuationCheckpoint(
+            schema_version=1,
+            checkpoint_revision=1,
+            provider="moonshot",
+            protocol="chat_completions",
+            model="kimi-k2.6",
+            api_base_url="https://api.moonshot.ai/v1",
+            state="complete",
+            rounds=(
+                ContinuationRound(
+                    assistant_content="VISIBLE-ANSWER-CANARY",
+                    reasoning_blocks=(raw_continuation,),
+                    calls=(),
+                ),
+            ),
         ),
     )
     planning = ConsoleChatMessage(
@@ -544,10 +568,12 @@ def test_plain_transcript_omits_thinking_refs_but_keeps_planning_and_tools(
 
     plain = transcript.to_plain_text()
 
+    assert assistant.provider_continuation is not None
     assert "VISIBLE-ANSWER-CANARY" in plain
     assert "VISIBLE-PLANNING-CANARY" in plain
     assert "VISIBLE-TOOL-CANARY" in plain
     assert "DISPLAYABLE-THINKING-CANARY" not in plain
+    assert raw_continuation not in plain
     assert PROPRIETARY_THINKING_NOTICE not in plain
 
 

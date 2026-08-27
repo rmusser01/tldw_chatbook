@@ -47,6 +47,38 @@ After the successful pytest result, pytest also reported ambient cleanup warning
 inaccessible pre-existing `garbage-*` temporary directories. The test command exited
 zero; these paths and warnings are unrelated to Task 2.
 
+### Spec-review fix round 1
+
+The review found two evidence-fixture gaps; neither reproduced a production leak.
+
+- Transcript RED: the strengthened test failed at
+  `assistant.provider_continuation is not None`. The prior fixture had displayable and
+  proprietary thinking blocks but no ADR-063 checkpoint, so its raw-continuation
+  omission assertion could not prove ownership. Attaching a canonical complete
+  Moonshot checkpoint with a distinct raw canary made the same real
+  `ConsoleChatMessage`/`ConsoleTranscript.to_plain_text()` path pass while retaining
+  answer, Planning, and tool output.
+- Diagnostic RED: the expanded inventory ran 6 passed and 1 failed. The malformed
+  export and import log checks were already content-free with all three canaries; the
+  failing Chatbook mutation's input-presence assertion showed that fixture still
+  lacked the exact application notice. Placing the raw continuation and exact notice
+  together in the invalid proprietary-thinking text completed the mutation without
+  changing production behavior.
+- Focused GREEN: the transcript regression passed 1/1 and the privacy inventory
+  passed 7/7.
+- Final six-file gate: **101 passed** with one pre-existing
+  `RequestsDependencyWarning`; the same ambient temporary-directory cleanup warnings
+  followed the successful result.
+
+Representative malformed-boundary coverage is now explicit: a human JSON exporter
+receives a malformed mapping containing canonical displayable thinking, canonical raw
+continuation, and the exact application notice and emits only a content-free warning;
+a malformed JSON import stream contains all three and emits only safe operation/source
+and `JSONDecodeError` context; and Chatbook graph validation receives all three and
+raises only its generic error. This is intentionally not a claim that every diagnostic
+boundary carries all three canaries; trajectory location tests retain their separate
+reserved-field value canary.
+
 ## Privacy inventory
 
 Four distinct canaries prove ownership: a visible answer, displayable thinking, raw
@@ -68,9 +100,10 @@ ADR-063 provider continuation, and the application-only proprietary notice.
 | Title, summary, usage, speech, answer-copy, repr | visible/safe metadata only | absent | absent | absent |
 | Logs and errors | safe operation/location context only | no value echo | no value echo | absent |
 
-The required companion privacy suite exercises malformed import/export logs and error
-paths, FTS, render/repr/copy, and document context with private canaries. The new
-inventory additionally decodes the real durable DB, sync, importable, archive, and
+The required companion privacy suite exercises additional malformed import/export
+logs and error paths, FTS, render/repr/copy, and document context with private
+canaries. The new inventory exercises the three-canary representative malformed
+boundaries above and decodes the real durable DB, sync, importable, archive, and
 imported-row owners instead of relying only on serialized aggregate searches.
 
 ## Mutation and negative controls

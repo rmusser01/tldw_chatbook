@@ -102,3 +102,17 @@ The new real-owner privacy inventory passed 5/5, and the required six-file gate 
 99/99 with only the pre-existing RequestsDependencyWarning. See `task-2-report.md` for
 the decoded durable-owner matrix and ADR-090/063/067 self-review. No new ADR is
 required; Task 3 remains pending.
+
+Task 2 spec-review fix round 1 (2026-08-26): review identified evidence-fixture gaps,
+not product leaks, so production code remains unchanged. The transcript RED failed
+because its assistant owner had no ADR-063 continuation; it now carries a canonical
+Moonshot checkpoint with a distinct raw canary and proves plain text retains answer,
+Planning, and tools while omitting displayable thinking, raw continuation, and the
+application notice. The diagnostic inventory RED was 6 passed/1 failed because the
+Chatbook malformed-error fixture lacked the exact notice; the new malformed export
+and import log cases already passed with displayable, raw, and notice canaries. After
+completing that fixture, focused GREEN was 7/7 plus the transcript 1/1. The required
+six-file gate passed 101/101 with the pre-existing RequestsDependencyWarning; scoped
+Ruff/format and diff checks are recorded in `task-2-report.md`. Coverage is stated as
+representative rather than falsely claiming every boundary carries all three canaries.
+No new ADR is required; Task 3 remains pending.
