@@ -123,6 +123,37 @@ def test_force_add_treats_pathspec_magic_as_a_literal_filename(tracker, root):
     assert repo.file_bytes(sha, sibling.name) is None
 
 
+def test_force_add_refreshes_ignored_executable_bytes_and_mode(tracker, root):
+    target = root / "ignored-tool.sh"
+    (root / ".gitignore").write_text(f"{target.name}\n")
+    target.write_bytes(b"#!/bin/sh\nexit 1\n")
+    target.chmod(0o755)
+    repo = tracker.service.repo_for_root(root)
+    first = repo.snapshot("first executable", force_paths=[target.name])
+    first_mode = str(
+        repo._run("ls-tree", first, "--", target.name).stdout
+    ).split()[0]
+    if first_mode != "100755":
+        pytest.skip("filesystem does not expose executable bits to Git")
+
+    expected = b"#!/bin/sh\nexit 0\n"
+    target.write_bytes(expected)
+    target.chmod(0o644)
+    repo.force_add([target.name])
+
+    assert repo._run("show", f":{target.name}", binary=True).stdout == expected
+    staged_mode = str(
+        repo._run("ls-files", "--stage", "--", target.name).stdout
+    ).split()[0]
+    assert staged_mode == "100644"
+    second = repo.snapshot("updated non-executable")
+    assert repo.file_bytes(second, target.name) == expected
+    committed_mode = str(
+        repo._run("ls-tree", second, "--", target.name).stdout
+    ).split()[0]
+    assert committed_mode == "100644"
+
+
 def test_snapshot_force_path_file_to_directory_swap_never_stages_descendants(
     tracker, root
 ):
@@ -275,6 +306,38 @@ def test_force_add_carveout_for_tool_touched_ignored_paths(tracker, root):
     assert not any("side_effect" in p for p in paths), (
         "script writes into ignored dirs are OUT of scope by design"
     )
+
+
+def test_force_path_under_auto_registered_nested_repo_is_owned_only_by_child(
+    tracker, root
+):
+    import subprocess as _sp
+
+    child = root / "childrepo"
+    child.mkdir()
+    _sp.run(["git", "init", "--quiet", str(child)], check=True)
+    (child / ".gitignore").write_text("ignored-write.txt\n")
+    (child / "seed.txt").write_text("child seed\n")
+    target = child / "ignored-write.txt"
+    expected = b"child-owned ignored write\n"
+
+    handle = tracker.begin_turn([root])
+    handle.await_baseline()
+    target.write_bytes(expected)
+    records = tracker.end_turn(handle, touched_paths=[str(target)])
+
+    by_root = {record.root: record for record in records}
+    parent_key = str(root.resolve())
+    child_key = str(child.resolve())
+    assert parent_key not in by_root
+    assert set(by_root) == {child_key}
+    child_record = by_root[child_key]
+    child_repo = tracker.service.repo_for_root(child)
+    assert child_repo.file_bytes(child_record.end_sha, target.name) == expected
+    parent_repo = tracker.service.repo_for_root(root)
+    parent_rel = target.relative_to(root).as_posix()
+    assert str(parent_repo._run("ls-files", "--", parent_rel).stdout).strip() == ""
+    assert parent_repo.file_bytes(parent_repo.tip(), parent_rel) is None
 
 
 def test_supplied_successor_sha_primes_a_late_ignored_path_for_successor_e(

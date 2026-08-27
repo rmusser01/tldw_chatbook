@@ -421,6 +421,14 @@ class ShadowRepo:
                 continue
             if resolved.is_dir():
                 continue
+            ancestor = resolved.parent
+            while ancestor != self.root:
+                marker = ancestor / ".git"
+                if marker.is_file() or marker.is_dir():
+                    break
+                ancestor = ancestor.parent
+            if ancestor != self.root:
+                continue
             exact_paths.append(relative.as_posix())
         return exact_paths
 
