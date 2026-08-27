@@ -20283,6 +20283,9 @@ class LibraryScreen(BaseAppScreen):
             return
         if not await self._flush_active_file_notes():
             return
+        if workspace is not None and workspace.cancel_path_task():
+            self._register_footer_shortcuts()
+            return
         release_source = self._acquire_file_notes_transition("source")
         if release_source is False:
             return

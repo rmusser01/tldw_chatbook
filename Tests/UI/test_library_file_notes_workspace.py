@@ -3393,6 +3393,89 @@ async def test_escape_in_files_mode_returns_to_database_notes(
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("task", ("new", "move"))
+async def test_source_exit_cancels_path_task_admitted_after_shared_save(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    task: str,
+) -> None:
+    root = tmp_path / "notes"
+    root.mkdir()
+    (root / "source.md").write_text("source", encoding="utf-8")
+    workspace = LibraryFileNotesWorkspace(
+        root=root,
+        replica=None,
+        autosave_delay=10,
+        poll_interval=10,
+    )
+    save_started = threading.Event()
+    release_save = threading.Event()
+    cancel_results: list[bool] = []
+
+    async with _production_workspace_context(workspace, size=(120, 40)) as pilot:
+        screen = pilot.app.screen
+        assert isinstance(screen, LibraryScreen)
+        assert await workspace.open_path("source.md")
+        service = workspace._service
+        assert service is not None
+        original_finish = service._finish_published_file
+
+        def delayed_finish(*args, **kwargs):
+            save_started.set()
+            assert release_save.wait(5)
+            return original_finish(*args, **kwargs)
+
+        monkeypatch.setattr(service, "_finish_published_file", delayed_finish)
+        original_cancel = workspace.cancel_path_task
+
+        def observed_cancel() -> bool:
+            cancelled = original_cancel()
+            cancel_results.append(cancelled)
+            return cancelled
+
+        monkeypatch.setattr(workspace, "cancel_path_task", observed_cancel)
+        editor = workspace.query_one("#file-notes-editor", TextArea)
+        _replace_editor_text(editor, "shared save draft")
+        await _wait_until(
+            pilot,
+            lambda: workspace.save_state == "dirty",
+            "shared-save draft did not become dirty",
+        )
+
+        opening = asyncio.create_task(
+            workspace._open_path_task(task, opener_id=f"file-notes-{task}")
+        )
+        await _wait_until(
+            pilot,
+            lambda: save_started.is_set() and workspace.save_state == "saving",
+            "path task did not start the shared save",
+        )
+        shared_save = workspace._save_task
+        assert shared_save is not None and not shared_save.done()
+        leaving = asyncio.create_task(screen._return_to_library_database_notes())
+        await _wait_until(
+            pilot,
+            lambda: cancel_results == [False] and not leaving.done(),
+            "source exit did not join the path task's shared save",
+        )
+        assert workspace._save_task is shared_save
+
+        release_save.set()
+        assert await opening
+        await leaving
+        await pilot.pause()
+
+        assert cancel_results == [False, True]
+        assert screen._library_notes_source == "files"
+        assert workspace.display
+        assert workspace.path_task == "none"
+        assert not workspace.query_one("#file-notes-path-task").display
+        assert not workspace.query_one("#file-notes-path", Input).has_focus
+
+    await workspace.shutdown()
+
+
+@pytest.mark.asyncio
 async def test_wide_files_task_return_reuses_the_existing_leave_guard() -> None:
     """The wide cue cannot bypass the Files flush/conflict admission seam."""
     replica = FileNotesReplica(":memory:")
