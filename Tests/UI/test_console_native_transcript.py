@@ -660,8 +660,8 @@ async def test_session_switch_cancels_finished_selection_in_nested_answer() -> N
 
 
 @pytest.mark.asyncio
-async def test_activity_stack_replacement_cancels_finished_nested_selection() -> None:
-    """Replacing disclosure children clears selection keyed to detached detail."""
+async def test_activity_stack_insertion_preserves_finished_nested_selection() -> None:
+    """Adding earlier thinking keeps the expanded Tool detail and selection."""
     app = MutableTranscriptHarness()
     user, assistant, thinking, tool = _assistant_turn_messages()
 
@@ -683,9 +683,11 @@ async def test_activity_stack_replacement_cancels_finished_nested_selection() ->
         transcript.set_messages([user, assistant, thinking, tool])
         await transcript.refresh_messages()
 
-        assert not detail.is_attached
+        assert detail.is_attached
+        assert transcript.query_one(f"#console-message-{tool.id}") is detail
         assert turn.answer_widget is answer
-        assert transcript.selection_manager.state.selection is None
+        assert transcript.selection_manager.state.selection is not None
+        assert transcript.selection_manager.state.selection.row_key == detail.id
 
 
 @pytest.mark.asyncio

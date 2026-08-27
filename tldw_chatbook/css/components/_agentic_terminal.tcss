@@ -4746,6 +4746,17 @@ ConsoleBoundedSection {
     color: $ds-text-primary;
 }
 
+.console-activity-status-live {
+    background: $ds-status-running 12%;
+    color: $ds-text-primary;
+}
+
+.console-activity-status-stopped,
+.console-activity-status-unavailable {
+    background: $ds-status-warning 12%;
+    color: $ds-text-primary;
+}
+
 /* These height-one headers opt out of the global outline because it would
    paint over their only content row. Text + background + underline provide
    the non-color focus cue without changing geometry in either theme. */
@@ -4806,6 +4817,13 @@ ConsoleBoundedSection {
 
 .console-activity-detail-stack .console-transcript-tool-diff {
     padding: 0 0 0 2;
+}
+
+.console-thinking-detail {
+    width: 100%;
+    height: auto;
+    color: $ds-text-muted;
+    text-wrap: wrap;
 }
 
 .console-transcript-message-roleplay-user,

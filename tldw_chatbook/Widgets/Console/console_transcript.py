@@ -32,11 +32,13 @@ from textual.widgets import Button, Markdown, Static
 from textual_diff_view import DiffView
 
 from tldw_chatbook.Chat.console_chat_models import (
+    PROPRIETARY_THINKING_NOTICE,
     ConsoleActivityPresentation,
     ConsoleChatMessage,
     ConsoleCitationNoticeCode,
     ConsoleCitationPhase,
     ConsoleMessageRole,
+    ConsoleThinkingActivityRef,
     FEEDBACK_ACTIVE_RUN_STATUSES,
 )
 from tldw_chatbook.Chat.assistant_generation_state import (
@@ -44,8 +46,15 @@ from tldw_chatbook.Chat.assistant_generation_state import (
 )
 from tldw_chatbook.Chat.console_turn_grouping import (
     ConsoleAssistantTurn,
+    ConsoleTranscriptUnit,
     group_console_transcript_messages,
-    visual_messages,
+    ordered_assistant_activities,
+    project_thinking_activities,
+)
+from tldw_chatbook.Chat.thinking_blocks import (
+    DisplayableThinkingBlock,
+    ProprietaryThinkingBlock,
+    ThinkingEnvelope,
 )
 from tldw_chatbook.Chat.console_image_view import (
     PIXELS_MAX_COLS,
@@ -934,6 +943,7 @@ class _TranscriptRow:
     assistant_turn: ConsoleAssistantTurn | None = None
     nested_rows: tuple["_TranscriptRow", ...] = ()
     activity_rows: tuple[tuple["_TranscriptRow", ...], ...] = ()
+    activity_items: tuple[ConsoleChatMessage | ConsoleThinkingActivityRef, ...] = ()
     activity_signature: tuple = ()
     adjunct_signature: tuple = ()
 
@@ -945,6 +955,7 @@ class _ActivityComponents:
     presentation: ConsoleActivityPresentation
     action_widgets: tuple[Widget, ...]
     detail_widgets: tuple[Widget, ...]
+    detail_available: bool
     action_signature: tuple
     detail_signature: tuple
 
@@ -2764,6 +2775,11 @@ class ConsoleTranscript(VerticalScroll):
         #: deliberately dropped when the transcript is rebuilt for another
         #: session rather than following the user across conversations.
         self._expanded_tool_output_ids: set[str] = set()
+        #: Trusted model-activity identity/owner projection for the current
+        #: session. Full thinking text stays in the Assistant envelope.
+        self._thinking_activity_refs: dict[str, ConsoleThinkingActivityRef] = {}
+        self._pending_thinking_auto_collapse: set[str] = set()
+        self._manual_thinking_disclosures: set[str] = set()
         # Optional session-boundary identity supplied by the owning screen.
         # The sentinel preserves the historical id-intersection behavior for
         # direct/legacy callers that do not know about sessions.
@@ -3177,13 +3193,16 @@ class ConsoleTranscript(VerticalScroll):
     @staticmethod
     def _build_unit_spans(
         messages: list[ConsoleChatMessage],
+        units: Iterable[ConsoleTranscriptUnit] | None = None,
     ) -> tuple[tuple[int, int, str, tuple[str, ...]], ...]:
         """Build one causal span lookup entry per message index."""
         index_by_id = {message.id: offset for offset, message in enumerate(messages)}
         spans: list[tuple[int, int, str, tuple[str, ...]] | None] = [
             None
         ] * len(messages)
-        for unit in group_console_transcript_messages(messages):
+        if units is None:
+            units = group_console_transcript_messages(messages)
+        for unit in units:
             if unit.standalone is not None:
                 standalone = unit.standalone
                 start = index_by_id[standalone.id]
@@ -3917,6 +3936,7 @@ class ConsoleTranscript(VerticalScroll):
                 new session recycles message ids. Omitting it preserves the
                 legacy id-intersection behavior.
         """
+        previous_thinking_refs = self._thinking_activity_refs
         previous_visible_ids = [
             message.id
             for message in self._messages
@@ -3925,20 +3945,54 @@ class ConsoleTranscript(VerticalScroll):
         ]
         previous_hidden_tail_ids = self._hidden_tail_ids
         self._messages = list(messages)
-        self._unit_spans_by_index = self._build_unit_spans(self._messages)
+        units = group_console_transcript_messages(self._messages)
+        self._unit_spans_by_index = self._build_unit_spans(self._messages, units)
         message_ids = {message.id for message in self._messages}
+        session_changed = False
         if session_id is not _SESSION_ID_UNSET:
             if (
                 self._session_identity is not _SESSION_ID_UNSET
                 and self._session_identity != session_id
             ):
+                session_changed = True
                 self._expanded_tool_output_ids.clear()
+                self._pending_thinking_auto_collapse.clear()
+                self._manual_thinking_disclosures.clear()
             self._session_identity = session_id
+        thinking_refs: dict[str, ConsoleThinkingActivityRef] = {}
+        for unit in units:
+            turn = unit.assistant_turn
+            if turn is None:
+                continue
+            live_block_id = self._live_thinking_block_id(turn)
+            for ref in project_thinking_activities(
+                assistant=turn.assistant,
+                live_block_id=live_block_id,
+            ):
+                thinking_refs[ref.activity_id] = ref
+                if (
+                    ref.status == "live"
+                    and ref.activity_id not in previous_thinking_refs
+                    and not session_changed
+                ):
+                    self._expanded_tool_output_ids.add(ref.activity_id)
+                    self._pending_thinking_auto_collapse.add(ref.activity_id)
+                elif (
+                    ref.status != "live"
+                    and ref.activity_id in self._pending_thinking_auto_collapse
+                ):
+                    if ref.activity_id not in self._manual_thinking_disclosures:
+                        self._expanded_tool_output_ids.discard(ref.activity_id)
+                    self._pending_thinking_auto_collapse.discard(ref.activity_id)
+        self._thinking_activity_refs = thinking_refs
+        thinking_ids = set(thinking_refs)
+        self._pending_thinking_auto_collapse &= thinking_ids
+        self._manual_thinking_disclosures &= thinking_ids
         # Expansion is per message id, so ids that left the transcript (a
         # session switch, a deleted branch) must go with them -- otherwise the
         # set grows for the life of the widget and a recycled id would come
         # back already expanded.
-        self._expanded_tool_output_ids &= message_ids
+        self._expanded_tool_output_ids &= message_ids | thinking_ids
         # TASK-15455: preserve the current contiguous window across streaming
         # updates by anchoring it to the first still-present visible id.  A
         # disjoint session switch has no such id and starts from a bounded tail
@@ -4077,7 +4131,7 @@ class ConsoleTranscript(VerticalScroll):
             # the tail is always safe; a crossed window never is.
             self._hide_tail_from(None)
         self._set_hidden_prefix(window_start)
-        if self.selected_message_id not in message_ids:
+        if self.selected_message_id not in message_ids | thinking_ids:
             self.selected_message_id = None
         for stale_id in [
             cached_id
@@ -4086,6 +4140,32 @@ class ConsoleTranscript(VerticalScroll):
         ]:
             del self._message_signature_cache[stale_id]
             self._signature_compute_counts.pop(stale_id, None)
+
+    @staticmethod
+    def _live_thinking_block_id(turn: ConsoleAssistantTurn) -> str | None:
+        """Return the current unbounded block, using visible turn boundaries."""
+        assistant = turn.assistant
+        envelope = assistant.thinking
+        if (
+            assistant.status not in _IN_FLIGHT_MESSAGE_STATUSES
+            or not isinstance(envelope, ThinkingEnvelope)
+            or not envelope.blocks
+        ):
+            return None
+        answer = (
+            assistant.variants.current.content
+            if assistant.variants is not None
+            else assistant.content
+        )
+        if answer:
+            return None
+        current = envelope.blocks[-1]
+        if any(
+            activity.activity_round_ordinal == current.round_ordinal
+            for activity in turn.activities
+        ):
+            return None
+        return current.block_id
 
     def set_image_specs(self, specs: Mapping[str, ConsoleImageRowSpec]) -> None:
         """Replace the prebuilt inline-image row payloads keyed by message ID.
@@ -4518,6 +4598,47 @@ class ConsoleTranscript(VerticalScroll):
         """
         return self._message_by_id(message_id)
 
+    def thinking_detail_text(self, activity_id: str) -> str | None:
+        """Resolve one trusted model activity body from its owning envelope."""
+        ref = self._thinking_activity_refs.get(activity_id)
+        if ref is None:
+            return None
+        assistant = next(
+            (
+                message
+                for message in self._messages
+                if message.id == ref.assistant_message_id
+            ),
+            None,
+        )
+        envelope = assistant.thinking if assistant is not None else None
+        if not isinstance(envelope, ThinkingEnvelope):
+            return None
+        block = next(
+            (block for block in envelope.blocks if block.block_id == ref.block_id),
+            None,
+        )
+        if isinstance(block, DisplayableThinkingBlock):
+            return block.text
+        if isinstance(block, ProprietaryThinkingBlock):
+            return PROPRIETARY_THINKING_NOTICE
+        return None
+
+    def _thinking_display_message(self, activity_id: str) -> ConsoleChatMessage | None:
+        """Build a bounded display-only row for selection/copy/Inspector seams."""
+        ref = self._thinking_activity_refs.get(activity_id)
+        detail = self.thinking_detail_text(activity_id)
+        if ref is None or detail is None:
+            return None
+        return ConsoleChatMessage(
+            role=ConsoleMessageRole.TOOL,
+            content=detail,
+            id=activity_id,
+            activity_presentation=ConsoleActivityPresentation(
+                "thinking", ref.label, ref.status
+            ),
+        )
+
     def reveal_message(self, message_id: str) -> bool:
         """Extend the mounted window back through ``message_id`` when hidden.
 
@@ -4627,14 +4748,15 @@ class ConsoleTranscript(VerticalScroll):
 
     def select_message(self, message_id: str) -> None:
         """Select one message and show its contextual action row."""
-        if not any(message.id == message_id for message in self._messages):
+        if self._message_by_id(message_id) is None:
             return
         if self.selected_message_id != message_id:
             self._clear_failed_speech_states()
         # Keep the public pre-windowing contract: callers may select any
         # message in the complete transcript model.  Reveal the contiguous
         # prefix through that turn before mounting its action row.
-        self.reveal_message(message_id)
+        if message_id not in self._thinking_activity_refs:
+            self.reveal_message(message_id)
         self.selected_message_id = message_id
         if self.is_mounted:
             self.call_later(self.refresh_messages)
@@ -5003,6 +5125,13 @@ class ConsoleTranscript(VerticalScroll):
         message_id = self.selected_message_id
         if not message_id:
             return
+        if action_id == "copy":
+            thinking_detail = self.thinking_detail_text(message_id)
+            if thinking_detail is not None:
+                copy_to_clipboard = getattr(self.app, "copy_to_clipboard", None)
+                if callable(copy_to_clipboard):
+                    copy_to_clipboard(thinking_detail)
+                return
         if action_id == "tool-output" and self._activity_can_expand(message_id):
             self.toggle_tool_output(message_id)
             return
@@ -5819,8 +5948,13 @@ class ConsoleTranscript(VerticalScroll):
         self.select_message(visible[index].id)
 
     def _message_by_id(self, message_id: str) -> ConsoleChatMessage | None:
-        return next(
+        message = next(
             (message for message in self._messages if message.id == message_id), None
+        )
+        return (
+            message
+            if message is not None
+            else self._thinking_display_message(message_id)
         )
 
     def _visible_messages(self) -> list[ConsoleChatMessage]:
@@ -5835,9 +5969,25 @@ class ConsoleTranscript(VerticalScroll):
             if message.id not in self._pruned_message_ids
             and message.id not in self._hidden_tail_ids
         ]
-        return list(
-            visual_messages(group_console_transcript_messages(causal_messages))
-        )
+        visible: list[ConsoleChatMessage] = []
+        for unit in group_console_transcript_messages(causal_messages):
+            if unit.standalone is not None:
+                visible.append(unit.standalone)
+                continue
+            turn = unit.assistant_turn
+            assert turn is not None
+            for activity in ordered_assistant_activities(
+                turn,
+                live_block_id=self._live_thinking_block_id(turn),
+            ):
+                if isinstance(activity, ConsoleChatMessage):
+                    visible.append(activity)
+                else:
+                    display = self._thinking_display_message(activity.activity_id)
+                    if display is not None:
+                        visible.append(display)
+            visible.append(turn.assistant)
+        return visible
 
     def _notify_selection_changed(self) -> None:
         """Let the owning screen refresh inspector/control surfaces after selection changes."""
@@ -6089,7 +6239,9 @@ class ConsoleTranscript(VerticalScroll):
             assert turn is not None
             assistant_rows = groups[turn.assistant.id]
             message_index = next(
-                index for index, row in enumerate(assistant_rows) if row.kind == "message"
+                index
+                for index, row in enumerate(assistant_rows)
+                if row.kind == "message"
             )
             rows.extend(assistant_rows[:message_index])
             nested_rows = assistant_rows[message_index:]
@@ -6097,23 +6249,57 @@ class ConsoleTranscript(VerticalScroll):
             owned_selected_id = (
                 selected_id if selected_id in turn.owned_message_ids else None
             )
+            activity_items = ordered_assistant_activities(
+                turn,
+                live_block_id=self._live_thinking_block_id(turn),
+            )
+            activity_ids = tuple(
+                item.id if isinstance(item, ConsoleChatMessage) else item.activity_id
+                for item in activity_items
+            )
+            if selected_id in activity_ids:
+                owned_selected_id = selected_id
             activity_rows = tuple(
-                tuple(
-                    row
-                    for row in groups[activity.id]
-                    if row.kind not in {"rule", "banner"}
+                (
+                    tuple(
+                        row
+                        for row in groups[item.id]
+                        if row.kind not in {"rule", "banner"}
+                    )
+                    if isinstance(item, ConsoleChatMessage)
+                    else ()
                 )
-                for activity in turn.activities
+                for item in activity_items
             )
             activity_signature = tuple(
                 (
-                    activity.id,
-                    activity.activity_presentation,
-                    activity.id in self._expanded_tool_output_ids,
-                    selected_id == activity.id,
+                    item.id
+                    if isinstance(item, ConsoleChatMessage)
+                    else item.activity_id,
+                    (
+                        item.activity_presentation
+                        if isinstance(item, ConsoleChatMessage)
+                        else (
+                            item.label,
+                            item.status,
+                            self.thinking_detail_text(item.activity_id),
+                        )
+                    ),
+                    (
+                        item.id
+                        if isinstance(item, ConsoleChatMessage)
+                        else item.activity_id
+                    )
+                    in self._expanded_tool_output_ids,
+                    selected_id
+                    == (
+                        item.id
+                        if isinstance(item, ConsoleChatMessage)
+                        else item.activity_id
+                    ),
                     tuple(row.signature for row in owned_rows),
                 )
-                for activity, owned_rows in zip(turn.activities, activity_rows)
+                for item, owned_rows in zip(activity_items, activity_rows)
             )
             adjunct_signature = tuple(row.signature for row in nested_rows[1:])
             rows.append(
@@ -6124,13 +6310,10 @@ class ConsoleTranscript(VerticalScroll):
                         "assistant-turn",
                         nested_rows[0].signature,
                         activity_signature,
-                        tuple(activity.id for activity in turn.activities),
+                        activity_ids,
                         owned_selected_id,
                         tuple(
-                            sorted(
-                                self._expanded_tool_output_ids
-                                & set(turn.owned_message_ids)
-                            )
+                            sorted(self._expanded_tool_output_ids & set(activity_ids))
                         ),
                         adjunct_signature,
                     ),
@@ -6139,6 +6322,7 @@ class ConsoleTranscript(VerticalScroll):
                     assistant_turn=turn,
                     nested_rows=tuple(nested_rows),
                     activity_rows=activity_rows,
+                    activity_items=activity_items,
                     activity_signature=activity_signature,
                     adjunct_signature=adjunct_signature,
                 )
@@ -6460,10 +6644,38 @@ class ConsoleTranscript(VerticalScroll):
 
     def _activity_components(
         self,
-        activity: ConsoleChatMessage,
+        activity: ConsoleChatMessage | ConsoleThinkingActivityRef,
         owned_rows: tuple[_TranscriptRow, ...],
     ) -> _ActivityComponents:
         """Build one disclosure's children through the shared transcript builders."""
+        if isinstance(activity, ConsoleThinkingActivityRef):
+            activity_id = activity.activity_id
+            expanded = activity_id in self._expanded_tool_output_ids
+            detail = self.thinking_detail_text(activity_id)
+            detail_widgets = (
+                (
+                    Static(
+                        Content(detail),
+                        id=f"console-thinking-detail-{activity_id}",
+                        classes="console-thinking-detail",
+                        markup=False,
+                    ),
+                )
+                if expanded and detail is not None
+                else ()
+            )
+            return _ActivityComponents(
+                presentation=ConsoleActivityPresentation(
+                    "thinking", activity.label, activity.status
+                ),
+                action_widgets=(),
+                detail_widgets=detail_widgets,
+                detail_available=detail is not None,
+                action_signature=(),
+                detail_signature=(
+                    (("thinking-detail", activity_id, detail),) if expanded else ()
+                ),
+            )
         presentation = activity.activity_presentation or ConsoleActivityPresentation(
             "activity", "Activity", "done"
         )
@@ -6501,25 +6713,32 @@ class ConsoleTranscript(VerticalScroll):
             presentation=presentation,
             action_widgets=tuple(action_widgets),
             detail_widgets=tuple(detail_widgets),
+            detail_available=bool(detail_widgets),
             action_signature=tuple(action_signature),
             detail_signature=tuple(detail_signature),
         )
 
     def _build_activity_disclosure(
         self,
-        activity: ConsoleChatMessage,
+        activity: ConsoleChatMessage | ConsoleThinkingActivityRef,
         owned_rows: tuple[_TranscriptRow, ...],
     ) -> ConsoleActivityDisclosure:
         """Build and stamp one disclosure for later same-id reconciliation."""
         components = self._activity_components(activity, owned_rows)
+        activity_id = (
+            activity.id
+            if isinstance(activity, ConsoleChatMessage)
+            else activity.activity_id
+        )
         disclosure = ConsoleActivityDisclosure(
-            activity.id,
+            activity_id,
             components.presentation.label,
             components.presentation.status,
-            expanded=activity.id in self._expanded_tool_output_ids,
-            selected=activity.id == self.selected_message_id,
+            expanded=activity_id in self._expanded_tool_output_ids,
+            selected=activity_id == self.selected_message_id,
             action_widgets=components.action_widgets,
             detail_widgets=components.detail_widgets,
+            detail_available=components.detail_available,
         )
         disclosure._console_action_signature = components.action_signature
         disclosure._console_detail_signature = components.detail_signature
@@ -6531,7 +6750,7 @@ class ConsoleTranscript(VerticalScroll):
         assert turn is not None
         return tuple(
             self._build_activity_disclosure(activity, owned_rows)
-            for activity, owned_rows in zip(turn.activities, row.activity_rows)
+            for activity, owned_rows in zip(row.activity_items, row.activity_rows)
         )
 
     async def _sync_activity_widgets(
@@ -6548,16 +6767,53 @@ class ConsoleTranscript(VerticalScroll):
             for disclosure in disclosures
             if isinstance(disclosure, ConsoleActivityDisclosure)
         )
-        next_ids = tuple(activity.id for activity in turn.activities)
+        next_ids = tuple(
+            activity.id
+            if isinstance(activity, ConsoleChatMessage)
+            else activity.activity_id
+            for activity in row.activity_items
+        )
         if len(disclosures) != len(current_ids) or current_ids != next_ids:
-            self._cancel_selection_if_row_removed(widget.activity_stack)
-            await widget.replace_activity_widgets(self._build_activity_widgets(row))
-            return
+            by_id = {
+                disclosure.activity_message_id: disclosure
+                for disclosure in disclosures
+                if isinstance(disclosure, ConsoleActivityDisclosure)
+            }
+            stale = [
+                disclosure
+                for activity_id, disclosure in by_id.items()
+                if activity_id not in next_ids
+            ]
+            if stale:
+                for disclosure in stale:
+                    self._cancel_selection_if_row_removed(disclosure)
+                await widget.activity_stack.remove_children(stale)
+            disclosures = []
+            for index, (activity, owned_rows) in enumerate(
+                zip(row.activity_items, row.activity_rows)
+            ):
+                activity_id = (
+                    activity.id
+                    if isinstance(activity, ConsoleChatMessage)
+                    else activity.activity_id
+                )
+                disclosure = by_id.get(activity_id)
+                if disclosure is None:
+                    disclosure = self._build_activity_disclosure(activity, owned_rows)
+                    await widget.activity_stack.mount(disclosure)
+                disclosures.append(disclosure)
+                if widget.activity_stack.children[index] is not disclosure:
+                    widget.activity_stack.move_child(disclosure, before=index)
 
         for disclosure, activity, owned_rows in zip(
-            disclosures, turn.activities, row.activity_rows
+            disclosures, row.activity_items, row.activity_rows
         ):
             assert isinstance(disclosure, ConsoleActivityDisclosure)
+            activity_id = (
+                activity.id
+                if isinstance(activity, ConsoleChatMessage)
+                else activity.activity_id
+            )
             components = self._activity_components(activity, owned_rows)
             if (
                 getattr(disclosure, "_console_action_signature", None)
@@ -6573,18 +6829,15 @@ class ConsoleTranscript(VerticalScroll):
                 != components.detail_signature
             ):
                 self._cancel_selection_if_row_removed(disclosure.detail_stack)
-                if disclosure.detail_stack.children:
-                    await disclosure.detail_stack.remove_children()
-                if components.detail_widgets:
-                    await disclosure.detail_stack.mount(*components.detail_widgets)
+                await disclosure.replace_detail_widgets(components.detail_widgets)
                 disclosure._console_detail_signature = components.detail_signature
             disclosure._has_actions = bool(components.action_widgets)
-            disclosure._has_detail = bool(components.detail_widgets)
+            disclosure.detail_available = components.detail_available
             disclosure.sync_activity(
                 components.presentation.label,
                 components.presentation.status,
-                expanded=activity.id in self._expanded_tool_output_ids,
-                selected=activity.id == self.selected_message_id,
+                expanded=activity_id in self._expanded_tool_output_ids,
+                selected=activity_id == self.selected_message_id,
             )
 
     def _build_assistant_turn_widget(self, row: _TranscriptRow) -> Widget:
@@ -6944,6 +7197,9 @@ class ConsoleTranscript(VerticalScroll):
     def _on_activity_activated(self, event: ConsoleActivityActivated) -> None:
         """Keep disclosure controls on the original message selection seam."""
         event.stop()
+        if event.message_id in self._thinking_activity_refs:
+            self._manual_thinking_disclosures.add(event.message_id)
+            self._pending_thinking_auto_collapse.discard(event.message_id)
         self.select_message(event.message_id)
         if event.toggle_requested:
             self.toggle_tool_output(event.message_id)
@@ -6958,6 +7214,9 @@ class ConsoleTranscript(VerticalScroll):
         """
         if not self._activity_can_expand(message_id):
             return
+        if message_id in self._thinking_activity_refs:
+            self._manual_thinking_disclosures.add(message_id)
+            self._pending_thinking_auto_collapse.discard(message_id)
         if message_id in self._expanded_tool_output_ids:
             self._expanded_tool_output_ids.discard(message_id)
         else:
@@ -6972,8 +7231,13 @@ class ConsoleTranscript(VerticalScroll):
             turn = row.assistant_turn
             if row.kind != "assistant-turn" or turn is None:
                 continue
-            for activity, owned_rows in zip(turn.activities, row.activity_rows):
-                if activity.id == message_id:
+            for activity, owned_rows in zip(row.activity_items, row.activity_rows):
+                activity_id = (
+                    activity.id
+                    if isinstance(activity, ConsoleChatMessage)
+                    else activity.activity_id
+                )
+                if activity_id == message_id:
                     return owned_rows
         return ()
 
@@ -6983,6 +7247,8 @@ class ConsoleTranscript(VerticalScroll):
             (candidate for candidate in self._messages if candidate.id == message_id),
             None,
         )
+        if message_id in self._thinking_activity_refs:
+            return self.thinking_detail_text(message_id) is not None
         return message is not None and _activity_is_expandable(
             message,
             self._owned_activity_rows(message_id),

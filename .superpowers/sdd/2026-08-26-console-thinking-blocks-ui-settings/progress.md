@@ -62,3 +62,12 @@ Task 1 independent re-review: READY at `0f05fcd826`. The reviewer reran the exac
 durable-owner lifecycle plus the complete presentation/grouping contracts (39 passed)
 and found no ordering, privacy, compatibility, schema, or migration issue. Task 1 is
 complete after four bounded review-fix rounds.
+
+Task 2: reused the incumbent activity disclosure for lazy trusted thinking evidence,
+one-time manual-win auto-collapse, in-place live updates, selection/navigation, Copy
+and Inspector display resolution, session pruning, and semantic status styling. RED was
+13 failed/40 passed; focused GREEN is 54 passed. The one required broad target run was
+192 passed/4 failed; both Task-2 regressions were fixed and rerun GREEN, while two stale
+BASE citation assertions still target pre-Assistant-turn row keys/counters. CSS build
+and bundle sync, scoped Ruff lint, focused Ruff format, and `git diff --check` pass.
+Task 2 report: `task-2-report.md`. No ADR required.
