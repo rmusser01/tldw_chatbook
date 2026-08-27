@@ -1017,6 +1017,7 @@ def test_published_exit_beats_dead_worker_missing_terminal_fallback(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     shell_exited = threading.Event()
+    monotonic_times = iter((100.0, 100.25, 101.25))
 
     class MissingTerminalQueue:
         def __init__(self) -> None:
@@ -1028,24 +1029,31 @@ def test_published_exit_beats_dead_worker_missing_terminal_fallback(
                 shell_exited.set()
             raise queue.Empty
 
-    monkeypatch.setattr(raw_cli, "_RAW_POST_EXIT_DRAIN_SECONDS", 0.0)
+    messages = MissingTerminalQueue()
+    monkeypatch.setattr(raw_cli, "_RAW_POST_EXIT_DRAIN_SECONDS", 1.0)
+    monkeypatch.setattr(
+        raw_cli.time,
+        "monotonic",
+        lambda: next(monotonic_times),
+    )
     spool = tempfile.TemporaryFile(mode="w+b")
     accumulator = raw_cli._OutputAccumulator(spool, 1024)
 
     result = raw_cli.RawShellExecutor._consume(
         _request(tmp_path, "ignored"),
         SimpleNamespace(is_alive=lambda: False),
-        MissingTerminalQueue(),
+        messages,
         accumulator,
         threading.Event(),
         lambda _event: None,
-        time.monotonic(),
+        0.0,
         "bash",
         shell_exited,
         SimpleNamespace(value=23),
     )
 
     assert result == ("exited", 23, "bash", True)
+    assert messages.calls == 5
     assert accumulator.truncated is True
     spool.close()
 

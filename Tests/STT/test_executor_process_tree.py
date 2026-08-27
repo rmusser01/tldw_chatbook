@@ -611,6 +611,33 @@ def test_close_is_idempotent_after_proven_tree_death() -> None:
     assert calls == first_calls
 
 
+def test_terminate_tree_is_idempotent_after_proven_windows_cleanup() -> None:
+    calls: list[object] = []
+    process = _FakeProcess(calls)
+    admission = _RecordingEvent(calls)
+    api = _FakeWindowsApi(calls)
+    identity = WorkerContainmentIdentity(pid=process.pid, process_group_id=None)
+    tree = ExecutorProcessTree(
+        process,
+        admission,
+        identity,
+        platform_name="nt",
+        windows_api=api,
+    )
+    tree.admit()
+    process._alive = False
+    calls.clear()
+
+    assert tree.terminate_tree(term_timeout=0.2, kill_timeout=0.3) is True
+    first_calls = list(calls)
+    assert tree.terminate_tree(term_timeout=4.0, kill_timeout=5.0) is True
+
+    assert calls == first_calls
+    assert calls.count(("terminate_job", 99)) == 1
+    assert calls.count(("wait_job", 99, 0.2)) == 1
+    assert calls.count(("close_job", 99)) == 1
+
+
 @pytest.mark.skipif(os.name != "nt", reason="native Windows Job Object evidence")
 @pytest.mark.parametrize(
     "leader_exits",

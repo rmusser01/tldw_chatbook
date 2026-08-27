@@ -1076,7 +1076,7 @@ class RawShellExecutor:
                         accumulator.truncated = True
                     return "exited", exited_code, resolved_shell, True
 
-            if dead_empty_polls >= 4:
+            if dead_empty_polls >= 4 and exited_at is None:
                 return "cleanup_unproven", None, resolved_shell, False
 
             if not _process_is_alive(process):

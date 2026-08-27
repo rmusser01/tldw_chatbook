@@ -278,6 +278,8 @@ class ExecutorProcessTree:
         """Terminate the contained tree and return only after proven death."""
 
         with self._lock:
+            if self._closed:
+                return not self._quarantined
             self._admitted = False
             self._closed = True
             try:
