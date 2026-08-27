@@ -36,3 +36,17 @@ Task 1 ADR check: no new ADR. The implementation follows ADR-090's dedicated
 assistant-owned thinking envelope, normalized conversation replay policy, importable
 round-trip and sensitivity boundary while retaining ADR-063 continuation as a
 separate `_private` owner. Human-readable/derivative surfaces remain Task 2.
+
+Task 1 spec-review fix round 1 (2026-08-26): four boundary findings were verified and
+fixed red-first. The combined selected-JSON/Chatbook regression run was RED with 11
+failures; an off-active-path tombstone refinement independently failed before the
+fix. Present-null `thinking_blocks`/`_thinking` values now reject by key presence,
+including wrong-role null. Chatbook V2 rejects thinking on deleted graph rows, while a
+durable soft-delete control proves the normal DB path clears the envelope. Selected
+JSON resolves DB-owned metadata once and fails with content-free copy when lookup
+fails instead of silently exporting Auto. Explicit empty-string policy is now an
+unknown bounded string that warns and normalizes to Auto; missing/null remains silent
+Auto. Focused review tests passed 43/43; the Task 1 suites plus nearest canonical and
+Console policy lifecycle tests passed 221/221. Scoped Ruff, production `py_compile`,
+and `git diff --check` passed; the existing RequestsDependencyWarning remains the only
+warning.

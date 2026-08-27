@@ -89,3 +89,50 @@ ADR path: `backlog/decisions/090-console-thinking-block-ownership-and-replay.md`
 Reason: Task 1 directly implements ADR-090's accepted importable exchange boundary and
 retains ADR-063's separate continuation ownership; it introduces no new architecture
 decision.
+
+## Spec-review fix round 1
+
+Four boundary issues were addressed with focused regression tests before production
+changes.
+
+### RED
+
+- The combined selected-conversation and Chatbook review run collected 39 tests and
+  failed **11**: lookup failure did not fail closed, empty policy did not warn, present
+  null envelopes bypassed both importers, deleted thinking imported, and the Chatbook
+  empty-policy warning was absent.
+- The direct tombstone test was refined to place a deleted assistant off the active
+  path; it then failed independently because `_thinking` was accepted. This avoids a
+  false positive from the existing deleted-active-leaf graph rule.
+- The durable-row control was green before production changes, proving
+  `soft_delete_message` already clears `thinking_blocks_json`; the defect was confined
+  to accepting an invalid external graph.
+
+### Fixes and decisions
+
+- Import envelope checks now distinguish key absence from a present null value.
+  `thinking_blocks: null` and `_thinking: null` are malformed, and wrong-role null is
+  rejected before conversation mutation.
+- V2 graph validation rejects `_thinking` whenever `deleted` is true. The importer
+  never constructs a tombstone that retains an envelope.
+- Selected JSON resolves the caller-owned conversation record once, using it for both
+  title and replay policy. Lookup exceptions raise the content-free error
+  `Conversation metadata is unavailable for export.` rather than normalizing an
+  unknown owner to Auto. Controls cover both Include and Exclude.
+- Policy preflight reserves silent Auto for missing/null. The present bounded string
+  `""` follows the ordinary unknown-string path: Auto plus the existing content-free
+  warning.
+
+### GREEN and static evidence
+
+- Focused review regression/control run: **43 passed, 1 unrelated dependency
+  warning in 5.35s**.
+- Task 1 targeted suites plus canonical thinking-policy and Console policy lifecycle
+  tests: **221 passed, 1 unrelated dependency warning in 28.54s**.
+- Scoped Ruff: **All checks passed**.
+- Changed production modules compiled with `py_compile`.
+- `git diff --check`: **passed**.
+
+The review fixes do not change the ADR decision: they harden ADR-090's deletion,
+ownership, replay-policy, and fail-before-mutation requirements without creating a new
+exchange model or broadening human-readable surfaces.

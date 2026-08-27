@@ -3256,8 +3256,8 @@ def load_chat_history_from_file_and_save_to_db(
                 if total_id_chars > _MAX_EXPORTED_HISTORY_TOTAL_ID_CHARS:
                     raise ValueError("Invalid exported chat history.")
                 staged = {"sender": role, "role": role, "content": content}
-                thinking_value = message.get("thinking_blocks")
-                if thinking_value is not None:
+                if "thinking_blocks" in message:
+                    thinking_value = message["thinking_blocks"]
                     if role != "assistant":
                         raise ValueError("Invalid exported chat history.")
                     canonical_thinking = thinking_exchange_to_json(thinking_value)

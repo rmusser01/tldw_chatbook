@@ -2657,9 +2657,20 @@ def generate_chat_history_content(
     """
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
 
-    # Try to get conversation name from DB if possible
+    # Resolve DB-owned conversation metadata once so policy cannot silently
+    # downgrade when the owning lookup fails.
+    conversation = None
     conversation_name = None
-    if conversation_id:
+    if conversation_id and db_instance is not None:
+        try:
+            conversation = db_instance.get_conversation_by_id(conversation_id)
+        except Exception:
+            raise ValueError(
+                "Conversation metadata is unavailable for export."
+            ) from None
+        if conversation and conversation.get("title"):
+            conversation_name = conversation["title"]
+    elif conversation_id:
         conversation_name = get_conversation_name(conversation_id, db_instance)
 
     if not conversation_name:  # Fallback logic
@@ -2683,16 +2694,9 @@ def generate_chat_history_content(
         # Assuming 'history' is like chatbot: List[Tuple[Optional[str], Optional[str]]]
     }
 
-    raw_policy = None
-    if db_instance is not None and conversation_id:
-        try:
-            conversation = db_instance.get_conversation_by_id(conversation_id)
-            if conversation:
-                raw_policy = conversation.get("thinking_history_policy")
-        except Exception:
-            logging.warning(
-                "Could not fetch thinking history policy for conversation export."
-            )
+    raw_policy = (
+        conversation.get("thinking_history_policy") if conversation else None
+    )
     chat_data["thinking_history_policy"] = normalize_thinking_history_policy(raw_policy)
 
     contains_private = False

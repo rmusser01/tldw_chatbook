@@ -415,7 +415,7 @@ def preflight_thinking_history_policy(
     value: object,
 ) -> tuple[ThinkingHistoryPolicy, str | None]:
     """Validate imported raw policy and normalize bounded unknown strings."""
-    if value is None or value == "":
+    if value is None:
         return "auto", None
     if type(value) is not str or len(cast(str, value)) > MAX_THINKING_HISTORY_POLICY_CHARS:
         raise ValueError("Invalid thinking history policy.")

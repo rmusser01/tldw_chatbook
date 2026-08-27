@@ -373,6 +373,39 @@ def _linear_graph(*, role: str = "assistant") -> dict[str, object]:
     }
 
 
+@pytest.mark.parametrize("role", ["assistant", "user"])
+def test_chatbook_v2_graph_rejects_present_null_thinking(role: str) -> None:
+    graph = _linear_graph(role=role)
+    graph["messages"][0]["_thinking"] = None
+
+    with pytest.raises(ValueError, match="Invalid V2 conversation graph"):
+        ChatbookImporter._validate_v2_conversation_graph(graph)
+
+
+def test_chatbook_v2_graph_rejects_thinking_on_deleted_message() -> None:
+    graph = _linear_graph(role="user")
+    graph["messages"].append(
+        {
+            "id": "message-2",
+            "parent_id": "message-1",
+            "variant_of": None,
+            "order": 1,
+            "role": "assistant",
+            "content": "Deleted answer",
+            "deleted": True,
+            "variant_number": 1,
+            "is_selected_variant": True,
+            "total_variants": 1,
+            "_thinking": json.loads(
+                dump_thinking_blocks_json(_thinking()) or "null"
+            ),
+        }
+    )
+
+    with pytest.raises(ValueError, match="Invalid V2 conversation graph"):
+        ChatbookImporter._validate_v2_conversation_graph(graph)
+
+
 def test_chatbook_v2_graph_rejects_aggregate_thinking_utf8_bytes(monkeypatch) -> None:
     graph = _linear_graph()
     graph["messages"][0]["_thinking"] = json.loads(
@@ -414,6 +447,104 @@ def test_chatbook_v2_rejects_invalid_policy_before_conversation_mutation(
         destination.close_connection()
 
 
+@pytest.mark.parametrize("message_id", ["user-1", "assistant-1"])
+def test_chatbook_v2_rejects_present_null_thinking_before_conversation_mutation(
+    tmp_path: Path,
+    chachanotes_template_db: Path,
+    message_id: str,
+) -> None:
+    source_paths, conversation_id, _ = _source_graph(
+        tmp_path, chachanotes_template_db
+    )
+    archive_path, result = _create_export(tmp_path, source_paths, conversation_id)
+    assert result[0], result[1]
+
+    def insert_null_thinking(conversation: dict[str, object]) -> None:
+        messages = {message["id"]: message for message in conversation["messages"]}
+        messages[message_id]["_thinking"] = None
+
+    broken = _rewrite_export(
+        archive_path,
+        tmp_path / f"null-thinking-{message_id}.chatbook.zip",
+        insert_null_thinking,
+    )
+    destination_path = tmp_path / f"null-thinking-{message_id}.db"
+    shutil.copyfile(chachanotes_template_db, destination_path)
+
+    success, _, status = _import(broken, destination_path, tmp_path)
+
+    assert success is False
+    assert status.successful_items == 0
+    destination = CharactersRAGDB(destination_path, "null-thinking-assert")
+    try:
+        assert destination.get_conversation_by_name("Thinking graph") == []
+    finally:
+        destination.close_connection()
+
+
+def test_chatbook_v2_rejects_deleted_thinking_before_conversation_mutation(
+    tmp_path: Path, chachanotes_template_db: Path
+) -> None:
+    source_paths, conversation_id, ids = _source_graph(
+        tmp_path, chachanotes_template_db
+    )
+    archive_path, result = _create_export(tmp_path, source_paths, conversation_id)
+    assert result[0], result[1]
+
+    def tombstone_thinking_owner(conversation: dict[str, object]) -> None:
+        messages = {message["id"]: message for message in conversation["messages"]}
+        assert "_thinking" in messages[ids["base"]]
+        messages[ids["base"]]["deleted"] = True
+
+    broken = _rewrite_export(
+        archive_path,
+        tmp_path / "deleted-thinking.chatbook.zip",
+        tombstone_thinking_owner,
+    )
+    destination_path = tmp_path / "deleted-thinking.db"
+    shutil.copyfile(chachanotes_template_db, destination_path)
+
+    success, _, status = _import(broken, destination_path, tmp_path)
+
+    assert success is False
+    assert status.successful_items == 0
+    destination = CharactersRAGDB(destination_path, "deleted-thinking-assert")
+    try:
+        assert destination.get_conversation_by_name("Thinking graph") == []
+    finally:
+        destination.close_connection()
+
+
+def test_durable_soft_delete_clears_thinking_from_tombstone() -> None:
+    database = CharactersRAGDB(":memory:", "deleted-thinking-control")
+    try:
+        conversation_id = database.add_conversation({"title": "Tombstone control"})
+        message_id = database.add_message(
+            {
+                "conversation_id": conversation_id,
+                "sender": "assistant",
+                "content": "Visible answer",
+                "thinking_blocks_json": dump_thinking_blocks_json(_thinking()),
+            }
+        )
+        row = database.execute_query(
+            "SELECT version FROM messages WHERE id = ?", (message_id,)
+        ).fetchone()
+
+        assert database.soft_delete_message(message_id, row["version"])
+
+        tombstone = database.execute_query(
+            "SELECT deleted, thinking_blocks_json FROM messages WHERE id = ?",
+            (message_id,),
+        ).fetchone()
+        assert (tombstone["deleted"], tombstone["thinking_blocks_json"]) == (
+            1,
+            None,
+        )
+    finally:
+        database.close_connection()
+
+
 def test_chatbook_v2_unknown_policy_falls_back_to_auto_with_content_free_warning(
     tmp_path: Path, chachanotes_template_db: Path
 ) -> None:
@@ -438,6 +569,34 @@ def test_chatbook_v2_unknown_policy_falls_back_to_auto_with_content_free_warning
     assert status.warnings == [UNKNOWN_POLICY_WARNING]
     assert "future-policy-canary" not in json.dumps(status.to_dict())
     destination = CharactersRAGDB(destination_path, "unknown-policy-assert")
+    try:
+        imported = destination.get_conversation_by_name("Thinking graph")[0]
+        assert imported["thinking_history_policy"] == "auto"
+    finally:
+        destination.close_connection()
+
+
+def test_chatbook_v2_empty_policy_falls_back_with_unknown_policy_warning(
+    tmp_path: Path, chachanotes_template_db: Path
+) -> None:
+    source_paths, conversation_id, _ = _source_graph(
+        tmp_path, chachanotes_template_db
+    )
+    archive_path, result = _create_export(tmp_path, source_paths, conversation_id)
+    assert result[0], result[1]
+    rewritten = _rewrite_export(
+        archive_path,
+        tmp_path / "empty-policy.chatbook.zip",
+        lambda conversation: conversation.update(thinking_history_policy=""),
+    )
+    destination_path = tmp_path / "empty-policy.db"
+    shutil.copyfile(chachanotes_template_db, destination_path)
+
+    success, message, status = _import(rewritten, destination_path, tmp_path)
+
+    assert success, message
+    assert status.warnings == [UNKNOWN_POLICY_WARNING]
+    destination = CharactersRAGDB(destination_path, "empty-policy-assert")
     try:
         imported = destination.get_conversation_by_name("Thinking graph")[0]
         assert imported["thinking_history_policy"] == "auto"

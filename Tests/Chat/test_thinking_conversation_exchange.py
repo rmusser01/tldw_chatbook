@@ -17,6 +17,7 @@ from tldw_chatbook.Chat.thinking_blocks import (
     ProprietaryThinkingBlock,
     ThinkingEnvelope,
     dump_thinking_blocks_json,
+    preflight_thinking_history_policy,
 )
 from tldw_chatbook.Character_Chat.Character_Chat_Lib import (
     load_chat_history_from_file_and_save_to_db,
@@ -59,6 +60,50 @@ def test_save_chat_history_passes_the_db_owner_to_content_generation(
         is None
     )
     assert seen == [database_owner]
+
+
+def test_selected_json_export_fails_closed_when_conversation_lookup_fails() -> None:
+    class FailingConversationDB:
+        @staticmethod
+        def get_conversation_by_id(_conversation_id: str) -> dict[str, object]:
+            raise RuntimeError("PRIVATE-POLICY-LOOKUP-CANARY")
+
+    with pytest.raises(
+        ValueError, match="Conversation metadata is unavailable for export"
+    ) as caught:
+        generate_chat_history_content(
+            [{"role": "assistant", "content": "Visible answer"}],
+            "conversation-1",
+            None,
+            db_instance=FailingConversationDB(),  # type: ignore[arg-type]
+        )
+
+    assert "PRIVATE-POLICY-LOOKUP-CANARY" not in str(caught.value)
+
+
+@pytest.mark.parametrize("policy", ["include", "exclude"])
+def test_selected_json_export_preserves_db_owned_explicit_policy(policy: str) -> None:
+    class ConversationDB:
+        @staticmethod
+        def get_conversation_by_id(_conversation_id: str) -> dict[str, object]:
+            return {"title": "Policy owner", "thinking_history_policy": policy}
+
+    content, _ = generate_chat_history_content(
+        [{"role": "assistant", "content": "Visible answer"}],
+        "conversation-1",
+        None,
+        db_instance=ConversationDB(),  # type: ignore[arg-type]
+    )
+
+    assert json.loads(content)["thinking_history_policy"] == policy
+
+
+def test_empty_policy_is_unknown_while_missing_or_null_policy_is_silent_auto() -> None:
+    assert preflight_thinking_history_policy(None) == ("auto", None)
+    assert preflight_thinking_history_policy("") == (
+        "auto",
+        UNKNOWN_POLICY_WARNING,
+    )
 
 
 def _thinking(text: str = "DISPLAYABLE-THINKING-CANARY") -> ThinkingEnvelope:
@@ -295,6 +340,94 @@ def test_selected_json_unknown_bounded_policy_falls_back_with_content_free_warni
         database.close_connection()
 
 
+def test_selected_json_empty_policy_falls_back_with_unknown_policy_warning(
+    monkeypatch,
+) -> None:
+    warnings: list[str] = []
+
+    class WarningLogger:
+        @staticmethod
+        def warning(message, *args):
+            warnings.append(message.format(*args))
+
+        @staticmethod
+        def info(*_args, **_kwargs):
+            return None
+
+        @staticmethod
+        def error(*_args, **_kwargs):
+            return None
+
+    monkeypatch.setattr(character_chat_module, "logger", WarningLogger())
+    database = CharactersRAGDB(":memory:", "thinking-empty-policy")
+    try:
+        payload = {
+            "format": "tldw_chat_history",
+            "format_version": 1,
+            "conversation_name": "Empty policy",
+            "thinking_history_policy": "",
+            "history": [{"role": "assistant", "content": "Visible answer"}],
+        }
+
+        conversation_id, _ = _import_payload(database, payload)
+
+        assert conversation_id is not None
+        assert (
+            database.get_conversation_by_id(conversation_id)[
+                "thinking_history_policy"
+            ]
+            == "auto"
+        )
+        assert warnings == [UNKNOWN_POLICY_WARNING]
+    finally:
+        database.close_connection()
+
+
+@pytest.mark.parametrize("policy_fields", [{}, {"thinking_history_policy": None}])
+def test_selected_json_missing_or_null_policy_imports_as_silent_auto(
+    monkeypatch,
+    policy_fields: dict[str, object],
+) -> None:
+    warnings: list[str] = []
+
+    class WarningLogger:
+        @staticmethod
+        def warning(message, *args):
+            warnings.append(message.format(*args))
+
+        @staticmethod
+        def info(*_args, **_kwargs):
+            return None
+
+        @staticmethod
+        def error(*_args, **_kwargs):
+            return None
+
+    monkeypatch.setattr(character_chat_module, "logger", WarningLogger())
+    database = CharactersRAGDB(":memory:", "thinking-silent-auto-policy")
+    try:
+        payload = {
+            "format": "tldw_chat_history",
+            "format_version": 1,
+            "conversation_name": "Silent Auto policy",
+            "history": [{"role": "assistant", "content": "Visible answer"}],
+            **policy_fields,
+        }
+
+        conversation_id, _ = _import_payload(database, payload)
+
+        assert conversation_id is not None
+        assert (
+            database.get_conversation_by_id(conversation_id)[
+                "thinking_history_policy"
+            ]
+            == "auto"
+        )
+        assert warnings == []
+    finally:
+        database.close_connection()
+
+
 @pytest.mark.parametrize(
     "policy",
     [42, "x" * 10_000],
@@ -322,6 +455,8 @@ def test_selected_json_rejects_invalid_policy_before_database_mutation(policy) -
 @pytest.mark.parametrize(
     "role,thinking",
     [
+        ("assistant", None),
+        ("user", None),
         ("user", json.loads(dump_thinking_blocks_json(_thinking()) or "null")),
         (
             "assistant",

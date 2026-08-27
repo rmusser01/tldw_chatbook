@@ -1143,9 +1143,9 @@ class ChatbookImporter:
             ):
                 raise ValueError("Invalid V2 conversation graph.")
             item = dict(raw)
-            thinking = raw.get("_thinking")
-            if thinking is not None:
-                if role != "assistant":
+            if "_thinking" in raw:
+                thinking = raw["_thinking"]
+                if role != "assistant" or raw["deleted"]:
                     raise ValueError("Invalid V2 conversation graph.")
                 try:
                     canonical_thinking = thinking_exchange_to_json(thinking)
