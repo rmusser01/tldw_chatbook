@@ -1,8 +1,15 @@
 """Seek-pagination coverage for local character conversations."""
 
+from contextlib import contextmanager
+import sqlite3
+
 import pytest
 
-from tldw_chatbook.DB.ChaChaNotes_DB import CharactersRAGDB, InputError
+from tldw_chatbook.DB.ChaChaNotes_DB import (
+    CharactersRAGDB,
+    CharactersRAGDBError,
+    InputError,
+)
 
 
 @pytest.fixture
@@ -233,7 +240,7 @@ def test_partial_seek_cursor_fails_before_sql(db, monkeypatch, cursor):
     def fail_sql(*_args, **_kwargs):
         raise AssertionError("SQL should not run")
 
-    monkeypatch.setattr(db, "execute_query", fail_sql)
+    monkeypatch.setattr(db, "transaction", fail_sql)
 
     with pytest.raises(InputError):
         db.get_conversations_for_character(1, **cursor)
@@ -243,7 +250,7 @@ def test_seek_cursor_with_nonzero_offset_fails_before_sql(db, monkeypatch):
     def fail_sql(*_args, **_kwargs):
         raise AssertionError("SQL should not run")
 
-    monkeypatch.setattr(db, "execute_query", fail_sql)
+    monkeypatch.setattr(db, "transaction", fail_sql)
 
     with pytest.raises(InputError):
         db.get_conversations_for_character(
@@ -253,3 +260,86 @@ def test_seek_cursor_with_nonzero_offset_fails_before_sql(db, monkeypatch):
             before_last_modified="2026-08-27T04:00:00Z",
             before_id="seen-1",
         )
+
+
+@pytest.mark.parametrize(
+    ("before_last_modified", "before_id"),
+    [
+        (object(), "seen-1"),
+        ("2026-08-27T04:00:00Z", 7),
+        ("   ", "seen-1"),
+        ("2026-08-27T04:00:00Z", "   "),
+    ],
+)
+def test_invalid_seek_cursor_values_fail_before_sql(
+    db, monkeypatch, before_last_modified, before_id
+):
+    monkeypatch.setattr(
+        db,
+        "transaction",
+        lambda: pytest.fail("SQL should not run"),
+    )
+
+    with pytest.raises(InputError):
+        db.get_conversations_for_character(
+            1,
+            before_last_modified=before_last_modified,
+            before_id=before_id,
+        )
+
+
+def test_character_conversation_read_uses_transaction_and_closes_cursor(
+    db, monkeypatch
+):
+    class TrackingCursor:
+        def __init__(self):
+            self.closed = False
+            self.executed = None
+
+        def execute(self, query, params):
+            self.executed = (query, params)
+
+        def fetchall(self):
+            return ({"id": "conv-1", "title": "First"},)
+
+        def close(self):
+            self.closed = True
+
+    cursor = TrackingCursor()
+
+    @contextmanager
+    def transaction():
+        yield cursor
+
+    monkeypatch.setattr(db, "transaction", transaction)
+    monkeypatch.setattr(
+        db,
+        "execute_query",
+        lambda *_args, **_kwargs: pytest.fail("read bypassed transaction()"),
+    )
+
+    rows = db.get_conversations_for_character(1, limit=1)
+
+    assert rows == [{"id": "conv-1", "title": "First"}]
+    assert cursor.executed is not None
+    assert cursor.closed is True
+
+
+def test_character_conversation_read_preserves_database_error_contract(
+    db, monkeypatch
+):
+    class FailingCursor:
+        def execute(self, _query, _params):
+            raise sqlite3.OperationalError("database unavailable")
+
+        def close(self):
+            pass
+
+    @contextmanager
+    def transaction():
+        yield FailingCursor()
+
+    monkeypatch.setattr(db, "transaction", transaction)
+
+    with pytest.raises(CharactersRAGDBError):
+        db.get_conversations_for_character(1)

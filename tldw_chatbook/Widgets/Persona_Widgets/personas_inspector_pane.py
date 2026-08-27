@@ -11,6 +11,7 @@ from textual.containers import Container, Horizontal, Vertical, VerticalScroll
 from textual.css.query import QueryError
 from textual.widgets import Button, Checkbox, ListItem, ListView, Static
 
+from ...Constants import PERSONAS_CONVERSATIONS_PAGE_SIZE
 from ..Console.console_image_viewer_modal import ClickableAvatarBox
 
 from .personas_messages import ActorPackExportRequested, PersonaBuddyActionRequested
@@ -516,7 +517,14 @@ class PersonasInspectorPane(VerticalScroll):
     async def show_conversations_loading(
         self, render_attempt: object | None = None
     ) -> bool:
-        """Show a loading placeholder while the listing worker runs."""
+        """Show a loading placeholder while the listing worker runs.
+
+        Args:
+            render_attempt: Optional token that owns this render attempt.
+
+        Returns:
+            Whether the loading placeholder still owns the visible render.
+        """
         token = self._claim_conversation_render(render_attempt)
         async with self._conversation_render_lock:
             return await self._show_conversations_placeholder(
@@ -529,7 +537,11 @@ class PersonasInspectorPane(VerticalScroll):
     def invalidate_conversation_render(
         self, render_attempt: object | None = None
     ) -> None:
-        """Invalidate the matching list render, or the current one."""
+        """Invalidate the matching list render, or the current one.
+
+        Args:
+            render_attempt: Token to invalidate, or ``None`` for the current token.
+        """
         if (
             render_attempt is None
             or self._conversation_render_attempt is render_attempt
@@ -667,6 +679,15 @@ class PersonasInspectorPane(VerticalScroll):
         ``empty_copy`` is given, in which case that copy renders as a
         disabled placeholder (the library empty-state idiom). Supplying
         ``has_more`` opts into explicit empty/load/exhausted tail states.
+
+        Args:
+            rows: Conversation ID and display-title pairs.
+            empty_copy: Optional copy for an empty result.
+            has_more: Whether another saved-conversation page is available.
+            render_attempt: Optional token that owns this render attempt.
+
+        Returns:
+            Whether this attempt still owns the visible render.
         """
         token = self._standalone_or_existing_conversation_render(render_attempt)
         async with self._conversation_render_lock:
@@ -693,7 +714,10 @@ class PersonasInspectorPane(VerticalScroll):
                     actionable = False
                     disabled = True
                 elif has_more:
-                    tail_copy = "Load 20 older conversations"
+                    tail_copy = (
+                        f"Load {PERSONAS_CONVERSATIONS_PAGE_SIZE} "
+                        "older conversations"
+                    )
                     actionable = True
                     disabled = False
                 else:
@@ -712,7 +736,14 @@ class PersonasInspectorPane(VerticalScroll):
     async def show_older_conversations_loading(
         self, render_attempt: object | None = None
     ) -> bool:
-        """Keep durable rows while replacing the action tail with busy copy."""
+        """Keep durable rows while replacing the action tail with busy copy.
+
+        Args:
+            render_attempt: Optional token that owns this render attempt.
+
+        Returns:
+            Whether this attempt still owns the visible render.
+        """
         token = self._claim_conversation_render(render_attempt)
         async with self._conversation_render_lock:
             if not self._conversation_render_is_current(token):
@@ -742,7 +773,16 @@ class PersonasInspectorPane(VerticalScroll):
         render_attempt: object | None = None,
         preserved_rows: tuple[tuple[str, str], ...] | None = None,
     ) -> bool:
-        """Show an actionable initial or append retry state."""
+        """Show an actionable initial or append retry state.
+
+        Args:
+            initial: Whether the failed request was the initial page.
+            render_attempt: Optional token that owns this render attempt.
+            preserved_rows: Durable rows to retain for an append retry.
+
+        Returns:
+            Whether this attempt still owns the visible render.
+        """
         token = self._standalone_or_existing_conversation_render(render_attempt)
         async with self._conversation_render_lock:
             if initial:
@@ -790,7 +830,16 @@ class PersonasInspectorPane(VerticalScroll):
         has_more: bool,
         render_attempt: object | None = None,
     ) -> bool:
-        """Append ordinary rows and replace only the pagination tail."""
+        """Append ordinary rows and replace only the pagination tail.
+
+        Args:
+            rows: Conversation ID and display-title pairs to append.
+            has_more: Whether another saved-conversation page is available.
+            render_attempt: Optional token that owns this render attempt.
+
+        Returns:
+            Whether this attempt still owns the visible render.
+        """
         token = self._standalone_or_existing_conversation_render(render_attempt)
         async with self._conversation_render_lock:
             if not self._conversation_render_is_current(token):
@@ -818,7 +867,7 @@ class PersonasInspectorPane(VerticalScroll):
                     return False
             rendered = await self._replace_conversation_tail(
                 (
-                    "Load 20 older conversations"
+                    f"Load {PERSONAS_CONVERSATIONS_PAGE_SIZE} older conversations"
                     if has_more
                     else "All conversations shown."
                 ),

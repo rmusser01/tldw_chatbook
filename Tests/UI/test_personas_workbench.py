@@ -4160,9 +4160,17 @@ class TestConversationsPanel:
         stub_conversations,
         monkeypatch,
     ):
+        from loguru import logger as loguru_logger
+
         read_started = asyncio.Event()
         release_read = threading.Event()
         app = PersonasTestApp(mock_app_instance)
+        retry_records = []
+        sink_id = loguru_logger.add(
+            lambda message: retry_records.append(message.record),
+            filter=lambda record: record["message"]
+            == "Could not render the conversations retry state.",
+        )
 
         def gated_failure(character_id, limit=50, offset=0, **cursor):
             app.call_from_thread(read_started.set)
@@ -4220,6 +4228,18 @@ class TestConversationsPanel:
                 ) == "Retry succeeded"
         finally:
             release_read.set()
+            loguru_logger.remove(sink_id)
+
+        assert len(retry_records) == 1
+        expected_context = {
+            "character_id": "1",
+            "cursor": None,
+            "phase": "initial-retry",
+            "operation": "render-owned-retry",
+        }
+        assert {
+            key: retry_records[0]["extra"][key] for key in expected_context
+        } == expected_context
 
     async def test_initial_and_append_failures_retry_the_identical_boundary(
         self, mock_app_instance, stub_characters, stub_conversations

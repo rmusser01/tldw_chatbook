@@ -12,6 +12,7 @@ from textual.widgets import Button, Checkbox, ListItem, ListView, Static
 # (TASK-15450); without it the widgets under test mount unstyled.
 from Tests.UI.consolidated_css import ConsolidatedCSSApp
 
+from tldw_chatbook import Constants as constants
 from tldw_chatbook.Widgets.Persona_Widgets import (
     personas_messages,
     personas_pane_messages,
@@ -1056,7 +1057,7 @@ async def test_initial_paginated_conversations_end_with_actionable_load_tail():
         assert [_row_text(item) for item in items] == [
             "First case",
             "Cold trail",
-            "Load 20 older conversations",
+            f"Load {constants.PERSONAS_CONVERSATIONS_PAGE_SIZE} older conversations",
         ]
 
         tail = items[-1]

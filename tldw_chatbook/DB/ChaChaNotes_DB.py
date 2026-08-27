@@ -9727,6 +9727,16 @@ UPDATE db_schema_version
             raise InputError(
                 "before_last_modified and before_id must be provided together."
             )
+        if before_last_modified is not None and not isinstance(
+            before_last_modified, (str, datetime)
+        ):
+            raise InputError("before_last_modified must be timestamp text or datetime.")
+        if isinstance(before_last_modified, str) and not before_last_modified.strip():
+            raise InputError("before_last_modified must not be empty.")
+        if before_id is not None and (
+            not isinstance(before_id, str) or not before_id.strip()
+        ):
+            raise InputError("before_id must be a non-empty string.")
         if cursor_supplied and offset != 0:
             raise InputError("A seek cursor cannot be combined with a nonzero offset.")
 
@@ -9754,8 +9764,9 @@ UPDATE db_schema_version
             )
             params = (character_id, limit, offset)
         try:
-            cursor = self.execute_query(query, params)
-            results = [dict(row) for row in cursor.fetchall()]
+            with self.transaction() as cursor, contextlib.closing(cursor):
+                cursor.execute(query, params)
+                results = [dict(row) for row in cursor.fetchall()]
 
             # Log metrics
             duration = time.time() - start_time
@@ -9777,11 +9788,15 @@ UPDATE db_schema_version
             )
 
             return results
-        except CharactersRAGDBError as e:
+        except (sqlite3.Error, CharactersRAGDBError) as e:
             logger.error(
                 f"Database error fetching conversations for character ID {character_id}: {e}"
             )
-            raise
+            if isinstance(e, CharactersRAGDBError):
+                raise
+            raise CharactersRAGDBError(
+                f"Failed to fetch conversations for character ID {character_id}: {e}"
+            ) from e
 
     def _conversation_search_filter(
         self,

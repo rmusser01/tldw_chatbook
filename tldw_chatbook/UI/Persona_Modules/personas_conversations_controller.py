@@ -26,6 +26,7 @@ from ...Constants import (
     LIBRARY_MODE_CONVERSATIONS,
     LIBRARY_NAV_CONTEXT_CONVERSATION_ID,
     LIBRARY_NAV_CONTEXT_MODE,
+    PERSONAS_CONVERSATIONS_PAGE_SIZE,
     TAB_CHAT,
     TAB_LIBRARY,
 )
@@ -47,9 +48,8 @@ _CONVERSATION_VIEW_ID = "#personas-conversation-transcript-view"
 #: Cap on the transcript text staged into a Console handoff body.
 _HANDOFF_TRANSCRIPT_CHAR_LIMIT = 6000
 
-#: Visible rows per saved-conversation page; one extra row is the sentinel.
-_CONVERSATIONS_PAGE_SIZE = 20
-_CONVERSATIONS_FETCH_LIMIT = _CONVERSATIONS_PAGE_SIZE + 1
+#: One extra fetched row is the pagination sentinel.
+_CONVERSATIONS_FETCH_LIMIT = PERSONAS_CONVERSATIONS_PAGE_SIZE + 1
 #: Duplicate-only seek continuations allowed before yielding to another user action.
 _CONVERSATIONS_MAX_AUTO_HOPS = 4
 
@@ -315,7 +315,12 @@ class PersonasConversationsController:
             )
         except Exception:
             rendered = False
-            logger.opt(exception=True).warning(
+            logger.bind(
+                character_id=str(character_id),
+                cursor=cursor,
+                phase=self._conversation_list_phase,
+                operation="render-owned-retry",
+            ).opt(exception=True).warning(
                 "Could not render the conversations retry state."
             )
         if rendered or not self._owns_conversation_retry(
@@ -330,14 +335,24 @@ class PersonasConversationsController:
                 preserved_rows=preserved_rows,
             )
         except Exception:
-            logger.opt(exception=True).error(
+            logger.bind(
+                character_id=str(character_id),
+                cursor=cursor,
+                phase=self._conversation_list_phase,
+                operation="render-fallback-retry",
+            ).opt(exception=True).error(
                 "Conversation retry presentation failed after bounded fallback."
             )
             return
         if not rendered and self._owns_conversation_retry(
             character_id, cursor, initial
         ):
-            logger.error(
+            logger.bind(
+                character_id=str(character_id),
+                cursor=cursor,
+                phase=self._conversation_list_phase,
+                operation="render-fallback-retry",
+            ).error(
                 "Conversation retry presentation was rejected after bounded fallback."
             )
 
@@ -383,7 +398,7 @@ class PersonasConversationsController:
                     last_modified,
                 )
             )
-            if len(durable_page) == _CONVERSATIONS_PAGE_SIZE:
+            if len(durable_page) == PERSONAS_CONVERSATIONS_PAGE_SIZE:
                 break
 
         raw_cursor = (
@@ -402,7 +417,7 @@ class PersonasConversationsController:
             page_ids.add(conversation_id)
             accepted.append((conversation_id, title, last_modified))
 
-        has_more = len(records) > _CONVERSATIONS_PAGE_SIZE
+        has_more = len(records) > PERSONAS_CONVERSATIONS_PAGE_SIZE
         if not accepted and has_more:
             advances = raw_cursor is not None and not any(
                 raw_cursor == boundary
