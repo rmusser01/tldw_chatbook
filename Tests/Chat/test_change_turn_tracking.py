@@ -328,6 +328,70 @@ def test_final_index_validation_chunks_exact_force_removals(
     assert tuple(path for call in calls for path in call[3:]) == paths
 
 
+@pytest.mark.parametrize(
+    ("operation", "staging_rounds"),
+    (("snapshot", 2), ("force_add", 1)),
+)
+def test_exact_force_add_paths_are_chunked_with_conservative_argv_budget(
+    tracker, root, monkeypatch, operation, staging_rounds
+):
+    import os as _os
+    import subprocess as _sp
+
+    repo = tracker.service.repo_for_root(root)
+    repo.snapshot("initial")
+    ordinary_paths = tuple(
+        f"ignored/dir-{index:05d}/{'x' * 180}-{index:05d}.txt"
+        for index in range(2_000)
+    )
+    overlong = f"ignored/{'y' * 5_000}"
+    paths = (*ordinary_paths[:1_000], overlong, *ordinary_paths[1_000:])
+    calls: list[tuple[str, ...]] = []
+    original_run = repo._run
+
+    def record_exact_add(*args, **kwargs):
+        if args[:2] == ("update-index", "--add"):
+            calls.append(args)
+            return _sp.CompletedProcess(args, 0, stdout="", stderr="")
+        return original_run(*args, **kwargs)
+
+    monkeypatch.setattr(repo, "_exact_force_paths", lambda _paths: list(paths))
+    monkeypatch.setattr(repo, "_validate_new_index_paths", lambda: ((), ()))
+    monkeypatch.setattr(repo, "_run", record_exact_add)
+
+    if operation == "snapshot":
+        repo.snapshot("chunked exact add", force_paths=paths)
+    else:
+        repo.force_add(paths)
+
+    base_args = (
+        repo._git,
+        "--git-dir",
+        str(repo.git_dir),
+        "--work-tree",
+        str(repo.root),
+    )
+
+    def conservative_cost(args):
+        return sum(2 * len(_os.fsencode(arg)) + 3 for arg in args)
+
+    assert tuple(path for call in calls for path in call[3:]) == (
+        paths * staging_rounds
+    )
+    assert all(
+        call[:3] == ("update-index", "--add", "--") for call in calls
+    )
+    for call in calls:
+        assert (
+            conservative_cost((*base_args, *call)) <= 8 * 1024
+            or call[3:] == (overlong,)
+        )
+    overlong_calls = [call for call in calls if overlong in call]
+    assert [call[3:] for call in overlong_calls] == [
+        (overlong,)
+    ] * staging_rounds
+
+
 def test_force_add_rejects_root_and_directory_paths(tracker, root, monkeypatch):
     monkeypatch.setenv("TLDW_CHANGE_REVIEW_MAX_FILE_BYTES", "100")
     ignored = root / "ignored"
@@ -1087,6 +1151,44 @@ def test_supplied_sha_survives_force_add_priming_failure(
     assert records[0].baseline_sha == baseline
     assert records[0].end_sha == supplied
     assert records[0].tracking_error == "injected priming failure"
+
+
+def test_invalid_supplied_sha_does_not_prime_the_index(
+    tracker, root, monkeypatch
+):
+    target = root / "ignored-agent-output.txt"
+    (root / ".gitignore").write_text(f"{target.name}\n")
+    handle = tracker.begin_turn([root])
+    handle.await_baseline()
+    key = str(root.resolve())
+    baseline = handle.baselines[key]
+    target.write_text("must not be staged\n")
+    invalid = "f" * 40
+    repo = tracker.service.repo_for_root(root)
+    force_add_calls: list[tuple[str, ...]] = []
+    original_force_add = repo.force_add
+
+    def record_force_add(paths):
+        force_add_calls.append(tuple(paths))
+        original_force_add(paths)
+
+    monkeypatch.setattr(repo, "force_add", record_force_add)
+    monkeypatch.setattr(tracker.service, "repo_for_root", lambda _root: repo)
+
+    records = tracker.end_turn(
+        handle,
+        touched_paths=[str(target)],
+        end_shas={key: invalid},
+    )
+
+    assert force_add_calls == []
+    assert handle.end_shas[key] == invalid
+    assert len(records) == 1
+    record = records[0]
+    assert record.baseline_sha == baseline
+    assert record.end_sha == invalid
+    assert record.tracking_error
+    assert str(repo._run("ls-files", "--", target.name).stdout).strip() == ""
 
 
 def test_supplied_sha_preserves_nonempty_continuation_range_statistics(

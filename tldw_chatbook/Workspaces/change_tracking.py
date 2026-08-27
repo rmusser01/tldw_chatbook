@@ -452,11 +452,13 @@ class ShadowRepo:
             ancestor = ancestor.parent
         return None
 
-    def _force_remove_exact_paths(self, paths: Sequence[str]) -> None:
-        """Remove exact index paths in conservatively bounded argv chunks."""
+    def _update_index_exact_paths(
+        self, option: str, paths: Sequence[str]
+    ) -> None:
+        """Update exact index paths in conservatively bounded argv chunks."""
         if not paths:
             return
-        args = ("update-index", "--force-remove", "--")
+        args = ("update-index", option, "--")
         command_bytes = sum(
             _conservative_argv_cost(arg)
             for arg in (
@@ -559,7 +561,7 @@ class ShadowRepo:
         )
         unsafe = tuple(rel for rel, _object_id, _mode in unsafe_entries)
         if unsafe:
-            self._force_remove_exact_paths(unsafe)
+            self._update_index_exact_paths("--force-remove", unsafe)
         nested = tuple(
             dict.fromkeys(
                 owner
@@ -603,7 +605,7 @@ class ShadowRepo:
             if rel in safe and sizes.get(object_id, 0) > cap
         )
         if oversized:
-            self._force_remove_exact_paths(oversized)
+            self._update_index_exact_paths("--force-remove", oversized)
         included = safe.difference(oversized)
         self.last_oversize_excluded = tuple(
             rel
@@ -646,7 +648,7 @@ class ShadowRepo:
             self.ensure_initialized()
             exact_paths = self._exact_force_paths(force_paths)
             if exact_paths:
-                self._run("update-index", "--add", "--", *exact_paths)
+                self._update_index_exact_paths("--add", exact_paths)
             scan = scan_root(
                 self.root,
                 max_files=_sys.maxsize,
@@ -709,7 +711,7 @@ class ShadowRepo:
             if force_paths:
                 final_paths = self._exact_force_paths(force_paths)
                 if final_paths:
-                    self._run("update-index", "--add", "--", *final_paths)
+                    self._update_index_exact_paths("--add", final_paths)
             self._validate_new_index_paths()
             had_tip = self.tip() is not None
             if had_tip:
@@ -850,7 +852,7 @@ class ShadowRepo:
             self.ensure_initialized()
             exact_paths = self._exact_force_paths(paths)
             if exact_paths:
-                self._run("update-index", "--add", "--", *exact_paths)
+                self._update_index_exact_paths("--add", exact_paths)
                 unsafe, oversized = self._validate_new_index_paths()
                 attempt_unsafe = tuple(
                     rel for rel in unsafe if rel in exact_paths

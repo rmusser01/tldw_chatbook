@@ -360,20 +360,20 @@ class ChangeTurnTracker:
                     # shared index only lets the next fresh snapshot consume
                     # a path that became available after this exact boundary.
                     end = provided
-                    repo.force_add(eligible)
                     if end == baseline:
+                        repo.force_add(eligible)
                         continue
                     changed = repo.changed_files(baseline, end)
-                    records.append(
-                        TurnChangeRecord(
-                            root=key,
-                            baseline_sha=baseline,
-                            end_sha=end,
-                            files_changed=len(changed),
-                            adds=sum(c.adds for c in changed),
-                            dels=sum(c.dels for c in changed),
-                        )
+                    record = TurnChangeRecord(
+                        root=key,
+                        baseline_sha=baseline,
+                        end_sha=end,
+                        files_changed=len(changed),
+                        adds=sum(c.adds for c in changed),
+                        dels=sum(c.dels for c in changed),
                     )
+                    repo.force_add(eligible)
+                    records.append(record)
                     continue
                 if eligible:
                     end = repo.snapshot("turn end", force_paths=eligible)
