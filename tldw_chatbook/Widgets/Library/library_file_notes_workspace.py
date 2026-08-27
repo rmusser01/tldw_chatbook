@@ -1694,16 +1694,38 @@ class LibraryFileNotesWorkspace(Vertical):
             return True
         if task not in {"new", "move", "save_copy"}:
             raise ValueError(f"Unsupported File Notes path task: {task}")
+        service = self._service
+        generation = self._root_generation
+        binding = self._session_binding
+        session_key = self._session_key
         if (
-            self._root_transitioning
+            not self._active
+            or not self.is_mounted
+            or not self.display
+            or self._root_transitioning
             or self._path_transitioning
-            or self._service is None
+            or self._shutdown
+            or service is None
         ):
             return False
         if task in {"move", "save_copy"} and self._opened is None:
             return False
         if task in {"new", "move"} and self._opened is not None:
             if not await self.flush_pending_work():
+                return False
+            if (
+                not self._active
+                or not self.is_mounted
+                or not self.display
+                or self._root_transitioning
+                or self._path_transitioning
+                or self._shutdown
+                or generation != self._root_generation
+                or service is not self._service
+                or binding != self._session_binding
+                or session_key != self._session_key
+                or (task == "move" and self._opened is None)
+            ):
                 return False
         if self._path_task != "none":
             self._close_path_task(restore_focus=False)

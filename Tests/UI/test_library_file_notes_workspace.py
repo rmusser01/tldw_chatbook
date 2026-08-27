@@ -2073,6 +2073,72 @@ async def test_folder_files_path_tasks_are_exclusive_execute_and_restore_focus(
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("task", ("new", "move"))
+@pytest.mark.parametrize("exit_kind", ("authority", "root"))
+async def test_folder_files_path_task_admission_expires_while_flushing(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    task: str,
+    exit_kind: str,
+) -> None:
+    root = tmp_path / "notes"
+    root.mkdir()
+    (root / "source.md").write_text("source", encoding="utf-8")
+    next_root = tmp_path / "next-notes"
+    next_root.mkdir()
+    workspace = LibraryFileNotesWorkspace(
+        root=root,
+        replica=None,
+        autosave_delay=10,
+        poll_interval=10,
+    )
+    flush_started = asyncio.Event()
+    release_flush = asyncio.Event()
+    flush_calls = 0
+
+    async with _WorkspaceHarness(workspace).run_test(size=(120, 40)) as pilot:
+        await _wait_until(pilot, lambda: workspace.initialized, "scan did not finish")
+        assert await workspace.open_path("source.md")
+
+        async def controlled_flush() -> bool:
+            nonlocal flush_calls
+            flush_calls += 1
+            if flush_calls == 1:
+                flush_started.set()
+                await release_flush.wait()
+            return True
+
+        monkeypatch.setattr(workspace, "flush_pending_work", controlled_flush)
+        opening = asyncio.create_task(
+            workspace._open_path_task(
+                task,
+                opener_id=f"file-notes-{task}",
+            )
+        )
+        await asyncio.wait_for(flush_started.wait(), 2)
+
+        root_changed = True
+        if exit_kind == "authority":
+            workspace.display = False
+        else:
+            root_changed = await workspace.set_root(next_root, persist=False)
+        release_flush.set()
+        admitted = await opening
+        await pilot.pause()
+
+        assert root_changed
+        assert admitted is False
+        assert workspace.path_task == "none"
+        assert not workspace.query_one("#file-notes-path-task").display
+        assert not workspace.query_one("#file-notes-path", Input).has_focus
+
+        if exit_kind == "authority":
+            workspace.display = True
+
+    await workspace.shutdown()
+
+
+@pytest.mark.asyncio
 async def test_folder_files_emits_only_admitted_work_session_events(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
