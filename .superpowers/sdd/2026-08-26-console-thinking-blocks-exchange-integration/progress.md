@@ -195,3 +195,19 @@ passed/2 skipped/2 warnings; post-format review regressions passed 12/12. Ruff,
 `py_compile`, CSS/derived bundles, diagnostic inventory (unchanged at 537/1,243/
 7,341/8), and diff checks passed. No new ADR, diagnostic, sink, Backlog status change,
 or live-gate claim was made.
+
+Task 3 quality-review fix round 2 (2026-08-27): four RED controls proved that a V1
+prepared owner resumed by manual Retry, Bypass, or queued reclaim was deleted and left
+READY/COMMITTING when persistence changed to V0. The early compatibility preflight is
+now owner-aware: resumed preparation pauses at PERSISTENCE with the exact existing
+owner, draft, frozen attachment, continuation sidecar, and current conversation
+identity/title intact; the established content-free refusal contacts no provider.
+Fresh-send cleanup is unchanged. Restoring V1 successfully retries the same manual or
+queued owner, and queue claim finalization preserves the next waiter. The older
+durable-continuation spec and ADR-090 now cross-link a dated supersession: Console
+generation deletion clears answer/thinking/continuation atomically, while ordinary
+non-deleting Discard and non-deleted off-branch ownership are unchanged. Focused
+preparation GREEN was 223/223; controller selection was 5/5; the exact broad matrix
+was 1,282 passed/2 skipped/2 warnings. CSS/derived bundles, unchanged diagnostic
+inventory (537/1,243/7,341/8), scoped Ruff/format, `py_compile`, and diff checks pass.
+No new ADR, database change, Backlog status change, or root live-gate claim was made.

@@ -11,16 +11,25 @@ from __future__ import annotations
 import asyncio
 import io
 import json
+from types import SimpleNamespace
 
 import httpx
 import pytest
 from textual.app import App, ComposeResult
 
-from Tests.UI.test_destination_shells import _build_test_app
+from Tests.Chat.test_console_automatic_library_preparation import (
+    _PolicyCoordinator,
+    _RagService,
+)
 from Tests.console_provider_doubles import with_destination
+from Tests.UI.test_destination_shells import _build_test_app
+from tldw_chatbook.Character_Chat.Character_Chat_Lib import (
+    load_chat_history_from_file_and_save_to_db,
+)
+from tldw_chatbook.Chat.attachment_core import PendingAttachment
 from tldw_chatbook.Chat.chat_conversation_service import ChatConversationService
-from tldw_chatbook.Chat.chat_persistence_service import ChatPersistenceService
 from tldw_chatbook.Chat.Chat_Functions import generate_chat_history_content
+from tldw_chatbook.Chat.chat_persistence_service import ChatPersistenceService
 from tldw_chatbook.Chat.console_chat_controller import ConsoleChatController
 from tldw_chatbook.Chat.console_chat_models import (
     PROPRIETARY_THINKING_NOTICE,
@@ -28,12 +37,7 @@ from tldw_chatbook.Chat.console_chat_models import (
     ConsoleProviderSelection,
 )
 from tldw_chatbook.Chat.console_chat_store import ConsoleChatStore
-from tldw_chatbook.Chat.console_provider_gateway import (
-    ConsoleProviderGateway,
-    ConsoleProviderResolution,
-    ProviderProprietaryThinkingEvidence,
-    ProviderThinkingDelta,
-)
+from tldw_chatbook.Chat.console_library_policy import ConsoleAutoRetrieve
 from tldw_chatbook.Chat.console_prepared_request import (
     THINKING_OWNER_KEY,
     build_console_request,
@@ -41,12 +45,22 @@ from tldw_chatbook.Chat.console_prepared_request import (
     resolve_request_capacity,
     thaw_json,
 )
+from tldw_chatbook.Chat.console_provider_gateway import (
+    ConsoleProviderGateway,
+    ConsoleProviderResolution,
+    ProviderProprietaryThinkingEvidence,
+    ProviderThinkingDelta,
+)
 from tldw_chatbook.Chat.console_thinking_history import (
     ProviderThinkingSidecar,
     ThinkingReplayTarget,
     resolve_thinking_history,
 )
 from tldw_chatbook.Chat.console_turn_grouping import project_thinking_activities
+from tldw_chatbook.Chat.console_turn_preparation import (
+    ConsolePreparationPauseKind,
+    ConsoleTurnPreparationState,
+)
 from tldw_chatbook.Chat.provider_continuation import (
     ContinuationRound,
     ProviderContinuationCheckpoint,
@@ -58,9 +72,6 @@ from tldw_chatbook.Chat.thinking_blocks import (
     ThinkingEnvelope,
     dump_thinking_blocks_json,
     parse_thinking_blocks_json,
-)
-from tldw_chatbook.Character_Chat.Character_Chat_Lib import (
-    load_chat_history_from_file_and_save_to_db,
 )
 from tldw_chatbook.Chatbooks.chatbook_creator import ChatbookCreator
 from tldw_chatbook.Chatbooks.chatbook_importer import ChatbookImporter, ImportStatus
@@ -77,7 +88,6 @@ from tldw_chatbook.Widgets.Console.console_assistant_turn import (
     ConsoleActivityDisclosure,
 )
 from tldw_chatbook.Widgets.Console.console_transcript import ConsoleTranscript
-
 
 VISIBLE_ANSWER = "VISIBLE-ANSWER-CANARY"
 DISPLAYABLE_THINKING = "DISPLAYABLE-THINKING-CANARY"
@@ -191,6 +201,18 @@ class _VersionedPersistence:
 
     def __getattr__(self, name: str):
         return getattr(self._delegate, name)
+
+
+def _inline_attachment() -> PendingAttachment:
+    return PendingAttachment(
+        file_path="/tmp/frozen-context.txt",
+        display_name="frozen-context.txt",
+        file_type="text",
+        insert_mode="inline",
+        text_content="FROZEN-ATTACHMENT-CANARY",
+        original_size=26,
+        processed_size=26,
+    )
 
 
 def _complete_displayable_envelope() -> ThinkingEnvelope:
@@ -550,6 +572,96 @@ async def test_unsupported_persistent_backend_refuses_before_provider_and_recove
         assert messages[-1].thinking is None
         durable = db.get_message_by_id(messages[-1].persisted_message_id)
         assert durable["thinking_blocks_json"] is None
+    finally:
+        db.close_connection()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("action", ["retry", "bypass"])
+async def test_resumed_preparation_thinking_refusal_preserves_exact_owner(
+    tmp_path,
+    action: str,
+) -> None:
+    db = CharactersRAGDB(tmp_path / f"resumed-{action}.sqlite", f"resumed-{action}")
+    supported = ChatPersistenceService(db)
+    persistence = _VersionedPersistence(supported, 1)
+    store = ConsoleChatStore(persistence=persistence)  # type: ignore[arg-type]
+    store.library_policy_coordinator = _PolicyCoordinator(ConsoleAutoRetrieve.AUTOMATIC)
+    session = store.create_session(title="Pre-send title")
+    store.active_session_id = session.id
+    store.set_session_draft(session.id, "INTERVENING-DRAFT-CANARY")
+    attachment = _inline_attachment()
+    assert store.add_pending_attachment(session.id, attachment)
+    gateway = _DispositionGateway("displayable")
+    service = _RagService(error=RuntimeError("pause before commit"))
+    controller = ConsoleChatController(store=store, provider_gateway=gateway)
+    controller.app = SimpleNamespace(library_rag_search_service=service)
+
+    try:
+        first = await controller.submit_draft(
+            "RESUMED-OWNER-CANARY", session_id=session.id
+        )
+        paused = store.preparation_for_session(session.id)
+        assert first.accepted is False
+        assert paused is not None
+        assert paused.state is ConsoleTurnPreparationState.PAUSED
+        assert paused.pause_kind is ConsolePreparationPauseKind.RETRIEVAL
+        assert paused.transient_user_message_id is not None
+        owner_before = store.get_message(paused.transient_user_message_id)
+        continuation_before = controller._prepared_send_continuations[
+            paused.preparation_id
+        ]
+        assert owner_before is not None
+        assert continuation_before.attachments == (attachment,)
+
+        # This state changed after admission and is not owned by the preparation.
+        intervening_conversation_id = str(
+            db.add_conversation({"title": "Intervening conversation"})
+        )
+        session.title = "Intervening session title"
+        session.persisted_conversation_id = intervening_conversation_id
+        persistence.version = 0
+        service.error = None
+
+        refused = (
+            await controller.retry_library_preparation(paused.preparation_id)
+            if action == "retry"
+            else await controller.bypass_library_preparation(paused.preparation_id)
+        )
+
+        assert refused.accepted is False
+        assert refused.should_clear_draft is False
+        assert refused.visible_copy == (
+            "This persistent backend cannot preserve model thinking version 1. "
+            "Upgrade it before sending."
+        )
+        assert "RESUMED-OWNER-CANARY" not in refused.visible_copy
+        current = store.preparation_for_session(session.id)
+        assert current is not None
+        assert current.state is ConsoleTurnPreparationState.PAUSED
+        assert current.pause_kind is ConsolePreparationPauseKind.PERSISTENCE
+        assert current.transient_user_message_id == paused.transient_user_message_id
+        assert store.get_message(paused.transient_user_message_id) == owner_before
+        assert store.session_draft(session.id) == "INTERVENING-DRAFT-CANARY"
+        assert store.pending_attachments(session.id) == [attachment]
+        assert (
+            controller._prepared_send_continuations[paused.preparation_id]
+            is continuation_before
+        )
+        assert session.title == "Intervening session title"
+        assert session.persisted_conversation_id == intervening_conversation_id
+        assert gateway.provider_contacts == 0
+
+        # Move back to a valid first-persistence identity before proving that
+        # the same prepared owner can proceed after the backend upgrade.
+        session.persisted_conversation_id = None
+        persistence.version = 1
+        recovered = await controller.retry_library_preparation(paused.preparation_id)
+
+        assert recovered.accepted is True
+        assert gateway.provider_contacts == 1
+        assert store.preparation_for_session(session.id) is None
+        assert store.get_message(paused.transient_user_message_id) is not None
     finally:
         db.close_connection()
 

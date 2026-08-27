@@ -243,3 +243,59 @@ Fresh review-fix evidence on the formatted tree:
 This review fix adds no ADR decision; it applies ADR-090's existing compatible,
 provider-resolved optional replay boundary and ADR-063's independent mandatory
 continuation ownership. Root still owns the isolated live gate and Backlog closeout.
+
+## Quality-review fix round 2 — owner-aware resumed refusal
+
+Review reproduced a separate state-machine defect after a prepared turn had already
+created its transient user owner. If persistence changed from V1 to V0 between the
+retrieval pause and manual Retry/Bypass, the shared thinking preflight treated the
+resumed owner as a fresh optimistic echo: it deleted that owner, restored stale
+conversation identity/title snapshots, returned the upgrade refusal, and left the
+preparation READY/COMMITTING instead of recoverably paused.
+
+Strict TDD produced four genuine failures before the production fix: joined SQLite
+manual Retry and Bypass controls both remained READY rather than PAUSED/PERSISTENCE,
+and the persistent queue reclaim equivalents did the same. The refusal made no
+provider contact, but the existing owner and current session state were lost.
+
+The minimal correction is one owner-aware branch in the existing early compatibility
+preflight. A resumed preparation now calls `_pause_prepared_commit(..., PERSISTENCE)`
+and returns the established content-free upgrade copy. That state-machine operation
+accepts both READY and COMMITTING. It preserves the exact owner, draft, frozen inline
+attachment, preparation continuation sidecar, and intervening conversation title/ID.
+Fresh sends retain their existing narrow delete/reset path; the broad matrix includes
+the fresh-refusal controls that remove only the just-created echo and preserve prior
+conversation state.
+
+The manual tests restore V1 and prove the same prepared owner can retry successfully.
+The queued tests prove claim finalization returns the refused owner to the recoverable
+queue head, preserves the next waiter, and later dispatches the first owner after V1
+restoration without another production change. Refused resumed dispatches make zero
+provider contacts and the refusal copy contains no draft or thinking payload.
+
+The older durable-continuation design's tombstone-retention paragraph now carries a
+dated supersession note linking ADR-090. ADR-090 carries the reciprocal amendment:
+for Console selected-generation edit/delete, visible answer, thinking sidecar, and
+ADR-063 continuation are one owner and are cleared together so deleted visible output
+cannot retain replayable private state. Ordinary non-deleting Discard and non-deleted
+off-branch continuation ownership remain unchanged. This is documentation of the
+already implemented ownership rule, not a database-policy rollback.
+
+Fresh final-tree evidence:
+
+- Owner-aware joined/manual plus queue preparation gate: **223 passed, 2 warnings in
+  24.20s**.
+- Focused controller preflight/recovery selection: **5 passed, 231 deselected,
+  1 warning in 1.48s**.
+- Exact approved broad targeted matrix: **1,284 collected; 1,282 passed, 2 skipped,
+  2 warnings in 143.58s**. The skips and warnings remain the documented loopback
+  permission controls and environment warnings.
+- CSS and all four derived widget/screen bundles reproduce from source.
+- Persistent diagnostic inventory remains unchanged and passes at **537 owners,
+  1,243 TASK-492 calls, 7,341 TASK-494 calls, and 8 sink files**.
+- Scoped Ruff format/check, relevant `py_compile`, and `git diff --check` pass.
+
+ADR required: no new ADR. ADR-090 already governs the generation-owner contract; this
+round explicitly resolves the older reference-only design contradiction. No new
+diagnostic, sink, envelope, provider behavior, Backlog status change, or live-gate
+claim was introduced. Root retains the isolated live verification and closeout.

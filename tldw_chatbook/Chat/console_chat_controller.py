@@ -5784,6 +5784,16 @@ class ConsoleChatController:
             resolution=resolution,
         )
         if thinking_block is not None:
+            if resumed_preparation is not None:
+                # This echo is the preparation's existing owner, not a fresh
+                # optimistic row. Keep its frozen inputs and any newer session
+                # identity intact, and return the state machine to the same
+                # retryable persistence pause used by durable commit failures.
+                self._pause_prepared_commit(
+                    resumed_preparation.preparation_id,
+                    ConsolePreparationPauseKind.PERSISTENCE,
+                )
+                return thinking_block
             # The optimistic echo exists only to cover a slow readiness probe.
             # Compatibility is still pre-acceptance: leave neither a synthetic
             # transcript owner nor an auto-derived title behind, so the exact

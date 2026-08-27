@@ -5,6 +5,7 @@ Date: 2026-08-26
 Related Task: [TASK-18932](../tasks/task-18932%20-%20Console-toggleable-live-reasoning-display.md)
 Related Spec: [Console Thinking Blocks](../../Docs/superpowers/specs/2026-08-26-console-thinking-blocks-design.md)
 Extends: ADR-063 and ADR-066
+Amends: [Durable Provider Tool Continuation Design](../../Docs/superpowers/specs/2026-08-12-durable-provider-tool-continuation-design.md)
 
 ## Context
 
@@ -92,6 +93,16 @@ Assistant regeneration snapshots/restores the complete live generation envelope.
 Assistant edit remains edit-in-place but explicitly clears thinking and continuation
 for the selected generation after confirmation. Ordinary continuation discard leaves
 a content-free proprietary-evidence marker intact; edit or deletion removes it.
+
+### Amendment recorded 2026-08-27: deletion ownership supersedes sidecar retention
+
+For Console assistant-generation deletion, this ADR supersedes the older continuation
+design statement that a soft-deleted row retains its provider continuation sidecar.
+Answer content, displayable thinking, and provider continuation are one selected-
+generation owner, so edit or deletion removes the thinking and continuation together
+with that generation's answer. Keeping either sidecar would retain replayable private
+state after its visible owner was deleted. This amendment does not change ordinary
+continuation Discard or the retention of a distinct, non-deleted off-branch variant.
 
 ## Alternatives Considered
 
