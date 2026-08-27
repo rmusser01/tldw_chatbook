@@ -1077,7 +1077,7 @@ async def test_production_llm_lifecycle_generations_survive_window_replacement(
                     stop_event = Button.Pressed(
                         new_window.query_one(f"#{stop_id}", Button)
                     )
-                    pulse = asyncio.create_task(asyncio.sleep(0.005))
+                    pulse = asyncio.create_task(asyncio.sleep(0))
                     await new_window.on_button_pressed(stop_event)
                     assert pulse.done(), f"{provider} Stop blocked the event loop"
                     if mode == "persistent":

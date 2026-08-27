@@ -1000,7 +1000,9 @@ async def test_clicking_a_specific_subagent_row_drills_into_that_run_directly():
                 return list(self._RUNS)
 
             def subagent_counts(self, conversation_ids):
-                return {"conv-A": len(self._RUNS)} if "conv-A" in conversation_ids else {}
+                return (
+                    {"conv-A": len(self._RUNS)} if "conv-A" in conversation_ids else {}
+                )
 
             def subagent_run(self, run_id):
                 return next((r for r in self._RUNS if r["id"] == run_id), None)
@@ -1170,6 +1172,9 @@ async def test_cancel_console_agent_fleet_row_returns_false_with_no_row_id():
         await _wait_for_selector(console, pilot, "#console-rail-section-header-agent")
 
         class _FakeBridge:
+            def subagent_counts(self, conversation_ids):
+                return {}
+
             def cancel_subagent(self, conversation_id, handle_id):
                 raise AssertionError("must not be called with an empty row id")
 
