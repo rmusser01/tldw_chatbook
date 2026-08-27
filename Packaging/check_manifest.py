@@ -83,6 +83,7 @@ WINDOWS_RESERVED_COMPONENTS = frozenset(
     {"con", "prn", "aux", "nul"}
     | {f"com{number}" for number in range(1, 10)}
     | {f"lpt{number}" for number in range(1, 10)}
+    | {f"{prefix}{number}" for prefix in ("com", "lpt") for number in "¹²³"}
 )
 TIKTOKEN_RESOURCE_PATHS = {
     f"{TIKTOKEN_CACHE_PREFIX}{name}"

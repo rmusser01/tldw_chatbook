@@ -2707,6 +2707,49 @@ def test_release_checker_enforces_portable_archive_components(
         assert name in output
 
 
+@pytest.mark.parametrize("archive_kind", ["sdist", "wheel"])
+@pytest.mark.parametrize(
+    "device_name",
+    ["COM¹.txt", "COM²", "COM³", "LPT¹.log", "LPT²", "LPT³"],
+)
+def test_release_checker_rejects_superscript_windows_device_names(
+    built_distributions: BuiltDistributions,
+    tmp_path: Path,
+    archive_kind: str,
+    device_name: str,
+) -> None:
+    dist_dir = tmp_path / "dist"
+    shutil.copytree(built_distributions.dist_dir, dist_dir)
+    unsafe = f"extra/{device_name}"
+    if archive_kind == "sdist":
+        sdist = next(dist_dir.glob("*.tar.gz"))
+        rewritten = sdist.with_name(f"{sdist.name}.rewritten")
+        with (
+            tarfile.open(sdist, "r:gz") as source,
+            tarfile.open(rewritten, "w:gz") as destination,
+        ):
+            members = source.getmembers()
+            for member in members:
+                stream = source.extractfile(member) if member.isfile() else None
+                destination.addfile(member, stream)
+            root = members[0].name.split("/", 1)[0]
+            unsafe = f"{root}/{unsafe}"
+            added = tarfile.TarInfo(unsafe)
+            added.size = len(b"unsafe")
+            destination.addfile(added, BytesIO(b"unsafe"))
+        rewritten.replace(sdist)
+    else:
+        with zipfile.ZipFile(next(dist_dir.glob("*.whl")), "a") as archive:
+            archive.writestr(unsafe, b"unsafe")
+
+    result = _run_manifest_checker(built_distributions, dist_dir, tmp_path)
+    output = result.stdout + result.stderr
+
+    assert result.returncode == 1
+    assert "non-portable archive path" in output
+    assert unsafe in output
+
+
 def test_migration_expectations_are_derived_not_enumerated() -> None:
     """The expectations must come from reality, or they cannot catch drift."""
     assert SOURCE_MIGRATION_PATHS, "no migration scripts found in the checkout"
