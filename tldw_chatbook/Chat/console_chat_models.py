@@ -907,6 +907,10 @@ class ConsoleChatMessage:
     #: Structured activity-header facts. Session-only; never persisted,
     #: restored, sent to a provider, or written to the agent run log.
     activity_presentation: ConsoleActivityPresentation | None = None
+    #: Explicit primary model-round ownership for one TOOL activity marker.
+    #: None means the marker is not owned by a model round (for example a
+    #: trailing change summary), never "infer from its sequence position".
+    activity_round_ordinal: int | None = None
     #: TASK-1860: the FULL, untruncated tool result behind a TOOL marker.
     #: ``content`` is a preview capped by the Console display setting, so
     #: without this the whole result was unreachable from the transcript --

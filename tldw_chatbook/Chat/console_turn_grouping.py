@@ -28,11 +28,15 @@ _THINKING_STATUS: dict[str, ConsoleActivityStatus] = {
 
 
 def thinking_activity_id(
-    *, session_id: str, assistant_message_id: str, block_id: str
+    *,
+    session_id: str,
+    assistant_message_id: str,
+    generation_id: str,
+    block_id: str,
 ) -> str:
     """Return a deterministic UI-safe identity without exposing owner input."""
     identity = json.dumps(
-        (session_id, assistant_message_id, block_id),
+        (session_id, assistant_message_id, generation_id, block_id),
         ensure_ascii=False,
         separators=(",", ":"),
     )
@@ -43,6 +47,7 @@ def project_thinking_activities(
     *,
     session_id: str,
     assistant: ConsoleChatMessage,
+    generation_id: str,
     live_block_id: str | None = None,
 ) -> tuple[ConsoleThinkingActivityRef, ...]:
     """Project only supported envelope evidence into trusted activity refs."""
@@ -69,6 +74,7 @@ def project_thinking_activities(
                 activity_id=thinking_activity_id(
                     session_id=session_id,
                     assistant_message_id=assistant.id,
+                    generation_id=generation_id,
                     block_id=block.block_id,
                 ),
                 assistant_message_id=assistant.id,
@@ -135,18 +141,19 @@ def ordered_assistant_activities(
     turn: ConsoleAssistantTurn,
     *,
     session_id: str,
+    generation_id: str,
     live_block_id: str | None = None,
 ) -> tuple[ConsoleChatMessage | ConsoleThinkingActivityRef, ...]:
-    """Merge thinking refs into existing TOOL-marker visual order.
+    """Merge thinking refs using only explicit model-round ownership.
 
-    Agent Thinking markers are the authoritative model-round anchors when
-    present. Legacy/direct turns without those anchors use the existing TOOL
-    sequence as their bounded fallback. Any final answer-only model block is
-    placed after the last tool activity and still before the answer body.
+    A block precedes the first activity owned by its round. Unanchored blocks
+    are kept together before wholly unowned activity rows, or immediately
+    before trailing unowned rows after the last explicitly owned round.
     """
     refs = project_thinking_activities(
         session_id=session_id,
         assistant=turn.assistant,
+        generation_id=generation_id,
         live_block_id=live_block_id,
     )
     if not refs:
@@ -154,41 +161,31 @@ def ordered_assistant_activities(
 
     blocks = turn.assistant.thinking
     assert isinstance(blocks, ThinkingEnvelope)
-    refs_by_round = {
-        block.round_ordinal: ref for block, ref in zip(blocks.blocks, refs)
-    }
-    anchored = any(
-        activity.activity_presentation is not None
-        and activity.activity_presentation.kind == "thinking"
-        for activity in turn.activities
-    )
     ordered: list[ConsoleChatMessage | ConsoleThinkingActivityRef] = []
     emitted_rounds: set[int] = set()
-
-    if anchored:
-        round_ordinal = 0
-        for activity in turn.activities:
-            presentation = activity.activity_presentation
-            if presentation is not None and presentation.kind == "thinking":
-                ref = refs_by_round.get(round_ordinal)
-                if ref is not None:
-                    ordered.append(ref)
-                    emitted_rounds.add(round_ordinal)
-                round_ordinal += 1
-            ordered.append(activity)
-    else:
-        for ordinal, activity in enumerate(turn.activities):
-            ref = refs_by_round.get(ordinal)
-            if ref is not None:
-                ordered.append(ref)
-                emitted_rounds.add(ordinal)
-            ordered.append(activity)
-
-    ordered.extend(
-        ref
-        for block, ref in zip(blocks.blocks, refs)
-        if block.round_ordinal not in emitted_rounds
+    remaining_owned = sum(
+        activity.activity_round_ordinal is not None for activity in turn.activities
     )
+
+    def append_through(round_ordinal: int | None = None) -> None:
+        for block, ref in zip(blocks.blocks, refs):
+            if block.round_ordinal in emitted_rounds or (
+                round_ordinal is not None and block.round_ordinal > round_ordinal
+            ):
+                continue
+            ordered.append(ref)
+            emitted_rounds.add(block.round_ordinal)
+
+    for activity in turn.activities:
+        round_ordinal = activity.activity_round_ordinal
+        if round_ordinal is not None:
+            append_through(round_ordinal)
+            remaining_owned -= 1
+        elif remaining_owned == 0:
+            append_through()
+        ordered.append(activity)
+
+    append_through()
     return tuple(ordered)
 
 
