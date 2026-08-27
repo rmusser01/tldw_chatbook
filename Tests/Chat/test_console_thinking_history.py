@@ -40,6 +40,7 @@ def _displayable(
     *,
     status: str = "complete",
     provider: str = "llama_cpp",
+    model: str = "Qwen3.8-27B",
     protocol: str = "chat_completions",
     source_format: str = "start_anchored_think",
 ) -> DisplayableThinkingBlock:
@@ -47,7 +48,7 @@ def _displayable(
         block_id=f"block-{text[:8]}-{status}",
         round_ordinal=0,
         provider=provider,
-        model="source-model",
+        model=model,
         protocol=protocol,
         source_format=source_format,
         status=status,  # type: ignore[arg-type]
@@ -74,7 +75,7 @@ def _sidecar(*blocks) -> ProviderThinkingSidecar:
 def _target(**changes) -> ThinkingReplayTarget:
     target = ThinkingReplayTarget(
         provider="llama_cpp",
-        model="target-model",
+        model="Qwen3.8-27B",
         protocol="chat_completions",
         disposition="displayable",
         round_trip_version=1,
@@ -128,6 +129,38 @@ def test_incompatible_target_never_receives_generic_thinking_translation(
     )
 
     assert resolved.groups == ()
+
+
+def test_plain_local_model_cannot_inherit_displayable_replay_capability() -> None:
+    resolved = resolve_thinking_history(
+        target=_target(model="Llama-3.3-8B-Instruct"),
+        policy="include",
+        sidecars=(_sidecar(_displayable()),),
+    )
+
+    assert resolved.groups == ()
+
+
+def test_different_reasoning_model_does_not_cross_replay() -> None:
+    resolved = resolve_thinking_history(
+        target=_target(model="gpt-oss-120b"),
+        policy="include",
+        sidecars=(_sidecar(_displayable(model="Qwen3.8-27B")),),
+    )
+
+    assert resolved.groups == ()
+
+
+def test_configured_custom_reasoner_replays_only_its_own_exact_block() -> None:
+    resolved = resolve_thinking_history(
+        target=_target(model="custom-reasoner-id"),
+        policy="include",
+        sidecars=(_sidecar(_displayable(model="custom-reasoner-id")),),
+    )
+
+    assert [block.text for block in resolved.groups[0].blocks] == [
+        "DISPLAYABLE-THINKING-CANARY"
+    ]
 
 
 @pytest.mark.parametrize("status", ["stopped", "failed"])
@@ -277,7 +310,7 @@ def test_gateway_include_refuses_before_provider_contact() -> None:
     resolution = ConsoleProviderResolution(
         provider="llama_cpp",
         base_url="http://127.0.0.1:9099",
-        model="target-model",
+        model="Qwen3.8-27B",
         ready=True,
         execution_key="llama_cpp",
         continuation_protocol="chat_completions",
@@ -309,7 +342,7 @@ async def test_gateway_shared_raw_owner_marker_attaches_continuation_and_thinkin
             "checkpoint_revision": 1,
             "provider": "deepseek",
             "protocol": "chat_completions",
-            "model": "target-model",
+            "model": "Qwen3.8-27B",
             "api_base_url": "http://127.0.0.1:9099",
             "state": "complete",
             "rounds": [
@@ -339,7 +372,7 @@ async def test_gateway_shared_raw_owner_marker_attaches_continuation_and_thinkin
     resolution = ConsoleProviderResolution(
         provider="deepseek",
         base_url="http://127.0.0.1:9099",
-        model="target-model",
+        model="Qwen3.8-27B",
         ready=True,
         execution_key="llama_cpp",
         continuation_protocol="chat_completions",
@@ -358,7 +391,7 @@ async def test_gateway_shared_raw_owner_marker_attaches_continuation_and_thinkin
         continuation_target=ContinuationRestoreTarget(
             provider="deepseek",
             protocol="chat_completions",
-            model="target-model",
+            model="Qwen3.8-27B",
             api_base_url="http://127.0.0.1:9099",
         ),
         continuation_owner_key="_owner",

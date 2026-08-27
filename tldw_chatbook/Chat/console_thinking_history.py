@@ -106,6 +106,7 @@ def _claims_local_compatibility(
     return (
         target.provider in _LOCAL_CHAT_TARGETS
         and block.provider in _LOCAL_CHAT_TARGETS
+        and target.model == block.model
         and target.protocol == block.protocol
         and target.disposition == "displayable"
         and target.round_trip_version == THINKING_ENVELOPE_VERSION

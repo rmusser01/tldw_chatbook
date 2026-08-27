@@ -177,3 +177,69 @@ and generation-ownership contracts; they introduce no new boundary or future cho
 No derived-check residual remains. Root still owns independent specification/code-
 quality reviews, isolated live Console verification, and Backlog closeout. This task
 does not claim the root-owned live gate and does not mark any Backlog task Done.
+
+## Specification review fix round 1 — model-specific local compatibility
+
+Review found that local thinking capability was frozen only from the execution key,
+and optional replay did not consume the target model. One llama.cpp/vLLM endpoint
+could therefore make a plain selected model inherit displayable capture/replay and
+the persistent V1 preflight requirement from a reasoning model.
+
+Strict TDD produced two initial genuine failures through the real resolver/history
+path: the same llama.cpp endpoint resolved both `Qwen3.8-27B` and
+`Llama-3.3-8B-Instruct` as displayable, and the plain target accepted the stored
+block. A second three-test RED pinned the accepted precedence and exact ownership:
+
+1. explicit `reasoning_effort = "none"` resolves ignored;
+2. any explicit non-`none` effort is the existing configured displayable signal;
+3. with effort unset, `reasoning_effort_hint_for_model(model)` supplies the existing
+   recognized-model signal;
+4. an otherwise unknown local model fails closed to ignored; and
+5. optional local replay additionally requires the stored and selected model IDs to
+   match exactly, alongside the existing local-provider family, protocol, envelope
+   version, completion status, and source-encoding checks.
+
+The resolver freezes that decision with the selected model/effort on the immutable
+`ConsoleProviderResolution`; a later model switch cannot change an in-flight target.
+No new preference, speculative model-name predicate, generic translation, or provider
+adapter was added. Explicitly configured custom reasoners remain supported and may
+replay only their own exact-model blocks. Required/private continuation remains
+provider-owned and is validated/restored independently; the optional-thinking check
+does not weaken or translate it.
+
+The joined replay spine now obtains its Qwen target from the actual resolver and
+dispatches the prepared request through the direct HTTP adapter. A second joined
+control uses the actual resolver/direct adapter with a plain model and persistent V0
+backend: it bypasses the thinking round-trip preflight and dispatches exactly once.
+The earlier synthetic ignored-disposition control remains only as a narrow enum
+control, not the integration evidence.
+
+Two controller tests initially failed after the production change because their
+synthetic selected model and stored block model were inconsistent; aligning those
+fixtures to one exact model restored their intended direct/agent replay coverage
+without another production change.
+
+`chat-basics.md` now states the accepted automatic-collapse boundary: first visible
+answer or tool event, terminal fallback if neither occurs, and any manual disclosure
+interaction cancels the pending automatic transition.
+
+Fresh review-fix evidence on the formatted tree:
+
+- Focused provider/history/prepared/controller/joined gate: **626 passed, 2 skipped,
+  2 warnings in 58.27s**.
+- Final-tree exact approved broad targeted matrix: **1,282 collected; 1,280 passed,
+  2 skipped, 2 warnings in 134.36s**.
+- Post-format resolver/history/controller/joined regression: **12 passed, 2 warnings
+  in 2.79s**.
+- The two skips remain loopback-listener permission controls. The two warnings remain
+  the environment's Requests dependency mismatch and Python 3.12 `pydub`/`audioop`
+  deprecation.
+- Scoped Ruff formatted 2 files and left 3 unchanged; scoped Ruff check passed.
+- CSS and all four derived widget/screen bundles reproduce from source.
+- Persistent diagnostic inventory is unchanged and passes at **537 owners, 1,243
+  TASK-492 calls, 7,341 TASK-494 calls, and 8 sink files**.
+- Relevant `py_compile` and `git diff --check` passed.
+
+This review fix adds no ADR decision; it applies ADR-090's existing compatible,
+provider-resolved optional replay boundary and ADR-063's independent mandatory
+continuation ownership. Root still owns the isolated live gate and Backlog closeout.

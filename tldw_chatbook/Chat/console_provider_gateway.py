@@ -93,6 +93,7 @@ from tldw_chatbook.Chat.thinking_blocks import (
 from tldw_chatbook.Chat.provider_readiness import get_provider_readiness
 from tldw_chatbook.Chat.provider_readiness import provider_config_key
 from tldw_chatbook.Chat.provider_usage import ProviderUsage
+from tldw_chatbook.Chat.console_session_settings import reasoning_effort_hint_for_model
 from tldw_chatbook.LLM_Calls.qwencloud import (
     normalize_qwencloud_api_mode,
     normalize_qwencloud_base_url,
@@ -151,12 +152,24 @@ _HOSTED_THINKING_FINISH_POLICIES = MappingProxyType(
 
 def _thinking_stream_capability(
     execution_key: str,
+    *,
+    model: str | None = None,
+    reasoning_effort: str | None = None,
 ) -> dict[str, ReasoningDisposition | int | None]:
     key = execution_key.strip().lower()
     if key in _DISPLAYABLE_THINKING_EXECUTION_KEYS:
+        effort = str(reasoning_effort or "").strip().lower()
+        disposition: ReasoningDisposition = (
+            "displayable"
+            if effort != "none"
+            and (bool(effort) or reasoning_effort_hint_for_model(model) is not None)
+            else "ignored"
+        )
         return {
-            "thinking_stream_disposition": "displayable",
-            "thinking_round_trip_version": THINKING_ENVELOPE_VERSION,
+            "thinking_stream_disposition": disposition,
+            "thinking_round_trip_version": (
+                THINKING_ENVELOPE_VERSION if disposition == "displayable" else None
+            ),
         }
     policy = _HOSTED_THINKING_FINISH_POLICIES.get(key)
     disposition: ReasoningDisposition = (
@@ -2150,7 +2163,7 @@ class ConsoleProviderGateway:
             ready=True,
             readiness_key="llama_cpp",
             execution_key="llama_cpp",
-            **self._resolution_settings(config),
+            **self._resolution_settings(config, model=model),
         )
 
     async def resolve_for_send(
@@ -2487,7 +2500,11 @@ class ConsoleProviderGateway:
             thinking_effort=selection.thinking_effort,
             thinking_budget_tokens=selection.thinking_budget_tokens,
             streaming=selection.streaming,
-            **_thinking_stream_capability(identity.execution_key),
+            **_thinking_stream_capability(
+                identity.execution_key,
+                model=model,
+                reasoning_effort=selection.reasoning_effort,
+            ),
         )
 
     async def stream_llamacpp_chat(
@@ -3851,7 +3868,11 @@ class ConsoleProviderGateway:
             raise RuntimeError("Provider stream error.")
 
     @staticmethod
-    def _resolution_settings(config: LlamaCppProviderConfig) -> dict[str, Any]:
+    def _resolution_settings(
+        config: LlamaCppProviderConfig,
+        *,
+        model: str | None = None,
+    ) -> dict[str, Any]:
         return {
             "api_key": config.api_key,
             "api_key_source": config.api_key_source,
@@ -3869,7 +3890,11 @@ class ConsoleProviderGateway:
             "thinking_effort": config.thinking_effort,
             "thinking_budget_tokens": config.thinking_budget_tokens,
             "streaming": config.streaming,
-            **_thinking_stream_capability("llama_cpp"),
+            **_thinking_stream_capability(
+                "llama_cpp",
+                model=model or config.explicit_model or config.configured_model,
+                reasoning_effort=config.reasoning_effort,
+            ),
         }
 
     @staticmethod

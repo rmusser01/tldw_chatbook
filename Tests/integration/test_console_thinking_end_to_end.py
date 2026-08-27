@@ -12,6 +12,7 @@ import asyncio
 import io
 import json
 
+import httpx
 import pytest
 from textual.app import App, ComposeResult
 
@@ -24,6 +25,7 @@ from tldw_chatbook.Chat.console_chat_controller import ConsoleChatController
 from tldw_chatbook.Chat.console_chat_models import (
     PROPRIETARY_THINKING_NOTICE,
     ConsoleMessageRole,
+    ConsoleProviderSelection,
 )
 from tldw_chatbook.Chat.console_chat_store import ConsoleChatStore
 from tldw_chatbook.Chat.console_provider_gateway import (
@@ -198,7 +200,7 @@ def _complete_displayable_envelope() -> ThinkingEnvelope:
                 block_id="joined-thinking-0",
                 round_ordinal=0,
                 provider="llama_cpp",
-                model="joined-reasoner",
+                model="Qwen3.8-27B",
                 protocol="chat_completions",
                 source_format="start_anchored_think",
                 status="complete",
@@ -393,13 +395,41 @@ async def test_durable_owner_replay_is_counted_and_dispatched_exactly_once(
     expected_count: int,
 ) -> None:
     owner_id = "assistant-durable-owner"
-    target_provider = "vllm"
+    endpoint = "http://127.0.0.1:9099"
+    dispatched: list[dict] = []
+
+    async def handler(request: httpx.Request) -> httpx.Response:
+        if request.url.path == "/health":
+            return httpx.Response(200, json={"status": "ok"})
+        assert request.url.path == "/v1/chat/completions"
+        dispatched.append(json.loads(request.content))
+        return httpx.Response(
+            200,
+            json={"choices": [{"message": {"content": "next answer"}}]},
+        )
+
+    gateway = ConsoleProviderGateway(
+        http_client=httpx.AsyncClient(
+            transport=httpx.MockTransport(handler),
+            base_url=endpoint,
+        ),
+        environ={},
+    )
+    resolution = await gateway.resolve_for_send(
+        ConsoleProviderSelection(
+            provider="llama_cpp",
+            base_url=endpoint,
+            explicit_model="Qwen3.8-27B",
+            reasoning_effort="low",
+            streaming=False,
+        )
+    )
     target = ThinkingReplayTarget(
-        provider=target_provider,
-        model="joined-reasoner",
-        protocol="chat_completions",
-        disposition="displayable",
-        round_trip_version=1,
+        provider=resolution.execution_key,
+        model=resolution.model or "",
+        protocol=resolution.continuation_protocol or "chat_completions",
+        disposition=resolution.thinking_stream_disposition,
+        round_trip_version=resolution.thinking_round_trip_version,
     )
     resolved = resolve_thinking_history(
         target=target,
@@ -429,49 +459,34 @@ async def test_durable_owner_replay_is_counted_and_dispatched_exactly_once(
     prepared = prepare_provider_request(
         semantic,
         wire_style="distinct_roles",
-        provider=target_provider,
-        model="joined-reasoner",
+        provider=resolution.execution_key,
+        model=resolution.model or "",
         capacity=resolve_request_capacity(context_window_tokens=None),
         count_fn=count_spy,
     )
     wire = [thaw_json(row) for row in prepared.messages]
-    dispatched: list[dict] = []
 
-    def provider_spy(**kwargs):
-        dispatched.append(kwargs)
-        return {"choices": [{"message": {"content": "next answer"}}]}
-
-    gateway = ConsoleProviderGateway(chat_api_call_fn=provider_spy)
-    resolution = with_destination(
-        ConsoleProviderResolution(
-            provider=target_provider,
-            model="joined-reasoner",
-            base_url="http://127.0.0.1:9099",
-            ready=True,
-            execution_key=target_provider,
-            continuation_protocol="chat_completions",
-            thinking_stream_disposition="displayable",
-            thinking_round_trip_version=1,
+    try:
+        assert [item async for item in gateway.stream_chat(resolution, prepared)] == [
+            "next answer"
+        ]
+        assert resolution.thinking_stream_disposition == "displayable"
+        assert resolved.effective_policy == expected_policy
+        assert str(wire).count(DISPLAYABLE_THINKING) == expected_count
+        assert counted_payloads[-1] == wire
+        assert (
+            str(dispatched[0]["messages"]).count(DISPLAYABLE_THINKING) == expected_count
         )
-    )
-
-    assert [item async for item in gateway.stream_chat(resolution, prepared)] == [
-        "next answer"
-    ]
-    assert resolved.effective_policy == expected_policy
-    assert str(wire).count(DISPLAYABLE_THINKING) == expected_count
-    assert counted_payloads[-1] == wire
-    assert str(dispatched[0]["messages_payload"]).count(DISPLAYABLE_THINKING) == (
-        expected_count
-    )
-    assert all(THINKING_OWNER_KEY not in row for row in wire)
+        assert all(THINKING_OWNER_KEY not in row for row in wire)
+    finally:
+        await gateway.aclose()
 
 
 def test_required_overlay_cannot_be_saved_or_downgraded() -> None:
     resolved = resolve_thinking_history(
         target=ThinkingReplayTarget(
             provider="llama_cpp",
-            model="joined-reasoner",
+            model="Qwen3.8-27B",
             protocol="chat_completions",
             disposition="displayable",
             round_trip_version=1,
@@ -580,6 +595,63 @@ async def test_persistence_preflight_controls_dispatch(
         assert assistant.content == "CONTROL-ANSWER"
         assert assistant.thinking is None
     finally:
+        db.close_connection()
+
+
+@pytest.mark.asyncio
+async def test_plain_local_model_uses_real_resolver_and_dispatches_on_v0_backend(
+    tmp_path,
+) -> None:
+    endpoint = "http://127.0.0.1:9099"
+    provider_contacts = 0
+
+    async def handler(request: httpx.Request) -> httpx.Response:
+        nonlocal provider_contacts
+        if request.url.path == "/health":
+            return httpx.Response(200, json={"status": "ok"})
+        assert request.url.path == "/v1/chat/completions"
+        provider_contacts += 1
+        return httpx.Response(
+            200,
+            json={"choices": [{"message": {"content": "PLAIN-MODEL-ANSWER"}}]},
+        )
+
+    db = CharactersRAGDB(tmp_path / "plain-v0.sqlite", "plain-v0")
+    supported = ChatPersistenceService(db)
+    store = ConsoleChatStore(
+        persistence=_VersionedPersistence(supported, 0)  # type: ignore[arg-type]
+    )
+    session = store.create_session(title="Plain local model")
+    store.active_session_id = session.id
+    gateway = ConsoleProviderGateway(
+        http_client=httpx.AsyncClient(
+            transport=httpx.MockTransport(handler),
+            base_url=endpoint,
+        ),
+        environ={},
+    )
+    controller = ConsoleChatController(
+        store=store,
+        provider_gateway=gateway,
+        provider="llama_cpp",
+        model="Llama-3.3-8B-Instruct",
+        base_url=endpoint,
+        streaming=False,
+    )
+
+    try:
+        result = await controller.submit_draft("Plain model question")
+
+        assert result.accepted is True
+        assert provider_contacts == 1
+        assert [
+            message.content for message in store.messages_for_session(session.id)
+        ] == [
+            "Plain model question",
+            "PLAIN-MODEL-ANSWER",
+        ]
+    finally:
+        await gateway.aclose()
         db.close_connection()
 
 

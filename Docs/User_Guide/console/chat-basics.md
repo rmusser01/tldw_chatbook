@@ -205,9 +205,10 @@ to hidden chain-of-thought.
   **Thinking · unavailable**; expanding it shows exactly
   `Proprietary thinking obfuscated - not available`.
 - A new live disclosure opens when its first evidence arrives, then
-  auto-collapses once when the assistant turn reaches a terminal state. You can
-  expand or collapse it manually after that. Reopened conversation history
-  starts collapsed.
+  auto-collapses once at the first visible answer or tool event. If neither
+  occurs, the terminal state is the fallback boundary. Expanding or collapsing
+  it manually cancels that pending automatic transition. Reopened conversation
+  history starts collapsed.
 - Stopped and failed replies retain only evidence that actually arrived. They
   do not synthesize a completed thought. A no-event turn remains without a
   Thinking row.

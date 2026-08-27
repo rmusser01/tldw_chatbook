@@ -177,3 +177,21 @@ call-count or sink-topology change. The repository's documented whole-inventory 
 was therefore appropriate. The regenerated guard passes with 537 owners, 1,243
 TASK-492 calls, 7,341 TASK-494 calls, and 8 sink files. Independent reviews, isolated
 live verification, and Backlog closeout remain root-owned.
+
+Task 3 specification-review fix round 1 (2026-08-27): RED proved that one local
+endpoint classified both a recognized Qwen reasoner and a plain Llama model as
+displayable, and replay ignored the selected model. The existing local controls now
+resolve with explicit `none` -> ignored, explicit non-none effort -> configured
+displayable, recognized model hint -> displayable when unset, and otherwise ignored.
+That decision is frozen with the selected model/effort. Optional local replay also
+requires an exact stored/selected model ID; Required ADR-063 continuation remains
+independent and provider-owned. The joined replay spine now uses the real resolver and
+direct HTTP adapter, while an actual plain-model/V0-backend control dispatches once
+without demanding thinking persistence. Two synthetic controller fixtures were
+corrected to use matching model IDs. `chat-basics.md` now names first answer/tool as
+the collapse boundary, terminal as fallback, and manual interaction as cancellation.
+Focused GREEN was 626 passed/2 skipped/2 warnings; the exact broad matrix was 1,280
+passed/2 skipped/2 warnings; post-format review regressions passed 12/12. Ruff,
+`py_compile`, CSS/derived bundles, diagnostic inventory (unchanged at 537/1,243/
+7,341/8), and diff checks passed. No new ADR, diagnostic, sink, Backlog status change,
+or live-gate claim was made.
