@@ -26,7 +26,25 @@
 
 - [ ] **Step 1: Extend the local evidence test builder only where needed**
 
-Allow `_reference()` to accept optional `source_type`, `snippet`, `score`, and `metadata` values so the tests can express empty content, rejected source kinds, score fallback, and chunk lineage without constructing ad-hoc payload dictionaries.
+Allow `_reference()` to accept optional `source_type`, `snippet`, `score`, and `metadata` values so the tests can express empty content, rejected source kinds, score fallback, and chunk lineage without constructing ad-hoc payload dictionaries. Add this exact launch helper:
+
+```python
+def _launch_from_references(
+    *references: EvidenceReference,
+) -> ConsoleLiveWorkLaunch:
+    bundle = EvidenceBundle(
+        bundle_id="bundle-custom",
+        query="question",
+        source="Library Search/RAG",
+        references=references,
+    )
+    return ConsoleLiveWorkLaunch.from_values(
+        source="Library Search/RAG",
+        title="Library Search/RAG retrieval",
+        payload={"query": "question", "evidence_bundle": bundle.to_payload()},
+        status="staged",
+    )
+```
 
 - [ ] **Step 2: Write failing public-estimator tests**
 
@@ -57,65 +75,26 @@ def test_prompted_evidence_keeps_empty_local_content_as_header_only() -> None:
     )
     assert console_prompted_evidence_text(launch) == "[S1] MEDIA — Source 1\n"
     assert console_prompted_source_count(launch) == 1
+
+
+def test_prompted_evidence_excludes_noncanonical_local_references() -> None:
+    launch = _launch_from_references(
+        _reference(1),
+        _reference(2, source_type="unsupported"),
+        _reference(3),
+    )
+    assert console_prompted_evidence_text(launch) == (
+        "[S1] MEDIA — Source 1\nBody 1\n---\n"
+        "[S2] MEDIA — Source 3\nBody 3"
+    )
+    assert console_prompted_source_count(launch) == 2
 ```
 
 - [ ] **Step 3: Add a green send-adapter characterization test**
 
 Through the existing public `capture_console_staged_evidence_for_chat()` seam, build a launch containing a valid chunked `m1` reference with `score=None`, an invalid source-kind reference, and a valid `m2` reference. Use `_CaptureApp(repository=repository, media_ids=("m1", "m2"))` and assert the recorded retrieval payload contains exactly two candidates with ranks `(1, 2)`, source IDs `(m1, m2)`, first-candidate `chunk_id == "chunk-1"`, and first-candidate `score == 0.0`. This is a pre-refactor characterization test and must pass before extraction; it does not import a helper that does not exist yet.
 
-- [ ] **Step 4: Add the authority-shrink regression in the RED phase**
-
-In `Tests/RAG/test_local_citation_capture.py`, import the existing public estimate functions and add:
-
-```python
-@pytest.mark.asyncio
-async def test_console_estimate_stays_pre_authority_while_send_rechecks() -> None:
-    launch = ConsoleLiveWorkLaunch.from_values(
-        source="Library Search/RAG",
-        title="staged evidence",
-        payload={
-            "evidence_bundle": EvidenceBundle(
-                bundle_id="bundle-authority-shrink",
-                references=(
-                    EvidenceReference(
-                        evidence_id="S1",
-                        source_id="m1",
-                        source_type="media",
-                        title="Source 1",
-                        snippet="Body 1",
-                        authority_label="local",
-                    ),
-                    EvidenceReference(
-                        evidence_id="S2",
-                        source_id="m2",
-                        source_type="media",
-                        title="Source 2",
-                        snippet="Body 2",
-                        authority_label="local",
-                    ),
-                ),
-            ).to_payload(),
-        },
-    )
-    assert console_prompted_source_count(launch) == 2
-    assert console_prompted_evidence_text(launch) == (
-        "[S1] MEDIA — Source 1\nBody 1\n---\n"
-        "[S2] MEDIA — Source 2\nBody 2"
-    )
-
-    captured = await cre.capture_console_staged_evidence_for_chat(
-        _CaptureApp(media_ids=("m2",)),
-        launch,
-        user_message="question",
-    )
-    assert captured.context == "[S1] MEDIA — Source 2\nBody 2"
-    assert captured.citation_repair_contract is not None
-    assert captured.citation_repair_contract.allowed_ordinals == (1,)
-```
-
-The estimate assertions fail on the current raw-snippet implementation while the send assertions characterize the existing authority boundary.
-
-- [ ] **Step 5: Run the characterization and RED tests**
+- [ ] **Step 4: Run the characterization and RED tests**
 
 Run:
 
@@ -125,8 +104,6 @@ Run:
 ../../.venv/bin/pytest -q \
   Tests/UI/test_console_staged_evidence_strip.py \
   -k "prompted_evidence or prompted_source_count"
-../../.venv/bin/pytest -q \
-  Tests/RAG/test_local_citation_capture.py::test_console_estimate_stays_pre_authority_while_send_rechecks
 ```
 
 Expected: the characterization test passes; the estimator tests fail on raw snippet joining, a count of 65, empty-content omission, and missing canonical framing before production changes.
@@ -239,8 +216,76 @@ git commit -m "refactor(console): share staged evidence formatting"
 - Modify: `tldw_chatbook/Chat/console_display_state.py:1-25,797-862`
 - Modify: `tldw_chatbook/UI/Screens/chat_screen.py:4320-4345,5270-5305,6590-6610`
 - Modify: `Tests/UI/test_console_staged_evidence_strip.py`
+- Modify: `Tests/RAG/test_local_citation_capture.py`
 
-- [ ] **Step 1: Add one private formatted-context seam**
+- [ ] **Step 1: Add the authority-shrink regression before estimator code**
+
+In `Tests/RAG/test_local_citation_capture.py`, import the existing public estimate functions and add:
+
+```python
+@pytest.mark.asyncio
+async def test_console_estimate_stays_pre_authority_while_send_rechecks(
+    monkeypatch,
+) -> None:
+    launch = ConsoleLiveWorkLaunch.from_values(
+        source="Library Search/RAG",
+        title="staged evidence",
+        payload={
+            "evidence_bundle": EvidenceBundle(
+                bundle_id="bundle-authority-shrink",
+                query="question",
+                references=(
+                    EvidenceReference(
+                        evidence_id="S1",
+                        source_id="m1",
+                        source_type="media",
+                        title="Source 1",
+                        snippet="Body 1",
+                        authority_label="local",
+                    ),
+                    EvidenceReference(
+                        evidence_id="S2",
+                        source_id="m2",
+                        source_type="media",
+                        title="Source 2",
+                        snippet="Body 2",
+                        authority_label="local",
+                    ),
+                ),
+            ).to_payload(),
+        },
+    )
+    app = _CaptureApp(media_ids=("m2",))
+    authority_queries = 0
+    execute_query = app.media_db.execute_query
+
+    def _counting_execute_query(query, params):
+        nonlocal authority_queries
+        authority_queries += 1
+        return execute_query(query, params)
+
+    monkeypatch.setattr(app.media_db, "execute_query", _counting_execute_query)
+    assert console_prompted_source_count(launch) == 2
+    assert console_prompted_evidence_text(launch) == (
+        "[S1] MEDIA — Source 1\nBody 1\n---\n"
+        "[S2] MEDIA — Source 2\nBody 2"
+    )
+    assert authority_queries == 0
+
+    captured = await cre.capture_console_staged_evidence_for_chat(
+        app,
+        launch,
+        user_message="question",
+    )
+    assert authority_queries >= 1
+    assert captured.context == "[S1] MEDIA — Source 2\nBody 2"
+    assert captured.citation_repair_contract is not None
+    assert captured.citation_repair_contract.allowed_ordinals == (1,)
+```
+
+Run this node before editing `console_display_state.py`. Expected: FAIL on the formatted estimate assertion, after successful fixture construction; the authority query count remains zero before send.
+
+- [ ] **Step 2: Add one private formatted-context seam**
 
 Import `LocalEvidenceContext`, `format_console_evidence_context`, and `normalize_console_evidence_references` from `tldw_chatbook.RAG_Search.local_citation_capture`, then add:
 
@@ -256,15 +301,15 @@ def _console_prompted_evidence_context(
     )
 ```
 
-- [ ] **Step 2: Make both public estimate helpers projections**
+- [ ] **Step 3: Make both public estimate helpers projections**
 
 `console_prompted_source_count()` returns `len(formatted.entries)` and `console_prompted_evidence_text()` returns `formatted.context`, with zero/empty fallbacks when no bundle exists. Remove both duplicated owner predicates and raw snippet joining.
 
-- [ ] **Step 3: Correct semantic documentation**
+- [ ] **Step 4: Correct semantic documentation**
 
 Update both helper docstrings and the relevant context/cost comments to say “formatted pre-authority estimate.” Update the sent-notice fallback documentation to remain authoritative when repair-contract ordinals exist and explicitly best-effort only when it must fall back to the launch estimate.
 
-- [ ] **Step 4: Run the estimator tests GREEN**
+- [ ] **Step 5: Run the estimator tests GREEN**
 
 Run:
 
@@ -273,18 +318,21 @@ Run:
   -k "prompted_evidence or prompted_source_count or staged_source_count"
 ../../.venv/bin/pytest -q \
   Tests/UI/test_console_staged_evidence_strip.py::test_context_estimate_counts_staged_evidence_before_send
+../../.venv/bin/pytest -q \
+  Tests/RAG/test_local_citation_capture.py::test_console_estimate_stays_pre_authority_while_send_rechecks
 ../../.venv/bin/pytest -q Tests/Chat/test_console_session_settings.py \
   -k "context_estimate"
 ```
 
 Expected: PASS.
 
-- [ ] **Step 5: Commit estimator parity**
+- [ ] **Step 6: Commit estimator parity**
 
 ```bash
 git add tldw_chatbook/Chat/console_display_state.py \
   tldw_chatbook/UI/Screens/chat_screen.py \
-  Tests/UI/test_console_staged_evidence_strip.py
+  Tests/UI/test_console_staged_evidence_strip.py \
+  Tests/RAG/test_local_citation_capture.py
 git commit -m "fix(console): align evidence cost estimate with prompt"
 ```
 

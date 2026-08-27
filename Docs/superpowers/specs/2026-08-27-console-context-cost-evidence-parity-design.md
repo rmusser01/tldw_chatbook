@@ -17,7 +17,7 @@ Add two small pure helpers beside the existing local citation normalization and 
 - A Console evidence adapter will accept the bundle's available `EvidenceReference` values, retain only local references, translate them into `NormalizedLocalResult` values through the existing `normalize_local_result()` boundary, and preserve their current order.
 - A prompt-formatting wrapper will compute the send path's existing full-candidate character allowance and call `format_local_evidence_context()`. This prevents either consumer from accidentally using the formatter's unrelated 90-character default or duplicating the allowance formula.
 
-The adapter preserves the send path's current mapping contract: `source_type` supplies source identity, `source_id` supplies lineage, a non-empty string `metadata["chunk_id"]` becomes both the result ID and chunk lineage, a missing score becomes `0.0`, and candidate ranks are assigned sequentially after successful normalization. Empty snippet text remains valid and produces a counted header-only prompt entry; changing that send policy is outside this task.
+The adapter preserves the send path's current mapping contract: `source_type` supplies the canonical source kind, `source_id` supplies authority/source identity, and a non-empty string `metadata["chunk_id"]` supplies both result identity and chunk lineage. A missing score becomes `0.0`, and candidate ranks are assigned sequentially after successful normalization. Empty snippet text remains valid and produces a counted header-only prompt entry; changing that send policy is outside this task.
 
 Both consumers will use these helpers:
 

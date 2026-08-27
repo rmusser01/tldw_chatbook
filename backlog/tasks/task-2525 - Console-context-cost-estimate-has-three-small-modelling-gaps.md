@@ -4,7 +4,7 @@ title: Console context/cost estimate has three small modelling gaps
 status: In Progress
 assignee: []
 created_date: '2026-08-06 02:21'
-updated_date: '2026-08-27 14:18'
+updated_date: '2026-08-27 14:22'
 labels:
   - console
   - rag
@@ -60,9 +60,9 @@ modelling gaps between what the estimate counts and what the send actually assem
 ## Implementation Plan
 
 <!-- SECTION:PLAN:BEGIN -->
-1. Add focused red estimator and authority-shrink tests plus a green send-adapter characterization.
+1. Add focused red estimator tests plus a green send-adapter characterization.
 2. Extract shared Console evidence normalization and full-candidate formatting helpers, then route the send adapter through them.
-3. Derive estimate text and count from one formatted pre-authority result and correct semantic documentation.
+3. Add authority-shrink RED coverage, derive estimate text and count from one formatted pre-authority result, and correct semantic documentation.
 4. Run focused isolated verification and static checks, then complete task notes and acceptance criteria.
 
 ADR required: no
