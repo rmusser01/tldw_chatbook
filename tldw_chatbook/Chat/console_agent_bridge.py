@@ -172,6 +172,7 @@ def _retire_generation_attempt_after_reply(
 
     @functools.wraps(method)
     def wrapped(self: Any, *args: Any, **kwargs: Any) -> Any:
+        generation_handoff = kwargs.pop("_generation_handoff", None)
         assistant_message_id = kwargs["assistant_message_id"]
         generation_token = kwargs.get("generation_token")
         if generation_token is None:
@@ -179,6 +180,12 @@ def _retire_generation_attempt_after_reply(
                 assistant_message_id
             )
             kwargs["generation_token"] = generation_token
+        if generation_handoff is not None and not generation_handoff.accept():
+            self._store.retire_generation_attempt(
+                assistant_message_id,
+                generation_token,
+            )
+            raise asyncio.CancelledError("Generation handoff was cancelled.")
         try:
             return method(self, *args, **kwargs)
         finally:

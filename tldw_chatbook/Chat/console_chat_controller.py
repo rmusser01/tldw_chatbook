@@ -1986,6 +1986,56 @@ class _LightweightProviderHistoryRow:
     attachments: tuple[MessageAttachment, ...] = ()
 
 
+class _GenerationTokenHandoff:
+    """Atomically transfer one issued token from controller to agent worker."""
+
+    def __init__(self, token: int | None) -> None:
+        self._lock = threading.Lock()
+        self._token = token
+        self._accepted = False
+        self._closed = False
+
+    def issue(self, token: int) -> None:
+        with self._lock:
+            if self._closed or self._accepted:
+                raise RuntimeError("Generation handoff is already settled.")
+            self._token = token
+
+    def accept(self) -> bool:
+        with self._lock:
+            if self._closed:
+                return False
+            self._accepted = True
+            return True
+
+    def close_local(self) -> int | None:
+        with self._lock:
+            if self._accepted:
+                return None
+            self._closed = True
+            return self._token
+
+
+def _retire_generation_before_agent_handoff(method: Callable[..., Any]):
+    """Retire local authority unless the bridge worker accepted ownership."""
+
+    @functools.wraps(method)
+    async def wrapped(self, *args, **kwargs):
+        handoff = _GenerationTokenHandoff(kwargs.get("generation_token"))
+        kwargs["_generation_handoff"] = handoff
+        try:
+            return await method(self, *args, **kwargs)
+        finally:
+            generation_token = handoff.close_local()
+            if generation_token is not None:
+                self.store.retire_generation_attempt(
+                    kwargs["assistant_message_id"],
+                    generation_token,
+                )
+
+    return wrapped
+
+
 class ConsoleChatController:
     """Coordinate native Console chat state between store and provider gateway."""
 
@@ -15604,28 +15654,47 @@ class ConsoleChatController:
         )
         if generation_token is None:
             generation_token = self.store.begin_generation_attempt(assistant_message_id)
-        if variant_mode:
-            self.store.begin_variant_stream(
-                assistant_message_id,
-                generation_token=generation_token,
+        try:
+            if variant_mode:
+                self.store.begin_variant_stream(
+                    assistant_message_id,
+                    generation_token=generation_token,
+                )
+            if character_emote_snapshot is not None and not prepare_retry:
+                self.store.begin_character_emote_capture(
+                    assistant_message_id,
+                    character_emote_snapshot,
+                )
+            if prefill and not prepare_retry:
+                try:
+                    self.store.append_stream_chunk(assistant_message_id, prefill)
+                except KeyError:
+                    self.store.retire_generation_attempt(
+                        assistant_message_id,
+                        generation_token,
+                    )
+                    return self._session_closed_result(session_id=owner_id)
+            self._set_run_state(
+                ConsoleRunState(ConsoleRunStatus.STREAMING, "Streaming response."),
+                session_id=owner_id,
             )
-        if character_emote_snapshot is not None and not prepare_retry:
-            self.store.begin_character_emote_capture(
+            retry_prepared = False
+            emitted_content = False
+            thinking_capture = ThinkingCapture(assistant_owner_id=assistant_message_id)
+            if prepare_retry:
+                self.store.record_trace_event(
+                    owner_id,
+                    anchor_message_id=assistant_message_id,
+                    event_kind="message_retry_requested",
+                    summary="User requested another response attempt",
+                    status="started",
+                )
+        except BaseException:
+            self.store.retire_generation_attempt(
                 assistant_message_id,
-                character_emote_snapshot,
+                generation_token,
             )
-        if prefill and not prepare_retry:
-            try:
-                self.store.append_stream_chunk(assistant_message_id, prefill)
-            except KeyError:
-                return self._session_closed_result(session_id=owner_id)
-        self._set_run_state(
-            ConsoleRunState(ConsoleRunStatus.STREAMING, "Streaming response."),
-            session_id=owner_id,
-        )
-        retry_prepared = False
-        emitted_content = False
-        thinking_capture = ThinkingCapture(assistant_owner_id=assistant_message_id)
+            raise
 
         def project_thinking(update: Any) -> None:
             if update.envelope is not None:
@@ -15638,14 +15707,6 @@ class ConsoleChatController:
         def settle_thinking(outcome: Literal["complete", "stopped", "failed"]) -> None:
             project_thinking(thinking_capture.settle(outcome))
 
-        if prepare_retry:
-            self.store.record_trace_event(
-                owner_id,
-                anchor_message_id=assistant_message_id,
-                event_kind="message_retry_requested",
-                summary="User requested another response attempt",
-                status="started",
-            )
         try:
             if self._teardown_refuses_turn(owner_id):
                 return self._accepted_shutdown_before_dispatch(
@@ -16249,6 +16310,7 @@ class ConsoleChatController:
             selected_body=selected.selected_body,
         )
 
+    @_retire_generation_before_agent_handoff
     async def _run_agent_reply(
         self,
         *,
@@ -16274,6 +16336,7 @@ class ConsoleChatController:
         thinking_policy: ThinkingHistoryPolicy = "auto",
         preparation_id: str | None = None,
         generation_token: int | None = None,
+        _generation_handoff: _GenerationTokenHandoff | None = None,
     ) -> ConsoleSubmitResult:
         """Run the agent loop as the reply engine, streaming into the target row."""
         logger.info(
@@ -16282,6 +16345,8 @@ class ConsoleChatController:
             variant_mode=variant_mode,
             prepare_retry=prepare_retry,
         )
+        if _generation_handoff is None:
+            raise RuntimeError("Agent generation handoff is required.")
         # Resolve the run's OWNING session FIRST (Task 3b): every write
         # below -- the per-session stream/cancel maps AND run state -- must
         # target it explicitly rather than whatever the user currently has
@@ -16482,18 +16547,6 @@ class ConsoleChatController:
             ConsoleRunState(ConsoleRunStatus.STREAMING, "Agent running."),
             session_id=session_id,
         )
-        if generation_token is None:
-            generation_token = self.store.begin_generation_attempt(assistant_message_id)
-        if variant_mode:
-            self.store.begin_variant_stream(
-                assistant_message_id,
-                generation_token=generation_token,
-            )
-        elif prepare_retry:
-            self.store.prepare_message_retry(
-                assistant_message_id,
-                generation_token=generation_token,
-            )
 
         # Split the leading session system message off the payload; the
         # agent config carries it (composed with the operating prompt).
@@ -16659,6 +16712,19 @@ class ConsoleChatController:
             ConsoleTurnPreparationState.DISPATCH_STARTED,
         ):
             raise RuntimeError("Prepared turn changed before provider dispatch.")
+        if generation_token is None:
+            generation_token = self.store.begin_generation_attempt(assistant_message_id)
+        _generation_handoff.issue(generation_token)
+        if variant_mode:
+            self.store.begin_variant_stream(
+                assistant_message_id,
+                generation_token=generation_token,
+            )
+        elif prepare_retry:
+            self.store.prepare_message_retry(
+                assistant_message_id,
+                generation_token=generation_token,
+            )
         try:
             # run_reply returns (run_id, outcome): run_id lets us write the
             # produced reply's PERSISTED id back onto the run after
@@ -16739,6 +16805,7 @@ class ConsoleChatController:
                     NATIVE_MESSAGE_ID_KEY if thinking_sidecar else None
                 ),
                 generation_token=generation_token,
+                _generation_handoff=_generation_handoff,
             )
         except asyncio.CancelledError:
             if cancel_event.is_set():

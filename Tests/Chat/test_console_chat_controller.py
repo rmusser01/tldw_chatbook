@@ -8062,6 +8062,260 @@ def test_generation_attempt_retirement_is_exact_and_fences_late_thinking() -> No
     assert store._generation_runtime_counts() == (0, 0, 0)
 
 
+@pytest.mark.asyncio
+@pytest.mark.parametrize("failure_type", [RuntimeError, asyncio.CancelledError])
+async def test_direct_setup_failure_retires_issued_generation_token(
+    monkeypatch,
+    failure_type,
+) -> None:
+    """Direct setup owns and retires its token before provider dispatch."""
+    store = ConsoleChatStore()
+    session = _arm_session(store)
+    assistant = store.append_message(
+        session.id,
+        role=ConsoleMessageRole.ASSISTANT,
+        content="",
+    )
+    issued: list[int] = []
+    original_begin = store.begin_generation_attempt
+
+    def record_begin(message_id):
+        token = original_begin(message_id)
+        issued.append(token)
+        return token
+
+    def fail_setup(*_args, **_kwargs):
+        raise failure_type("setup interrupted")
+
+    monkeypatch.setattr(store, "begin_generation_attempt", record_begin)
+    monkeypatch.setattr(store, "begin_variant_stream", fail_setup)
+    gateway = StreamingGateway()
+    controller = ConsoleChatController(store=store, provider_gateway=gateway)
+    resolution = await gateway.resolve_for_send(None)
+
+    with pytest.raises(failure_type, match="setup interrupted"):
+        await controller._run_direct_provider_reply(
+            resolution=resolution,
+            provider_messages=[],
+            assistant_message_id=assistant.id,
+            prepare_retry=False,
+            variant_mode=True,
+            prefill=None,
+            prefill_from_one_shot=False,
+            one_shot_prefill_revision=None,
+            citation_repair_session=None,
+            stream_signals=None,
+        )
+
+    assert len(issued) == 1
+    assert store._generation_runtime_counts() == (0, 0, 0)
+    store.settle_message_thinking(
+        assistant.id,
+        _terminal_thinking(assistant.id, "failed"),
+        generation_token=issued[0],
+    )
+    assert store.get_message(assistant.id).thinking is None
+
+
+@pytest.mark.asyncio
+async def test_direct_setup_retirement_cannot_erase_newer_generation(
+    monkeypatch,
+) -> None:
+    store = ConsoleChatStore()
+    session = _arm_session(store)
+    assistant = store.append_message(
+        session.id,
+        role=ConsoleMessageRole.ASSISTANT,
+        content="",
+    )
+    original_begin = store.begin_generation_attempt
+    issued: list[int] = []
+
+    def record_begin(message_id):
+        token = original_begin(message_id)
+        issued.append(token)
+        return token
+
+    def supersede_then_fail(*_args, **_kwargs):
+        original_begin(assistant.id)
+        raise RuntimeError("setup superseded")
+
+    monkeypatch.setattr(store, "begin_generation_attempt", record_begin)
+    monkeypatch.setattr(store, "begin_variant_stream", supersede_then_fail)
+    gateway = StreamingGateway()
+    controller = ConsoleChatController(store=store, provider_gateway=gateway)
+    resolution = await gateway.resolve_for_send(None)
+
+    with pytest.raises(RuntimeError, match="setup superseded"):
+        await controller._run_direct_provider_reply(
+            resolution=resolution,
+            provider_messages=[],
+            assistant_message_id=assistant.id,
+            prepare_retry=False,
+            variant_mode=True,
+            prefill=None,
+            prefill_from_one_shot=False,
+            one_shot_prefill_revision=None,
+            citation_repair_session=None,
+            stream_signals=None,
+        )
+
+    assert store._generation_attempt_tokens[assistant.id] != issued[0]
+    store.retire_generation_attempt(
+        assistant.id,
+        store._generation_attempt_tokens[assistant.id],
+    )
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("failure_type", [RuntimeError, asyncio.CancelledError])
+@pytest.mark.parametrize("issue_newer_token", [False, True])
+async def test_agent_pre_worker_failure_retires_preissued_generation_token(
+    monkeypatch,
+    failure_type,
+    issue_newer_token,
+) -> None:
+    """A recovery-owned token stays local until an agent worker accepts it."""
+    store = ConsoleChatStore()
+    session = _arm_session(store)
+    store.append_message(session.id, role=ConsoleMessageRole.USER, content="question")
+    assistant = store.append_message(
+        session.id,
+        role=ConsoleMessageRole.ASSISTANT,
+        content="",
+    )
+    gateway = StreamingGateway()
+    controller = ConsoleChatController(
+        store=store,
+        provider_gateway=gateway,
+        agent_runtime_enabled=True,
+        agent_bridge=SimpleNamespace(run_reply=lambda **_kwargs: None),
+    )
+    configuration = controller.resolve_turn_configuration_snapshot(session.id)
+    (
+        resolution,
+        turn_context,
+    ) = await controller._capture_and_resolve_turn_execution_context(
+        session.id,
+        configuration,
+    )
+    assert turn_context is not None
+    issued = store.begin_generation_attempt(assistant.id)
+    newer_tokens: list[int] = []
+
+    async def fail_before_worker(**_kwargs):
+        if issue_newer_token:
+            newer_tokens.append(store.begin_generation_attempt(assistant.id))
+        raise failure_type("pre-worker interrupted")
+
+    monkeypatch.setattr(
+        controller,
+        "_compose_agent_request_providers",
+        fail_before_worker,
+    )
+    with pytest.raises(failure_type, match="pre-worker interrupted"):
+        await controller._run_agent_reply(
+            resolution=resolution,
+            provider_messages=[],
+            assistant_message_id=assistant.id,
+            prepare_retry=False,
+            variant_mode=False,
+            turn_context=turn_context,
+            generation_token=issued,
+        )
+
+    if issue_newer_token:
+        assert store._generation_attempt_tokens[assistant.id] == newer_tokens[0]
+    else:
+        assert store._generation_runtime_counts() == (0, 0, 0)
+    store.settle_message_thinking(
+        assistant.id,
+        _terminal_thinking(assistant.id, "failed"),
+        generation_token=issued,
+    )
+    assert store.get_message(assistant.id).thinking is None
+    if issue_newer_token:
+        assert store.retire_generation_attempt(assistant.id, newer_tokens[0]) is True
+    assert store._generation_runtime_counts() == (0, 0, 0)
+
+
+@pytest.mark.asyncio
+async def test_agent_cancellation_before_worker_start_retires_and_rejects_handoff(
+    monkeypatch,
+) -> None:
+    store = ConsoleChatStore()
+    gateway = StreamingGateway()
+    bridge_calls: list[dict] = []
+    controller = ConsoleChatController(
+        store=store,
+        provider_gateway=gateway,
+        agent_runtime_enabled=True,
+        agent_bridge=SimpleNamespace(
+            run_reply=lambda **kwargs: bridge_calls.append(kwargs)
+        ),
+    )
+    _arm_session(store)
+    captured: list[tuple[object, tuple, dict]] = []
+    issued: list[tuple[str, int]] = []
+    original_begin = store.begin_generation_attempt
+    original_to_thread = controller_module.asyncio.to_thread
+
+    def record_begin(message_id):
+        token = original_begin(message_id)
+        issued.append((message_id, token))
+        return token
+
+    async def cancel_before_start(function, *args, **kwargs):
+        if "_generation_handoff" not in kwargs:
+            return await original_to_thread(function, *args, **kwargs)
+        captured.append((function, args, kwargs))
+        raise asyncio.CancelledError("worker not started")
+
+    monkeypatch.setattr(store, "begin_generation_attempt", record_begin)
+    monkeypatch.setattr(controller_module.asyncio, "to_thread", cancel_before_start)
+
+    await controller.submit_draft("hello")
+
+    assert len(issued) == 1
+    assert len(captured) == 1
+    assert store._generation_runtime_counts() == (0, 0, 0)
+    _function, _args, kwargs = captured[0]
+    assert kwargs["_generation_handoff"].accept() is False
+    assert bridge_calls == []
+    message_id, retired = issued[0]
+    store.settle_message_thinking(
+        message_id,
+        _terminal_thinking(message_id, "failed"),
+        generation_token=retired,
+    )
+    assert store.get_message(message_id).thinking is None
+
+
+@pytest.mark.asyncio
+async def test_agent_teardown_refusal_occurs_before_generation_issuance(
+    monkeypatch,
+) -> None:
+    store = ConsoleChatStore()
+    gateway = StreamingGateway()
+    bridge_calls: list[dict] = []
+    controller = ConsoleChatController(
+        store=store,
+        provider_gateway=gateway,
+        agent_runtime_enabled=True,
+        agent_bridge=SimpleNamespace(
+            run_reply=lambda **kwargs: bridge_calls.append(kwargs)
+        ),
+    )
+    _arm_session(store)
+    monkeypatch.setattr(controller, "_teardown_refuses_turn", lambda _session: True)
+
+    result = await controller.submit_draft("hello")
+
+    assert result.accepted is True
+    assert bridge_calls == []
+    assert store._generation_runtime_counts() == (0, 0, 0)
+
+
 def test_edit_fences_detached_thinking_before_generation_evidence_is_cleared(
     tmp_path,
 ) -> None:
