@@ -6774,6 +6774,87 @@ class TestGatewayExchangeCapture:
         assert captures[0].response["content"] == "he"
 
     @pytest.mark.asyncio
+    async def test_openai_stop_closes_transport_through_gateway_boundary(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Console cancellation closes the real OpenAI adapter without a tail yield.
+
+        HTTP alone is isolated: this drives the production gateway,
+        ``chat_api_call``, and ``chat_with_openai`` generator. Blocking capture
+        publication after the first provider delta leaves that generator
+        suspended at its content yield, so cancelling the public async stream
+        deterministically exercises the same ``GeneratorExit`` cleanup path as
+        Console Stop.
+        """
+
+        class _StreamingResponse:
+            status_code = 200
+            text = ""
+
+            def __init__(self) -> None:
+                self.closed = threading.Event()
+
+            def __bool__(self) -> bool:
+                return True
+
+            def raise_for_status(self) -> None:
+                return None
+
+            def iter_lines(self, *, decode_unicode: bool):
+                assert decode_unicode is True
+                yield 'data: {"choices": [{"delta": {"content": "he"}}]}'
+                raise AssertionError("stopped stream requested another HTTP chunk")
+
+            def close(self) -> None:
+                self.closed.set()
+
+        response = _StreamingResponse()
+
+        def fake_post(_session, *_args, **_kwargs):
+            return response
+
+        monkeypatch.setattr("requests.Session.post", fake_post)
+
+        signals = ConsoleProviderStreamSignals(exchange_capture_enabled=True)
+        content_recorded = threading.Event()
+        release_worker = threading.Event()
+        original_record = ConsoleProviderStreamSignals._mutate_scoped_exchange
+
+        def blocking_record(self, token, key, items):
+            original_record(self, token, key, items)
+            content_recorded.set()
+            if not release_worker.wait(timeout=5):
+                raise TimeoutError("test did not release provider worker")
+
+        monkeypatch.setattr(
+            ConsoleProviderStreamSignals,
+            "_mutate_scoped_exchange",
+            blocking_record,
+        )
+        stream = ConsoleProviderGateway().stream_chat(
+            dataclasses.replace(self._resolution(), streaming=True),
+            [{"role": "user", "content": "q"}],
+            signals=signals,
+        )
+        pending = asyncio.create_task(anext(stream))
+        try:
+            assert await asyncio.to_thread(content_recorded.wait, 5)
+            pending.cancel()
+            with pytest.raises(asyncio.CancelledError):
+                await pending
+
+            assert response.closed.wait(timeout=1)
+            captures = signals.exchange_captures()
+            assert len(captures) == 1
+            assert captures[0].status == "stopped"
+            assert captures[0].response["content"] == "he"
+        finally:
+            release_worker.set()
+            if not pending.done():
+                pending.cancel()
+            await stream.aclose()
+
+    @pytest.mark.asyncio
     async def test_native_tool_calls_recorded_in_capture(self):
         response = {
             "choices": [

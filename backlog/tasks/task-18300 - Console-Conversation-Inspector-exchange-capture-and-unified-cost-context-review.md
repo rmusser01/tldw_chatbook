@@ -204,9 +204,17 @@ runtime references. The two pytest warning classes are incumbent dependency
 version/deprecation notices; additional post-summary output was the repository's
 known temp-cleanup noise and did not change the zero exit status.
 
+Qodo review follow-up added a gateway integration regression that traverses
+`ConsoleProviderGateway` → `chat_api_call` → `chat_with_openai`, cancels after
+the first recorded provider delta, and asserts transport cleanup plus a stopped
+partial capture. It passes with the fix and was independently proven red by
+temporarily restoring the old yield-from-`finally` behavior.
+
 **Files changed in this task.**
 - `tldw_chatbook/LLM_Calls/LLM_API_Calls.py` (Stop-safe OpenAI stream cleanup)
 - `Tests/Chat/test_openai_streaming_usage.py` (GeneratorExit regression)
+- `Tests/Chat/test_console_provider_gateway.py` (gateway-boundary Stop
+  regression added during Qodo review)
 - `backlog/tasks/task-18300 - Console-Conversation-Inspector-exchange-capture-and-unified-cost-context-review.md`
   (final acceptance and implementation evidence)
 - `backlog/docs/lessons-live-verification.md` (Stop/GeneratorExit incident)

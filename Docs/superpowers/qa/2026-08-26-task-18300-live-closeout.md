@@ -71,6 +71,8 @@ was previously missing.
 Final targeted gate:
 
 - OpenAI streaming module: 6 passed;
+- OpenAI Stop through the real Console gateway/provider chain: 1 passed and
+  proven red against the pre-fix yield-from-`finally` behavior;
 - Inspector/capture/UI/import-provenance selection: 110 passed;
 - Ruff on the changed Python files: clean;
 - `git diff --check`: clean;
