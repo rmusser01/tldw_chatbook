@@ -16,6 +16,7 @@ from textual.widgets import Button, Input
 
 from Tests.UI.test_console_native_chat_flow import (
     CapturingGateway,
+    _build_console_send_test_app,
     _configure_native_ready_console,
     _wait_for_text,
 )
@@ -273,7 +274,7 @@ async def test_console_unknown_command_first_enter_renders_hint_and_does_not_sen
 @pytest.mark.asyncio
 async def test_console_unknown_command_second_unmodified_enter_sends_as_text():
     gateway = CapturingGateway()
-    app = _build_test_app()
+    app = _build_console_send_test_app()
     _configure_native_ready_console(app)
     app.console_provider_gateway_factory = lambda: gateway
     host = ConsoleHarness(app)
@@ -403,7 +404,7 @@ async def test_console_collapse_disarms_unknown_command_literal_send():
 @pytest.mark.asyncio
 async def test_console_collapsed_paste_starting_with_slash_sends_normally():
     gateway = CapturingGateway()
-    app = _build_test_app()
+    app = _build_console_send_test_app()
     _configure_native_ready_console(app)
     app.console_provider_gateway_factory = lambda: gateway
     host = ConsoleHarness(app)
@@ -1250,7 +1251,10 @@ async def test_console_resume_triggered_prompt_insert_survives_stale_session_swi
         await pilot.pause(0.1)
         assert console._console_visible_draft_session_id == first_session.id
 
-        second_session = store.create_session(title="Second")
+        second_session = store.create_session(
+            title="Second",
+            settings=first_session.settings,
+        )
         store.set_session_draft(second_session.id, "stale leftover draft")
         assert store.active_session_id == second_session.id
         # The tracker has NOT caught up with the switch yet -- this is the
