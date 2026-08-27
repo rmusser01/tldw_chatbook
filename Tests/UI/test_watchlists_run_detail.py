@@ -22,6 +22,8 @@ reactives were not the thing that was broken.
 
 from __future__ import annotations
 
+import asyncio
+from copy import deepcopy
 from typing import Any
 
 import pytest
@@ -34,7 +36,11 @@ from Tests.UI.full_app_destination_context import (
     full_app_destination_context as _visual_destination_harness,
 )
 from Tests.UI.app_factory import _build_test_app
-from tldw_chatbook.UI.Watchlists_Modules.runs_pane import RunsPane
+from tldw_chatbook.UI.Watchlists_Modules.runs_pane import (
+    RefreshRunsRequested,
+    RunsPane,
+)
+from tldw_chatbook.tldw_api.exceptions import APIResponseError
 
 # TWO runs, and every click targets the SECOND row -- the same discipline as
 # `test_watchlists_source_row_click_selects`: with one run, a default row-0
@@ -133,6 +139,84 @@ async def _settle_until(pilot, predicate, tries: int = 80) -> bool:
         if predicate():
             return True
     return False
+
+
+async def _pump_until(pilot, predicate, tries: int = 80) -> bool:
+    """Yield to Textual until an event-driven condition lands, without sleeps."""
+    for _ in range(tries):
+        if predicate():
+            return True
+        await pilot.pause()
+    return bool(predicate())
+
+
+async def _wait_worker_group_idle(pilot, screen, group: str) -> bool:
+    """Wait only for the worker group owned by the behavior under test."""
+    return await _pump_until(
+        pilot,
+        lambda: not any(
+            worker.group == group and not worker.is_finished
+            for worker in screen.workers
+        ),
+    )
+
+
+async def _refresh_test_pane(pilot, host):
+    """Mount Runs and let its initial loader finish before installing fakes."""
+    screen = _active_destination_screen(host)
+    screen.active_section = "runs"
+    assert await _pump_until(
+        pilot, lambda: bool(screen.query("#watchlists-runs-pane"))
+    )
+    assert await _wait_worker_group_idle(pilot, screen, "wc_runs")
+    await pilot.pause()
+    return screen, screen.query_one("#watchlists-runs-pane", RunsPane)
+
+
+async def _seed_refresh_snapshot(screen, pane, pilot, *, run=None) -> None:
+    """Install one complete mounted Runs snapshot through the selection path."""
+    selected = dict(run or RUNS[1])
+    rows = [dict(RUNS[0]), selected]
+
+    async def initial_items(**kwargs):
+        run_id = int(kwargs.get("run_id") or 0)
+        return [dict(item) for item in RUN_ITEMS.get(run_id, [])]
+
+    screen._controller.list_items = initial_items
+    screen._loaded_runs = rows
+    pane.runs = rows
+    await pilot.pause()
+    pane.select_run_by_id(str(selected["id"]))
+    assert await _wait_worker_group_idle(pilot, screen, "wc_run_detail")
+    await pilot.pause()
+    assert screen.selected_run is not None
+    assert pane.selected_run is not None
+
+
+def _mounted_run_snapshot(screen, pane) -> dict[str, Any]:
+    """The full state a failed refresh is required to leave byte-for-byte."""
+    return deepcopy(
+        {
+            "loaded_runs": screen._loaded_runs,
+            "screen_selection": screen.selected_run,
+            "pane_rows": pane.runs,
+            "pane_selection": pane.selected_run,
+            "screen_items": screen._run_detail_items,
+            "screen_logs": screen._run_detail_logs,
+            "screen_note": screen._run_detail_items_note,
+            "pane_items": pane.run_items,
+            "pane_logs": pane.run_logs,
+            "pane_note": pane.run_items_note,
+            "cancel": (
+                str(pane.query_one("#runs-cancel-button").label),
+                pane.query_one("#runs-cancel-button").disabled,
+            ),
+            "rerun": (
+                str(pane.query_one("#runs-rerun-button").label),
+                pane.query_one("#runs-rerun-button").disabled,
+            ),
+        }
+    )
 
 
 def _stats_text(pane: RunsPane) -> str:
@@ -1027,3 +1111,463 @@ async def test_a_tick_for_a_run_the_user_has_left_does_nothing():
             "read it"
         )
         assert pane.selected_run["id"] == RUNS[0]["id"]
+
+
+# --- TASK-2331: authoritative, generation-checked Runs refresh ------------
+
+
+@pytest.mark.asyncio
+async def test_refresh_replaces_rows_and_reloads_selected_fresh_detail_by_id():
+    app = _build_test_app()
+    app.watchlist_scope_service = StaticWatchlistsScopeService([])
+    host = _visual_destination_harness(app, "watchlists_collections")
+    async with host.run_test(size=(235, 52)) as pilot:
+        screen, pane = await _refresh_test_pane(pilot, host)
+        await _seed_refresh_snapshot(screen, pane, pilot)
+        before = _mounted_run_snapshot(screen, pane)
+
+        fresh_selected = dict(
+            RUNS[1],
+            status="failed",
+            found_count=9,
+            processed_count=8,
+            error_count=1,
+            log_text="authoritative refresh log",
+        )
+        fresh_rows = [dict(RUNS[0], source_title="Fresh Summit"), fresh_selected]
+        list_started = asyncio.Event()
+        release_list = asyncio.Event()
+        detail_loaded = asyncio.Event()
+        list_calls: list[dict[str, Any]] = []
+        detail_calls: list[dict[str, Any]] = []
+
+        async def list_runs(**kwargs):
+            list_calls.append(kwargs)
+            list_started.set()
+            await release_list.wait()
+            return deepcopy(fresh_rows)
+
+        async def list_items(**kwargs):
+            detail_calls.append(kwargs)
+            detail_loaded.set()
+            return [
+                {
+                    "id": "local:watchlist_item:99",
+                    "item_id": 99,
+                    "run_id": 2,
+                    "title": "Fresh detail item",
+                    "status": "new",
+                    "alert_count": 0,
+                }
+            ]
+
+        async def get_run_must_not_be_needed(**_kwargs):
+            raise AssertionError("the selected normalized id is in the fresh page")
+
+        screen._controller.list_runs = list_runs
+        screen._controller.list_items = list_items
+        screen._controller.get_run = get_run_must_not_be_needed
+
+        await pilot.click("#runs-refresh-button")
+        await asyncio.wait_for(list_started.wait(), timeout=2)
+        assert _mounted_run_snapshot(screen, pane) == before, (
+            "nothing may publish while authoritative reconciliation is incomplete"
+        )
+
+        release_list.set()
+        await asyncio.wait_for(detail_loaded.wait(), timeout=2)
+        assert await _wait_worker_group_idle(pilot, screen, "wc_runs")
+        assert await _wait_worker_group_idle(pilot, screen, "wc_run_detail")
+        await pilot.pause()
+
+        assert list_calls == [{"runtime_backend": "local", "limit": 100}]
+        assert screen._loaded_runs == fresh_rows
+        assert pane.runs == fresh_rows
+        assert screen.selected_run == fresh_selected
+        assert pane.selected_run == fresh_selected
+        assert detail_calls and detail_calls[-1]["run_id"] == 2
+        assert pane.run_items[0]["title"] == "Fresh detail item"
+        assert screen._run_detail_items == pane.run_items
+        assert "authoritative refresh log" in _logs_text(pane)
+        assert "Found: 9" in _stats_text(pane)
+
+
+@pytest.mark.asyncio
+async def test_refresh_fetches_and_appends_a_selected_run_outside_the_newest_100():
+    app = _build_test_app()
+    app.watchlist_scope_service = StaticWatchlistsScopeService([])
+    host = _visual_destination_harness(app, "watchlists_collections")
+    async with host.run_test(size=(235, 52)) as pilot:
+        screen, pane = await _refresh_test_pane(pilot, host)
+        await _seed_refresh_snapshot(screen, pane, pilot)
+
+        page = [
+            dict(
+                RUNS[0],
+                id=f"local:watchlist_run:{1000 + index}",
+                run_id=1000 + index,
+                source_title=f"Page row {index}",
+            )
+            for index in range(100)
+        ]
+        pinned = dict(
+            RUNS[1],
+            status="completed",
+            found_count=12,
+            processed_count=12,
+            log_text="pinned fresh detail",
+        )
+        pin_started = asyncio.Event()
+        release_pin = asyncio.Event()
+        pin_calls: list[dict[str, Any]] = []
+
+        async def list_runs(**kwargs):
+            assert kwargs == {"runtime_backend": "local", "limit": 100}
+            return deepcopy(page)
+
+        async def get_run(**kwargs):
+            pin_calls.append(kwargs)
+            pin_started.set()
+            await release_pin.wait()
+            return dict(pinned)
+
+        async def list_items(**_kwargs):
+            return [{"title": "Pinned item", "status": "new", "alert_count": 0}]
+
+        screen._controller.list_runs = list_runs
+        screen._controller.get_run = get_run
+        screen._controller.list_items = list_items
+
+        screen.post_message(RefreshRunsRequested())
+        await asyncio.wait_for(pin_started.wait(), timeout=2)
+        assert pane.runs[-1]["id"] == RUNS[1]["id"], (
+            "the mounted page stays untouched until the pin lookup resolves"
+        )
+
+        release_pin.set()
+        assert await _wait_worker_group_idle(pilot, screen, "wc_runs")
+        assert await _wait_worker_group_idle(pilot, screen, "wc_run_detail")
+        await pilot.pause()
+
+        assert pin_calls == [{"runtime_backend": "local", "run_id": 2}], (
+            "the service receives the selected record's raw run_id, never its "
+            "namespaced UI id"
+        )
+        assert screen._loaded_runs[:100] == page
+        assert screen._loaded_runs[100] == pinned
+        assert pane.runs == screen._loaded_runs
+        assert screen.selected_run == pinned
+        assert pane.selected_run == pinned
+        assert pane.run_items[0]["title"] == "Pinned item"
+
+
+@pytest.mark.parametrize(
+    ("backend", "missing_error"),
+    [
+        ("local", KeyError("local detail is gone")),
+        ("server", APIResponseError(404, "server detail is gone")),
+    ],
+)
+@pytest.mark.asyncio
+async def test_refresh_authoritative_not_found_clears_selection_and_detail(
+    backend, missing_error
+):
+    app = _build_test_app()
+    app.watchlist_scope_service = StaticWatchlistsScopeService([])
+    host = _visual_destination_harness(app, "watchlists_collections")
+    async with host.run_test(size=(235, 52)) as pilot:
+        screen, pane = await _refresh_test_pane(pilot, host)
+        screen.runtime_backend = backend
+        await pilot.pause()
+        selected = dict(
+            RUNS[1],
+            id=f"{backend}:watchlist_run:2",
+            backend=backend,
+            job_id=2,
+        )
+        await _seed_refresh_snapshot(screen, pane, pilot, run=selected)
+
+        lookup_started = asyncio.Event()
+        release_lookup = asyncio.Event()
+        worker_calls: list[dict[str, Any]] = []
+        original_run_worker = screen.run_worker
+
+        def recording_run_worker(coro, **kwargs):
+            worker_calls.append(kwargs)
+            return original_run_worker(coro, **kwargs)
+
+        async def list_runs(**kwargs):
+            assert kwargs == {"runtime_backend": backend, "limit": 100}
+            return [dict(RUNS[0], id=f"{backend}:watchlist_run:1", backend=backend)]
+
+        async def get_run(**kwargs):
+            assert kwargs == {"runtime_backend": backend, "run_id": 2}
+            lookup_started.set()
+            await release_lookup.wait()
+            raise missing_error
+
+        screen.run_worker = recording_run_worker
+        screen._controller.list_runs = list_runs
+        screen._controller.get_run = get_run
+        screen.post_message(RefreshRunsRequested())
+        await asyncio.wait_for(lookup_started.wait(), timeout=2)
+
+        release_lookup.set()
+        assert await _wait_worker_group_idle(pilot, screen, "wc_runs")
+        assert await _wait_worker_group_idle(pilot, screen, "wc_run_detail")
+        await pilot.pause()
+
+        assert [run["id"] for run in screen._loaded_runs] == [
+            f"{backend}:watchlist_run:1"
+        ]
+        assert pane.runs == screen._loaded_runs
+        assert screen.selected_run is None
+        assert pane.selected_run is None
+        assert screen._run_detail_items == pane.run_items == []
+        assert screen._run_detail_logs == pane.run_logs == ""
+        assert screen._run_detail_items_note == pane.run_items_note == ""
+        assert "No run selected" in _stats_text(pane)
+        assert any(
+            call.get("exclusive") is True
+            and call.get("group") == "wc_run_detail"
+            for call in worker_calls
+        ), "the authoritative clear must supersede older run-detail work"
+
+
+@pytest.mark.parametrize("failure_stage", ["list", "pin"])
+@pytest.mark.asyncio
+async def test_refresh_transient_failure_preserves_the_complete_mounted_snapshot(
+    failure_stage,
+):
+    app = _build_test_app()
+    app.watchlist_scope_service = StaticWatchlistsScopeService([])
+    host = _visual_destination_harness(app, "watchlists_collections")
+    toasts: list[tuple[str, dict[str, Any]]] = []
+    app.notify = lambda message, **kwargs: toasts.append((str(message), kwargs))
+    async with host.run_test(size=(235, 52)) as pilot:
+        screen, pane = await _refresh_test_pane(pilot, host)
+        await _seed_refresh_snapshot(screen, pane, pilot)
+        before = _mounted_run_snapshot(screen, pane)
+        failure_started = asyncio.Event()
+        release_failure = asyncio.Event()
+
+        async def list_runs(**_kwargs):
+            if failure_stage == "list":
+                failure_started.set()
+                await release_failure.wait()
+                raise RuntimeError("private local path")
+            return [dict(RUNS[0])]
+
+        async def get_run(**kwargs):
+            assert kwargs["run_id"] == 2
+            failure_started.set()
+            await release_failure.wait()
+            raise APIResponseError(503, "secret upstream URL")
+
+        screen._controller.list_runs = list_runs
+        screen._controller.get_run = get_run
+        screen.post_message(RefreshRunsRequested())
+        await asyncio.wait_for(failure_started.wait(), timeout=2)
+        assert _mounted_run_snapshot(screen, pane) == before
+
+        release_failure.set()
+        assert await _wait_worker_group_idle(pilot, screen, "wc_runs")
+        await pilot.pause()
+
+        assert _mounted_run_snapshot(screen, pane) == before
+        assert toasts
+        message, kwargs = toasts[-1]
+        assert "secret" not in message and "path" not in message
+        assert kwargs.get("severity") == "error"
+        assert kwargs.get("markup") is False
+
+
+@pytest.mark.asyncio
+async def test_backend_switch_discards_a_gated_refresh_response():
+    app = _build_test_app()
+    app.watchlist_scope_service = StaticWatchlistsScopeService([])
+    host = _visual_destination_harness(app, "watchlists_collections")
+    async with host.run_test(size=(235, 52)) as pilot:
+        screen, pane = await _refresh_test_pane(pilot, host)
+        await _seed_refresh_snapshot(screen, pane, pilot)
+        list_started = asyncio.Event()
+        release_list = asyncio.Event()
+
+        async def list_runs(**kwargs):
+            assert kwargs == {"runtime_backend": "local", "limit": 100}
+            list_started.set()
+            await release_list.wait()
+            return [dict(RUNS[0], source_title="stale local row")]
+
+        screen._controller.list_runs = list_runs
+        screen.post_message(RefreshRunsRequested())
+        await asyncio.wait_for(list_started.wait(), timeout=2)
+
+        screen.runtime_backend = "server"
+        await pilot.pause()
+        assert screen._loaded_runs == []
+        assert pane.runs == []
+        assert screen.selected_run is pane.selected_run is None
+
+        release_list.set()
+        assert await _wait_worker_group_idle(pilot, screen, "wc_runs")
+        await pilot.pause()
+
+        assert screen.runtime_backend == "server"
+        assert screen._loaded_runs == []
+        assert pane.runs == []
+        assert screen.selected_run is pane.selected_run is None
+        assert screen._run_detail_items == pane.run_items == []
+        assert "No run selected" in _stats_text(pane)
+
+
+@pytest.mark.asyncio
+async def test_backend_switch_discards_a_stale_refresh_failure_silently():
+    app = _build_test_app()
+    app.watchlist_scope_service = StaticWatchlistsScopeService([])
+    host = _visual_destination_harness(app, "watchlists_collections")
+    toasts: list[str] = []
+    app.notify = lambda message, **_kwargs: toasts.append(str(message))
+    async with host.run_test(size=(235, 52)) as pilot:
+        screen, pane = await _refresh_test_pane(pilot, host)
+        await _seed_refresh_snapshot(screen, pane, pilot)
+        list_started = asyncio.Event()
+        release_list = asyncio.Event()
+
+        async def list_runs(**kwargs):
+            if kwargs.get("runtime_backend") == "server":
+                return []
+            list_started.set()
+            while not release_list.is_set():
+                try:
+                    await release_list.wait()
+                except asyncio.CancelledError:
+                    continue
+            raise RuntimeError("obsolete backend failure")
+
+        screen._controller.list_runs = list_runs
+        screen.post_message(RefreshRunsRequested())
+        await asyncio.wait_for(list_started.wait(), timeout=2)
+        screen.runtime_backend = "server"
+        await pilot.pause()
+        toasts.clear()
+
+        release_list.set()
+        assert await _wait_worker_group_idle(pilot, screen, "wc_runs")
+
+        assert screen.runtime_backend == "server"
+        assert screen._loaded_runs == pane.runs == []
+        assert toasts == [], "obsolete backend work is discarded without an error toast"
+
+
+@pytest.mark.asyncio
+async def test_second_refresh_generation_supersedes_an_older_late_response():
+    app = _build_test_app()
+    app.watchlist_scope_service = StaticWatchlistsScopeService([])
+    host = _visual_destination_harness(app, "watchlists_collections")
+    async with host.run_test(size=(235, 52)) as pilot:
+        screen, pane = await _refresh_test_pane(pilot, host)
+        await _seed_refresh_snapshot(screen, pane, pilot)
+        starts = [asyncio.Event(), asyncio.Event()]
+        releases = [asyncio.Event(), asyncio.Event()]
+        rows = [
+            [dict(RUNS[0], source_title="older response"), dict(RUNS[1])],
+            [dict(RUNS[0], source_title="newest response"), dict(RUNS[1])],
+        ]
+        call_count = 0
+
+        async def list_runs(**_kwargs):
+            nonlocal call_count
+            index = call_count
+            call_count += 1
+            starts[index].set()
+            while not releases[index].is_set():
+                try:
+                    await releases[index].wait()
+                except asyncio.CancelledError:
+                    # The generation check, not cooperative cancellation, is
+                    # the publication authority this regression exercises.
+                    continue
+            return deepcopy(rows[index])
+
+        async def list_items(**_kwargs):
+            return []
+
+        screen._controller.list_runs = list_runs
+        screen._controller.list_items = list_items
+
+        screen._request_runs_refresh()
+        assert screen._runs_refresh_generation == 1
+        await asyncio.wait_for(starts[0].wait(), timeout=2)
+
+        screen._request_runs_refresh()
+        assert screen._runs_refresh_generation == 2, (
+            "the superseding token must advance when Refresh is accepted, "
+            "not when its worker eventually starts"
+        )
+        await asyncio.wait_for(starts[1].wait(), timeout=2)
+
+        releases[1].set()
+        assert await _pump_until(
+            pilot,
+            lambda: bool(screen._loaded_runs)
+            and screen._loaded_runs[0]["source_title"] == "newest response",
+        )
+        releases[0].set()
+        assert await _wait_worker_group_idle(pilot, screen, "wc_runs")
+        assert await _wait_worker_group_idle(pilot, screen, "wc_run_detail")
+        await pilot.pause()
+
+        assert screen._loaded_runs[0]["source_title"] == "newest response"
+        assert pane.runs[0]["source_title"] == "newest response"
+
+
+@pytest.mark.asyncio
+async def test_later_user_clear_supersedes_an_older_run_detail_query():
+    app = _build_test_app()
+    app.watchlist_scope_service = StaticWatchlistsScopeService([])
+    host = _visual_destination_harness(app, "watchlists_collections")
+    async with host.run_test(size=(235, 52)) as pilot:
+        screen, pane = await _refresh_test_pane(pilot, host)
+        await _seed_refresh_snapshot(screen, pane, pilot)
+        query_started = asyncio.Event()
+        release_query = asyncio.Event()
+        worker_calls: list[dict[str, Any]] = []
+        original_run_worker = screen.run_worker
+
+        def recording_run_worker(coro, **kwargs):
+            worker_calls.append(kwargs)
+            return original_run_worker(coro, **kwargs)
+
+        async def stale_items(**_kwargs):
+            query_started.set()
+            while not release_query.is_set():
+                try:
+                    await release_query.wait()
+                except asyncio.CancelledError:
+                    continue
+            return [{"title": "Stale resurrected item", "status": "new"}]
+
+        screen.run_worker = recording_run_worker
+        screen._controller.list_items = stale_items
+
+        pane.select_run_by_id(str(RUNS[0]["id"]))
+        await asyncio.wait_for(query_started.wait(), timeout=2)
+        pane.selected_run = None
+        assert await _pump_until(pilot, lambda: screen.selected_run is None)
+        assert screen._run_detail_items == pane.run_items == []
+
+        release_query.set()
+        assert await _wait_worker_group_idle(pilot, screen, "wc_run_detail")
+        await pilot.pause()
+
+        detail_workers = [
+            call for call in worker_calls if call.get("group") == "wc_run_detail"
+        ]
+        assert len(detail_workers) >= 2
+        assert all(call.get("exclusive") is True for call in detail_workers)
+        assert screen.selected_run is pane.selected_run is None
+        assert screen._run_detail_items == pane.run_items == []
+        assert screen._run_detail_logs == pane.run_logs == ""
+        assert screen._run_detail_items_note == pane.run_items_note == ""
+        assert "Stale resurrected item" not in str(pane.run_items)

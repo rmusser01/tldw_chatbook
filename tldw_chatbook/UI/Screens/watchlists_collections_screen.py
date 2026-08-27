@@ -37,6 +37,7 @@ from ...Constants import (
 )
 from ...config import get_cli_setting
 from ...runtime_policy.types import PolicyDeniedError
+from ...tldw_api.exceptions import APIResponseError
 from ...Subscriptions.briefing_audio import (
     AudioGenerationError,
     active_audio_claim_row_ids,
@@ -190,6 +191,7 @@ from ..Watchlists_Modules.rules_pane import (
 )
 from ..Watchlists_Modules.runs_pane import (
     CancelRunRequested,
+    RefreshRunsRequested,
     RerunRunRequested,
     RunProgressTick,
     RunSelected,
@@ -709,6 +711,7 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
         self._pending_navigation_run_id: str | None = None
         self._pending_navigation_run_backend: str | None = None
         self._loaded_runs: list[dict[str, Any]] = []
+        self._runs_refresh_generation = 0
         # TASK-2306: the selected run's Items and Logs, mirrored here for the
         # same reason `_loaded_runs` is -- `_build_detail_pane` constructs a
         # brand new `RunsPane` on every workbench rebuild, and a pane seeded
@@ -5647,6 +5650,172 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
         event.stop()
         self._source_create_form_open = event.is_open
 
+    @on(RefreshRunsRequested)
+    def handle_refresh_runs_requested(self, event: RefreshRunsRequested) -> None:
+        """Reload Runs from its current backend without exposing partial state."""
+        event.stop()
+        self._request_runs_refresh()
+
+    def _request_runs_refresh(self) -> None:
+        """Capture one refresh intent and supersede every older Runs read."""
+        self._runs_refresh_generation += 1
+        generation = self._runs_refresh_generation
+        backend = self.runtime_backend
+        selected = self.selected_run
+        selected_id = (
+            str(selected.get("id") or "").strip() if selected is not None else ""
+        )
+        selected_run_id = selected.get("run_id") if selected is not None else None
+        self.run_worker(
+            self._refresh_runs(
+                backend=backend,
+                generation=generation,
+                selected_id=selected_id or None,
+                selected_run_id=selected_run_id,
+            ),
+            exclusive=True,
+            group="wc_runs",
+        )
+
+    def _runs_refresh_is_current(self, *, backend: str, generation: int) -> bool:
+        """Return whether a staged refresh may still affect this screen."""
+        return (
+            backend == self.runtime_backend
+            and generation == self._runs_refresh_generation
+        )
+
+    async def _refresh_runs(
+        self,
+        *,
+        backend: str,
+        generation: int,
+        selected_id: str | None,
+        selected_run_id: Any,
+    ) -> None:
+        """Stage and reconcile one authoritative Runs page before publishing."""
+        try:
+            rows = await self._controller.list_runs(
+                runtime_backend=backend,
+                limit=100,
+            )
+            staged = [dict(run) for run in rows]
+        except Exception:
+            if not self._runs_refresh_is_current(
+                backend=backend,
+                generation=generation,
+            ):
+                return
+            self._report_runs_refresh_failure("Failed to refresh watchlist runs.")
+            return
+
+        candidate = None
+        if selected_id is not None:
+            candidate = next(
+                (
+                    run
+                    for run in staged
+                    if str(run.get("id") or "") == selected_id
+                ),
+                None,
+            )
+            if candidate is None:
+                if selected_run_id is None:
+                    if not self._runs_refresh_is_current(
+                        backend=backend,
+                        generation=generation,
+                    ):
+                        return
+                    self._report_runs_refresh_failure(
+                        "Selected watchlist run has no raw run id."
+                    )
+                    return
+                try:
+                    pinned = await self._controller.get_run(
+                        runtime_backend=backend,
+                        run_id=selected_run_id,
+                    )
+                except KeyError:
+                    if backend != "local":
+                        if not self._runs_refresh_is_current(
+                            backend=backend,
+                            generation=generation,
+                        ):
+                            return
+                        self._report_runs_refresh_failure(
+                            "Failed to pin the selected watchlist run."
+                        )
+                        return
+                except APIResponseError as exc:
+                    if backend != "server" or exc.status_code != 404:
+                        if not self._runs_refresh_is_current(
+                            backend=backend,
+                            generation=generation,
+                        ):
+                            return
+                        self._report_runs_refresh_failure(
+                            "Failed to pin the selected watchlist run."
+                        )
+                        return
+                except Exception:
+                    if not self._runs_refresh_is_current(
+                        backend=backend,
+                        generation=generation,
+                    ):
+                        return
+                    self._report_runs_refresh_failure(
+                        "Failed to pin the selected watchlist run."
+                    )
+                    return
+                else:
+                    if not isinstance(pinned, Mapping) or not pinned:
+                        if not self._runs_refresh_is_current(
+                            backend=backend,
+                            generation=generation,
+                        ):
+                            return
+                        self._report_runs_refresh_failure(
+                            "Selected watchlist run returned an invalid record."
+                        )
+                        return
+                    candidate = dict(pinned)
+                    staged.append(candidate)
+
+        if not self._runs_refresh_is_current(
+            backend=backend,
+            generation=generation,
+        ):
+            return
+
+        runs_pane = None
+        if self._dom_is_live:
+            try:
+                runs_pane = self.query_one("#watchlists-runs-pane", RunsPane)
+            except NoMatches:
+                pass
+        with self.app.batch_update():
+            self._loaded_runs = staged
+            self.selected_run = candidate
+            self._select_entity(candidate)
+            if runs_pane is not None:
+                runs_pane.runs = staged
+                runs_pane.selected_run = candidate
+        self.run_worker(
+            self._load_run_detail(candidate),
+            exclusive=True,
+            group="wc_run_detail",
+        )
+
+    def _report_runs_refresh_failure(self, log_message: str) -> None:
+        """Report a refresh failure without exposing exception text."""
+        logger.opt(exception=True).debug(log_message)
+        notify = getattr(self.app_instance, "notify", None)
+        if callable(notify):
+            notify(
+                "Failed to load watchlist runs.",
+                severity="error",
+                markup=False,
+            )
+
     @on(RunSelected)
     def handle_run_selected(self, event: RunSelected) -> None:
         event.stop()
@@ -5756,6 +5925,22 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
         # state, which for a local run is when its items land.
         await self._load_run_detail(record)
 
+    def _run_detail_request_is_current(
+        self, run: Mapping[str, Any] | None
+    ) -> bool:
+        """Return whether `run` still owns the selected detail mirrors."""
+        current = self.selected_run
+        if run is None:
+            return current is None
+        if current is None:
+            return False
+        requested_backend = str(run.get("backend") or self.runtime_backend)
+        current_backend = str(current.get("backend") or self.runtime_backend)
+        return (
+            requested_backend == current_backend
+            and str(current.get("id") or "") == str(run.get("id") or "")
+        )
+
     async def _load_run_detail(self, run: dict[str, Any] | None) -> None:
         """Fill the selected run's Items and Logs sub-regions.
 
@@ -5775,6 +5960,8 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
             run: The newly selected run, or `None` when the selection was
                 cleared.
         """
+        if not self._run_detail_request_is_current(run):
+            return
         if run is None:
             self._run_detail_items = []
             self._run_detail_logs = ""
@@ -5810,6 +5997,8 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
                     limit=self._RUN_ITEMS_LIMIT,
                 )
             except Exception as exc:
+                if not self._run_detail_request_is_current(run):
+                    return
                 # Review wave, Important 2. The "loaders may log at debug"
                 # exemption (`test_watchlists_check_now_failure.py`) is paid
                 # for by a visible toast, and every sibling loader on this
@@ -5836,6 +6025,8 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
                 items = [dict(item) for item in rows]
                 note = self._run_items_note(run, items)
 
+        if not self._run_detail_request_is_current(run):
+            return
         self._run_detail_items = items
         self._run_detail_logs = self._run_log_text(run)
         self._run_detail_items_note = note
