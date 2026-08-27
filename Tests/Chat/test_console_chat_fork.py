@@ -1715,6 +1715,196 @@ def test_stage_fork_snapshot_rejects_late_source_mutation(
     assert "fork-session" not in store._nodes_by_session
 
 
+@pytest.mark.parametrize(
+    ("mutation", "selected_position"),
+    (
+        ("attachment", None),
+        ("generation", None),
+        ("attachment", 0),
+        ("generation", 0),
+    ),
+)
+def test_stage_fork_snapshot_rejects_aba_payload_mutation(
+    mutation,
+    selected_position,
+    monkeypatch,
+) -> None:
+    store, _, session, _, _, _, selected, _ = _fork_store()
+    image_selections = (
+        (
+            ConsoleForkImageSelectionFence(
+                native_message_id=selected.id,
+                selected_position=selected_position,
+                browse_revision=1,
+                attachment_meta_fingerprint="sha256:selected-image",
+            ),
+        )
+        if selected_position is not None
+        else ()
+    )
+    fence = store.issue_fork_fence(
+        selected.id,
+        image_selections=image_selections,
+    )
+    selected_live = store._nodes_by_session[session.id][selected.id]
+    original_attachments = selected_live.attachments
+    original_generation = selected_live.generation_metadata
+    original_validate = store.validate_fork_fence
+    calls = 0
+
+    def validate_around_transient_value(candidate, *, image_selections=()):
+        nonlocal calls
+        calls += 1
+        if calls == 1:
+            valid = original_validate(candidate, image_selections=image_selections)
+            if mutation == "attachment":
+                selected_live.attachments = (
+                    replace(original_attachments[0], data=b"transient-image"),
+                )
+            else:
+                selected_live.generation_metadata = (
+                    replace(original_generation[0], prompt="transient prompt"),
+                )
+            return valid
+        selected_live.attachments = original_attachments
+        selected_live.generation_metadata = original_generation
+        return original_validate(candidate, image_selections=image_selections)
+
+    monkeypatch.setattr(
+        store,
+        "validate_fork_fence",
+        validate_around_transient_value,
+    )
+
+    with pytest.raises(ValueError, match="source changed"):
+        store.stage_fork_snapshot(
+            fence,
+            title="Independent fork",
+            fork_session_id="fork-session",
+            fork_conversation_id="fork-conversation",
+        )
+
+    assert calls == 2
+    assert "fork-session" not in {item.id for item in store.sessions()}
+
+
+@pytest.mark.parametrize(
+    ("field_name", "transient_value"),
+    (
+        ("role", ConsoleMessageRole.USER),
+        ("status", "stopped"),
+        ("persisted_message_id", "transient-persisted-message"),
+    ),
+)
+def test_stage_fork_snapshot_uses_fenced_source_identity_across_aba(
+    field_name,
+    transient_value,
+    monkeypatch,
+) -> None:
+    store, _, session, _, _, _, selected, _ = _fork_store(durable=True)
+    fence = store.issue_fork_fence(selected.id)
+    entry = fence.lineage[-1]
+    selected_live = store._nodes_by_session[session.id][selected.id]
+    original_value = getattr(selected_live, field_name)
+    original_validate = store.validate_fork_fence
+    calls = 0
+
+    def validate_around_transient_value(candidate, *, image_selections=()):
+        nonlocal calls
+        calls += 1
+        if calls == 1:
+            valid = original_validate(candidate, image_selections=image_selections)
+            setattr(selected_live, field_name, transient_value)
+            return valid
+        setattr(selected_live, field_name, original_value)
+        return original_validate(candidate, image_selections=image_selections)
+
+    monkeypatch.setattr(
+        store,
+        "validate_fork_fence",
+        validate_around_transient_value,
+    )
+
+    snapshot = store.stage_fork_snapshot(
+        fence,
+        title="Independent fork",
+        fork_session_id="fork-session",
+        fork_conversation_id="fork-conversation",
+    )
+    projected = snapshot.messages[-1]
+
+    assert calls == 2
+    assert projected.source_native_message_id == entry.native_message_id
+    assert projected.source_persisted_message_id == entry.persisted_message_id
+    assert projected.source_persisted_revision == entry.persisted_revision
+    assert projected.role is entry.role
+    assert projected.status == entry.status
+
+
+@pytest.mark.parametrize(
+    ("selected_position", "expected_data", "expected_prompt"),
+    (
+        (None, (b"image", b"second-image"), ("a diagram", "second prompt")),
+        (1, (b"second-image",), ("second prompt",)),
+    ),
+)
+def test_stage_fork_snapshot_projects_the_fenced_attachment_scope(
+    selected_position,
+    expected_data,
+    expected_prompt,
+) -> None:
+    store, _, session, _, _, _, selected, _ = _fork_store()
+    selected_live = store._nodes_by_session[session.id][selected.id]
+    selected_live.attachments = (
+        *selected_live.attachments,
+        MessageAttachment(b"second-image", "image/png", "second.png", 1),
+    )
+    selected_live.generation_metadata = (
+        *selected_live.generation_metadata,
+        GenerationVariantMeta(
+            prompt="second prompt",
+            negative_prompt="",
+            backend="openai",
+            model="image-test",
+            seed=4,
+            style=None,
+            params={"size": "small"},
+        ),
+    )
+    image_selections = (
+        (
+            ConsoleForkImageSelectionFence(
+                native_message_id=selected.id,
+                selected_position=selected_position,
+                browse_revision=1,
+                attachment_meta_fingerprint="sha256:selected-image",
+            ),
+        )
+        if selected_position is not None
+        else ()
+    )
+    fence = store.issue_fork_fence(
+        selected.id,
+        image_selections=image_selections,
+    )
+
+    snapshot = store.stage_fork_snapshot(
+        fence,
+        title="Independent fork",
+        fork_session_id="fork-session",
+        fork_conversation_id="fork-conversation",
+    )
+    projected = snapshot.messages[-1]
+
+    assert (
+        tuple(attachment.data for attachment in projected.attachments) == expected_data
+    )
+    assert (
+        tuple(metadata.prompt for metadata in projected.generation_metadata)
+        == expected_prompt
+    )
+
+
 def test_configuration_snapshot_is_the_exact_sanitized_allowlist() -> None:
     store, _, session, _, _, _, selected, _ = _fork_store()
     fence = store.issue_fork_fence(selected.id)

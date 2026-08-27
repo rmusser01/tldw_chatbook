@@ -4684,14 +4684,17 @@ class ConsoleChatStore:
         return current.content, current.id
 
     @staticmethod
-    def _fork_attachment_fingerprint(message: ConsoleChatMessage) -> str:
+    def _fork_attachment_fingerprint(
+        attachments: Sequence[MessageAttachment | ConsoleForkProjectedAttachment],
+        generation: Sequence[GenerationVariantMeta | ConsoleForkProjectedGeneration],
+    ) -> str:
         payload: list[dict[str, object]] = []
-        generation = message.generation_metadata
-        if len(generation) > len(message.attachments):
+        if len(generation) > len(attachments):
             raise ValueError("Console fork generation metadata is unavailable.")
-        for index, attachment in enumerate(message.attachments):
+        for index, attachment in enumerate(attachments):
             if (
-                type(attachment) is not MessageAttachment
+                type(attachment)
+                not in {MessageAttachment, ConsoleForkProjectedAttachment}
                 or type(attachment.data) is not bytes
                 or type(attachment.mime_type) is not str
                 or type(attachment.display_name) is not str
@@ -4702,28 +4705,41 @@ class ConsoleChatStore:
             metadata_payload: dict[str, object] | None = None
             if metadata is not None:
                 if (
-                    type(metadata) is not GenerationVariantMeta
+                    type(metadata)
+                    not in {GenerationVariantMeta, ConsoleForkProjectedGeneration}
                     or type(metadata.prompt) is not str
                     or type(metadata.negative_prompt) is not str
                     or type(metadata.backend) is not str
                     or type(metadata.model) not in {str, type(None)}
                     or type(metadata.seed) not in {int, type(None)}
                     or type(metadata.style) not in {str, type(None)}
-                    or type(metadata.params) is not dict
                 ):
                     raise ValueError("Console fork generation metadata is unavailable.")
-                try:
-                    params_json = json.dumps(
-                        metadata.params,
-                        allow_nan=False,
-                        ensure_ascii=False,
-                        separators=(",", ":"),
-                        sort_keys=True,
-                    )
-                except (TypeError, ValueError):
-                    raise ValueError(
-                        "Console fork generation metadata is unavailable."
-                    ) from None
+                if type(metadata) is GenerationVariantMeta:
+                    if type(metadata.params) is not dict:
+                        raise ValueError(
+                            "Console fork generation metadata is unavailable."
+                        )
+                    try:
+                        params_json = json.dumps(
+                            metadata.params,
+                            allow_nan=False,
+                            ensure_ascii=False,
+                            separators=(",", ":"),
+                            sort_keys=True,
+                        )
+                    except (TypeError, ValueError):
+                        raise ValueError(
+                            "Console fork generation metadata is unavailable."
+                        ) from None
+                elif (
+                    type(metadata) is ConsoleForkProjectedGeneration
+                    and metadata.position == index
+                    and type(metadata.params_json) is str
+                ):
+                    params_json = metadata.params_json
+                else:
+                    raise ValueError("Console fork generation metadata is unavailable.")
                 metadata_payload = {
                     "prompt": metadata.prompt,
                     "negative_prompt": metadata.negative_prompt,
@@ -4788,6 +4804,7 @@ class ConsoleChatStore:
         message: ConsoleChatMessage,
         *,
         durable: bool,
+        selected_attachment_position: int | None = None,
     ) -> ConsoleForkLineageFence:
         if not self._fork_message_state_is_eligible(message.role, message.status):
             raise ValueError("Console fork message state is unavailable.")
@@ -4803,6 +4820,16 @@ class ConsoleChatStore:
         siblings = tuple(
             self._children_by_parent.get(session_id, {}).get(parent_id, ())
         )
+        attachments = message.attachments
+        generation_metadata = message.generation_metadata
+        if selected_attachment_position is not None:
+            attachments = (
+                replace(
+                    attachments[selected_attachment_position],
+                    position=0,
+                ),
+            )
+            generation_metadata = (generation_metadata[selected_attachment_position],)
         return ConsoleForkLineageFence(
             native_message_id=message.id,
             persisted_message_id=message.persisted_message_id,
@@ -4818,7 +4845,10 @@ class ConsoleChatStore:
                 if durable
                 else None
             ),
-            attachment_fingerprint=self._fork_attachment_fingerprint(message),
+            attachment_fingerprint=self._fork_attachment_fingerprint(
+                attachments,
+                generation_metadata,
+            ),
         )
 
     def fork_eligibility(self, message_id: str) -> ConsoleForkEligibility:
@@ -4904,6 +4934,10 @@ class ConsoleChatStore:
                 and selection.selected_position < len(message.generation_metadata)
             ):
                 raise ValueError("Selected generated image is unavailable.")
+        selection_by_message = {
+            selection.native_message_id: selection.selected_position
+            for selection in selections
+        }
         configuration = self._fork_configuration_snapshot(session)
         return ConsoleForkFence(
             source_session_id=session.id,
@@ -4927,6 +4961,7 @@ class ConsoleChatStore:
                     session_id,
                     self._nodes_by_session[session_id][native_id],
                     durable=durable,
+                    selected_attachment_position=selection_by_message.get(native_id),
                 )
                 for native_id in prefix
             ),
@@ -4978,11 +5013,16 @@ class ConsoleChatStore:
                 != fence.source_configuration_fingerprint
             ):
                 return False
+            selection_by_message = {
+                selection.native_message_id: selection.selected_position
+                for selection in fence.image_selections
+            }
             current_lineage = tuple(
                 self._fork_lineage_entry(
                     session.id,
                     self._nodes_by_session[session.id][native_id],
                     durable=durable,
+                    selected_attachment_position=selection_by_message.get(native_id),
                 )
                 for native_id in prefix
             )
@@ -5031,8 +5071,8 @@ class ConsoleChatStore:
         previous_persisted: str | None = None
         for entry in fence.lineage:
             source = nodes[entry.native_message_id]
-            target_native = native_ids[source.id]
-            target_persisted = persisted_ids[source.id]
+            target_native = native_ids[entry.native_message_id]
+            target_persisted = persisted_ids[entry.native_message_id]
             target_turn: str | None = None
             if entry.turn_id is not None:
                 target_turn = turn_ids.setdefault(entry.turn_id, str(uuid4()))
@@ -5040,8 +5080,8 @@ class ConsoleChatStore:
                 str(uuid4()) if entry.visible_variant_id is not None else None
             )
             positions = tuple(range(len(source.attachments)))
-            if source.id in selection_by_message:
-                selected_position = selection_by_message[source.id]
+            if entry.native_message_id in selection_by_message:
+                selected_position = selection_by_message[entry.native_message_id]
                 if selected_position not in positions:
                     raise ValueError("Selected generated image is unavailable.")
                 positions = (selected_position,)
@@ -5085,8 +5125,8 @@ class ConsoleChatStore:
                     )
             projected.append(
                 ConsoleForkProjectedMessage(
-                    source_native_message_id=source.id,
-                    source_persisted_message_id=source.persisted_message_id,
+                    source_native_message_id=entry.native_message_id,
+                    source_persisted_message_id=entry.persisted_message_id,
                     source_persisted_revision=entry.persisted_revision,
                     native_message_id=target_native,
                     persisted_message_id=target_persisted,
@@ -5094,8 +5134,8 @@ class ConsoleChatStore:
                     persisted_parent_id=previous_persisted,
                     turn_id=target_turn,
                     visible_variant_id=target_variant,
-                    role=source.role,
-                    status=source.status,
+                    role=entry.role,
+                    status=entry.status,
                     content=entry.visible_content,
                     attachments=tuple(attachments),
                     generation_metadata=tuple(generation_rows),
@@ -5122,12 +5162,46 @@ class ConsoleChatStore:
             configuration=configuration,
             citation_links=(),
         )
+        candidate_matches_fence = len(candidate.messages) == len(fence.lineage)
+        for entry, message in zip(
+            fence.lineage,
+            candidate.messages,
+        ):
+            candidate_matches_fence = candidate_matches_fence and (
+                message.source_native_message_id == entry.native_message_id
+                and message.source_persisted_message_id == entry.persisted_message_id
+                and message.source_persisted_revision == entry.persisted_revision
+                and message.native_message_id == native_ids[entry.native_message_id]
+                and message.persisted_message_id
+                == persisted_ids[entry.native_message_id]
+                and message.native_parent_id == native_ids.get(entry.native_parent_id)
+                and message.persisted_parent_id
+                == persisted_ids.get(entry.native_parent_id)
+                and message.turn_id == turn_ids.get(entry.turn_id)
+                and (message.visible_variant_id is None)
+                == (entry.visible_variant_id is None)
+                and message.role is entry.role
+                and message.status == entry.status
+                and message.content == entry.visible_content
+            )
+            if not candidate_matches_fence:
+                break
+            candidate_matches_fence = (
+                self._fork_attachment_fingerprint(
+                    message.attachments,
+                    message.generation_metadata,
+                )
+                == entry.attachment_fingerprint
+            )
+            if not candidate_matches_fence:
+                break
         source_still_matches = self.validate_fork_fence(
             fence,
             image_selections=fence.image_selections,
         )
         if (
             not source_still_matches
+            or not candidate_matches_fence
             or configuration_fingerprint != fence.source_configuration_fingerprint
         ):
             raise ValueError("Console fork source changed.")
