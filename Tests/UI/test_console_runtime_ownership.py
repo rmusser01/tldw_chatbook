@@ -120,11 +120,14 @@ async def test_raw_cli_refusal_bank_survives_leave_and_clears_on_dispose():
     bank = runtime.raw_cli_refusal_stash_bank
     bank["session-a"] = [stash]
 
+    assert runtime.accepts_raw_cli_refusal_callbacks is True
     assert await runtime.leave_console() is True
+    assert runtime.accepts_raw_cli_refusal_callbacks is True
     assert runtime.raw_cli_refusal_stash_bank is bank
     assert bank == {"session-a": [stash]}
 
     await runtime.dispose()
+    assert runtime.accepts_raw_cli_refusal_callbacks is False
     assert bank == {}
 
 

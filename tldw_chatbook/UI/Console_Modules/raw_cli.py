@@ -65,6 +65,7 @@ class ConsoleRawCliController:
         selected_local_root: Callable[[str], Path | None],
         private_scratch_root: Callable[[str], Path],
         refusal_stash_bank: dict[str, list[Any]],
+        accepts_raw_cli_refusal_callbacks: Callable[[], bool],
         restore_stash: Callable[[str | None, ConsoleDraftStash], bool],
         append_local_error: Callable[[str | None, str], None],
         append_store_marker: Callable[..., Any],
@@ -80,6 +81,9 @@ class ConsoleRawCliController:
         self._selected_local_root = selected_local_root
         self._private_scratch_root = private_scratch_root
         self._banked_stashes_by_session = refusal_stash_bank
+        self._accepts_raw_cli_refusal_callbacks = (
+            accepts_raw_cli_refusal_callbacks
+        )
         self._restore_stash = restore_stash
         self._append_local_error = append_local_error
         # Task 7/8 consume these already-wired boundaries; Task 6 must not
@@ -169,7 +173,7 @@ class ConsoleRawCliController:
             result = runtime.execute(request, lambda _event: None)
         except Exception:  # noqa: BLE001 -- runtime already owns diagnostic detail
             self._marshal_to_ui(
-                self._append_local_error,
+                self._append_execution_error,
                 session_id,
                 "Raw CLI execution failed locally.",
             )
@@ -195,14 +199,30 @@ class ConsoleRawCliController:
         stash: ConsoleDraftStash,
         message: str,
     ) -> bool:
+        if not self._refusal_callbacks_are_open():
+            return False
         restored = self._restore_stash(session_id, stash)
         if not restored and session_id is not None:
             self._banked_stashes_by_session.setdefault(session_id, []).append(stash)
         self._append_local_error(session_id, message)
         return False
 
+    def _append_execution_error(self, session_id: str, message: str) -> None:
+        """Append a worker failure only while completion callbacks are open."""
+        if self._refusal_callbacks_are_open():
+            self._append_local_error(session_id, message)
+
+    def _refusal_callbacks_are_open(self) -> bool:
+        """Read the app-owned terminal fence, failing closed on teardown."""
+        try:
+            return self._accepts_raw_cli_refusal_callbacks() is True
+        except Exception:  # noqa: BLE001 -- a broken lifecycle seam is closed
+            return False
+
     def restore_banked_stashes(self, session_id: str, composer: Any) -> int:
         """Prepend exact refused stashes once their origin is reconciled."""
+        if not self._refusal_callbacks_are_open():
+            return 0
         stashes = self._banked_stashes_by_session.pop(session_id, [])
         for stash in reversed(stashes):
             composer.restore_stashed_draft(stash)

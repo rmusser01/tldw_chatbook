@@ -582,6 +582,11 @@ class ConsoleRuntime:
         return self._raw_cli_refusal_stash_bank
 
     @property
+    def accepts_raw_cli_refusal_callbacks(self) -> bool:
+        """Whether raw CLI completion callbacks may still mutate UI state."""
+        return not self._disposed
+
+    @property
     def persona_buddy_sink(self) -> PersonaBuddyConsoleAdapter:
         """The app-owned, screen-free sink for trusted Console state."""
         self._persona_buddy_sink.bind_controller(

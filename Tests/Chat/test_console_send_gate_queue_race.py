@@ -477,6 +477,7 @@ async def test_raw_cli_worker_runs_while_model_owner_is_active_without_queueing(
         selected_local_root=lambda _session_id: tmp_path,
         private_scratch_root=lambda _session_id: tmp_path,
         refusal_stash_bank={},
+        accepts_raw_cli_refusal_callbacks=lambda: True,
         restore_stash=lambda _session_id, _stash: None,
         append_local_error=lambda _session_id, _text: None,
         append_store_marker=lambda *args, **kwargs: None,

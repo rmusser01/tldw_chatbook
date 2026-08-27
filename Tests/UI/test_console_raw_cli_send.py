@@ -9,6 +9,7 @@ from typing import Any
 import pytest
 
 from tldw_chatbook.Chat.console_command_grammar import CommandParse, KIND_NOT_COMMAND
+from tldw_chatbook.Chat.console_runtime import ConsoleRuntime
 from tldw_chatbook.Tools.raw_cli_executor import RawCliResult
 from tldw_chatbook.UI.Console_Modules.raw_cli import (
     ConsoleRawCliController,
@@ -82,6 +83,7 @@ def _controller(
     append_local_error: Any | None = None,
     marshal_to_ui: Any | None = None,
     refusal_stash_bank: dict[str, list[ConsoleDraftStash]] | None = None,
+    accepts_raw_cli_refusal_callbacks: Any = lambda: True,
 ):
     restored: list[tuple[str | None, ConsoleDraftStash]] = []
     errors: list[tuple[str | None, str]] = []
@@ -129,6 +131,7 @@ def _controller(
         selected_local_root=read_selected,
         private_scratch_root=read_scratch,
         refusal_stash_bank=refusal_stash_bank,
+        accepts_raw_cli_refusal_callbacks=accepts_raw_cli_refusal_callbacks,
         restore_stash=restore_stash,
         append_local_error=append_local_error,
         append_store_marker=lambda *args, **kwargs: None,
@@ -566,3 +569,102 @@ def test_hidden_session_refusal_bank_restores_multiple_stashes_in_order(
     assert controller.restore_banked_stashes("session-a", reconciled) == 2
     assert reconciled.draft_text() == "! first! secondtail"
     assert controller.restore_banked_stashes("session-a", reconciled) == 0
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("completion", ["refused", "exception"])
+async def test_marshaled_raw_completion_after_runtime_dispose_is_fenced(
+    tmp_path: Path,
+    completion: str,
+) -> None:
+    class CompletingRuntime(_Runtime):
+        def execute(self, request: Any, _on_event: Any) -> RawCliResult:
+            self.requests.append(request)
+            if completion == "exception":
+                raise RuntimeError("test runtime failure")
+            return RawCliResult(
+                invocation_id=request.invocation_id,
+                caller=request.caller,
+                resolved_shell=request.shell,
+                initial_directory=request.initial_directory,
+                elapsed_seconds=0.0,
+                stdout_preview="",
+                stderr_preview="",
+                record_output="",
+                exit_code=None,
+                terminal_state="refused",
+                truncated=False,
+                cleanup_proven=True,
+            )
+
+    owner = ConsoleRuntime(type("App", (), {})())
+    marshalled: list[tuple[Any, tuple[Any, ...]]] = []
+    restore_attempts: list[tuple[str | None, ConsoleDraftStash]] = []
+
+    def refuse_restore(
+        session_id: str | None, stash: ConsoleDraftStash
+    ) -> bool:
+        restore_attempts.append((session_id, stash))
+        return False
+
+    controller, _restored, errors, workers, _selected, _scratch = _controller(
+        tmp_path,
+        CompletingRuntime(),
+        restore_stash=refuse_restore,
+        refusal_stash_bank=owner.raw_cli_refusal_stash_bank,
+        accepts_raw_cli_refusal_callbacks=(
+            lambda: owner.accepts_raw_cli_refusal_callbacks
+        ),
+        marshal_to_ui=lambda callback, *args: marshalled.append((callback, args)),
+    )
+    stash = _physical_raw_stash("pwd")
+
+    assert controller.start_user_command(stash) is True
+    workers[0][0]()
+    assert len(marshalled) == 1
+
+    await owner.dispose()
+    callback, args = marshalled.pop()
+    callback(*args)
+
+    assert restore_attempts == []
+    assert owner.raw_cli_refusal_stash_bank == {}
+    assert errors == []
+
+
+@pytest.mark.asyncio
+async def test_direct_refusal_and_banked_restore_after_dispose_are_fenced(
+    tmp_path: Path,
+) -> None:
+    owner = ConsoleRuntime(type("App", (), {})())
+    restore_attempts: list[tuple[str | None, ConsoleDraftStash]] = []
+
+    def refuse_restore(
+        session_id: str | None, stash: ConsoleDraftStash
+    ) -> bool:
+        restore_attempts.append((session_id, stash))
+        return False
+
+    controller, _restored, errors, _workers, _selected, _scratch = _controller(
+        tmp_path,
+        _Runtime(),
+        restore_stash=refuse_restore,
+        refusal_stash_bank=owner.raw_cli_refusal_stash_bank,
+        accepts_raw_cli_refusal_callbacks=(
+            lambda: owner.accepts_raw_cli_refusal_callbacks
+        ),
+    )
+    stash = _physical_raw_stash("pwd")
+
+    await owner.dispose()
+    assert controller._refuse("session-1", stash, "late refusal") is False
+
+    assert restore_attempts == []
+    assert owner.raw_cli_refusal_stash_bank == {}
+    assert errors == []
+
+    owner.raw_cli_refusal_stash_bank["session-1"] = [stash]
+    composer = ConsoleComposerBar()
+    composer.load_draft("later draft")
+    assert controller.restore_banked_stashes("session-1", composer) == 0
+    assert composer.draft_text() == "later draft"

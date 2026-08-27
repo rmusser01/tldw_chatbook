@@ -1549,6 +1549,9 @@ def build_console_controllers(
             )
         ),
         refusal_stash_bank=screen._console_runtime().raw_cli_refusal_stash_bank,
+        accepts_raw_cli_refusal_callbacks=(
+            lambda: screen._console_runtime().accepts_raw_cli_refusal_callbacks
+        ),
         restore_stash=(
             lambda session_id, stash: restore_refused_raw_cli_stash(
                 session_id,
