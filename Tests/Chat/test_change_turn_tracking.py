@@ -239,6 +239,43 @@ def test_supplied_successor_sha_primes_a_late_ignored_path_for_successor_e(
     assert repo.file_bytes(successor_records[0].end_sha, target.name) == expected
 
 
+def test_supplied_sha_priming_treats_pathspec_magic_as_a_literal_filename(
+    tracker, root
+):
+    target = root / ":(glob)**"
+    expected = b"literal target\n"
+    sibling = root / "unrelated-ignored.txt"
+    (root / ".gitignore").write_text(
+        ":(glob)\\*\\*\nunrelated-ignored.txt\n"
+    )
+
+    parent = tracker.begin_turn([root])
+    parent.await_baseline()
+    assert tracker.end_turn(parent) == []
+    continuation = tracker.continuation(parent)
+    assert continuation is not None
+
+    successor = tracker.begin_turn([root])
+    successor.await_baseline()
+    key = str(root.resolve())
+    supplied = successor.baselines[key]
+    target.write_bytes(expected)
+    sibling.write_text("must stay ignored\n")
+
+    assert tracker.end_turn(
+        continuation,
+        touched_paths=[str(target)],
+        end_shas=successor.baselines,
+    ) == []
+    successor_records = tracker.end_turn(successor)
+
+    assert len(successor_records) == 1
+    assert successor_records[0].baseline_sha == supplied
+    repo = tracker.service.repo_for_root(root)
+    assert repo.file_bytes(successor_records[0].end_sha, target.name) == expected
+    assert repo.file_bytes(successor_records[0].end_sha, sibling.name) is None
+
+
 def test_supplied_sha_survives_force_add_priming_failure(
     tracker, root, monkeypatch
 ):

@@ -403,6 +403,27 @@ class ShadowRepo:
         proc = self._run("cat-file", "-e", f"{sha}^{{commit}}", check=False)
         return proc.returncode == 0
 
+    def _literal_force_pathspecs(self, paths: Sequence[str]) -> list[str]:
+        """Return safe literal pathspecs for existing files inside the root."""
+        literal_paths: list[str] = []
+        for raw in paths:
+            if not raw or raw == ".":
+                continue
+            path = Path(raw)
+            if path.is_absolute():
+                continue
+            try:
+                resolved = (self.root / path).resolve()
+                relative = resolved.relative_to(self.root)
+            except (OSError, RuntimeError, ValueError):
+                continue
+            if relative == Path(".") or not resolved.exists():
+                continue
+            if resolved.is_dir():
+                continue
+            literal_paths.append(f":(literal){relative.as_posix()}")
+        return literal_paths
+
     def snapshot(self, message: str, *, force_paths: Sequence[str] = ()) -> str:
         """Stage everything and commit if anything changed; return the tip.
 
@@ -435,23 +456,7 @@ class ShadowRepo:
 
         with self._locked():
             self.ensure_initialized()
-            literal_paths: list[str] = []
-            for force_path in force_paths:
-                if not force_path or force_path == ".":
-                    continue
-                path = Path(force_path)
-                if path.is_absolute():
-                    continue
-                try:
-                    resolved = (self.root / path).resolve()
-                    relative = resolved.relative_to(self.root)
-                except (OSError, RuntimeError, ValueError):
-                    continue
-                if relative == Path(".") or not resolved.exists():
-                    continue
-                if resolved.is_dir():
-                    continue
-                literal_paths.append(f":(literal){relative.as_posix()}")
+            literal_paths = self._literal_force_pathspecs(force_paths)
             if literal_paths:
                 self._run("add", "-f", "--", *literal_paths)
             scan = scan_root(
@@ -646,12 +651,13 @@ class ShadowRepo:
         Args:
             paths: Root-relative paths to stage with ``add -f``.
         """
-        existing = [p for p in paths if (self.root / p).exists()]
-        if not existing:
+        if not paths:
             return
         with self._locked():
             self.ensure_initialized()
-            self._run("add", "-f", "--", *existing)
+            literal_paths = self._literal_force_pathspecs(paths)
+            if literal_paths:
+                self._run("add", "-f", "--", *literal_paths)
 
     # -- low-level restore (full revert semantics live in TASK-1974) -------
 
