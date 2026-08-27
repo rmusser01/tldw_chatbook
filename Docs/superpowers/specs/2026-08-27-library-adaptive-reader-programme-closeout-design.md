@@ -1,6 +1,6 @@
 # Library adaptive-reader programme closeout design
 
-**Status:** Awaiting user approval
+**Status:** Approved for implementation planning
 **Date:** 2026-08-27
 **Task:** TASK-23019
 **Decision:** [ADR-086](../../../backlog/decisions/086-library-adaptive-reader-shell.md)
