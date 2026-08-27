@@ -668,6 +668,7 @@ class WatchlistTree(Vertical):
         """Move the active marker in place so scope commits retain focus."""
         if not self.is_mounted:
             return
+        self._sync_scope_action_controls(scope)
         for button in self.query(".is-active"):
             button.remove_class("is-active")
         button_id = self._scope_button_id(scope)
@@ -677,6 +678,58 @@ class WatchlistTree(Vertical):
             self.query_one(f"#{button_id}", Button).add_class("is-active")
         except Exception:
             return
+
+    def _sync_scope_action_controls(self, scope: TreeScope | None) -> None:
+        """Patch scope-dependent action buttons without recomposing the tree."""
+        on_watchlist = (
+            scope is not None
+            and scope.kind == "watchlist"
+            and scope.watchlist_id is not None
+        )
+        on_watchlist_source = (
+            scope is not None
+            and scope.kind == "source"
+            and scope.parent_context == "watchlist"
+            and scope.watchlist_id is not None
+            and scope.source_id is not None
+        )
+        actions = (
+            (
+                "wl-tree-rename",
+                on_watchlist,
+                self._NEEDS_WATCHLIST,
+                "Rename the selected watchlist.",
+            ),
+            (
+                "wl-tree-delete",
+                on_watchlist,
+                self._NEEDS_WATCHLIST,
+                "Delete the selected watchlist. Its sources are kept.",
+            ),
+            (
+                "wl-tree-add-source",
+                on_watchlist,
+                self._NEEDS_WATCHLIST,
+                "Add a source you already have to the selected watchlist. "
+                "To make a new one, use New source under Sources.",
+            ),
+            (
+                "wl-tree-remove-source",
+                on_watchlist_source,
+                self._NEEDS_SOURCE,
+                "Remove the selected source from its watchlist.",
+            ),
+        )
+        for button_id, allowed, blocked_copy, ready_copy in actions:
+            try:
+                button = self.query_one(f"#{button_id}", Button)
+            except Exception:
+                continue
+            disabled_reason = self.write_disabled_reason or (
+                None if allowed else blocked_copy
+            )
+            button.disabled = disabled_reason is not None
+            button.tooltip = disabled_reason or ready_copy
 
     @staticmethod
     def _scope_button_id(scope: TreeScope | None) -> str | None:

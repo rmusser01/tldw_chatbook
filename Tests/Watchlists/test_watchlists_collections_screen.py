@@ -46,7 +46,11 @@ from tldw_chatbook.UI.Watchlists_Modules.sources_pane import (
     SourceSelected,
     SourcesPane,
 )
-from tldw_chatbook.UI.Watchlists_Modules.watchlist_tree import TreeScope, TreeScopeChanged
+from tldw_chatbook.UI.Watchlists_Modules.watchlist_tree import (
+    TreeScope,
+    TreeScopeChanged,
+    WatchlistTree,
+)
 from tldw_chatbook.Utils.input_validation import validate_url as real_validate_url
 
 
@@ -1092,6 +1096,7 @@ async def test_scoped_source_rows_narrows_by_watchlist_and_unassigned():
         )
         service.add_source(morning["id"], a)
         service.add_source(security["id"], b)
+        await screen._load_tree_data().wait()
 
         screen.post_message(TreeScopeChanged(TreeScope(kind="all")))
         await pilot.pause()
@@ -2632,7 +2637,7 @@ async def test_staged_console_payload_follows_the_tree_scope():
         )
         db.add_subscription(name="Krebs", type="rss", source="https://b.example/f")
         service.add_source(morning["id"], arxiv)
-        screen._tree_watchlists = [{"id": morning["id"], "name": "Morning AI Brief"}]
+        await screen._load_tree_data().wait()
 
         screen.post_message(
             TreeScopeChanged(TreeScope(kind="watchlist", watchlist_id=morning["id"]))
@@ -2752,7 +2757,7 @@ async def test_centre_header_summary_follows_the_tree_scope_off_the_read_tab():
         )
         db.add_subscription(name="Krebs", type="rss", source="https://b.example/f")
         service.add_source(morning["id"], arxiv)
-        screen._tree_watchlists = [{"id": morning["id"], "name": "Morning AI Brief"}]
+        await screen._load_tree_data().wait()
 
         screen.active_section = "sources"
         await pilot.pause(0.2)
@@ -2812,7 +2817,7 @@ async def test_centre_header_summary_follows_the_tree_scope_on_the_read_tab_too(
         )
         db.add_subscription(name="Krebs", type="rss", source="https://b.example/f")
         service.add_source(morning["id"], arxiv)
-        screen._tree_watchlists = [{"id": morning["id"], "name": "Morning AI Brief"}]
+        await screen._load_tree_data().wait()
 
         # task-2513 made Read ("items") the DEFAULT section, so the section
         # write the sibling tests use to force a rebuild would be a no-op
@@ -2965,6 +2970,185 @@ async def test_load_tree_data_failure_notifies_the_user():
         screen = host.screen_stack[-1]
         assert screen.query_one("#wl-tree-node-all", Button)
         assert screen.query_one("#wl-tree-node-unassigned", Button)
+
+
+@pytest.mark.asyncio
+async def test_tree_snapshot_owns_complete_aggregate_rows_not_management_cache(
+    monkeypatch,
+) -> None:
+    app = _build_test_app()
+    service = app.watchlist_bundle_service
+    assigned_id = service._db.add_subscription(
+        name="Assigned feed", type="rss", source="https://assigned.example/feed"
+    )
+    unassigned_id = service._db.add_subscription(
+        name="Unassigned feed",
+        type="rss",
+        source="https://unassigned.example/feed",
+    )
+    watchlist = service.create("Snapshot watchlist")
+    service.add_source(watchlist["id"], assigned_id)
+    spies = {}
+    for name in (
+        "list_watchlists",
+        "list_all_source_rows",
+        "list_unassigned_source_rows",
+        "get_watchlist_item_counts",
+        "get_source_item_counts",
+    ):
+        spy = Mock(wraps=getattr(service, name))
+        monkeypatch.setattr(service, name, spy)
+        spies[name] = spy
+
+    host = DestinationHarness(app, "watchlists_collections")
+    async with host.run_test(size=(180, 50)) as pilot:
+        await host.workers.wait_for_complete()
+        screen = host.screen_stack[-1]
+        screen._loaded_sources = [{"id": 999, "name": "Capped management row"}]
+        for spy in spies.values():
+            spy.reset_mock()
+
+        await screen._load_tree_data().wait()
+        await pilot.pause()
+
+        assert {row["id"] for row in screen._tree_all_source_rows} == {
+            assigned_id,
+            unassigned_id,
+        }
+        assert [row["id"] for row in screen._tree_unassigned_source_rows] == [
+            unassigned_id
+        ]
+        assert screen._loaded_sources == [
+            {"id": 999, "name": "Capped management row"}
+        ]
+        for name, spy in spies.items():
+            assert spy.call_count == 1, name
+
+
+@pytest.mark.asyncio
+async def test_root_and_watchlist_expansion_persist_independently_across_rebuilds() -> None:
+    app = _build_test_app()
+    watchlist = app.watchlist_bundle_service.create("Persistent branch")
+    host = DestinationHarness(app, "watchlists_collections")
+    async with host.run_test(size=(180, 50)) as pilot:
+        await host.workers.wait_for_complete()
+        await pilot.pause()
+        screen = host.screen_stack[-1]
+        tree = screen.query_one("#wl-tree", WatchlistTree)
+        tree.expanded_root_kinds = frozenset({"all", "unassigned"})
+        tree.expanded = frozenset({watchlist["id"]})
+        await pilot.pause()
+
+        screen.active_section = "sources"
+        await pilot.pause()
+        screen.active_section = "items"
+        await pilot.pause()
+        tree = screen.query_one("#wl-tree", WatchlistTree)
+
+        assert tree.expanded_root_kinds == frozenset({"all", "unassigned"})
+        assert tree.expanded == frozenset({watchlist["id"]})
+        assert screen._tree_expanded_root_kinds == frozenset(
+            {"all", "unassigned"}
+        )
+        assert screen._tree_expanded_watchlist_ids == frozenset({watchlist["id"]})
+
+
+@pytest.mark.asyncio
+async def test_tree_snapshot_acquisition_runs_off_the_textual_event_loop(
+    monkeypatch,
+) -> None:
+    app = _build_test_app()
+    service = app.watchlist_bundle_service
+    caller_thread = threading.get_ident()
+    acquisition_threads: list[int] = []
+    original = service.list_all_source_rows
+
+    def record_thread() -> list[dict]:
+        acquisition_threads.append(threading.get_ident())
+        return original()
+
+    monkeypatch.setattr(service, "list_all_source_rows", record_thread)
+    host = DestinationHarness(app, "watchlists_collections")
+    async with host.run_test(size=(180, 50)):
+        await host.workers.wait_for_complete()
+
+    assert acquisition_threads
+    assert all(thread_id != caller_thread for thread_id in acquisition_threads)
+
+
+@pytest.mark.asyncio
+async def test_slow_tree_refresh_cannot_overwrite_a_newer_snapshot(monkeypatch) -> None:
+    app = _build_test_app()
+    service = app.watchlist_bundle_service
+    slow_started = threading.Event()
+    release_slow = threading.Event()
+    call_lock = threading.Lock()
+    call_count = 0
+
+    def staged_all_sources() -> list[dict]:
+        nonlocal call_count
+        with call_lock:
+            call_count += 1
+            this_call = call_count
+        if this_call == 1:
+            slow_started.set()
+            release_slow.wait(5)
+            return [{"id": 1, "name": "Stale", "type": "rss"}]
+        return [{"id": 2, "name": "Fresh", "type": "rss"}]
+
+    host = DestinationHarness(app, "watchlists_collections")
+    async with host.run_test(size=(180, 50)) as pilot:
+        await host.workers.wait_for_complete()
+        screen = host.screen_stack[-1]
+        monkeypatch.setattr(service, "list_all_source_rows", staged_all_sources)
+        first = screen._load_tree_data()
+        assert await _wait_until(pilot, slow_started.is_set)
+        second = screen._load_tree_data()
+        await second.wait()
+        assert [row["name"] for row in screen._tree_all_source_rows] == ["Fresh"]
+
+        release_slow.set()
+        await first.wait()
+        assert [row["name"] for row in screen._tree_all_source_rows] == ["Fresh"]
+
+
+@pytest.mark.asyncio
+async def test_tree_branch_failure_retains_last_snapshot_and_notifies_once_per_episode(
+    monkeypatch,
+) -> None:
+    app = _build_test_app()
+    service = app.watchlist_bundle_service
+    service._db.add_subscription(
+        name="Last known feed", type="rss", source="https://known.example/feed"
+    )
+    app.notify = Mock()
+    host = DestinationHarness(app, "watchlists_collections")
+    async with host.run_test(size=(180, 50)):
+        await host.workers.wait_for_complete()
+        screen = host.screen_stack[-1]
+        expected_all = list(screen._tree_all_source_rows)
+        expected_unassigned = list(screen._tree_unassigned_source_rows)
+        app.notify.reset_mock()
+
+        failure = Mock(side_effect=RuntimeError("all-source branch failed"))
+        monkeypatch.setattr(service, "list_all_source_rows", failure)
+        await screen._load_tree_data().wait()
+        await screen._load_tree_data().wait()
+
+        assert screen._tree_all_source_rows == expected_all
+        assert screen._tree_unassigned_source_rows == expected_unassigned
+        assert screen._tree_snapshot_failures == frozenset({"all_sources"})
+        app.notify.assert_called_once()
+
+        monkeypatch.setattr(
+            service, "list_all_source_rows", Mock(return_value=expected_all)
+        )
+        await screen._load_tree_data().wait()
+        assert screen._tree_snapshot_failures == frozenset()
+
+        monkeypatch.setattr(service, "list_all_source_rows", failure)
+        await screen._load_tree_data().wait()
+        assert app.notify.call_count == 2
 
 
 # --- TASK-895: the tree's write verbs, end to end -------------------------
@@ -3341,7 +3525,10 @@ async def test_removing_a_source_from_a_watchlist_keeps_the_source():
         screen.post_message(
             TreeScopeChanged(
                 TreeScope(
-                    kind="source", watchlist_id=watchlist["id"], source_id=source_id
+                    kind="source",
+                    parent_context="watchlist",
+                    watchlist_id=watchlist["id"],
+                    source_id=source_id,
                 )
             )
         )
@@ -3483,6 +3670,17 @@ def test_every_watchlist_bundle_service_method_has_a_production_caller():
                 for target in node.targets:
                     if isinstance(target, ast.Name):
                         self.aliases.add(target.id)
+            self.generic_visit(node)
+
+        def visit_FunctionDef(self, node: ast.FunctionDef) -> None:
+            for argument in (*node.args.posonlyargs, *node.args.args):
+                annotation = argument.annotation
+                if annotation is not None and any(
+                    isinstance(part, ast.Name)
+                    and part.id == "WatchlistBundleService"
+                    for part in ast.walk(annotation)
+                ):
+                    self.aliases.add(argument.arg)
             self.generic_visit(node)
 
         def visit_Call(self, node: ast.Call) -> None:
