@@ -8981,6 +8981,19 @@ class ConsoleChatStore:
         with self._generation_owner_locks_guard:
             return self._generation_attempt_tokens.get(message_id) == generation_token
 
+    def retire_generation_attempt(
+        self,
+        message_id: str,
+        generation_token: int,
+    ) -> bool:
+        """Retire exactly one completed attempt without erasing a successor."""
+        with self._generation_owner_scope(message_id):
+            with self._generation_owner_locks_guard:
+                if self._generation_attempt_tokens.get(message_id) != generation_token:
+                    return False
+                self._generation_attempt_tokens.pop(message_id, None)
+                return True
+
     def _require_generation_attempt_locked(
         self,
         message_id: str,

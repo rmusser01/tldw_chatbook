@@ -13,6 +13,7 @@ from tldw_chatbook.Chat.console_prepared_request import (
     resolve_request_capacity,
     thaw_json,
 )
+from tldw_chatbook.Chat.console_history_budget import ProviderContinuationSidecar
 from tldw_chatbook.Chat.console_provider_gateway import (
     ConsoleProviderGateway,
     ConsoleProviderResolution,
@@ -22,6 +23,10 @@ from tldw_chatbook.Chat.console_thinking_history import (
     ThinkingHistorySerializationError,
     ThinkingReplayTarget,
     resolve_thinking_history,
+)
+from tldw_chatbook.Chat.provider_continuation import (
+    ContinuationRestoreTarget,
+    parse_provider_continuation_json,
 )
 from tldw_chatbook.Chat.thinking_blocks import (
     DisplayableThinkingBlock,
@@ -292,3 +297,82 @@ def test_gateway_include_refuses_before_provider_contact() -> None:
         )
 
     assert called is False
+
+
+@pytest.mark.asyncio
+async def test_gateway_shared_raw_owner_marker_attaches_continuation_and_thinking_once() -> (
+    None
+):
+    checkpoint = parse_provider_continuation_json(
+        {
+            "schema_version": 1,
+            "checkpoint_revision": 1,
+            "provider": "deepseek",
+            "protocol": "chat_completions",
+            "model": "target-model",
+            "api_base_url": "http://127.0.0.1:9099",
+            "state": "complete",
+            "rounds": [
+                {
+                    "assistant_content": "visible answer",
+                    "reasoning_blocks": [],
+                    "calls": [
+                        {
+                            "call_id": "call_shared",
+                            "name": "lookup",
+                            "arguments": "{}",
+                            "state": "completed",
+                            "result": "done",
+                        }
+                    ],
+                }
+            ],
+        }
+    )
+    dispatched: list[dict] = []
+
+    def provider_spy(**kwargs):
+        dispatched.append(kwargs)
+        return {"choices": [{"message": {"content": "ok"}}]}
+
+    gateway = ConsoleProviderGateway(chat_api_call_fn=provider_spy)
+    resolution = ConsoleProviderResolution(
+        provider="deepseek",
+        base_url="http://127.0.0.1:9099",
+        model="target-model",
+        ready=True,
+        execution_key="llama_cpp",
+        continuation_protocol="chat_completions",
+        thinking_stream_disposition="displayable",
+        thinking_round_trip_version=1,
+    )
+
+    prepared = gateway.prepare_chat_request(
+        resolution,
+        [
+            {"role": "user", "content": "old"},
+            {"role": "assistant", "content": "visible answer", "_owner": "a1"},
+            {"role": "user", "content": "current"},
+        ],
+        continuation_sidecar=(ProviderContinuationSidecar("a1", checkpoint),),
+        continuation_target=ContinuationRestoreTarget(
+            provider="deepseek",
+            protocol="chat_completions",
+            model="target-model",
+            api_base_url="http://127.0.0.1:9099",
+        ),
+        continuation_owner_key="_owner",
+        thinking_sidecar=(
+            ProviderThinkingSidecar(
+                "a1", ThinkingEnvelope((_displayable("SHARED-OWNER-CANARY"),))
+            ),
+        ),
+        thinking_policy="include",
+        thinking_owner_key="_owner",
+    )
+
+    assert [group.owner_message_id for group in prepared.continuation_groups] == ["a1"]
+    assert [group.owner_message_id for group in prepared.thinking_groups] == ["a1"]
+    assert repr(prepared.messages_payload).count("SHARED-OWNER-CANARY") == 1
+    assert [item async for item in gateway.stream_chat(resolution, prepared)] == ["ok"]
+    assert repr(dispatched[0]["messages_payload"]).count("SHARED-OWNER-CANARY") == 1

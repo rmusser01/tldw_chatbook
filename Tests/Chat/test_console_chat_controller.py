@@ -4662,6 +4662,7 @@ async def test_controller_direct_replays_live_session_thinking_policy() -> None:
     assert gateway.prepare_kwargs["thinking_sidecar"][0].owner_message_id == owner.id
     wire = repr(gateway.prepared.messages_payload)
     assert wire.count("late serialized evidence") == 1
+    assert store._generation_runtime_counts() == (0, 0, 0)
 
 
 @pytest.mark.asyncio
@@ -4701,6 +4702,7 @@ async def test_controller_agent_replays_same_live_session_thinking_policy(
     assert gateway.prepare_kwargs["thinking_sidecar"][0].owner_message_id == owner.id
     wire = repr(gateway.prepared.messages_payload)
     assert wire.count("late serialized evidence") == 1
+    assert store._generation_runtime_counts() == (0, 0, 0)
 
 
 @pytest.mark.asyncio
@@ -8032,6 +8034,34 @@ def test_generation_runtime_entries_do_not_survive_invalid_or_owner_churn() -> N
     assert store._generation_runtime_counts() == (0, 0, 0)
 
 
+def test_generation_attempt_retirement_is_exact_and_fences_late_thinking() -> None:
+    """Retirement reclaims only its own token and rejects its late evidence."""
+    store = ConsoleChatStore()
+    session = _arm_session(store)
+    assistant = store.append_message(
+        session.id,
+        role=ConsoleMessageRole.ASSISTANT,
+        content="answer",
+    )
+    retired = store.begin_generation_attempt(assistant.id)
+
+    assert store.retire_generation_attempt(assistant.id, retired) is True
+    assert store._generation_runtime_counts() == (0, 0, 0)
+    store.settle_message_thinking(
+        assistant.id,
+        _terminal_thinking(assistant.id, "complete"),
+        generation_token=retired,
+    )
+    assert store.get_message(assistant.id).thinking is None
+
+    stale = store.begin_generation_attempt(assistant.id)
+    current = store.begin_generation_attempt(assistant.id)
+    assert store.retire_generation_attempt(assistant.id, stale) is False
+    assert store._generation_attempt_tokens[assistant.id] == current
+    assert store.retire_generation_attempt(assistant.id, current) is True
+    assert store._generation_runtime_counts() == (0, 0, 0)
+
+
 def test_edit_fences_detached_thinking_before_generation_evidence_is_cleared(
     tmp_path,
 ) -> None:
@@ -8229,7 +8259,13 @@ async def test_dispatch_recovery_reset_reuses_fence_for_no_evidence_reply(
         )
 
         assert result.accepted is True
-        assert store._generation_attempt_tokens[assistant.id] == replacement_token
+        assert store._generation_runtime_counts() == (0, 0, 0)
+        store.settle_message_thinking(
+            assistant.id,
+            _terminal_thinking(assistant.id, "complete"),
+            generation_token=replacement_token,
+        )
+        assert store.get_message(assistant.id).thinking is None
         assert store.get_message(assistant.id).content == "hello"
         assert store.get_message(assistant.id).thinking is None
         reloaded = _reload_console_message(

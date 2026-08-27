@@ -1838,16 +1838,24 @@ class ConsoleProviderGateway:
                 if is_deleted_history_value(message.get("deleted")):
                     continue
                 row = dict(message)
-                continuation_owner_id = (
-                    row.pop(continuation_owner_key, None)
-                    if continuation_owner_key is not None
-                    else None
-                )
-                thinking_owner_id = (
-                    row.pop(thinking_owner_key, None)
-                    if thinking_owner_key is not None
-                    else None
-                )
+                if (
+                    continuation_owner_key is not None
+                    and continuation_owner_key == thinking_owner_key
+                ):
+                    shared_owner_id = row.pop(continuation_owner_key, None)
+                    continuation_owner_id = shared_owner_id
+                    thinking_owner_id = shared_owner_id
+                else:
+                    continuation_owner_id = (
+                        row.pop(continuation_owner_key, None)
+                        if continuation_owner_key is not None
+                        else None
+                    )
+                    thinking_owner_id = (
+                        row.pop(thinking_owner_key, None)
+                        if thinking_owner_key is not None
+                        else None
+                    )
                 row.pop("provider_continuation", None)
                 row.pop("deleted", None)
                 if (

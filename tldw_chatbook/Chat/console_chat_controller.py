@@ -15942,6 +15942,10 @@ class ConsoleChatController:
             # own matching pop.
             if self._active_cancel_events.get(owner_id) is cancel_event:
                 self._active_cancel_events.pop(owner_id, None)
+            self.store.retire_generation_attempt(
+                assistant_message_id,
+                generation_token,
+            )
 
     async def _select_post_generation_body(
         self,

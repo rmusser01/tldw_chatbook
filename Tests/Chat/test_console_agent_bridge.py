@@ -6570,6 +6570,9 @@ def test_agent_late_thinking_after_controller_stop_is_durably_settled(
         assert stopped_row is not None
         assert stopped_row["assistant_generation_state"] == "stopped"
         assert stopped_row["thinking_blocks_json"] is None
+        # Stop commits the visible terminal state while the detached worker
+        # still owns late-evidence settlement authority.
+        assert store._generation_runtime_counts() == (0, 0, 1)
 
         gateway.release.set()
         worker.join(timeout=5)
@@ -6577,6 +6580,7 @@ def test_agent_late_thinking_after_controller_stop_is_durably_settled(
         assert "error" not in result
         _run_id, outcome = result["reply"]
         assert outcome.status == RUN_CANCELLED
+        assert store._generation_runtime_counts() == (0, 0, 0)
 
         settled_row = chat_db.get_message_by_id(assistant.persisted_message_id)
         assert settled_row is not None

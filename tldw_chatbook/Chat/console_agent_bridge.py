@@ -164,6 +164,32 @@ from tldw_chatbook.Internal_Prompts.catalog import CATALOG
 from tldw_chatbook.Skills_Interop.skill_trust_models import SkillTrustBlockedError
 from tldw_chatbook.Utils.token_counter import get_model_token_limit
 
+
+def _retire_generation_attempt_after_reply(
+    method: Callable[..., Any],
+) -> Callable[..., Any]:
+    """Keep an agent attempt current through capture settlement, then retire it."""
+
+    @functools.wraps(method)
+    def wrapped(self: Any, *args: Any, **kwargs: Any) -> Any:
+        assistant_message_id = kwargs["assistant_message_id"]
+        generation_token = kwargs.get("generation_token")
+        if generation_token is None:
+            generation_token = self._store.begin_generation_attempt(
+                assistant_message_id
+            )
+            kwargs["generation_token"] = generation_token
+        try:
+            return method(self, *args, **kwargs)
+        finally:
+            self._store.retire_generation_attempt(
+                assistant_message_id,
+                generation_token,
+            )
+
+    return wrapped
+
+
 # Catalog-default re-export: keeps existing imports/tests valid and pins
 # the "shipped default" text. compose_agent_system_prompt below resolves
 # the live (possibly overridden) value at call time via get_internal_prompt.
@@ -3669,6 +3695,7 @@ class ConsoleAgentBridge:
 
     # -- run ------------------------------------------------------------
 
+    @_retire_generation_attempt_after_reply
     def run_reply(
         self,
         *,
