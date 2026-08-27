@@ -256,6 +256,27 @@ def classify_console_raw_draft(stash: ConsoleDraftStash) -> ConsoleRawDraft:
     return ConsoleRawDraft("chat", stash.text)
 
 
+def unescape_console_raw_chat_stash(stash: ConsoleDraftStash) -> ConsoleDraftStash:
+    """Remove one raw-chat escape while preserving segment provenance."""
+    if not stash.text.startswith(r"\! "):
+        return stash
+    escaped_text = stash.text[1:]
+    segments = [replace(segment) for segment in stash.segments]
+    if not segments and escaped_text:
+        segments = [_DraftSegment(escaped_text)]
+    for index, segment in enumerate(segments):
+        if segment.text:
+            if segment.text.startswith("\\"):
+                segments[index] = replace(segment, text=segment.text[1:])
+            break
+    return replace(
+        stash,
+        segments=segments,
+        text=escaped_text,
+        raw_cli_prefix_typed=False,
+    )
+
+
 @dataclass(frozen=True)
 class _DraftHistorySnapshot:
     """Undo/redo entry with bounded structured state and flat compatibility."""
@@ -1960,7 +1981,11 @@ class ConsoleComposerBar(Horizontal):
 
         normalized_send_label = send_label.strip() or "Send"
         self._send_label = normalized_send_label
-        send_ready = has_draft and not send_blocked
+        raw_cli_ready = (
+            self._raw_cli_prefix_typed and self.draft_text().startswith("! ")
+        )
+        effective_send_blocked = send_blocked and not raw_cli_ready
+        send_ready = has_draft and not effective_send_blocked
         # TASK-23018: this used to call the TOOLTIP provider, which re-derives
         # the entire next request (whole-session provider projection + token
         # count) -- measured at 5.85 ms per keypress on a 400-message session
@@ -1969,11 +1994,15 @@ class ConsoleComposerBar(Horizontal):
         # cheap availability question is asked here now; the rendered tooltip
         # is derived in `_refresh_send_price_for_pointer` when it reaches
         # Send, which is the only moment a tooltip can be seen.
-        price_available = send_ready and self._send_price_tooltip_provider is not None
+        price_available = (
+            send_ready
+            and not raw_cli_ready
+            and self._send_price_tooltip_provider is not None
+        )
         if price_available:
             price_available = self._send_price_is_available()
         self._send_price_available = price_available
-        displayed_send_label = normalized_send_label
+        displayed_send_label = "Run" if raw_cli_ready else normalized_send_label
         if price_available:
             displayed_send_label = f"{normalized_send_label} | $"
 
@@ -1994,7 +2023,9 @@ class ConsoleComposerBar(Horizontal):
         # feedback (toast + transcript system row) survives the flag.
         send_button.disabled = not send_ready
         send_button.variant = "primary" if send_ready else "default"
-        if send_blocked and wake_turn_active:
+        if raw_cli_ready:
+            send_button.tooltip = "Run this raw command with host-user authority."
+        elif effective_send_blocked and wake_turn_active:
             # task-15862 AC#3: a wake turn's blocked state names itself --
             # the queue tooltip riding `setup_blocked_reason` mid-wake read
             # as a provider-setup problem.
@@ -2002,9 +2033,9 @@ class ConsoleComposerBar(Horizontal):
                 "A background sub-agent result is being delivered. "
                 "Wait for it to finish."
             )
-        elif send_blocked and setup_blocked_reason:
+        elif effective_send_blocked and setup_blocked_reason:
             send_button.tooltip = setup_blocked_reason
-        elif send_blocked:
+        elif effective_send_blocked:
             send_button.tooltip = (
                 "Wait for the active Console run to finish before sending."
             )
@@ -2023,21 +2054,23 @@ class ConsoleComposerBar(Horizontal):
         send_button.set_class(not send_ready, "console-action-disabled")
         send_button.set_class(send_ready, "console-send-ready")
         send_button.set_class(not has_draft, "console-send-inactive")
-        send_button.set_class(send_blocked, "console-send-blocked")
+        send_button.set_class(effective_send_blocked, "console-send-blocked")
         self.set_class(
-            send_blocked and bool(setup_blocked_reason) and not wake_turn_active,
+            effective_send_blocked
+            and bool(setup_blocked_reason)
+            and not wake_turn_active,
             "console-composer-setup-blocked",
         )
         reason = build_console_disabled_reason(
             action_id="send",
             has_draft=has_draft,
-            send_blocked=send_blocked,
+            send_blocked=effective_send_blocked,
             setup_blocked_reason=setup_blocked_reason,
             wake_turn_active=wake_turn_active,
         )
         reason_changed = reason != self._send_disabled_reason
         self._send_disabled_reason = reason
-        self._sync_send_disabled_reason(reason, muted=not send_blocked)
+        self._sync_send_disabled_reason(reason, muted=not effective_send_blocked)
 
         stop_button.disabled = False
         stop_button.variant = "warning" if run_active else "default"
@@ -3433,13 +3466,11 @@ class ConsoleComposerBar(Horizontal):
     @on(Button.Pressed, "#console-send-message")
     def _stash_visible_send_draft(self, event: Button.Pressed) -> None:
         """Capture a mouse Send at its press event, matching the Enter path."""
-        if not self._raw_cli_prefix_typed:
-            return
         owner = self.screen
         if not hasattr(owner, "_console_pending_send_stash"):
             return
         if getattr(owner, "_console_pending_send_stash") is None:
-            owner._console_pending_send_stash = self.stash_draft_for_send()
+            owner._console_pending_send_stash = self.stash_raw_cli_draft_for_send()
 
     def load_draft(self, text: str) -> None:
         """Replace the native Console draft with literal text.
@@ -3510,6 +3541,14 @@ class ConsoleComposerBar(Horizontal):
         )
         self.clear_draft()
         return stash
+
+    def stash_raw_cli_draft_for_send(self) -> ConsoleDraftStash | None:
+        """Consume an existing trusted raw-prefix latch without deriving trust."""
+        if not (
+            self._raw_cli_prefix_typed and self.draft_text().startswith("! ")
+        ):
+            return None
+        return self.stash_draft_for_send()
 
     def restore_stashed_draft(self, stash: ConsoleDraftStash | None) -> None:
         """Put a stashed draft back, ahead of anything typed since the stash.

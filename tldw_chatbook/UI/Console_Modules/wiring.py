@@ -82,7 +82,7 @@ from .prompt_queue import (
     commit_queued_draft_transaction,
 )
 from .prompts import ConsolePromptsController
-from .raw_cli import ConsoleRawCliController
+from .raw_cli import ConsoleRawCliController, restore_refused_raw_cli_stash
 from .reaction_preview import get_console_reaction_preview_coordinator
 from .realtime import ConsoleRealtimeController
 from .review_selection import (
@@ -1543,10 +1543,20 @@ def build_console_controllers(
                 screen._console_runtime().scratch_spaces.snapshot(session_id).root
             )
         ),
-        restore_stash=lambda stash: screen._restore_console_send_stash(stash),
+        restore_stash=(
+            lambda session_id, stash: restore_refused_raw_cli_stash(
+                session_id,
+                stash,
+                store=screen._ensure_console_chat_store(),
+                composer=screen._console_composer_or_none(),
+                visible_session_id=screen._console_visible_draft_session_id,
+            )
+        ),
         append_local_error=(
-            lambda text: screen.run_worker(
-                screen._append_native_console_system_message(text),
+            lambda session_id, text: screen.run_worker(
+                screen._append_native_console_system_message(
+                    text, session_id=session_id
+                ),
                 exclusive=False,
                 name="_append_console_raw_cli_refusal",
             )

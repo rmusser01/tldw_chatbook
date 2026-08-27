@@ -460,6 +460,114 @@ async def test_raw_cli_visible_send_consumes_same_trusted_stash_as_enter() -> No
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("setup_reason", ["", "Choose a provider and model."])
+async def test_raw_cli_keeps_visible_send_enabled_across_cached_model_blocks(
+    setup_reason: str,
+) -> None:
+    host = _RawCliComposerHarness()
+
+    async with host.run_test(size=(120, 20)) as pilot:
+        composer = host.query_one("#console-native-composer", ConsoleComposerBar)
+        _type_raw_cli_prefix(composer)
+        composer.insert_text("pwd")
+        composer.sync_action_state(
+            has_draft=True,
+            run_active=True,
+            can_save_chatbook=False,
+            send_blocked=True,
+            setup_blocked_reason=setup_reason,
+            send_label="Queue",
+        )
+        await pilot.pause()
+
+        send = composer.query_one("#console-send-message", Button)
+        reason = composer.query_one("#console-send-disabled-reason", Static)
+        assert send.disabled is False
+        assert send.has_class("console-send-ready")
+        assert not send.has_class("console-send-blocked")
+        assert send.tooltip == "Run this raw command with host-user authority."
+        assert str(send.label) == "Run"
+        assert reason.styles.display == "none"
+
+        composer.clear_draft()
+        await pilot.pause()
+
+        assert send.disabled is True
+        assert send.has_class("console-send-blocked")
+        assert str(send.label) == "Queue"
+        assert reason.styles.display == "block"
+
+
+@pytest.mark.asyncio
+async def test_escaped_chat_stash_keeps_segment_payload_and_restore_consistent() -> (
+    None
+):
+    composer = ConsoleComposerBar()
+    composer.insert_text(r"\! ")
+    composer.insert_pasted_text("echo pasted")
+    stash = composer.stash_draft_for_send()
+    assert stash is not None
+    original_metadata = [
+        (
+            segment.origin,
+            segment.collapse_state,
+            segment.label,
+            segment.generated_boundary,
+            segment.paste_block,
+        )
+        for segment in stash.segments
+    ]
+
+    dispatched: list[tuple[str, ConsoleDraftStash | None]] = []
+
+    async def dispatch(
+        draft: str, *, stash: ConsoleDraftStash | None = None
+    ) -> bool:
+        dispatched.append((draft, stash))
+        return True
+
+    screen = SimpleNamespace(
+        _console_pending_send_stash=stash,
+        _raw_cli=SimpleNamespace(start_user_command=Mock()),
+        _console_composer_or_none=lambda: composer,
+        query_one=lambda *_args, **_kwargs: composer,
+        _console_pending_image_attachment=lambda: None,
+        _focus_console_composer_if_needed=lambda **_kwargs: None,
+        _dismiss_console_guidance=lambda: None,
+        _console_command_registry=SimpleNamespace(
+            parse=Mock(side_effect=AssertionError("pasted body must not parse"))
+        ),
+        _dispatch_console_draft_send=dispatch,
+    )
+
+    assert await ChatScreen._send_console_message_from_visible_action(screen) is True
+    assert len(dispatched) == 1
+    dispatched_text, escaped = dispatched[0]
+    assert escaped is not None
+
+    assert dispatched_text == "! echo pasted"
+    assert escaped.text == "! echo pasted"
+    assert "".join(segment.text for segment in escaped.segments) == escaped.text
+    assert escaped.has_paste is True
+    assert escaped.raw_cli_prefix_typed is False
+    assert [
+        (
+            segment.origin,
+            segment.collapse_state,
+            segment.label,
+            segment.generated_boundary,
+            segment.paste_block,
+        )
+        for segment in escaped.segments
+    ] == original_metadata
+
+    composer.insert_text("newer")
+    composer.restore_stashed_draft(escaped)
+    assert composer.draft_text() == "! echo pastednewer"
+    assert composer._raw_cli_prefix_typed is False
+
+
+@pytest.mark.asyncio
 async def test_raw_cli_trusted_state_is_text_labeled_danger_without_geometry_shift() -> (
     None
 ):

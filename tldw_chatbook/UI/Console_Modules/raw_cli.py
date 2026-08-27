@@ -30,6 +30,37 @@ _UNARMED_REFUSAL = (
 _AUTHORITY_CHANGED_REFUSAL = (
     "Raw CLI authority changed before launch. The exact draft was restored."
 )
+_CONTAINMENT_REFUSAL = (
+    "Raw CLI did not launch because authority changed or process containment "
+    "could not be established. The exact draft was restored."
+)
+
+
+def restore_refused_raw_cli_stash(
+    session_id: str | None,
+    stash: ConsoleDraftStash,
+    *,
+    store: Any,
+    composer: Any | None,
+    visible_session_id: str | None,
+) -> None:
+    """Restore locally when visible, otherwise prepend to the origin draft."""
+    if session_id is None:
+        if composer is not None:
+            composer.restore_stashed_draft(stash)
+        return
+    if composer is not None and visible_session_id == session_id:
+        composer.restore_stashed_draft(stash)
+        try:
+            store.set_session_draft(session_id, composer.draft_text())
+        except KeyError:
+            pass
+        return
+    try:
+        current = store.session_draft(session_id)
+        store.set_session_draft(session_id, stash.text + current)
+    except KeyError:
+        return
 
 
 class ConsoleRawCliController:
@@ -43,8 +74,8 @@ class ConsoleRawCliController:
         persisted_leaf_anchor: Callable[[str], str | None],
         selected_local_root: Callable[[str], Path | None],
         private_scratch_root: Callable[[str], Path],
-        restore_stash: Callable[[ConsoleDraftStash], None],
-        append_local_error: Callable[[str], None],
+        restore_stash: Callable[[str | None, ConsoleDraftStash], None],
+        append_local_error: Callable[[str | None, str], None],
         append_store_marker: Callable[..., Any],
         update_store_marker: Callable[..., Any],
         agent_runs_db: Callable[[], Any],
@@ -73,18 +104,19 @@ class ConsoleRawCliController:
         classified = classify_console_raw_draft(stash)
         if classified.kind != "raw":
             return False
+        session_id = self._active_session_id()
         if not classified.text.strip():
-            return self._refuse(stash, _EMPTY_REFUSAL)
+            return self._refuse(session_id, stash, _EMPTY_REFUSAL)
 
         runtime = self._raw_cli_runtime()
         if runtime.permitted is not True:
-            return self._refuse(stash, _LOCKED_REFUSAL)
+            return self._refuse(session_id, stash, _LOCKED_REFUSAL)
         if runtime.armed is not True:
-            return self._refuse(stash, _UNARMED_REFUSAL)
+            return self._refuse(session_id, stash, _UNARMED_REFUSAL)
 
-        session_id = self._active_session_id()
         if not session_id:
             return self._refuse(
+                session_id,
                 stash,
                 "Raw CLI needs an active Console session. The exact draft was restored.",
             )
@@ -101,9 +133,12 @@ class ConsoleRawCliController:
             )
             validate_raw_cli_request(request)
         except ValueError as exc:
-            return self._refuse(stash, f"Raw CLI refused: {exc}. Draft restored.")
+            return self._refuse(
+                session_id, stash, f"Raw CLI refused: {exc}. Draft restored."
+            )
         except Exception:  # noqa: BLE001 -- submission snapshot fails locally
             return self._refuse(
+                session_id,
                 stash,
                 "Raw CLI could not capture this Console context. The exact draft "
                 "was restored.",
@@ -111,13 +146,14 @@ class ConsoleRawCliController:
 
         try:
             self._start_worker(
-                partial(self._execute, runtime, request, stash),
+                partial(self._execute, runtime, request, session_id, stash),
                 thread=True,
                 exclusive=False,
                 name=f"console-raw-cli-{request.invocation_id}",
             )
         except Exception:  # noqa: BLE001 -- failed worker admission is local refusal
             return self._refuse(
+                session_id,
                 stash,
                 "Raw CLI worker could not start. The exact draft was restored.",
             )
@@ -134,6 +170,7 @@ class ConsoleRawCliController:
         self,
         runtime: Any,
         request: RawCliRequest,
+        session_id: str,
         stash: ConsoleDraftStash,
     ) -> None:
         try:
@@ -141,20 +178,34 @@ class ConsoleRawCliController:
         except Exception:  # noqa: BLE001 -- runtime already owns diagnostic detail
             self._marshal_to_ui(
                 self._append_local_error,
+                session_id,
                 "Raw CLI execution failed locally.",
             )
             return
         if result.terminal_state == "refused":
             self._marshal_to_ui(
                 self._refuse,
+                session_id,
                 stash,
                 _AUTHORITY_CHANGED_REFUSAL,
             )
+        elif result.terminal_state == "containment_unavailable":
+            self._marshal_to_ui(
+                self._refuse,
+                session_id,
+                stash,
+                _CONTAINMENT_REFUSAL,
+            )
 
-    def _refuse(self, stash: ConsoleDraftStash, message: str) -> bool:
-        self._restore_stash(stash)
-        self._append_local_error(message)
+    def _refuse(
+        self,
+        session_id: str | None,
+        stash: ConsoleDraftStash,
+        message: str,
+    ) -> bool:
+        self._restore_stash(session_id, stash)
+        self._append_local_error(session_id, message)
         return False
 
 
-__all__ = ["ConsoleRawCliController"]
+__all__ = ["ConsoleRawCliController", "restore_refused_raw_cli_stash"]

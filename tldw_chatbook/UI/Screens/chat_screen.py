@@ -414,7 +414,10 @@ from ...Widgets.Console.console_control_bar import (
     ConsoleAutoSpeakRetryRequested,
     ConsoleAutoSpeakResumeRequested,
 )
-from ...Widgets.Console.console_composer_bar import classify_console_raw_draft
+from ...Widgets.Console.console_composer_bar import (
+    classify_console_raw_draft,
+    unescape_console_raw_chat_stash,
+)
 from ...Widgets.Console.console_speech_controls import (
     ConsoleAutoSpeakChanged,
     ConsoleHandsFreeToggleRequested,
@@ -12951,19 +12954,30 @@ class ChatScreen(BaseAppScreen):
         # keypress; the mouse path still reads the live draft here.
         stash = self._console_pending_send_stash
         self._console_pending_send_stash = None
+        composer = self._console_composer_or_none()
+        if stash is None and composer is not None:
+            stash = composer.stash_raw_cli_draft_for_send()
+            if stash is None and composer.draft_text().startswith(r"\! "):
+                stash = composer.stash_draft_for_send()
         if stash is not None:
             raw_draft = classify_console_raw_draft(stash)
             if raw_draft.kind == "raw":
                 self._raw_cli.start_user_command(stash)
                 return False
             if raw_draft.kind == "escaped_chat":
-                stash.text = raw_draft.text
-        try:
-            composer = self.query_one("#console-native-composer", ConsoleComposerBar)
-            draft = stash.text if stash is not None else composer.draft_text()
-        except QueryError:
-            composer = None
-            draft = stash.text if stash is not None else ""
+                stash = unescape_console_raw_chat_stash(stash)
+        if composer is None:
+            try:
+                composer = self.query_one(
+                    "#console-native-composer", ConsoleComposerBar
+                )
+            except QueryError:
+                composer = None
+        draft = (
+            stash.text
+            if stash is not None
+            else (composer.draft_text() if composer is not None else "")
+        )
         if stash is None and draft.startswith(r"\! "):
             draft = draft[1:]
         if not draft.strip() and self._console_pending_image_attachment() is None:
