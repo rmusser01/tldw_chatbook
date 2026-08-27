@@ -8,8 +8,8 @@
 
 **Tech Stack:** Python 3.11+, Textual 8.x reactives/messages, existing `WatchlistBundleService`, pytest/pytest-asyncio, Ruff.
 
-**ADR required:** no  
-**ADR path:** `backlog/decisions/042-watchlists-reader-first-ia.md`  
+**ADR required:** no
+**ADR path:** `backlog/decisions/042-watchlists-reader-first-ia.md`
 **Reason:** ADR-042 already defines the long-lived Reader-first navigation, stable snapshot, and atomic scope-commit boundaries this task extends. The change adds contextual occurrences within those boundaries without changing storage, service ownership, or runtime contracts.
 
 ---
