@@ -205,7 +205,6 @@ Named callables cover these capabilities:
 - prompt-queue dispatch;
 - feedback-comment modal wait;
 - trajectory-screen presentation;
-- native transcript synchronization;
 - user notifications.
 
 The presentation callbacks may close over the screen in wiring, but the controller
