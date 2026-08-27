@@ -4052,12 +4052,23 @@ class ConsoleChatStore:
         preparation_id: str,
         fingerprint: ConsoleDurableAcceptanceFingerprint,
     ) -> bool:
-        """True when THIS acceptance was retired, rather than mutated.
+        """Return whether THIS acceptance was retired, rather than mutated.
 
         The public form of the tombstone check TASK-22587 introduced. Callers
         outside the store need it to tell "the user closed the chat" from "the
         owner changed underneath me", which are otherwise indistinguishable
         once the live fingerprint is gone.
+
+        Args:
+            preparation_id: The preparation whose retirement is in question.
+            fingerprint: The acceptance the caller believes it is settling.
+                Matching matters: a tombstone under this id for a DIFFERENT
+                acceptance is an owner change, not a close.
+
+        Returns:
+            True when a tombstone exists for ``preparation_id`` and carries
+            exactly ``fingerprint``; False otherwise, including when no
+            tombstone exists at all.
         """
 
         with self._preparation_lock:
