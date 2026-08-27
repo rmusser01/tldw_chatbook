@@ -1694,16 +1694,18 @@ class ConsoleMarkdownMessage(Vertical):
                 timeout=6,
             )
 
-    def on_click(self, event: Click) -> None:
+    async def on_click(self, event: Click) -> None:
+        transcript = self.parent
+        while transcript is not None and not isinstance(transcript, ConsoleTranscript):
+            transcript = transcript.parent
+        if isinstance(transcript, ConsoleTranscript):
+            await transcript._dismiss_message_more_for_click(event.control)
         if event.control is not None and event.control.has_class(
             "console-message-speech-action"
         ):
             event.stop()
             return
         event.stop()
-        transcript = self.parent
-        while transcript is not None and not isinstance(transcript, ConsoleTranscript):
-            transcript = transcript.parent
         if isinstance(transcript, ConsoleTranscript):
             manager = transcript.selection_manager
             if (
@@ -1924,16 +1926,18 @@ class ConsoleTranscriptMessage(Vertical):
         self._clamp_selection_to_text()
         self._refresh_body_highlight()
 
-    def on_click(self, event: Click) -> None:
+    async def on_click(self, event: Click) -> None:
+        transcript = self.parent
+        while transcript is not None and not isinstance(transcript, ConsoleTranscript):
+            transcript = transcript.parent
+        if isinstance(transcript, ConsoleTranscript):
+            await transcript._dismiss_message_more_for_click(event.control)
         if event.control is not None and event.control.has_class(
             "console-message-speech-action"
         ):
             event.stop()
             return
         event.stop()
-        transcript = self.parent
-        while transcript is not None and not isinstance(transcript, ConsoleTranscript):
-            transcript = transcript.parent
         if isinstance(transcript, ConsoleTranscript):
             manager = transcript.selection_manager
             if (
@@ -2967,6 +2971,15 @@ class ConsoleTranscript(VerticalScroll):
         )
         hint.display = False
         yield hint
+
+    async def recompose(self) -> None:
+        """Detach screen-owned message overflow UI before rebuilding rows."""
+        menus = message_more_menus_on_screen(self.screen) if self.is_mounted else []
+        opener_id = menus[0].opener_button_id if menus else ""
+        await self.dismiss_message_more_menu(restore_focus=False)
+        await super().recompose()
+        if menus:
+            self._restore_message_action_focus(opener_id)
 
     @property
     def allow_vertical_scroll(self) -> bool:
@@ -5842,7 +5855,7 @@ class ConsoleTranscript(VerticalScroll):
         for menu in self._attached_selection_menus():
             menu.remove()
 
-    def on_click(self, event: Click) -> None:
+    async def on_click(self, event: Click) -> None:
         """Clear selection when the user clicks negative space in the transcript.
 
         Any click that reaches this handler is outside the floating selection
@@ -5871,12 +5884,13 @@ class ConsoleTranscript(VerticalScroll):
             event.stop()
             self.selection_manager.consume_just_finished()
             return
+        control = event.control
+        await self._dismiss_message_more_for_click(control)
         self._remove_selection_menu()
         if self.selection_manager.just_finished:
             event.stop()
             self.selection_manager.consume_just_finished()
             return
-        control = event.control
         if control is not None and any(
             control.has_class(class_name) for class_name in self.PROTECTED_CLICK_CLASSES
         ):
@@ -5911,6 +5925,11 @@ class ConsoleTranscript(VerticalScroll):
         if control is self:
             self.action_clear_selection()
             event.stop()
+
+    async def _dismiss_message_more_for_click(self, control: Widget | None) -> None:
+        """Dismiss More for any transcript click except its own opener."""
+        if getattr(control, "console_action_id", None) != "more":
+            await self.dismiss_message_more_menu(restore_focus=False)
 
     def on_key(self, event: Key) -> None:
         if self._kb_selection_row is not None:
@@ -7268,28 +7287,30 @@ class ConsoleTranscript(VerticalScroll):
         )
         return replace(message, content=expanded)
 
-    @on(Button.Pressed, ".console-transcript-action-button")
+    @on(Button.Pressed)
     async def _intercept_transcript_action_press(self, event: Button.Pressed) -> None:
-        """Handle transcript-owned actions; let controller actions bubble.
+        """Handle transcript-owned actions and close More before other presses.
 
         Expansion is view state owned by this widget -- it never reaches the
         store and nothing outside the transcript needs to know about it -- so
         routing it through the screen's action dispatch would add a hop that
-        carries no information. Every other action id is left untouched and
-        still bubbles to `ChatScreen`.
+        carries no information. More opens its captured-target popup; every
+        other action first detaches that popup, then still bubbles to
+        `ChatScreen`.
         """
         button_id = event.button.id or ""
-        tool_prefix = "console-message-action-tool-output-"
-        if button_id.startswith(tool_prefix):
-            event.stop()
-            self.toggle_tool_output(button_id.removeprefix(tool_prefix))
-            return
         more_prefix = "console-message-action-more-"
         if button_id.startswith(more_prefix):
             event.stop()
             await self._open_message_more_menu(
                 button_id.removeprefix(more_prefix), event.button
             )
+            return
+        await self.dismiss_message_more_menu(restore_focus=False)
+        tool_prefix = "console-message-action-tool-output-"
+        if button_id.startswith(tool_prefix):
+            event.stop()
+            self.toggle_tool_output(button_id.removeprefix(tool_prefix))
 
     @on(ConsoleActivityActivated)
     def _on_activity_activated(self, event: ConsoleActivityActivated) -> None:

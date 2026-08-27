@@ -36,6 +36,7 @@ from tldw_chatbook.Chat.console_roleplay_identity import (
     ConsoleTranscriptStyle,
     resolve_console_message_presentation,
 )
+from tldw_chatbook.Video_Generation.video_metadata import VideoGenerationMetadata
 from tldw_chatbook.Widgets.Console.console_save_as_modal import ConsoleSaveAsModal
 from tldw_chatbook.Widgets.Console.console_assistant_turn import (
     ConsoleActivityDisclosure,
@@ -44,6 +45,7 @@ from tldw_chatbook.Widgets.Console.console_assistant_turn import (
 from tldw_chatbook.Widgets.Console.console_generation_card import (
     ConsoleGenerationCardSpec,
 )
+from tldw_chatbook.Widgets.Console.console_video_card import ConsoleVideoCardSpec
 import tldw_chatbook.Widgets.Console.console_transcript as transcript_module
 from tldw_chatbook.Widgets.Console.console_transcript import (
     ConsoleMarkdownMessage,
@@ -2066,6 +2068,64 @@ async def test_console_more_menu_lifecycle_dismisses_without_dispatch(
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("click_target", "expected_selection"),
+    (
+        ("#console-message-action-copy-m2", "m2"),
+        ("#console-message-m2", None),
+    ),
+)
+async def test_console_more_menu_closes_on_in_transcript_click_without_dispatch(
+    monkeypatch, click_target, expected_selection
+):
+    app = TranscriptHarness(css_path=str(_BUNDLE))
+
+    async with app.run_test(size=(80, 24)) as pilot:
+        transcript = app.query_one(ConsoleTranscript)
+        await pilot.click("#console-message-m2")
+        await pilot.click("#console-message-action-more-m2")
+        await _wait_for_selector(app, pilot, "#console-message-more-menu")
+        dispatched = []
+        monkeypatch.setattr(
+            transcript,
+            "dispatch_captured_message_action",
+            lambda *args, **kwargs: dispatched.append((args, kwargs)),
+        )
+
+        await pilot.click(click_target)
+        await pilot.pause()
+
+        assert not app.query("#console-message-more-menu")
+        assert transcript.selected_message_id == expected_selection
+        assert dispatched == []
+
+
+@pytest.mark.asyncio
+async def test_console_real_recompose_closes_more_and_restores_opener(monkeypatch):
+    app = TranscriptHarness(css_path=str(_BUNDLE))
+
+    async with app.run_test(size=(80, 24)) as pilot:
+        transcript = app.query_one(ConsoleTranscript)
+        await pilot.click("#console-message-m2")
+        await pilot.click("#console-message-action-more-m2")
+        await _wait_for_selector(app, pilot, "#console-message-more-menu")
+        dispatched = []
+        monkeypatch.setattr(
+            transcript,
+            "dispatch_captured_message_action",
+            lambda *args, **kwargs: dispatched.append((args, kwargs)),
+        )
+
+        transcript.refresh(recompose=True)
+        await pilot.pause()
+
+        assert not app.query("#console-message-more-menu")
+        assert transcript.selected_message_id == "m2"
+        assert app.query_one("#console-message-action-more-m2").has_focus
+        assert dispatched == []
+
+
+@pytest.mark.asyncio
 async def test_console_more_choice_keeps_captured_target_after_selection_race(
     monkeypatch,
 ):
@@ -2233,6 +2293,90 @@ async def test_console_selected_action_rows_fit_reference_terminals(
         )
 
 
+@pytest.mark.parametrize("size", ((120, 35), (100, 30), (80, 24)))
+@pytest.mark.parametrize("media_kind", ("generated-image", "video"))
+@pytest.mark.asyncio
+async def test_console_media_card_actions_fit_reference_terminals(size, media_kind):
+    app = MutableTranscriptHarness(css_path=str(_BUNDLE))
+
+    async with app.run_test(size=size) as pilot:
+        transcript = app.query_one(ConsoleTranscript)
+        if media_kind == "generated-image":
+            message = _generation_message(variant_count=3, message_id="fit-image")
+            app.screen._generation_browse = {message.id: 1}
+            transcript.set_generation_card_specs(
+                {
+                    message.id: ConsoleGenerationCardSpec(
+                        message_id=message.id,
+                        browsed_index=1,
+                        variant_count=3,
+                        meta=message.generation_metadata[1],
+                        mode="pixels",
+                    )
+                }
+            )
+            card_selector = f"#console-generation-card-{message.id}"
+            expected_actions = (
+                "variant-previous",
+                "variant-next",
+                "keep",
+                "toggle-image-view",
+                "save-image",
+            )
+        else:
+            meta = VideoGenerationMetadata(
+                name="fit-video",
+                prompt="a red dragon",
+                backend="minimax",
+            )
+            message = ConsoleChatMessage(
+                role=ConsoleMessageRole.ASSISTANT,
+                content="[video] a red dragon",
+                video_metadata=meta,
+                id="fit-video",
+            )
+            transcript.set_video_card_specs(
+                {
+                    message.id: ConsoleVideoCardSpec(
+                        message_id=message.id,
+                        meta=meta,
+                        status="ready",
+                        file_path="/tmp/fit-video.mp4",
+                    )
+                }
+            )
+            card_selector = f"#console-video-card-{message.id}"
+            expected_actions = ("video-play", "video-save-copy")
+
+        transcript.set_messages([message])
+        transcript.select_message(message.id)
+        await transcript.refresh_messages()
+        await pilot.pause()
+
+        card = app.query_one(card_selector)
+        action_row = card.query_one(".console-media-card-actions")
+        buttons = list(card.query(".console-media-card-action"))
+        assert tuple(button.console_action_id for button in buttons) == expected_actions
+        if media_kind == "generated-image":
+            assert tuple(button.label.plain for button in buttons) == (
+                "<",
+                ">",
+                "Keep",
+                "View",
+                "Save",
+            )
+        assert transcript.max_scroll_x == 0
+        assert action_row.region.height == 1
+        assert all(button.region.height == 1 for button in buttons)
+        assert all(
+            card.region.x <= button.region.x < button.region.right <= card.region.right
+            for button in buttons
+        )
+        assert all(
+            button.content_region.width >= len(button.label.plain) for button in buttons
+        )
+
+
 @pytest.mark.asyncio
 async def test_console_ineligible_fork_reason_is_visible_and_repeated_by_f(
     monkeypatch,
@@ -2385,7 +2529,9 @@ async def test_console_transcript_click_action_row_background_preserves_selectio
         # Route a container-background click without stale screen coordinates.
         action_row = app.query_one("#console-message-actions-m2")
         transcript = app.query_one(ConsoleTranscript)
-        transcript.on_click(SimpleNamespace(control=action_row, stop=lambda: None))
+        await transcript.on_click(
+            SimpleNamespace(control=action_row, stop=lambda: None)
+        )
         await pilot.pause()
 
         assert "More…" in _visible_text(app)

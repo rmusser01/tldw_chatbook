@@ -46,6 +46,11 @@ from tldw_chatbook.Chat.console_image_view import (
 #: circular import.
 CARD_BORDER_COLOR = "#6f7782"
 CARD_TITLE = "Image Generation"
+_CARD_ACTION_LABELS = {
+    "keep": "Keep",
+    "toggle-image-view": "View",
+    "save-image": "Save",
+}
 
 
 @dataclass(frozen=True)
@@ -291,7 +296,7 @@ class ConsoleGenerationCard(Vertical):
             buttons = []
             for action in self.actions:
                 button = Button(
-                    action.label,
+                    _CARD_ACTION_LABELS.get(action.action_id, action.label),
                     id=f"console-message-action-{action.action_id}-{self.spec.message_id}",
                     classes="console-media-card-action",
                     disabled=not action.enabled,
@@ -326,7 +331,7 @@ class ConsoleGenerationCard(Vertical):
         actions.extend(
             (
                 ConsoleMessageAction("toggle-image-view", "View"),
-                ConsoleMessageAction("save-image", "Save image"),
+                ConsoleMessageAction("save-image", "Save"),
             )
         )
         return tuple(actions)
