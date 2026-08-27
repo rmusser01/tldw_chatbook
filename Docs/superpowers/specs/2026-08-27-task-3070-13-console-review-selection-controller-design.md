@@ -1,7 +1,8 @@
 # TASK-3070.13 Console Review and Selection Controller Design
 
 **Status:** design direction approved by the owner 2026-08-26; written amendment
-reviewed and hardened 2026-08-27 before implementation planning
+reviewed and hardened 2026-08-27, then revalidated against latest dev before
+implementation
 
 **Task:** `TASK-3070.13 - Extract Console review and selection workflow ownership`
 
@@ -36,9 +37,16 @@ Marking the task superseded would leave seven surviving policy methods on
 the current implementation boundary for TASK-3070.13; the original inventory and
 arithmetic remain immutable historical evidence.
 
-The exact implementation base is `origin/dev` `ee8dc24115`. At that revision,
-`ChatScreen` is 17,599 physical lines with 539 direct methods. The surviving coherent
-family is 16 methods and 840 physical lines.
+The exact implementation base is `origin/dev` `c6218918d1`. At that revision,
+`ChatScreen` is 17,624 physical lines with 539 unique direct method names (569 AST
+definitions when property getter/setter definitions are counted separately). The
+surviving coherent family is 16 methods and 850 physical lines.
+
+The base moved once after the first review: TASK-2126 added semantic-capture policy
+bindings to `action_open_trajectory_view`, increasing that retained delegate from 62
+to 72 lines while leaving the seven move methods, six stays, and their behavior
+unchanged. This amendment incorporates that current behavior instead of extracting
+from the stale `ee8dc24115` body.
 
 The focused pre-change baseline is 111 passing tests out of 115. The four failures
 are pre-existing stale unit assertions in `test_console_annotation_markers.py`:
@@ -59,7 +67,7 @@ must not change product behavior to satisfy them.
    the new owner without mirrored state or stale compatibility behavior.
 5. Preserve Git, run-store, note, annotation, prompt-queue, privacy, cancellation,
    and user-visible behavior.
-6. Remove at least 399 physical `ChatScreen` lines and seven direct methods without
+6. Remove at least 409 physical `ChatScreen` lines and seven direct methods without
    raising a ratchet.
 7. Keep persistence work off the event loop without mutating controller/UI state from
    the persistence worker thread.
@@ -98,17 +106,19 @@ is exhaustive and binding for this task.
 | `_open_change_review` | 55 | stay | constructs and pushes the presentation screen |
 | `_record_console_feedback_event` | 60 | move | durable audit/annotation policy and immediate preview update |
 | `_sync_console_annotation_discovery` | 34 | move | conversation transition and worker-dispatch policy |
-| `action_open_trajectory_view` | 62 | delegate | Textual binding must remain on the screen |
+| `action_open_trajectory_view` | 72 | delegate | Textual binding must remain on the screen |
 | `on_console_review_notes_requested` | 31 | stay | ADR-068 event ownership and inflight contract |
 | `on_console_selection_feedback_requested` | 48 | delegate | Textual `@on` boundary must remain on the screen |
 | `on_console_selection_note_requested` | 24 | delegate | Textual `@on` boundary must remain on the screen |
-| **Total** | **840** | **7 move / 3 delegate / 6 stay** | |
+| **Total** | **850** | **7 move / 3 delegate / 6 stay** | |
 
-The seven move methods contain 280 lines. The six stays contain 426 lines. Capping
-each complete delegate at five lines leaves at most 441 screen lines from this
-family, so the minimum net removal is 399 lines and seven direct methods. The
-conservative post-extraction screen is therefore at most 17,200 lines and 532 direct
-methods. Actual results may be smaller; the projection is not a new ratchet.
+The seven move methods contain 280 lines. The six stays contain 426 lines. The three
+delegates now contain 144 lines. Capping each complete delegate at five lines leaves
+at most 441 screen lines from this family, so the minimum net removal is 409 lines and
+seven unique direct method names. The conservative post-extraction screen is therefore
+at most 17,215 lines and 532 unique direct method names. Actual results may be smaller;
+the projection is not a new ratchet, whose existing AST-definition budget remains
+unchanged.
 
 ## Considered Approaches
 
@@ -200,6 +210,7 @@ Named callables cover these capabilities:
 - active agent-conversation identity, change-review provider resolution, live
   run-active probes, and current turn workspace roots;
 - the current agent-runs database read seam;
+- semantic-capture policy bindings for the active session/conversation;
 - native Console messages;
 - worker scheduling and UI-thread callback marshaling;
 - prompt-queue dispatch;
@@ -303,9 +314,10 @@ constructor arguments, notification, and `push_screen` presentation.
 ### Trajectory view
 
 The Textual action delegates to the controller. The controller resolves the current
-persisted conversation, title, run database, and snapshot builder; emits the same
-empty-state/building notifications; and builds off-thread. The named UI-thread and
-presentation callbacks push the same live-tail `TrajectoryScreen`. No controller DOM
+persisted conversation, title, run database, semantic-capture policy bindings, and
+snapshot builder; emits the same empty-state/building notifications; and builds
+off-thread. The named UI-thread and presentation callbacks push the same live-tail
+`TrajectoryScreen`, including the current capture-policy bindings. No controller DOM
 or Textual screen dependency is introduced. The presentation callback keeps the
 `TrajectoryScreen` import lazy, so importing `review_selection.py` does not widen the
 Chat first-paint import leg.
@@ -346,11 +358,11 @@ Add a source-inspected architecture suite proving:
   dependencies, and exposes no sibling-controller object accessor;
 - compatibility descriptors are read/write, fail loudly before wiring, and store no
   shadow state;
-- the current-base family spans and conservative 399-line / seven-method removal are
+- the current-base family spans and conservative 409-line / seven-method removal are
   met without a ratchet increase.
 
 Moving the module-level trajectory adapter removes additional `chat_screen.py` lines,
-but those lines are intentionally excluded from the frozen 399-line family arithmetic.
+but those lines are intentionally excluded from the frozen 409-line family arithmetic.
 The guaranteed reduction therefore remains conservative and directly comparable with
 the approved inventory.
 

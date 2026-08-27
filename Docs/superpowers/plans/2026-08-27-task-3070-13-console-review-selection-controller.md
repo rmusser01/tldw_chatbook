@@ -12,9 +12,9 @@
 
 ## Global Constraints
 
-- Implementation base: `origin/dev` `ee8dc24115ba14cddef9de2b262e1cbf7bfa32ca`; if the executable drift gate finds a changed 7/3/6 family, stop and amend before continuing.
+- Implementation base: `origin/dev` `c6218918d1e70c1938f7e11df592d0c70ca60383`; if the executable drift gate finds a changed 7/3/6 family, stop and amend before continuing.
 - Exact ownership: seven moves, three complete delegates of at most five physical lines each, six screen stays.
-- Conservative screen reduction: at least 399 physical lines and seven direct methods; the trajectory adapter's additional removal is not counted toward this minimum.
+- Conservative screen reduction: at least 409 physical lines and seven unique direct method names; the trajectory adapter's additional removal is not counted toward this minimum.
 - No `ChatScreen` reference, DOM query, sibling-controller object, dependency container, dynamic facade, mixin, Git authority, SQL/schema ownership, stale screen re-export, or compatibility shadow state.
 - Preserve ADR-068 screen ownership of review-note modal/fetch/mutate/forced-reload flow.
 - Keep `TrajectoryScreen` lazily imported at presentation time; importing the controller module must not widen Chat first paint.
@@ -28,9 +28,9 @@
 
 - Worktree: `/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.worktrees/task-3070-13-console-review-selection`
 - Planning branch: `codex/task-3070-13-console-review-selection`
-- Current screen: 17,599 physical lines / 539 direct methods.
-- Frozen current-base family: 16 methods / 840 lines = seven moves / three delegates / six stays.
-- Conservative final screen: no more than 17,200 physical lines / 532 direct methods.
+- Current screen: 17,624 physical lines / 539 unique direct method names (569 AST definitions including property getter/setter definitions).
+- Frozen current-base family: 16 methods / 850 lines = seven moves / three delegates / six stays.
+- Conservative final screen: no more than 17,215 physical lines / 532 unique direct method names; the existing 17,727/593 AST-definition ratchet is not raised.
 - Focused baseline: 111/115 pass. The four known failures are stale unit traversals in `Tests/UI/test_console_annotation_markers.py`; mounted annotation behavior is green and production must not be changed to satisfy those assertions.
 
 ADR required: no
@@ -122,16 +122,16 @@ Reason: this task applies the existing controller ownership rule in `DESIGN.md` 
   - the controller has no `query`, `query_one`, `focus`, `push_screen`, `ChatScreen`, `__getattr__`, `__getattribute__`, mixin base, SQL literal/execute call, Git subprocess, or stored sibling-controller accessor/object;
   - `build_console_controllers()` assigns `screen._review_selection` exactly once and is the sole production constructor;
   - the constructor has only named keyword-only callables and no `screen`, `app_instance`, dependency object, `*args`, or `**kwargs` escape hatch;
-  - `chat_screen.py` is at most 17,200 lines / 532 direct methods and the immutable ratchet is not raised.
+  - `chat_screen.py` is at most 17,215 lines / 532 unique direct method names and the immutable 17,727/593 AST-definition ratchet is not raised.
 
 - [ ] **Step 2: Add current-base arithmetic and durable rebase drift coverage**
 
-  Read the frozen `TASK_BASE` and live `origin/dev` sources with bounded `git show`. For the frozen base, assert 17,599/539, the 16 exact candidate names, 840 total lines, seven/three/six, 280 move lines, 426 stay lines, and conservative 399/7 removal. For live `origin/dev`, accept only one of two complete states:
+  Read the frozen `TASK_BASE` and live `origin/dev` sources with bounded `git show`. For the frozen base, assert 17,624/539 unique names, the 16 exact candidate names, 850 total lines, seven/three/six, 280 move lines, 426 stay lines, 144 delegate lines, and conservative 409/7 removal. For live `origin/dev`, accept only one of two complete states:
 
   ```python
   if MOVE_METHODS <= origin_screen_methods:
       assert exact_current_family(origin_screen) == reviewed_family
-      assert projected_counts(origin_screen) <= (17_200, 532)
+      assert projected_counts(origin_screen) <= (17_215, 532)
   else:
       assert final_owner_contract(origin_screen, origin_review_module)
   ```
@@ -202,6 +202,7 @@ Reason: this task applies the existing controller ownership rule in `DESIGN.md` 
           run_active_for_root: Callable[[str], bool],
           workspace_roots_accessor: Callable[[], tuple[str, ...] | None],
           agent_runs_db_accessor: Callable[[], Any | None],
+          capture_policy_bindings_accessor: Callable[[str, str], Any | None],
           native_messages_accessor: Callable[[], list[Any]],
           run_worker: Callable[..., Any],
           show_feedback_comment: Callable[[str, str], Awaitable[str | None]],
@@ -236,11 +237,12 @@ Reason: this task applies the existing controller ownership rule in `DESIGN.md` 
               conversation_id=launch.conversation_id,
               revision_provider=launch.revision_provider,
               snapshot_builder=launch.snapshot_builder,
+              capture_policy_bindings=launch.capture_policy_bindings,
           )
       )
   ```
 
-  `ConsoleTrajectoryLaunch` is a frozen, slotted dataclass defined in `review_selection.py` carrying `snapshot`, `screen_title`, `conversation_id`, `revision_provider`, and `snapshot_builder`. This is data, not a dependency container. The lazy import must stay inside `_present_console_trajectory`.
+  `ConsoleTrajectoryLaunch` is a frozen, slotted dataclass defined in `review_selection.py` carrying `snapshot`, `screen_title`, `conversation_id`, `revision_provider`, `snapshot_builder`, and `capture_policy_bindings`. This is data, not a dependency container. The lazy import must stay inside `_present_console_trajectory`, and the presenter passes `capture_policy_bindings=launch.capture_policy_bindings` to `TrajectoryScreen`.
 
   Construct `screen._review_selection` immediately before `_send_price`. Wire each fine-grained callable with a late-bound lambda that resolves the exact current operation/fact at call time. No callable may return `_agent`, `_prompt_queue`, `_session`, or `_console_chat_controller`; only the store/service object, scalar/tuple fact, or operation result may cross.
 
@@ -468,7 +470,7 @@ Reason: this task applies the existing controller ownership rule in `DESIGN.md` 
 
 **Interfaces:**
 
-- Consumes: current store/session metadata, agent-runs DB seam, `run_worker`, `marshal_to_ui`, `present_trajectory`, and existing store/repository read APIs.
+- Consumes: current store/session metadata, agent-runs DB seam, semantic-capture policy binding accessor, `run_worker`, `marshal_to_ui`, `present_trajectory`, and existing store/repository read APIs.
 - Produces: module function `_build_trajectory_snapshot`, `ConsoleTrajectoryLaunch`, `open_trajectory_view()`, and the final screen action delegate.
 
 - [ ] **Step 1: Retarget the trajectory helper tests RED-first**
@@ -505,7 +507,13 @@ Reason: this task applies the existing controller ownership rule in `DESIGN.md` 
       conversation_id: str
       revision_provider: Callable[[], int]
       snapshot_builder: Callable[[], TrajectorySnapshot]
+      capture_policy_bindings: Any | None
   ```
+
+  Resolve capture-policy bindings before launching with the current session id and
+  persisted conversation id. Wiring owns the late-bound call through
+  `build_capture_policy_bindings`; the controller receives only the resulting
+  binding data and never a Console chat controller.
 
 - [ ] **Step 4: Install the final action delegate and retarget patch handles**
 
