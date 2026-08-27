@@ -57,3 +57,8 @@ capture, presentation, grouping, and variant lifecycle controls remain GREEN in 
 fresh 195-test run. Ruff lint passed on all scoped Python files, Ruff format check passed
 on production/presentation, and `git diff --check` passed. Included in the round-4 fix
 commit.
+
+Task 1 independent re-review: READY at `0f05fcd826`. The reviewer reran the exact
+durable-owner lifecycle plus the complete presentation/grouping contracts (39 passed)
+and found no ordering, privacy, compatibility, schema, or migration issue. Task 1 is
+complete after four bounded review-fix rounds.
