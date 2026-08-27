@@ -17,6 +17,7 @@ from tldw_chatbook.Agents.local_tool_provider import (
     LocalApprovalEffect,
     LocalToolProvider,
 )
+from tldw_chatbook.Agents.mcp_tool_provider import MCPPendingCall
 from tldw_chatbook.Agents.run_context import use_run_id
 from tldw_chatbook.Chat.console_chat_controller import (
     ConsoleChatController,
@@ -37,6 +38,7 @@ from tldw_chatbook.Chat.console_library_policy import (
     ConsoleLibraryPolicySnapshot,
 )
 from tldw_chatbook.Chat.console_scratch_space import ConsoleScratchSpaceManager
+from tldw_chatbook.Chat.console_chat_store import ConsoleChatStore
 from tldw_chatbook.Chat.console_turn_context import (
     ConsoleTurnConfigurationSnapshot,
     ConsoleTurnExecutionContext,
@@ -104,6 +106,48 @@ def test_local_pending_gate_carries_descriptor_owned_effects(tmp_path):
 
     assert gate is not None
     assert gate.effects == (LocalApprovalEffect.PRIVATE_READ,)
+
+
+def test_mounted_approval_row_carries_exact_descriptor_effects(tmp_path):
+    """The controller must pass the descriptor-owned effect through unchanged."""
+    store = ConsoleChatStore()
+    session = store.ensure_session()
+    gate = provider(ASK, tmp_path).pending_gate_for(
+        "fs_list", {"effects": ["network"], "path": "."}
+    )
+    assert gate is not None
+    call = MCPPendingCall(
+        llm_name=gate.llm_name,
+        server_key=gate.server_key,
+        tool_name=gate.tool_name,
+        server_label=gate.server_label,
+        arguments=gate.arguments,
+        reason=gate.reason,
+        effects=gate.effects,
+    )
+    controller = ConsoleChatController(store=store, provider_gateway=object())
+    mounted: list[dict[str, object]] = []
+
+    def _mount(payload: dict[str, object] | None) -> None:
+        if payload is None:
+            return
+        mounted.append(payload)
+        controller.resolve_pending_approval(
+            {call.llm_name: "deny"}, round_id=str(payload["round_id"])
+        )
+
+    controller.app = SimpleNamespace(
+        call_from_thread=lambda callback, *args: callback(*args)
+    )
+    controller.set_pending_approval = _mount
+    controller.park_pending_approval = lambda _session_id: None
+
+    assert controller.request_mcp_approvals([call], session_id=session.id) == {
+        call.llm_name: "deny"
+    }
+    row = mounted[0]["calls"][0]
+    assert row["effects"] == [LocalApprovalEffect.PRIVATE_READ]
+    assert row["effects"] != row["arguments"]["effects"]
 
 
 def test_hook_skips_non_ask_calls(tmp_path):

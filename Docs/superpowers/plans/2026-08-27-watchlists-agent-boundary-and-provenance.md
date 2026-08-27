@@ -41,7 +41,7 @@ the new exposure/effect contract and Console-only private/mutating boundary.
 - Modify: `Tests/Chat/test_console_local_review_hook.py`
 - Modify: `Tests/UI/test_chat_approval_card.py`
 - Modify: `Docs/User_Guide/console/agent-runs-and-tools.md`
-- Modify: `backlog/decisions/032-local-agent-tool-permission-boundary.md`
+- Verify: `backlog/decisions/032-local-agent-tool-permission-boundary.md`
 
 ### Step 1: Pin fail-closed descriptor construction
 
@@ -136,8 +136,8 @@ pytest -q Tests/Chat/test_console_local_review_hook.py Tests/UI/test_chat_approv
 
 ### Step 5: Record the decision and documentation
 
-Add the approved addendum to ADR-032 with TASK-22859/TASK-22860/TASK-22861
-links. Update the Console tool guide to distinguish catalog exposure,
+Verify ADR-032's already-present approved addendum with TASK-22859/TASK-22860/
+TASK-22861 links. Update the Console tool guide to distinguish catalog exposure,
 authorization, risk tags, and approval effects.
 
 Run:

@@ -9094,6 +9094,7 @@ class ConsoleChatController:
                     "arguments": dict(call.arguments or {}),
                     "reason": call.reason,
                     "options": list(call.options),
+                    "effects": list(call.effects),
                     "path_precheck_failed": call.path_precheck_failed,
                     "call_id": call.call_id,
                     "full_command": call.full_command,
