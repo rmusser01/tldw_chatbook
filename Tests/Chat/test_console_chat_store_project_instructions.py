@@ -446,21 +446,19 @@ def test_adapter_without_state_setter_warns_and_keeps_memory_choice() -> None:
     assert persistence.metadata_writes == 0
 
 
-def test_promotion_writes_project_context_only_after_ordinary_durable_promotion(
+def test_promotion_writes_project_context_inside_ordinary_durable_promotion(
     tmp_path, monkeypatch
 ) -> None:
     db = CharactersRAGDB(tmp_path / "promotion.db", client_id="promotion-test")
     service = ChatPersistenceService(db)
     transaction_states: list[bool] = []
-    original_write = service.set_conversation_console_project_context
+    original_write = db.set_conversation_console_project_context
 
-    def recording_write(**kwargs) -> None:
+    def recording_write(conversation_id, project_context_json) -> None:
         transaction_states.append(db.get_connection().in_transaction)
-        original_write(**kwargs)
+        original_write(conversation_id, project_context_json)
 
-    monkeypatch.setattr(
-        service, "set_conversation_console_project_context", recording_write
-    )
+    monkeypatch.setattr(db, "set_conversation_console_project_context", recording_write)
     store = ConsoleChatStore(persistence=service)
     session = store.create_session(title="temporary", ephemeral=True)
     store.set_session_project_instruction_state(session.id, ENABLED_STATE)
@@ -471,14 +469,14 @@ def test_promotion_writes_project_context_only_after_ordinary_durable_promotion(
     conversation_id = store.promote_ephemeral_session(session.id)
 
     assert conversation_id is not None
-    assert transaction_states == [False]
+    assert transaction_states == [True]
     assert db.get_conversation_console_project_context(conversation_id) == (
         encode_project_context_json(ENABLED_STATE)
     )
     db.close_connection()
 
 
-def test_promotion_state_write_failure_keeps_durable_conversation_and_choice(
+def test_promotion_state_write_failure_rolls_back_the_complete_bundle(
     tmp_path, monkeypatch
 ) -> None:
     db = CharactersRAGDB(tmp_path / "promotion-failure.db", client_id="promotion-test")
@@ -490,33 +488,26 @@ def test_promotion_state_write_failure_keeps_durable_conversation_and_choice(
         session.id, role=ConsoleMessageRole.USER, content="hello", persist=True
     )
 
-    def fail_write(**kwargs) -> None:
+    def fail_write(*_args, **_kwargs) -> None:
         raise RuntimeError("do not leak this detail")
 
-    monkeypatch.setattr(service, "set_conversation_console_project_context", fail_write)
-    warnings: list[str] = []
-    sink_id = logger.add(
-        lambda log_message: warnings.append(log_message.record["message"]),
-        level="WARNING",
-    )
-    try:
-        conversation_id = store.promote_ephemeral_session(session.id)
-    finally:
-        logger.remove(sink_id)
+    monkeypatch.setattr(db, "set_conversation_console_project_context", fail_write)
 
-    assert conversation_id is not None
-    assert session.ephemeral is False
-    assert session.persisted_conversation_id == conversation_id
+    with pytest.raises(RuntimeError, match="do not leak this detail"):
+        store.promote_ephemeral_session(session.id)
+
+    assert session.ephemeral is True
+    assert session.persisted_conversation_id is None
     assert session.project_instruction_state == ENABLED_STATE
     promoted_message = store.get_message(message.id)
-    assert promoted_message.persisted_message_id is not None
-    assert db.get_conversation_by_id(conversation_id) is not None
-    assert db.get_message_by_id(promoted_message.persisted_message_id) is not None
-    assert db.get_conversation_console_project_context(conversation_id) is None
-    assert [warning for warning in warnings if "project_instruction" in warning] == [
-        WRITE_WARNING
-    ]
-    assert all("do not leak this detail" not in warning for warning in warnings)
+    assert promoted_message.persisted_message_id is None
+    assert (
+        db.get_connection().execute("SELECT COUNT(*) FROM conversations").fetchone()[0]
+        == 0
+    )
+    assert (
+        db.get_connection().execute("SELECT COUNT(*) FROM messages").fetchone()[0] == 0
+    )
     db.close_connection()
 
 

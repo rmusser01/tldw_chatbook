@@ -1,16 +1,24 @@
 import base64
 import json
 import time
+from dataclasses import asdict, dataclass
 from typing import Any, Dict, List, Mapping, Optional, Sequence, Tuple, cast
 
 from loguru import logger as _logger
 
+from tldw_chatbook.Chat.attachment_core import MAX_ATTACHMENT_BYTES
 from tldw_chatbook.Chat.citation_trace_models import SealedCitationWrite
 from tldw_chatbook.Chat.citation_trace_repository import (
     CitationPersistenceUnavailable,
     CitationTraceRepository,
 )
 from tldw_chatbook.Chat.console_context_policy import ConsoleContextPolicyOverrides
+from tldw_chatbook.Chat.console_chat_fork import (
+    CONSOLE_FORK_VIDEO_TOMBSTONE_CONTENT,
+    ConsoleChatForkSnapshot,
+    fingerprint_console_fork_selected_image,
+    validate_console_fork_image_payload,
+)
 from tldw_chatbook.Chat.console_context_repository import (
     ConsoleContextRepository,
     ContextPolicyReadResult,
@@ -43,15 +51,31 @@ from tldw_chatbook.Chat.console_speech_preferences import (
     merge_console_speech_preferences,
     parse_console_speech_preferences,
 )
+from tldw_chatbook.Chat.console_project_instructions import (
+    encode_project_context_json,
+)
+from tldw_chatbook.Chat.rag_scope import serialize_scope
 from tldw_chatbook.Chat.message_metadata import MessageMetadata
 from tldw_chatbook.DB.ChaChaNotes_DB import (
     CharactersRAGDB,
     ConflictError,
     TrajectoryRowWrite,
 )
+from tldw_chatbook.Video_Generation.video_metadata import VideoGenerationMetadata
 
 logger = _logger.bind(module="ChatPersistenceService")
 _ASSISTANT_AUTHORITY_UNSET = cast(Optional[str], object())
+
+
+@dataclass(frozen=True, slots=True)
+class ConsoleForkCommitResult:
+    """Durable identities returned only after an atomic fork commit."""
+
+    conversation_id: str
+    active_leaf_message_id: str
+    message_id_map: dict[str, str]
+    policy: ConsoleLibraryPolicySnapshot
+    already_committed: bool = False
 
 
 def _initial_metadata_object(metadata: object) -> dict[str, object]:
@@ -145,6 +169,52 @@ class ChatPersistenceService:
         if type(version) is not int or version < 1:
             return None
         return version
+
+    def get_console_fork_citation_state(
+        self,
+        message_id: str,
+        revision: int,
+        body: str,
+    ) -> str:
+        """Return one authoritative citation state for immutable fork staging."""
+
+        repository = self.citation_repository
+        if repository is not None and repository.db is self.db:
+            return repository.classify_fork_message_owner(
+                message_id=message_id,
+                message_revision=revision,
+                message_body=body,
+            )
+        connection = self.db.get_connection()
+        message = connection.execute(
+            """
+            SELECT version, content, deleted
+            FROM messages
+            WHERE id = ?
+            """,
+            (message_id,),
+        ).fetchone()
+        if (
+            message is None
+            or message["deleted"]
+            or message["version"] != revision
+            or message["content"] != body
+        ):
+            raise CitationPersistenceUnavailable("fork_source_owner_unverifiable")
+        ambiguous = connection.execute(
+            """
+            SELECT 1
+            FROM rag_message_trace_owners
+            WHERE message_id = ? AND message_revision = ?
+            LIMIT 1
+            """,
+            (message_id, revision),
+        ).fetchone()
+        if ambiguous is not None:
+            raise CitationPersistenceUnavailable(
+                "fork_source_owner_authority_ambiguous"
+            )
+        return "none"
 
     def get_conversation_version(self, conversation_id: str) -> int | None:
         """Return the current positive version for one active conversation."""
@@ -304,6 +374,9 @@ class ChatPersistenceService:
         self,
         *,
         conversation_id: str | None = None,
+        root_id: str | None = None,
+        parent_conversation_id: str | None = None,
+        forked_from_message_id: str | None = None,
         character_id: Optional[int] = None,
         character_name: Optional[str] = None,
         assistant_kind: Optional[str] = None,
@@ -325,6 +398,9 @@ class ChatPersistenceService:
 
         Args:
             conversation_id: Optional preallocated durable conversation identity.
+            root_id: Optional canonical conversation root identity.
+            parent_conversation_id: Optional durable source conversation identity.
+            forked_from_message_id: Optional persisted source boundary identity.
             character_id: Local character identifier associated with the conversation.
             character_name: Display name used to derive a title when no explicit
                 title is supplied.
@@ -373,6 +449,9 @@ class ChatPersistenceService:
             explicit_title=conversation_title,
         )
         conversation_data = {
+            "root_id": root_id,
+            "parent_conversation_id": parent_conversation_id,
+            "forked_from_message_id": forked_from_message_id,
             "character_id": character_id,
             "assistant_kind": assistant_kind,
             "assistant_id": assistant_id,
@@ -517,6 +596,8 @@ class ChatPersistenceService:
         active_leaf_message_id: str | None,
         context_summary: str | None = None,
         context_summary_boundary_message_id: str | None = None,
+        project_context_json: str | None = None,
+        context_policy_overrides: ConsoleContextPolicyOverrides | None = None,
         contributions: Sequence[ConsoleTransactionContribution] = (),
     ) -> ConsoleLibraryPolicySnapshot:
         """Commit one temporary Console transcript and all Task-7 sidecars."""
@@ -562,6 +643,16 @@ class ChatPersistenceService:
                 context_summary,
                 context_summary_boundary_message_id,
             )
+            if context_policy_overrides is not None:
+                self.context_repository.save_policy(
+                    conversation_id,
+                    context_policy_overrides,
+                )
+            if project_context_json is not None:
+                self.db.set_conversation_console_project_context(
+                    conversation_id,
+                    project_context_json,
+                )
             if contributions:
                 with _scoped_console_transaction_writer(
                     cursor,
@@ -574,6 +665,479 @@ class ChatPersistenceService:
                             message_ids=message_ids,
                         )
         return policy_result.snapshot
+
+    def fork_console_conversation_bundle(
+        self,
+        *,
+        snapshot: ConsoleChatForkSnapshot,
+        conversation_kwargs: Mapping[str, object],
+        policy_candidate: ConsoleLibraryPolicyCandidate,
+        project_context_json: str,
+    ) -> ConsoleForkCommitResult | None:
+        """Commit one validated durable fork as a single SQLite bundle."""
+
+        self._validate_console_fork_persistence_input(
+            snapshot,
+            policy_candidate=policy_candidate,
+            project_context_json=project_context_json,
+        )
+        if not snapshot.durable:
+            return None
+        target_id = snapshot.fork_conversation_id
+        if target_id is None:
+            raise ValueError("Durable fork conversation id is unavailable.")
+        prepared_conversation = self._fork_conversation_kwargs(
+            snapshot,
+            conversation_kwargs,
+        )
+        self.validate_workspace_target(**prepared_conversation)
+        with self.db.transaction(immediate=True) as cursor:
+            committed = self._resolve_console_fork_commit_cursor(cursor, snapshot)
+            if committed is not None:
+                return committed
+            root_id, parent_id, boundary_id = self._recheck_fork_source(
+                cursor,
+                snapshot,
+            )
+            created_id = self.create_conversation(
+                conversation_id=target_id,
+                root_id=root_id,
+                parent_conversation_id=parent_id,
+                forked_from_message_id=boundary_id,
+                **prepared_conversation,
+            )
+            if created_id != target_id:
+                raise RuntimeError(
+                    "Persistence returned an unexpected conversation id."
+                )
+            for message in snapshot.messages:
+                attachments = [
+                    {
+                        "position": attachment.position,
+                        "data": attachment.data,
+                        "mime_type": attachment.mime_type,
+                        "display_name": attachment.display_name,
+                    }
+                    for attachment in message.attachments
+                ]
+                generation_metadata = [
+                    {
+                        "position": metadata.position,
+                        "prompt": metadata.prompt,
+                        "negative_prompt": metadata.negative_prompt,
+                        "backend": metadata.backend,
+                        "model": metadata.model,
+                        "seed": metadata.seed,
+                        "style": metadata.style,
+                        "params_json": metadata.params_json,
+                    }
+                    for metadata in message.generation_metadata
+                ]
+                metadata_json = None
+                if message.video_tombstone is not None:
+                    video = message.video_tombstone
+                    metadata_json = VideoGenerationMetadata(
+                        name=f"forked-video-{message.native_message_id}",
+                        prompt=video.prompt,
+                        negative_prompt=video.negative_prompt,
+                        backend=video.backend,
+                        model=video.model,
+                        seed=video.seed,
+                        duration_seconds=video.duration_seconds,
+                        fps=video.fps,
+                        width=video.width,
+                        height=video.height,
+                        ratio=video.ratio,
+                        source_image_message_id=video.source_image_message_id,
+                        container=video.container,
+                    ).to_json()
+                persisted_id = self.create_message(
+                    conversation_id=target_id,
+                    sender=message.role.value,
+                    content=message.content,
+                    message_id=message.persisted_message_id,
+                    parent_message_id=message.persisted_parent_id,
+                    attachments=attachments,
+                    generation_metadata=generation_metadata,
+                    metadata_json=metadata_json,
+                )
+                if persisted_id != message.persisted_message_id:
+                    raise RuntimeError("Persistence returned an unexpected message id.")
+            self._link_console_fork_citations(cursor, snapshot)
+            policy_result = self.console_library_policy_repository.insert(
+                target_id,
+                policy_candidate,
+            )
+            if policy_result.status is not ConsoleLibraryPolicyWriteStatus.COMMITTED:
+                raise RuntimeError(
+                    "Console Library policy could not be committed with fork."
+                )
+            self.context_repository.save_policy(
+                target_id,
+                snapshot.configuration.context_policy_overrides,
+            )
+            self.db.set_conversation_console_project_context(
+                target_id,
+                project_context_json,
+            )
+            active_leaf = snapshot.messages[-1].persisted_message_id
+            self.db.set_conversation_active_leaf(target_id, active_leaf)
+        return ConsoleForkCommitResult(
+            conversation_id=target_id,
+            active_leaf_message_id=active_leaf,
+            message_id_map=self._fork_message_id_map(snapshot),
+            policy=policy_result.snapshot,
+        )
+
+    def resolve_console_fork_commit(
+        self,
+        snapshot: ConsoleChatForkSnapshot,
+    ) -> ConsoleForkCommitResult | None:
+        """Resolve an ambiguous durable fork result without writing."""
+
+        if not isinstance(snapshot, ConsoleChatForkSnapshot):
+            raise TypeError("snapshot must be ConsoleChatForkSnapshot")
+        if not snapshot.durable:
+            return None
+        with self.db.transaction() as cursor:
+            return self._resolve_console_fork_commit_cursor(cursor, snapshot)
+
+    def _resolve_console_fork_commit_cursor(
+        self,
+        cursor: Any,
+        snapshot: ConsoleChatForkSnapshot,
+    ) -> ConsoleForkCommitResult | None:
+        target_id = snapshot.fork_conversation_id
+        if target_id is None:
+            raise ValueError("Durable fork conversation id is unavailable.")
+        row = cursor.execute(
+            """
+            SELECT id, root_id, parent_conversation_id, forked_from_message_id,
+                   title, active_leaf_message_id, deleted,
+                   console_project_context_json
+            FROM conversations WHERE id = ?
+            """,
+            (target_id,),
+        ).fetchone()
+        if row is None:
+            return None
+        expected_parent = snapshot.source_conversation_id
+        expected_boundary = snapshot.source_boundary_persisted_message_id
+        if expected_parent is None:
+            expected_root = target_id
+        else:
+            source = cursor.execute(
+                "SELECT root_id FROM conversations WHERE id = ?",
+                (expected_parent,),
+            ).fetchone()
+            expected_root = source["root_id"] if source is not None else None
+        active_leaf = snapshot.messages[-1].persisted_message_id
+        expected_identity = (
+            target_id,
+            expected_root,
+            expected_parent,
+            expected_boundary,
+            snapshot.title,
+            active_leaf,
+            0,
+        )
+        actual_identity = (
+            row["id"],
+            row["root_id"],
+            row["parent_conversation_id"],
+            row["forked_from_message_id"],
+            row["title"],
+            row["active_leaf_message_id"],
+            row["deleted"],
+        )
+        if actual_identity != expected_identity:
+            raise RuntimeError("Console fork target identity collision.")
+        for message in snapshot.messages:
+            persisted = cursor.execute(
+                """
+                SELECT conversation_id, parent_message_id, sender, content, deleted
+                FROM messages WHERE id = ?
+                """,
+                (message.persisted_message_id,),
+            ).fetchone()
+            if persisted is None or tuple(persisted) != (
+                target_id,
+                message.persisted_parent_id,
+                message.role.value,
+                message.content,
+                0,
+            ):
+                raise RuntimeError("Console fork target identity collision.")
+        policy = self.console_library_policy_repository.read(target_id).durable_policy
+        if policy is None:
+            raise RuntimeError("Console fork target identity collision.")
+        return ConsoleForkCommitResult(
+            conversation_id=target_id,
+            active_leaf_message_id=active_leaf,
+            message_id_map=self._fork_message_id_map(snapshot),
+            policy=policy,
+            already_committed=True,
+        )
+
+    @staticmethod
+    def _fork_message_id_map(snapshot: ConsoleChatForkSnapshot) -> dict[str, str]:
+        return {
+            message.native_message_id: message.persisted_message_id
+            for message in snapshot.messages
+            if message.persisted_message_id is not None
+        }
+
+    def _recheck_fork_source(
+        self,
+        cursor: Any,
+        snapshot: ConsoleChatForkSnapshot,
+    ) -> tuple[str, str | None, str | None]:
+        source_id = snapshot.source_conversation_id
+        if source_id is None:
+            return snapshot.fork_conversation_id or "", None, None
+        source = cursor.execute(
+            "SELECT root_id, version, deleted FROM conversations WHERE id = ?",
+            (source_id,),
+        ).fetchone()
+        if (
+            source is None
+            or source["deleted"]
+            or type(snapshot.source_conversation_version) is not int
+            or source["version"] != snapshot.source_conversation_version
+        ):
+            raise RuntimeError("Console fork source changed.")
+        previous_source_id = None
+        for message in snapshot.messages:
+            row = cursor.execute(
+                """
+                SELECT conversation_id, parent_message_id, version, content, deleted
+                FROM messages WHERE id = ?
+                """,
+                (message.source_persisted_message_id,),
+            ).fetchone()
+            if (
+                row is None
+                or row["conversation_id"] != source_id
+                or row["parent_message_id"] != previous_source_id
+                or row["version"] != message.source_persisted_revision
+                or row["deleted"]
+                or (
+                    message.visible_variant_id is None
+                    and message.video_tombstone is None
+                    and row["content"] != message.content
+                )
+            ):
+                raise RuntimeError("Console fork source changed.")
+            previous_source_id = message.source_persisted_message_id
+        if previous_source_id != snapshot.source_boundary_persisted_message_id:
+            raise RuntimeError("Console fork source changed.")
+        return source["root_id"], source_id, previous_source_id
+
+    def _link_console_fork_citations(
+        self,
+        cursor: Any,
+        snapshot: ConsoleChatForkSnapshot,
+    ) -> None:
+        target_by_source = {
+            message.source_persisted_message_id: message
+            for message in snapshot.messages
+            if message.source_persisted_message_id is not None
+        }
+        for link in snapshot.citation_links:
+            target = target_by_source.get(link.source_persisted_message_id)
+            if target is None:
+                raise CitationPersistenceUnavailable("fork_citation_owner_missing")
+            if link.state != "active_required":
+                continue
+            repository = self.citation_repository
+            if repository is None or repository.db is not self.db:
+                raise CitationPersistenceUnavailable("citation_repository_unavailable")
+            repository.link_fork_message_owner(
+                cursor,
+                source_message_id=link.source_persisted_message_id,
+                source_message_revision=link.source_revision,
+                source_message_body=target.content,
+                target_message_id=target.persisted_message_id or "",
+                target_message_revision=1,
+                target_message_body=target.content,
+                confirmed_state=link.state,
+            )
+
+    @staticmethod
+    def _fork_conversation_kwargs(
+        snapshot: ConsoleChatForkSnapshot,
+        conversation_kwargs: Mapping[str, object],
+    ) -> dict[str, object]:
+        configuration = snapshot.configuration
+        prepared = dict(conversation_kwargs)
+        prepared["conversation_title"] = snapshot.title
+        prepared["system_prompt"] = configuration.settings.system_prompt
+        prepared["speech_preferences"] = configuration.speech_preferences
+        metadata = _initial_metadata_object(prepared.pop("metadata", {}) or {})
+        metadata["console_session_settings"] = {
+            "version": 1,
+            **asdict(configuration.settings),
+            "pinned_prefill": None,
+        }
+        if configuration.rag_scope is not None:
+            metadata["rag_scope"] = serialize_scope(configuration.rag_scope)
+        if (
+            configuration.user_display_name_override is not None
+            or configuration.character_system_template is not None
+        ):
+            metadata = json.loads(
+                merge_console_roleplay_context(
+                    metadata,
+                    ConsoleRoleplayContext(
+                        user_name_override=(configuration.user_display_name_override),
+                        character_system_template=(
+                            configuration.character_system_template
+                        ),
+                    ),
+                )
+            )
+        prepared["metadata"] = metadata or None
+        return prepared
+
+    @staticmethod
+    def _validate_console_fork_persistence_input(
+        snapshot: ConsoleChatForkSnapshot,
+        *,
+        policy_candidate: ConsoleLibraryPolicyCandidate,
+        project_context_json: str,
+    ) -> None:
+        if not isinstance(snapshot, ConsoleChatForkSnapshot):
+            raise TypeError("snapshot must be ConsoleChatForkSnapshot")
+        if policy_candidate != snapshot.configuration.library_policy:
+            raise ValueError("Console fork Library policy changed.")
+        if project_context_json != encode_project_context_json(
+            snapshot.configuration.project_instruction_state
+        ):
+            raise ValueError("Console fork project context changed.")
+        if not snapshot.messages:
+            raise ValueError("Console fork must contain a message.")
+        durable_ids = [message.persisted_message_id for message in snapshot.messages]
+        if snapshot.durable:
+            if (
+                not snapshot.fork_conversation_id
+                or any(not message_id for message_id in durable_ids)
+                or len(set(durable_ids)) != len(durable_ids)
+            ):
+                raise ValueError("Console fork durable identities are invalid.")
+        elif snapshot.fork_conversation_id is not None or any(durable_ids):
+            raise ValueError("Temporary fork cannot carry durable identities.")
+        if not snapshot.durable and (
+            snapshot.source_conversation_id is not None
+            or snapshot.source_conversation_version is not None
+            or snapshot.source_boundary_persisted_message_id is not None
+            or snapshot.citation_links
+            or any(
+                message.source_persisted_message_id is not None
+                or message.source_persisted_revision is not None
+                for message in snapshot.messages
+            )
+        ):
+            raise ValueError("Temporary fork citation identity is invalid.")
+        expected_citations = {
+            (
+                message.source_persisted_message_id,
+                message.source_persisted_revision,
+            )
+            for message in snapshot.messages
+            if message.source_persisted_message_id is not None
+        }
+        actual_citations = {
+            (link.source_persisted_message_id, link.source_revision)
+            for link in snapshot.citation_links
+        }
+        if (
+            len(actual_citations) != len(snapshot.citation_links)
+            or actual_citations != expected_citations
+            or any(
+                link.state not in {"active_required", "unavailable", "none"}
+                for link in snapshot.citation_links
+            )
+        ):
+            raise ValueError("Console fork citation states are invalid.")
+        prior_native = None
+        prior_persisted = None
+        image_ids: set[str] = set()
+        for message in snapshot.messages:
+            if (
+                message.native_parent_id != prior_native
+                or message.persisted_parent_id != prior_persisted
+            ):
+                raise ValueError("Console fork lineage is invalid.")
+            if message.video_tombstone is not None:
+                if (
+                    message.attachments
+                    or message.generation_metadata
+                    or message.content != CONSOLE_FORK_VIDEO_TOMBSTONE_CONTENT
+                    or message.video_tombstone.owner_native_message_id
+                    != message.native_message_id
+                    or message.video_tombstone.owner_persisted_message_id
+                    != message.persisted_message_id
+                    or (
+                        message.video_tombstone.source_image_message_id is not None
+                        and message.video_tombstone.source_image_message_id
+                        not in image_ids
+                    )
+                ):
+                    raise ValueError("Console fork video tombstone is invalid.")
+            if message.generation_metadata and len(message.generation_metadata) != len(
+                message.attachments
+            ):
+                raise ValueError("Console fork generation metadata is invalid.")
+            has_image = False
+            for position, attachment in enumerate(message.attachments):
+                if (
+                    attachment.owner_native_message_id != message.native_message_id
+                    or attachment.owner_persisted_message_id
+                    != message.persisted_message_id
+                    or attachment.position != position
+                    or type(attachment.data) is not bytes
+                    or not attachment.data
+                    or len(attachment.data) > MAX_ATTACHMENT_BYTES
+                    or type(attachment.mime_type) is not str
+                    or not attachment.mime_type
+                    or type(attachment.display_name) is not str
+                ):
+                    raise ValueError("Console fork attachment is invalid.")
+                if attachment.mime_type.startswith("image/"):
+                    validate_console_fork_image_payload(
+                        attachment.data,
+                        attachment.mime_type,
+                    )
+                    has_image = True
+            for position, metadata in enumerate(message.generation_metadata):
+                if (
+                    metadata.owner_native_message_id != message.native_message_id
+                    or metadata.owner_persisted_message_id
+                    != message.persisted_message_id
+                    or metadata.position != position
+                    or not has_image
+                ):
+                    raise ValueError("Console fork generation metadata is invalid.")
+                try:
+                    fingerprint_console_fork_selected_image(
+                        message.attachments[position],
+                        metadata,
+                    )
+                except (TypeError, ValueError):
+                    raise ValueError(
+                        "Console fork generation metadata is invalid."
+                    ) from None
+            if has_image:
+                image_id = (
+                    message.persisted_message_id
+                    if snapshot.durable
+                    else message.native_message_id
+                )
+                if image_id is None:
+                    raise ValueError("Console fork image identity is invalid.")
+                image_ids.add(image_id)
+            prior_native = message.native_message_id
+            prior_persisted = message.persisted_message_id
 
     def fork_conversation_into_workspace(
         self,

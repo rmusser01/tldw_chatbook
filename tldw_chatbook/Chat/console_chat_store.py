@@ -11,7 +11,7 @@ import threading
 import time
 from collections import OrderedDict, deque
 from contextlib import contextmanager
-from dataclasses import dataclass, field, fields, is_dataclass, replace
+from dataclasses import asdict, dataclass, field, fields, is_dataclass, replace
 from datetime import datetime, timezone
 from enum import Enum
 from types import MappingProxyType
@@ -67,6 +67,7 @@ from tldw_chatbook.Chat.console_chat_models import (
 from tldw_chatbook.Chat.console_chat_fork import (
     CONSOLE_FORK_VIDEO_TOMBSTONE_CONTENT,
     ConsoleChatForkSnapshot,
+    ConsoleForkCitationLink,
     ConsoleForkConfigurationSnapshot,
     ConsoleForkEligibility,
     ConsoleForkFence,
@@ -501,6 +502,14 @@ class ConsoleChatPersistence(Protocol):
 
     def create_conversation(self, **kwargs) -> str:
         """Create a persisted conversation and return its ID."""
+
+    def get_console_fork_citation_state(
+        self,
+        message_id: str,
+        revision: int,
+        body: str,
+    ) -> str:
+        """Confirm one durable source message's citation ownership state."""
 
     def create_message(
         self,
@@ -5281,19 +5290,21 @@ class ConsoleChatStore:
             configuration,
             validate_destination=durable,
         )
+        citation_links = self._fork_citation_links(tuple(projected), durable=durable)
         candidate = ConsoleChatForkSnapshot(
             fork_session_id=fork_session_id,
             fork_conversation_id=fork_conversation_id,
             title=normalized_title,
             source_session_id=fence.source_session_id,
             source_conversation_id=fence.source_conversation_id,
+            source_conversation_version=fence.source_conversation_version,
             source_boundary_persisted_message_id=(
                 fence.lineage[-1].persisted_message_id
             ),
             durable=durable,
             messages=tuple(projected),
             configuration=configuration,
-            citation_links=(),
+            citation_links=citation_links,
         )
         candidate_matches_fence = len(candidate.messages) == len(fence.lineage)
         for entry, message in zip(
@@ -5361,6 +5372,44 @@ class ConsoleChatStore:
         ):
             raise ValueError("Console fork source changed.")
         return candidate
+
+    def _fork_citation_links(
+        self,
+        messages: tuple[ConsoleForkProjectedMessage, ...],
+        *,
+        durable: bool,
+    ) -> tuple[ConsoleForkCitationLink, ...]:
+        """Freeze confirmed governed-owner states for a durable source path."""
+
+        if not durable or not any(
+            message.source_persisted_message_id is not None for message in messages
+        ):
+            return ()
+        reader = getattr(self.persistence, "get_console_fork_citation_state", None)
+        if not callable(reader):
+            raise ValueError("Console fork citation authority is unavailable.")
+        links: list[ConsoleForkCitationLink] = []
+        for message in messages:
+            source_id = message.source_persisted_message_id
+            source_revision = message.source_persisted_revision
+            if source_id is None or type(source_revision) is not int:
+                raise ValueError("Console fork citation authority is unavailable.")
+            try:
+                state = reader(source_id, source_revision, message.content)
+            except CitationPersistenceUnavailable as exc:
+                raise ValueError(
+                    "Console fork citation authority is unavailable."
+                ) from exc
+            if state not in {"active_required", "unavailable", "none"}:
+                raise ValueError("Console fork citation authority is unavailable.")
+            links.append(
+                ConsoleForkCitationLink(
+                    source_persisted_message_id=source_id,
+                    source_revision=source_revision,
+                    state=state,
+                )
+            )
+        return tuple(links)
 
     def register_fork_snapshot(
         self,
@@ -11661,6 +11710,11 @@ class ConsoleChatStore:
 
         scope_type, workspace_id = self._persistence_scope(session)
         metadata: dict[str, object] = {}
+        if session.settings is not None:
+            metadata["console_session_settings"] = {
+                "version": 1,
+                **asdict(session.settings),
+            }
         if session.rag_scope_holder.scope is not None:
             metadata["rag_scope"] = serialize_scope(session.rag_scope_holder.scope)
         pinned_prefill = (
@@ -11732,6 +11786,10 @@ class ConsoleChatStore:
                 if boundary_native_id is not None
                 else None
             ),
+            project_context_json=encode_project_context_json(
+                session.project_instruction_state
+            ),
+            context_policy_overrides=session.context_policy_overrides,
             contributions=contributions,
         )
 
@@ -11760,7 +11818,6 @@ class ConsoleChatStore:
                 self.on_scope_flushed(identity.conversation_id, held_scope)
             except Exception:
                 logger.exception("on_scope_flushed callback failed after promotion.")
-        self._persist_project_instruction_state(session)
         return identity.conversation_id
 
     def set_session_system_prompt(

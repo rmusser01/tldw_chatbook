@@ -11,6 +11,9 @@ from PIL import Image as PILImage
 
 from tldw_chatbook.Chat import console_chat_fork
 from tldw_chatbook.Chat.chat_persistence_service import ChatPersistenceService
+from tldw_chatbook.Chat.citation_trace_repository import (
+    CitationPersistenceUnavailable,
+)
 from tldw_chatbook.Chat.console_chat_fork import (
     CONSOLE_FORK_FINGERPRINT_JSON_MAX_BYTES,
     CONSOLE_FORK_TITLE_MAX_LENGTH,
@@ -62,12 +65,26 @@ class _ForkVersionPersistence:
     def __init__(self) -> None:
         self.conversation_version = 7
         self.message_versions: dict[str, int] = {}
+        self.citation_states: dict[str, str] = {}
 
     def get_conversation_version(self, _conversation_id: str) -> int:
         return self.conversation_version
 
     def get_message_version(self, message_id: str) -> int | None:
         return self.message_versions.get(message_id)
+
+    def get_console_fork_citation_state(
+        self,
+        message_id: str,
+        revision: int,
+        body: str,
+    ) -> str:
+        assert revision == self.message_versions[message_id]
+        assert body
+        state = self.citation_states.get(message_id, "none")
+        if state == "ambiguous":
+            raise CitationPersistenceUnavailable("fork_owner_ambiguous")
+        return state
 
 
 def _image_bytes(
@@ -566,6 +583,7 @@ def _registration_snapshot(
         title="Independent fork",
         source_session_id="source-session",
         source_conversation_id=None,
+        source_conversation_version=None,
         source_boundary_persisted_message_id=None,
         durable=True,
         messages=messages,
@@ -812,6 +830,7 @@ def test_fork_records_are_frozen_slotted_contracts() -> None:
                 "title",
                 "source_session_id",
                 "source_conversation_id",
+                "source_conversation_version",
                 "source_boundary_persisted_message_id",
                 "durable",
                 "messages",
@@ -1720,6 +1739,74 @@ def test_stage_and_register_fork_preserves_source_and_allocates_fresh_ownership(
             in {projected.persisted_message_id for projected in snapshot.messages}
             for message in snapshot.messages
         )
+
+
+@pytest.mark.parametrize("first_state", ("none", "unavailable"))
+def test_stage_fork_snapshot_freezes_each_durable_citation_state(
+    first_state: str,
+) -> None:
+    store, persistence, session, user, _, _, selected, _ = _fork_store(durable=True)
+    source_user = store._nodes_by_session[session.id][user.id]
+    source_selected = store._nodes_by_session[session.id][selected.id]
+    persistence.citation_states[source_user.persisted_message_id] = first_state
+    persistence.citation_states[source_selected.persisted_message_id] = (
+        "active_required"
+    )
+    fence = store.issue_fork_fence(selected.id)
+
+    snapshot = store.stage_fork_snapshot(
+        fence,
+        title="Independent fork",
+        fork_session_id="fork-session",
+        fork_conversation_id="fork-conversation",
+    )
+
+    assert snapshot.citation_links == (
+        ConsoleForkCitationLink(
+            source_persisted_message_id=source_user.persisted_message_id,
+            source_revision=persistence.message_versions[
+                source_user.persisted_message_id
+            ],
+            state=first_state,
+        ),
+        ConsoleForkCitationLink(
+            source_persisted_message_id=source_selected.persisted_message_id,
+            source_revision=persistence.message_versions[
+                source_selected.persisted_message_id
+            ],
+            state="active_required",
+        ),
+    )
+
+
+def test_stage_fork_snapshot_rejects_ambiguous_citation_authority() -> None:
+    store, persistence, session, _, _, _, selected, _ = _fork_store(durable=True)
+    source_selected = store._nodes_by_session[session.id][selected.id]
+    persistence.citation_states[source_selected.persisted_message_id] = "ambiguous"
+    fence = store.issue_fork_fence(selected.id)
+
+    with pytest.raises(ValueError, match="citation authority"):
+        store.stage_fork_snapshot(
+            fence,
+            title="Independent fork",
+            fork_session_id="fork-session",
+            fork_conversation_id="fork-conversation",
+        )
+
+
+def test_temporary_fork_snapshot_keeps_text_without_governed_citation_links() -> None:
+    store, _, _, _, _, _, selected, _ = _fork_store(ephemeral=True)
+    fence = store.issue_fork_fence(selected.id)
+
+    snapshot = store.stage_fork_snapshot(
+        fence,
+        title="Temporary fork",
+        fork_session_id="fork-session",
+        fork_conversation_id=None,
+    )
+
+    assert "Selected variant" in [message.content for message in snapshot.messages]
+    assert snapshot.citation_links == ()
 
 
 @pytest.mark.parametrize(

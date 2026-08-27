@@ -9,6 +9,10 @@ from tldw_chatbook.Chat.console_chat_models import (
 )
 from tldw_chatbook.Chat import console_chat_store as console_store_module
 from tldw_chatbook.Chat.console_chat_store import ConsoleChatStore
+from tldw_chatbook.Chat.console_context_policy import (
+    ConsoleContextPolicyOverrides,
+    ContextCompactionMode,
+)
 from tldw_chatbook.Chat.console_library_policy import (
     ConsoleAssistantLibraryAccess,
     ConsoleAutoRetrieve,
@@ -95,7 +99,9 @@ def _memory_state(store, session_id):
 
 
 def _conversation_count(db):
-    return db.get_connection().execute("SELECT COUNT(*) FROM conversations").fetchone()[0]
+    return (
+        db.get_connection().execute("SELECT COUNT(*) FROM conversations").fetchone()[0]
+    )
 
 
 def _bundle_counts(db):
@@ -235,11 +241,17 @@ def test_promotion_is_atomic_for_policy_lineage_attachments_and_contribution(
     ]
     assert rows[1]["parent_message_id"] == live_user.persisted_message_id
     attachments = db.get_attachments_for_messages([live_user.persisted_message_id])
-    assert [row["position"] for row in attachments[live_user.persisted_message_id]] == [1]
-    trajectory = db.get_connection().execute(
-        "SELECT message_id, seq FROM message_trajectory_metadata WHERE conversation_id = ?",
-        (conversation_id,),
-    ).fetchone()
+    assert [row["position"] for row in attachments[live_user.persisted_message_id]] == [
+        1
+    ]
+    trajectory = (
+        db.get_connection()
+        .execute(
+            "SELECT message_id, seq FROM message_trajectory_metadata WHERE conversation_id = ?",
+            (conversation_id,),
+        )
+        .fetchone()
+    )
     assert tuple(trajectory) == (live_assistant.persisted_message_id, 1)
     with pytest.raises(RuntimeError, match="active contribution"):
         contribution.writer.next_trajectory_sequence()
@@ -270,6 +282,64 @@ def test_contribution_failure_rolls_back_bundle_and_preserves_retryability(tmp_p
     assert _conversation_count(db) == 1
 
 
+def test_promotion_persists_sparse_context_policy_inside_the_bundle(
+    tmp_path, monkeypatch
+):
+    db, service, store = _store(tmp_path, "context-policy.db")
+    session = store.create_session(title="Context policy", ephemeral=True)
+    session.context_policy_overrides = ConsoleContextPolicyOverrides(
+        compaction_mode=ContextCompactionMode.OFF,
+    )
+    store.append_message(session.id, role=ConsoleMessageRole.USER, content="hello")
+    transaction_states = []
+    original = service.context_repository.save_policy
+
+    def recording_save(conversation_id, overrides):
+        transaction_states.append(db.get_connection().in_transaction)
+        return original(conversation_id, overrides)
+
+    monkeypatch.setattr(service.context_repository, "save_policy", recording_save)
+    monkeypatch.setattr(
+        store,
+        "_flush_context_policy_on_first_persist",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(
+            AssertionError("postcommit context-policy write")
+        ),
+    )
+
+    conversation_id = store.promote_ephemeral_session(session.id)
+
+    assert transaction_states == [True]
+    assert service.get_conversation_context_policy(conversation_id).overrides == (
+        session.context_policy_overrides
+    )
+
+
+def test_promotion_context_policy_failure_rolls_back_without_publication(
+    tmp_path, monkeypatch
+):
+    db, service, store = _store(tmp_path, "context-policy-failure.db")
+    session = store.create_session(title="Context policy", ephemeral=True)
+    session.context_policy_overrides = ConsoleContextPolicyOverrides(
+        compaction_mode=ContextCompactionMode.OFF,
+    )
+    store.append_message(session.id, role=ConsoleMessageRole.USER, content="hello")
+    before = _memory_state(store, session.id)
+    monkeypatch.setattr(
+        service.context_repository,
+        "save_policy",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(
+            RuntimeError("injected context policy failure")
+        ),
+    )
+
+    with pytest.raises(RuntimeError, match="injected context policy failure"):
+        store.promote_ephemeral_session(session.id)
+
+    assert _memory_state(store, session.id) == before
+    assert _conversation_count(db) == 0
+
+
 def test_promotion_rejects_unresolved_operation_before_any_write(tmp_path):
     db, _service, store = _store(tmp_path, "unresolved.db")
     session = store.create_session(ephemeral=True)
@@ -294,7 +364,9 @@ def _workspace_store(tmp_path):
     return db, registry, service, ConsoleChatStore(persistence=service)
 
 
-@pytest.mark.parametrize("failure_point", ("policy", "message", "attachment", "contribution"))
+@pytest.mark.parametrize(
+    "failure_point", ("policy", "message", "attachment", "contribution")
+)
 def test_chat_failure_never_projects_cross_database_workspace_membership(
     tmp_path, monkeypatch, failure_point
 ):
@@ -314,19 +386,25 @@ def test_chat_failure_never_projects_cross_database_workspace_membership(
         monkeypatch.setattr(
             service.console_library_policy_repository,
             "insert",
-            lambda *_args, **_kwargs: (_ for _ in ()).throw(RuntimeError("policy fail")),
+            lambda *_args, **_kwargs: (_ for _ in ()).throw(
+                RuntimeError("policy fail")
+            ),
         )
     elif failure_point == "message":
         monkeypatch.setattr(
             service,
             "create_message",
-            lambda *_args, **_kwargs: (_ for _ in ()).throw(RuntimeError("message fail")),
+            lambda *_args, **_kwargs: (_ for _ in ()).throw(
+                RuntimeError("message fail")
+            ),
         )
     elif failure_point == "attachment":
         monkeypatch.setattr(
             db,
             "set_message_attachments",
-            lambda *_args, **_kwargs: (_ for _ in ()).throw(RuntimeError("attachment fail")),
+            lambda *_args, **_kwargs: (_ for _ in ()).throw(
+                RuntimeError("attachment fail")
+            ),
         )
 
     with pytest.raises(RuntimeError):
@@ -362,7 +440,9 @@ def test_workspace_projection_failure_keeps_commit_and_retries_idempotently(
     assert store.has_pending_workspace_projection(session.id)
     assert store.promote_ephemeral_session(session.id) is None
     assert not store.has_pending_workspace_projection(session.id)
-    assert [row.item_id for row in registry.list_workspace_conversations("workspace-a")] == [conversation_id]
+    assert [
+        row.item_id for row in registry.list_workspace_conversations("workspace-a")
+    ] == [conversation_id]
     assert store.retry_pending_workspace_projection(session.id)
     assert store.promote_ephemeral_session(session.id) is None
     assert _conversation_count(db) == 1

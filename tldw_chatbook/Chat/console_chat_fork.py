@@ -216,6 +216,7 @@ class ConsoleChatForkSnapshot:
     title: str
     source_session_id: str
     source_conversation_id: str | None
+    source_conversation_version: int | str | None
     source_boundary_persisted_message_id: str | None
     durable: bool
     messages: tuple[ConsoleForkProjectedMessage, ...]
