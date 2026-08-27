@@ -1886,7 +1886,7 @@ class SubscriptionsDB(BaseDB):
         return remaining
 
     @contextmanager
-    def transaction(self):
+    def transaction(self, *, immediate: bool = False):
         """Context manager for database transactions, safe to nest.
 
         task-19562 part C. This used to commit unconditionally on exit. A
@@ -1922,6 +1922,9 @@ class SubscriptionsDB(BaseDB):
         which is why no incident was ever observed -- but the ordering was
         one added statement away from silent partial persistence.
 
+        Args:
+            immediate: Acquire SQLite's write lock before yielding.
+
         Yields:
             The thread-local `sqlite3.Connection`. The same object is yielded
             to a nested block, so an inner `with` shares the outer's
@@ -1948,6 +1951,8 @@ class SubscriptionsDB(BaseDB):
 
         self._local.transaction_depth = 1
         try:
+            if immediate:
+                conn.execute("BEGIN IMMEDIATE")
             yield conn
             conn.commit()
         except Exception:
@@ -4065,8 +4070,8 @@ class SubscriptionsDB(BaseDB):
         self, source_id: int, *, created_at: str
     ) -> Dict[str, Any]:
         """Insert one queued source receipt or return its active winner."""
-        try:
-            with self.transaction() as conn:
+        with self.transaction(immediate=True) as conn:
+            try:
                 cursor = conn.execute(
                     "INSERT INTO local_watchlist_runs "
                     "(source_id, job_id, status, stats_json, created_at, updated_at) "
@@ -4086,19 +4091,18 @@ class SubscriptionsDB(BaseDB):
                 receipt = dict(row)
                 receipt["_claim_acquired"] = True
                 return receipt
-        except sqlite3.IntegrityError:
-            with self.transaction() as conn:
+            except sqlite3.IntegrityError:
                 winner = conn.execute(
                     "SELECT * FROM local_watchlist_runs "
                     "WHERE source_id = ? AND status IN ('queued', 'running') "
                     "ORDER BY created_at DESC, id DESC LIMIT 1",
                     (source_id,),
                 ).fetchone()
-            if winner is not None:
-                receipt = dict(winner)
-                receipt["_claim_acquired"] = False
-                return receipt
-            raise
+                if winner is not None:
+                    receipt = dict(winner)
+                    receipt["_claim_acquired"] = False
+                    return receipt
+                raise
 
     def transition_watchlist_run(
         self,
@@ -4157,8 +4161,8 @@ class SubscriptionsDB(BaseDB):
         self, watchlist_id: int, *, created_at: str
     ) -> Dict[str, Any]:
         """Insert one generating briefing or return its durable active winner."""
-        try:
-            with self.transaction() as conn:
+        with self.transaction(immediate=True) as conn:
+            try:
                 cursor = conn.execute(
                     "INSERT INTO briefings "
                     "(watchlist_id, status, created_at, updated_at) "
@@ -4171,19 +4175,18 @@ class SubscriptionsDB(BaseDB):
                 receipt = dict(row)
                 receipt["_claim_acquired"] = True
                 return receipt
-        except sqlite3.IntegrityError:
-            with self.transaction() as conn:
+            except sqlite3.IntegrityError:
                 winner = conn.execute(
                     "SELECT * FROM briefings "
                     "WHERE watchlist_id = ? AND status = 'generating' "
                     "ORDER BY created_at DESC, id DESC LIMIT 1",
                     (watchlist_id,),
                 ).fetchone()
-            if winner is not None:
-                receipt = dict(winner)
-                receipt["_claim_acquired"] = False
-                return receipt
-            raise
+                if winner is not None:
+                    receipt = dict(winner)
+                    receipt["_claim_acquired"] = False
+                    return receipt
+                raise
 
     def transition_briefing(
         self, briefing_id: int, *, status: str, error: str | None = None, **fields: Any

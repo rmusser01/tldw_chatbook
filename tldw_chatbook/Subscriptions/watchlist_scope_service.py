@@ -769,6 +769,20 @@ class WatchlistScopeService:
                         "Local watchlist run launch did not return a run identifier."
                     )
                 resolved_run_id = self._run_id_from_item_id(run_id)
+                if (
+                    isinstance(launched, Mapping)
+                    and launched.get("_claim_acquired") is False
+                ):
+                    while True:
+                        winner = await self._maybe_await(
+                            service.get_run(resolved_run_id)
+                        )
+                        if str(winner.get("status") or "").lower() not in {
+                            "queued",
+                            "running",
+                        }:
+                            return winner
+                        await asyncio.sleep(0.01)
                 try:
                     return await self._maybe_await(execute_run(resolved_run_id))
                 except asyncio.CancelledError:

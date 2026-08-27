@@ -1,11 +1,11 @@
 ---
 id: TASK-22860
 title: Migrate durable briefing provenance and atomic Watchlists claims
-status: Done
+status: In Progress
 assignee:
   - '@codex'
 created_date: '2026-08-27 04:14'
-updated_date: '2026-08-27 06:25'
+updated_date: '2026-08-27 06:56'
 labels:
   - watchlists
   - briefings
@@ -64,4 +64,6 @@ ADR path: `backlog/decisions/032-local-agent-tool-permission-boundary.md`
 Reason: Implemented the existing ADR-032 durable receipt/provenance authority; no new architectural decision was introduced.
 
 Verification: 104 Subscriptions DB migration/readiness tests, 62 briefing selection/service tests, and 36 local Watchlists service tests passed. Ruff passed for every touched Python/test file and `git diff --check` passed. One pre-existing Requests dependency-version warning remains. No full repository suite was run, per task scope.
+
+Controller review gate: implementation is not accepted until a fresh independent review approves the exact task diff; status was returned to In Progress after the implementation commit.
 <!-- SECTION:NOTES:END -->

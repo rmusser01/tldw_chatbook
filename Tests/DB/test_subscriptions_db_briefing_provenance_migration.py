@@ -138,6 +138,7 @@ CREATE TABLE briefing_items (
     featured INTEGER DEFAULT 0,
     PRIMARY KEY (briefing_id, item_id)
 );
+CREATE INDEX idx_briefing_items_item ON briefing_items(item_id);
 """
 
 
@@ -162,6 +163,7 @@ def _build_v1(path: Path, *, fail_version_write: bool = False) -> None:
             "item_id",
             "featured",
         )
+        assert "idx_briefing_items_item" in _indexes(conn)
         assert "uq_local_watchlist_runs_active_source" not in _indexes(conn)
         assert "uq_briefings_generating_watchlist" not in _indexes(conn)
         conn.execute(
@@ -193,7 +195,7 @@ def _build_v1(path: Path, *, fail_version_write: bool = False) -> None:
         conn.execute("INSERT INTO briefing_items VALUES (20, 11, 1)")
         for row in (
             (30, "queued", "2026-08-04T00:00:00+00:00"),
-            (31, "running", "2026-08-05T00:00:00+00:00"),
+            (31, "running", "2026-08-04T00:00:00+00:00"),
         ):
             conn.execute(
                 "INSERT INTO local_watchlist_runs "
@@ -203,7 +205,7 @@ def _build_v1(path: Path, *, fail_version_write: bool = False) -> None:
             )
         for row in (
             (21, "2026-08-04T00:00:00+00:00"),
-            (22, "2026-08-05T00:00:00+00:00"),
+            (22, "2026-08-04T00:00:00+00:00"),
         ):
             conn.execute(
                 "INSERT INTO briefings "
@@ -297,6 +299,7 @@ def test_v1_upgrade_failure_rolls_back_table_rebuild_and_version(tmp_path: Path)
             "item_id",
             "featured",
         )
+        assert "idx_briefing_items_item" in _indexes(conn)
         assert "uq_local_watchlist_runs_active_source" not in _indexes(conn)
         assert "uq_briefings_generating_watchlist" not in _indexes(conn)
 
@@ -375,6 +378,61 @@ def test_two_database_owners_resolve_source_run_claim_and_terminal_releases_it(
     second.close()
 
 
+def test_source_claim_has_no_stale_winner_resolution_gap(tmp_path: Path) -> None:
+    path = tmp_path / "run-claim-gap.db"
+    winner = SubscriptionsDB(path, client_id="winner")
+    loser = SubscriptionsDB(path, client_id="loser")
+    source_id = winner.add_subscription(
+        name="Claimed", type="rss", source="https://example.test/feed"
+    )
+    first = winner.accept_watchlist_run(
+        source_id, created_at="2026-08-10T00:00:00+00:00"
+    )
+    gap_seen = threading.Event()
+    accept_finished = threading.Event()
+    terminalized = threading.Event()
+    statements: list[str] = []
+    loser_connection = loser.conn
+
+    def trace(statement: str) -> None:
+        statements.append(statement)
+        if (
+            statement.startswith("SELECT * FROM local_watchlist_runs")
+            and not loser_connection.in_transaction
+        ):
+            gap_seen.set()
+            terminalized.wait(2)
+
+    loser_connection.set_trace_callback(trace)
+
+    def terminalize_winner() -> None:
+        if not gap_seen.wait(0.1):
+            accept_finished.wait(2)
+        winner.transition_watchlist_run(
+            int(first["id"]),
+            status="completed",
+            finished_at="2026-08-10T00:01:00+00:00",
+        )
+        terminalized.set()
+
+    with ThreadPoolExecutor(max_workers=1) as pool:
+        future = pool.submit(terminalize_winner)
+        try:
+            receipt = loser.accept_watchlist_run(
+                source_id, created_at="2026-08-10T00:00:30+00:00"
+            )
+        finally:
+            accept_finished.set()
+        future.result(timeout=2)
+
+    assert "BEGIN IMMEDIATE" in statements
+    assert not gap_seen.is_set()
+    assert receipt["id"] == first["id"]
+    assert receipt["_claim_acquired"] is False
+    winner.close()
+    loser.close()
+
+
 def test_two_database_owners_resolve_briefing_claim_and_terminal_releases_it(
     tmp_path: Path,
 ) -> None:
@@ -416,3 +474,57 @@ def test_two_database_owners_resolve_briefing_claim_and_terminal_releases_it(
     assert replacement["_claim_acquired"] is True
     first.close()
     second.close()
+
+
+def test_briefing_claim_has_no_stale_winner_resolution_gap(tmp_path: Path) -> None:
+    path = tmp_path / "briefing-claim-gap.db"
+    winner = SubscriptionsDB(path, client_id="winner")
+    loser = SubscriptionsDB(path, client_id="loser")
+    with winner.transaction() as conn:
+        watchlist_id = conn.execute(
+            "INSERT INTO watchlists (name) VALUES ('Claimed')"
+        ).lastrowid
+    first = winner.accept_briefing(
+        watchlist_id, created_at="2026-08-10T00:00:00+00:00"
+    )
+    gap_seen = threading.Event()
+    accept_finished = threading.Event()
+    terminalized = threading.Event()
+    statements: list[str] = []
+    loser_connection = loser.conn
+
+    def trace(statement: str) -> None:
+        statements.append(statement)
+        if (
+            statement.startswith("SELECT * FROM briefings")
+            and not loser_connection.in_transaction
+        ):
+            gap_seen.set()
+            terminalized.wait(2)
+
+    loser_connection.set_trace_callback(trace)
+
+    def terminalize_winner() -> None:
+        if not gap_seen.wait(0.1):
+            accept_finished.wait(2)
+        winner.transition_briefing(
+            int(first["id"]), status="failed", error="interrupted"
+        )
+        terminalized.set()
+
+    with ThreadPoolExecutor(max_workers=1) as pool:
+        future = pool.submit(terminalize_winner)
+        try:
+            receipt = loser.accept_briefing(
+                watchlist_id, created_at="2026-08-10T00:00:30+00:00"
+            )
+        finally:
+            accept_finished.set()
+        future.result(timeout=2)
+
+    assert "BEGIN IMMEDIATE" in statements
+    assert not gap_seen.is_set()
+    assert receipt["id"] == first["id"]
+    assert receipt["_claim_acquired"] is False
+    winner.close()
+    loser.close()

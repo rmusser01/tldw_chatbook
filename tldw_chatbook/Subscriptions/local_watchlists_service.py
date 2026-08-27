@@ -1168,7 +1168,7 @@ class LocalWatchlistsService:
         if subscription is None:
             raise KeyError(f"Subscription not found: {resolved_source_id}")
         try:
-            run_id = await run_db_off_loop(
+            receipt = await run_db_off_loop(
                 db, self._insert_queued_run, db, resolved_source_id, self._utc_now()
             )
         except sqlite3.IntegrityError as exc:
@@ -1187,13 +1187,16 @@ class LocalWatchlistsService:
             raise KeyError(
                 f"Subscription not found: {resolved_source_id}"
             ) from exc
-        return await self.get_run(run_id)
+        run = await self.get_run(receipt["id"])
+        run["_claim_acquired"] = receipt["_claim_acquired"]
+        return run
 
     @staticmethod
-    def _insert_queued_run(db: SubscriptionsDB, source_id: int, now: str) -> int:
-        """Accept one database-owned source claim and return its durable id."""
-        receipt = db.accept_watchlist_run(source_id, created_at=now)
-        return int(receipt["id"])
+    def _insert_queued_run(
+        db: SubscriptionsDB, source_id: int, now: str
+    ) -> dict[str, Any]:
+        """Accept one database-owned source claim."""
+        return db.accept_watchlist_run(source_id, created_at=now)
 
     async def execute_run(self, run_id: Any) -> dict[str, Any]:
         """Execute a queued local watchlist run and persist its observed result.

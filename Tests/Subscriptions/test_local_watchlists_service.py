@@ -1,3 +1,4 @@
+import asyncio
 import json
 import logging
 import threading
@@ -12,7 +13,7 @@ from tldw_chatbook.Notifications import (
     ClientNotificationsDB,
     NotificationDispatchService,
 )
-from tldw_chatbook.Subscriptions import LocalWatchlistsService
+from tldw_chatbook.Subscriptions import LocalWatchlistsService, WatchlistScopeService
 from tldw_chatbook.Subscriptions import monitoring_engine
 from tldw_chatbook.Subscriptions.monitoring_engine import ContentExtractor
 from tldw_chatbook.Subscriptions.watchlist_bundle_service import WatchlistBundleService
@@ -205,6 +206,70 @@ async def test_run_lifecycle_uses_database_owned_claim_transitions(tmp_path):
     assert accepted == [source["source_id"]]
     assert terminal == [(launched["run_id"], "cancelled")]
     assert cancelled["status"] == "cancelled"
+
+
+@pytest.mark.asyncio
+async def test_two_scope_services_execute_one_durable_source_claim(tmp_path):
+    path = tmp_path / "subscriptions.db"
+    first_db = SubscriptionsDB(path, "first")
+    second_db = SubscriptionsDB(path, "second")
+    executor_started = asyncio.Event()
+    release_executor = asyncio.Event()
+    loser_accepted = threading.Event()
+    executor_calls = 0
+
+    async def executor(_subscription):
+        nonlocal executor_calls
+        executor_calls += 1
+        executor_started.set()
+        await release_executor.wait()
+        return {"items": []}
+
+    first_service = LocalWatchlistsService(
+        db_factory=lambda: first_db, run_executor=executor
+    )
+    second_service = LocalWatchlistsService(
+        db_factory=lambda: second_db, run_executor=executor
+    )
+    source = await first_service.create_source(
+        {
+            "name": "Feed",
+            "url": "https://example.com/feed.xml",
+            "source_type": "rss",
+        }
+    )
+    original_accept = second_db.accept_watchlist_run
+
+    def accept_loser(source_id: int, *, created_at: str):
+        receipt = original_accept(source_id, created_at=created_at)
+        if receipt["_claim_acquired"] is False:
+            loser_accepted.set()
+        return receipt
+
+    second_db.accept_watchlist_run = accept_loser
+    first_scope = WatchlistScopeService(
+        local_service=first_service, server_service=None
+    )
+    second_scope = WatchlistScopeService(
+        local_service=second_service, server_service=None
+    )
+
+    first = asyncio.create_task(
+        first_scope.launch_run(runtime_backend="local", source_id=source["source_id"])
+    )
+    await asyncio.wait_for(executor_started.wait(), timeout=2)
+    second = asyncio.create_task(
+        second_scope.launch_run(runtime_backend="local", source_id=source["source_id"])
+    )
+    assert await asyncio.to_thread(loser_accepted.wait, 2)
+    release_executor.set()
+    receipts = await asyncio.gather(first, second)
+
+    assert executor_calls == 1
+    assert receipts[0]["run_id"] == receipts[1]["run_id"]
+    assert [receipt["status"] for receipt in receipts] == ["completed", "completed"]
+    durable = await first_service.get_run(receipts[0]["run_id"])
+    assert durable["status"] == "completed"
 
 
 @pytest.mark.asyncio
