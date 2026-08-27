@@ -3,7 +3,10 @@
 from __future__ import annotations
 
 import argparse
+import json
+import os
 import subprocess
+import sys
 from collections.abc import Collection, Mapping
 from dataclasses import dataclass
 from pathlib import Path
@@ -39,6 +42,46 @@ class ParentOptions:
     no_promote: bool
     promote: bool
     verify_evidence: Path | None
+
+
+@dataclass(frozen=True)
+class ScratchEnvironment:
+    env: dict[str, str]
+    denied_roots: tuple[str, ...]
+
+
+@dataclass(frozen=True)
+class ChildRunResult:
+    returncode: int
+    error: str | None
+    result_path: Path | None
+
+
+CONTAINMENT_EXIT_STATUS = 86
+CHILD_TIMEOUT_SECONDS = 3600
+CHILD_PATH = Path(__file__).with_name("task23019_closeout_child.py")
+CREDENTIAL_ENV_NAMES = frozenset(
+    {
+        "AWS_ACCESS_KEY_ID",
+        "AWS_SECRET_ACCESS_KEY",
+        "AWS_SESSION_TOKEN",
+        "GOOGLE_APPLICATION_CREDENTIALS",
+        "SSH_ASKPASS",
+    }
+)
+CREDENTIAL_ENV_SUFFIXES = (
+    "_API_KEY",
+    "_TOKEN",
+    "_PASSWORD",
+    "_SECRET",
+    "_CREDENTIAL",
+    "_CREDENTIALS",
+    "_PRIVATE_KEY",
+)
+PRESERVED_ENV_NAMES = frozenset(
+    {"COLORTERM", "FORCE_COLOR", "LANG", "LANGUAGE", "NO_COLOR", "PATH", "TERM", "TZ"}
+)
+PRESERVED_ENV_PREFIXES = ("LC_",)
 
 
 CATALOGUE: dict[str, Contract] = {
@@ -276,7 +319,10 @@ def validate_automated_results(
     validate_collected_selectors(catalogue, results.keys())
     for contract in catalogue.values():
         for selector in contract.automated_nodes:
-            if any(results[node_id] != "PASS" for node_id in matching_node_ids(selector, results)):
+            if any(
+                results[node_id] != "PASS"
+                for node_id in matching_node_ids(selector, results)
+            ):
                 raise CloseoutError("pytest_node_not_pass")
 
 
@@ -307,6 +353,152 @@ def verify_subject_tree(repo: Path, subject: Subject) -> None:
     """Reject a later HEAD whose tree differs from the admitted subject tree."""
     if _git(repo, "rev-parse", "HEAD^{tree}") != subject.tree:
         raise CloseoutError("subject_tree_mismatch")
+
+
+def _is_credential_environment_name(name: str) -> bool:
+    upper_name = name.upper()
+    return upper_name in CREDENTIAL_ENV_NAMES or upper_name.endswith(
+        CREDENTIAL_ENV_SUFFIXES
+    )
+
+
+def _is_preserved_environment_name(name: str) -> bool:
+    upper_name = name.upper()
+    return upper_name in PRESERVED_ENV_NAMES or upper_name.startswith(
+        PRESERVED_ENV_PREFIXES
+    )
+
+
+def prepare_scratch_environment(
+    scratch: Path, *, environ: Mapping[str, str] | None = None
+) -> ScratchEnvironment:
+    """Validate and create all child-owned filesystem roots under scratch."""
+    source = dict(os.environ if environ is None else environ)
+    original_home = Path(source.get("HOME", os.path.expanduser("~"))).resolve()
+    original_roots = (
+        original_home,
+        Path(source.get("XDG_CONFIG_HOME", original_home / ".config")).resolve(),
+        Path(source.get("XDG_DATA_HOME", original_home / ".local/share")).resolve(),
+        Path(source.get("XDG_CACHE_HOME", original_home / ".cache")).resolve(),
+        Path(source.get("XDG_STATE_HOME", original_home / ".local/state")).resolve(),
+    )
+
+    scratch_root = scratch.resolve()
+    owned_paths = {
+        "HOME": scratch_root / "home",
+        "XDG_CONFIG_HOME": scratch_root / "xdg-config",
+        "XDG_DATA_HOME": scratch_root / "xdg-data",
+        "XDG_CACHE_HOME": scratch_root / "xdg-cache",
+        "XDG_STATE_HOME": scratch_root / "xdg-state",
+        "TLDW_CONFIG_PATH": scratch_root / "xdg-config/tldw_cli/config.toml",
+        "TMPDIR": scratch_root / "tmp",
+        "TEMP": scratch_root / "tmp",
+        "TMP": scratch_root / "tmp",
+    }
+    resolved_owned = {name: path.resolve() for name, path in owned_paths.items()}
+    child_stdin = (scratch_root / "stdin").resolve()
+    if any(
+        not path.is_relative_to(scratch_root) for path in resolved_owned.values()
+    ) or not child_stdin.is_relative_to(scratch_root):
+        raise CloseoutError("scratch_owner_escape")
+
+    scratch_root.mkdir(parents=True, exist_ok=True)
+    for name, path in resolved_owned.items():
+        (path.parent if name == "TLDW_CONFIG_PATH" else path).mkdir(
+            parents=True, exist_ok=True
+        )
+    child_stdin.touch(exist_ok=True)
+
+    child_environment = {
+        name: value
+        for name, value in source.items()
+        if _is_preserved_environment_name(name)
+        and not _is_credential_environment_name(name)
+    }
+    child_environment.update({name: str(path) for name, path in resolved_owned.items()})
+    child_environment.update(
+        {
+            "TLDW_TEST_MODE": "1",
+            "PYTHONDONTWRITEBYTECODE": "1",
+            "PYTEST_DISABLE_PLUGIN_AUTOLOAD": "1",
+        }
+    )
+    return ScratchEnvironment(
+        env=child_environment,
+        denied_roots=tuple(sorted({str(path) for path in original_roots})),
+    )
+
+
+def run_closeout_child(
+    *,
+    checkout: Path,
+    scratch: Path,
+    mode: str,
+    target: Path,
+    scenario: str | None = None,
+    environ: Mapping[str, str] | None = None,
+) -> ChildRunResult:
+    """Run one bounded child using only explicit arguments, cwd, and environment."""
+    if mode not in {"pytest", "live"}:
+        raise CloseoutError("child_mode_not_defined")
+    if mode == "live" and scenario is None:
+        raise CloseoutError("scenario_not_defined")
+
+    checkout_root = checkout.resolve()
+    scratch_root = scratch.resolve()
+    prepared = prepare_scratch_environment(scratch_root, environ=environ)
+    command = [
+        sys.executable,
+        str(CHILD_PATH),
+        "--checkout",
+        str(checkout_root),
+        "--scratch",
+        str(scratch_root),
+        "--mode",
+        mode,
+        "--target",
+        str(target.resolve()),
+    ]
+    for denied_root in prepared.denied_roots:
+        command.extend(("--denied-root", denied_root))
+    if scenario is not None:
+        command.extend(("--scenario", scenario))
+
+    try:
+        with (scratch_root / "stdin").open("rb") as child_stdin:
+            completed = subprocess.run(
+                command,
+                cwd=checkout_root,
+                env=prepared.env,
+                stdin=child_stdin,
+                check=False,
+                capture_output=True,
+                text=True,
+                timeout=CHILD_TIMEOUT_SECONDS,
+            )
+    except subprocess.TimeoutExpired:
+        raise CloseoutError("child_timeout") from None
+    if completed.returncode == CONTAINMENT_EXIT_STATUS:
+        return ChildRunResult(
+            returncode=completed.returncode,
+            error="containment_failure",
+            result_path=None,
+        )
+
+    result_path = scratch_root / (
+        "automated-results.json" if mode == "pytest" else "live-results.json"
+    )
+    payload: object = {}
+    if result_path.is_file():
+        payload = json.loads(result_path.read_text(encoding="utf-8"))
+    child_error = payload.get("error") if isinstance(payload, dict) else None
+    if child_error is None and completed.returncode:
+        child_error = "pytest_failed" if mode == "pytest" else "child_failed"
+    return ChildRunResult(
+        returncode=completed.returncode,
+        error=child_error if isinstance(child_error, str) else None,
+        result_path=result_path if result_path.is_file() else None,
+    )
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -360,7 +552,9 @@ def parse_options(arguments: list[str] | None = None) -> ParentOptions:
         live_only=parsed.live_only,
         no_promote=parsed.no_promote or parsed.development_run,
         promote=parsed.promote and not parsed.development_run,
-        verify_evidence=Path(parsed.verify_evidence) if verify_evidence_provided else None,
+        verify_evidence=Path(parsed.verify_evidence)
+        if verify_evidence_provided
+        else None,
     )
 
 
