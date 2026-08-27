@@ -77,6 +77,7 @@ from tldw_chatbook.Chat.console_chat_fork import (
     ConsoleForkProjectedGeneration,
     ConsoleForkProjectedMessage,
     ConsoleForkProjectedVideoTombstone,
+    encode_console_fork_message_metadata,
     fingerprint_console_fork_configuration,
     fingerprint_console_fork_selected_image,
     normalize_fork_title,
@@ -4875,9 +4876,9 @@ class ConsoleChatStore:
     @classmethod
     def _fork_media_fingerprint(cls, message: ConsoleChatMessage) -> str:
         if message.video_metadata is None:
-            if (
-                type(message.content) is str
-                and parse_video_marker(message.content) is not None
+            if type(message.content) is str and (
+                parse_video_marker(message.content) is not None
+                or message.content == CONSOLE_FORK_VIDEO_TOMBSTONE_CONTENT
             ):
                 raise ValueError("Console fork video metadata is unavailable.")
             return cls._fork_attachment_fingerprint(
@@ -4887,7 +4888,10 @@ class ConsoleChatStore:
         if message.attachments or message.generation_metadata:
             raise ValueError("Console fork video payload is unavailable.")
         fingerprint = cls._fork_video_fingerprint(message.video_metadata)
-        if message.content != video_content_marker(message.video_metadata.name):
+        if message.content not in {
+            video_content_marker(message.video_metadata.name),
+            CONSOLE_FORK_VIDEO_TOMBSTONE_CONTENT,
+        }:
             raise ValueError("Console fork video marker is unavailable.")
         return fingerprint
 
@@ -5481,7 +5485,7 @@ class ConsoleChatStore:
             ):
                 raise ValueError("Console fork citation authority is unavailable.")
             try:
-                state = reader(
+                classified = reader(
                     source_id,
                     source_revision,
                     source_body,
@@ -5491,13 +5495,24 @@ class ConsoleChatStore:
                 raise ValueError(
                     "Console fork citation authority is unavailable."
                 ) from exc
-            if state not in {"active_required", "unavailable", "none"}:
+            if type(classified) is not tuple or len(classified) != 2:
+                raise ValueError("Console fork citation authority is unavailable.")
+            state, trace_id = classified
+            if (
+                state not in {"active_required", "unavailable", "none"}
+                or (
+                    state == "active_required"
+                    and (type(trace_id) is not str or not trace_id)
+                )
+                or (state != "active_required" and trace_id is not None)
+            ):
                 raise ValueError("Console fork citation authority is unavailable.")
             links.append(
                 ConsoleForkCitationLink(
                     source_persisted_message_id=source_id,
                     source_revision=source_revision,
                     state=state,
+                    trace_id=trace_id,
                 )
             )
         return tuple(links)
@@ -11791,8 +11806,23 @@ class ConsoleChatStore:
                 ]
             if message.usage is not None:
                 create_kwargs["usage_json"] = message.usage.to_json()
+            attachment_display_name = (
+                message.attachments[0].display_name if message.attachments else ""
+            )
+            fork_metadata_json = encode_console_fork_message_metadata(
+                message.status,
+                attachment_display_name,
+            )
             if message.video_metadata is not None:
+                if fork_metadata_json is not None or (
+                    message.metadata is not None and not message.metadata.is_empty
+                ):
+                    raise ValueError("Console video metadata shape is invalid.")
                 create_kwargs["metadata_json"] = message.video_metadata.to_json()
+            elif fork_metadata_json is not None:
+                if message.metadata is not None and not message.metadata.is_empty:
+                    raise ValueError("Console message metadata shape is invalid.")
+                create_kwargs["metadata_json"] = fork_metadata_json
             elif message.metadata is not None and not message.metadata.is_empty:
                 create_kwargs["metadata_json"] = message.metadata.to_json()
             prepared_messages.append(

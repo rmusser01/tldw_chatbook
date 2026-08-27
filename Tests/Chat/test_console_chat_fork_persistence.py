@@ -40,6 +40,7 @@ from tldw_chatbook.Chat.console_chat_models import (
 )
 from tldw_chatbook.Chat.console_chat_store import ConsoleChatStore
 from tldw_chatbook.Chat.console_conversation_hydration import (
+    apply_resume_settings_overrides,
     console_messages_from_conversation_tree,
 )
 from tldw_chatbook.Chat.console_context_policy import (
@@ -207,6 +208,7 @@ def _snapshot(
             source_persisted_message_id=source_id,
             source_revision=source_row["version"],
             state="none",
+            trace_id=None,
         )
         for source_id, source_row in zip(source_ids, source_rows)
         if source_id is not None
@@ -404,10 +406,126 @@ def _active_citation_snapshot(
                 if link.source_persisted_message_id == "source-assistant"
                 else "none"
             ),
+            trace_id=(
+                "trace-1"
+                if link.source_persisted_message_id == "source-assistant"
+                else None
+            ),
         )
         for link in snapshot.citation_links
     )
     return replace(snapshot, citation_links=links), repository
+
+
+def _replacement_sealed_write():
+    original = _sealed_write()
+    source_trace = original.trace
+    source_run = source_trace.evidence_runs[0]
+    source_prompt = source_trace.prompt_evidence_sets[0]
+    source_entry = source_prompt.entries[0]
+    source_attempt = source_trace.answer_attempts[0]
+    source_occurrence = source_attempt.occurrences[0]
+    run = source_run.model_copy(
+        update={
+            "run_id": "run-2",
+            "request_id": "request-2",
+            "payload_ref": "run-payload-2",
+        }
+    )
+    prompt = source_prompt.model_copy(
+        update={
+            "prompt_set_id": "prompt-2",
+            "entries": (
+                source_entry.model_copy(
+                    update={
+                        "run_id": "run-2",
+                        "snapshot_payload_ref": "snapshot-2",
+                    }
+                ),
+            ),
+        }
+    )
+    attempt = source_attempt.model_copy(
+        update={
+            "attempt_id": "attempt-2",
+            "prompt_evidence_set_id": "prompt-2",
+            "answer_payload_ref": "answer-payload-2",
+            "occurrences": (
+                source_occurrence.model_copy(update={"occurrence_id": "occurrence-2"}),
+            ),
+        }
+    )
+    trace = source_trace.model_copy(
+        update={
+            "trace_id": "trace-2",
+            "request_id": "request-2",
+            "generation_id": "generation-2",
+            "evidence_runs": (run,),
+            "prompt_evidence_sets": (prompt,),
+            "answer_attempts": (attempt,),
+            "selected_attempt_id": "attempt-2",
+        }
+    )
+    run_payload = original.evidence_run_payloads[0].model_copy(
+        update={"payload_id": "run-payload-2", "run_id": "run-2"}
+    )
+    snapshot_payload = original.evidence_snapshot_payloads[0].model_copy(
+        update={"payload_id": "snapshot-2"}
+    )
+    answer_payload = original.answer_attempt_payloads[0].model_copy(
+        update={"payload_id": "answer-payload-2", "attempt_id": "attempt-2"}
+    )
+    return type(original)(
+        trace=trace,
+        evidence_run_payloads=(run_payload,),
+        evidence_snapshot_payloads=(snapshot_payload,),
+        answer_attempt_payloads=(answer_payload,),
+    )
+
+
+@pytest.mark.parametrize("original_state", ("deleted", "body_mismatch"))
+def test_fork_rejects_replacement_trace_after_exact_owner_confirmation(
+    tmp_path,
+    original_state,
+) -> None:
+    db = CharactersRAGDB(
+        tmp_path / f"citation-switch-{original_state}.db",
+        client_id="fork-test",
+    )
+    snapshot, repository = _active_citation_snapshot(db)
+    service = ChatPersistenceService(db, citation_repository=repository)
+    assistant = snapshot.messages[-1]
+    replacement = repository.prepare_write(_replacement_sealed_write())
+    with db.transaction() as cursor:
+        cursor.execute(
+            """
+            UPDATE rag_message_trace_owners
+            SET state = ?
+            WHERE message_id = 'source-assistant' AND trace_id = 'trace-1'
+            """,
+            (original_state,),
+        )
+        repository.write_prepared(
+            cursor,
+            replacement,
+            message_id="source-assistant",
+            message_revision=assistant.source_persisted_revision or 0,
+            message_body=assistant.source_persisted_content or "",
+        )
+
+    with pytest.raises(CitationPersistenceUnavailable):
+        _commit(service, snapshot)
+
+    assert db.get_conversation_by_id("fork") is None
+    assert (
+        db.get_connection()
+        .execute(
+            "SELECT COUNT(*) FROM rag_message_trace_owners WHERE message_id = ?",
+            ("fork-assistant",),
+        )
+        .fetchone()[0]
+        == 0
+    )
 
 
 def test_snapshot_carries_the_frozen_source_conversation_version() -> None:
@@ -475,6 +593,11 @@ def test_durable_fork_commits_ancestry_lineage_policy_and_context(tmp_path) -> N
         "source": "derived",
         "pinned_prefill": None,
     }
+    restored_settings = apply_resume_settings_overrides(
+        ConsoleSessionSettings(provider="caller-default", model="caller-model"),
+        conversation,
+    )
+    assert restored_settings == snapshot.configuration.settings
     assert parse_scope(metadata["rag_scope"]) == snapshot.configuration.rag_scope
     roleplay = parse_console_roleplay_context(metadata)
     assert roleplay.user_name_override == "Rowan"
@@ -1071,6 +1194,30 @@ def test_missing_durable_citation_state_is_rejected_before_the_transaction(
     assert db.get_conversation_by_id("fork") is None
 
 
+@pytest.mark.parametrize(
+    ("state", "trace_id"),
+    (("active_required", None), ("none", "trace-1")),
+)
+def test_citation_state_and_frozen_trace_identity_must_match(
+    tmp_path,
+    state,
+    trace_id,
+) -> None:
+    db = CharactersRAGDB(tmp_path / "citation-trace-shape.db", client_id="fork-test")
+    service = ChatPersistenceService(db)
+    snapshot = _snapshot(db)
+    first, *remaining = snapshot.citation_links
+    snapshot = replace(
+        snapshot,
+        citation_links=(replace(first, state=state, trace_id=trace_id), *remaining),
+    )
+
+    with pytest.raises(ValueError, match="citation states"):
+        _commit(service, snapshot)
+
+    assert db.get_conversation_by_id("fork") is None
+
+
 def test_temporary_fork_rejects_governed_citation_identity(tmp_path) -> None:
     db = CharactersRAGDB(tmp_path / "temporary-citation.db", client_id="fork-test")
     service = ChatPersistenceService(db)
@@ -1091,6 +1238,7 @@ def test_temporary_fork_rejects_governed_citation_identity(tmp_path) -> None:
                 source_persisted_message_id="source-user",
                 source_revision=1,
                 state="none",
+                trace_id=None,
             ),
         ),
     )

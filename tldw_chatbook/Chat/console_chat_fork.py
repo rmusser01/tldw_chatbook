@@ -268,6 +268,7 @@ class ConsoleForkCitationLink:
     source_persisted_message_id: str
     source_revision: int
     state: ConsoleForkCitationState
+    trace_id: str | None
 
 
 @dataclass(frozen=True, slots=True)

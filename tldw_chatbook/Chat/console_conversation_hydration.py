@@ -47,7 +47,10 @@ from tldw_chatbook.Chat.console_chat_models import (
 from tldw_chatbook.Chat.console_chat_fork import (
     parse_console_fork_message_metadata,
 )
-from tldw_chatbook.Chat.console_session_settings import ConsoleSessionSettings
+from tldw_chatbook.Chat.console_session_settings import (
+    ConsoleSessionSettings,
+    parse_persisted_console_session_settings,
+)
 from tldw_chatbook.Chat.console_prefill import (
     pinned_prefill_from_conversation_metadata,
 )
@@ -322,13 +325,11 @@ async def load_console_conversation_tree(
 def apply_resume_settings_overrides(
     settings: ConsoleSessionSettings, conversation: Mapping[str, Any]
 ) -> ConsoleSessionSettings:
-    """Overlay what the CONVERSATION ROW contributes to a resumed session.
+    """Restore one saved settings snapshot plus canonical row-owned fields.
 
-    Only ``system_prompt`` and ``pinned_prefill`` come from the persisted
-    conversation; every other field is inherited from whatever base the
-    caller supplied (the screen: the active session's settings; a launch:
-    the config defaults). A saved system prompt is never seeded from
-    ``[chat_defaults]``, which is why it has to travel this way.
+    A complete valid versioned snapshot replaces the caller's provider and
+    generation defaults. Invalid metadata is ignored as one unit. The row's
+    ``system_prompt`` and top-level pinned-prefill metadata remain canonical.
 
     Blank/whitespace-only prompt text collapses to "no system prompt";
     anything else is restored verbatim (leading/trailing whitespace and
@@ -340,7 +341,8 @@ def apply_resume_settings_overrides(
         conversation: The persisted conversation row.
 
     Returns:
-        The same settings with the conversation's two contributions applied.
+        Persisted settings, or the base snapshot on malformed metadata, with
+        canonical prompt and pinned-prefill fields applied.
     """
     raw_system_prompt = conversation.get("system_prompt")
     system_prompt = (
@@ -351,7 +353,12 @@ def apply_resume_settings_overrides(
     pinned_prefill = pinned_prefill_from_conversation_metadata(
         conversation.get("metadata")
     )
-    return replace(settings, system_prompt=system_prompt, pinned_prefill=pinned_prefill)
+    persisted = parse_persisted_console_session_settings(conversation.get("metadata"))
+    return replace(
+        persisted or settings,
+        system_prompt=system_prompt,
+        pinned_prefill=pinned_prefill,
+    )
 
 
 async def hydrate_console_session(

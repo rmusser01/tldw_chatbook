@@ -203,7 +203,7 @@ class ChatPersistenceService:
         revision: int,
         source_body: str,
         target_body: str,
-    ) -> str:
+    ) -> tuple[str, str | None]:
         """Return one authoritative citation state for immutable fork staging."""
 
         repository = self.citation_repository
@@ -243,7 +243,7 @@ class ChatPersistenceService:
             raise CitationPersistenceUnavailable(
                 "fork_source_owner_authority_ambiguous"
             )
-        return "none"
+        return "none", None
 
     def get_conversation_version(self, conversation_id: str) -> int | None:
         """Return the current positive version for one active conversation."""
@@ -1020,6 +1020,7 @@ class ChatPersistenceService:
                 target_message_revision=1,
                 target_message_body=target.content,
                 confirmed_state=link.state,
+                confirmed_trace_id=link.trace_id,
             )
 
     @staticmethod
@@ -1161,6 +1162,14 @@ class ChatPersistenceService:
             or actual_citations != expected_citations
             or any(
                 link.state not in {"active_required", "unavailable", "none"}
+                for link in snapshot.citation_links
+            )
+            or any(
+                (
+                    link.state == "active_required"
+                    and (type(link.trace_id) is not str or not link.trace_id)
+                )
+                or (link.state != "active_required" and link.trace_id is not None)
                 for link in snapshot.citation_links
             )
         ):

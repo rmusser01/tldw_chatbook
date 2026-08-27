@@ -2097,6 +2097,7 @@ def test_fork_owner_links_the_target_to_the_same_immutable_trace(
             target_message_revision=1,
             target_message_body="Answer [S1].",
             confirmed_state="active_required",
+            confirmed_trace_id="trace-1",
         )
 
     connection = db.get_connection()
@@ -2146,6 +2147,7 @@ def test_fork_owner_link_rolls_back_with_its_outer_transaction(
                 target_message_revision=1,
                 target_message_body="Answer [S1].",
                 confirmed_state="active_required",
+                confirmed_trace_id="trace-1",
             )
             raise RuntimeError("after citation link")
 
@@ -2233,6 +2235,7 @@ def test_fork_owner_active_required_fails_when_source_owner_is_revoked(
                 target_message_revision=1,
                 target_message_body="Answer [S1].",
                 confirmed_state="active_required",
+                confirmed_trace_id="trace-1",
             )
 
     assert (
@@ -2318,6 +2321,7 @@ def test_fork_owner_rechecks_the_entire_governed_payload_graph_in_transaction(
                 target_message_revision=1,
                 target_message_body="Answer [S1].",
                 confirmed_state="active_required",
+                confirmed_trace_id="trace-1",
             )
 
     target_owners = (
@@ -2372,6 +2376,7 @@ def test_fork_owner_payload_recheck_uses_the_governed_cursor(
             target_message_revision=1,
             target_message_body="Answer [S1].",
             confirmed_state="active_required",
+            confirmed_trace_id="trace-1",
         )
 
     owner = connection.execute(
@@ -2432,6 +2437,7 @@ def test_fork_owner_active_required_revalidates_message_identity(
                 target_message_revision=1,
                 target_message_body=target_body,
                 confirmed_state="active_required",
+                confirmed_trace_id="trace-1",
             )
 
     target_owners = (
@@ -2486,24 +2492,18 @@ def test_fork_snapshot_state_distinguishes_active_unavailable_and_none(
         }
     )
 
-    assert (
-        service.get_console_fork_citation_state(
-            "message-1",
-            1,
-            "Answer [S1].",
-            "Answer [S1].",
-        )
-        == "active_required"
-    )
-    assert (
-        service.get_console_fork_citation_state(
-            "message-without-owner",
-            1,
-            "No citations.",
-            "No citations.",
-        )
-        == "none"
-    )
+    assert service.get_console_fork_citation_state(
+        "message-1",
+        1,
+        "Answer [S1].",
+        "Answer [S1].",
+    ) == ("active_required", "trace-1")
+    assert service.get_console_fork_citation_state(
+        "message-without-owner",
+        1,
+        "No citations.",
+        "No citations.",
+    ) == ("none", None)
     with pytest.raises(CitationPersistenceUnavailable, match="unverifiable"):
         service.get_console_fork_citation_state(
             "message-without-owner",
@@ -2526,15 +2526,12 @@ def test_fork_snapshot_state_distinguishes_active_unavailable_and_none(
             "Answer [S1].",
         )
 
-    assert (
-        service.get_console_fork_citation_state(
-            "message-1",
-            1,
-            "Answer [S1].",
-            "Visible variant [S1].",
-        )
-        == "unavailable"
-    )
+    assert service.get_console_fork_citation_state(
+        "message-1",
+        1,
+        "Answer [S1].",
+        "Visible variant [S1].",
+    ) == ("unavailable", None)
 
     with db.transaction() as cursor:
         cursor.execute(
@@ -2548,15 +2545,12 @@ def test_fork_snapshot_state_distinguishes_active_unavailable_and_none(
             (_identity(db).profile_id,),
         )
 
-    assert (
-        service.get_console_fork_citation_state(
-            "message-1",
-            1,
-            "Answer [S1].",
-            "Answer [S1].",
-        )
-        == "unavailable"
-    )
+    assert service.get_console_fork_citation_state(
+        "message-1",
+        1,
+        "Answer [S1].",
+        "Answer [S1].",
+    ) == ("unavailable", None)
 
 
 @pytest.mark.parametrize(

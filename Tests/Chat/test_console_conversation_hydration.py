@@ -23,6 +23,7 @@ failure the plan named ("rather than duplicating it").
 from __future__ import annotations
 
 import asyncio
+import json
 from dataclasses import replace
 from types import SimpleNamespace
 
@@ -44,12 +45,107 @@ from tldw_chatbook.Chat.chat_persistence_service import ChatPersistenceService
 from tldw_chatbook.Chat.console_chat_models import ConsoleMessageRole
 from tldw_chatbook.Chat.console_chat_store import ConsoleChatStore
 from tldw_chatbook.Chat.console_session_settings import (
+    ConsoleSessionSettings,
     default_console_session_settings,
 )
 from tldw_chatbook.UI.Screens.chat_screen import ChatScreen
 
 
 CONVERSATION_ID = "conv-fixture"
+
+
+def test_resume_restores_the_complete_versioned_console_settings_snapshot() -> None:
+    base = ConsoleSessionSettings(provider="base", model="base-model")
+    persisted = ConsoleSessionSettings(
+        provider="openai",
+        model="gpt-test",
+        base_url="https://example.test/v1",
+        temperature=0.12,
+        top_p=0.34,
+        min_p=0.05,
+        top_k=17,
+        max_tokens=2345,
+        seed=19,
+        presence_penalty=0.25,
+        frequency_penalty=-0.5,
+        reasoning_effort="high",
+        reasoning_summary="detailed",
+        verbosity="low",
+        thinking_effort="medium",
+        thinking_budget_tokens=4096,
+        streaming=False,
+        character_label="Ada",
+        system_prompt="metadata prompt must not win",
+        source="user",
+        pinned_prefill="metadata prefill must not win",
+    )
+    metadata = {
+        "console_session_settings": {
+            "version": 1,
+            **persisted.__dict__,
+        },
+        "pinned_response_prefill": "Canonical prefill",
+    }
+
+    restored = apply_resume_settings_overrides(
+        base,
+        {
+            "system_prompt": "Canonical row prompt",
+            "metadata": json.dumps(metadata),
+        },
+    )
+
+    assert restored == ConsoleSessionSettings(
+        **{
+            **persisted.__dict__,
+            "system_prompt": "Canonical row prompt",
+            "pinned_prefill": "Canonical prefill",
+        }
+    )
+
+
+@pytest.mark.parametrize(
+    "payload",
+    (
+        "not-json",
+        json.dumps({"console_session_settings": []}),
+        json.dumps({"console_session_settings": {"version": 2}}),
+        json.dumps(
+            {
+                "console_session_settings": {
+                    "version": 1,
+                    **ConsoleSessionSettings(provider="openai").__dict__,
+                    "streaming": "yes",
+                }
+            }
+        ),
+    ),
+)
+def test_resume_malformed_settings_fall_back_without_partial_poisoning(
+    payload: str,
+) -> None:
+    base = ConsoleSessionSettings(
+        provider="base",
+        model="safe-model",
+        temperature=0.61,
+        streaming=True,
+        system_prompt="old prompt",
+        pinned_prefill="old prefill",
+    )
+
+    restored = apply_resume_settings_overrides(
+        base,
+        {"system_prompt": "Row prompt", "metadata": payload},
+    )
+
+    assert restored == ConsoleSessionSettings(
+        **{
+            **base.__dict__,
+            "system_prompt": "Row prompt",
+            "pinned_prefill": None,
+        }
+    )
+
 
 #: Deliberately awkward: two branches off one root, a truly-empty node in
 #: the middle of a branch (its child must re-parent through it), a system
@@ -168,6 +264,7 @@ def test_the_screen_tree_walk_still_flattens_every_branch(tmp_path):
         "user",
         "assistant",
     ]
+
     # `ConsoleChatMessage.id` is a per-instance uuid, so compare the fields
     # the walk actually decides rather than object identity.
     def _walk_shape(built):
@@ -286,7 +383,9 @@ async def test_production_hydration_never_activates_placeholder_authority(
         observed.append((store.active_session_id, session_id))
         return await original_hydrate(session_id)
 
-    monkeypatch.setattr(store, "hydrate_session_library_policy", observe_before_activation)
+    monkeypatch.setattr(
+        store, "hydrate_session_library_policy", observe_before_activation
+    )
     session = await hydrate_console_session(
         app=app,
         store=store,

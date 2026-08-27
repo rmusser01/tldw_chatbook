@@ -17,6 +17,7 @@ from tldw_chatbook.Chat.citation_trace_repository import (
 from tldw_chatbook.Chat.console_chat_fork import (
     CONSOLE_FORK_FINGERPRINT_JSON_MAX_BYTES,
     CONSOLE_FORK_TITLE_MAX_LENGTH,
+    CONSOLE_FORK_VIDEO_TOMBSTONE_CONTENT,
     ConsoleChatForkSnapshot,
     ConsoleForkCitationState,
     ConsoleForkCitationLink,
@@ -91,7 +92,7 @@ class _ForkVersionPersistence:
         revision: int,
         source_body: str,
         target_body: str,
-    ) -> str:
+    ) -> tuple[str, str | None]:
         assert revision == self.message_versions[message_id]
         assert source_body == self.message_bodies[message_id]
         assert target_body
@@ -99,8 +100,8 @@ class _ForkVersionPersistence:
         if state == "ambiguous":
             raise CitationPersistenceUnavailable("fork_owner_ambiguous")
         if state == "active_required" and source_body != target_body:
-            return "unavailable"
-        return state
+            return "unavailable", None
+        return state, ("trace-1" if state == "active_required" else None)
 
 
 def _image_bytes(
@@ -847,7 +848,12 @@ def test_fork_records_are_frozen_slotted_contracts() -> None:
         ),
         (
             ConsoleForkCitationLink,
-            ("source_persisted_message_id", "source_revision", "state"),
+            (
+                "source_persisted_message_id",
+                "source_revision",
+                "state",
+                "trace_id",
+            ),
         ),
         (
             ConsoleChatForkSnapshot,
@@ -1831,6 +1837,7 @@ def test_stage_fork_snapshot_freezes_each_durable_citation_state(
                 source_user.persisted_message_id
             ],
             state=first_state,
+            trace_id=None,
         ),
         ConsoleForkCitationLink(
             source_persisted_message_id=source_selected.persisted_message_id,
@@ -1838,6 +1845,7 @@ def test_stage_fork_snapshot_freezes_each_durable_citation_state(
                 source_selected.persisted_message_id
             ],
             state="active_required",
+            trace_id="trace-1",
         ),
     )
 
@@ -2696,6 +2704,59 @@ def test_fork_issue_rejects_inconsistent_source_video_content(invalid_kind) -> N
             if invalid_kind == "metadata-without-marker"
             else video_content_marker("different-video")
         )
+
+    with pytest.raises(ValueError, match="video"):
+        store.issue_fork_fence(message.id)
+
+
+def test_registered_video_tombstone_can_be_fenced_and_forked_again() -> None:
+    source_store = ConsoleChatStore()
+    source = source_store.create_session(
+        title="Video source",
+        settings=ConsoleSessionSettings(provider="openai", model="gpt-test"),
+        ephemeral=True,
+    )
+    video = source_store.append_video_message(
+        source.id,
+        video_metadata=VideoGenerationMetadata(
+            name="source-video",
+            prompt="animate",
+            backend="minimax",
+        ),
+    )
+    first_snapshot = source_store.stage_fork_snapshot(
+        source_store.issue_fork_fence(video.id),
+        title="First fork",
+        fork_session_id="first-fork",
+        fork_conversation_id=None,
+    )
+    store = ConsoleChatStore()
+    store.register_fork_snapshot(first_snapshot, activate=False)
+    tombstone = store.get_message(first_snapshot.messages[-1].native_message_id)
+
+    eligibility = store.fork_eligibility(tombstone.id)
+    fence = store.issue_fork_fence(tombstone.id)
+    second_snapshot = store.stage_fork_snapshot(
+        fence,
+        title="Second fork",
+        fork_session_id="second-fork",
+        fork_conversation_id=None,
+    )
+
+    assert eligibility.eligible is True
+    assert tombstone.content == CONSOLE_FORK_VIDEO_TOMBSTONE_CONTENT
+    assert second_snapshot.messages[-1].content == CONSOLE_FORK_VIDEO_TOMBSTONE_CONTENT
+    assert second_snapshot.messages[-1].video_tombstone is not None
+
+
+def test_fork_rejects_a_tombstone_body_without_video_metadata() -> None:
+    store = ConsoleChatStore()
+    session = _new_fork_session(store, title="Invalid tombstone")
+    message = store.append_message(
+        session.id,
+        role=ConsoleMessageRole.ASSISTANT,
+        content=CONSOLE_FORK_VIDEO_TOMBSTONE_CONTENT,
+    )
 
     with pytest.raises(ValueError, match="video"):
         store.issue_fork_fence(message.id)

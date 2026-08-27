@@ -1,14 +1,20 @@
 from dataclasses import FrozenInstanceError
+from io import BytesIO
 
 import pytest
+from PIL import Image as PILImage
 
 from tldw_chatbook.Chat.chat_persistence_service import ChatPersistenceService
+from tldw_chatbook.Chat.chat_conversation_service import ChatConversationService
 from tldw_chatbook.Chat.console_chat_models import (
     ConsoleMessageRole,
     MessageAttachment,
 )
 from tldw_chatbook.Chat import console_chat_store as console_store_module
 from tldw_chatbook.Chat.console_chat_store import ConsoleChatStore
+from tldw_chatbook.Chat.console_conversation_hydration import (
+    console_messages_from_conversation_tree,
+)
 from tldw_chatbook.Chat.console_context_policy import (
     ConsoleContextPolicyOverrides,
     ContextCompactionMode,
@@ -19,6 +25,8 @@ from tldw_chatbook.Chat.console_library_policy import (
     ConsoleLibraryPolicyCandidate,
     ConsoleLibraryPolicyDefaults,
 )
+from tldw_chatbook.Chat.console_session_settings import ConsoleSessionSettings
+from tldw_chatbook.Chat.message_metadata import MessageMetadata
 from tldw_chatbook.Chat.rag_scope import RagScope, ScopeItem
 from tldw_chatbook.DB.ChaChaNotes_DB import CharactersRAGDB
 from tldw_chatbook.DB.Workspace_DB import WorkspaceDB
@@ -63,6 +71,12 @@ def _store(tmp_path, name="promotion.db"):
         ),
     )
     return db, service, store
+
+
+def _png_bytes():
+    buffer = BytesIO()
+    PILImage.new("RGB", (2, 2), (0, 0, 0)).save(buffer, format="PNG")
+    return buffer.getvalue()
 
 
 def _memory_state(store, session_id):
@@ -255,6 +269,77 @@ def test_promotion_is_atomic_for_policy_lineage_attachments_and_contribution(
     assert tuple(trajectory) == (live_assistant.persisted_message_id, 1)
     with pytest.raises(RuntimeError, match="active contribution"):
         contribution.writer.next_trajectory_sequence()
+
+
+@pytest.mark.parametrize("terminal_status", ("stopped", "failed"))
+def test_temporary_fork_promotion_reloads_status_and_position_zero_label(
+    tmp_path,
+    terminal_status,
+):
+    db, _service, store = _store(tmp_path, f"fork-metadata-{terminal_status}.db")
+    source = store.create_session(
+        title="Temporary source",
+        settings=ConsoleSessionSettings(provider="openai", model="gpt-test"),
+        ephemeral=True,
+    )
+    store.append_message(
+        source.id,
+        role=ConsoleMessageRole.USER,
+        content="look",
+        attachments=(
+            MessageAttachment(_png_bytes(), "image/png", "original-name.png", 0),
+        ),
+    )
+    assistant = store.append_message(
+        source.id,
+        role=ConsoleMessageRole.ASSISTANT,
+        content="partial answer",
+    )
+    store._nodes_by_session[source.id][assistant.id].status = terminal_status
+    snapshot = store.stage_fork_snapshot(
+        store.issue_fork_fence(assistant.id),
+        title="Temporary fork",
+        fork_session_id=f"temporary-fork-{terminal_status}",
+        fork_conversation_id=None,
+    )
+    fork = store.register_fork_snapshot(snapshot, activate=False)
+
+    conversation_id = store.promote_ephemeral_session(fork.id)
+
+    assert conversation_id is not None
+    tree = ChatConversationService(db).get_conversation_tree(
+        conversation_id,
+        depth_cap=100,
+        root_limit=100,
+    )
+    hydrated = console_messages_from_conversation_tree(tree, db=db)
+    assert [message.status for message in hydrated] == ["complete", terminal_status]
+    assert hydrated[0].attachments[0].display_name == "original-name.png"
+    assert hydrated[0].attachment_label == "original-name.png"
+
+
+def test_temporary_promotion_rejects_conflicting_fork_and_ordinary_metadata(
+    tmp_path,
+):
+    db, _service, store = _store(tmp_path, "fork-metadata-conflict.db")
+    session = store.create_session(
+        title="Temporary fork",
+        settings=ConsoleSessionSettings(provider="openai", model="gpt-test"),
+        ephemeral=True,
+    )
+    message = store.append_message(
+        session.id,
+        role=ConsoleMessageRole.ASSISTANT,
+        content="partial answer",
+    )
+    live = store._nodes_by_session[session.id][message.id]
+    live.status = "stopped"
+    live.metadata = MessageMetadata(engine="realtime")
+
+    with pytest.raises(ValueError, match="metadata shape"):
+        store.promote_ephemeral_session(session.id)
+
+    assert _conversation_count(db) == 0
 
 
 def test_contribution_failure_rolls_back_bundle_and_preserves_retryability(tmp_path):

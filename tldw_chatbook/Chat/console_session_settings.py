@@ -3,9 +3,11 @@
 from __future__ import annotations
 
 import functools
+import json
+import math
 import os
 import re
-from dataclasses import dataclass, replace
+from dataclasses import dataclass, fields, replace
 from typing import Callable, Mapping, Sequence
 from urllib.parse import urlparse, urlunparse
 
@@ -206,6 +208,69 @@ class ConsoleSessionSettings:
     #: persisted per-conversation in conversations.metadata (one-shot
     #: prefill is transient store state, not settings).
     pinned_prefill: str | None = None
+
+
+def parse_persisted_console_session_settings(
+    raw_metadata: object,
+) -> ConsoleSessionSettings | None:
+    """Decode one complete versioned settings snapshot without partial fallback."""
+
+    try:
+        metadata = json.loads(raw_metadata or "{}")
+    except (TypeError, ValueError):
+        return None
+    if not isinstance(metadata, dict):
+        return None
+    payload = metadata.get("console_session_settings")
+    field_names = {field.name for field in fields(ConsoleSessionSettings)}
+    if (
+        not isinstance(payload, dict)
+        or set(payload) != {"version", *field_names}
+        or type(payload.get("version")) is not int
+        or payload["version"] != 1
+    ):
+        return None
+
+    required_text = {"provider", "character_label", "source"}
+    optional_text = {
+        "model",
+        "base_url",
+        "reasoning_effort",
+        "reasoning_summary",
+        "verbosity",
+        "thinking_effort",
+        "system_prompt",
+        "pinned_prefill",
+    }
+    required_float = {"temperature", "top_p"}
+    optional_float = {"min_p", "presence_penalty", "frequency_penalty"}
+    optional_int = {"top_k", "max_tokens", "seed", "thinking_budget_tokens"}
+    values = {name: payload[name] for name in field_names}
+    if any(type(values[name]) is not str for name in required_text):
+        return None
+    if not values["provider"]:
+        return None
+    if any(type(values[name]) not in {str, type(None)} for name in optional_text):
+        return None
+    if any(type(values[name]) not in {int, float} for name in required_float):
+        return None
+    if any(
+        type(values[name]) not in {int, float, type(None)} for name in optional_float
+    ):
+        return None
+    if any(type(values[name]) not in {int, type(None)} for name in optional_int):
+        return None
+    if type(values["streaming"]) is not bool:
+        return None
+    for name in required_float | optional_float:
+        if values[name] is not None:
+            if not math.isfinite(float(values[name])):
+                return None
+            values[name] = float(values[name])
+    try:
+        return ConsoleSessionSettings(**values)
+    except TypeError:
+        return None
 
 
 @dataclass(frozen=True, slots=True)
