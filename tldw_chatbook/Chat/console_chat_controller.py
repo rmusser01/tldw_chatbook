@@ -909,6 +909,9 @@ _APPROVAL_SCOPE_RANK: dict[str, int] = {
 
 
 CONSOLE_CONTINUE_INSTRUCTION = "Continue and extend the selected message."
+#: The generic copy for a turn ended by the session closing. One name for
+#: it so the six sites that reported a close cannot drift apart (TASK-22690).
+SESSION_CLOSED_COPY = "Session closed."
 PROVIDER_CONTINUATION_RECOVERY_REQUIRED = (
     "Recover the interrupted tool run before sending a new message: "
     "Resume or Discard it first."
@@ -6573,7 +6576,10 @@ class ConsoleChatController:
         return ConsoleSubmitResult(
             True,
             True,
-            "",
+            # TASK-22690: the generic copy every other close site uses. This
+            # returned "" when TASK-22587 added it, which reads to the caller
+            # as "no message" rather than "the session closed".
+            SESSION_CLOSED_COPY,
             session_id=session_id,
             user_message_id=commit.user_message_id,
             assistant_message_id=commit.assistant_message_id,
@@ -6968,6 +6974,21 @@ class ConsoleChatController:
         with self.store.durable_preparation_lock:
             current = self._durable_postcommit_continuations.get(preparation_id)
             if current is None or current.fingerprint != fingerprint:
+                if current is None and self.store.durable_acceptance_retired(
+                    preparation_id, fingerprint
+                ):
+                    # TASK-22690: the user closed the chat while this sequence
+                    # ran, so the close already dropped the continuation and
+                    # retired the preparation. The tombstone proves it is THIS
+                    # acceptance, which is what separates an ordinary close from
+                    # an owner that genuinely changed underneath us. A fourth
+                    # site of the conflation TASK-22587 removed.
+                    return self._postcommit_stopped_by_close(
+                        preparation_id=preparation_id,
+                        session_id=session_id,
+                        commit=commit,
+                        continuation=continuation,
+                    )
                 raise RuntimeError("Durable continuation owner changed.")
             self._durable_postcommit_continuations.pop(preparation_id, None)
             self._release_retired_prepared_evidence(current)
@@ -7845,7 +7866,7 @@ class ConsoleChatController:
             if task is not None and task is not asyncio.current_task():
                 task.cancel()
             self._set_run_state(
-                ConsoleRunState(ConsoleRunStatus.STOPPED, "Session closed."),
+                ConsoleRunState(ConsoleRunStatus.STOPPED, SESSION_CLOSED_COPY),
                 # `session_id` here is the session being CLOSED, which the
                 # `_active_stream_belongs_to_session` guard above confirms
                 # owns the active stream -- not necessarily the currently
@@ -15733,7 +15754,7 @@ class ConsoleChatController:
         def commit_canceled() -> ConsoleCitationSelectionOutcome:
             if not owns_request():
                 visible_copy = (
-                    "Session closed."
+                    SESSION_CLOSED_COPY
                     if repair_session.cancel_reason == "session_close"
                     else initial_body
                 )
@@ -15745,7 +15766,7 @@ class ConsoleChatController:
                 current = self.store.get_message(assistant_message_id)
             except KeyError:
                 return ConsoleCitationSelectionOutcome(
-                    "Session closed.",
+                    SESSION_CLOSED_COPY,
                     "canceled",
                 )
             if current.content != initial_body:
@@ -15876,7 +15897,7 @@ class ConsoleChatController:
                 current_message = self.store.get_message(assistant_message_id)
             except KeyError:
                 return ConsoleCitationSelectionOutcome(
-                    "Session closed.",
+                    SESSION_CLOSED_COPY,
                     "canceled",
                 )
             if (
@@ -18093,7 +18114,7 @@ class ConsoleChatController:
                 "Session closed" there too would be a redundant, confusing
                 second signal for something the user just did on purpose.
         """
-        visible_copy = "Session closed."
+        visible_copy = SESSION_CLOSED_COPY
         self._set_run_state(
             ConsoleRunState(ConsoleRunStatus.STOPPED, visible_copy),
             session_id=session_id,
