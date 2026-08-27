@@ -2,15 +2,29 @@
 
 from __future__ import annotations
 
+import codecs
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 import math
+import multiprocessing
 import ntpath
 import os
 from pathlib import Path
 import posixpath
+import queue
 import shutil
-from typing import Literal, TypeAlias
+import subprocess
+import tempfile
+import threading
+import time
+from typing import Any, BinaryIO, Literal, TypeAlias
+
+from tldw_chatbook.Agents.run_log import configured_max_record_bytes
+from tldw_chatbook.STT.executor_process_tree import (
+    ExecutorProcessTree,
+    WorkerContainmentIdentity,
+    enter_worker_containment,
+)
 
 MAX_RAW_COMMAND_BYTES = 16 * 1024
 MAX_RAW_TIMEOUT_SECONDS = 300.0
@@ -57,6 +71,13 @@ _SHELL_ENVIRONMENT_KEYS = (
     "COMSPEC",
     "PATHEXT",
 )
+
+_RAW_OUTPUT_CHUNK_BYTES = 8 * 1024
+_RAW_OUTPUT_QUEUE_SIZE = 16
+_RAW_OUTPUT_FLUSH_SECONDS = 0.05
+_RAW_STARTUP_TIMEOUT_SECONDS = 10.0
+_RAW_QUEUE_POLL_SECONDS = 0.05
+_RAW_SPOOL_PREFIX = "tldw_raw_cli_"
 
 
 @dataclass(frozen=True, slots=True)
@@ -212,3 +233,677 @@ def build_scrubbed_environment(
     """Copy only shell usability variables into a new empty environment."""
     source = os.environ if source is None else source
     return {key: source[key] for key in _SHELL_ENVIRONMENT_KEYS if key in source}
+
+
+class _StreamSanitizer:
+    """Incrementally remove terminal controls while preserving literal text."""
+
+    def __init__(self) -> None:
+        self._state = "text"
+        self._pending_cr = False
+
+    def feed(self, text: str, *, final: bool = False) -> str:
+        """Return sanitized text, retaining incomplete controls for the next call."""
+        output: list[str] = []
+        for character in text:
+            if self._state == "text":
+                if self._pending_cr:
+                    output.append("\n")
+                    self._pending_cr = False
+                    if character == "\n":
+                        continue
+                codepoint = ord(character)
+                if character == "\r":
+                    self._pending_cr = True
+                elif character in ("\n", "\t"):
+                    output.append(character)
+                elif character == "\x1b":
+                    self._state = "escape"
+                elif character == "\x9b":
+                    self._state = "csi"
+                elif character == "\x9d":
+                    self._state = "osc"
+                elif codepoint < 0x20 or 0x7F <= codepoint <= 0x9F:
+                    continue
+                else:
+                    output.append(character)
+            elif self._state == "escape":
+                if character == "[":
+                    self._state = "csi"
+                elif character == "]":
+                    self._state = "osc"
+                elif character == "\x1b":
+                    self._state = "escape"
+                else:
+                    self._state = "text"
+                    codepoint = ord(character)
+                    if character == "\r":
+                        self._pending_cr = True
+                    elif character in ("\n", "\t"):
+                        output.append(character)
+                    elif not (codepoint < 0x20 or 0x7F <= codepoint <= 0x9F):
+                        output.append(character)
+            elif self._state == "csi":
+                if 0x40 <= ord(character) <= 0x7E:
+                    self._state = "text"
+            elif self._state == "osc":
+                if character in ("\x07", "\x9c"):
+                    self._state = "text"
+                elif character == "\x1b":
+                    self._state = "osc_escape"
+            elif self._state == "osc_escape":
+                if character == "\\" or character in ("\x07", "\x9c"):
+                    self._state = "text"
+                elif character != "\x1b":
+                    self._state = "osc"
+
+        if final:
+            if self._pending_cr:
+                output.append("\n")
+            self._pending_cr = False
+            self._state = "text"
+        return "".join(output)
+
+
+def _utf8_prefix(text: str, byte_limit: int) -> tuple[str, bool]:
+    """Return the largest UTF-8-safe prefix within ``byte_limit``."""
+    encoded = text.encode("utf-8")
+    if len(encoded) <= byte_limit:
+        return text, False
+    if byte_limit <= 0:
+        return "", bool(encoded)
+    prefix = encoded[:byte_limit].decode("utf-8", errors="ignore")
+    return prefix, True
+
+
+class _OutputAccumulator:
+    """Own bounded sanitized previews and the private record spool."""
+
+    def __init__(self, spool: BinaryIO, max_record_bytes: int) -> None:
+        self._spool = spool
+        self._max_record_bytes = max_record_bytes
+        self._record_bytes = 0
+        self._preview_bytes = 0
+        self._previews: dict[RawCliStream, list[str]] = {
+            "stdout": [],
+            "stderr": [],
+        }
+        self._raw_bytes: dict[RawCliStream, int] = {"stdout": 0, "stderr": 0}
+        self._decoders = {
+            stream: codecs.getincrementaldecoder("utf-8")(errors="replace")
+            for stream in ("stdout", "stderr")
+        }
+        self._sanitizers = {
+            stream: _StreamSanitizer() for stream in ("stdout", "stderr")
+        }
+        self._finished: set[RawCliStream] = set()
+        self._reported_truncation: set[RawCliStream] = set()
+        self.truncated = False
+
+    def consume(
+        self,
+        stream: RawCliStream,
+        payload: bytes,
+        on_event: Callable[[RawCliStreamEvent], None],
+    ) -> None:
+        """Decode and sanitize one worker chunk at the parent choke point."""
+        self._raw_bytes[stream] += len(payload)
+        text = self._decoders[stream].decode(payload)
+        self._accept(stream, self._sanitizers[stream].feed(text), on_event)
+
+    def finish(
+        self,
+        stream: RawCliStream,
+        on_event: Callable[[RawCliStreamEvent], None],
+    ) -> None:
+        """Flush one stream's incremental decoder and sanitizer once."""
+        if stream in self._finished:
+            return
+        decoded = self._decoders[stream].decode(b"", final=True)
+        text = self._sanitizers[stream].feed(decoded, final=True)
+        self._accept(stream, text, on_event)
+        self._finished.add(stream)
+
+    def finish_all(self, on_event: Callable[[RawCliStreamEvent], None]) -> None:
+        """Flush both streams after terminal settlement or forced cleanup."""
+        self.finish("stdout", on_event)
+        self.finish("stderr", on_event)
+
+    def preview(self, stream: RawCliStream) -> str:
+        """Return one stream's bounded transcript preview."""
+        return "".join(self._previews[stream])
+
+    def record_output(self) -> str:
+        """Read the bounded private spool without exposing its path."""
+        self._spool.flush()
+        self._spool.seek(0)
+        return self._spool.read(self._max_record_bytes).decode(
+            "utf-8", errors="replace"
+        )
+
+    def _accept(
+        self,
+        stream: RawCliStream,
+        text: str,
+        on_event: Callable[[RawCliStreamEvent], None],
+    ) -> None:
+        if not text:
+            return
+        preview_text, preview_truncated = _utf8_prefix(
+            text,
+            MAX_RAW_PREVIEW_BYTES - self._preview_bytes,
+        )
+        preview_size = len(preview_text.encode("utf-8"))
+        if preview_text:
+            self._previews[stream].append(preview_text)
+            self._preview_bytes += preview_size
+
+        record = f"[{stream}] {text}"
+        record_text, record_truncated = _utf8_prefix(
+            record,
+            self._max_record_bytes - self._record_bytes,
+        )
+        if record_text:
+            encoded_record = record_text.encode("utf-8")
+            self._spool.write(encoded_record)
+            self._record_bytes += len(encoded_record)
+
+        newly_truncated = preview_truncated or record_truncated
+        self.truncated = self.truncated or newly_truncated
+        if preview_text or (
+            newly_truncated and stream not in self._reported_truncation
+        ):
+            on_event(
+                RawCliStreamEvent(
+                    stream=stream,
+                    text=preview_text,
+                    total_bytes=self._raw_bytes[stream],
+                    truncated=self.truncated,
+                )
+            )
+        if newly_truncated:
+            self._reported_truncation.add(stream)
+
+
+def _launch_shell(argv: tuple[str, ...], request: RawCliRequest) -> Any:
+    """Launch the fixed outer shell as a non-interactive ordinary process."""
+    return subprocess.Popen(
+        argv,
+        shell=False,
+        stdin=subprocess.DEVNULL,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        cwd=str(request.initial_directory),
+        env=build_scrubbed_environment(),
+    )
+
+
+class _CoalescingOutput:
+    """Batch small reads while preserving each stream's byte order."""
+
+    def __init__(self, stream: RawCliStream, output_queue: Any) -> None:
+        self._stream = stream
+        self._output_queue = output_queue
+        self._buffer = bytearray()
+        self._lock = threading.Lock()
+        self._timer: threading.Timer | None = None
+        self._closed = False
+
+    def add(self, payload: bytes) -> None:
+        with self._lock:
+            self._buffer.extend(payload)
+            if len(self._buffer) >= _RAW_OUTPUT_CHUNK_BYTES:
+                self._cancel_timer_locked()
+                self._flush_locked()
+            elif self._timer is None:
+                self._timer = threading.Timer(
+                    _RAW_OUTPUT_FLUSH_SECONDS,
+                    self._flush_on_timer,
+                )
+                self._timer.daemon = True
+                self._timer.start()
+
+    def close(self) -> None:
+        with self._lock:
+            self._closed = True
+            self._cancel_timer_locked()
+            self._flush_locked()
+
+    def _cancel_timer_locked(self) -> None:
+        if self._timer is not None:
+            self._timer.cancel()
+            self._timer = None
+
+    def _flush_on_timer(self) -> None:
+        with self._lock:
+            self._timer = None
+            if not self._closed:
+                self._flush_locked()
+
+    def _flush_locked(self) -> None:
+        if not self._buffer:
+            return
+        payload = bytes(self._buffer)
+        self._buffer.clear()
+        self._output_queue.put(("output", self._stream, payload))
+
+
+def _drain_pipe(stream: RawCliStream, pipe: BinaryIO, output_queue: Any) -> None:
+    """Drain one child pipe completely into bounded IPC chunks."""
+    total_bytes = 0
+    read = getattr(pipe, "read1", pipe.read)
+    coalesced = _CoalescingOutput(stream, output_queue)
+    try:
+        while True:
+            payload = read(_RAW_OUTPUT_CHUNK_BYTES)
+            if not payload:
+                break
+            total_bytes += len(payload)
+            coalesced.add(payload)
+    finally:
+        coalesced.close()
+        pipe.close()
+        output_queue.put(("stream_end", stream, total_bytes))
+
+
+def _close_worker_queue(output_queue: Any) -> None:
+    """Close the worker's queue handles after its final payload."""
+    output_queue.close()
+    output_queue.join_thread()
+
+
+def _raw_cli_worker_entry(
+    request: RawCliRequest,
+    identity_connection: Any,
+    admission_event: Any,
+    launch_event: Any,
+    abort_event: Any,
+    output_queue: Any,
+) -> None:
+    """Enter containment, await admission, then run exactly one shell."""
+    terminal: tuple[str, str, int | None, str] | None = None
+    shell_process: Any | None = None
+    try:
+        identity = enter_worker_containment()
+        identity_connection.send(identity)
+        identity_connection.close()
+        while not admission_event.wait(_RAW_QUEUE_POLL_SECONDS):
+            if abort_event.is_set():
+                return
+        while not launch_event.wait(_RAW_QUEUE_POLL_SECONDS):
+            if abort_event.is_set():
+                return
+
+        try:
+            argv = resolve_shell_argv(request.shell, request.command)
+        except FileNotFoundError:
+            terminal = ("terminal", "shell_unavailable", None, request.shell)
+            return
+
+        try:
+            shell_process = _launch_shell(argv, request)
+        except OSError:
+            terminal = ("terminal", "spawn_failed", None, argv[0])
+            return
+
+        output_queue.put(("launched", argv[0]))
+        assert shell_process.stdout is not None
+        assert shell_process.stderr is not None
+        readers = [
+            threading.Thread(
+                target=_drain_pipe,
+                args=("stdout", shell_process.stdout, output_queue),
+                name="raw-cli-stdout",
+            ),
+            threading.Thread(
+                target=_drain_pipe,
+                args=("stderr", shell_process.stderr, output_queue),
+                name="raw-cli-stderr",
+            ),
+        ]
+        for reader in readers:
+            reader.start()
+        exit_code = shell_process.wait()
+        for reader in readers:
+            reader.join()
+        terminal = ("terminal", "exited", exit_code, argv[0])
+    finally:
+        try:
+            identity_connection.close()
+        except OSError:
+            pass
+        if shell_process is not None:
+            for pipe in (shell_process.stdout, shell_process.stderr):
+                if pipe is not None and not pipe.closed:
+                    pipe.close()
+        if terminal is not None:
+            output_queue.put(terminal)
+        _close_worker_queue(output_queue)
+
+
+def _process_is_alive(process: Any | None) -> bool:
+    if process is None:
+        return False
+    try:
+        return bool(process.is_alive())
+    except (AssertionError, ValueError):
+        return False
+
+
+def _stop_process(process: Any | None) -> bool:
+    """Boundedly stop a worker that has not produced a containment owner."""
+    if not _process_is_alive(process):
+        return True
+    process.terminate()
+    process.join(2.0)
+    if _process_is_alive(process):
+        process.kill()
+        process.join(2.0)
+    return not _process_is_alive(process)
+
+
+def _safe_close(value: Any | None) -> None:
+    if value is None:
+        return
+    try:
+        value.close()
+    except (OSError, ValueError):
+        pass
+
+
+def _open_spool() -> tuple[BinaryIO, str]:
+    """Create the private spool and remove it if setup cannot complete."""
+    descriptor, path = tempfile.mkstemp(prefix=_RAW_SPOOL_PREFIX)
+    try:
+        if hasattr(os, "fchmod"):
+            os.fchmod(descriptor, 0o600)
+        return os.fdopen(descriptor, "w+b", buffering=0), path
+    except BaseException:
+        try:
+            os.close(descriptor)
+        except OSError:
+            pass
+        try:
+            os.unlink(path)
+        except FileNotFoundError:
+            pass
+        raise
+
+
+def _cleanup_tree(tree: ExecutorProcessTree, *, terminate: bool) -> bool:
+    """Run bounded tree cleanup and convert missing death proof to ``False``."""
+    try:
+        return tree.terminate_tree() if terminate else tree.close()
+    except Exception:
+        return False
+
+
+class RawShellExecutor:
+    """Synchronously execute one admitted, bounded raw shell request."""
+
+    def __init__(self) -> None:
+        self._context = multiprocessing.get_context("spawn")
+
+    def execute(
+        self,
+        request: RawCliRequest,
+        *,
+        cancel_event: Any,
+        on_event: Callable[[RawCliStreamEvent], None],
+        admit_worker: Callable[[ExecutorProcessTree], bool],
+    ) -> RawCliResult:
+        """Validate, admit, stream, and finalize exactly one shell invocation."""
+        validate_raw_cli_request(request)
+        if not callable(on_event) or not callable(admit_worker):
+            raise TypeError("on_event and admit_worker must be callable")
+
+        record_limit = configured_max_record_bytes()
+        spool, spool_name = _open_spool()
+        accumulator = _OutputAccumulator(spool, record_limit)
+        process: Any | None = None
+        tree: ExecutorProcessTree | None = None
+        identity_receive: Any | None = None
+        identity_send: Any | None = None
+        output_queue: Any | None = None
+        abort_event: Any | None = None
+        launch_event: Any | None = None
+        started_at: float | None = None
+        cleanup_proven = True
+        resolved_shell = request.shell
+        terminal_state: RawCliTerminalState = "cleanup_unproven"
+        exit_code: int | None = None
+        try:
+            identity_receive, identity_send = self._context.Pipe(duplex=False)
+            admission_event = self._context.Event()
+            launch_event = self._context.Event()
+            abort_event = self._context.Event()
+            output_queue = self._context.Queue(maxsize=_RAW_OUTPUT_QUEUE_SIZE)
+            process = self._context.Process(
+                target=_raw_cli_worker_entry,
+                args=(
+                    request,
+                    identity_send,
+                    admission_event,
+                    launch_event,
+                    abort_event,
+                    output_queue,
+                ),
+                name=f"raw-cli-{request.invocation_id}",
+            )
+            try:
+                process.start()
+            except (OSError, RuntimeError):
+                terminal_state = "spawn_failed"
+                cleanup_proven = _stop_process(process)
+                return self._result(
+                    request,
+                    accumulator,
+                    resolved_shell,
+                    started_at,
+                    exit_code,
+                    terminal_state,
+                    cleanup_proven,
+                )
+            _safe_close(identity_send)
+            identity_send = None
+
+            identity = self._receive_identity(
+                process,
+                identity_receive,
+                cancel_event,
+            )
+            if identity is None:
+                terminal_state = (
+                    "cancelled" if cancel_event.is_set() else "containment_unavailable"
+                )
+                cleanup_proven = _stop_process(process)
+                return self._result(
+                    request,
+                    accumulator,
+                    resolved_shell,
+                    started_at,
+                    exit_code,
+                    terminal_state,
+                    cleanup_proven,
+                )
+
+            try:
+                tree = ExecutorProcessTree(process, admission_event, identity)
+                admitted = admit_worker(tree)
+            except Exception:
+                admitted = False
+            if admitted is not True or tree is None or not tree.admitted:
+                terminal_state = "containment_unavailable"
+                abort_event.set()
+                cleanup_proven = (
+                    _cleanup_tree(tree, terminate=True)
+                    if tree is not None
+                    else _stop_process(process)
+                )
+                return self._result(
+                    request,
+                    accumulator,
+                    resolved_shell,
+                    started_at,
+                    exit_code,
+                    terminal_state,
+                    cleanup_proven,
+                )
+
+            started_at = time.monotonic()
+            launch_event.set()
+            terminal_state, exit_code, resolved_shell, triggered = self._consume(
+                request,
+                process,
+                output_queue,
+                accumulator,
+                cancel_event,
+                on_event,
+                started_at,
+                resolved_shell,
+            )
+            if triggered:
+                cleanup_proven = _cleanup_tree(tree, terminate=True)
+                self._drain_after_stop(output_queue, accumulator, on_event)
+            else:
+                cleanup_proven = _cleanup_tree(tree, terminate=False)
+            accumulator.finish_all(on_event)
+            return self._result(
+                request,
+                accumulator,
+                resolved_shell,
+                started_at,
+                exit_code,
+                terminal_state,
+                cleanup_proven,
+            )
+        finally:
+            if abort_event is not None:
+                abort_event.set()
+            if tree is not None:
+                _cleanup_tree(tree, terminate=False)
+            elif _process_is_alive(process):
+                _stop_process(process)
+            _safe_close(identity_receive)
+            _safe_close(identity_send)
+            if output_queue is not None:
+                try:
+                    output_queue.close()
+                    output_queue.join_thread()
+                except (OSError, ValueError):
+                    pass
+            spool.close()
+            try:
+                os.unlink(spool_name)
+            except FileNotFoundError:
+                pass
+
+    @staticmethod
+    def _receive_identity(
+        process: Any,
+        connection: Any,
+        cancel_event: Any,
+    ) -> WorkerContainmentIdentity | None:
+        empty_polls = 0
+        while empty_polls * _RAW_QUEUE_POLL_SECONDS < _RAW_STARTUP_TIMEOUT_SECONDS:
+            if connection.poll(_RAW_QUEUE_POLL_SECONDS):
+                try:
+                    identity = connection.recv()
+                except EOFError:
+                    return None
+                if (
+                    type(identity) is WorkerContainmentIdentity
+                    and identity.pid == process.pid
+                ):
+                    return identity
+                return None
+            if cancel_event.is_set() or not _process_is_alive(process):
+                return None
+            empty_polls += 1
+        return None
+
+    @staticmethod
+    def _consume(
+        request: RawCliRequest,
+        process: Any,
+        output_queue: Any,
+        accumulator: _OutputAccumulator,
+        cancel_event: Any,
+        on_event: Callable[[RawCliStreamEvent], None],
+        started_at: float,
+        resolved_shell: str,
+    ) -> tuple[RawCliTerminalState, int | None, str, bool]:
+        dead_empty_polls = 0
+        while True:
+            message: tuple[Any, ...] | None = None
+            try:
+                message = output_queue.get(timeout=_RAW_QUEUE_POLL_SECONDS)
+                dead_empty_polls = 0
+            except queue.Empty:
+                if not _process_is_alive(process):
+                    dead_empty_polls += 1
+                    if dead_empty_polls >= 4:
+                        return "cleanup_unproven", None, resolved_shell, False
+
+            if message is not None:
+                kind = message[0]
+                if kind == "output":
+                    accumulator.consume(message[1], message[2], on_event)
+                elif kind == "stream_end":
+                    accumulator.finish(message[1], on_event)
+                elif kind == "launched":
+                    resolved_shell = str(message[1])
+                elif kind == "terminal":
+                    return message[1], message[2], str(message[3]), False
+
+            if not _process_is_alive(process):
+                continue
+            if cancel_event.is_set():
+                return "cancelled", None, resolved_shell, True
+            if time.monotonic() - started_at >= request.timeout_seconds:
+                return "timed_out", None, resolved_shell, True
+
+    @staticmethod
+    def _drain_after_stop(
+        output_queue: Any,
+        accumulator: _OutputAccumulator,
+        on_event: Callable[[RawCliStreamEvent], None],
+    ) -> None:
+        empty_polls = 0
+        while empty_polls < 2:
+            try:
+                message = output_queue.get(timeout=_RAW_QUEUE_POLL_SECONDS)
+            except queue.Empty:
+                empty_polls += 1
+                continue
+            empty_polls = 0
+            if message[0] == "output":
+                accumulator.consume(message[1], message[2], on_event)
+            elif message[0] == "stream_end":
+                accumulator.finish(message[1], on_event)
+
+    @staticmethod
+    def _result(
+        request: RawCliRequest,
+        accumulator: _OutputAccumulator,
+        resolved_shell: str,
+        started_at: float | None,
+        exit_code: int | None,
+        terminal_state: RawCliTerminalState,
+        cleanup_proven: bool,
+    ) -> RawCliResult:
+        elapsed = 0.0 if started_at is None else max(0.0, time.monotonic() - started_at)
+        return RawCliResult(
+            invocation_id=request.invocation_id,
+            caller=request.caller,
+            resolved_shell=resolved_shell,
+            initial_directory=request.initial_directory,
+            elapsed_seconds=elapsed,
+            stdout_preview=accumulator.preview("stdout"),
+            stderr_preview=accumulator.preview("stderr"),
+            record_output=accumulator.record_output(),
+            exit_code=exit_code,
+            terminal_state=terminal_state,
+            truncated=accumulator.truncated,
+            cleanup_proven=cleanup_proven,
+        )

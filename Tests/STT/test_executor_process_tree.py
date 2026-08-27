@@ -12,6 +12,7 @@ from types import SimpleNamespace
 
 import pytest
 
+import tldw_chatbook.STT.executor_process_tree as process_tree_module
 from Tests.STT.executor_test_support import (
     containment_crashed_leader_with_term_ignoring_descendant,
     containment_descendant,
@@ -488,3 +489,78 @@ import tldw_chatbook.STT.executor_process_tree
     )
 
     assert completed.returncode == 0, completed.stderr
+
+
+def test_containment_documentation_is_shared_local_worker_wording() -> None:
+    assert "STT" not in (process_tree_module.__doc__ or "")
+    assert "local worker generation" in (process_tree_module.__doc__ or "")
+    assert "worker generation" in (ExecutorProcessTree.__doc__ or "")
+
+
+def test_close_is_idempotent_after_proven_tree_death() -> None:
+    calls: list[object] = []
+    process = _FakeProcess(calls)
+    admission = _RecordingEvent(calls)
+    identity = WorkerContainmentIdentity(pid=process.pid, process_group_id=process.pid)
+    tree = ExecutorProcessTree(
+        process,
+        admission,
+        identity,
+        platform_name="posix",
+    )
+    process._alive = False
+    tree._posix_group_exists = lambda _group_id: False  # type: ignore[method-assign]
+
+    assert tree.close() is True
+    first_calls = list(calls)
+    assert tree.close() is True
+    assert calls == first_calls
+
+
+@pytest.mark.skipif(os.name != "nt", reason="native Windows Job Object evidence")
+@pytest.mark.parametrize(
+    "leader_exits",
+    [False, True],
+    ids=["cancellation", "ordinary-finalization"],
+)
+def test_windows_native_job_object_empties_on_cancel_and_finalization(
+    tmp_path: Path,
+    leader_exits: bool,
+) -> None:
+    scratch = tmp_path / "windows-job-object"
+    scratch.mkdir(mode=0o700)
+    context = multiprocessing.get_context("spawn")
+    receive, send = context.Pipe(duplex=False)
+    admission = context.Event()
+    process = context.Process(
+        target=(
+            containment_crashed_leader_with_term_ignoring_descendant
+            if leader_exits
+            else containment_descendant
+        ),
+        args=(send, admission, str(scratch)),
+    )
+    process.start()
+    tree: ExecutorProcessTree | None = None
+    identity: WorkerContainmentIdentity | None = None
+    child_pid: int | None = None
+    try:
+        kind, identity = _receive(receive)
+        assert kind == "identity"
+        tree = ExecutorProcessTree(process, admission, identity)
+        tree.admit()
+        assert tree._job_handle
+        child_kind, raw_child_pid = _receive(receive)
+        assert child_kind == "child"
+        child_pid = int(raw_child_pid)
+        if leader_exits:
+            process.join(10.0)
+            assert process.is_alive() is False
+
+        assert tree.close() is True
+        assert process.is_alive() is False
+        assert _wait_for_pid_exit(child_pid) is True
+    finally:
+        _finalize_native_tree(tree, process, identity, child_pid)
+        receive.close()
+        send.close()

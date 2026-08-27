@@ -1,4 +1,4 @@
-"""Contain one local STT worker generation and all of its descendants."""
+"""Contain one local worker generation and all of its descendants."""
 
 from __future__ import annotations
 
