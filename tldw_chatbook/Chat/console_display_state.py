@@ -17,6 +17,11 @@ from tldw_chatbook.Chat.console_project_instructions import (
     ProjectInstructionControlState,
 )
 from tldw_chatbook.Chat.rag_scope import EffectiveScope, RagScope
+from tldw_chatbook.RAG_Search.local_citation_capture import (
+    LocalEvidenceContext,
+    format_console_evidence_context,
+    normalize_console_evidence_references,
+)
 from tldw_chatbook.UI.character_display_text import sanitize_character_display_label
 
 CONSOLE_INSPECTOR_REVIEW_APPROVAL_ID = "console-inspector-review-approval"
@@ -794,72 +799,48 @@ def console_staged_source_count(launch: ConsoleLiveWorkLaunch | None) -> int:
     return len(bundle.references) or 1
 
 
-def console_prompted_source_count(launch: ConsoleLiveWorkLaunch | None) -> int:
-    """Return how many staged references a Console send will actually prompt.
+def _console_prompted_evidence_context(
+    launch: ConsoleLiveWorkLaunch | None,
+) -> LocalEvidenceContext | None:
+    """Build the formatted pre-authority estimate without performing I/O."""
+    bundle = evidence_bundle_from_launch(launch)
+    if bundle is None:
+        return None
+    return format_console_evidence_context(
+        normalize_console_evidence_references(bundle.available_references())
+    )
 
-    Distinct from :func:`console_staged_source_count`, which answers "how
-    much is staged". This answers "how much reaches the model", and it
-    applies exactly the filter
-    ``capture_console_staged_evidence_for_chat`` applies before formatting
-    the prompt blocks: available status (``EvidenceBundle.
-    available_references``) AND ``source_owner == "local"``. A four-result
-    bundle carrying two blocked references stages four and sends two.
+
+def console_prompted_source_count(launch: ConsoleLiveWorkLaunch | None) -> int:
+    """Return the formatted pre-authority estimate of prompted source count.
+
+    The actual send rechecks local authority and may carry fewer entries.
 
     Args:
         launch: Currently staged live-work launch, if any.
 
     Returns:
-        Count of references eligible to enter the prompt; ``0`` when nothing
-        is staged or the launch carries no evidence bundle (a bundleless
-        launch yields no prompt context at all).
+        Count of canonical formatted entries; ``0`` without an evidence
+        bundle.
     """
-    bundle = evidence_bundle_from_launch(launch)
-    if bundle is None:
-        return 0
-    return sum(
-        1
-        for reference in bundle.available_references()
-        if reference.source_owner.strip().lower() == "local"
-    )
+    formatted = _console_prompted_evidence_context(launch)
+    return len(formatted.entries) if formatted is not None else 0
 
 
 def console_prompted_evidence_text(launch: ConsoleLiveWorkLaunch | None) -> str:
-    """Return the staged evidence text a Console send will actually prompt.
+    """Return the zero-I/O formatted pre-authority evidence estimate.
 
-    task-6: the Console context/cost estimates used to report zero for
-    staged evidence because nothing carried its TEXT that far --
-    ``ConsoleStagedSource`` is label-only. This is the pure, zero-I/O
-    source of truth for that text, read at estimate time (settings
-    summary, cost chip) before any send happens.
-
-    Applies exactly the same filter as :func:`console_prompted_source_count`
-    (``EvidenceBundle.available_references`` AND ``source_owner == "local"``)
-    because it answers the same question that function counts: "how much
-    reaches the model". ``reference.snippet`` is the right field to read,
-    not a full re-fetch, because the actual send path
-    (``capture_console_staged_evidence_for_chat``) re-validates identity and
-    authority but never re-fetches content -- it hands the provider exactly
-    this (already length-limited, see ``EVIDENCE_SNIPPET_CHAR_LIMIT``)
-    snippet verbatim. That length limit is also why an oversized source
-    (e.g. a 942 KB document) still yields a bounded, non-zero estimate here:
-    the snippet was already capped when the reference was staged.
+    The actual send rechecks local authority and may carry less context.
 
     Args:
         launch: Currently staged live-work launch, if any.
 
     Returns:
-        Prompt-eligible reference snippets joined with blank lines, in
-        bundle order; ``""`` when nothing is staged or nothing is
-        prompt-eligible.
+        Canonical prompt-formatted context, or ``""`` without an evidence
+        bundle or formatted entries.
     """
-    bundle = evidence_bundle_from_launch(launch)
-    if bundle is None:
-        return ""
-    return "\n\n".join(
-        reference.snippet
-        for reference in bundle.available_references()
-        if reference.source_owner.strip().lower() == "local" and reference.snippet
-    )
+    formatted = _console_prompted_evidence_context(launch)
+    return formatted.context if formatted is not None else ""
 
 
 @dataclass(frozen=True)

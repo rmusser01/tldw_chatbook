@@ -21,6 +21,10 @@ from tldw_chatbook.Chat.citation_evidence_models import (
     EvidenceBundle,
     EvidenceReference,
 )
+from tldw_chatbook.Chat.console_display_state import (
+    console_prompted_evidence_text,
+    console_prompted_source_count,
+)
 from tldw_chatbook.Chat.console_live_work import ConsoleLiveWorkLaunch
 from tldw_chatbook.Chat.citation_source_locators import CanonicalSourceKind
 from tldw_chatbook.Chat.citation_trace_builder import (
@@ -1366,6 +1370,66 @@ async def test_console_send_adapter_preserves_chunk_lineage_score_and_rank():
     ] == ["m1", "m2"]
     assert candidates[0].lineage["chunk_id"] == "chunk-1"
     assert candidates[0].score == 0.0
+
+
+@pytest.mark.asyncio
+async def test_console_estimate_stays_pre_authority_while_send_rechecks(
+    monkeypatch,
+) -> None:
+    launch = ConsoleLiveWorkLaunch.from_values(
+        source="Library Search/RAG",
+        title="staged evidence",
+        payload={
+            "evidence_bundle": EvidenceBundle(
+                bundle_id="bundle-authority-shrink",
+                query="question",
+                references=(
+                    EvidenceReference(
+                        evidence_id="S1",
+                        source_id="m1",
+                        source_type="media",
+                        title="Source 1",
+                        snippet="Body 1",
+                        authority_label="local",
+                    ),
+                    EvidenceReference(
+                        evidence_id="S2",
+                        source_id="m2",
+                        source_type="media",
+                        title="Source 2",
+                        snippet="Body 2",
+                        authority_label="local",
+                    ),
+                ),
+            ).to_payload(),
+        },
+    )
+    app = _CaptureApp(media_ids=("m2",))
+    authority_queries = 0
+    execute_query = app.media_db.execute_query
+
+    def _counting_execute_query(query, params):
+        nonlocal authority_queries
+        authority_queries += 1
+        return execute_query(query, params)
+
+    monkeypatch.setattr(app.media_db, "execute_query", _counting_execute_query)
+    assert console_prompted_source_count(launch) == 2
+    assert console_prompted_evidence_text(launch) == (
+        "[S1] MEDIA — Source 1\nBody 1\n---\n"
+        "[S2] MEDIA — Source 2\nBody 2"
+    )
+    assert authority_queries == 0
+
+    captured = await cre.capture_console_staged_evidence_for_chat(
+        app,
+        launch,
+        user_message="question",
+    )
+    assert authority_queries >= 1
+    assert captured.context == "[S1] MEDIA — Source 2\nBody 2"
+    assert captured.citation_repair_contract is not None
+    assert captured.citation_repair_contract.allowed_ordinals == (1,)
 
 
 @pytest.mark.asyncio
