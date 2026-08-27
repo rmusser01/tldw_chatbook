@@ -216,18 +216,35 @@ def runtime_migration_paths(module_source: str) -> set[str]:
     return {f"{MIGRATIONS_PREFIX}{name}" for name in names}
 
 
-def _sdist_members(path: Path) -> tuple[set[str], list[str]]:
+def _archive_name_errors(label: str, names: list[str]) -> list[str]:
     errors: list[str] = []
-    with tarfile.open(path, "r:gz") as archive:
-        archive_members = archive.getmembers()
     seen: set[str] = set()
     duplicates: set[str] = set()
-    for member in archive_members:
-        if member.name in seen:
-            duplicates.add(member.name)
-        seen.add(member.name)
+    for name in names:
+        if name in seen:
+            duplicates.add(name)
+        seen.add(name)
+        posix_path = PurePosixPath(name)
+        canonical = posix_path.as_posix() + ("/" if name.endswith("/") else "")
+        if (
+            "\\" in name
+            or posix_path.is_absolute()
+            or posix_path == PurePosixPath(".")
+            or ".." in posix_path.parts
+            or name != canonical
+        ):
+            errors.append(f"{label}: non-canonical archive path: {name}")
     for duplicate in sorted(duplicates):
-        errors.append(f"source distribution: duplicate archive member: {duplicate}")
+        errors.append(f"{label}: duplicate archive member: {duplicate}")
+    return errors
+
+
+def _sdist_members(path: Path) -> tuple[set[str], list[str]]:
+    with tarfile.open(path, "r:gz") as archive:
+        archive_members = archive.getmembers()
+    errors = _archive_name_errors(
+        "source distribution", [member.name for member in archive_members]
+    )
     files = [member.name for member in archive_members if member.isfile()]
     roots = {name.split("/", 1)[0] for name in files}
     if len(roots) != 1:
@@ -259,18 +276,12 @@ def _sdist_tiktoken_members(path: Path) -> tuple[set[str], list[str]]:
 
 
 def _wheel_members(path: Path) -> tuple[set[str], list[str]]:
-    errors: list[str] = []
     with zipfile.ZipFile(path) as archive:
         names = archive.namelist()
-    seen: set[str] = set()
-    duplicates: set[str] = set()
-    for name in names:
-        if name in seen:
-            duplicates.add(name)
-        seen.add(name)
-    for duplicate in sorted(duplicates):
-        errors.append(f"wheel: duplicate archive member: {duplicate}")
-    return {name for name in names if not name.endswith("/")}, errors
+    return (
+        {name for name in names if not name.endswith("/")},
+        _archive_name_errors("wheel", names),
+    )
 
 
 def _wheel_tiktoken_members(path: Path) -> tuple[set[str], list[str]]:
