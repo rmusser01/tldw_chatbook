@@ -125,6 +125,7 @@ from ...Chat.console_chat_models import (
     MessageAttachment,
 )
 from ...Chat.console_chat_store import ConsoleChatStore
+from ...Chat.console_chat_fork import ConsoleForkEligibility
 from ...Chat.console_conversation_hydration import (
     console_messages_from_conversation_tree,
 )
@@ -233,6 +234,7 @@ class ConsoleMessageController:
         play_console_video: Callable[[str], Any] | None = None,
         save_console_video_copy: Callable[[str], Any] | None = None,
         regenerate_console_video_message: Callable[[str], Any] | None = None,
+        request_console_chat_fork: Callable[[str], Any] | None = None,
     ) -> None:
         """Build the controller and bind everything its moved bodies need.
 
@@ -379,6 +381,9 @@ class ConsoleMessageController:
         self._play_console_video_fn = play_console_video
         self._save_console_video_copy_fn = save_console_video_copy
         self._regenerate_console_video_message_fn = regenerate_console_video_message
+        self._request_console_chat_fork_fn = request_console_chat_fork or (
+            lambda _message_id: None
+        )
 
         # This cluster's own state, moved verbatim from `ChatScreen.__init__`.
         # `ChatScreen` keeps proxy properties under the original attribute
@@ -1424,6 +1429,12 @@ class ConsoleMessageController:
             )
             return True
 
+        if action_id == "fork":
+            eligibility = self.console_fork_eligibility(message_id)
+            if not eligibility.eligible:
+                self.app_instance.notify(eligibility.reason, severity="warning")
+                return True
+
         presentation = self._console_message_presentation(message)
         result = self._console_message_action_service.dispatch(action_id, message)
         if result.clipboard_text is not None:
@@ -1434,6 +1445,11 @@ class ConsoleMessageController:
         ):
             result = replace(result, target_content=presentation.content)
         self._last_console_action = result
+        if action_id == "fork" and result.status == "fork_requested":
+            requested = self._request_console_chat_fork_fn(message_id)
+            if inspect.isawaitable(requested):
+                await requested
+            return True
         if action_id == "view-original-attempt" and result.status == "completed":
             controller = self._ensure_console_chat_controller()
             original_attempt = controller.original_attempt_for_message(message_id)
@@ -1683,6 +1699,13 @@ class ConsoleMessageController:
         severity = "information" if result.status in {"completed", "wip"} else "warning"
         self.app_instance.notify(result.visible_copy, severity=severity)
         return True
+
+    def console_fork_eligibility(self, message_id: str) -> ConsoleForkEligibility:
+        """Return the store-owned frozen eligibility for one rendered boundary."""
+        try:
+            return self._ensure_console_chat_store().fork_eligibility(message_id)
+        except (KeyError, ValueError):
+            return ConsoleForkEligibility(False, "Message is not forkable.")
 
     def _console_message_presentation(
         self, message: ConsoleChatMessage

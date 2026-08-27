@@ -318,6 +318,20 @@ def test_generation_card_details_text_contains_all_fields():
     assert "2/3" in text  # n/N indicator, 1-based
 
 
+def test_generation_card_owns_image_actions():
+    card = ConsoleGenerationCard(_card_spec("gen-1", browsed_index=1, variant_count=3))
+
+    ids = [action.action_id for action in card.actions]
+
+    assert ids == [
+        "variant-previous",
+        "variant-next",
+        "keep",
+        "toggle-image-view",
+        "save-image",
+    ]
+
+
 def test_generation_card_details_text_omits_model_row_when_absent():
     """task-558 fix round 1: `resolved_model` is only known for some
     backends/requests (e.g. no configured SwarmUI default AND no explicit
@@ -398,9 +412,10 @@ def test_generation_card_widget_builds_for_pixels_and_graphics_modes():
     # `test_console_native_transcript.py`'s `list(transcript.compose())`.
     pixels_card = ConsoleGenerationCard(_card_spec("gen-1", mode="pixels"))
     assert pixels_card.id == "console-generation-card-gen-1"
-    image_widget, details_widget = list(pixels_card.compose())
+    image_widget, details_widget, actions_widget = list(pixels_card.compose())
     assert image_widget.id == "console-generation-card-image-gen-1"
     assert details_widget.id == "console-generation-card-details-gen-1"
+    assert actions_widget.has_class("console-media-card-actions")
 
     graphics_card = ConsoleGenerationCard(_card_spec("gen-1", mode="graphics"))
     graphics_image_widget = next(iter(graphics_card.compose()))

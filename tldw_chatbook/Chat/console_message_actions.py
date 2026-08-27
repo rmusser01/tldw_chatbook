@@ -246,7 +246,6 @@ class ConsoleMessageActionService:
             "speak",
             "speak-stop",
             "edit",
-            "view-original-attempt",
             "fork",
             "regenerate",
             "retry",
@@ -507,9 +506,15 @@ class ConsoleMessageActionService:
                 media=(),
             )
         overflow = self._overflow_actions(actions)
-        primary = tuple(
-            action for action in actions if action.action_id in self._PRIMARY_ACTION_IDS
-        )
+        primary_ids = self._PRIMARY_ACTION_IDS
+        if generation_variant_count == 0:
+            primary_ids = primary_ids | {
+                "variant-previous",
+                "variant-next",
+                "toggle-image-view",
+                "save-image",
+            }
+        primary = tuple(action for action in actions if action.action_id in primary_ids)
         if overflow:
             overflow_enabled = any(action.enabled for action in overflow)
             primary += (
@@ -527,7 +532,14 @@ class ConsoleMessageActionService:
             for action in actions
             if action.action_id in self._MEDIA_ACTION_IDS
             and (
-                action.action_id not in {"variant-previous", "variant-next", "keep"}
+                action.action_id
+                not in {
+                    "variant-previous",
+                    "variant-next",
+                    "keep",
+                    "toggle-image-view",
+                    "save-image",
+                }
                 or generation_variant_count > 0
             )
         )
@@ -552,6 +564,8 @@ class ConsoleMessageActionService:
                         action.disabled_reason,
                     )
                 )
+            elif action.action_id == "view-original-attempt":
+                overflow.append(action)
             elif action.action_id == "feedback":
                 overflow.extend(
                     (

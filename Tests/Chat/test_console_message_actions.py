@@ -253,7 +253,7 @@ def test_variant_action_labels_fit_compact_terminal_width_budget():
 
     labels = service.plain_action_labels(message)
 
-    assert " ".join(labels) == "Copy 🔊 Edit Fork ♻ ---> More…"
+    assert " ".join(labels) == "Copy 🔊 Edit < > Fork ♻ ---> More…"
     assert len(" ".join(labels)) <= 52
 
 
@@ -916,7 +916,7 @@ def test_original_attempt_action_is_explicit_and_precedes_regenerate():
     assert "View original attempt" not in service.plain_action_row(message)
 
 
-def test_original_attempt_remains_in_the_primary_action_group() -> None:
+def test_original_attempt_is_an_exceptional_diagnostic_in_more() -> None:
     message = ConsoleChatMessage(
         role=ConsoleMessageRole.ASSISTANT,
         content="Repaired answer [S1]",
@@ -932,7 +932,6 @@ def test_original_attempt_remains_in_the_primary_action_group() -> None:
         "copy",
         "speak",
         "edit",
-        "view-original-attempt",
         "fork",
         "regenerate",
         "continue",
@@ -940,6 +939,7 @@ def test_original_attempt_remains_in_the_primary_action_group() -> None:
     )
     assert tuple(action.action_id for action in groups.overflow) == (
         "save-as",
+        "view-original-attempt",
         "feedback-up",
         "feedback-down",
         "delete",
@@ -947,7 +947,7 @@ def test_original_attempt_remains_in_the_primary_action_group() -> None:
     assert groups.media == ()
 
 
-def test_original_attempt_remains_in_selected_row_actions() -> None:
+def test_original_attempt_is_not_a_direct_selected_row_action() -> None:
     message = ConsoleChatMessage(
         role=ConsoleMessageRole.ASSISTANT,
         content="Repaired answer [S1]",
@@ -963,7 +963,6 @@ def test_original_attempt_remains_in_selected_row_actions() -> None:
         "copy",
         "speak",
         "edit",
-        "view-original-attempt",
         "fork",
         "regenerate",
         "continue",
@@ -1343,6 +1342,38 @@ def test_action_groups_separate_primary_overflow_and_media_actions() -> None:
     )
 
 
+def test_text_response_sibling_navigation_remains_direct() -> None:
+    message = ConsoleChatMessage(
+        role=ConsoleMessageRole.ASSISTANT,
+        content="second answer",
+        id="assistant-sibling",
+        sibling_index=1,
+        sibling_count=2,
+    )
+
+    groups = ConsoleMessageActionService().action_groups(message)
+
+    assert "variant-previous" in {action.action_id for action in groups.primary}
+    assert "variant-next" in {action.action_id for action in groups.primary}
+    assert groups.media == ()
+
+
+def test_non_generation_image_controls_remain_direct() -> None:
+    message = ConsoleChatMessage(
+        role=ConsoleMessageRole.ASSISTANT,
+        content="attached image",
+        id="assistant-image",
+        image_data=b"png",
+        image_mime_type="image/png",
+    )
+
+    groups = ConsoleMessageActionService().action_groups(message)
+
+    primary_ids = {action.action_id for action in groups.primary}
+    assert {"toggle-image-view", "save-image"} <= primary_ids
+    assert groups.media == ()
+
+
 @pytest.mark.parametrize(
     ("message", "expected_primary"),
     (
@@ -1484,9 +1515,7 @@ def test_assistant_activity_row_keeps_only_its_specialized_action() -> None:
         role=ConsoleMessageRole.ASSISTANT,
         content="review complete",
         change_review_run_id="review-1",
-        activity_presentation=ConsoleActivityPresentation(
-            "changes", "Changes", "done"
-        ),
+        activity_presentation=ConsoleActivityPresentation("changes", "Changes", "done"),
         id="assistant-activity-row",
     )
 

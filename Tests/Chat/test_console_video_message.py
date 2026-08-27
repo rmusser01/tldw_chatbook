@@ -26,6 +26,10 @@ from tldw_chatbook.UI.Console_Modules.video import ConsoleVideoController
 from tldw_chatbook.UI.Screens.chat_screen import ChatScreen
 from tldw_chatbook.Video_Generation.video_metadata import VideoGenerationMetadata
 from tldw_chatbook.Video_Generation.video_store import VideoStore, parse_video_marker
+from tldw_chatbook.Widgets.Console.console_video_card import (
+    ConsoleVideoCard,
+    ConsoleVideoCardSpec,
+)
 
 from Tests.UI.app_factory import _build_test_app
 
@@ -151,6 +155,21 @@ def test_append_video_message_marker_and_shape(store_with_session):
     assert msg.video_metadata == _video_meta()
     # The marker must not collide with the image generation prefix.
     assert not msg.content.startswith("[image] ")
+
+
+def test_video_card_owns_play_and_save_actions():
+    spec = ConsoleVideoCardSpec(
+        message_id="video-1",
+        meta=_video_meta(),
+        status="expired",
+    )
+
+    ids = [action.action_id for action in ConsoleVideoCard(spec).actions]
+
+    assert ids == [
+        "video-play",
+        "video-save-copy",
+    ]
 
 
 def test_append_video_message_persists_namespaced_payload(store_with_session):

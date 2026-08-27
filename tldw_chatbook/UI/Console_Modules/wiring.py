@@ -1268,6 +1268,11 @@ def build_console_controllers(
                 message_id
             )
         ),
+        request_console_chat_fork=(
+            lambda message_id: getattr(
+                screen._session, "request_console_chat_fork", lambda _message_id: None
+            )(message_id)
+        ),
     )
     screen._console_auto_speak = ConsoleAutoSpeakCoordinator(
         store_accessor=lambda: screen._ensure_console_chat_store(),

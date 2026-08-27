@@ -450,7 +450,10 @@ from ...Widgets.Console.console_selection_menu import (
     ConsoleSideChatRequested,
     selection_menus_on_screen,
 )
-
+from ...Widgets.Console.console_message_more_menu import (
+    ConsoleMessageMoreMenu,
+    message_more_menus_on_screen,
+)
 from ...Widgets.Console.console_side_chat_modal import ConsoleSideChatModal
 from ...Widgets.Console import console_project_instructions as project_instruction_ui
 from ...Widgets.Console.console_conversation_inspector import (
@@ -1040,7 +1043,9 @@ CONSOLE_WORKBENCH_SHORTCUT_GROUPS = (
             ("Enter", "show the selected message's actions"),
             ("c", "copy the selected message"),
             ("e", "edit the selected message"),
+            ("f", "fork from the selected message"),
             ("r", "regenerate the selected message"),
+            ("More…", "Save as, feedback, delete, and diagnostics"),
             ("Escape", "clear the selection"),
         ),
     ),
@@ -9269,7 +9274,7 @@ class ChatScreen(BaseAppScreen):
             ),
             ConsoleDisplayRow(
                 "Message actions",
-                "Copy, Edit, Save as..., Regenerate, Continue, Feedback, Delete",
+                "Copy, Edit, Fork, Regenerate/Retry, Continue, More…",
             ),
             ConsoleDisplayRow(
                 "Keyboard",
@@ -12081,6 +12086,11 @@ class ChatScreen(BaseAppScreen):
         if region := self._console_transcript_region_or_none():
             region.sync_recovery()
         if transcript is not None:
+            selected_id = transcript.selected_message_id
+            if selected_id is not None:
+                transcript.set_fork_eligibilities(
+                    {selected_id: self._console_fork_eligibility(selected_id)}
+                )
             transcript.set_presentation_context(self._console_presentation_context())
             # Turn file card spec: keeps the mounted transcript's provider
             # factory current every tick -- late-bound so a session switch
@@ -14433,6 +14443,10 @@ class ChatScreen(BaseAppScreen):
         `message.py`'s module docstring."""
         return await self._message.handle_console_message_action(event)
 
+    def _console_fork_eligibility(self, message_id: str):
+        """Delegate store-owned Fork eligibility to the message controller."""
+        return self._message.console_fork_eligibility(message_id)
+
     def _console_save_as_destinations(self, message: Any) -> list[Any]:
         """Delegate to `ConsoleMessageController` (wave-3 task 1) -- kept
         for the pre-existing test suite's direct-call convention."""
@@ -16020,10 +16034,14 @@ class ChatScreen(BaseAppScreen):
         # transcript returns here having touched neither registry.
         node: object = target
         while node is not None:
-            if isinstance(node, (ConsoleTranscript, ConsoleSelectionMenu)):
+            if isinstance(
+                node,
+                (ConsoleTranscript, ConsoleSelectionMenu, ConsoleMessageMoreMenu),
+            ):
                 return  # the transcript/menu own their in-area interaction
             node = getattr(node, "parent", None)
         menus = selection_menus_on_screen(self)
+        more_menus = message_more_menus_on_screen(self)
         # Only transcripts the cleanup would actually change; on the rest,
         # all three steps below are provable no-ops (see
         # ``ConsoleTranscript.has_pending_selection_ui``).
@@ -16032,7 +16050,7 @@ class ChatScreen(BaseAppScreen):
             for transcript in console_transcripts_on_screen(self)
             if transcript.has_pending_selection_ui
         ]
-        if not menus and not transcripts:
+        if not menus and not more_menus and not transcripts:
             return  # the common case: no selection UI anywhere on the screen
         # Menus mount on the screen now; route the dismissal through every
         # transcript's centralized selection-UI cleanup (clears highlight +
@@ -16044,6 +16062,10 @@ class ChatScreen(BaseAppScreen):
             transcript._selection_origin_row = None
         for menu in menus:
             if not getattr(menu, "_pruning", False):
+                menu.remove()
+        for menu in more_menus:
+            if not getattr(menu, "_pruning", False):
+                menu.owner._restore_message_action_focus(menu.opener_button_id)
                 menu.remove()
 
     def on_mouse_down(self, event: MouseDown) -> None:
