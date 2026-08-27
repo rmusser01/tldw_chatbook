@@ -61,4 +61,8 @@ ADR required: yes. ADR path: `backlog/decisions/086-library-adaptive-reader-shel
 Post-rebase verification: rebased cleanly onto `origin/dev` at `c6218918d1e70c1938f7e11df592d0c70ca60383`. Fresh integration gates passed all 310 targeted Skills tests and all 153 shared-shell/cross-reader tests with the same two dependency warnings and environmental pytest temporary-cleanup noise only. No integration correction was required.
 
 Pre-PR review hardening: fenced delete settlement and interlock cleanup by the exact Work generation, reserved the one-shot post-create scroll receipt for the Work pane, projected selected identity into the retained Items row with a persistent marker, and invalidated active trust-review receipts after content saves. The focused 203-test Skills state/canvas/reader/lifecycle set passed after these corrections; Ruff, py_compile, and diff checks remained clean.
+
+Protected-check inventory review: the statement-level diagnostic comparison showed one intentional replacement in `library_screen.py`: the removed `info` call interpolated `skill_name`, while the new retained Work-pane failure diagnostic is fixed-text `debug` output with exception context and no user content, secret, path, or URL. Regenerated `Docs/security/production-diagnostic-inventory.json`; all six Derived Artifacts checks then passed under Python 3.11.
+
+Final pre-merge rebase: rebased cleanly onto `origin/dev` at `9f7b914a14289ec34a1149eb7a51fd4c843585cc`. All six Derived Artifacts checks, `git diff --check`, and the 206-test Skills reader/state/canvas/lifecycle suite passed; output contained only the two known dependency warnings and environmental pytest temporary-cleanup noise.
 <!-- SECTION:NOTES:END -->
