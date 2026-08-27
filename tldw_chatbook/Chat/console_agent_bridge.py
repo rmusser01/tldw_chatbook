@@ -158,7 +158,10 @@ from tldw_chatbook.config import (
 )
 from tldw_chatbook.Chat.console_skill_resolver import SKILL_UNTRUSTED_REFUSE
 from tldw_chatbook.DB.AgentRuns_DB import AgentRunsDB
-from tldw_chatbook.Workspaces.change_turn_tracker import ChangeTurnTracker
+from tldw_chatbook.Workspaces.change_turn_tracker import (
+    ChangeTurnTracker,
+    _BASELINE_TIMEOUT_SECONDS as _CHANGE_BOUNDARY_WAIT_SECONDS,
+)
 from tldw_chatbook.Internal_Prompts import get_internal_prompt
 from tldw_chatbook.Internal_Prompts.catalog import CATALOG
 from tldw_chatbook.Skills_Interop.skill_trust_models import SkillTrustBlockedError
@@ -1683,6 +1686,15 @@ class _ChildChangeState:
 
 
 @dataclass
+class _SuccessorBoundaryClaim:
+    """A successor baseline promised to one open survivor window."""
+
+    ready: threading.Event = field(default_factory=threading.Event)
+    handle: Any = None
+    failed: bool = False
+
+
+@dataclass
 class _PostTurnChangeWindow:
     """One conversation's open "what did the survivors do" change window.
 
@@ -1698,20 +1710,18 @@ class _PostTurnChangeWindow:
         handle: The pre-satisfied follow-on handle (see
             ``ChangeTurnTracker.continuation``).
         child_states: Mutable WRITE-path states retained by this window.
-        successor: The NEXT turn's ``TurnHandle``, once one has started.
-            Its baseline shas become this window's end, whoever closes it
-            and whenever -- because from the instant that baseline is
-            taken, the tree belongs to the next turn's record, and a
-            window ending anywhere later would put the same write on two
-            cards (found by mutation: a survivor finishing mid-turn was
-            counted twice).
+        successor_claim: Pre-B handoff to the next turn, when one starts.
+        closing: Whether one caller already owns close I/O.
+        close_done: Releases later close callers after the owner finishes.
     """
 
     run_id: str
     session_id: str
     handle: Any
     child_states: tuple[_ChildChangeState, ...] = ()
-    successor: Any = None
+    successor_claim: _SuccessorBoundaryClaim | None = None
+    closing: bool = False
+    close_done: threading.Event = field(default_factory=threading.Event)
 
 
 @dataclass(frozen=True)
@@ -4576,6 +4586,8 @@ class ConsoleAgentBridge:
         # the run (spec failure posture): begin_turn cannot raise, and the
         # wrapper's await records timeouts as per-root disclosures.
         change_handle = None
+        successor_claim: _SuccessorBoundaryClaim | None = None
+        inherited_child_states_at_b: tuple[_ChildChangeState, ...] = ()
         # PR3a-1 Task 6c: measured BEFORE this turn's B. Any sub-agent
         # running now belongs to an EARLIER turn (this one has not spawned
         # anything yet), and a working-tree differ cannot tell its writes
@@ -4584,16 +4596,71 @@ class ConsoleAgentBridge:
         # implying sole authorship.
         concurrent_subagent = self._live_child_count(conversation_id) > 0
         if self._change_tracker is not None and change_roots:
-            try:
-                change_handle = self._change_tracker.begin_turn(change_roots)
-                # PR3a-1 Task 6c: an earlier turn's survivor window ends
-                # HERE, at this turn's baseline -- fixed now, applied
-                # whenever that window is actually closed.
-                self._note_successor_turn(conversation_id, change_handle)
-            except Exception:  # noqa: BLE001 -- tracking must never block a run
-                logger.opt(exception=True).warning(
-                    "change_review: begin_turn failed; turn untracked"
+            close_done = None
+            begin_paths: list[str] = []
+            with self._change_window_lock:
+                inherited_states = {
+                    state.owner_key: state
+                    for state in self._child_change_states.get(
+                        conversation_id, {}
+                    ).values()
+                }
+                prior_window = self._post_turn_change_windows.get(conversation_id)
+                if prior_window is not None:
+                    if prior_window.closing:
+                        close_done = prior_window.close_done
+                    else:
+                        successor_claim = _SuccessorBoundaryClaim()
+                        prior_window.successor_claim = successor_claim
+                        inherited_states.update(
+                            {
+                                state.owner_key: state
+                                for state in prior_window.child_states
+                            }
+                        )
+                inherited_child_states_at_b = tuple(inherited_states.values())
+                begin_paths = sorted(
+                    {
+                        path
+                        for state in inherited_child_states_at_b
+                        for path in state.touched_paths
+                    }
                 )
+
+            boundary_failed = False
+            if close_done is not None:
+                try:
+                    boundary_failed = not close_done.wait(
+                        _CHANGE_BOUNDARY_WAIT_SECONDS
+                    )
+                except Exception:  # noqa: BLE001 -- tracking is best effort
+                    boundary_failed = True
+                if boundary_failed:
+                    logger.warning(
+                        "change_review: prior survivor close did not finish; "
+                        "successor turn untracked"
+                    )
+
+            if not boundary_failed:
+                try:
+                    change_handle = self._change_tracker.begin_turn(
+                        change_roots,
+                        touched_paths=begin_paths,
+                    )
+                except Exception:  # noqa: BLE001 -- tracking must never block a run
+                    logger.opt(exception=True).warning(
+                        "change_review: begin_turn failed; turn untracked"
+                    )
+                finally:
+                    if successor_claim is not None:
+                        claim_already_failed = successor_claim.failed
+                        if claim_already_failed:
+                            change_handle = None
+                        successor_claim.handle = change_handle
+                        successor_claim.failed = (
+                            claim_already_failed or change_handle is None
+                        )
+                        successor_claim.ready.set()
         if change_handle is not None:
             _inner_review = review_tool_calls
             _handle = change_handle
@@ -4901,7 +4968,7 @@ class ConsoleAgentBridge:
                     # than waiting on a child that need never finish, and
                     # in the transcript position resume re-derives it in.
                     # It ends at THIS turn's baseline shas, bound by
-                    # `_note_successor_turn` at turn start, so the two
+                    # the pre-B successor claim at turn start, so the two
                     # windows abut on one sha: a survivor's write lands in
                     # exactly one of them, never in the crack between and
                     # never on both cards.
@@ -4929,8 +4996,14 @@ class ConsoleAgentBridge:
                         )
                         _e_child_states = {
                             state.owner_key: state
-                            for state in _pending_child_states_before_e
+                            for state in inherited_child_states_at_b
                         }
+                        _e_child_states.update(
+                            {
+                                state.owner_key: state
+                                for state in _pending_child_states_before_e
+                            }
+                        )
                         if child_change_state.touched_paths:
                             _e_child_states[
                                 child_change_state.owner_key
@@ -5459,29 +5532,12 @@ class ConsoleAgentBridge:
                 return
         self._close_post_turn_change_window(conversation_id)
 
-    def _note_successor_turn(self, conversation_id: str, handle: Any) -> None:
-        """Tell an open survivor window where it must stop (Task 6c).
-
-        Called as soon as a new turn's baseline is KICKED (not settled) --
-        the window's end is decided by that turn's existence, not by when
-        its snapshot finishes, so a survivor that ends mid-turn stops at
-        the same sha as one that ends after it.
-
-        Args:
-            conversation_id: The conversation starting a turn.
-            handle: That turn's ``TurnHandle``.
-        """
-        with self._change_window_lock:
-            window = self._post_turn_change_windows.get(conversation_id)
-            if window is not None and window.successor is None:
-                window.successor = handle
-
     def _close_post_turn_change_window(self, conversation_id: str) -> None:
         """Close this conversation's survivor window and record it.
 
-        Two callers, and the pop under the lock is what makes them safe
-        together: the last child leaving ``_child_run_scope`` (on the
-        child's own thread, promptly) and the next turn's ``finally``.
+        The first caller marks the window closing. Later callers wait for
+        that owner's completion outside the bridge lock, so close-time Git
+        index priming cannot be overtaken by a successor E snapshot.
 
         Where the window ENDS does not depend on which of them closes it:
         at the successor turn's baseline shas when a next turn has
@@ -5499,28 +5555,66 @@ class ConsoleAgentBridge:
             conversation_id: The conversation whose window to close.
         """
         with self._change_window_lock:
-            window = self._post_turn_change_windows.pop(conversation_id, None)
-            touched_paths = (
-                sorted(
+            window = self._post_turn_change_windows.get(conversation_id)
+            if window is None:
+                return
+            if window.closing:
+                close_done = window.close_done
+                owner = False
+                successor_claim = None
+            else:
+                window.closing = True
+                close_done = window.close_done
+                owner = True
+                successor_claim = window.successor_claim
+
+        if not owner:
+            try:
+                completed = close_done.wait(_CHANGE_BOUNDARY_WAIT_SECONDS)
+            except Exception:  # noqa: BLE001 -- tracking is best effort
+                completed = False
+            if not completed:
+                logger.warning(
+                    "change_review: post-turn close wait timed out; "
+                    "continuing without tracking this boundary"
+                )
+            return
+
+        try:
+            if self._change_tracker is None:
+                return
+            end_shas = None
+            if successor_claim is not None:
+                try:
+                    claim_ready = successor_claim.ready.wait(
+                        _CHANGE_BOUNDARY_WAIT_SECONDS
+                    )
+                except Exception:  # noqa: BLE001 -- tracking is best effort
+                    claim_ready = False
+                if not claim_ready:
+                    successor_claim.failed = True
+                    logger.warning(
+                        "change_review: successor claim did not attach; "
+                        "boundary changes are untracked"
+                    )
+                    return
+                if (
+                    not successor_claim.failed
+                    and successor_claim.handle is not None
+                ):
+                    # The same bounded wait `end_turn` does anyway; here it
+                    # makes the exact B sha available to an earlier closer.
+                    successor_claim.handle.await_baseline()
+                    end_shas = dict(successor_claim.handle.baselines)
+
+            with self._change_window_lock:
+                touched_paths = sorted(
                     {
                         path
                         for state in window.child_states
                         for path in state.touched_paths
                     }
                 )
-                if window is not None
-                else []
-            )
-        if window is None or self._change_tracker is None:
-            return
-        try:
-            end_shas = None
-            if window.successor is not None:
-                # The same wait `end_turn` does anyway; here it only makes
-                # the boundary sha available to a closer that may be
-                # running well before the successor turn ends.
-                window.successor.await_baseline()
-                end_shas = dict(window.successor.baselines)
             records = self._change_tracker.end_turn(
                 window.handle,
                 touched_paths=touched_paths,
@@ -5544,6 +5638,11 @@ class ConsoleAgentBridge:
                 "change_review: post-turn window failed; a survivor's "
                 "changes are untracked"
             )
+        finally:
+            with self._change_window_lock:
+                if self._post_turn_change_windows.get(conversation_id) is window:
+                    self._post_turn_change_windows.pop(conversation_id, None)
+            window.close_done.set()
 
     def _record_change_snapshots(
         self, *, run_id: str, records: list, kind: str
