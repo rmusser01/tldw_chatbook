@@ -51,6 +51,12 @@ from tldw_chatbook.Chat.console_chat_models import (
     GenerationVariantMeta,
 )
 from tldw_chatbook.Chat.console_chat_store import ConsoleChatSession, ConsoleChatStore
+from tldw_chatbook.Chat.console_turn_grouping import project_thinking_activities
+from tldw_chatbook.Chat.thinking_blocks import (
+    DisplayableThinkingBlock,
+    ProprietaryThinkingBlock,
+    ThinkingEnvelope,
+)
 from tldw_chatbook.Chat.console_image_view import IMAGE_CACHE_MAX_ENTRIES
 from tldw_chatbook.Chat.console_library_destination import (
     resolve_console_destination,
@@ -5663,6 +5669,75 @@ async def test_console_display_only_activity_selection_updates_and_clears_inspec
         assert "Selected Message" not in _visible_text(
             console.query_one("#console-run-inspector-state")
         )
+
+
+@pytest.mark.asyncio
+async def test_console_thinking_selection_inspector_uses_current_owner_and_full_body():
+    """Collapsed thinking resolves fully, but only while its owner is active."""
+    app = _build_test_app()
+    host = ConsoleHarness(app)
+    long_body = ("private reasoning " * 8).strip()
+
+    async with host.run_test(size=(160, 48)) as pilot:
+        console = host.screen_stack[-1]
+        await _wait_for_selector(console, pilot, "#console-native-transcript")
+        store = console._ensure_console_chat_store()
+        first = store.ensure_session(title="Thinking owner")
+        owner = store.append_message(
+            first.id,
+            role=ConsoleMessageRole.ASSISTANT,
+            content="Public answer",
+        )
+        store.replace_message_thinking(
+            owner.id,
+            ThinkingEnvelope(
+                (
+                    DisplayableThinkingBlock(
+                        block_id="displayable-block",
+                        round_ordinal=0,
+                        provider="local_llamacpp",
+                        model="model.gguf",
+                        protocol="openai_chat",
+                        source_format="start_anchored_think",
+                        status="complete",
+                        text=long_body,
+                    ),
+                    ProprietaryThinkingBlock(
+                        block_id="proprietary-block",
+                        round_ordinal=1,
+                        provider="moonshot",
+                        model="kimi-k2",
+                        protocol="openai_chat",
+                        source_format="reasoning_content",
+                        status="complete",
+                    ),
+                )
+            ),
+        )
+        second = store.create_session(title="Other session", activate=False)
+        await console._sync_native_console_chat_ui()
+        await _open_console_inspector_rail(console, pilot)
+
+        transcript = console.query_one("#console-native-transcript", ConsoleTranscript)
+        refs = project_thinking_activities(assistant=store.get_message(owner.id))
+        expected_bodies = (long_body, "Proprietary thinking obfuscated - not available")
+        for ref, expected in zip(refs, expected_bodies):
+            transcript.select_message(ref.activity_id)
+            await console._sync_native_console_chat_ui()
+            await _wait_for_text(console, pilot, expected)
+            rows = console._selected_console_message_inspector_rows()
+            excerpt = next(row for row in rows if row.label == "Excerpt")
+            assert excerpt.value == expected
+            assert f"Excerpt: {expected}" in _visible_text(
+                console.query_one("#console-run-inspector-state")
+            )
+
+        # The transcript can lag one sync behind a session switch. Its stale
+        # projection must not bypass the store's active-session ownership guard.
+        stale_activity_id = refs[0].activity_id
+        transcript.select_message(stale_activity_id)
+        store.switch_session(second.id)
+        assert console._selected_console_message_inspector_rows() == ()
 
 
 @pytest.mark.asyncio

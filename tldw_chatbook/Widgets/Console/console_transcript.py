@@ -2780,6 +2780,7 @@ class ConsoleTranscript(VerticalScroll):
         self._thinking_activity_refs: dict[str, ConsoleThinkingActivityRef] = {}
         self._pending_thinking_auto_collapse: set[str] = set()
         self._manual_thinking_disclosures: set[str] = set()
+        self._closed_live_thinking_blocks: set[tuple[str, str]] = set()
         # Optional session-boundary identity supplied by the owning screen.
         # The sentinel preserves the historical id-intersection behavior for
         # direct/legacy callers that do not know about sessions.
@@ -3234,11 +3235,11 @@ class ConsoleTranscript(VerticalScroll):
                 continue
             turn = unit.assistant_turn
             assert turn is not None
+            owner = (turn.assistant.id, turn.owned_message_ids)
             for message_id in turn.owned_message_ids:
-                ownership[message_id] = (
-                    turn.assistant.id,
-                    turn.owned_message_ids,
-                )
+                ownership[message_id] = owner
+            for ref in project_thinking_activities(assistant=turn.assistant):
+                ownership[ref.activity_id] = owner
         return ownership
 
     def _tail_window_start(
@@ -3937,6 +3938,11 @@ class ConsoleTranscript(VerticalScroll):
                 legacy id-intersection behavior.
         """
         previous_thinking_refs = self._thinking_activity_refs
+        previous_activity_ids = {
+            message.id
+            for message in self._messages
+            if message.role is ConsoleMessageRole.TOOL
+        }
         previous_visible_ids = [
             message.id
             for message in self._messages
@@ -3958,33 +3964,50 @@ class ConsoleTranscript(VerticalScroll):
                 self._expanded_tool_output_ids.clear()
                 self._pending_thinking_auto_collapse.clear()
                 self._manual_thinking_disclosures.clear()
+                self._closed_live_thinking_blocks.clear()
             self._session_identity = session_id
         thinking_refs: dict[str, ConsoleThinkingActivityRef] = {}
+        current_thinking_blocks: set[tuple[str, str]] = set()
         for unit in units:
             turn = unit.assistant_turn
             if turn is None:
                 continue
             live_block_id = self._live_thinking_block_id(turn)
+            envelope = turn.assistant.thinking
+            if isinstance(envelope, ThinkingEnvelope):
+                current_thinking_blocks.update(
+                    (turn.assistant.id, block.block_id) for block in envelope.blocks
+                )
+            if live_block_id is not None and any(
+                activity.id not in previous_activity_ids
+                for activity in turn.activities
+            ):
+                self._closed_live_thinking_blocks.add(
+                    (turn.assistant.id, live_block_id)
+                )
+                live_block_id = None
             for ref in project_thinking_activities(
                 assistant=turn.assistant,
                 live_block_id=live_block_id,
             ):
                 thinking_refs[ref.activity_id] = ref
+                is_live = ref.block_id == live_block_id
                 if (
-                    ref.status == "live"
+                    is_live
                     and ref.activity_id not in previous_thinking_refs
                     and not session_changed
                 ):
                     self._expanded_tool_output_ids.add(ref.activity_id)
                     self._pending_thinking_auto_collapse.add(ref.activity_id)
                 elif (
-                    ref.status != "live"
+                    not is_live
                     and ref.activity_id in self._pending_thinking_auto_collapse
                 ):
                     if ref.activity_id not in self._manual_thinking_disclosures:
                         self._expanded_tool_output_ids.discard(ref.activity_id)
                     self._pending_thinking_auto_collapse.discard(ref.activity_id)
         self._thinking_activity_refs = thinking_refs
+        self._closed_live_thinking_blocks &= current_thinking_blocks
         thinking_ids = set(thinking_refs)
         self._pending_thinking_auto_collapse &= thinking_ids
         self._manual_thinking_disclosures &= thinking_ids
@@ -4141,8 +4164,7 @@ class ConsoleTranscript(VerticalScroll):
             del self._message_signature_cache[stale_id]
             self._signature_compute_counts.pop(stale_id, None)
 
-    @staticmethod
-    def _live_thinking_block_id(turn: ConsoleAssistantTurn) -> str | None:
+    def _live_thinking_block_id(self, turn: ConsoleAssistantTurn) -> str | None:
         """Return the current unbounded block, using visible turn boundaries."""
         assistant = turn.assistant
         envelope = assistant.thinking
@@ -4160,6 +4182,8 @@ class ConsoleTranscript(VerticalScroll):
         if answer:
             return None
         current = envelope.blocks[-1]
+        if (assistant.id, current.block_id) in self._closed_live_thinking_blocks:
+            return None
         if any(
             activity.activity_round_ordinal == current.round_ordinal
             for activity in turn.activities
@@ -4623,6 +4647,11 @@ class ConsoleTranscript(VerticalScroll):
         if isinstance(block, ProprietaryThinkingBlock):
             return PROPRIETARY_THINKING_NOTICE
         return None
+
+    def thinking_owner_message_id(self, activity_id: str) -> str | None:
+        """Return the current Assistant owner for one projected thinking row."""
+        ref = self._thinking_activity_refs.get(activity_id)
+        return ref.assistant_message_id if ref is not None else None
 
     def _thinking_display_message(self, activity_id: str) -> ConsoleChatMessage | None:
         """Build a bounded display-only row for selection/copy/Inspector seams."""

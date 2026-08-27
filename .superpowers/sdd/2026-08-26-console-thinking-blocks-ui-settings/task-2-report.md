@@ -78,6 +78,45 @@ git diff --check: pass
 The test runner also emitted the repository's existing dependency-version warning
 and temporary-directory cleanup warnings; neither changed test outcomes.
 
+## Review fix round 1
+
+Four Priority-1 review findings were reproduced before implementation:
+
+- the real `ChatScreen` Inspector could not resolve a projected thinking ID, so
+  no thinking Excerpt row existed;
+- four lifecycle cases stayed in the wrong expansion state: an ordinal-less Tool
+  did not close pending live thinking, and live proprietary evidence began
+  collapsed at each answer/Tool/terminal boundary case;
+- watermark pruning removed the Assistant owner of a selected thinking row; and
+- two-sided tail trimming hid the selected thinking row's Assistant owner.
+
+The bounded fix keeps the store's ordinary ownership guard intact, resolves a
+current thinking ID through its Assistant owner, and supplies the full lazy body
+to the Inspector (including bodies longer than 90 characters and the exact
+proprietary notice). A stale-session projection still returns no Inspector rows.
+Live-block identity is now the lifecycle fact even when proprietary presentation
+status remains `unavailable`; genuinely new Tool IDs close the pending block
+without inventing an activity round ordinal, while an already-observed Tool does
+not close a later block. Closed-live state is session-scoped and bounded to blocks
+still present. Finally, thinking activity IDs share their Assistant causal tuple in
+`_ownership_by_message_id`, protecting the whole unit during watermark pruning and
+two-sided windowing.
+
+Fresh review-fix evidence:
+
+```text
+Task 2 disclosure/Assistant suite: 58 passed, 1 warning in 29.68s
+Inspector/pruning/windowing subset: 17 passed, 2 warnings in 37.43s
+Rendered real-Inspector full-body follow-up: 1 passed, 2 warnings in 3.08s
+Ruff check on all six changed Python files: pass
+git diff --check: pass
+```
+
+Ruff's whole-file format check reports the six touched legacy files would be
+reformatted; no broad formatting churn was applied. No CSS changed in this review
+round, so the already-passing Task 2 CSS source/bundle check did not require a
+rebuild.
+
 ## Decisions
 
 - Keep `detail_available` separate from mounted detail children so a collapsed
@@ -97,7 +136,11 @@ and temporary-directory cleanup warnings; neither changed test outcomes.
 
 - `tldw_chatbook/Widgets/Console/console_assistant_turn.py`
 - `tldw_chatbook/Widgets/Console/console_transcript.py`
+- `tldw_chatbook/UI/Screens/chat_screen.py`
 - `tldw_chatbook/css/components/_agentic_terminal.tcss`
 - `tldw_chatbook/css/tldw_cli_modular.tcss`
 - `Tests/UI/test_console_thinking_disclosures.py`
 - `Tests/UI/test_console_native_transcript.py`
+- `Tests/UI/test_console_native_chat_flow.py`
+- `Tests/UI/test_console_transcript_pruning.py`
+- `Tests/UI/test_console_transcript_two_sided_window.py`

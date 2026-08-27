@@ -9256,8 +9256,11 @@ class ChatScreen(BaseAppScreen):
         if message_id is None:
             return ()
         store = self._ensure_console_chat_store()
+        thinking_owner_id = transcript.thinking_owner_message_id(message_id)
         try:
-            owner_session_id = store.session_id_for_message(message_id)
+            owner_session_id = store.session_id_for_message(
+                thinking_owner_id or message_id
+            )
         except KeyError:
             return ()
         if owner_session_id != store.active_session_id:
@@ -9308,7 +9311,11 @@ class ChatScreen(BaseAppScreen):
         excerpt = (
             "Streaming…"
             if message.status == "streaming"
-            else self._message._console_message_excerpt(message, max_length=90)
+            else (
+                transcript.thinking_detail_text(message_id)
+                if thinking_owner_id is not None
+                else self._message._console_message_excerpt(message, max_length=90)
+            )
         )
         if excerpt:
             rows.append(ConsoleDisplayRow("Excerpt", excerpt))

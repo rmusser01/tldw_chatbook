@@ -71,3 +71,16 @@ and Inspector display resolution, session pruning, and semantic status styling. 
 BASE citation assertions still target pre-Assistant-turn row keys/counters. CSS build
 and bundle sync, scoped Ruff lint, focused Ruff format, and `git diff --check` pass.
 Task 2 report: `task-2-report.md`. No ADR required.
+
+Task 2 review fix round 1: reproduced all four Priority-1 findings at RED. The
+real ChatScreen Inspector now resolves current thinking IDs through the owning
+Assistant and renders the full displayable/proprietary body while retaining the
+active-session store guard. Lifecycle closure uses newly arrived Tool identity
+rather than speculative round ordinals; proprietary blocks use live block identity
+while displaying `unavailable`. Thinking activity IDs now map to the Assistant's
+causal ownership tuple so selection protects the owner through watermark pruning
+and two-sided tail windowing. GREEN: 58 Task-2 disclosure/Assistant tests, 17
+Inspector/pruning/windowing tests, and one rendered-Inspector follow-up passed.
+Scoped Ruff lint and `git diff --check` pass; whole-file Ruff format remains the
+pre-existing legacy-file baseline. No CSS changed. Report updated in
+`task-2-report.md`; no ADR required.

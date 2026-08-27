@@ -172,6 +172,103 @@ async def test_first_answer_tool_or_terminal_boundary_auto_collapses_once(
 
 
 @pytest.mark.asyncio
+async def test_unowned_tool_arrival_collapses_only_current_live_thinking() -> None:
+    """Arrival, not a guessed round, is the boundary for ordinal-less tools."""
+    app = ThinkingTranscriptHarness()
+    first_block = _displayable("first round", block_id="round-zero")
+    first = _assistant(blocks=(first_block,))
+    old_tool = ConsoleChatMessage(
+        role=ConsoleMessageRole.TOOL,
+        content="tool result",
+        id="ordinal-less-tool",
+        activity_round_ordinal=None,
+        activity_presentation=ConsoleActivityPresentation(
+            "tool", "fs_read", "success"
+        ),
+    )
+
+    async with app.run_test(size=(100, 28)):
+        transcript = app.query_one(ConsoleTranscript)
+        transcript.set_messages([first], session_id="session-a")
+        await transcript.refresh_messages()
+        first_disclosure = _disclosure(transcript, first)
+        assert first_disclosure.expanded
+
+        transcript.set_messages([first, old_tool], session_id="session-a")
+        await transcript.refresh_messages()
+        assert not first_disclosure.expanded
+        assert first_disclosure.status == "done"
+
+        second = replace(
+            first,
+            thinking=ThinkingEnvelope(
+                (
+                    first_block,
+                    _displayable(
+                        "second round",
+                        block_id="round-one",
+                        round_ordinal=1,
+                    ),
+                )
+            ),
+        )
+        transcript.set_messages([second, old_tool], session_id="session-a")
+        await transcript.refresh_messages()
+        second_ref = project_thinking_activities(assistant=second)[1]
+        second_disclosure = transcript.query_one(
+            f"#console-activity-disclosure-{second_ref.activity_id}",
+            ConsoleActivityDisclosure,
+        )
+        assert second_disclosure.expanded
+        assert second_disclosure.status == "live"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("boundary", ["answer", "tool", "terminal"])
+async def test_live_proprietary_notice_expands_then_collapses_at_real_boundary(
+    boundary: str,
+) -> None:
+    app = ThinkingTranscriptHarness()
+    live = _assistant(blocks=(_proprietary(),))
+
+    async with app.run_test(size=(100, 28)):
+        transcript = app.query_one(ConsoleTranscript)
+        transcript.set_messages([live], session_id="session-a")
+        await transcript.refresh_messages()
+        disclosure = _disclosure(transcript, live)
+
+        assert disclosure.expanded
+        assert disclosure.status == "unavailable"
+        assert transcript.thinking_detail_text(disclosure.activity_message_id) == (
+            PROPRIETARY_THINKING_NOTICE
+        )
+
+        if boundary == "answer":
+            messages = [replace(live, content="Answer")]
+        elif boundary == "terminal":
+            messages = [replace(live, status="complete")]
+        else:
+            messages = [
+                live,
+                ConsoleChatMessage(
+                    role=ConsoleMessageRole.TOOL,
+                    content="tool result",
+                    id="proprietary-tool-boundary",
+                    activity_round_ordinal=None,
+                    activity_presentation=ConsoleActivityPresentation(
+                        "tool", "fs_read", "success"
+                    ),
+                ),
+            ]
+        transcript.set_messages(messages, session_id="session-a")
+        await transcript.refresh_messages()
+
+        assert not disclosure.expanded
+        assert disclosure.status == "unavailable"
+        assert not disclosure.detail_stack.children
+
+
+@pytest.mark.asyncio
 @pytest.mark.parametrize("control", ["mouse", "enter", "space", "o"])
 async def test_manual_toggle_wins_over_pending_auto_collapse(control: str) -> None:
     app = ThinkingTranscriptHarness()
