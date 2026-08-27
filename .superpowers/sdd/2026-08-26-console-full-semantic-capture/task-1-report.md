@@ -3,13 +3,13 @@
 ## Implementation
 
 - Added Safe/Full capture-detail contracts, fail-safe policy resolution, shared 64 MiB uncompressed budget, endpoint identity sanitization, structural credential exclusion, nested binary stubbing, bounded blob encode/decode, and legacy-Safe/blob-column provenance validation.
-- Added the local-only v49→v50 migration: `message_exchanges.capture_detail` with a Safe default and checked sparse per-conversation capture-policy storage.
+- Added the local-only v50→v51 migration: `message_exchanges.capture_detail` with a Safe default and checked sparse per-conversation capture-policy storage.
 - Threaded immutable capture detail through DB upsert/select, persistence/store writes, and Inspector load so mismatches are skipped with content-free diagnostic categories.
 - Added `exchange_capture_detail = "safe"` as the application default. No user-visible Full control was added.
 
 ## Files
 
-Production: `console_exchange_capture.py`, `console_project_instructions.py`, `console_capture_policy_repository.py`, `config.py`, `ChaChaNotes_DB.py`, v49→v50 migration SQL, `chat_persistence_service.py`, `console_chat_store.py`, and `chat_screen.py`.
+Production: `console_exchange_capture.py`, `console_project_instructions.py`, `console_capture_policy_repository.py`, `config.py`, `ChaChaNotes_DB.py`, v50→v51 migration SQL, `chat_persistence_service.py`, `console_chat_store.py`, and `chat_screen.py`.
 
 Tests: capture, repository, migration, message-exchange, store, and Inspector-loader tests listed in the task brief.
 

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import stat
 from pathlib import Path
 from unittest.mock import AsyncMock
 
@@ -171,10 +172,10 @@ async def test_file_export_validates_overwrite_and_uses_atomic_writer(
 ) -> None:
     target = tmp_path / "exchange.json"
     target.write_text("keep", encoding="utf-8")
-    writes: list[tuple[Path, str]] = []
+    writes: list[tuple[Path, str, dict[str, object]]] = []
     monkeypatch.setattr(
         "tldw_chatbook.Widgets.Console.console_exchange_export_dialog.atomic_write_text",
-        lambda path, text, **_kwargs: writes.append((Path(path), text)),
+        lambda path, text, **kwargs: writes.append((Path(path), text, kwargs)),
     )
     app = _Harness()
     async with app.run_test() as pilot:
@@ -201,6 +202,58 @@ async def test_file_export_validates_overwrite_and_uses_atomic_writer(
         dialog._confirm_overwrite = confirm
         assert await dialog.export_selected() is True
         assert writes and writes[0][0] == target
+        assert writes[0][2]["mode"] == 0o600
+        assert writes[0][2]["overwrite"] is True
+
+
+@pytest.mark.asyncio
+async def test_file_appearing_after_validation_is_not_overwritten(
+    tmp_path: Path,
+) -> None:
+    target = tmp_path / "appeared.json"
+    app = _Harness()
+    async with app.run_test() as pilot:
+        dialog = ConsoleExchangeExportDialog(
+            _capture(),
+            expected_capture_revision=1,
+            capture_revision_provider=lambda: 1,
+        )
+        await app.push_screen(dialog)
+        await pilot.pause()
+        await dialog.select_destination("file")
+        dialog.query_one("#exchange-export-path", Input).value = str(target)
+
+        async def project_after_competing_create(profile: TraceExportProfile):
+            target.write_text("other writer", encoding="utf-8")
+            return dialog._project(profile)
+
+        dialog._project_async = project_after_competing_create
+
+        assert await dialog.export_selected() is False
+        assert target.read_text(encoding="utf-8") == "other writer"
+        assert "appeared" in str(
+            dialog.query_one("#exchange-export-status", Static).render()
+        )
+
+
+@pytest.mark.asyncio
+async def test_new_file_export_is_owner_readable_only(tmp_path: Path) -> None:
+    target = tmp_path / "private.json"
+    app = _Harness()
+    async with app.run_test() as pilot:
+        dialog = ConsoleExchangeExportDialog(
+            _capture(),
+            expected_capture_revision=1,
+            capture_revision_provider=lambda: 1,
+        )
+        await app.push_screen(dialog)
+        await pilot.pause()
+        await dialog.select_destination("file")
+        dialog.query_one("#exchange-export-path", Input).value = str(target)
+
+        assert await dialog.export_selected() is True
+
+    assert stat.S_IMODE(target.stat().st_mode) == 0o600
 
 
 @pytest.mark.asyncio

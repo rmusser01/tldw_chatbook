@@ -126,7 +126,19 @@ def resolve_capture_policy(
     global_default: object = None,
     allow_next_send: bool = True,
 ) -> CapturePolicyResolution:
-    """Resolve capture detail without treating an invalid value as Full."""
+    """Resolve capture detail without treating an invalid value as Full.
+
+    Args:
+        enabled: Whether exchange capture is enabled for future calls.
+        next_send: Optional one-shot detail override.
+        conversation: Optional persisted conversation detail override.
+        global_default: Optional global detail default.
+        allow_next_send: Whether this admission may consume the one-shot scope.
+
+    Returns:
+        The first valid scoped detail, its source, and any invalid sources
+        skipped while resolving. Safe is returned when none are valid.
+    """
     candidates = (
         ("next_send", CapturePolicySource.NEXT_SEND, next_send, allow_next_send),
         ("conversation", CapturePolicySource.CONVERSATION, conversation, True),
@@ -341,7 +353,15 @@ def _sanitize_semantic_json_string(value: str) -> str:
 
 
 def sanitize_capture_value(value: Any) -> Any:
-    """Remove structured credentials and stub binary from an arbitrary value."""
+    """Remove structured credentials and stub binary from an arbitrary value.
+
+    Args:
+        value: Provider-shaped semantic value to make capture-safe.
+
+    Returns:
+        A JSON-compatible value with credential fields removed and binary or
+        base64 strings replaced by bounded stubs.
+    """
     return stub_binary_strings(_remove_nested_credentials(_jsonable(value)))
 
 
@@ -369,6 +389,14 @@ def build_request_capture(
     the Inspector already renders this tuple verbatim as an "Omitted by
     capture policy" line, so a viewer sees the withholding without any new
     UI surface.
+
+    Args:
+        kwargs: Provider request values at the semantic adapter boundary.
+        capture_detail: Safe or Full instruction-retention policy.
+        budget: Optional shared uncompressed capture budget.
+
+    Returns:
+        The allowlisted, sanitized request and sorted omission inventory.
     """
     active_budget = budget or CaptureBudget()
     request: dict = {}
@@ -401,7 +429,17 @@ def build_response_capture(
     synthetic_fallback: bool = False,
     budget: CaptureBudget | None = None,
 ) -> dict[str, Any]:
-    """Build a binary-stubbed response under the same capture budget."""
+    """Build a binary-stubbed response under the same capture budget.
+
+    Args:
+        content: Accumulated provider response text.
+        tool_calls: Accumulated provider tool-call structures.
+        synthetic_fallback: Whether the response came from a fallback path.
+        budget: Optional shared uncompressed capture budget.
+
+    Returns:
+        A sanitized response mapping with a truncation inventory.
+    """
     active_budget = budget or CaptureBudget()
     inventory: list[str] = []
     response = {

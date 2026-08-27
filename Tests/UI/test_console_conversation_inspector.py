@@ -1627,6 +1627,24 @@ async def test_stale_capture_revision_blocks_expansion_and_export(
 
 
 @pytest.mark.asyncio
+async def test_inspector_adopts_first_revision_after_opening_during_quiescence() -> None:
+    revision = SimpleNamespace(value=None)
+    app = InspectorHarness(
+        **_default_kwargs(capture_revision_provider=lambda: revision.value)
+    )
+
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        modal = app.screen
+        assert modal._capture_revision_at_open is None
+
+        revision.value = 7
+
+        assert modal._capture_revision_is_current() is True
+        assert modal._capture_revision_at_open == 7
+
+
+@pytest.mark.asyncio
 async def test_revision_change_during_async_capture_load_discards_result() -> None:
     revision = SimpleNamespace(value=3)
     cap = _capture("full-run", 0, "2026-08-26T10:00:00Z", "m")

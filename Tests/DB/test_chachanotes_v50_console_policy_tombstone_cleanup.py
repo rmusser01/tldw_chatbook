@@ -17,11 +17,9 @@ The second half is why v48 could be edited at all. Editing an applied step
 only changes the outcome for databases that have not reached it; the forward
 step is what makes the already-migrated profile converge, in the same open.
 
-This module holds the repo's exact current-schema-version pin, which belongs
-to the NEWEST migration's own file so that a schema bump touches the file that
-caused it (the convention
-``Tests/DB/test_chachanotes_console_library_policy_migration.py`` records).
-Everything downstream of a completed upgrade reads
+This module pins the v50 step's schema floor. The exact current-version pin
+belongs to the newest migration's own file so a later schema bump does not
+rewrite this historical contract. Everything downstream of a completed upgrade reads
 ``_CURRENT_SCHEMA_VERSION``: a version literal is only correct at a fixture's
 SEEDED starting point.
 """
@@ -153,12 +151,12 @@ def _build_shipped_v48_profile(path: Path) -> None:
 # ---------------------------------------------------------------------------
 # the pin
 # ---------------------------------------------------------------------------
-def test_schema_version_is_50(tmp_path: Path) -> None:
-    """The one exact current-version pin (see this module's docstring)."""
+def test_a_fresh_database_is_at_least_v50(tmp_path: Path) -> None:
+    """This step's floor; the newest migration owns the exact current pin."""
     db = CharactersRAGDB(tmp_path / "fresh.db", client_id="v50-pin")
     try:
-        assert _version(db.get_connection()) == 50
-        assert CharactersRAGDB._CURRENT_SCHEMA_VERSION == 50
+        assert _version(db.get_connection()) >= 50
+        assert CharactersRAGDB._CURRENT_SCHEMA_VERSION >= 50
     finally:
         db.close_connection()
 

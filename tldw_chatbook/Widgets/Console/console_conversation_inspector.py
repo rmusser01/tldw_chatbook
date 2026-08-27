@@ -500,7 +500,16 @@ class ConsoleConversationInspector(SafeModalDismissMixin, ModalScreen[None]):
             current = provider()
         except Exception:
             current = None
-        if current == self._capture_revision_at_open and current is not None:
+        if current is None:
+            self._invalidate_stale_captures()
+            return False
+        if self._capture_revision_at_open is None:
+            # An Inspector may open while purge owns the quiescence lease. It
+            # must fail closed during that interval, then adopt the first real
+            # post-lease revision before it has loaded any capture bodies.
+            self._capture_revision_at_open = current
+            return True
+        if current == self._capture_revision_at_open:
             return True
         self._invalidate_stale_captures()
         return False

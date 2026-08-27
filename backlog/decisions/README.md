@@ -82,6 +82,7 @@ ADRs explain why significant architectural decisions were made. Backlog tasks, S
 | [ADR-088](088-console-lightweight-next-send-history-projection.md) | Accepted | Share a lightweight pre-serialization Console history projection so next-send pricing observes admitted text/media without database writes or base64 encoding. |
 | [ADR-089](089-console-per-turn-change-review-ownership.md) | Accepted | Make agent-turn cards and Change Review the Console file-change owners, add guarded per-turn Undo All, and retire the redundant Inspector projection. |
 | [ADR-091](091-bounded-epub-archive-admission.md) | Accepted | Isolate ebook parsing in one-worker pool generations and reject EPUB ZIP structures whose expanded resource cost exceeds fixed safety bounds. |
+| [ADR-092](092-console-full-semantic-capture-policy.md) | Accepted | Keep Safe as the default while allowing scoped Full semantic exchange capture with frozen run policy, invariant credential/binary protections, distinct export profiles, and conversation-scoped erasure. |
 
 ## Historical Decision Material
 

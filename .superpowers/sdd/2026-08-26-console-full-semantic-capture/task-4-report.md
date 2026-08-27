@@ -2,7 +2,7 @@
 
 ## Outcome
 
-Implemented the ADR-089 shared Console capture-policy controls and governed
+Implemented the ADR-092 shared Console capture-policy controls and governed
 per-call exchange export in commit `d685a90009` (`feat(console): expose
 governed full capture controls`) and hardened the independently reviewed
 surface in fix-round commit `478a9f1bae` (`fix(console): harden capture policy

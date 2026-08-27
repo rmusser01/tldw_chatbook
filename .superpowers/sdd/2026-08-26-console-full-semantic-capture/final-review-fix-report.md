@@ -14,16 +14,16 @@ Fix round 2 implementation: `873972639f` (`fix(db): suppress raw exchange error 
 
 ADR required: no
 
-ADR path: `backlog/decisions/089-console-full-semantic-capture-and-export.md`
+ADR path: `backlog/decisions/092-console-full-semantic-capture-policy.md`
 
-Reason: these corrections enforce ADR-089's existing Safe-first,
+Reason: these corrections enforce ADR-092's existing Safe-first,
 capture-never-breaks-send, Safe-before-disk, content-free logging, and truthful
 purge/UI contracts. They do not introduce a new storage, ownership, security,
 or cross-module policy decision.
 
 Controller ruling: when a persisted conversation policy is unavailable or
 corrupt under Global Full, publish explicit session Safe, retain save-pending,
-and keep hydration retryable; do not disable Safe capture entirely. ADR-089
+and keep hydration retryable; do not disable Safe capture entirely. ADR-092
 defines Safe as the fail-closed diagnostic mode, while disabled capture is
 reserved for admission bookkeeping failure that cannot safely resolve policy.
 If wrong, Safe diagnostic metadata may still be retained during a repository
@@ -114,6 +114,11 @@ outage, but semantic bodies cannot escalate to Full.
 - `chat_screen.py` measures **20,093 lines / 633 methods**, within the reviewed
   Task 4 base **20,099 / 633**. The independently stale absolute ratchet was
   neither run nor raised.
+- After rebasing onto current `dev`, Qodo's post-rebase regressions are green:
+  the focused fix gate passed **90 tests**, and the same 16-file privacy/UI
+  matrix passed **890 tests, 2 sandbox-only loopback skips** in three bounded
+  shards. Changed-file Ruff, production py_compile, CSS regeneration/sync, and
+  `git diff --check` are clean.
 
 Skips are environmental and unchanged: two loopback-listener tests cannot bind
 inside the sandbox, and one DB posture test is Windows-only. Dependency and
@@ -122,7 +127,10 @@ gate.
 
 ## Residual risk
 
-No known Critical or Important implementation defect remains in the corrected
-surfaces after fix round 2. Independent re-review is still required before the
-reopened child criteria can be checked or their statuses returned to Done. The
-one-time Impeccable detector was not rerun, as directed.
+No known Critical or Important implementation defect remains. Independent
+re-review completed cleanly, and Qodo's later post-rebase review produced 11
+actionable findings that were corrected and covered by regressions. Its one
+nullable-type comment does not apply to the concrete purge-revision binding;
+the distinct Inspector freshness callback remains intentionally nullable and
+is now documented explicitly. The one-time Impeccable detector was not rerun,
+as directed.

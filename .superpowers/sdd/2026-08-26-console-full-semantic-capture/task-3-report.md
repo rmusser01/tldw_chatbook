@@ -38,7 +38,7 @@ The original Task 3 RED/GREEN evidence remains in commit `16cfc0991a`. This revi
 
 - The repository environment emitted its existing `requests` dependency warning and pytest temporary-directory cleanup warnings; neither affected outcomes.
 - The review-required owner-loop correction intentionally replaces the original worker-offloaded DB commit. It adds no callback, await, dependency, second pipeline, or speculative abstraction after the durable commit.
-- ADR-089 remains governing; no new ADR or lesson entry was needed.
+- ADR-092 remains governing; no new ADR or lesson entry was needed.
 
 Task `TASK-22507.3` remains **In Progress** for independent review. Acceptance criteria remain intentionally unchecked.
 

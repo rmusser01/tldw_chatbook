@@ -147,6 +147,48 @@ def test_store_commit_swaps_only_full_capture_state_and_advances_revision():
     ] == ["safe"]
 
 
+def test_capture_quiescence_waits_for_inflight_exchange_write():
+    store, session, message, persistence = _store_with_captures()
+    stored_message = store._nodes_by_session[session.id][message.id]
+    writer_started = threading.Event()
+    release_writer = threading.Event()
+    lease_acquired = threading.Event()
+    lease_results: list[bool] = []
+
+    def blocking_append(*, message_id, rows):
+        writer_started.set()
+        assert release_writer.wait(2)
+        persistence.exchange_appends.append([dict(row) for row in rows])
+        return True
+
+    persistence.append_message_exchanges = blocking_append
+    persistence.exchange_appends.clear()
+    writer = threading.Thread(target=store._persist_exchanges_only, args=(stored_message,))
+    writer.start()
+    assert writer_started.wait(1)
+
+    def acquire_lease() -> None:
+        lease_results.append(store.begin_capture_quiescence(session.id))
+        lease_acquired.set()
+
+    lease = threading.Thread(target=acquire_lease)
+    lease.start()
+    try:
+        assert not lease_acquired.wait(0.1)
+    finally:
+        release_writer.set()
+        writer.join(2)
+        lease.join(2)
+
+    assert not writer.is_alive()
+    assert not lease.is_alive()
+    assert lease_results == [True]
+    assert len(persistence.exchange_appends) == 1
+
+    store._persist_exchanges_only(stored_message)
+    assert len(persistence.exchange_appends) == 1
+
+
 def test_store_purge_preserves_unrelated_session_owners_and_exact_safe_keys():
     store, session_a, message_a, persistence = _store_with_captures()
     session_b = store.create_session()

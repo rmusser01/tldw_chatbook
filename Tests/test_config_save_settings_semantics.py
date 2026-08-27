@@ -144,6 +144,47 @@ def test_full_capture_settings_publish_after_replacement_despite_cache_failure(
     assert config_module.runtime_capture_policy().detail is CaptureDetail.FULL
 
 
+def test_full_capture_cache_failure_keeps_policy_at_actual_config_generation(
+    monkeypatch,
+):
+    monkeypatch.setattr(config_module, "_CONFIG_GENERATION", 4)
+    monkeypatch.setattr(
+        config_module,
+        "_published_runtime_config_snapshot",
+        lambda: config_module.RuntimeConfigSnapshot(
+            4,
+            {
+                "console": {
+                    "exchange_capture": True,
+                    "exchange_capture_detail": "safe",
+                }
+            },
+        ),
+    )
+
+    def mutate(*_args, **kwargs):
+        assert kwargs["locked_snapshot_precondition"](
+            config_module.AtomicConfigSnapshot(4, {})
+        )
+        kwargs["after_replace"]()
+        return ConfigMutationResult(True, False, "cache_reload")
+
+    config_module._publish_runtime_capture_policy(True, CaptureDetail.SAFE, 4)
+    monkeypatch.setattr(config_module, "apply_settings_mutation_to_cli_config", mutate)
+
+    result = config_module.apply_console_capture_settings(
+        enabled=True,
+        detail=CaptureDetail.FULL,
+        expected_generation=4,
+    )
+
+    assert result.file_replaced is True
+    assert result.fully_applied is False
+    policy = config_module.runtime_capture_policy()
+    assert policy.detail is CaptureDetail.FULL
+    assert policy.generation == 4
+
+
 def test_stale_safe_capture_generation_does_not_publish(monkeypatch):
     config_module._publish_runtime_capture_policy(True, CaptureDetail.FULL, 7)
     monkeypatch.setattr(

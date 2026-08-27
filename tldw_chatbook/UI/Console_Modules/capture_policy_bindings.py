@@ -42,7 +42,18 @@ def build_capture_policy_bindings(
     *,
     purge_success: Callable[[], Awaitable[None]] | None = None,
 ) -> CapturePolicyBindings:
-    """Freeze policy/count/purge callbacks to one live Console session."""
+    """Freeze policy/count/purge callbacks to one live Console session.
+
+    Args:
+        controller: Live Console controller that owns capture policy.
+        session_id: Immutable session targeted by the surface.
+        conversation_id: Immutable persisted conversation target, if any.
+        purge_success: Optional post-commit Inspector repaint callback.
+
+    Returns:
+        Shared policy bindings whose purge revision is always an integer.
+        Inspector read freshness uses the separate nullable callback below.
+    """
 
     def read():
         return controller.capture_policy_snapshot(session_id)
@@ -110,7 +121,17 @@ def build_capture_policy_bindings(
 def build_inspector_capture_policy_wiring(
     controller: Any,
 ) -> InspectorCapturePolicyWiring | None:
-    """Resolve and freeze the active Inspector target and repaint callback."""
+    """Resolve and freeze the active Inspector target and repaint callback.
+
+    Args:
+        controller: Live Console controller whose active session is opening
+            the Inspector.
+
+    Returns:
+        Immutable Inspector wiring, or ``None`` when no session is active.
+        Its freshness callback returns ``None`` only while capture is
+        quiescent; purge mutation continues to use the non-null binding.
+    """
 
     session_id = controller.store.active_session_id
     if session_id is None:

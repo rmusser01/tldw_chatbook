@@ -15,7 +15,7 @@ labels:
 dependencies: []
 references:
   - Docs/superpowers/specs/2026-08-26-console-full-semantic-capture-design.md
-  - backlog/decisions/089-console-full-semantic-capture-policy.md
+  - backlog/decisions/092-console-full-semantic-capture-policy.md
 priority: high
 ---
 
@@ -40,7 +40,7 @@ Let users deliberately retain complete semantic provider exchanges for one eligi
 ## Implementation Plan
 
 <!-- SECTION:PLAN:BEGIN -->
-1. Treat Docs/superpowers/specs/2026-08-26-console-full-semantic-capture-design.md and ADR-089 as the approved contract.
+1. Treat Docs/superpowers/specs/2026-08-26-console-full-semantic-capture-design.md and ADR-092 as the approved contract.
 2. Execute TASK-22507.1: add Safe-first capture construction, bounds, provenance, schema migration, and local policy persistence without exposing Full in the UI.
 3. Execute TASK-22507.2 after TASK-22507.1: resolve and consume scoped policy at admission, freeze it on provider signals, and cover direct/retry/tool/fleet/Anthropic/llama.cpp paths.
 4. Execute TASK-22507.3 after TASK-22507.1 and TASK-22507.2: add conversation-wide Full-capture count/purge under quiescence with staged cache replacement and capture-revision fences.
@@ -48,18 +48,21 @@ Let users deliberately retain complete semantic provider exchanges for one eligi
 6. Follow Docs/superpowers/plans/2026-08-26-console-full-semantic-capture.md task-by-task, close each child only with its focused evidence, then run the final integration gate and close this parent.
 
 ADR required: yes
-ADR path: backlog/decisions/089-console-full-semantic-capture-policy.md
-Reason: ADR-089 governs the persisted privacy metadata, provider/runtime capture boundary, logical deletion semantics, and shared UI/storage contract.
+ADR path: backlog/decisions/092-console-full-semantic-capture-policy.md
+Reason: ADR-092 governs the persisted privacy metadata, provider/runtime capture boundary, logical deletion semantics, and shared UI/storage contract.
 <!-- SECTION:PLAN:END -->
 
 ## Implementation Notes
 
 <!-- SECTION:NOTES:BEGIN -->
-- Implemented ADR-089 across four reviewed child tasks: Safe-first v50 exchange provenance/persistence, frozen scoped next-send/conversation/global policy, quiescent conversation-wide Full purge, and shared Inspector/live Trace/F9 controls with governed per-call export.
+- Implemented ADR-092 across four reviewed child tasks: Safe-first v51 exchange provenance/persistence, frozen scoped next-send/conversation/global policy, quiescent conversation-wide Full purge, and shared Inspector/live Trace/F9 controls with governed per-call export.
 - Full capture now includes Anthropic system content, project/workspace instructions, RAG context, tool schemas/calls/results, and provider semantic bodies while structured credentials, paths, and binary/base64 content remain excluded across chunks, caches, SQLite, exports, logs, and exception graphs.
 - Final whole-branch review found and closed policy hydration, stream aggregation, Safe-before-disk, config projection, purge truthfulness, admission fallback, and DB exception-chain defects. Final reviewer verdict: Ready to merge — Yes, with no Critical or Important findings.
 - Final verification at `c5d18abc50`: fresh exact privacy/UI gate `886 passed, 2 sandbox-only loopback skips`; complete DB gate `1831 passed, 1 Windows-only skip`; Task 2 gate `570 passed, 2 sandbox-only skips`; 80x24 `114 passed`; Settings/config/layout `381 passed`; lowest DB boundary `12 passed`; Ruff, py_compile, all-five CSS sync, and diff checks clean. The repository-wide absolute screen-size ceiling remains a pre-existing stale failure, while the feature delta passes at 20,093 lines/633 methods versus 20,099/633 base.
-- Documentation, ADR-089, implementation reports, and the aggregate-stream sanitation lesson are updated. No new ADR was required for the final corrections because they enforce the existing Safe-first and content-free boundary.
+- Documentation, ADR-092, implementation reports, and the aggregate-stream sanitation lesson are updated. No new ADR was required for the final corrections because they enforce the existing Safe-first and content-free boundary.
+- The final `dev` rebase preserved upstream's v49-to-v50 Console Library tombstone cleanup, moved Full-capture persistence to v50-to-v51, restored the approved governing spec and plan from the former stacked base, and renumbered the now-colliding capture decision from ADR-089 to ADR-092.
+- The post-rebase Qodo review produced 11 actionable findings, all addressed: transactional policy reads, complete public API documentation, owner-only export files with atomic no-clobber semantics, generation-safe config publication, store-level purge/write exclusion, and Inspector recovery after quiescent startup. One nullable-type comment was declined because purge bindings intentionally require a concrete revision; the separately typed Inspector freshness callback remains nullable and is now documented explicitly.
+- Final post-Qodo evidence: the eight new regressions failed before their fixes and passed afterward; the focused fix gate passed 90 tests; the complete 16-file privacy/UI matrix passed 890 tests with 2 sandbox-only loopback skips; changed-file Ruff, production py_compile, and `git diff --check` passed. These corrections enforce ADR-092, so no new ADR or lesson entry was required.
 <!-- SECTION:NOTES:END -->
 
 ## Final Summary

@@ -275,6 +275,7 @@ class ConsoleExchangeExportDialog(SafeModalDismissMixin, ModalScreen[None]):
                 return False
 
         destination: Path | None = None
+        destination_existed = False
         if self._destination == "file":
             raw_path = self.query_one("#exchange-export-path", Input).value.strip()
             if not raw_path:
@@ -285,7 +286,8 @@ class ConsoleExchangeExportDialog(SafeModalDismissMixin, ModalScreen[None]):
             except ValueError:
                 self._set_status("Invalid destination path.", error=True)
                 return False
-            if destination.exists() and not await self._confirm_overwrite(destination):
+            destination_existed = destination.exists()
+            if destination_existed and not await self._confirm_overwrite(destination):
                 self._set_status("Export cancelled; the existing file was kept.")
                 return False
 
@@ -310,10 +312,19 @@ class ConsoleExchangeExportDialog(SafeModalDismissMixin, ModalScreen[None]):
                     atomic_write_text,
                     destination,
                     projection.json_text,
+                    mode=0o600,
                     privacy_safe_log=True,
+                    overwrite=destination_existed,
                 )
                 self._set_status(f"Export written to {destination.name}.")
             return True
+        except FileExistsError:
+            self._projection = None
+            self._set_status(
+                "Export cancelled; a file appeared at the destination and was kept.",
+                error=True,
+            )
+            return False
         except ExchangeExportUnavailable:
             self._projection = None
             self._set_status("Full trace is unavailable for this capture.", error=True)

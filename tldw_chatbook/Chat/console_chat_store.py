@@ -1149,6 +1149,7 @@ class ConsoleChatStore:
         # disappears some OTHER way is not itself proof this cache's entry
         # for it goes away too.
         self._exchange_blob_cache: dict[str, dict[tuple[str, int, str], bytes]] = {}
+        self._capture_quiescence_lock = threading.RLock()
         self._capture_quiescent_sessions: set[str] = set()
         # Ephemeral fence for issued speech snapshots. It deliberately lives
         # outside ConsoleChatMessage so it is neither persisted nor restored.
@@ -4440,19 +4441,22 @@ class ConsoleChatStore:
 
     def begin_capture_quiescence(self, session_id: str) -> bool:
         """Block exchange attachment/flush for one live session."""
-        self._session_or_raise(session_id)
-        if session_id in self._capture_quiescent_sessions:
-            return False
-        self._capture_quiescent_sessions.add(session_id)
-        return True
+        with self._capture_quiescence_lock:
+            self._session_or_raise(session_id)
+            if session_id in self._capture_quiescent_sessions:
+                return False
+            self._capture_quiescent_sessions.add(session_id)
+            return True
 
     def capture_quiescent(self, session_id: str) -> bool:
         """Return whether one live session currently rejects capture writers."""
-        return session_id in self._capture_quiescent_sessions
+        with self._capture_quiescence_lock:
+            return session_id in self._capture_quiescent_sessions
 
     def end_capture_quiescence(self, session_id: str) -> None:
         """Release one session's exchange writer fence."""
-        self._capture_quiescent_sessions.discard(session_id)
+        with self._capture_quiescence_lock:
+            self._capture_quiescent_sessions.discard(session_id)
 
     def stage_full_capture_purge(self, session_id: str) -> StagedCapturePurge:
         """Build every replacement needed after a durable Full-row delete."""
@@ -8332,6 +8336,12 @@ class ConsoleChatStore:
         is keyed the same way, so a repeat flush of the same key is always
         harmless.
         """
+        with self._capture_quiescence_lock:
+            self._attach_message_exchanges_locked(message_id, captures)
+
+    def _attach_message_exchanges_locked(
+        self, message_id: str, captures: Sequence["ExchangeCapture"]
+    ) -> None:
         message = self._message_or_raise(message_id)
         if self._message_session_index[message_id] in self._capture_quiescent_sessions:
             return
@@ -9960,6 +9970,10 @@ class ConsoleChatStore:
         or nothing to write bails out silently rather than falling back to
         ``_persist_existing_message``.
         """
+        with self._capture_quiescence_lock:
+            self._persist_exchanges_only_locked(message)
+
+    def _persist_exchanges_only_locked(self, message: ConsoleChatMessage) -> None:
         session_id = self._message_session_index.get(message.id)
         if session_id in self._capture_quiescent_sessions:
             return

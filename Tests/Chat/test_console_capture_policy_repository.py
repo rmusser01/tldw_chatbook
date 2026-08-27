@@ -90,3 +90,19 @@ def test_schema_unavailable_is_not_reported_as_absent(db) -> None:
 
     assert result.status is repository_module.CapturePolicyReadStatus.UNAVAILABLE_OR_CORRUPT
     assert result.policy is None
+
+
+def test_read_uses_shared_transaction_boundary(db, monkeypatch) -> None:
+    conversation_id = _conversation(db)
+    repository = ConsoleCapturePolicyRepository(db)
+    original_transaction = db.transaction
+    calls: list[bool] = []
+
+    def transaction(*, immediate: bool = False):
+        calls.append(immediate)
+        return original_transaction(immediate=immediate)
+
+    monkeypatch.setattr(db, "transaction", transaction)
+
+    assert repository.read(conversation_id).status is repository_module.CapturePolicyReadStatus.ABSENT
+    assert calls == [False]

@@ -80,7 +80,20 @@ def project_exchange_export(
     capture: ExchangeCapture,
     profile: TraceExportProfile,
 ) -> ExchangeExportProjection:
-    """Project one stored call through the selected existing Trace profile."""
+    """Project one stored call through the selected existing Trace profile.
+
+    Args:
+        capture: Persisted provider exchange to disclose.
+        profile: Existing Trace disclosure profile to apply.
+
+    Returns:
+        The governed payload, rendered JSON, and Full-availability metadata.
+
+    Raises:
+        TypeError: If ``profile`` is not a ``TraceExportProfile``.
+        ExchangeExportUnavailable: If Full export is requested from a Safe
+            capture that never retained the omitted bodies.
+    """
     if not isinstance(profile, TraceExportProfile):
         raise TypeError("profile must be TraceExportProfile")
     full_available = capture.capture_detail is CaptureDetail.FULL

@@ -50,19 +50,29 @@ class ConsoleCapturePolicyRepository:
         self.db = db
 
     def read(self, conversation_id: str) -> CapturePolicyReadResult:
+        """Read one local conversation override without inheriting on failure.
+
+        Args:
+            conversation_id: Persisted conversation identifier to inspect.
+
+        Returns:
+            A typed result distinguishing a found policy, conclusive absence,
+            and unavailable or corrupt storage.
+        """
         if type(conversation_id) is not str or not conversation_id.strip():
             return CapturePolicyReadResult(
                 CapturePolicyReadStatus.UNAVAILABLE_OR_CORRUPT,
                 None,
             )
         try:
-            row = self.db.get_connection().execute(
-                "SELECT policy.conversation_id, policy.capture_detail, policy.updated_at "
-                "FROM console_conversation_capture_policy AS policy "
-                "JOIN conversations AS conversation ON conversation.id = policy.conversation_id "
-                "WHERE policy.conversation_id = ? AND conversation.deleted = 0",
-                (conversation_id,),
-            ).fetchone()
+            with self.db.transaction() as cursor:
+                row = cursor.execute(
+                    "SELECT policy.conversation_id, policy.capture_detail, policy.updated_at "
+                    "FROM console_conversation_capture_policy AS policy "
+                    "JOIN conversations AS conversation ON conversation.id = policy.conversation_id "
+                    "WHERE policy.conversation_id = ? AND conversation.deleted = 0",
+                    (conversation_id,),
+                ).fetchone()
             if row is None:
                 return CapturePolicyReadResult(CapturePolicyReadStatus.ABSENT, None)
             policy = self._from_row(row)
@@ -81,6 +91,15 @@ class ConsoleCapturePolicyRepository:
     def replace(
         self, conversation_id: str, detail: CaptureDetail | None
     ) -> CapturePolicyWriteResult:
+        """Replace or inherit one local conversation capture policy.
+
+        Args:
+            conversation_id: Persisted conversation identifier to mutate.
+            detail: Explicit Safe or Full detail, or ``None`` to inherit.
+
+        Returns:
+            A structured status and the stored policy when one remains.
+        """
         if type(conversation_id) is not str or not conversation_id.strip():
             return CapturePolicyWriteResult(CapturePolicyWriteStatus.UNAVAILABLE, None)
         if detail is not None and not isinstance(detail, CaptureDetail):

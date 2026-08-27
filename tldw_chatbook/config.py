@@ -6318,7 +6318,11 @@ def _publish_runtime_capture_policy(
 
 
 def runtime_capture_policy() -> RuntimeCapturePolicy:
-    """Return the shared runtime capture policy, resolving invalid detail Safe."""
+    """Return the shared runtime capture policy, resolving invalid detail Safe.
+
+    Returns:
+        The canonical enabled/detail projection and its config generation.
+    """
     from tldw_chatbook.Chat.console_exchange_capture import CaptureDetail
 
     global _RUNTIME_CAPTURE_POLICY
@@ -6353,7 +6357,17 @@ def apply_console_capture_settings(
     detail: CaptureDetail,
     expected_generation: int,
 ) -> ConfigMutationResult:
-    """Apply the kill switch/detail with privacy-safe publication ordering."""
+    """Apply the kill switch/detail with privacy-safe publication ordering.
+
+    Args:
+        enabled: Future-capture kill-switch state.
+        detail: Safe or Full global capture detail.
+        expected_generation: Config generation observed by the caller.
+
+    Returns:
+        Structured replacement/cache-publication status, including conflicts
+        and partial post-replacement cache failures.
+    """
     from tldw_chatbook.Chat.console_exchange_capture import CaptureDetail
 
     if type(enabled) is not bool or not isinstance(detail, CaptureDetail):
@@ -6366,7 +6380,13 @@ def apply_console_capture_settings(
         _publish_runtime_capture_policy(enabled, detail, expected_generation)
 
     def publish_after_replace() -> None:
-        _publish_runtime_capture_policy(enabled, detail, expected_generation + 1)
+        # The general config generation advances only after cache publication
+        # succeeds. Publishing the committed capture owner at the still-current
+        # generation keeps it authoritative if that later step fails; on
+        # success, the generation bump makes the next read rebuild from the new
+        # canonical snapshot. This callback runs while the config write lock is
+        # still held, so a newer writer cannot be overwritten afterward.
+        _publish_runtime_capture_policy(enabled, detail, expected_generation)
 
     privacy_safe = not enabled or detail is CaptureDetail.SAFE
     result = apply_settings_mutation_to_cli_config(
@@ -6380,8 +6400,6 @@ def apply_console_capture_settings(
         before_replace=publish_before_replace if privacy_safe else None,
         after_replace=None if privacy_safe else publish_after_replace,
     )
-    if privacy_safe and result.file_replaced:
-        _publish_runtime_capture_policy(enabled, detail, expected_generation + 1)
     return result
 
 

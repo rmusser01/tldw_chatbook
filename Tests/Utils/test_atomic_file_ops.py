@@ -109,3 +109,13 @@ def test_privacy_safe_failure_log_contains_only_category_and_exception_class(
     assert body_canary not in log_text
     assert exception_canary not in log_text
     assert "Traceback" not in log_text
+
+
+def test_no_overwrite_refuses_an_existing_destination(tmp_path):
+    target = tmp_path / "appeared.json"
+    target.write_text("other writer", encoding="utf-8")
+
+    with pytest.raises(FileExistsError):
+        atomic_write_text(target, "private export", overwrite=False)
+
+    assert target.read_text(encoding="utf-8") == "other writer"
