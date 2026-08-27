@@ -790,6 +790,27 @@ def _citation_calls(
     ]
 
 
+def _assert_row_carries_no_sealed_trace(
+    persistence: "_ReadyCitationPersistence", row: dict[str, Any]
+) -> None:
+    """Assert one committed row has NO sealed citation trace (TASK-22301).
+
+    Replaces ``assert "citation_write" not in call``. Against a ROW dict that
+    key is never present, so the assertion was true of any input and could
+    never fail -- it survived the call-to-row conversion looking correct while
+    testing nothing. The trace table is where the claim is actually decidable.
+    """
+
+    cited = {
+        trace["message_id"]
+        for trace in persistence.citation_trace_rows()
+        if trace["message_id"] is not None
+    }
+    assert row["message_id"] not in cited, (
+        f"row {row['message_id']} carries a sealed citation trace but must not"
+    )
+
+
 def _assert_no_terminal_state(store: ConsoleChatStore) -> None:
     assert store._terminal_citation_finalizers == {}
     assert store._terminal_persistence_deferred_ids == set()
@@ -1486,7 +1507,7 @@ async def test_finalizer_exception_logs_only_fixed_content_safe_diagnostic(monke
         sender=ConsoleMessageRole.ASSISTANT.value
     )
     assert len(assistant_calls) == 1
-    assert "citation_write" not in assistant_calls[0]
+    _assert_row_carries_no_sealed_trace(persistence, assistant_calls[0])
     assert "attempt_or_seal_failure" in output
     for sentinel in (
         body,
@@ -3413,7 +3434,7 @@ async def test_agent_empty_done_disarms_before_ordinary_fallback():
     )
     assert assistant.content == "No response was generated."
     assert len(assistant_calls) == 1
-    assert "citation_write" not in assistant_calls[0]
+    _assert_row_carries_no_sealed_trace(persistence, assistant_calls[0])
     assert builder.is_sealed is False
     assert builder.answer_attempts == ()
     _assert_no_terminal_state(store)
@@ -3541,8 +3562,17 @@ async def test_agent_replaced_placeholder_does_not_transfer_finalizer():
         sender=ConsoleMessageRole.ASSISTANT.value
     )
     assert assistant.content == "replacement answer"
-    assert len(assistant_calls) == 1
-    assert "citation_write" not in assistant_calls[0]
+    # TWO committed ASSISTANT rows is the durable shape here: the agent replaces
+    # the placeholder with a NEW row rather than updating it in place, and both
+    # are committed. The old `== 1` counted `create_message` calls, which the
+    # durable checkpoint never makes.
+    assert len(assistant_calls) == 2
+    replacement = _first((
+        row for row in assistant_calls if row["content"] == "replacement answer"
+    ), what="committed replacement ASSISTANT row")
+    # THE SUBJECT of this test: the replacement must not inherit the
+    # placeholder's citation finalizer, so it must carry no sealed trace.
+    _assert_row_carries_no_sealed_trace(persistence, replacement)
     assert builder.is_sealed is False
     assert builder.answer_attempts == ()
     _assert_no_terminal_state(store)
