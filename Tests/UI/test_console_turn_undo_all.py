@@ -506,7 +506,11 @@ async def test_mounted_duplicate_root_undo_refuses_inline_and_routes_to_review(
         session = store.create_session(session_id="conv-ambiguous-undo")
         session.persisted_conversation_id = session.id
         screen._ensure_console_chat_controller()
-        monkeypatch.setattr(screen, "_console_change_review_provider", lambda: provider)
+        monkeypatch.setattr(
+            screen._review_selection,
+            "_console_change_review_provider",
+            lambda: provider,
+        )
         review_calls: list[str] = []
         monkeypatch.setattr(
             screen,
@@ -579,7 +583,11 @@ async def test_mounted_partial_and_provider_failures_name_problem_and_allow_retr
         session = store.create_session(session_id="conv-partial-undo")
         session.persisted_conversation_id = session.id
         screen._ensure_console_chat_controller()
-        monkeypatch.setattr(screen, "_console_change_review_provider", lambda: provider)
+        monkeypatch.setattr(
+            screen._review_selection,
+            "_console_change_review_provider",
+            lambda: provider,
+        )
         store.append_message(
             session.id,
             role=ConsoleMessageRole.TOOL,

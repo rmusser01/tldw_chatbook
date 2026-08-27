@@ -34,12 +34,26 @@ def _message(message_id: str, role=ConsoleMessageRole.ASSISTANT) -> ConsoleChatM
     return ConsoleChatMessage(role=role, content="body", id=message_id)
 
 
+def _all_rows(transcript: ConsoleTranscript) -> list[object]:
+    """Return top-level and recursively nested transcript rows."""
+    rows: list[object] = []
+
+    def visit(row: object) -> None:
+        rows.append(row)
+        for nested in row.nested_rows:  # type: ignore[attr-defined]
+            visit(nested)
+
+    for row in transcript._transcript_rows():
+        visit(row)
+    return rows
+
+
 def test_annotated_message_gains_a_marker_row() -> None:
     transcript = ConsoleTranscript()
     transcript.set_messages([_message("m1"), _message("m2")])
     transcript.set_annotation_previews({"m1": ("tighten error paths",)})
 
-    rows = [row for row in transcript._transcript_rows() if row.kind == "annotations"]
+    rows = [row for row in _all_rows(transcript) if row.kind == "annotations"]
     assert [row.message.id for row in rows] == ["m1"]
     rendered = str(rows[0].renderable)
     assert "tighten error paths" in rendered
@@ -50,7 +64,7 @@ def test_marker_row_lists_every_note_in_order() -> None:
     transcript.set_messages([_message("m1")])
     transcript.set_annotation_previews({"m1": ("first pass", "second pass")})
 
-    (row,) = [r for r in transcript._transcript_rows() if r.kind == "annotations"]
+    (row,) = [r for r in _all_rows(transcript) if r.kind == "annotations"]
     rendered = str(row.renderable)
     assert rendered.index("first pass") < rendered.index("second pass")
 
@@ -76,9 +90,9 @@ def test_marker_signature_changes_when_notes_change() -> None:
     transcript = ConsoleTranscript()
     transcript.set_messages([_message("m1")])
     transcript.set_annotation_previews({"m1": ("v1",)})
-    (before,) = [r for r in transcript._transcript_rows() if r.kind == "annotations"]
+    (before,) = [r for r in _all_rows(transcript) if r.kind == "annotations"]
     transcript.set_annotation_previews({"m1": ("v1", "v2")})
-    (after,) = [r for r in transcript._transcript_rows() if r.kind == "annotations"]
+    (after,) = [r for r in _all_rows(transcript) if r.kind == "annotations"]
     assert before.signature != after.signature
 
 
@@ -87,7 +101,7 @@ def test_marker_widget_is_a_static_keyed_to_the_message() -> None:
     transcript.set_messages([_message("m1")])
     transcript.set_annotation_previews({"m1": ("note",)})
 
-    (row,) = [r for r in transcript._transcript_rows() if r.kind == "annotations"]
+    (row,) = [r for r in _all_rows(transcript) if r.kind == "annotations"]
     widget = transcript._build_row_widget(row, track=False)
     assert widget.id == "console-annotations-m1"
     assert widget.has_class("console-transcript-annotations")
@@ -170,7 +184,7 @@ async def test_restore_rekeys_persisted_annotations_to_native_ids(tmp_path):
                 comment="from a previous run",
             )
 
-            screen._sync_console_annotation_discovery(store)
+            screen._review_selection._sync_console_annotation_discovery(store)
             for _ in range(50):
                 await pilot.pause()
                 if screen._console_annotation_previews:
@@ -234,9 +248,7 @@ async def test_marker_click_requests_notes_not_message_toggle():
         await pilot.click("#console-annotations-m1")
         await pilot.pause()
 
-        assert [
-            event.anchor_message_id for event in app.review_notes_events
-        ] == ["m1"]
+        assert [event.anchor_message_id for event in app.review_notes_events] == ["m1"]
         assert transcript.selected_message_id == "m1"
 
 
@@ -255,9 +267,7 @@ async def test_n_on_selected_noted_message_requests_notes():
         await pilot.press("n")
         await pilot.pause()
 
-        assert [
-            event.anchor_message_id for event in app.review_notes_events
-        ] == ["m1"]
+        assert [event.anchor_message_id for event in app.review_notes_events] == ["m1"]
 
 
 @pytest.mark.asyncio
@@ -393,7 +403,9 @@ async def test_edit_then_delete_round_trip_pins_the_sidecar_row(tmp_path):
             snapshots: dict[str, object] = {}
 
             async def _resolver(modal) -> bool:
-                snapshots["edit_ok"] = await modal._on_edit(annotation_id, "edited comment")
+                snapshots["edit_ok"] = await modal._on_edit(
+                    annotation_id, "edited comment"
+                )
                 snapshots["after_edit_annotations"] = db.get_transcript_annotations(
                     conversation_id
                 )
@@ -425,8 +437,14 @@ async def test_edit_then_delete_round_trip_pins_the_sidecar_row(tmp_path):
             edited = after_edit[0]
             assert edited["comment"] == "edited comment"
             assert edited["updated_at"] != original["updated_at"]
-            for key in ("annotation_id", "conversation_id", "row_key", "message_id",
-                        "quote_text", "created_at"):
+            for key in (
+                "annotation_id",
+                "conversation_id",
+                "row_key",
+                "message_id",
+                "quote_text",
+                "created_at",
+            ):
                 assert edited[key] == original[key], key
 
             # Sidecar row is byte-identical after the edit.
@@ -475,11 +493,9 @@ async def test_delete_of_last_note_removes_the_marker_after_forced_reload(tmp_pa
                 comment="only note",
             )
 
-            screen._sync_console_annotation_discovery(store)
+            screen._review_selection._sync_console_annotation_discovery(store)
             await _wait_until(pilot, lambda: bool(screen._console_annotation_previews))
-            assert screen._console_annotation_previews == {
-                assistant.id: ("only note",)
-            }
+            assert screen._console_annotation_previews == {assistant.id: ("only note",)}
 
             async def _resolver(modal) -> bool:
                 assert await modal._on_delete(annotation_id) is True
