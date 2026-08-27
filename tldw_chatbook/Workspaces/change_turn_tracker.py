@@ -239,9 +239,13 @@ class ChangeTurnTracker:
                     eligible = self._eligible_touched_paths(
                         root, frozen_touched_paths
                     )
-                    handle.baselines[key] = repo.snapshot(
-                        "turn baseline", force_paths=eligible
-                    )
+                    if eligible:
+                        baseline = repo.snapshot(
+                            "turn baseline", force_paths=eligible
+                        )
+                    else:
+                        baseline = repo.snapshot("turn baseline")
+                    handle.baselines[key] = baseline
                     handle.baseline_oversize[key] = repo.last_oversize_excluded
                 except Exception as exc:  # noqa: BLE001 -- disclosed, never raised
                     handle.errors[key] = str(exc)[:400]
@@ -345,17 +349,18 @@ class ChangeTurnTracker:
                     )
                 )
                 continue
+            provided = (end_shas or {}).get(key)
+            if provided:
+                handle.end_shas[key] = provided
             try:
                 repo = self.service.repo_for_root(root)
                 eligible = self._eligible_touched_paths(root, touched_paths)
-                provided = (end_shas or {}).get(key)
                 if provided:
                     # The supplied snapshot stays immutable. Priming the
                     # shared index only lets the next fresh snapshot consume
                     # a path that became available after this exact boundary.
-                    repo.force_add(eligible)
                     end = provided
-                    handle.end_shas[key] = end
+                    repo.force_add(eligible)
                     if end == baseline:
                         continue
                     changed = repo.changed_files(baseline, end)
@@ -370,7 +375,10 @@ class ChangeTurnTracker:
                         )
                     )
                     continue
-                end = repo.snapshot("turn end", force_paths=eligible)
+                if eligible:
+                    end = repo.snapshot("turn end", force_paths=eligible)
+                else:
+                    end = repo.snapshot("turn end")
                 handle.end_shas[key] = end
                 oversize = repo.last_oversize_excluded
                 # TASK-1977: a TRACKED sub-root is not an untracked hole —
@@ -423,6 +431,7 @@ class ChangeTurnTracker:
                     TurnChangeRecord(
                         root=key,
                         baseline_sha=baseline,
+                        end_sha=provided or "",
                         tracking_error=str(exc)[:400],
                     )
                 )

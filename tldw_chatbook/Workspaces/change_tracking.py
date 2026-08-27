@@ -435,11 +435,25 @@ class ShadowRepo:
 
         with self._locked():
             self.ensure_initialized()
-            existing = [
-                path for path in force_paths if (self.root / path).exists()
-            ]
-            if existing:
-                self._run("add", "-f", "--", *existing)
+            literal_paths: list[str] = []
+            for force_path in force_paths:
+                if not force_path or force_path == ".":
+                    continue
+                path = Path(force_path)
+                if path.is_absolute():
+                    continue
+                try:
+                    resolved = (self.root / path).resolve()
+                    relative = resolved.relative_to(self.root)
+                except (OSError, RuntimeError, ValueError):
+                    continue
+                if relative == Path(".") or not resolved.exists():
+                    continue
+                if resolved.is_dir():
+                    continue
+                literal_paths.append(f":(literal){relative.as_posix()}")
+            if literal_paths:
+                self._run("add", "-f", "--", *literal_paths)
             scan = scan_root(
                 self.root,
                 max_files=_sys.maxsize,

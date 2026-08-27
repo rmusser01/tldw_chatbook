@@ -89,6 +89,62 @@ def test_begin_turn_force_adds_an_ignored_path_into_the_baseline(tracker, root):
     assert repo.file_bytes(baseline, target.name) == expected
 
 
+def test_force_add_rejects_root_and_directory_paths(tracker, root, monkeypatch):
+    monkeypatch.setenv("TLDW_CHANGE_REVIEW_MAX_FILE_BYTES", "100")
+    ignored = root / "ignored"
+    ignored.mkdir()
+    (root / ".gitignore").write_text("ignored/\n")
+    (ignored / "small.txt").write_text("small\n")
+    oversized = ignored / "oversized.bin"
+    oversized.write_bytes(b"x" * 101)
+
+    repo = tracker.service.repo_for_root(root)
+    sha = repo.snapshot("unsafe force paths", force_paths=[".", "ignored"])
+
+    assert repo.file_bytes(sha, "ignored/small.txt") is None
+    assert repo.file_bytes(sha, "ignored/oversized.bin") is None
+
+
+def test_force_add_treats_pathspec_magic_as_a_literal_filename(tracker, root):
+    target = root / ":(glob)**"
+    expected = b"only this ignored file\n"
+    sibling = root / "unrelated-ignored.txt"
+    (root / ".gitignore").write_text("*\n!/.gitignore\n!/seed.txt\n")
+    target.write_bytes(expected)
+    sibling.write_text("must stay ignored\n")
+
+    repo = tracker.service.repo_for_root(root)
+    sha = repo.snapshot("literal force path", force_paths=[target.name])
+
+    assert repo.file_bytes(sha, target.name) == expected
+    assert repo.file_bytes(sha, sibling.name) is None
+
+
+def test_force_add_rejects_escapes_and_symlinked_directories(
+    tracker, root, tmp_path
+):
+    ignored = root / "ignored"
+    ignored.mkdir()
+    (ignored / "inside.txt").write_text("ignored\n")
+    link = root / "ignored-link"
+    try:
+        link.symlink_to(ignored, target_is_directory=True)
+    except OSError:
+        pytest.skip("symlinks unsupported on this platform/permission level")
+    outside = tmp_path / "outside.txt"
+    outside.write_text("outside\n")
+    (root / ".gitignore").write_text("ignored/\nignored-link\n")
+
+    repo = tracker.service.repo_for_root(root)
+    sha = repo.snapshot(
+        "unsafe force paths",
+        force_paths=["", "../outside.txt", str(outside), link.name],
+    )
+
+    assert repo.file_bytes(sha, "ignored/inside.txt") is None
+    assert repo.file_bytes(sha, link.name) is None
+
+
 def test_begin_is_nonblocking_and_await_gates(tmp_path, root):
     """B must ride the model's first-token latency: begin_turn returns
     while the snapshot is still running; await_baseline blocks until done.
@@ -100,10 +156,10 @@ def test_begin_is_nonblocking_and_await_gates(tmp_path, root):
             repo = super().repo_for_root(r)
             original = repo.snapshot
 
-            def slow_snapshot(message: str, *, force_paths=()) -> str:
+            def slow_snapshot(message: str) -> str:
                 time.sleep(0.4)
                 events.append("baseline-finished")
-                return original(message, force_paths=force_paths)
+                return original(message)
 
             repo.snapshot = slow_snapshot  # type: ignore[method-assign]
             return repo
@@ -181,6 +237,67 @@ def test_supplied_successor_sha_primes_a_late_ignored_path_for_successor_e(
     assert successor_records[0].baseline_sha == supplied
     repo = tracker.service.repo_for_root(root)
     assert repo.file_bytes(successor_records[0].end_sha, target.name) == expected
+
+
+def test_supplied_sha_survives_force_add_priming_failure(
+    tracker, root, monkeypatch
+):
+    target = root / "ignored-agent-output.txt"
+    (root / ".gitignore").write_text(f"{target.name}\n")
+    handle = tracker.begin_turn([root])
+    handle.await_baseline()
+    key = str(root.resolve())
+    baseline = handle.baselines[key]
+
+    (root / "boundary.txt").write_text("at supplied boundary\n")
+    repo = tracker.service.repo_for_root(root)
+    supplied = repo.snapshot("supplied boundary")
+    assert supplied != baseline
+    target.write_text("late ignored write\n")
+
+    def fail_force_add(self, paths):
+        raise RuntimeError("injected priming failure")
+
+    monkeypatch.setattr(type(repo), "force_add", fail_force_add)
+    records = tracker.end_turn(
+        handle,
+        touched_paths=[str(target)],
+        end_shas={key: supplied},
+    )
+
+    assert handle.end_shas.get(key) == supplied
+    assert len(records) == 1
+    assert records[0].baseline_sha == baseline
+    assert records[0].end_sha == supplied
+    assert records[0].tracking_error == "injected priming failure"
+
+
+def test_supplied_sha_preserves_nonempty_continuation_range_statistics(
+    tracker, root
+):
+    parent = tracker.begin_turn([root])
+    parent.await_baseline()
+    assert tracker.end_turn(parent) == []
+    continuation = tracker.continuation(parent)
+    assert continuation is not None
+    key = str(root.resolve())
+    baseline = continuation.baselines[key]
+
+    (root / "between-boundaries.txt").write_text("one\ntwo\n")
+    successor = tracker.begin_turn([root])
+    successor.await_baseline()
+    supplied = successor.baselines[key]
+    assert supplied != baseline
+
+    records = tracker.end_turn(continuation, end_shas=successor.baselines)
+
+    assert continuation.end_shas[key] == supplied
+    assert len(records) == 1
+    assert records[0].baseline_sha == baseline
+    assert records[0].end_sha == supplied
+    assert records[0].files_changed == 1
+    assert records[0].adds == 2
+    assert records[0].dels == 0
 
 
 def test_tracking_failure_yields_error_records_never_raises(tmp_path, root):
@@ -420,11 +537,11 @@ def test_baseline_completes_before_the_first_tool_executes(tmp_path, root):
             repo = super().repo_for_root(r)
             original = repo.snapshot
 
-            def slow_snapshot(message: str, *, force_paths=()) -> str:
+            def slow_snapshot(message: str) -> str:
                 if "baseline" in message:
                     time.sleep(0.5)
                     events.append("baseline-finished")
-                return original(message, force_paths=force_paths)
+                return original(message)
 
             repo.snapshot = slow_snapshot  # type: ignore[method-assign]
             return repo
@@ -1291,11 +1408,11 @@ def test_a_survivors_write_racing_the_next_baseline_is_still_reviewable(
             repo = super().repo_for_root(r)
             original = repo.snapshot
 
-            def slow_snapshot(message: str, *, force_paths=()) -> str:
+            def slow_snapshot(message: str) -> str:
                 if "baseline" in message:
                     time.sleep(0.6)
                     events.append("baseline-finished")
-                return original(message, force_paths=force_paths)
+                return original(message)
 
             repo.snapshot = slow_snapshot  # type: ignore[method-assign]
             return repo
@@ -1385,11 +1502,11 @@ def test_a_survivors_tool_dispatch_is_gated_on_nothing_across_turns(
             repo = super().repo_for_root(r)
             original = repo.snapshot
 
-            def slow_snapshot(message: str, *, force_paths=()) -> str:
+            def slow_snapshot(message: str) -> str:
                 if "baseline" in message:
                     time.sleep(0.6)
                     events.append("baseline-finished")
-                return original(message, force_paths=force_paths)
+                return original(message)
 
             repo.snapshot = slow_snapshot  # type: ignore[method-assign]
             return repo
