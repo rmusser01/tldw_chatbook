@@ -16,7 +16,7 @@
 
 **ADR path:** `backlog/decisions/092-console-live-child-write-path-boundaries.md`
 
-**Reason:** Baseline snapshots gain an optional path input, supplied-SHA closure gains an index-priming side effect, and successor startup gains an explicit handoff contract.
+**Reason:** Baseline snapshots gain an optional path input, supplied-SHA closure gains a successor-owned force-path handoff, and successor startup gains an explicit handoff contract.
 
 ---
 
@@ -24,7 +24,7 @@
 
 - Modify `Tests/Chat/test_change_turn_tracking.py`: production-shaped ignored-write regression, tracker contract tests, and deterministic boundary-race tests.
 - Modify `tldw_chatbook/Workspaces/change_tracking.py`: atomically force-add optional existing paths inside `ShadowRepo.snapshot`'s repository lock.
-- Modify `tldw_chatbook/Workspaces/change_turn_tracker.py`: share touched-path eligibility, pass paths into B/fresh-E snapshots, and prime the index on supplied-SHA closure.
+- Modify `tldw_chatbook/Workspaces/change_turn_tracker.py`: share touched-path eligibility, pass paths into B/fresh-E snapshots, and bind supplied-SHA late paths to the claimed successor handle.
 - Modify `tldw_chatbook/Chat/console_agent_bridge.py`: child-change state, path normalization, pending/live retention, pre-E capture, successor claim, and close completion.
 - Modify TASK-15671, ADR-092, this plan, and the approved spec for governance and completion evidence.
 
@@ -134,17 +134,17 @@ Extract only the current within-root and max-file-size filtering into a private 
 
 Expected: PASS.
 
-- [x] **Step 6: Write supplied-SHA priming RED**
+- [x] **Step 6: Write supplied-SHA successor-handoff RED**
 
-Add `test_supplied_successor_sha_primes_a_late_ignored_path_for_successor_e`: create a clean parent continuation; take successor B while the ignored target is absent; create the target; close the continuation with `touched_paths=[target]` and `end_shas=successor.baselines`; end the successor without passing the path. Assert the continuation retained supplied B while successor E contains the file.
+Add `test_supplied_successor_sha_defers_a_late_ignored_path_to_successor_e`: create a clean parent continuation; take successor B while the ignored target is absent; create the target; close the continuation with `touched_paths=[target]`, `end_shas=successor.baselines`, and the claimed successor handle; end the successor without passing the path. Assert the continuation retained supplied B while successor E contains the file.
 
-- [x] **Step 7: Verify supplied-SHA RED**
+- [x] **Step 7: Verify supplied-SHA handoff RED**
 
 ```bash
-/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/bin/python -m pytest -q Tests/Chat/test_change_turn_tracking.py::test_supplied_successor_sha_primes_a_late_ignored_path_for_successor_e
+/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/bin/python -m pytest -q Tests/Chat/test_change_turn_tracking.py::test_supplied_successor_sha_defers_a_late_ignored_path_to_successor_e
 ```
 
-Expected: FAIL because supplied-SHA `end_turn` performs no force-add.
+Expected: FAIL because supplied-SHA `end_turn` performs no force-path handoff.
 
 - [x] **Step 8: Prime without rewriting supplied SHAs**
 
@@ -236,7 +236,7 @@ Add deterministic tests for five contracts:
 
 1. `test_successor_claim_uses_window_paths_after_live_state_cleanup`: remove final state from the live map behind a barrier, start the successor, and assert B still contains the ignored file from the claimed window reference.
 2. `test_successor_b_waits_for_an_already_started_fresh_close`: block fresh close after it owns the window, start successor B on another thread, prove B has not started, release close, and assert old E/new B abut.
-3. `test_successor_e_waits_for_close_time_index_priming`: let the child closer own supplied-SHA closure, race successor E, and assert the late ignored file appears only in successor E.
+3. `test_successor_e_waits_for_close_time_force_path_handoff`: let the child closer own supplied-SHA closure, race successor E, and assert the late ignored file appears only in successor E.
 4. `test_claim_and_close_failures_release_waiters_without_breaking_runs`: inject one claim attachment failure and one close-time tracker failure; waiting threads must finish within the established timeout while reply/teardown stays successful.
 5. `test_inherited_child_state_crosses_successor_e_and_second_window_without_backward_leakage`: keep an older child alive through successor B/E, let the successor spawn its own child, and assert the older state remains available to successor E and the second survivor window while the newer child's path is absent from the older window.
 
@@ -409,3 +409,15 @@ git diff --check
 ```
 
 Expected: every task-relevant test passes. The documented latest-dev stale-signature failure may remain baseline-only only if its failure is unchanged and no TASK-15671 code reaches it differently.
+
+## Post-review correction
+
+Qodo identified that the original supplied-SHA implementation left late
+ignored paths staged in the shadow index shared by every conversation on a
+root. A different conversation could consume that unowned index state. The
+final implementation instead binds those paths to the exact claimed successor
+handle and supplies them only to that handle's atomic E snapshot. Regression
+coverage interposes an unrelated conversation E and proves it remains clean.
+The same review also moved traversal, absolute-root, and symlink checks through
+`Utils.path_validation.validate_path` and consolidated the tracking-error
+length constant.

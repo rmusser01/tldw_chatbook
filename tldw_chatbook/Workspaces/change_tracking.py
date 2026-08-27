@@ -43,6 +43,8 @@ from typing import Sequence
 
 from loguru import logger
 
+from tldw_chatbook.Utils.path_validation import validate_path
+
 #: Patterns for the shadow repo's ``info/exclude`` — noise no review should
 #: carry. The user's own ``.gitignore`` files are additionally honored by git
 #: itself (with the tool-touched force-add carve-out applied in TASK-1971).
@@ -99,6 +101,9 @@ _LOCK_TIMEOUT_SECONDS = 60.0
 _LOCK_RETRY_SECONDS = 0.05
 
 _GIT_TIMEOUT_SECONDS = 120.0
+
+#: Maximum user-visible tracking-error length stored by this module.
+_TRACKING_ERROR_MAX_CHARS = 400
 
 class ChangeTrackingError(Exception):
     """A shadow-repo operation failed. Callers treat this as degradation,
@@ -294,7 +299,8 @@ class ShadowRepo:
                 proc.stderr.decode("utf-8", "replace") if proc.stderr else ""
             )
             raise ChangeTrackingError(
-                f"git {args[0]} failed ({proc.returncode}): {stderr.strip()[:400]}"
+                f"git {args[0]} failed ({proc.returncode}): "
+                f"{stderr.strip()[:_TRACKING_ERROR_MAX_CHARS]}"
             )
         return proc
 
@@ -413,13 +419,15 @@ class ShadowRepo:
         for raw in paths:
             if not raw or raw == ".":
                 continue
-            path = Path(raw)
-            if path.is_absolute():
-                continue
             try:
-                resolved = (self.root / path).resolve()
+                resolved = validate_path(
+                    raw,
+                    self.root,
+                    redact_paths=True,
+                    allow_hidden=True,
+                )
                 relative = resolved.relative_to(self.root)
-            except (OSError, RuntimeError, ValueError):
+            except ValueError:
                 continue
             if relative == Path(".") or not resolved.exists():
                 continue
@@ -832,7 +840,7 @@ class ShadowRepo:
                         (
                             "forced path is no longer safe at staging boundary: "
                             f"{paths_text}"
-                        )[:400]
+                        )[:_TRACKING_ERROR_MAX_CHARS]
                     )
                 attempt_oversized = tuple(
                     rel for rel in oversized if rel in exact_paths
@@ -843,7 +851,7 @@ class ShadowRepo:
                         (
                             "forced path exceeds change-tracking size cap: "
                             f"{paths_text}"
-                        )[:400]
+                        )[:_TRACKING_ERROR_MAX_CHARS]
                     )
 
     # -- low-level restore (full revert semantics live in TASK-1974) -------

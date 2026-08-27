@@ -5,7 +5,7 @@ status: Done
 assignee:
   - '@codex'
 created_date: '2026-08-11 21:30'
-updated_date: '2026-08-27 15:40'
+updated_date: '2026-08-27 20:43'
 labels:
   - console
   - change-review
@@ -36,7 +36,8 @@ Change tracking force-adds paths an agent touched even when `.gitignore` would h
    file is absent from survivor review on current `dev`.
 2. Extend `ShadowRepo`/`ChangeTurnTracker` so recorded eligible WRITE paths can
    be force-added atomically at baseline and fresh-end snapshots, while a
-   supplied-SHA close primes the next exact snapshot without rewriting history.
+   supplied-SHA close binds late paths to the claimed successor without
+   rewriting history or leaving unowned index state.
 3. Retain one bounded bridge-local path state per spawning turn, including
    pending, inherited, and E-in-flight children, and pass those paths through
    the existing parent/survivor lifecycle.
@@ -50,7 +51,7 @@ ADR required: yes
 ADR path: `backlog/decisions/092-console-live-child-write-path-boundaries.md`
 
 Reason: the fix changes the cross-module baseline input and supplied-SHA
-shadow-index semantics while preserving ADR-089's user-visible ownership.
+successor-handoff semantics while preserving ADR-089's user-visible ownership.
 
 Approved design:
 `Docs/superpowers/specs/2026-08-26-task-15671-ignored-survivor-write-tracking-design.md`
@@ -71,20 +72,25 @@ Detailed implementation plan:
   outcome, and a timeout fails change tracking closed instead of inventing an
   overlapping review window.
 - Extended baseline and end snapshots to force-add eligible recorded paths
-  atomically. Supplied-SHA closure preserves the supplied commit while priming
-  the shadow index for the next fresh snapshot. Exact paths use Git's native
-  NUL-delimited `update-index --stdin` transport rather than custom argv
-  chunking.
+  atomically. Supplied-SHA closure preserves the supplied commit and binds late
+  paths to the exact claimed successor handle; successor E stages them inside
+  its own locked snapshot, so another conversation cannot consume shared index
+  state. Exact paths use Git's native NUL-delimited `update-index --stdin`
+  transport rather than custom argv chunking.
 - Added production-shaped and race-focused coverage for ignored post-turn
   writes, pending and inherited children, B/E ownership, concurrent close,
   oversize/refusal behavior, and injected failures. Final review also added a
   pending-at-successor-B regression so later child writes receive the existing
   concurrent-sub-agent disclosure.
-- After rebasing onto current `origin/dev`,
-  `Tests/Chat/test_change_turn_tracking.py` passed 89 tests and
+- After final review and rebasing onto current `origin/dev`,
+  `Tests/Chat/test_change_turn_tracking.py` passed 90 tests and
   `Tests/Workspaces/test_change_tracking.py` plus
   `Tests/Workspaces/test_change_bounds.py` passed 62 tests. Scoped Ruff,
   `compileall`, and `git diff --check` also passed.
+- Qodo's three findings were validated and fixed: force-path inputs now use
+  the shared path validator with hidden paths explicitly allowed, tracking
+  errors use one named length constant, and a cross-conversation regression
+  proves supplied-boundary paths remain owned by their claimed successor.
 - The adjacent Chat aggregate has two baseline-only failures in
   `test_child_run_scope_ordering.py` and `test_fleet_settle_fanout.py`: both
   monkeypatch `_persist` with the old `(self, run_id, outcome)` signature while

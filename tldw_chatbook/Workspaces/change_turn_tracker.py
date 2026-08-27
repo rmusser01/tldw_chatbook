@@ -41,6 +41,7 @@ from typing import Any, Iterable, Sequence
 
 from loguru import logger
 
+from tldw_chatbook.Utils.path_validation import validate_path
 from tldw_chatbook.Workspaces.change_bounds import (
     DEFAULT_MAX_FILE_BYTES,
     change_review_setting,
@@ -109,7 +110,26 @@ class TurnHandle:
         #: from (see :meth:`ChangeTurnTracker.continuation`), so a write
         #: made after this turn's E cannot fall between two windows.
         self.end_shas: dict[str, str] = {}
+        #: Root-relative ignored paths owned by this handle but learned only
+        #: after its baseline. They are staged atomically with this handle's
+        #: E snapshot, never left in the root-shared shadow index.
+        self._deferred_force_paths: dict[str, set[str]] = {}
+        self._deferred_force_paths_lock = threading.Lock()
         self._thread: threading.Thread | None = None
+
+    def defer_force_paths(self, root: Path | str, paths: Iterable[str]) -> None:
+        """Bind eligible ignored paths to this handle's future E snapshot."""
+        if not paths:
+            return
+        key = str(root)
+        with self._deferred_force_paths_lock:
+            self._deferred_force_paths.setdefault(key, set()).update(paths)
+
+    def force_paths_for_root(self, root: Path | str) -> tuple[str, ...]:
+        """Return a stable copy of deferred paths for one root."""
+        key = str(root)
+        with self._deferred_force_paths_lock:
+            return tuple(sorted(self._deferred_force_paths.get(key, ())))
 
     def await_baseline(self, timeout: float = _BASELINE_TIMEOUT_SECONDS) -> None:
         """Block until every root's B snapshot settled (or errored).
@@ -295,6 +315,7 @@ class ChangeTurnTracker:
         touched_paths: Sequence[str] = (),
         *,
         end_shas: "dict[str, str] | None" = None,
+        successor_handle: "TurnHandle | None" = None,
     ) -> list[TurnChangeRecord]:
         """Take E snapshots and return one record per root that changed.
 
@@ -316,6 +337,10 @@ class ChangeTurnTracker:
                 those measurements belong to whoever took that snapshot,
                 and re-deriving them here would report the state of a tree
                 this window never observed.
+            successor_handle: The claimed turn whose baseline supplied
+                ``end_shas``. Eligible ignored paths learned after that
+                baseline are bound to this handle and staged atomically at
+                its E snapshot instead of leaking through the shared index.
 
         Returns:
             Records for roots with changes or tracking errors.
@@ -353,12 +378,15 @@ class ChangeTurnTracker:
                 repo = self.service.repo_for_root(root)
                 eligible = self._eligible_touched_paths(root, touched_paths)
                 if provided:
-                    # The supplied snapshot stays immutable. Priming the
-                    # shared index only lets the next fresh snapshot consume
-                    # a path that became available after this exact boundary.
+                    # The supplied snapshot stays immutable. Late ignored
+                    # paths belong to the claimed successor and must not be
+                    # left staged in the root-shared shadow index where an
+                    # unrelated conversation could consume them.
                     end = provided
                     if end == baseline:
-                        repo.force_add(eligible)
+                        self._defer_to_successor(
+                            successor_handle, key, provided, eligible
+                        )
                         continue
                     changed = repo.changed_files(baseline, end)
                     record = TurnChangeRecord(
@@ -369,11 +397,18 @@ class ChangeTurnTracker:
                         adds=sum(c.adds for c in changed),
                         dels=sum(c.dels for c in changed),
                     )
-                    repo.force_add(eligible)
+                    self._defer_to_successor(
+                        successor_handle, key, provided, eligible
+                    )
                     records.append(record)
                     continue
-                if eligible:
-                    end = repo.snapshot("turn end", force_paths=eligible)
+                force_paths = list(
+                    dict.fromkeys(
+                        (*eligible, *handle.force_paths_for_root(key))
+                    )
+                )
+                if force_paths:
+                    end = repo.snapshot("turn end", force_paths=force_paths)
                 else:
                     end = repo.snapshot("turn end")
                 handle.end_shas[key] = end
@@ -436,6 +471,25 @@ class ChangeTurnTracker:
 
     # -- helpers -----------------------------------------------------------
 
+    @staticmethod
+    def _defer_to_successor(
+        successor_handle: TurnHandle | None,
+        root_key: str,
+        boundary_sha: str,
+        paths: Sequence[str],
+    ) -> None:
+        """Attach supplied-boundary paths to their exact successor handle."""
+        if not paths:
+            return
+        if (
+            successor_handle is None
+            or successor_handle.baselines.get(root_key) != boundary_sha
+        ):
+            raise ValueError(
+                "ignored paths have no matching claimed successor boundary"
+            )
+        successor_handle.defer_force_paths(root_key, paths)
+
     def _eligible_touched_paths(
         self, root: Path, touched_paths: Iterable[str]
     ) -> list[str]:
@@ -464,8 +518,14 @@ class ChangeTurnTracker:
         out: list[str] = []
         for raw in paths:
             try:
-                rel = Path(raw).expanduser().resolve().relative_to(root)
-            except (ValueError, OSError):
+                validated = validate_path(
+                    Path(raw).expanduser(),
+                    root,
+                    redact_paths=True,
+                    allow_hidden=True,
+                )
+                rel = validated.relative_to(root)
+            except ValueError:
                 continue
             out.append(str(rel))
         return out

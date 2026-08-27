@@ -140,14 +140,16 @@ Existing callers omit the argument and behave identically. Fresh-E
 `end_turn` uses the same atomic primitive while retaining existing output.
 
 When a survivor closes against supplied successor SHAs, those commits remain
-immutable. The supplied-SHA branch applies the same eligible force-add to the
-shadow index without replacing B. A path first available after B is therefore
-captured by successor E and shown with the existing concurrent-subagent
-disclosure.
+immutable. The supplied-SHA branch validates that the boundary belongs to the
+claimed successor handle, then attaches eligible late paths to that handle.
+It does not stage them in the root-shared shadow index. Successor E passes the
+attached paths to its own atomic snapshot, so another conversation cannot
+consume or misattribute them.
 
 `_PostTurnChangeWindow` also owns a close-completion event and closing flag.
 The first closer performs DB/Git work; later closers wait outside the bridge
-lock. Consequently successor E cannot overtake close-time index priming.
+lock. Consequently successor E cannot overtake the close-time force-path
+handoff.
 
 ## Failure behavior
 
@@ -188,8 +190,9 @@ Focused tests additionally prove:
   consumes the claimed window's retained paths;
 - a path known before B lands in the survivor diff and survivor E equals
   successor B;
-- a new ignored file after B is primed by supplied-SHA closure and appears at
-  successor E even with concurrent close callers;
+- a new ignored file after B is bound to the claimed successor and appears at
+  successor E even with concurrent close callers, while another conversation
+  snapshot cannot consume it;
 - an inherited state remains visible through successor E and a second survivor
   window while that successor's own child cannot leak backward; and
 - injected claim-setup and close-time tracker failures release waiting callers
@@ -234,7 +237,8 @@ existing live-handle registry is the parent-visible source for pending work.
 ### Rewrite successor B after closure
 
 Replacing the shared SHA violates ADR-089 and risks double attribution. A
-pre-B claim plus index priming preserves immutable history.
+pre-B claim plus successor-owned force-path handoff preserves immutable
+history without shared staged state.
 
 ### Add a filesystem watcher
 

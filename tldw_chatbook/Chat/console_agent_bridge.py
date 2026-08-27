@@ -165,6 +165,7 @@ from tldw_chatbook.Workspaces.change_turn_tracker import (
 from tldw_chatbook.Internal_Prompts import get_internal_prompt
 from tldw_chatbook.Internal_Prompts.catalog import CATALOG
 from tldw_chatbook.Skills_Interop.skill_trust_models import SkillTrustBlockedError
+from tldw_chatbook.Utils.path_validation import validate_path
 from tldw_chatbook.Utils.token_counter import get_model_token_limit
 
 
@@ -4385,15 +4386,22 @@ class ConsoleAgentBridge:
                 for raw_path in touched_paths:
                     try:
                         path = Path(raw_path)
-                        if path.is_absolute():
-                            normalized_paths.append(str(path))
-                        elif child_path_root is not None:
+                        if child_path_root is not None:
                             normalized_paths.append(
-                                str((child_path_root / path).resolve())
+                                str(
+                                    validate_path(
+                                        path,
+                                        child_path_root,
+                                        redact_paths=True,
+                                        allow_hidden=True,
+                                    )
+                                )
                             )
+                        elif path.is_absolute():
+                            normalized_paths.append(str(path))
                         else:
                             normalized_paths.append(raw_path)
-                    except (OSError, RuntimeError, ValueError):
+                    except ValueError:
                         logger.warning(
                             "change_review: could not normalize one attributed "
                             "child WRITE path"
@@ -5026,7 +5034,7 @@ class ConsoleAgentBridge:
             if change_handle is not None:
                 # PR3a-1 Task 6c: close the EARLIER turn's survivor
                 # window before this turn's E. A timed-out close waiter
-                # cannot prove that close-time priming finished, so this
+                # cannot prove that close-time handoff finished, so this
                 # turn must fail closed instead of overtaking it.
                 boundary_safe = self._close_post_turn_change_window(
                     conversation_id
@@ -5602,8 +5610,8 @@ class ConsoleAgentBridge:
         """Close this conversation's survivor window and record it.
 
         The first caller marks the window closing. Later callers wait for
-        that owner's completion outside the bridge lock, so close-time Git
-        index priming cannot be overtaken by a successor E snapshot.
+        that owner's completion outside the bridge lock, so the close-time
+        force-path handoff cannot be overtaken by a successor E snapshot.
 
         Where the window ENDS does not depend on which of them closes it:
         at the successor turn's baseline shas when a next turn has
@@ -5661,6 +5669,7 @@ class ConsoleAgentBridge:
                 close_succeeded = True
                 return True
             end_shas = None
+            claim_handle = None
             if successor_claim is not None:
                 try:
                     claim_ready = successor_claim.ready.wait(
@@ -5714,6 +5723,11 @@ class ConsoleAgentBridge:
                 window.handle,
                 touched_paths=touched_paths,
                 end_shas=end_shas,
+                successor_handle=(
+                    claim_handle
+                    if successor_claim is not None
+                    else None
+                ),
             )
             if not records:
                 close_succeeded = True

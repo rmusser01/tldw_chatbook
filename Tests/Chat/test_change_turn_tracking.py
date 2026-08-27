@@ -28,6 +28,7 @@ from tldw_chatbook.Agents.agent_models import (
 )
 from tldw_chatbook.Agents.agent_runtime import FENCE_OPEN
 import tldw_chatbook.Chat.console_agent_bridge as console_agent_bridge_module
+import tldw_chatbook.Workspaces.change_tracking as change_tracking_module
 from tldw_chatbook.Chat.console_agent_bridge import (
     ConsoleAgentBridge,
     _ChildChangeState,
@@ -673,20 +674,29 @@ def test_force_add_file_to_directory_swap_never_stages_descendants(
     assert repo.tip() == baseline
 
 
-def test_force_add_rejects_escapes_and_symlinked_directories(
-    tracker, root, tmp_path
+def test_force_add_rejects_escapes_through_the_shared_path_validator(
+    tracker, root, tmp_path, monkeypatch
 ):
     ignored = root / "ignored"
     ignored.mkdir()
     (ignored / "inside.txt").write_text("ignored\n")
-    link = root / "ignored-link"
-    try:
-        link.symlink_to(ignored, target_is_directory=True)
-    except OSError:
-        pytest.skip("symlinks unsupported on this platform/permission level")
     outside = tmp_path / "outside.txt"
     outside.write_text("outside\n")
-    (root / ".gitignore").write_text("ignored/\nignored-link\n")
+    link = root / "outside-link"
+    try:
+        link.symlink_to(outside)
+    except OSError:
+        pytest.skip("symlinks unsupported on this platform/permission level")
+    (root / ".gitignore").write_text("ignored/\noutside-link\n")
+
+    real_validate = change_tracking_module.validate_path
+    validated_inputs: list[str] = []
+
+    def record_validation(user_path, base_directory, **kwargs):
+        validated_inputs.append(str(user_path))
+        return real_validate(user_path, base_directory, **kwargs)
+
+    monkeypatch.setattr(change_tracking_module, "validate_path", record_validation)
 
     repo = tracker.service.repo_for_root(root)
     sha = repo.snapshot(
@@ -694,6 +704,9 @@ def test_force_add_rejects_escapes_and_symlinked_directories(
         force_paths=["", "../outside.txt", str(outside), link.name],
     )
 
+    assert "../outside.txt" in validated_inputs
+    assert str(outside) in validated_inputs
+    assert link.name in validated_inputs
     assert repo.file_bytes(sha, "ignored/inside.txt") is None
     assert repo.file_bytes(sha, link.name) is None
 
@@ -832,7 +845,7 @@ def test_force_path_under_auto_registered_nested_repo_is_owned_only_by_child(
     assert parent_repo.file_bytes(parent_repo.tip(), parent_rel) is None
 
 
-def test_supplied_successor_sha_primes_a_late_ignored_path_for_successor_e(
+def test_supplied_successor_sha_defers_a_late_ignored_path_to_successor_e(
     tracker, root
 ):
     target = root / "ignored-agent-output.txt"
@@ -855,6 +868,7 @@ def test_supplied_successor_sha_primes_a_late_ignored_path_for_successor_e(
         continuation,
         touched_paths=[str(target)],
         end_shas=successor.baselines,
+        successor_handle=successor,
     )
     assert continuation_records == []
     assert continuation.end_shas[key] == supplied
@@ -866,7 +880,42 @@ def test_supplied_successor_sha_primes_a_late_ignored_path_for_successor_e(
     assert repo.file_bytes(successor_records[0].end_sha, target.name) == expected
 
 
-def test_supplied_sha_primed_file_growing_before_successor_e_is_disclosed(
+def test_supplied_boundary_does_not_leak_force_paths_to_another_conversation(
+    tracker, root
+):
+    target = root / "ignored-agent-output.txt"
+    expected = b"owned by the claimed successor\n"
+    (root / ".gitignore").write_text(f"{target.name}\n")
+
+    parent = tracker.begin_turn([root])
+    parent.await_baseline()
+    assert tracker.end_turn(parent) == []
+    continuation = tracker.continuation(parent)
+    assert continuation is not None
+
+    successor = tracker.begin_turn([root])
+    successor.await_baseline()
+    unrelated = tracker.begin_turn([root])
+    unrelated.await_baseline()
+    target.write_bytes(expected)
+
+    assert tracker.end_turn(
+        continuation,
+        touched_paths=[str(target)],
+        end_shas=successor.baselines,
+        successor_handle=successor,
+    ) == []
+
+    assert tracker.end_turn(unrelated) == []
+    successor_records = tracker.end_turn(successor)
+
+    assert len(successor_records) == 1
+    repo = tracker.service.repo_for_root(root)
+    record = successor_records[0]
+    assert repo.file_bytes(record.end_sha, target.name) == expected
+
+
+def test_supplied_sha_deferred_file_growing_before_successor_e_is_disclosed(
     tracker, root, monkeypatch
 ):
     monkeypatch.setenv("TLDW_CHANGE_REVIEW_MAX_FILE_BYTES", "8")
@@ -889,10 +938,11 @@ def test_supplied_sha_primed_file_growing_before_successor_e_is_disclosed(
         continuation,
         touched_paths=[str(target)],
         end_shas=successor.baselines,
+        successor_handle=successor,
     ) == []
     assert continuation.end_shas[key] == supplied
     repo = tracker.service.repo_for_root(root)
-    assert repo._run("show", f":{target.name}", binary=True).stdout == b"small"
+    assert str(repo._run("ls-files", "--", target.name).stdout).strip() == ""
 
     target.write_bytes(b"x" * 9)
     records = tracker.end_turn(successor)
@@ -907,7 +957,7 @@ def test_supplied_sha_primed_file_growing_before_successor_e_is_disclosed(
     assert str(repo._run("ls-files", "--", target.name).stdout).strip() == ""
 
 
-def test_supplied_sha_primed_path_becoming_nested_before_successor_e_is_disclosed(
+def test_supplied_sha_deferred_path_becoming_nested_before_successor_e_is_disclosed(
     tracker, root
 ):
     child = root / "late-child"
@@ -932,10 +982,11 @@ def test_supplied_sha_primed_path_becoming_nested_before_successor_e_is_disclose
         continuation,
         touched_paths=[str(target)],
         end_shas=successor.baselines,
+        successor_handle=successor,
     ) == []
     assert continuation.end_shas[key] == supplied
     repo = tracker.service.repo_for_root(root)
-    assert str(repo._run("ls-files", "--", target_rel).stdout).strip() == target_rel
+    assert str(repo._run("ls-files", "--", target_rel).stdout).strip() == ""
 
     (child / ".git").mkdir()
     records = tracker.end_turn(successor)
@@ -950,7 +1001,7 @@ def test_supplied_sha_primed_path_becoming_nested_before_successor_e_is_disclose
     assert str(repo._run("ls-files", "--", target_rel).stdout).strip() == ""
 
 
-def test_supplied_sha_priming_treats_pathspec_magic_as_a_literal_filename(
+def test_supplied_sha_deferred_path_treats_pathspec_magic_as_a_literal_filename(
     tracker, root
 ):
     target = root / "[ab]"
@@ -975,6 +1026,7 @@ def test_supplied_sha_priming_treats_pathspec_magic_as_a_literal_filename(
         continuation,
         touched_paths=[str(target)],
         end_shas=successor.baselines,
+        successor_handle=successor,
     ) == []
     successor_records = tracker.end_turn(successor)
 
@@ -985,7 +1037,7 @@ def test_supplied_sha_priming_treats_pathspec_magic_as_a_literal_filename(
     assert repo.file_bytes(successor_records[0].end_sha, sibling.name) is None
 
 
-def test_supplied_sha_force_add_over_cap_returns_error_with_exact_end(
+def test_deferred_supplied_path_growing_over_cap_is_disclosed_by_successor(
     tracker, root, monkeypatch
 ):
     monkeypatch.setenv("TLDW_CHANGE_REVIEW_MAX_FILE_BYTES", "32")
@@ -1023,25 +1075,27 @@ def test_supplied_sha_force_add_over_cap_returns_error_with_exact_end(
         return original_run(self, *args, **kwargs)
 
     monkeypatch.setattr(type(repo), "_run", grow_before_index)
-    records = tracker.end_turn(
+    continuation_records = tracker.end_turn(
         continuation,
         touched_paths=[str(target)],
         end_shas=successor.baselines,
+        successor_handle=successor,
     )
+    records = tracker.end_turn(successor)
 
     assert grew
     assert continuation.end_shas[key] == supplied
+    assert len(continuation_records) == 1
     assert len(records) == 1
     record = records[0]
-    assert record.baseline_sha == continuation.baselines[key]
+    assert record.baseline_sha == supplied
     assert record.end_sha == supplied
-    assert "size cap" in record.tracking_error
-    assert target.name in record.tracking_error
-    assert len(record.tracking_error) <= 400
+    assert record.tracking_error == ""
+    assert record.untracked_oversize == 1
     assert str(repo._run("ls-files", "--", target.name).stdout).strip() == ""
 
 
-def test_supplied_sha_force_add_drops_path_when_nested_marker_appears(
+def test_deferred_supplied_path_becoming_nested_is_disclosed_by_successor(
     tracker, root, monkeypatch
 ):
     child = root / "late-child"
@@ -1078,25 +1132,28 @@ def test_supplied_sha_force_add_drops_path_when_nested_marker_appears(
         return original_run(self, *args, **kwargs)
 
     monkeypatch.setattr(type(repo), "_run", create_marker_before_index)
-    records = tracker.end_turn(
+    continuation_records = tracker.end_turn(
         continuation,
         touched_paths=[str(target)],
         end_shas=successor.baselines,
+        successor_handle=successor,
     )
+    records = tracker.end_turn(successor)
 
     assert marker_created.is_set()
     assert continuation.end_shas[key] == supplied
+    assert len(continuation_records) == 1
     assert len(records) == 1
     record = records[0]
-    assert record.baseline_sha == continuation.baselines[key]
+    assert record.baseline_sha == supplied
     assert record.end_sha == supplied
-    assert "no longer safe" in record.tracking_error
-    assert len(record.tracking_error) <= 400
+    assert record.tracking_error == ""
+    assert record.nested_repos == (child.name,)
     assert str(repo._run("ls-files", "--", target_rel).stdout).strip() == ""
     assert repo.file_bytes(supplied, target_rel) is None
 
 
-def test_supplied_sha_survives_force_add_priming_failure(
+def test_deferred_force_path_snapshot_failure_is_disclosed_by_successor(
     tracker, root, monkeypatch
 ):
     target = root / "ignored-agent-output.txt"
@@ -1107,31 +1164,41 @@ def test_supplied_sha_survives_force_add_priming_failure(
     baseline = handle.baselines[key]
 
     (root / "boundary.txt").write_text("at supplied boundary\n")
-    repo = tracker.service.repo_for_root(root)
-    supplied = repo.snapshot("supplied boundary")
+    successor = tracker.begin_turn([root])
+    successor.await_baseline()
+    supplied = successor.baselines[key]
     assert supplied != baseline
     target.write_text("late ignored write\n")
+    repo = tracker.service.repo_for_root(root)
+    original_snapshot = type(repo).snapshot
 
-    def fail_force_add(self, paths):
-        raise RuntimeError("injected priming failure")
+    def fail_deferred_snapshot(self, message, *, force_paths=()):
+        if force_paths:
+            raise RuntimeError("injected deferred snapshot failure")
+        return original_snapshot(self, message, force_paths=force_paths)
 
-    monkeypatch.setattr(type(repo), "force_add", fail_force_add)
+    monkeypatch.setattr(type(repo), "snapshot", fail_deferred_snapshot)
     records = tracker.end_turn(
         handle,
         touched_paths=[str(target)],
         end_shas={key: supplied},
+        successor_handle=successor,
     )
+    successor_records = tracker.end_turn(successor)
 
     assert handle.end_shas.get(key) == supplied
     assert len(records) == 1
     assert records[0].baseline_sha == baseline
     assert records[0].end_sha == supplied
-    assert records[0].tracking_error == "injected priming failure"
+    assert records[0].tracking_error == ""
+    assert len(successor_records) == 1
+    assert (
+        successor_records[0].tracking_error
+        == "injected deferred snapshot failure"
+    )
 
 
-def test_invalid_supplied_sha_does_not_prime_the_index(
-    tracker, root, monkeypatch
-):
+def test_invalid_supplied_sha_does_not_defer_or_stage_the_path(tracker, root):
     target = root / "ignored-agent-output.txt"
     (root / ".gitignore").write_text(f"{target.name}\n")
     handle = tracker.begin_turn([root])
@@ -1141,23 +1208,12 @@ def test_invalid_supplied_sha_does_not_prime_the_index(
     target.write_text("must not be staged\n")
     invalid = "f" * 40
     repo = tracker.service.repo_for_root(root)
-    force_add_calls: list[tuple[str, ...]] = []
-    original_force_add = repo.force_add
-
-    def record_force_add(paths):
-        force_add_calls.append(tuple(paths))
-        original_force_add(paths)
-
-    monkeypatch.setattr(repo, "force_add", record_force_add)
-    monkeypatch.setattr(tracker.service, "repo_for_root", lambda _root: repo)
-
     records = tracker.end_turn(
         handle,
         touched_paths=[str(target)],
         end_shas={key: invalid},
     )
 
-    assert force_add_calls == []
     assert handle.end_shas[key] == invalid
     assert len(records) == 1
     record = records[0]
@@ -4123,10 +4179,10 @@ def test_inherited_child_write_waits_for_claimed_successor_baseline(
     assert old_window.close_done.is_set()
 
 
-def test_successor_e_waits_for_close_time_index_priming(
+def test_successor_e_waits_for_close_time_force_path_handoff(
     tmp_path, root, tracker, monkeypatch
 ):
-    target = root / "late-close-prime.txt"
+    target = root / "late-close-handoff.txt"
     expected = b"created after successor B\n"
     (root / ".gitignore").write_text(f"{target.name}\n")
     gateway = _BlockingParentGateway()
@@ -4209,10 +4265,10 @@ def test_successor_e_waits_for_close_time_index_priming(
         assert close_owned.wait(5), "child closer never owned supplied-SHA close"
         gateway.release.set()
         assert close_done.wait_started.wait(5), (
-            "successor E did not wait for close-time index priming"
+            "successor E did not wait for close-time force-path handoff"
         )
         assert not successor_e_started.is_set(), (
-            "successor E overtook close-time index priming"
+            "successor E overtook close-time force-path handoff"
         )
     finally:
         release_close.set()
@@ -4253,7 +4309,7 @@ def test_successor_e_waiter_timeout_disables_turn_tracking(
         "_CHANGE_BOUNDARY_WAIT_SECONDS",
         0.01,
     )
-    target = root / "timeout-before-prime.txt"
+    target = root / "timeout-before-handoff.txt"
     expected = b"created after successor B\n"
     (root / ".gitignore").write_text(f"{target.name}\n")
     gateway = _BlockingParentGateway()
@@ -4291,7 +4347,7 @@ def test_successor_e_waiter_timeout_disables_turn_tracking(
         successor_handle["value"] = handle
         return handle
 
-    def block_close_before_priming(handle, *args, **kwargs):
+    def block_close_before_handoff(handle, *args, **kwargs):
         if handle is window.handle:
             assert kwargs.get("end_shas") is not None
             close_owned.set()
@@ -4301,7 +4357,7 @@ def test_successor_e_waiter_timeout_disables_turn_tracking(
         return real_end(handle, *args, **kwargs)
 
     monkeypatch.setattr(tracker, "begin_turn", capture_successor_b)
-    monkeypatch.setattr(tracker, "end_turn", block_close_before_priming)
+    monkeypatch.setattr(tracker, "end_turn", block_close_before_handoff)
     errors: list[BaseException] = []
     result: list[object] = []
 
@@ -4333,7 +4389,7 @@ def test_successor_e_waiter_timeout_disables_turn_tracking(
         target.write_bytes(expected)
 
         closer.start()
-        assert close_owned.wait(5), "first-owner close never reached priming"
+        assert close_owned.wait(5), "first-owner close never reached handoff"
         gateway.release.set()
         assert close_done.wait_started.wait(5), (
             "successor E never waited on the first-owner close"
@@ -4343,7 +4399,7 @@ def test_successor_e_waiter_timeout_disables_turn_tracking(
             "successor reply did not survive the boundary timeout"
         )
         assert not successor_e_called.is_set(), (
-            "successor E tracking overtook unfinished close-time priming"
+            "successor E tracking overtook unfinished close-time handoff"
         )
     finally:
         gateway.release.set()
@@ -4411,7 +4467,7 @@ def test_untrusted_claimed_successor_boundary_fails_closed(
                 return [
                     TurnChangeRecord(
                         root=str(root.resolve()),
-                        tracking_error="injected close-time priming failure",
+                        tracking_error="injected close-time handoff failure",
                     )
                 ]
             if boundary_failure == "exception":

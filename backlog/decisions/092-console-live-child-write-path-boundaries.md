@@ -24,9 +24,11 @@ Concurrent closers share one completion event, ensuring successor E cannot
 overtake close-time work.
 
 Boundary snapshots may atomically force-add eligible recorded paths inside the
-shadow repository lock. Supplied-SHA closure never rewrites that SHA, but may
-prime the index so a path first available after B appears at successor E with
-the existing concurrent-subagent disclosure.
+shadow repository lock. Supplied-SHA closure never rewrites that SHA and never
+leaves paths staged in the root-shared index. Instead, it binds eligible late
+paths to the claimed successor handle whose B supplied the boundary; successor
+E consumes them inside its own locked snapshot. A mismatched or missing claim
+fails tracking closed rather than exposing the paths to another conversation.
 
 The projection stores only owner identity, scope counts, and normalized path
 strings. AgentRunsDB remains durable step authority. No file
@@ -53,6 +55,7 @@ filesystem completion time.
 | Partition by step-index watermark | Tool-call indexes precede execution and can lose an in-flight write. |
 | Register only at child scope entry | A successfully launched fleet thread can remain pending past parent E. |
 | Replace successor B after closure | Breaks exact abutting history and risks duplicate attribution. |
+| Prime the root-shared shadow index | An unrelated conversation snapshot can consume unowned staged paths and misattribute the write. |
 | Add a filesystem watcher | Converts bounded review into open-ended monitoring of detached work. |
 
 ## Consequences
@@ -61,8 +64,9 @@ filesystem completion time.
   baseline snapshots can force-add them atomically.
 - Fresh E behavior and path eligibility remain unchanged; live child paths use
   the same rules at B and E.
-- Supplied-SHA closure may stage paths for the next fresh snapshot but never
-  changes the supplied SHA or its diff.
+- Supplied-SHA closure transfers eligible late paths to the exact claimed
+  successor handle; it neither changes the supplied SHA nor stages unowned
+  index entries.
 - Pending, inherited, and E-in-flight children remain visible through exact
   state references; children spawned by a later turn remain separate.
 - Successor startup and survivor closure gain bounded event handoff. A timeout
