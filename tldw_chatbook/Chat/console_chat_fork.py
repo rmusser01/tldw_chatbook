@@ -57,6 +57,7 @@ class ConsoleForkLineageFence:
     native_message_id: str
     persisted_message_id: str | None
     native_parent_id: str | None
+    turn_id: str | None
     role: ConsoleMessageRole
     status: ConsoleMessageStatus
     visible_content: str
@@ -223,6 +224,63 @@ def default_fork_title(source_title: str) -> str:
     return normalize_fork_title(candidate)
 
 
+def _validate_console_fork_configuration_identity(
+    configuration: ConsoleForkConfigurationSnapshot,
+) -> None:
+    """Reject identities persistence would normalize or refuse."""
+    runtime = configuration.runtime_backend
+    kind = configuration.assistant_kind
+    assistant_id = configuration.assistant_id
+    authority_id = configuration.assistant_authority_id
+    memory_mode = configuration.persona_memory_mode
+    character_id = configuration.character_id
+
+    if runtime not in {"local", "server"}:
+        raise ValueError("Fork runtime backend must be local or server.")
+    if kind not in {None, "generic", "character", "persona"}:
+        raise ValueError("Fork assistant kind is invalid.")
+    for field_name, value in (
+        ("assistant_id", assistant_id),
+        ("assistant_authority_id", authority_id),
+    ):
+        if value is not None and (not value or value != value.strip()):
+            raise ValueError(f"Fork {field_name} must be canonical nonblank text.")
+    if character_id is not None and not 1 <= character_id <= 2**63 - 1:
+        raise ValueError("Fork character_id must be a positive SQLite integer.")
+
+    if kind is None:
+        if any(
+            value is not None
+            for value in (assistant_id, authority_id, memory_mode, character_id)
+        ):
+            raise ValueError("Unscoped fork identity cannot carry assistant fields.")
+        return
+    if kind == "generic":
+        if any(
+            value is not None for value in (authority_id, memory_mode, character_id)
+        ):
+            raise ValueError("Generic fork identity cannot carry character authority.")
+        return
+    if kind == "persona":
+        if assistant_id is None:
+            raise ValueError("Persona fork identity requires an assistant_id.")
+        if authority_id is not None or character_id is not None:
+            raise ValueError("Persona fork identity cannot carry character authority.")
+        if memory_mode not in {None, "read_only", "read_write"}:
+            raise ValueError("Persona fork memory mode is invalid.")
+        return
+
+    if memory_mode is not None:
+        raise ValueError("Character fork identity cannot carry persona memory.")
+    if assistant_id is None:
+        raise ValueError("Character fork identity requires an assistant_id.")
+    if runtime == "local":
+        if character_id is None or assistant_id != str(character_id):
+            raise ValueError("Local character fork identity is not canonical.")
+    elif character_id is not None:
+        raise ValueError("Server character fork identity cannot carry character_id.")
+
+
 def fingerprint_console_fork_configuration(
     configuration: ConsoleForkConfigurationSnapshot,
 ) -> str:
@@ -257,6 +315,7 @@ def fingerprint_console_fork_configuration(
             "character_system_template": (str, type(None)),
         },
     )
+    _validate_console_fork_configuration_identity(configuration)
     if type(configuration.settings) is not ConsoleSessionSettings:
         raise TypeError("Fork settings must be ConsoleSessionSettings.")
     _require_exact_field_types(
@@ -308,10 +367,11 @@ def fingerprint_console_fork_configuration(
                 item,
                 {"source_type": (str,), "source_id": (str,)},
             )
-    if type(configuration.context_policy_overrides) is not ConsoleContextPolicyOverrides:
-        raise TypeError(
-            "Fork context policy must be ConsoleContextPolicyOverrides."
-        )
+    if (
+        type(configuration.context_policy_overrides)
+        is not ConsoleContextPolicyOverrides
+    ):
+        raise TypeError("Fork context policy must be ConsoleContextPolicyOverrides.")
     _require_exact_field_types(
         "Fork configuration context policy",
         configuration.context_policy_overrides,

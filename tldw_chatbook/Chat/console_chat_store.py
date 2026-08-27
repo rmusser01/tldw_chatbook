@@ -4598,6 +4598,18 @@ class ConsoleChatStore:
             return "durable"
         return "unsaved_persistable"
 
+    @staticmethod
+    def _fork_message_state_is_eligible(role: object, status: object) -> bool:
+        if type(role) is not ConsoleMessageRole or type(status) is not str:
+            return False
+        if role is ConsoleMessageRole.USER:
+            return status == "complete"
+        return role is ConsoleMessageRole.ASSISTANT and status in {
+            "complete",
+            "stopped",
+            "failed",
+        }
+
     def _fork_configuration_snapshot(
         self,
         session: ConsoleChatSession,
@@ -4754,6 +4766,8 @@ class ConsoleChatStore:
         *,
         durable: bool,
     ) -> ConsoleForkLineageFence:
+        if not self._fork_message_state_is_eligible(message.role, message.status):
+            raise ValueError("Console fork message state is unavailable.")
         content, variant_id = self._fork_visible_selection(message)
         parent_id = self._native_parent_by_message.get(message.id)
         expected_persisted_parent = (
@@ -4770,6 +4784,7 @@ class ConsoleChatStore:
             native_message_id=message.id,
             persisted_message_id=message.persisted_message_id,
             native_parent_id=parent_id,
+            turn_id=message.turn_id,
             role=message.role,
             status=message.status,
             visible_content=content,
@@ -4799,10 +4814,10 @@ class ConsoleChatStore:
         durable = self._fork_durability(session) == "durable"
         for native_id in prefix:
             message = nodes.get(native_id)
-            if message is None or message.role not in {
-                ConsoleMessageRole.USER,
-                ConsoleMessageRole.ASSISTANT,
-            }:
+            if message is None or not self._fork_message_state_is_eligible(
+                message.role,
+                message.status,
+            ):
                 return ConsoleForkEligibility(
                     False,
                     "Only user and assistant messages can be forked.",
@@ -4811,11 +4826,7 @@ class ConsoleChatStore:
                 content, _ = self._fork_visible_selection(message)
             except ValueError as exc:
                 return ConsoleForkEligibility(False, str(exc))
-            eligible_status = message.status == "complete" or (
-                message.role is ConsoleMessageRole.ASSISTANT
-                and message.status in {"stopped", "failed"}
-            )
-            if not eligible_status or not content.strip():
+            if not content.strip():
                 return ConsoleForkEligibility(
                     False,
                     "Message must contain stable completed text before forking.",
@@ -4826,7 +4837,9 @@ class ConsoleChatStore:
                     "Every message through the selected boundary must be saved before forking.",
                 )
         try:
-            self._fork_configuration_snapshot(session)
+            fingerprint_console_fork_configuration(
+                self._fork_configuration_snapshot(session)
+            )
         except (TypeError, ValueError) as exc:
             return ConsoleForkEligibility(False, str(exc))
         return ConsoleForkEligibility(True)
@@ -4911,9 +4924,7 @@ class ConsoleChatStore:
             active_ids = self.active_path_message_ids(session.id)
             boundary_index = active_ids.index(fence.boundary_message_id)
             prefix = active_ids[: boundary_index + 1]
-            if tuple(prefix) != tuple(
-                item.native_message_id for item in fence.lineage
-            ):
+            if tuple(prefix) != tuple(item.native_message_id for item in fence.lineage):
                 return False
             durability = self._fork_durability(session)
             if (
@@ -4974,9 +4985,7 @@ class ConsoleChatStore:
             raise ValueError("A temporary fork cannot own a conversation id.")
         session = self._sessions[fence.source_session_id]
         nodes = self._nodes_by_session[session.id]
-        native_ids = {
-            entry.native_message_id: str(uuid4()) for entry in fence.lineage
-        }
+        native_ids = {entry.native_message_id: str(uuid4()) for entry in fence.lineage}
         persisted_ids = {
             entry.native_message_id: str(uuid4()) if durable else None
             for entry in fence.lineage
@@ -4994,9 +5003,11 @@ class ConsoleChatStore:
             target_native = native_ids[source.id]
             target_persisted = persisted_ids[source.id]
             target_turn: str | None = None
-            if source.turn_id is not None:
-                target_turn = turn_ids.setdefault(source.turn_id, str(uuid4()))
-            target_variant = str(uuid4()) if entry.visible_variant_id is not None else None
+            if entry.turn_id is not None:
+                target_turn = turn_ids.setdefault(entry.turn_id, str(uuid4()))
+            target_variant = (
+                str(uuid4()) if entry.visible_variant_id is not None else None
+            )
             positions = tuple(range(len(source.attachments)))
             if source.id in selection_by_message:
                 selected_position = selection_by_message[source.id]
@@ -5148,8 +5159,7 @@ class ConsoleChatStore:
             )
             or len(persisted_ids) != len(set(persisted_ids))
             or any(
-                persisted_id in existing_persisted_ids
-                for persisted_id in persisted_ids
+                persisted_id in existing_persisted_ids for persisted_id in persisted_ids
             )
         ):
             raise ValueError("Fork persisted message id already exists.")
@@ -5225,34 +5235,27 @@ class ConsoleChatStore:
                 or projected.persisted_parent_id != expected_persisted_parent
             ):
                 raise ValueError("Fork message parent relationship is invalid.")
-            eligible_status = projected.status == "complete" or (
-                projected.role is ConsoleMessageRole.ASSISTANT
-                and projected.status in {"stopped", "failed"}
-            )
             if (
-                projected.role
-                not in {ConsoleMessageRole.USER, ConsoleMessageRole.ASSISTANT}
+                not self._fork_message_state_is_eligible(
+                    projected.role,
+                    projected.status,
+                )
                 or type(projected.content) is not str
                 or not projected.content.strip()
-                or not eligible_status
                 or type(projected.turn_id) not in {str, type(None)}
                 or type(projected.visible_variant_id) not in {str, type(None)}
             ):
                 raise ValueError("Fork message content or state is invalid.")
-            if (
-                not snapshot.durable
-                and (
-                    projected.persisted_message_id is not None
-                    or projected.persisted_parent_id is not None
-                )
+            if not snapshot.durable and (
+                projected.persisted_message_id is not None
+                or projected.persisted_parent_id is not None
             ):
                 raise ValueError("Temporary fork ancestry is invalid.")
             attachments: list[MessageAttachment] = []
             for index, attachment in enumerate(projected.attachments):
                 if (
                     type(attachment) is not ConsoleForkProjectedAttachment
-                    or attachment.owner_native_message_id
-                    != projected.native_message_id
+                    or attachment.owner_native_message_id != projected.native_message_id
                     or attachment.owner_persisted_message_id
                     != projected.persisted_message_id
                     or attachment.position != index
@@ -5273,8 +5276,7 @@ class ConsoleChatStore:
             for index, metadata in enumerate(projected.generation_metadata):
                 if (
                     type(metadata) is not ConsoleForkProjectedGeneration
-                    or metadata.owner_native_message_id
-                    != projected.native_message_id
+                    or metadata.owner_native_message_id != projected.native_message_id
                     or metadata.owner_persisted_message_id
                     != projected.persisted_message_id
                     or metadata.position != index
@@ -5344,6 +5346,16 @@ class ConsoleChatStore:
         holder = SessionScopeHolder()
         holder.set(configuration.rag_scope)
         policy = configuration.library_policy
+        policy_snapshot = (
+            normalize_policy_read(None).snapshot
+            if snapshot.durable
+            else ConsoleLibraryPolicySnapshot(
+                auto_retrieve=policy.auto_retrieve,
+                assistant_access=policy.assistant_access,
+                policy_revision=None,
+                source="temporary",
+            )
+        )
         session = ConsoleChatSession(
             id=snapshot.fork_session_id,
             title=snapshot.title,
@@ -5351,14 +5363,8 @@ class ConsoleChatStore:
             persisted_conversation_id=snapshot.fork_conversation_id,
             settings=configuration.settings,
             context_policy_overrides=configuration.context_policy_overrides,
-            library_policy_holder=ConsoleLibraryPolicyHolder(
-                ConsoleLibraryPolicySnapshot(
-                    auto_retrieve=policy.auto_retrieve,
-                    assistant_access=policy.assistant_access,
-                    policy_revision=None,
-                    source="durable" if snapshot.durable else "temporary",
-                )
-            ),
+            library_policy_holder=ConsoleLibraryPolicyHolder(policy_snapshot),
+            library_policy_hydrated=not snapshot.durable,
             rag_scope_holder=holder,
             runtime_backend=configuration.runtime_backend,
             assistant_kind=configuration.assistant_kind,
@@ -5375,8 +5381,7 @@ class ConsoleChatStore:
         )
         nodes = {message.id: message for message in built_messages}
         parent_by_message = {
-            message.native_message_id: message.native_parent_id
-            for message in messages
+            message.native_message_id: message.native_parent_id for message in messages
         }
         children: dict[str | None, list[str]] = {}
         for message in messages:

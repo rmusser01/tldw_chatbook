@@ -1,3 +1,4 @@
+import asyncio
 import pickle
 from dataclasses import FrozenInstanceError, fields, replace
 from itertools import combinations
@@ -6,6 +7,7 @@ from typing import get_args
 import pytest
 
 from tldw_chatbook.Chat import console_chat_fork
+from tldw_chatbook.Chat.chat_persistence_service import ChatPersistenceService
 from tldw_chatbook.Chat.console_chat_fork import (
     CONSOLE_FORK_FINGERPRINT_JSON_MAX_BYTES,
     CONSOLE_FORK_TITLE_MAX_LENGTH,
@@ -36,6 +38,7 @@ from tldw_chatbook.Chat.console_library_policy import (
     ConsoleAssistantLibraryAccess,
     ConsoleAutoRetrieve,
     ConsoleLibraryPolicyCandidate,
+    ConsoleLibraryPolicyWriteStatus,
 )
 from tldw_chatbook.Chat.console_project_instructions import (
     ProjectInstructionControlState,
@@ -44,6 +47,7 @@ from tldw_chatbook.Chat.console_project_instructions import (
 from tldw_chatbook.Chat.console_session_settings import ConsoleSessionSettings
 from tldw_chatbook.Chat.console_speech_preferences import ConsoleSpeechPreferences
 from tldw_chatbook.Chat.rag_scope import RagScope, ScopeItem
+from tldw_chatbook.DB.ChaChaNotes_DB import CharactersRAGDB
 
 
 class _ForkVersionPersistence:
@@ -73,11 +77,11 @@ def _fork_store(*, durable: bool = False, ephemeral: bool = False):
         title="Source chat",
         workspace_id="workspace-1",
         settings=settings,
-        runtime_backend="local",
+        runtime_backend="server",
         assistant_kind="persona",
         assistant_id="persona-1",
-        assistant_authority_id="authority-1",
-        persona_memory_mode="conversation",
+        assistant_authority_id=None,
+        persona_memory_mode="read_write",
         ephemeral=ephemeral,
         project_instruction_state=ProjectInstructionControlState(
             project_instructions_enabled=True,
@@ -99,9 +103,7 @@ def _fork_store(*, durable: bool = False, ephemeral: bool = False):
         session.id,
         role=ConsoleMessageRole.USER,
         content="Question",
-        attachments=(
-            MessageAttachment(b"sent", "text/plain", "question.txt", 0),
-        ),
+        attachments=(MessageAttachment(b"sent", "text/plain", "question.txt", 0),),
     )
     store.append_message(
         session.id,
@@ -127,9 +129,7 @@ def _fork_store(*, durable: bool = False, ephemeral: bool = False):
         first_answer.id,
         role=ConsoleMessageRole.ASSISTANT,
         content="Selected answer",
-        attachments=(
-            MessageAttachment(b"image", "image/png", "selected.png", 0),
-        ),
+        attachments=(MessageAttachment(b"image", "image/png", "selected.png", 0),),
     )
     store.add_variant(selected.id, "Selected variant")
     selected_live = store._nodes_by_session[session.id][selected.id]
@@ -161,7 +161,14 @@ def _fork_store(*, durable: bool = False, ephemeral: bool = False):
     if durable:
         session.persisted_conversation_id = "conversation-1"
         for index, message_id in enumerate(
-            (user.id, first_answer.id, later_user.id, later_answer.id, selected.id, after.id),
+            (
+                user.id,
+                first_answer.id,
+                later_user.id,
+                later_answer.id,
+                selected.id,
+                after.id,
+            ),
             start=1,
         ):
             message = store._nodes_by_session[session.id][message_id]
@@ -174,7 +181,16 @@ def _fork_store(*, durable: bool = False, ephemeral: bool = False):
                 if parent_id is not None
                 else None
             )
-    return store, persistence, session, user, first_answer, later_answer, selected, after
+    return (
+        store,
+        persistence,
+        session,
+        user,
+        first_answer,
+        later_answer,
+        selected,
+        after,
+    )
 
 
 def _source_store_bytes(store: ConsoleChatStore, session_id: str) -> bytes:
@@ -222,8 +238,7 @@ def _source_store_bytes(store: ConsoleChatStore, session_id: str) -> bytes:
                 for node_id in node_ids
             ),
             tuple(
-                (node_id, store._message_session_index[node_id])
-                for node_id in node_ids
+                (node_id, store._message_session_index[node_id]) for node_id in node_ids
             ),
             store._active_leaf_by_session[session_id],
             tuple(message.id for message in store._messages_by_session[session_id]),
@@ -255,9 +270,9 @@ def _configuration_snapshot() -> ConsoleForkConfigurationSnapshot:
             auto_retrieve=ConsoleAutoRetrieve.NEVER,
             assistant_access=ConsoleAssistantLibraryAccess.BLOCKED,
         ),
-        runtime_backend="chat",
-        assistant_kind=None,
-        assistant_id=None,
+        runtime_backend="local",
+        assistant_kind="generic",
+        assistant_id="console",
         assistant_authority_id=None,
         persona_memory_mode=None,
         character_id=None,
@@ -267,6 +282,159 @@ def _configuration_snapshot() -> ConsoleForkConfigurationSnapshot:
         speech_preferences=ConsoleSpeechPreferences(),
         project_instruction_state=ProjectInstructionControlState.new_session(),
     )
+
+
+_FORK_IDENTITY_FIELDS = (
+    "runtime_backend",
+    "assistant_kind",
+    "assistant_id",
+    "assistant_authority_id",
+    "persona_memory_mode",
+    "character_id",
+)
+
+_CANONICAL_FORK_IDENTITIES = (
+    pytest.param("local", None, None, None, None, None, id="unscoped-local"),
+    pytest.param("server", None, None, None, None, None, id="unscoped-server"),
+    pytest.param("local", "generic", None, None, None, None, id="generic"),
+    pytest.param("server", "generic", "assistant-1", None, None, None, id="generic-id"),
+    pytest.param(
+        "local", "persona", "persona-1", None, "read_only", None, id="persona"
+    ),
+    pytest.param(
+        "server",
+        "persona",
+        "persona-1",
+        None,
+        "read_write",
+        None,
+        id="persona-server",
+    ),
+    pytest.param("local", "character", "7", None, None, 7, id="local-character"),
+    pytest.param(
+        "server",
+        "character",
+        "character-7",
+        "catalog-1",
+        None,
+        None,
+        id="server-character",
+    ),
+)
+
+_INVALID_FORK_IDENTITIES = (
+    pytest.param("chat", "generic", None, None, None, None, id="runtime"),
+    pytest.param("local", "Persona", "p-1", None, None, None, id="kind-case"),
+    pytest.param("local", "generic", " ", None, None, None, id="blank-id"),
+    pytest.param("local", "generic", " id ", None, None, None, id="padded-id"),
+    pytest.param("local", "character", "7", " ", None, 7, id="blank-authority"),
+    pytest.param(
+        "local",
+        "character",
+        "7",
+        " authority ",
+        None,
+        7,
+        id="padded-authority",
+    ),
+    pytest.param("local", "persona", None, None, None, None, id="persona-no-id"),
+    pytest.param(
+        "local",
+        "persona",
+        "p-1",
+        "authority",
+        None,
+        None,
+        id="persona-authority",
+    ),
+    pytest.param(
+        "local",
+        "persona",
+        "p-1",
+        None,
+        "conversation",
+        None,
+        id="persona-memory",
+    ),
+    pytest.param("local", "persona", "p-1", None, None, 1, id="persona-character-id"),
+    pytest.param(
+        "local", "generic", None, None, "read_only", None, id="generic-memory"
+    ),
+    pytest.param(
+        "local",
+        "generic",
+        None,
+        "authority",
+        None,
+        None,
+        id="generic-authority",
+    ),
+    pytest.param("local", "generic", None, None, None, 1, id="generic-character"),
+    pytest.param("local", None, "assistant", None, None, None, id="null-id"),
+    pytest.param(
+        "local",
+        "character",
+        "7",
+        None,
+        "read_only",
+        7,
+        id="character-memory",
+    ),
+    pytest.param(
+        "local",
+        "character",
+        "7",
+        None,
+        None,
+        None,
+        id="local-character-no-character-id",
+    ),
+    pytest.param(
+        "local",
+        "character",
+        "8",
+        None,
+        None,
+        7,
+        id="local-character-mismatch",
+    ),
+    pytest.param(
+        "local",
+        "character",
+        "1",
+        None,
+        None,
+        True,
+        id="boolean-character-id",
+    ),
+    pytest.param(
+        "local",
+        "character",
+        "0",
+        None,
+        None,
+        0,
+        id="nonpositive-character-id",
+    ),
+    pytest.param(
+        "server",
+        "character",
+        "character-7",
+        None,
+        None,
+        7,
+        id="server-character-local-id",
+    ),
+    pytest.param(
+        "server",
+        "character",
+        None,
+        None,
+        None,
+        None,
+        id="server-character-no-id",
+    ),
+)
 
 
 def _registration_snapshot(
@@ -431,6 +599,7 @@ def test_fork_records_are_frozen_slotted_contracts() -> None:
                 "native_message_id",
                 "persisted_message_id",
                 "native_parent_id",
+                "turn_id",
                 "role",
                 "status",
                 "visible_content",
@@ -595,9 +764,7 @@ def test_private_fork_hash_uses_canonical_json_and_purpose_domains() -> None:
     assert fingerprint("test", {"alpha": 1, "beta": 2}) == fingerprint(
         "test", {"beta": 2, "alpha": 1}
     )
-    assert fingerprint("test", {"alpha": 1}) != fingerprint(
-        "other", {"alpha": 1}
-    )
+    assert fingerprint("test", {"alpha": 1}) != fingerprint("other", {"alpha": 1})
 
 
 def test_fork_fingerprint_rejects_unbounded_allowlisted_payload() -> None:
@@ -693,6 +860,72 @@ def test_fork_configuration_fingerprint_rejects_malformed_nested_leaf_types(
         console_chat_fork.fingerprint_console_fork_configuration(configuration)
 
 
+@pytest.mark.parametrize(_FORK_IDENTITY_FIELDS, _CANONICAL_FORK_IDENTITIES)
+def test_fork_configuration_accepts_only_canonical_persistence_identities(
+    runtime_backend,
+    assistant_kind,
+    assistant_id,
+    assistant_authority_id,
+    persona_memory_mode,
+    character_id,
+) -> None:
+    configuration = replace(
+        _configuration_snapshot(),
+        runtime_backend=runtime_backend,
+        assistant_kind=assistant_kind,
+        assistant_id=assistant_id,
+        assistant_authority_id=assistant_authority_id,
+        persona_memory_mode=persona_memory_mode,
+        character_id=character_id,
+    )
+
+    assert console_chat_fork.fingerprint_console_fork_configuration(configuration)
+
+
+@pytest.mark.parametrize(_FORK_IDENTITY_FIELDS, _INVALID_FORK_IDENTITIES)
+def test_invalid_persistence_identity_is_rejected_at_every_fork_boundary(
+    runtime_backend,
+    assistant_kind,
+    assistant_id,
+    assistant_authority_id,
+    persona_memory_mode,
+    character_id,
+) -> None:
+    identity = dict(
+        zip(
+            _FORK_IDENTITY_FIELDS,
+            (
+                runtime_backend,
+                assistant_kind,
+                assistant_id,
+                assistant_authority_id,
+                persona_memory_mode,
+                character_id,
+            ),
+            strict=True,
+        )
+    )
+    configuration = replace(_configuration_snapshot(), **identity)
+    with pytest.raises((TypeError, ValueError)):
+        console_chat_fork.fingerprint_console_fork_configuration(configuration)
+
+    source_store, _, session, _, _, _, selected, _ = _fork_store()
+    for field_name, value in identity.items():
+        setattr(session, field_name, value)
+    assert source_store.fork_eligibility(selected.id).eligible is False
+    with pytest.raises(ValueError):
+        source_store.issue_fork_fence(selected.id)
+
+    registration_store = ConsoleChatStore()
+    snapshot = replace(
+        _registration_snapshot(),
+        configuration=configuration,
+    )
+    with pytest.raises((TypeError, ValueError)):
+        registration_store.register_fork_snapshot(snapshot, activate=False)
+    assert registration_store.sessions() == []
+
+
 @pytest.mark.parametrize(
     "image_selection",
     (
@@ -738,9 +971,7 @@ def test_issue_fork_fence_uses_only_the_canonical_active_prefix() -> None:
     assert first_answer.id not in {entry.native_message_id for entry in fence.lineage}
     assert later_answer.id not in {entry.native_message_id for entry in fence.lineage}
     assert after.id not in {entry.native_message_id for entry in fence.lineage}
-    assert all(
-        entry.role is not ConsoleMessageRole.TOOL for entry in fence.lineage
-    )
+    assert all(entry.role is not ConsoleMessageRole.TOOL for entry in fence.lineage)
     assert store.active_path_message_ids(session.id) == active_before
     assert store.get_message(selected.id).variants.current.id == selected_variant_before
 
@@ -760,10 +991,13 @@ def test_issue_fork_fence_captures_the_exact_image_selection_tuple() -> None:
     )
 
     assert fence.image_selections == (selection,)
-    assert store.validate_fork_fence(
-        fence,
-        image_selections=(selection,),
-    ) is True
+    assert (
+        store.validate_fork_fence(
+            fence,
+            image_selections=(selection,),
+        )
+        is True
+    )
 
 
 @pytest.mark.parametrize(
@@ -792,10 +1026,13 @@ def test_validate_fork_fence_rejects_each_changed_image_selection_field(
 
     changed = replace(selection, **{field_name: changed_value})
 
-    assert store.validate_fork_fence(
-        fence,
-        image_selections=(changed,),
-    ) is False
+    assert (
+        store.validate_fork_fence(
+            fence,
+            image_selections=(changed,),
+        )
+        is False
+    )
 
 
 def test_fork_fence_rejects_a_boundary_outside_the_active_path() -> None:
@@ -814,7 +1051,9 @@ def test_fork_fence_rejects_a_boundary_outside_the_active_path() -> None:
         (ConsoleMessageRole.ASSISTANT, "stopped", "partial", True),
         (ConsoleMessageRole.ASSISTANT, "failed", "partial", True),
         (ConsoleMessageRole.USER, "pending", "draft", False),
+        (ConsoleMessageRole.USER, "stopped", "sent", False),
         (ConsoleMessageRole.ASSISTANT, "streaming", "partial", False),
+        (ConsoleMessageRole.ASSISTANT, "Complete", "answer", False),
         (ConsoleMessageRole.ASSISTANT, "discarded", "answer", False),
         (ConsoleMessageRole.ASSISTANT, "failed", "", False),
         (ConsoleMessageRole.TOOL, "complete", "tool", False),
@@ -835,6 +1074,83 @@ def test_fork_eligibility_requires_stable_user_or_assistant_content(
     assert bool(result.reason) is not eligible
 
 
+@pytest.mark.parametrize(
+    "canonical_role",
+    (ConsoleMessageRole.USER, ConsoleMessageRole.ASSISTANT),
+)
+def test_fork_eligibility_rejects_raw_roles_that_compare_equal_to_the_enum(
+    canonical_role,
+) -> None:
+    store = ConsoleChatStore()
+    session = store.create_session(settings=ConsoleSessionSettings(provider="openai"))
+    message = store.append_message(
+        session.id,
+        role=canonical_role,
+        content="stable content",
+    )
+    raw_role = canonical_role.value
+    assert raw_role == canonical_role
+    store._nodes_by_session[session.id][message.id].role = raw_role  # type: ignore[assignment]
+
+    assert store.fork_eligibility(message.id).eligible is False
+    with pytest.raises(ValueError):
+        store.issue_fork_fence(message.id)
+
+
+def test_validate_fork_fence_rejects_a_raw_role_after_issue() -> None:
+    store, _, session, _, _, _, selected, _ = _fork_store()
+    fence = store.issue_fork_fence(selected.id)
+    selected_live = store._nodes_by_session[session.id][selected.id]
+    selected_live.role = selected_live.role.value  # type: ignore[assignment]
+
+    assert store.validate_fork_fence(fence) is False
+
+
+def test_fork_registration_rejects_raw_roles_without_publishing() -> None:
+    store = ConsoleChatStore()
+    snapshot = _registration_snapshot()
+    first, *rest = snapshot.messages
+    snapshot = replace(
+        snapshot,
+        messages=(replace(first, role="user"), *rest),  # type: ignore[arg-type]
+    )
+
+    with pytest.raises(ValueError, match="state"):
+        store.register_fork_snapshot(snapshot, activate=False)
+
+    assert store.sessions() == []
+    assert store._message_session_index == {}
+
+
+def test_fork_boundaries_reject_a_string_status_subclass() -> None:
+    class StatusText(str):
+        pass
+
+    store = ConsoleChatStore()
+    session = store.create_session(settings=ConsoleSessionSettings(provider="openai"))
+    message = store.append_message(
+        session.id,
+        role=ConsoleMessageRole.USER,
+        content="stable content",
+    )
+    store._nodes_by_session[session.id][message.id].status = StatusText("complete")
+
+    assert store.fork_eligibility(message.id).eligible is False
+    with pytest.raises(ValueError):
+        store.issue_fork_fence(message.id)
+
+    registration_store = ConsoleChatStore()
+    snapshot = _registration_snapshot()
+    first, *rest = snapshot.messages
+    snapshot = replace(
+        snapshot,
+        messages=(replace(first, status=StatusText("complete")), *rest),
+    )
+    with pytest.raises(ValueError, match="state"):
+        registration_store.register_fork_snapshot(snapshot, activate=False)
+    assert registration_store.sessions() == []
+
+
 def test_durable_fence_requires_every_prefix_message_to_be_persisted() -> None:
     store, _, session, user, _, _, selected, _ = _fork_store(durable=True)
     store._nodes_by_session[session.id][user.id].persisted_message_id = None
@@ -853,6 +1169,7 @@ def test_durable_fence_requires_every_prefix_message_to_be_persisted() -> None:
         "title",
         "content",
         "status",
+        "turn",
         "parent",
         "persisted_parent",
         "selected_variant",
@@ -882,6 +1199,8 @@ def test_validate_fork_fence_rechecks_every_captured_source_field(mutation) -> N
         store._nodes_by_session[session.id][user.id].content = "Changed"
     elif mutation == "status":
         selected_live.status = "stopped"
+    elif mutation == "turn":
+        selected_live.turn_id = "changed-source-turn"
     elif mutation == "parent":
         store._native_parent_by_message[selected.id] = None
     elif mutation == "persisted_parent":
@@ -893,9 +1212,7 @@ def test_validate_fork_fence_rechecks_every_captured_source_field(mutation) -> N
                 id="same-content-other-variant",
             )
         )
-        selected_live.variants.selected_index = len(
-            selected_live.variants.variants
-        ) - 1
+        selected_live.variants.selected_index = len(selected_live.variants.variants) - 1
     elif mutation == "siblings":
         store._children_by_parent[session.id][user.id].remove(first_answer.id)
     elif mutation == "attachment":
@@ -912,7 +1229,7 @@ def test_validate_fork_fence_rechecks_every_captured_source_field(mutation) -> N
     else:
         persistence.message_versions[selected_live.persisted_message_id] += 1
 
-    if mutation in {"status", "selected_variant", "persisted_id"}:
+    if mutation in {"status", "turn", "selected_variant", "persisted_id"}:
         assert store.fork_eligibility(selected.id).eligible is True
     assert store.validate_fork_fence(fence) is False
 
@@ -966,7 +1283,7 @@ def test_every_allowlisted_configuration_field_stales_the_fence(field_name) -> N
         )
     else:
         replacement_values = {
-            "runtime_backend": "server",
+            "runtime_backend": "local",
             "assistant_kind": "character",
             "assistant_id": "persona-2",
             "assistant_authority_id": "authority-2",
@@ -1150,18 +1467,67 @@ def test_stage_and_register_fork_preserves_source_and_allocates_fresh_ownership(
             for generation in message.generation_metadata
         )
     if ephemeral:
-        assert all(message.persisted_message_id is None for message in snapshot.messages)
+        assert all(
+            message.persisted_message_id is None for message in snapshot.messages
+        )
         assert all(message.persisted_parent_id is None for message in snapshot.messages)
     else:
         assert all(message.persisted_message_id for message in snapshot.messages)
         assert all(
             message.persisted_parent_id is None
             or message.persisted_parent_id
-            in {
-                projected.persisted_message_id for projected in snapshot.messages
-            }
+            in {projected.persisted_message_id for projected in snapshot.messages}
             for message in snapshot.messages
         )
+
+
+@pytest.mark.parametrize(
+    ("selected_turn_id", "shared_target_turn"),
+    (("source-turn-1", True), ("source-turn-split", False)),
+)
+def test_stage_fork_snapshot_preserves_fenced_turn_grouping(
+    selected_turn_id,
+    shared_target_turn,
+) -> None:
+    store, _, session, _, _, _, selected, _ = _fork_store()
+    store._nodes_by_session[session.id][selected.id].turn_id = selected_turn_id
+    fence = store.issue_fork_fence(selected.id)
+
+    snapshot = store.stage_fork_snapshot(
+        fence,
+        title="Independent fork",
+        fork_session_id="fork-session",
+        fork_conversation_id="fork-conversation",
+    )
+
+    user_turn, assistant_turn = (message.turn_id for message in snapshot.messages)
+    assert user_turn is not None
+    assert assistant_turn is not None
+    assert (user_turn == assistant_turn) is shared_target_turn
+
+
+def test_stage_fork_snapshot_does_not_reread_turns_after_validation(
+    monkeypatch,
+) -> None:
+    store, _, session, _, _, _, selected, _ = _fork_store()
+    fence = store.issue_fork_fence(selected.id)
+    original_validate = store.validate_fork_fence
+
+    def validate_then_mutate(candidate, *, image_selections=()):
+        valid = original_validate(candidate, image_selections=image_selections)
+        store._nodes_by_session[session.id][selected.id].turn_id = "late-live-turn"
+        return valid
+
+    monkeypatch.setattr(store, "validate_fork_fence", validate_then_mutate)
+
+    snapshot = store.stage_fork_snapshot(
+        fence,
+        title="Independent fork",
+        fork_session_id="fork-session",
+        fork_conversation_id="fork-conversation",
+    )
+
+    assert snapshot.messages[0].turn_id == snapshot.messages[1].turn_id
 
 
 def test_configuration_snapshot_is_the_exact_sanitized_allowlist() -> None:
@@ -1184,11 +1550,11 @@ def test_configuration_snapshot_is_the_exact_sanitized_allowlist() -> None:
             auto_retrieve=session.library_policy_holder.snapshot.auto_retrieve,
             assistant_access=session.library_policy_holder.snapshot.assistant_access,
         ),
-        runtime_backend="local",
+        runtime_backend="server",
         assistant_kind="persona",
         assistant_id="persona-1",
-        assistant_authority_id="authority-1",
-        persona_memory_mode="conversation",
+        assistant_authority_id=None,
+        persona_memory_mode="read_write",
         character_id=None,
         character_name=None,
         user_display_name_override="Riley",
@@ -1220,7 +1586,9 @@ def test_fork_registration_failure_publishes_no_partial_indices() -> None:
     assert store._message_session_index == before_message_index
 
 
-def test_staged_session_and_conversation_id_collision_is_rejected_before_publish() -> None:
+def test_staged_session_and_conversation_id_collision_is_rejected_before_publish() -> (
+    None
+):
     store, _, session, _, _, _, selected, _ = _fork_store()
     snapshot = store.stage_fork_snapshot(
         store.issue_fork_fence(selected.id),
@@ -1259,8 +1627,9 @@ def test_fork_registration_rejects_cross_domain_ownership_id_collisions(
     assert store._message_session_index == {}
 
 
-def test_fork_registration_allows_each_messages_native_and_persisted_id_to_match(
-) -> None:
+def test_fork_registration_allows_each_messages_native_and_persisted_id_to_match() -> (
+    None
+):
     store = ConsoleChatStore()
     snapshot = _registration_snapshot()
     snapshot = replace(
@@ -1283,8 +1652,9 @@ def test_fork_registration_allows_each_messages_native_and_persisted_id_to_match
     )
 
 
-def test_fork_registration_rejects_persisted_id_matching_another_message_native_id(
-) -> None:
+def test_fork_registration_rejects_persisted_id_matching_another_message_native_id() -> (
+    None
+):
     store = ConsoleChatStore()
     snapshot = _registration_snapshot()
     first, second = snapshot.messages
@@ -1334,9 +1704,63 @@ def test_fork_registration_allows_one_turn_id_shared_by_multiple_messages() -> N
 
     session = store.register_fork_snapshot(snapshot, activate=False)
 
-    assert {
-        message.turn_id for message in store.messages_for_session(session.id)
-    } == {"fork-turn"}
+    assert {message.turn_id for message in store.messages_for_session(session.id)} == {
+        "fork-turn"
+    }
+
+
+def test_durable_fork_registration_hydrates_seeded_policy_before_cas(
+    tmp_path,
+) -> None:
+    async def scenario() -> None:
+        db = CharactersRAGDB(tmp_path / "fork-policy.sqlite", client_id="fork-policy")
+        service = ChatPersistenceService(db)
+        snapshot = _registration_snapshot()
+        conversation_id = service.create_conversation(
+            conversation_id=snapshot.fork_conversation_id,
+            conversation_title=snapshot.title,
+        )
+        assert conversation_id == snapshot.fork_conversation_id
+        seeded = service.console_library_policy_repository.insert(
+            conversation_id,
+            snapshot.configuration.library_policy,
+        )
+        assert seeded.status is ConsoleLibraryPolicyWriteStatus.COMMITTED
+        assert seeded.snapshot.policy_revision == 1
+
+        store = ConsoleChatStore(persistence=service)
+        session = store.register_fork_snapshot(snapshot, activate=False)
+
+        assert session.library_policy_hydrated is False
+        assert session.library_policy_holder.snapshot.policy_revision is None
+        assert session.library_policy_holder.snapshot.source == "missing"
+        assert (
+            session.library_policy_holder.snapshot.auto_retrieve
+            is ConsoleAutoRetrieve.NEVER
+        )
+        assert (
+            session.library_policy_holder.snapshot.assistant_access
+            is ConsoleAssistantLibraryAccess.BLOCKED
+        )
+
+        hydrated = await store.hydrate_session_library_policy(session.id)
+        assert session.library_policy_hydrated is True
+        assert hydrated.source == "durable"
+        assert hydrated.policy_revision == 1
+
+        edited = ConsoleLibraryPolicyCandidate(
+            auto_retrieve=ConsoleAutoRetrieve.AUTOMATIC,
+            assistant_access=ConsoleAssistantLibraryAccess.ALLOWED,
+        )
+        store.stage_session_library_policy(session.id, edited)
+        saved = await store.save_session_library_policy(session.id)
+
+        assert saved.status is ConsoleLibraryPolicyWriteStatus.COMMITTED
+        assert saved.snapshot.policy_revision == 2
+        persisted = service.console_library_policy_repository.read(conversation_id)
+        assert persisted.snapshot == saved.snapshot
+
+    asyncio.run(scenario())
 
 
 def test_fork_registration_rolls_back_all_indices_if_activation_raises(
