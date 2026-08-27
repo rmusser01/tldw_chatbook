@@ -117,6 +117,22 @@ clears the 2,157-line deficit by 477 lines and the 39-method deficit by 32 metho
 TASK-3070.14 still measures the actual final tree and lowers the
 ratchet to that exact result; projections never become budgets.
 
+### Final closeout measurement (2026-08-27)
+
+After TASK-3070.12 and TASK-3070.13 merged, TASK-3070.14 rebased onto
+`origin/dev` `e6b17b9bc8` and measured the live tree at **16,968 physical
+lines and 562 direct `ChatScreen` method definitions**. The 532 figure in
+TASK-3070.13's implementation notes counts unique method names; the ratchet's
+AST contract deliberately counts all direct definitions, including property
+setters, so 562 is the canonical method ceiling.
+
+The historical 17,727 / 593 ceiling remains frozen in the Wave 6 deficit
+arithmetic. The live one-way ratchet is lowered separately to 16,968 / 562,
+and closeout evidence requires the live source measurement, the final-closeout
+oracle, and the canonical budget to be exactly equal. This locks in a further
+759-line and 31-definition reduction without rewriting the approved historical
+evidence or changing production code.
+
 ## Verification
 
 TASK-3070.11 adds source-inspected architecture evidence for the immutable revisions,
