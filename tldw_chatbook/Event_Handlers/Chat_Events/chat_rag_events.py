@@ -46,7 +46,9 @@ from ...RAG_Search.local_citation_capture import (
     LocalEvidenceContext,
     LocalResultNormalizationError,
     NormalizedLocalResult,
+    format_console_evidence_context,
     format_local_evidence_context,
+    normalize_console_evidence_references,
     normalize_local_result,
 )
 from ...RAG_Search.pipeline_builder_simple import BUILTIN_PIPELINES, execute_pipeline
@@ -1695,40 +1697,9 @@ async def capture_console_staged_evidence_for_chat(
         )
         return LocalRagContextResult(None, None)
 
-    normalized: list[NormalizedLocalResult] = []
-    rejected_count = 0
-    for reference in bundle.available_references():
-        if reference.source_owner.strip().lower() != "local":
-            rejected_count += 1
-            continue
-        metadata: Dict[str, Any] = {
-            "source_type": reference.source_type,
-            "source_id": reference.source_id,
-        }
-        chunk_id = reference.metadata.get("chunk_id")
-        if isinstance(chunk_id, str) and chunk_id:
-            metadata["chunk_id"] = chunk_id
-        result_id = (
-            chunk_id if isinstance(chunk_id, str) and chunk_id else reference.source_id
-        )
-        try:
-            normalized.append(
-                normalize_local_result(
-                    {
-                        "source": reference.source_type,
-                        "id": result_id,
-                        "title": reference.title,
-                        "content": reference.snippet,
-                        "score": (
-                            reference.score if reference.score is not None else 0.0
-                        ),
-                        "metadata": metadata,
-                    },
-                    candidate_rank=len(normalized) + 1,
-                )
-            )
-        except LocalResultNormalizationError:
-            rejected_count += 1
+    references = bundle.available_references()
+    normalized = normalize_console_evidence_references(references)
+    rejected_count = len(references) - len(normalized)
     if rejected_count:
         logger.info(
             "Console RAG evidence excluded; "
@@ -1740,7 +1711,7 @@ async def capture_console_staged_evidence_for_chat(
     request_session = _capture_request_scope_session(app)
     authorization = await _authorize_local_results_for_prompt(
         app,
-        tuple(normalized),
+        normalized,
         request_session=request_session,
     )
     if not authorization.completed:
@@ -1748,13 +1719,7 @@ async def capture_console_staged_evidence_for_chat(
             "Console RAG evidence unavailable; reason=prompt_authority_failure"
         )
         return LocalRagContextResult(None, None)
-    formatted = format_local_evidence_context(
-        authorization.candidates,
-        max_length=sum(
-            len(candidate.title) + len(candidate.content) + 32
-            for candidate in authorization.candidates
-        ),
-    )
+    formatted = format_console_evidence_context(authorization.candidates)
     context = formatted.context if formatted.context.strip() else None
     if context is None:
         return LocalRagContextResult(None, None)

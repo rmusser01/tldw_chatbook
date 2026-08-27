@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 import math
 import re
+import sqlite3
 import sys
 from dataclasses import FrozenInstanceError
 from types import SimpleNamespace
@@ -20,6 +21,10 @@ from tldw_chatbook.Chat.citation_repair import CitationRepairContract
 from tldw_chatbook.Chat.citation_evidence_models import (
     EvidenceBundle,
     EvidenceReference,
+)
+from tldw_chatbook.Chat.console_display_state import (
+    console_prompted_evidence_text,
+    console_prompted_source_count,
 )
 from tldw_chatbook.Chat.console_live_work import ConsoleLiveWorkLaunch
 from tldw_chatbook.Chat.citation_source_locators import CanonicalSourceKind
@@ -949,6 +954,30 @@ class _ExistingMediaDB:
         )
 
 
+class _InMemoryMediaDB:
+    """Minimal real SQLite authority store for prompt-boundary tests."""
+
+    is_memory_db = True
+
+    def __init__(self, *existing_ids: str) -> None:
+        self.connection = sqlite3.connect(":memory:")
+        self.connection.execute(
+            "CREATE TABLE Media (id TEXT PRIMARY KEY, deleted INTEGER NOT NULL)"
+        )
+        self.connection.executemany(
+            "INSERT INTO Media (id, deleted) VALUES (?, 0)",
+            ((source_id,) for source_id in existing_ids),
+        )
+        self.query_count = 0
+
+    def execute_query(self, query, params):
+        self.query_count += 1
+        return self.connection.execute(query, params)
+
+    def close(self) -> None:
+        self.connection.close()
+
+
 class _CaptureRepository:
     def __init__(self):
         self.builders = []
@@ -1299,6 +1328,127 @@ async def test_console_staged_local_evidence_records_exact_prompt_capture():
     snapshot = captured.citation_builder.evidence_snapshot_payloads[0]
     assert snapshot.snapshot_text == captured.context
     assert snapshot.snapshot_text.encode("utf-8").endswith(snippet.encode("utf-8"))
+
+
+@pytest.mark.asyncio
+async def test_console_send_adapter_preserves_chunk_lineage_score_and_rank():
+    repository = _CaptureRepository()
+    app = _CaptureApp(repository=repository, media_ids=("m1", "m2"))
+    launch = ConsoleLiveWorkLaunch.from_values(
+        source="Library Search/RAG",
+        title="Library Search/RAG retrieval",
+        payload={
+            "evidence_bundle": EvidenceBundle(
+                bundle_id="bundle-lineage",
+                query="question",
+                source="Library Search/RAG",
+                references=(
+                    EvidenceReference(
+                        evidence_id="S1",
+                        source_id="m1",
+                        source_type="media",
+                        title="Source 1",
+                        snippet="Body 1",
+                        authority_label="local",
+                        source_owner="local",
+                        score=None,
+                        metadata={"chunk_id": "chunk-1"},
+                    ),
+                    EvidenceReference(
+                        evidence_id="S2",
+                        source_id="invalid-2",
+                        source_type="unsupported",
+                        title="Invalid source",
+                        snippet="Must be excluded",
+                        authority_label="local",
+                        source_owner="local",
+                    ),
+                    EvidenceReference(
+                        evidence_id="S3",
+                        source_id="m2",
+                        source_type="media",
+                        title="Source 2",
+                        snippet="Body 2",
+                        authority_label="local",
+                        source_owner="local",
+                        score=0.5,
+                    ),
+                ),
+            ).to_payload(),
+        },
+        status="staged",
+    )
+
+    captured = await cre.capture_console_staged_evidence_for_chat(
+        app,
+        launch,
+        user_message="ordinary prompt",
+    )
+
+    assert captured.citation_builder is repository.builders[0]
+    assert captured.prompt_evidence_set_id is not None
+    candidates = captured.citation_builder.evidence_run_payloads[0].candidates
+    assert len(candidates) == 2
+    assert [candidate.rank for candidate in candidates] == [1, 2]
+    assert [
+        candidate.source_identity["source_id"] for candidate in candidates
+    ] == ["m1", "m2"]
+    assert candidates[0].lineage["chunk_id"] == "chunk-1"
+    assert candidates[0].score == 0.0
+
+
+@pytest.mark.asyncio
+async def test_console_estimate_stays_pre_authority_while_send_rechecks() -> None:
+    launch = ConsoleLiveWorkLaunch.from_values(
+        source="Library Search/RAG",
+        title="staged evidence",
+        payload={
+            "evidence_bundle": EvidenceBundle(
+                bundle_id="bundle-authority-shrink",
+                query="question",
+                references=(
+                    EvidenceReference(
+                        evidence_id="S1",
+                        source_id="m1",
+                        source_type="media",
+                        title="Source 1",
+                        snippet="Body 1",
+                        authority_label="local",
+                    ),
+                    EvidenceReference(
+                        evidence_id="S2",
+                        source_id="m2",
+                        source_type="media",
+                        title="Source 2",
+                        snippet="Body 2",
+                        authority_label="local",
+                    ),
+                ),
+            ).to_payload(),
+        },
+    )
+    app = _CaptureApp(media_ids=())
+    media_db = _InMemoryMediaDB("m2")
+    app.media_db = media_db
+    try:
+        assert console_prompted_source_count(launch) == 2
+        assert console_prompted_evidence_text(launch) == (
+            "[S1] MEDIA — Source 1\nBody 1\n---\n"
+            "[S2] MEDIA — Source 2\nBody 2"
+        )
+        assert media_db.query_count == 0
+
+        captured = await cre.capture_console_staged_evidence_for_chat(
+            app,
+            launch,
+            user_message="question",
+        )
+        assert media_db.query_count >= 1
+        assert captured.context == "[S1] MEDIA — Source 2\nBody 2"
+        assert captured.citation_repair_contract is not None
+        assert captured.citation_repair_contract.allowed_ordinals == (1,)
+    finally:
+        media_db.close()
 
 
 @pytest.mark.asyncio

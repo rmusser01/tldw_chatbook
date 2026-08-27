@@ -55,37 +55,49 @@ def _reference(
     title: str | None = None,
     status: str = "available",
     source_owner: str = "local",
+    source_type: str = "media",
+    snippet: str | None = None,
+    score: float | None = None,
+    metadata: dict[str, object] | None = None,
 ) -> EvidenceReference:
     return EvidenceReference(
         evidence_id=f"S{index}",
         source_id=f"media-{index}",
-        source_type="media",
+        source_type=source_type,
         title=title if title is not None else f"Source {index}",
-        snippet=f"Body {index}",
+        snippet=snippet if snippet is not None else f"Body {index}",
         authority_label="local",
         status=status,
         source_owner=source_owner,
+        score=score,
+        metadata={} if metadata is None else metadata,
     )
 
 
-def _mixed_launch() -> ConsoleLiveWorkLaunch:
-    """Four staged references, of which only two can ever reach the prompt."""
+def _launch_from_references(
+    *references: EvidenceReference,
+) -> ConsoleLiveWorkLaunch:
     bundle = EvidenceBundle(
-        bundle_id="bundle-mixed",
+        bundle_id="bundle-custom",
         query="question",
         source="Library Search/RAG",
-        references=(
-            _reference(1),
-            _reference(2, status="blocked"),
-            _reference(3),
-            _reference(4, source_owner="server"),
-        ),
+        references=references,
     )
     return ConsoleLiveWorkLaunch.from_values(
         source="Library Search/RAG",
         title="Library Search/RAG retrieval",
         payload={"query": "question", "evidence_bundle": bundle.to_payload()},
         status="staged",
+    )
+
+
+def _mixed_launch() -> ConsoleLiveWorkLaunch:
+    """Four staged references, of which only two can ever reach the prompt."""
+    return _launch_from_references(
+        _reference(1),
+        _reference(2, status="blocked"),
+        _reference(3),
+        _reference(4, source_owner="server"),
     )
 
 
@@ -194,19 +206,47 @@ def test_prompted_source_count_applies_the_captures_own_filter() -> None:
     assert console_prompted_source_count(None) == 0
 
 
-def test_prompted_evidence_text_applies_the_same_filter_as_the_count() -> None:
-    """task-6: the text the context/cost estimates count must match exactly
-    what `console_prompted_source_count` counts -- same filter, same
-    references. `capture_console_staged_evidence_for_chat` re-validates
-    identity/authority but never re-fetches content, so each reference's
-    (already truncated) `snippet` is exactly what reaches the prompt."""
+def test_prompted_evidence_uses_canonical_headers_and_separators() -> None:
     launch = _mixed_launch()
-    text = console_prompted_evidence_text(launch)
-    assert "Body 1" in text
-    assert "Body 3" in text
-    assert "Body 2" not in text  # blocked
-    assert "Body 4" not in text  # server-owned
+
+    assert console_prompted_evidence_text(launch) == (
+        "[S1] MEDIA — Source 1\nBody 1\n---\n"
+        "[S2] MEDIA — Source 3\nBody 3"
+    )
+    assert console_prompted_source_count(launch) == 2
     assert console_prompted_evidence_text(None) == ""
+
+
+def test_prompted_evidence_applies_the_send_cap() -> None:
+    launch = _launch(65)
+
+    text = console_prompted_evidence_text(launch)
+
+    assert console_prompted_source_count(launch) == 64
+    assert "[S64] MEDIA — Source 64\nBody 64" in text
+    assert "Source 65" not in text
+    assert text.count("\n---\n") == 63
+
+
+def test_prompted_evidence_keeps_empty_local_content_as_header_only() -> None:
+    launch = _launch_from_references(_reference(1, snippet=""))
+
+    assert console_prompted_evidence_text(launch) == "[S1] MEDIA — Source 1\n"
+    assert console_prompted_source_count(launch) == 1
+
+
+def test_prompted_evidence_excludes_noncanonical_local_references() -> None:
+    launch = _launch_from_references(
+        _reference(1),
+        _reference(2, source_type="unsupported"),
+        _reference(3),
+    )
+
+    assert console_prompted_evidence_text(launch) == (
+        "[S1] MEDIA — Source 1\nBody 1\n---\n"
+        "[S2] MEDIA — Source 3\nBody 3"
+    )
+    assert console_prompted_source_count(launch) == 2
 
 
 def test_prompted_evidence_text_is_empty_for_a_bundleless_launch() -> None:
