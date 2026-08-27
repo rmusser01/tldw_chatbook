@@ -482,6 +482,32 @@ _DISPATCH_IDENTIFIER_RE = re.compile(r"[A-Za-z0-9][A-Za-z0-9._:-]{0,199}\Z", re.
 _LEGACY_PENDING_APPROVAL_ROUND_ID = "__legacy_pending_approval__"
 
 
+def project_recovery_should_skip_send_interception(
+    recovery_code: str, state: "ProjectInstructionControlState"
+) -> bool:
+    """Whether a binding-recovery on the send path has nothing to recover.
+
+    TASK-21145 (UAT H-2): a session that never had a folder bound and has
+    no eligible folders must not intercept the user's message with a setup
+    modal — project instructions simply don't apply to that send. Sessions
+    whose EXISTING binding broke (unavailable/retargeted) or where several
+    folders need an explicit choice still get the recovery dialog.
+
+    Args:
+        recovery_code: The ProjectInstructionBindingRecovery code raised
+            by the resolver.
+        state: The session's project-instruction control state.
+
+    Returns:
+        True when the send should proceed without project instructions
+        instead of showing the recovery dialog.
+    """
+    return (
+        recovery_code == "no_eligible_binding"
+        and state.working_folder_binding_id is None
+    )
+
+
 class ProjectInstructionBindingRecovery(RuntimeError):
     """Raised when an enabled session cannot prove one selected folder root."""
 
@@ -1851,6 +1877,35 @@ class _LightweightProviderHistoryRow:
 
 class ConsoleChatController:
     """Coordinate native Console chat state between store and provider gateway."""
+
+    #: TASK-21145 (UAT H-3): "Validating provider." must always reach a
+    #: terminal state — the UAT run sat on it 30s+ with no error, no retry,
+    #: and no way forward. Generous enough for a slow first TLS handshake;
+    #: finite so the composer never wedges.
+    PROVIDER_VALIDATION_TIMEOUT_SECONDS = 30.0
+
+    async def _resolve_for_send_bounded(self, selection: Any) -> Any:
+        """resolve_for_send with a hard deadline (UAT H-3).
+
+        Returns:
+            The gateway resolution, or a not-ready stand-in carrying
+            actionable timeout copy. Cancellation propagates untouched.
+        """
+        from types import SimpleNamespace
+
+        try:
+            return await asyncio.wait_for(
+                self.provider_gateway.resolve_for_send(selection),
+                timeout=self.PROVIDER_VALIDATION_TIMEOUT_SECONDS,
+            )
+        except TimeoutError:
+            return SimpleNamespace(
+                ready=False,
+                visible_copy=(
+                    "Provider validation timed out. Check the server or "
+                    "your connection, then try again."
+                ),
+            )
 
     def __init__(
         self,
@@ -4922,7 +4977,7 @@ class ConsoleChatController:
             resolution = (
                 _resume_resolution
                 if resumed_preparation is not None
-                else await self.provider_gateway.resolve_for_send(turn_selection)
+                else await self._resolve_for_send_bounded(turn_selection)
             )
         except BaseException:
             # A readiness probe that raises or is cancelled AFTER the optimistic
@@ -10455,7 +10510,7 @@ class ConsoleChatController:
             session_id=session_id,
         )
         turn_context = self.resolve_turn_execution_context(session_id)
-        resolution = await self.provider_gateway.resolve_for_send(
+        resolution = await self._resolve_for_send_bounded(
             turn_context.provider_selection
         )
         if not getattr(resolution, "ready", False):
@@ -10584,7 +10639,7 @@ class ConsoleChatController:
                 task is cancelled, so cancellation is never swallowed.
         """
         turn_context = self.resolve_turn_execution_context(session_id)
-        resolution = await self.provider_gateway.resolve_for_send(
+        resolution = await self._resolve_for_send_bounded(
             turn_context.provider_selection
         )
         if not getattr(resolution, "ready", False):
@@ -11957,7 +12012,9 @@ class ConsoleChatController:
             session_id,
             captured_configuration,
         )
-        resolution = await self.provider_gateway.resolve_for_send(
+        # TASK-21145 (UAT H-3): the single resolve choke point carries the
+        # hard deadline, so no send-path validation can hang unbounded.
+        resolution = await self._resolve_for_send_bounded(
             captured_configuration.provider_selection
         )
         if not getattr(resolution, "ready", False):

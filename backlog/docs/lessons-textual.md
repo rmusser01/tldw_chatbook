@@ -226,3 +226,57 @@ class-level replacement plus framework dispatch that splits in two.
   references after recompose, bare-`App` harnesses that never load the app stylesheet)
 - `lessons-live-verification.md` — why a green suite can still miss live-only defects
 - `lessons-backlog-hygiene.md` — task IDs, CLI quirks, git plumbing traps
+
+## `refresh(recompose=True)` can orphan `app.focused` and soft-lock ALL keyboard input (TASK-22281, 2026-08-25)
+
+**What happened.** UAT finding F-1: on a cold full-track walk of the first-run
+wizard, entering the Speech step killed every key — ctrl+n/ctrl+b, Escape, Tab,
+even the app-level ctrl+p palette — while rendering stayed alive. 2/2
+reproducible on fresh profiles, 0/2 warm. Diagnosis: `show_step()`'s focus fix
+focused a child of the incoming step an instant after the step's first
+`on_show` scheduled a `refresh(recompose=True)`; the recompose detached that
+child, and **Textual 8.2.8 leaves `app.focused` pointing at the detached
+widget**. Key events then dispatch into a dead message pump, so binding
+resolution never runs at any level. The wizard soft-locked until the process
+was killed. Warm entries skipped the lazy load's recompose (`_loaded` gate),
+which is why Resume "fixed" it.
+
+**The rule.** If a widget subtree can recompose while one of its children may
+hold focus, focus must be re-anchored after every recompose — a one-shot fix at
+the focusing site is re-orphaned by the next recompose (the load-completion
+callback recomposed again moments later). The fix that held: `SetupStep`
+overrides `refresh()` to `call_after_refresh(self._heal_orphaned_focus)`
+whenever `recompose=True`; the heal no-ops if focus is alive or the step is
+hidden, else refocuses same-id-in-new-tree → preferred_focus → first focusable
+→ nav bar. Regression test: walk the cold path with Pilot and assert BOTH
+`app.focused.is_attached` AND that a real `pilot.press("ctrl+b")` still
+navigates — the mechanism assertion alone is necessary but not sufficient.
+
+**Diagnostic trap discovered en route.** `logger.info(...)` from wizard code
+never reaches the persistent app log — the sink records only the structured
+`diagnostics.*` events — and loguru's default stderr sink is swallowed by the
+TUI. Instrument with a plain append-to-file probe gated by an env var (or a
+diagnostics event); a probe you cannot see is indistinguishable from a probe
+that never fired.
+
+## Textual's focus order is VISUAL (y, x) order, not DOM order (TASK-21142, 2026-08-25)
+
+**What happened.** To make Tab reach Next before the abandon button, the
+wizard footer's DOM was reordered (Next composed first) with dock CSS keeping
+the visual convention. The focus chain measurably did not change: Screen's
+`focus_chain` sorts siblings by `_focus_sort_key` = `(y - margin_top,
+x - margin_left)` from each widget's virtual region. DOM order only breaks
+ties. The fix that worked was changing the VISUAL order (Windows-wizard
+footer: progress left, right-aligned Back/Next/Exit) so the sort itself
+produces the desired traversal.
+
+**The rule.** To change Tab order in Textual, change where widgets sit on
+screen (or intercept keys); moving them in compose() while CSS restores the
+old geometry changes nothing.
+
+**Sibling trap from the same task (TASK-21148).** A widget hidden only via a
+`.hidden` class is display-none ONLY where the app stylesheet is loaded;
+bare-App test harnesses have no such rule, so the "hidden" widget keeps its
+docked row and shifts every geometry below it. Anything meant to be
+invisible in all hosts must also set `widget.display = False` (or carry the
+rule in DEFAULT_CSS).

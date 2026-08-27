@@ -857,7 +857,7 @@ async def test_console_composer_empty_setup_blocked_state_shows_reason():
         assert disabled_reason.styles.display == "block"
         assert (
             disabled_reason.renderable.plain
-            == "Send blocked — choose a model to continue"
+            == "Send blocked — choose a model to continue ›"
         )
         assert send_button.disabled is True
         assert (

@@ -1549,6 +1549,28 @@
     }
 
 
+/* ===== WIDGET: SetupWizardProgress (UI/Wizards/FirstRunSetupWizard.py) ===== */
+
+    SetupWizardProgress .setup-progress-item {
+        height: auto;
+    }
+    SetupWizardProgress .step-indicator-stack {
+        layout: vertical;
+        align: center top;
+        width: auto;
+        height: auto;
+    }
+    SetupWizardProgress .step-number {
+        width: auto;
+        min-width: 4;
+        margin-right: 0;
+    }
+    SetupWizardProgress .step-title {
+        margin-right: 0;
+        text-align: center;
+    }
+
+
 /* ===== WIDGET: SetupRecoveryDialog (UI/Wizards/first_run_recovery_dialog.py) ===== */
 
     SetupRecoveryDialog {

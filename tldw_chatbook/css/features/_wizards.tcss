@@ -33,7 +33,9 @@
 .wizard-progress {
     layout: horizontal;
     align: center middle;
-    padding: 2;
+    /* TASK-21148 (UAT Z-3): 1-row padding — the old 2 spent four rows of
+       chrome before any step content at 40-row terminals. */
+    padding: 1 2;
     background: $panel;
     border-bottom: solid $primary-darken-2;
     height: auto;
@@ -108,7 +110,7 @@
 .wizard-step {
     width: 100%;
     height: 100%;
-    padding: 2;
+    padding: 1 2;
     display: block;
     visibility: hidden;
 }
@@ -135,6 +137,20 @@
     border-top: thick $primary-darken-2;
     height: 5;
 }
+
+/* TASK-21142 (UAT N-2): Textual focus order is VISUAL (y, x) order, so the
+   footer adopts the Windows-wizard convention — progress text docked left,
+   right-aligned [Back][Next][Exit] cluster — making Next the first enabled
+   Tab stop after step content, before the abandon action. */
+.setup-navigation { align: right middle; }
+.setup-navigation .wizard-progress-text {
+    dock: left;
+    width: auto;
+    height: 100%;
+    content-align: left middle;
+    padding: 0 2;
+}
+.setup-navigation #wizard-cancel { height: 3; min-width: 12; }
 
 .wizard-progress-text {
     width: 1fr;
@@ -1086,6 +1102,9 @@ SmartContentTree Tree > .selected-node {
     text-style: bold;
     margin-top: 1;
 }
+/* TASK-21140 (UAT G-3): calm informational lines that previously borrowed
+   the error class and rendered reassurance as a failure. */
+.setup-step-note { color: $text-muted; margin-top: 1; }
 .setup-field-label { margin-top: 1; }
 .setup-probe-status { color: $text-muted; margin-top: 1; }
 .setup-summary-row { height: 1; }
@@ -1355,16 +1374,18 @@ SmartContentTree Tree > .selected-node {
     background: $panel;
 }
 
+/* TASK-21148 (UAT F-2/F-3): the tracker stacks each title UNDER its number
+   box, so the row needs box(3) + title(1) = 4 content rows and items size
+   themselves. The old fixed 4/3 caps clipped the stacked titles. */
 FirstRunSetupWizard SetupWizardContainer .wizard-progress {
-    height: 4;
-    min-height: 4;
-    max-height: 4;
+    height: auto;
+    max-height: 5;
     padding: 0 1;
     margin: 0;
 }
 
 .setup-progress-item {
-    height: 3;
+    height: auto;
     min-width: 0;
     margin: 0;
 }
@@ -1388,6 +1409,19 @@ FirstRunSetupWizard SetupWizardContainer .wizard-progress {
 
 .setup-progress-item.-complete .step-title {
     color: $ds-text-primary;
+    text-style: bold;
+}
+
+/* TASK-21143 (UAT N-7): visited step whose probe failed — amber "!", never
+   the ✓ users read as "this part is OK". */
+.setup-progress-item.-attention .step-number {
+    background: $ds-surface-raised;
+    color: $warning;
+    border: solid $warning;
+    text-style: bold;
+}
+.setup-progress-item.-attention .step-title {
+    color: $warning;
     text-style: bold;
 }
 
@@ -1459,3 +1493,39 @@ WizardProgress .step-title.active {
     color: $ds-focus-fg;
     text-style: bold underline;
 }
+
+/* TASK-21148 (UAT Z-2): sub-minimum terminal nudge in the wizard chrome. */
+.setup-size-hint {
+    dock: bottom;
+    height: 1;
+    color: $warning;
+    text-align: center;
+}
+/* Explicit: the docked row must fully vanish when hidden — module concat
+   order must not decide whether .hidden wins. */
+.setup-size-hint.hidden { display: none; }
+
+/* TASK-21148 (UAT F-2/F-3): tracker titles under the number boxes; boxes
+   sized for two-digit steps. */
+.setup-progress-item .step-indicator-stack {
+    layout: vertical;
+    align: center top;
+    width: auto;
+    height: auto;
+}
+.setup-progress-item .step-number {
+    width: auto;
+    min-width: 4;
+    margin-right: 0;
+}
+.setup-progress-item .step-title {
+    margin-right: 0;
+    text-align: center;
+}
+
+
+/* TASK-21148 (UAT P-1/Z-3): collapsible sections inside steps spent ~3
+   blank rows before their first field. */
+.setup-step Collapsible > Contents { padding: 0 1; }
+.setup-step Collapsible > Contents .setup-field-label { margin-top: 0; }
+.setup-step Collapsible > Contents .setup-probe-status { margin-top: 0; }

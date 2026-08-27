@@ -273,16 +273,19 @@ async def test_voice_step_compact_controls_are_ordered_and_default_is_opt_in():
             }
         ]
 
+        # TASK-21148 (UAT V-1/V-2): outcome first — try-it controls lead,
+        # plumbing (endpoint/auth/model/voice ids) follows under the
+        # Advanced disclosure.
         assert ordered_ids == [
             "setup-voice-preset",
-            "setup-voice-endpoint",
-            "setup-voice-auth",
-            "setup-voice-model",
-            "setup-voice-voice",
             "setup-voice-sample",
             "setup-voice-test",
             "setup-voice-status",
             "setup-voice-default",
+            "setup-voice-endpoint",
+            "setup-voice-auth",
+            "setup-voice-model",
+            "setup-voice-voice",
         ]
         assert step.query_one("#setup-voice-default", Checkbox).value is False
         assert step.query_one("#setup-voice-test", Button).disabled is False
@@ -521,7 +524,7 @@ async def test_voice_sample_failure_stays_locally_valid_and_needs_test(monkeypat
         await pilot.pause(0.1)
 
         status = str(step.query_one("#setup-voice-status", Static).renderable)
-        assert "Needs test" in status
+        assert "Not tested yet" in status
         assert "server-owned" not in status
         assert step.query_one("#setup-voice-test", Button).disabled is False
         assert voice_state.validate_voice_setup_draft(
@@ -565,7 +568,7 @@ async def test_voice_late_sample_success_cannot_verify_changed_endpoint(monkeypa
         release.set()
         await pilot.pause(0.1)
 
-        assert "Needs test" in str(
+        assert "Not tested yet" in str(
             step.query_one("#setup-voice-status", Static).renderable
         )
         assert step._verified_draft is None
@@ -645,7 +648,7 @@ async def test_voice_edit_cancels_inflight_sample_and_reenables_valid_test(
         await pilot.pause()
 
         assert button.disabled is False
-        assert "Needs test" in str(
+        assert "Not tested yet" in str(
             step.query_one("#setup-voice-status", Static).renderable
         )
 
@@ -730,7 +733,7 @@ async def test_voice_external_worker_cancel_restores_retry_state(monkeypatch) ->
         await pilot.pause(0.1)
 
         assert button.disabled is False
-        assert "Needs test" in str(
+        assert "Not tested yet" in str(
             step.query_one("#setup-voice-status", Static).renderable
         )
 
@@ -775,7 +778,7 @@ async def test_voice_lifecycle_cancels_sample_and_restores_retry_state(
         await pilot.pause()
 
         assert button.disabled is False
-        assert "Needs test" in str(
+        assert "Not tested yet" in str(
             step.query_one("#setup-voice-status", Static).renderable
         )
 
@@ -933,7 +936,7 @@ async def test_official_voice_refreshes_after_configured_environment_key_added(
 
         assert step.query_one("#setup-voice-test", Button).disabled is False
         assert step.query_one("#setup-voice-add-key", Button).display is False
-        assert "Needs test" in str(
+        assert "Not tested yet" in str(
             step.query_one("#setup-voice-status", Static).renderable
         )
         assert "sk-added-outside-draft" not in repr(step.get_step_data())
@@ -1311,7 +1314,11 @@ async def test_next_button_click_drives_quick_track_to_summary():
     of that suppression would fail it.
     """
     wizard = _make_wizard()
-    app = _HostApp(wizard)
+    # _StyledHostApp: this test drives real screen coordinates via
+    # pilot.click, which needs the app stylesheet loaded — the wizard
+    # tracker's layout rides the bundle as BUNDLED_CSS (class-level
+    # DEFAULT_CSS is barred by the parse-cache rule).
+    app = _StyledHostApp(wizard)
     async with app.run_test(size=(120, 40)) as pilot:
         await pilot.pause(0.2)
         container = wizard.query_one(SetupWizardContainer)
@@ -1333,6 +1340,7 @@ async def test_next_button_click_drives_quick_track_to_summary():
             "provider",
             "model",
             "voice",
+            "protect-keys",
             "summary",
         ]
         assert set(container.wizard_data.keys()) == {
@@ -1340,6 +1348,7 @@ async def test_next_button_click_drives_quick_track_to_summary():
             "provider",
             "model",
             "voice",
+            "protect-keys",
         }
         assert container.query_one("#wizard-next", Button).display is False
         assert container.query_one("#wizard-cancel", Button).display is False
@@ -5147,7 +5156,7 @@ async def test_mounted_model_save_rejects_settings_changed_discovery_identity(
             assert model_step.selected_model_id == ""
             assert model_step._selection_discovery_key is None
             assert model_step._effective_model_id() == ""
-            error = str(model_step.query_one(".setup-step-error", Static).renderable)
+            error = str(container.query_one("#setup-step-error-pinned", Static).renderable)
             assert "connection settings changed" in error.lower()
 
             for _ in range(30):
@@ -5299,7 +5308,7 @@ async def test_mounted_selection_precondition_rejects_completed_config_write_bef
         assert not container.provider_setup_committed
         assert model_step.selected_model_id == ""
         assert model_step._selection_discovery_key is None
-        error = str(model_step.query_one(".setup-step-error", Static).renderable)
+        error = str(container.query_one("#setup-step-error-pinned", Static).renderable)
         assert "connection settings changed" in error.lower()
 
 
@@ -5841,7 +5850,7 @@ async def test_mounted_unchanged_manual_next_rejects_relevant_external_change(
         assert getattr(result, "conflict_reason", None) == "identity_changed"
         assert model_step.selected_model_id == ""
         assert model_step._selection_discovery_key is None
-        error = str(model_step.query_one(".setup-step-error", Static).renderable)
+        error = str(container.query_one("#setup-step-error-pinned", Static).renderable)
         assert "connection settings changed" in error.lower()
         rendered = pilot.app.export_screenshot()
         assert "manual-idempotent-key-a" not in rendered
@@ -6512,7 +6521,7 @@ async def test_mounted_executor_entry_rejects_stale_provider_identity(
         assert not container.provider_setup_committed
         assert model_step.selected_model_id == ""
         assert model_step._selection_discovery_key is None
-        error = str(model_step.query_one(".setup-step-error", Static).renderable)
+        error = str(container.query_one("#setup-step-error-pinned", Static).renderable)
         assert "connection settings changed" in error.lower()
         rendered = pilot.app.export_screenshot()
         assert "writer-entry-saved-canary" not in rendered
@@ -8721,12 +8730,12 @@ async def test_model_listing_unavailable_is_disabled_and_manual_entry_remains_en
                 ),
             ),
             "#setup-model-connection-failed",
-            "Connection failed (request failed). Retry or enter a model ID below.",
+            "Couldn't reach the server (request failed). Check it's running, then Retry — or enter a model ID below.",
         ),
         (
             RuntimeError("transport detail must not reach the UI"),
             "#setup-model-connection-failed",
-            "Connection failed (request failed). Retry or enter a model ID below.",
+            "Couldn't reach the server (request failed). Check it's running, then Retry — or enter a model ID below.",
         ),
     ],
 )
@@ -8844,13 +8853,13 @@ async def test_mounted_provider_handoff_preserves_typed_discovery_outcome(
             "500",
             "request_failed",
             "#setup-model-connection-failed",
-            "Connection failed (request failed). Retry or enter a model ID below.",
+            "Couldn't reach the server (request failed). Check it's running, then Retry — or enter a model ID below.",
         ),
         (
             "malformed",
             "invalid_response",
             "#setup-model-connection-failed",
-            "Connection failed (invalid response). Retry or enter a model ID below.",
+            "Couldn't reach the server (invalid response). Check it's running, then Retry — or enter a model ID below.",
         ),
     ],
 )
@@ -9232,7 +9241,7 @@ async def test_mounted_model_owner_timeout_fences_late_result_and_keeps_manual_r
             pytest.fail("Model owner timeout did not render bounded failure")
         status = model_step.query_one("#setup-model-connection-failed", RadioButton)
         assert str(status.label) == (
-            "Connection failed (timeout). Retry or enter a model ID below."
+            "Couldn't reach the server (timeout). Check it's running, then Retry — or enter a model ID below."
         )
         assert status.disabled
         assert cancelled.is_set()
@@ -10068,8 +10077,22 @@ async def test_summary_footer_shows_the_effective_config_path(monkeypatch, tmp_p
         step.on_show()
         await pilot.pause()
         footer = str(step.query_one("#setup-summary-footer", Static).render())
-        assert str(scratch_config) in footer
+        # TASK-21148 (UAT S-4): long paths middle-truncate on one line
+        # instead of hard-wrapping mid-character — the budget derives from
+        # the step's width (review follow-up), so assert the structure:
+        # the rendered path is the head and tail of the real path joined by
+        # a single ellipsis (or the full path when it fits).
         assert "Config file:" in footer
+        line = next(
+            ln for ln in footer.splitlines() if ln.startswith("Config file:")
+        )
+        rendered_path = line[len("Config file: "):]
+        full_path = str(scratch_config)
+        if rendered_path != full_path:
+            assert "…" in rendered_path
+            head, _, tail = rendered_path.partition("…")
+            assert full_path.startswith(head) and full_path.endswith(tail)
+        assert footer.count(scratch_config.name[-12:]) >= 1
 
 
 @pytest.mark.asyncio
@@ -10214,7 +10237,11 @@ async def test_summary_destination_button_advances_without_an_event():
     wiring, not click hit-regions.
     """
     wizard = _make_wizard()
-    app = _HostApp(wizard)
+    # _StyledHostApp: this test drives real screen coordinates via
+    # pilot.click, which needs the app stylesheet loaded — the wizard
+    # tracker's layout rides the bundle as BUNDLED_CSS (class-level
+    # DEFAULT_CSS is barred by the parse-cache rule).
+    app = _StyledHostApp(wizard)
     async with app.run_test(size=(120, 40)) as pilot:
         await pilot.pause(0.2)
         container = wizard.query_one(SetupWizardContainer)
@@ -10309,8 +10336,20 @@ async def test_ctrl_n_recovers_hidden_widget_focus_and_stops_at_summary():
         await pilot.pause(0.1)
 
         def _first_focusable(step):
-            # Mirrors production: hidden (display:none / .hidden) widgets must
-            # never be focus targets (TASK-1496/1498).
+            # Mirrors production: preferred_focus() wins when displayed
+            # (TASK-21146: Summary prefers its primary exit button), then
+            # hidden (display:none / .hidden) widgets must never be focus
+            # targets (TASK-1496/1498).
+            preferred = (
+                step.preferred_focus() if isinstance(step, SetupStep) else None
+            )
+            if (
+                preferred is not None
+                and preferred.focusable
+                and preferred.display
+                and not preferred.has_class("hidden")
+            ):
+                return preferred
             return next(
                 (
                     w
@@ -10323,7 +10362,17 @@ async def test_ctrl_n_recovers_hidden_widget_focus_and_stops_at_summary():
         def _assert_focus_on_current_step_content() -> None:
             current = container.steps[container.current_step]
             expected = _first_focusable(current)
-            assert expected is not None, f"{current!r} has no focusable widget"
+            if expected is None:
+                # Mirrors production's final fallback: a step with no
+                # focusable content (keyless Protect hides its only button,
+                # TASK-21148) parks focus on the nav bar so the container
+                # stays in the focus chain.
+                nav_next = container.query_one("#wizard-next", Button)
+                assert app.focused is nav_next, (
+                    f"{current!r} has no focusable widget; expected nav "
+                    f"fallback focus, got {app.focused!r}"
+                )
+                return
             assert app.focused is expected, (
                 f"expected focus on {current!r}'s first focusable widget "
                 f"{expected!r}, got {app.focused!r}"
@@ -11052,15 +11101,17 @@ async def test_rerun_with_stored_plaintext_key_activates_protect_step_without_ty
 
 
 @pytest.mark.asyncio
-async def test_fresh_config_without_stored_key_omits_protect_step():
-    """Regression guard for the Bug-4 fix above: a fresh config with no
-    stored key and nothing typed this run must still omit STEP_PROTECT."""
+async def test_fresh_config_without_stored_key_still_includes_protect_step():
+    """TASK-21148 (UAT N-6): Protect is always on the track — a stable step
+    total beats a shorter one. The keyless run renders the step's
+    nothing-to-do state instead of omitting the step (which used to move
+    the goalposts mid-flight the moment a key was typed)."""
     wizard = _make_wizard()
     app = _HostApp(wizard)
     async with app.run_test(size=(120, 40)) as pilot:
         await pilot.pause(0.2)
         container = wizard.query_one(SetupWizardContainer)
-        assert STEP_PROTECT not in container.active_ids
+        assert STEP_PROTECT in container.active_ids
 
 
 class TestAppOfferGating:
@@ -11277,7 +11328,7 @@ async def test_progress_defaults_to_quick_track_and_titles_fit():
         await pilot.pause(0.2)
         container = wizard.query_one(SetupWizardContainer)
         assert container.track == TRACK_QUICK
-        assert len(container.active_ids) == 5
+        assert len(container.active_ids) == 6
         for step in container.steps:
             title = step.config.title
             assert len(title) <= 8, f"step title too long for progress row: {title!r}"
@@ -11294,7 +11345,7 @@ async def test_setup_progress_renders_projection_state_classes_and_dynamic_total
         container = wizard.query_one(SetupWizardContainer)
 
         rows = list(wizard.query(".setup-progress-item"))
-        assert len(rows) == len(container.active_ids) == 5
+        assert len(rows) == len(container.active_ids) == 6
         assert [row.id for row in rows] == [
             f"setup-progress-{step_id}" for step_id in container.active_ids
         ]
@@ -11338,7 +11389,8 @@ async def test_full_track_progress_content_stays_inside_non_overlapping_items(
         await pilot.pause(0.1)
 
         rows = list(wizard.query(".setup-progress-item"))
-        assert len(rows) == (11 if include_protect else 10)
+        # TASK-21148 (UAT N-6): Protect is always on the track.
+        assert len(rows) == 11
         assert sum(row.has_class("-active") for row in rows) == 1
         assert all(
             row.has_class("-active")
@@ -11390,7 +11442,7 @@ async def test_quick_track_progress_recovers_titles_after_live_resize(theme: str
         await pilot.pause(0.2)
         assert not progress.has_class("-compact")
         rows = list(progress.query(".setup-progress-item"))
-        assert len(rows) == 5
+        assert len(rows) == 6
         for row in rows:
             title = row.query_one(".step-title")
             assert title.display
@@ -11582,9 +11634,14 @@ async def test_key_hints_footer_and_test_button_probe():
     from tldw_chatbook.UI.Wizards.FirstRunSetupWizard import ProviderStep
     from tldw_chatbook.UI.Wizards.BaseWizard import WizardStepConfig
 
-    # Footer: rendered by the real wizard screen.
+    # Footer: rendered by the real wizard screen. _StyledHostApp (not the
+    # bare _HostApp): this test asserts real geometry — that the nav button
+    # is actually painted — which only holds with the app stylesheet
+    # loaded. The tracker's stacked layout rides the bundle as BUNDLED_CSS
+    # (class-level DEFAULT_CSS is barred by the parse-cache rule; see
+    # Tests/UI/test_widget_css_consolidation.py).
     wizard = _make_wizard()
-    app = _HostApp(wizard)
+    app = _StyledHostApp(wizard)
     async with app.run_test(size=(120, 40)) as pilot:
         await pilot.pause(0.2)
         hints = wizard.query_one("#setup-key-hints", Static)
@@ -11599,7 +11656,7 @@ async def test_key_hints_footer_and_test_button_probe():
         from tldw_chatbook.UI.Wizards.BaseWizard import WizardProgress
 
         progress = wizard.query_one(WizardProgress)
-        assert progress.total_steps == 5
+        assert progress.total_steps == 6
 
     # Test button: fires the probe with the typed key.
     probe = AsyncMock()
@@ -12470,28 +12527,27 @@ async def test_quick_track_label_names_the_steps_the_tracker_shows():
         await pilot.pause(0.2)
         quick = wizard.query_one("#setup-track-quick", RadioButton)
         label = str(quick.label)
-        assert "provider, model, voice & summary" in label
+        assert "provider, model, voice, protection" in label
         assert "recommended" in label
         container = wizard.query_one(SetupWizardContainer)
-        assert len(container.active_ids) == 5
+        assert len(container.active_ids) == 6
         nav = wizard.query_one(WizardNavigation)
-        assert nav.total_steps == 5
+        assert nav.total_steps == 6
 
 
 @pytest.mark.asyncio
-async def test_nav_text_total_syncs_when_protect_keys_joins_on_key_entry():
-    """TASK-2154.9 (FR-02): the conditional protect-keys step joins the
-    quick track once a secret exists -- the "Step X of Y" text must update
-    in the same refresh as the progress dots; before this fix the text
-    total lagged one navigation behind."""
+async def test_nav_text_total_is_stable_when_a_key_is_entered():
+    """TASK-21148 (UAT N-6): entering a key must NOT change the step total —
+    Protect is always on the track, so "Step X of Y" never moves its
+    goalposts mid-flight (the old behavior this test's predecessor pinned)."""
     wizard = _make_wizard()
     app = _HostApp(wizard)
     async with app.run_test(size=(120, 40)) as pilot:
         await pilot.pause(0.2)
         container = wizard.query_one(SetupWizardContainer)
         nav = wizard.query_one(WizardNavigation)
-        assert STEP_PROTECT not in container.active_ids
-        assert nav.total_steps == 5
+        assert STEP_PROTECT in container.active_ids
+        assert nav.total_steps == 6
 
         container.note_key_entered()
         await pilot.pause(0.1)
@@ -12500,3 +12556,264 @@ async def test_nav_text_total_syncs_when_protect_keys_joins_on_key_entry():
         assert nav.total_steps == 6
         progress_text = str(wizard.query_one("#wizard-progress", Static).render())
         assert "Step 1 of 6" in progress_text
+
+
+# ---------------------------------------------------------------------------
+# TASK-21143 (UAT S-1/M-2/M-1/N-7/P-5): the provider trust chain. A failed
+# discovery probe must reach every surface that previously said "✓":
+# the model step's failure row (auth points Back, Retry hidden), the
+# Next gate (explicit "Continue anyway"), the tracker (attention state),
+# the Provider step on return (pinned notice), and the Summary
+# (row overlay + review_provider primary).
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_auth_failed_probe_drives_row_gate_tracker_and_provider_notice(
+    monkeypatch,
+) -> None:
+    from types import SimpleNamespace
+    from unittest.mock import AsyncMock
+
+    import tldw_chatbook.config as config_module
+
+    monkeypatch.setattr(
+        config_module,
+        "get_cli_providers_and_models",
+        lambda: {"custom": ["curated-model-must-not-appear"]},
+    )
+    auth_failed = ModelDiscoveryResult(
+        provider="custom",
+        provider_list_key="custom",
+        endpoint_fingerprint="safe-fingerprint",
+        status="error",
+        error=ModelDiscoveryError(
+            kind="missing_credentials",
+            message="401 unauthorized",
+            recovery_hint="fix the key",
+        ),
+    )
+    scope_service = MagicMock(
+        discover_models=AsyncMock(return_value=auth_failed)
+    )
+    wizard = _make_wizard()
+    wizard.app_instance.app_config = {
+        "api_settings": {
+            "custom": {"api_url": "https://outcome.example.test/v1/chat/completions"}
+        }
+    }
+    wizard.app_instance.llm_provider_catalog_scope_service = scope_service
+    app = _HostApp(wizard)
+
+    async with app.run_test(size=(120, 40)) as pilot:
+        await pilot.pause(0.2)
+        container = wizard.query_one(SetupWizardContainer)
+        container.select_track(TRACK_QUICK)
+        provider_index = container._step_index_for_id(STEP_PROVIDER)
+        model_index = container._step_index_for_id(STEP_MODEL)
+        provider_step = container.steps[provider_index]
+        model_step = container.steps[model_index]
+        container.show_step(provider_index)
+        provider_step.select_provider("custom")
+        await pilot.pause(0.1)
+        await container._advance()
+        for _ in range(40):
+            await pilot.pause(0.1)
+            if model_step.query("#setup-model-connection-failed"):
+                break
+
+        # M-1/M-4: auth copy points Back; Retry is hidden (it cannot fix a
+        # rejected key).
+        row = model_step.query_one("#setup-model-connection-failed")
+        row_text = str(row.label)
+        assert "Authentication failed" in row_text and "Back" in row_text
+        assert model_step.query_one("#setup-model-retry", Button).has_class(
+            "hidden"
+        )
+        assert container.provider_probe_failure() == "authentication"
+
+        # M-2: Next gates behind an explicit confirmation; cancel keeps
+        # editing, confirm advances exactly once.
+        advanced = []
+
+        async def fake_advance():
+            advanced.append(True)
+
+        monkeypatch.setattr(container, "_advance", fake_advance)
+        container.can_proceed = True
+        container.advance_programmatically()
+        await pilot.pause(0.2)
+        from tldw_chatbook.UI.Wizards.FirstRunSetupWizard import (
+            _SettlingGuardedConfirmationDialog,
+        )
+
+        assert isinstance(app.screen, _SettlingGuardedConfirmationDialog)
+        assert not advanced
+        app.screen.query_one("#cancel-button", Button).press()
+        await pilot.pause(0.2)
+        assert not advanced, "cancel must not advance"
+        container.advance_programmatically()
+        await pilot.pause(0.2)
+        assert isinstance(app.screen, _SettlingGuardedConfirmationDialog)
+        app.screen.query_one("#confirm-button", Button).press()
+        await pilot.pause(0.3)
+        assert advanced == [True], "confirm advances exactly once"
+
+        # N-7: the tracker downgrades the visited provider step to
+        # "attention" while the failure stands.
+        container._rebuild_progress()
+        await pilot.pause(0.1)
+        from tldw_chatbook.UI.Wizards.FirstRunSetupWizard import (
+            SetupWizardProgress,
+        )
+
+        items = container.query_one(
+            ".wizard-progress", SetupWizardProgress
+        ).items
+        states = {item.step_id: item.state for item in items}
+        assert states[STEP_PROVIDER] == "attention"
+
+        # P-5: returning to Provider surfaces the failure where the fix is.
+        container.show_step(provider_index)
+        await pilot.pause(0.1)
+        strip = wizard.query_one("#setup-step-error-pinned", Static)
+        assert "rejected" in str(strip.renderable)
+        assert not strip.has_class("hidden")
+
+
+@pytest.mark.asyncio
+async def test_summary_overlays_probe_failure_and_flips_primary():
+    from types import SimpleNamespace
+    from unittest.mock import AsyncMock
+
+    wizard = SimpleNamespace(
+        app_instance=MagicMock(app_config={}),
+        commit_config=AsyncMock(return_value=True),
+        rerun=False,
+        wizard_data={"welcome": {"track": "quick"}},
+        provider_probe_failure=lambda: "authentication",
+    )
+    step = SummaryStep(
+        wizard=wizard,
+        config=WizardStepConfig(id="summary", title="Summary", step_number=9),
+        load_config=lambda: {
+            "api_settings": {"openai": {"api_key": "sk-x"}},
+            "chat_defaults": {"provider": "OpenAI", "model": "gpt-5.6-terra"},
+        },
+        rag_deps_installed=lambda: False,
+    )
+    app = _StepHost(step)
+    async with app.run_test(size=(120, 40)) as pilot:
+        await pilot.pause()
+        step.on_show()
+        await pilot.pause(0.2)
+        rendered = str(step.query_one("#setup-summary-rows", Static).render())
+        assert "key failed an authentication check" in rendered
+        assert "✓ Provider" not in rendered
+        primary = step.query_one("#setup-exit-chat", Button)
+        assert str(primary.label) == "Review provider setup"
+
+
+# ---------------------------------------------------------------------------
+# TASK-21146 (UAT H-1): the online model-list consent lives in the wizard
+# Summary (default OFF, shown only while unanswered) and persists through
+# the exact [model_catalog] contract the Console modal writes — so a
+# completed wizard never hands the user a surprise consent modal, while
+# skipping the wizard keeps the existing Console flow.
+# ---------------------------------------------------------------------------
+
+
+def _summary_wizard_mock():
+    from types import SimpleNamespace
+    from unittest.mock import AsyncMock
+
+    return SimpleNamespace(
+        app_instance=MagicMock(app_config={}),
+        commit_config=AsyncMock(return_value=True),
+        rerun=False,
+        wizard_data={"welcome": {"track": "quick"}},
+        provider_probe_failure=lambda: "",
+    )
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("allowed", [False, True])
+async def test_summary_consent_checkbox_persists_answer_on_commit(allowed):
+    from textual.widgets import Checkbox
+
+    wizard = _summary_wizard_mock()
+    step = SummaryStep(
+        wizard=wizard,
+        config=WizardStepConfig(id="summary", title="Summary", step_number=9),
+        load_config=lambda: {
+            "api_settings": {"openai": {"api_key": "sk-x"}},
+            "chat_defaults": {"provider": "OpenAI", "model": "gpt-5.6-terra"},
+        },
+        rag_deps_installed=lambda: False,
+    )
+    app = _StepHost(step)
+    async with app.run_test(size=(120, 40)) as pilot:
+        await pilot.pause()
+        step.on_show()
+        await pilot.pause(0.2)
+        box = step.query_one("#setup-summary-model-catalog-consent", Checkbox)
+        assert not box.has_class("hidden"), "unanswered consent must be offered"
+        assert box.value is False, "consent defaults to OFF (deny-by-default)"
+        box.value = allowed
+        ok, error = await step.commit()
+        assert ok, error
+        committed = wizard.commit_config.call_args.args[0]
+        expected = {"refresh_consent_recorded": True}
+        if not allowed:
+            expected["auto_refresh_enabled"] = False
+        assert committed == {"model_catalog": expected}
+
+
+@pytest.mark.asyncio
+async def test_summary_consent_not_reoffered_once_recorded():
+    from textual.widgets import Checkbox
+
+    wizard = _summary_wizard_mock()
+    step = SummaryStep(
+        wizard=wizard,
+        config=WizardStepConfig(id="summary", title="Summary", step_number=9),
+        load_config=lambda: {
+            "api_settings": {"openai": {"api_key": "sk-x"}},
+            "chat_defaults": {"provider": "OpenAI", "model": "gpt-5.6-terra"},
+            "model_catalog": {"refresh_consent_recorded": True},
+        },
+        rag_deps_installed=lambda: False,
+    )
+    app = _StepHost(step)
+    async with app.run_test(size=(120, 40)) as pilot:
+        await pilot.pause()
+        step.on_show()
+        await pilot.pause(0.2)
+        box = step.query_one("#setup-summary-model-catalog-consent", Checkbox)
+        assert box.has_class("hidden"), "an answered consent must never re-ask"
+        ok, error = await step.commit()
+        assert ok, error
+        wizard.commit_config.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_setup_checkbox_glyphs_differ_structurally():
+    """Mirror of the SetupRadioButton TASK-1497 pin: checked state must
+    survive a monochrome capture (live UAT read the unchecked consent box
+    as checked because stock Checkbox renders a constant X)."""
+    from tldw_chatbook.UI.Wizards.FirstRunSetupWizard import SetupCheckbox
+
+    class Host(App):
+        def compose(self):
+            yield SetupCheckbox("x", id="box")
+
+    app = Host()
+    async with app.run_test(size=(40, 10)):
+        box = app.query_one("#box", SetupCheckbox)
+        box._button
+        unchecked = box.BUTTON_INNER
+        box.value = True
+        box._button
+        checked = box.BUTTON_INNER
+        assert unchecked != checked
+        assert checked == "✓"

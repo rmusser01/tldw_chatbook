@@ -1641,7 +1641,24 @@ class ConsoleComposerBar(Horizontal):
             return
         strip.set_class(muted, "console-send-disabled-reason-idle")
         if reason:
-            strip.update(Content(reason))
+            # TASK-21145 (UAT H-3): a setup blocker must carry its own way
+            # out — the UAT run showed "Send blocked — finish provider
+            # setup to continue" with no route to that setup. The WHOLE
+            # reason becomes an action link opening the wizard re-run
+            # (app.action_run_setup_wizard); appending a separate "Open
+            # setup" label instead blew the strip's width budget and
+            # squeezed the command card (SEND_REASON_MAX_WIDTH is sized
+            # for the longest reason + the 2-cell chevron). `reason` is
+            # always one of build_console_disabled_reason's fixed literals
+            # (no user text, no markup metacharacters).
+            if self.has_class("console-composer-setup-blocked"):
+                strip.update(
+                    Content.from_markup(
+                        f"[@click=app.run_setup_wizard]{reason} ›[/]"
+                    )
+                )
+            else:
+                strip.update(Content(reason))
             strip.styles.display = "block"
             strip.styles.width = "auto"
             strip.styles.min_width = 0
