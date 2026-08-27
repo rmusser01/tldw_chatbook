@@ -9,6 +9,29 @@ decays into folklore, and folklore is ignored. If you add one, bring the inciden
 
 ---
 
+## Persist test configuration through the same durable seam production reloads
+
+**TASK-22988 (renumbered from TASK-22507), 2026-08-26.** The joined Roleplay-resume gate exposed seven
+deterministic Console native-flow failures. Baseline comparison proved that all
+seven predated the feature. The tests prepared provider keys, endpoints, models,
+and defaults by mutating only `app.app_config`. Mounting Console legitimately
+persisted missing scoped-rail state, which invalidated the config cache; provider
+readiness then reloaded the hermetic per-test config from disk and lost every
+snapshot-only value. The symptoms looked unrelated: prompt summaries fell back to
+the default endpoint, sends became setup-blocked, the configured model vanished,
+and focus stayed on the setup modal. Persisting the fixtures through the production
+config writer, force-reloading, and synchronizing the active session made the exact
+seven nodes green. A regression now proves the prepared provider state survives a
+real cache-invalidating save/reload.
+
+**What to do.** If mounted production code can save or reload configuration, write
+test settings into the isolated `TLDW_CONFIG_PATH` through the production save seam
+before mount; do not rely on direct mutation of a boot-time config snapshot. For a
+post-mount provider change, update both the durable config and the active session
+settings through their normal synchronization path. Include one deliberate
+save/reload in the test so a future cache invalidation cannot silently erase the
+fixture.
+
 ## A privacy assertion must inspect every default durable owner, not only the primary database
 
 **TASK-19908, 2026-08-22.** Trace capture tests proved that AgentRunsDB and the

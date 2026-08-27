@@ -1454,6 +1454,10 @@
 
 
 
+
+
+
+
     /* The character dictionaries + world-books sections sit alongside the
        character card view (both visible when a character is selected), not
        swapped by _show_center like the other detail-stack children. The
@@ -2809,6 +2813,10 @@
 
     PersonasConversationTranscriptWidget #personas-transcript-scroll {
         height: 1fr;
+    }
+
+    PersonasConversationTranscriptWidget #personas-transcript-preview-note {
+        height: auto;
     }
 
     PersonasConversationTranscriptWidget .personas-transcript-line {

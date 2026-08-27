@@ -8,13 +8,15 @@ from dataclasses import dataclass
 from typing import Any
 
 from tldw_chatbook.Chat.console_roleplay_identity import (
+    CHARACTER_SPEAKER_LABEL_MAX_CHARACTERS,
     ChatDisplayNameError,
     normalize_chat_display_name,
 )
+from tldw_chatbook.UI.character_display_text import sanitize_character_display_label
 
 
 ROLEPLAY_CONTEXT_METADATA_KEY = "console_roleplay_context"
-ROLEPLAY_CONTEXT_VERSION = 1
+ROLEPLAY_CONTEXT_VERSION = 2
 
 
 class RoleplayContextVersionError(ValueError):
@@ -27,10 +29,11 @@ class ConsoleRoleplayContext:
 
     user_name_override: str | None = None
     character_system_template: str | None = None
+    character_name_snapshot: str | None = None
 
 
 def parse_console_roleplay_context(raw_metadata: object) -> ConsoleRoleplayContext:
-    """Safely project one version-one roleplay context from conversation metadata.
+    """Safely project a supported roleplay context from conversation metadata.
 
     Corrupt, incomplete, or future data is deliberately treated as absent so a
     conversation can still be restored by a build that does not understand it.
@@ -40,7 +43,7 @@ def parse_console_roleplay_context(raw_metadata: object) -> ConsoleRoleplayConte
     if not isinstance(owned_context, Mapping):
         return ConsoleRoleplayContext()
     version = owned_context.get("version")
-    if not _is_integer(version) or version != ROLEPLAY_CONTEXT_VERSION:
+    if not _is_integer(version) or version not in {1, ROLEPLAY_CONTEXT_VERSION}:
         return ConsoleRoleplayContext()
 
     try:
@@ -57,9 +60,19 @@ def parse_console_roleplay_context(raw_metadata: object) -> ConsoleRoleplayConte
     ):
         return ConsoleRoleplayContext()
 
+    character_name_snapshot = None
+    if version == ROLEPLAY_CONTEXT_VERSION:
+        try:
+            character_name_snapshot = _normalize_character_name_snapshot(
+                owned_context.get("character_name_snapshot")
+            )
+        except ValueError:
+            pass
+
     return ConsoleRoleplayContext(
         user_name_override=user_name_override,
         character_system_template=character_system_template,
+        character_name_snapshot=character_name_snapshot,
     )
 
 
@@ -95,8 +108,15 @@ def merge_console_roleplay_context(
         or not character_system_template.strip()
     ):
         character_system_template = None
+    character_name_snapshot = _normalize_character_name_snapshot(
+        context.character_name_snapshot
+    )
 
-    if user_name_override is None and character_system_template is None:
+    if (
+        user_name_override is None
+        and character_system_template is None
+        and character_name_snapshot is None
+    ):
         metadata.pop(ROLEPLAY_CONTEXT_METADATA_KEY, None)
     else:
         metadata[ROLEPLAY_CONTEXT_METADATA_KEY] = {
@@ -109,6 +129,11 @@ def merge_console_roleplay_context(
             **(
                 {"character_system_template": character_system_template}
                 if character_system_template is not None
+                else {}
+            ),
+            **(
+                {"character_name_snapshot": character_name_snapshot}
+                if character_name_snapshot is not None
                 else {}
             ),
         }
@@ -131,3 +156,24 @@ def _metadata_object(raw_metadata: object) -> dict[str, Any]:
 def _is_integer(value: object) -> bool:
     """Return whether a JSON value is an integer but not boolean."""
     return isinstance(value, int) and not isinstance(value, bool)
+
+
+def _normalize_character_name_snapshot(value: object) -> str | None:
+    """Validate a stored character prompt-identity snapshot."""
+    if value is None:
+        return None
+    if type(value) is not str:
+        raise ValueError("Character name snapshot must be text.")
+    normalized = value.strip()
+    if not normalized:
+        raise ValueError("Character name snapshot cannot be blank.")
+    if len(normalized) > CHARACTER_SPEAKER_LABEL_MAX_CHARACTERS:
+        raise ValueError("Character name snapshot is too long.")
+    if (
+        sanitize_character_display_label(
+            value, max_characters=CHARACTER_SPEAKER_LABEL_MAX_CHARACTERS
+        )
+        != value
+    ):
+        raise ValueError("Character name snapshot is not display-safe.")
+    return normalized

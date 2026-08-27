@@ -1,6 +1,8 @@
+import asyncio
 import json
 from dataclasses import FrozenInstanceError, replace
 from datetime import datetime
+from types import SimpleNamespace
 
 import pytest
 
@@ -19,6 +21,9 @@ from tldw_chatbook.Chat.console_library_policy import (
     ConsoleLibraryPolicyDefaults,
     ConsoleLibraryPolicySnapshot,
 )
+from tldw_chatbook.Chat.console_library_policy_coordinator import (
+    ConsoleLibraryPolicyCoordinator,
+)
 from tldw_chatbook.Chat.console_context_policy import ConsoleContextPolicyOverrides
 from tldw_chatbook.Chat.console_dispatch_checkpoint import (
     ConsoleEgressClass,
@@ -30,6 +35,7 @@ from tldw_chatbook.Chat.console_dispatch_checkpoint import (
 from tldw_chatbook.Chat.console_roleplay_identity import (
     resolve_console_message_presentation,
 )
+from tldw_chatbook.Chat.console_roleplay_metadata import ConsoleRoleplayContext
 from tldw_chatbook.Chat.console_session_settings import ConsoleSessionSettings
 from tldw_chatbook.Chat.message_metadata import MessageMetadata
 from tldw_chatbook.Chat.provider_usage import ProviderUsage
@@ -1586,6 +1592,320 @@ def test_store_closes_last_session_returns_none():
     assert store.sessions() == []
 
 
+def _populate_native_owned_cleanup_state(
+    store: ConsoleChatStore,
+    session: ConsoleChatSession,
+    message_ids: set[str],
+) -> None:
+    """Populate every native-owned cleanup bucket exercised by Task 3."""
+    for message_id in message_ids:
+        store._terminal_citation_finalizers[message_id] = lambda: None
+        store._provisional_terminal_selection_ids.add(message_id)
+        store._terminal_persistence_deferred_ids.add(message_id)
+        store._stream_chunks_by_message[message_id] = ["chunk"]
+        store._stream_materialized_counts[message_id] = 1
+        store._pending_persistence_message_ids.add(message_id)
+        store._variant_stream_bases[message_id] = object()
+        store._variant_restored_message_ids.add(message_id)
+        store._failed_retry_message_ids.add(message_id)
+        store._message_speech_revisions[message_id] = 3
+        store._message_completion_generations[message_id] = 4
+        store._roleplay_message_projection_candidates[message_id] = ("projection",)
+        store._exchange_blob_cache[message_id] = {("run", 1, "ok"): b"blob"}
+        store._abandoned_exchange_run_tags[message_id] = {"run"}
+        store._character_emote_captures[message_id] = object()
+        store._trajectory_timing[message_id] = {"step_started_at": 1.0}
+        store._trajectory_written_ids.add(message_id)
+        store._pending_trajectory_tool_rows[message_id] = [
+            {"session_id": session.id}
+        ]
+        store._pending_trajectory_event_rows[message_id] = [
+            {"event_kind": "test"}
+        ]
+
+    preparation = SimpleNamespace(
+        preparation_id=f"prep-{session.id}",
+        session_id=session.id,
+        state="settled",
+    )
+    store._preparations_by_session[session.id] = preparation
+    store._preparations_by_id[preparation.preparation_id] = preparation
+    store._dispatch_recoveries_by_session[session.id] = SimpleNamespace(
+        recovery_needed=False,
+        kind=None,
+    )
+    store._dispatch_recovery_message_baselines[session.id] = object()
+    store._dispatch_recovery_queue_hydration_pending.add(session.id)
+    store._character_emote_feed_by_session[session.id] = object()
+    store._unresolved_promotion_operations[session.id] = "promotion"
+    store._pending_workspace_projections[session.id] = "conv-restored"
+    store._deferred_project_instruction_state_session_ids.add(session.id)
+    store._session_turn_ids[session.id] = "turn-restored"
+    store._payload_revisions[session.id] = 11
+
+
+def _assert_native_owned_cleanup_state_absent(
+    store: ConsoleChatStore,
+    session_id: str,
+    message_ids: set[str],
+) -> None:
+    message_maps = (
+        store._terminal_citation_finalizers,
+        store._stream_chunks_by_message,
+        store._stream_materialized_counts,
+        store._variant_stream_bases,
+        store._message_speech_revisions,
+        store._message_completion_generations,
+        store._native_parent_by_message,
+        store._roleplay_message_projection_candidates,
+        store._exchange_blob_cache,
+        store._abandoned_exchange_run_tags,
+        store._character_emote_captures,
+        store._trajectory_timing,
+        store._pending_trajectory_tool_rows,
+        store._pending_trajectory_event_rows,
+    )
+    message_sets = (
+        store._provisional_terminal_selection_ids,
+        store._terminal_persistence_deferred_ids,
+        store._pending_persistence_message_ids,
+        store._variant_restored_message_ids,
+        store._failed_retry_message_ids,
+        store._trajectory_written_ids,
+    )
+    assert all(
+        message_id not in owner
+        for message_id in message_ids
+        for owner in (*message_maps, *message_sets)
+    )
+    session_maps = (
+        store._sessions,
+        store._messages_by_session,
+        store._tool_markers_by_session,
+        store._nodes_by_session,
+        store._children_by_parent,
+        store._active_leaf_by_session,
+        store._context_summary_by_session,
+        store._roleplay_system_projection_candidates,
+        store._conversation_context_epochs,
+        store._speech_preference_epochs,
+        store._character_emote_feed_by_session,
+        store._unresolved_promotion_operations,
+        store._dispatch_recoveries_by_session,
+        store._dispatch_recovery_message_baselines,
+        store._pending_workspace_projections,
+        store._preparations_by_session,
+        store._session_turn_ids,
+        store._payload_revisions,
+    )
+    session_sets = (
+        store._dispatch_recovery_queue_hydration_pending,
+        store._deferred_project_instruction_state_session_ids,
+    )
+    assert all(session_id not in owner for owner in (*session_maps, *session_sets))
+    assert all(
+        owner != session_id for owner in store._message_session_index.values()
+    )
+    assert all(
+        preparation.session_id != session_id
+        for preparation in store._preparations_by_id.values()
+    )
+
+
+def test_rollback_restored_session_purges_exact_native_state_without_durable_mutation():
+    class DurableObserver:
+        def __init__(self) -> None:
+            self.mutations: list[tuple[str, str]] = []
+
+        def delete_conversation(self, conversation_id: str) -> None:
+            self.mutations.append(("delete", conversation_id))
+
+        def update_conversation(self, conversation_id: str) -> None:
+            self.mutations.append(("update", conversation_id))
+
+    persistence = DurableObserver()
+    coordinator = ConsoleLibraryPolicyCoordinator(object())
+    store = ConsoleChatStore(
+        persistence=persistence,
+        library_policy_coordinator=coordinator,
+    )
+    prior_settings = ConsoleSessionSettings(provider="openai", model="prior")
+    prior = store.create_session(title="Prior", settings=prior_settings)
+    store.set_session_draft(prior.id, "keep this draft")
+    root = ConsoleChatMessage(
+        id="restored-root",
+        role=ConsoleMessageRole.USER,
+        content="root",
+        persisted_message_id="persisted-root",
+    )
+    off_path = ConsoleChatMessage(
+        id="restored-off-path",
+        role=ConsoleMessageRole.ASSISTANT,
+        content="old branch",
+        persisted_message_id="persisted-off-path",
+        parent_message_id="persisted-root",
+    )
+    active = ConsoleChatMessage(
+        id="restored-active",
+        role=ConsoleMessageRole.ASSISTANT,
+        content="active branch",
+        persisted_message_id="persisted-active",
+        parent_message_id="persisted-root",
+    )
+    restored = store.restore_persisted_session(
+        title="Restored",
+        workspace_id="workspace-restored",
+        persisted_conversation_id="conv-restored",
+        all_nodes=[root, off_path, active],
+        active_leaf_persisted_id="persisted-active",
+    )
+    marker = store.append_message(
+        restored.id,
+        role=ConsoleMessageRole.TOOL,
+        content="display-only marker",
+    )
+    owned_message_ids = {root.id, off_path.id, active.id, marker.id}
+    _populate_native_owned_cleanup_state(store, restored, owned_message_ids)
+    store._pending_trajectory_tool_rows["__unanchored__"] = [
+        {"session_id": restored.id, "payload_json": "remove"},
+        {"session_id": prior.id, "payload_json": "keep"},
+    ]
+    store._sync_v2_message_versions["conv-restored:persisted-active"] = "shared"
+    store._trajectory_capture_failure_keys.add("shared-event")
+    store._trajectory_capture_failure_hydrated.add("conv-restored")
+    store._payload_revisions["conv-restored"] = 29
+    assert restored.id in coordinator._holders
+
+    rolled_back = store.rollback_restored_session(
+        restored.id,
+        expected_session=restored,
+        prior_active_session_id=prior.id,
+    )
+
+    assert rolled_back is True
+    assert store.active_session_id == prior.id
+    assert store.switch_session(prior.id) is prior
+    assert prior.settings is prior_settings
+    assert prior.draft == "keep this draft"
+    _assert_native_owned_cleanup_state_absent(
+        store, restored.id, owned_message_ids
+    )
+    assert restored.id not in coordinator._holders
+    assert store._pending_trajectory_tool_rows["__unanchored__"] == [
+        {"session_id": prior.id, "payload_json": "keep"}
+    ]
+    assert store._sync_v2_message_versions == {
+        "conv-restored:persisted-active": "shared"
+    }
+    assert store._trajectory_capture_failure_keys == {"shared-event"}
+    assert store._trajectory_capture_failure_hydrated == {"conv-restored"}
+    assert store._payload_revisions["conv-restored"] == 29
+    assert persistence.mutations == []
+
+
+def test_rollback_restored_session_refuses_reused_session_id():
+    store = ConsoleChatStore()
+    prior = store.create_session(title="Prior")
+    restored = store.restore_persisted_session(
+        title="Restored",
+        workspace_id=None,
+        persisted_conversation_id="conv-restored",
+        all_nodes=[],
+        activate=False,
+    )
+    replacement = ConsoleChatSession(id=restored.id, title="Different live owner")
+    store._sessions[restored.id] = replacement
+
+    rolled_back = store.rollback_restored_session(
+        restored.id,
+        expected_session=restored,
+        prior_active_session_id=prior.id,
+    )
+
+    assert rolled_back is False
+    assert store._sessions[restored.id] is replacement
+    assert store.active_session_id == prior.id
+
+
+@pytest.mark.parametrize(
+    ("failure_boundary", "cancelled"),
+    (
+        ("_restore_speech_preferences", False),
+        ("_hydrate_generation_metadata_from_persistence", True),
+    ),
+    ids=("ordinary-exception", "cancellation"),
+)
+def test_restore_persisted_session_is_atomic_after_create(
+    failure_boundary,
+    cancelled,
+    monkeypatch,
+):
+    """Every post-create failure purges only the new runtime session."""
+    class DurableObserver:
+        def __init__(self) -> None:
+            self.mutations: list[tuple[str, str]] = []
+
+        def delete_conversation(self, conversation_id: str) -> None:
+            self.mutations.append(("delete", conversation_id))
+
+        def update_conversation(self, conversation_id: str) -> None:
+            self.mutations.append(("update", conversation_id))
+
+    persistence = DurableObserver()
+    coordinator = ConsoleLibraryPolicyCoordinator(object())
+    store = ConsoleChatStore(
+        persistence=persistence,
+        library_policy_coordinator=coordinator,
+    )
+    prior = store.create_session(title="Prior")
+    store.set_session_draft(prior.id, "prior draft")
+
+    def fail_post_create(*_args, **_kwargs):
+        if cancelled:
+            raise asyncio.CancelledError
+        raise RuntimeError("post-create restore failed")
+
+    monkeypatch.setattr(store, failure_boundary, fail_post_create)
+    expected_error = asyncio.CancelledError if cancelled else RuntimeError
+
+    with pytest.raises(expected_error):
+        store.restore_persisted_session(
+            title="Failed restore",
+            workspace_id="workspace-restored",
+            persisted_conversation_id="failed-conversation",
+            all_nodes=[],
+        )
+
+    assert store.active_session_id == prior.id
+    assert store.sessions() == [prior]
+    assert prior.draft == "prior draft"
+    assert set(coordinator._holders) == {prior.id}
+    assert persistence.mutations == []
+
+
+def test_close_session_keeps_neighbor_policy_and_uses_exact_runtime_purge():
+    store = ConsoleChatStore()
+    first = store.create_session(title="First")
+    closing = store.create_session(title="Closing")
+    expected_neighbor = store.create_session(title="Next")
+    store.switch_session(closing.id)
+    message = store.append_message(
+        closing.id,
+        role=ConsoleMessageRole.USER,
+        content="owned",
+    )
+    _populate_native_owned_cleanup_state(store, closing, {message.id})
+    store._sync_v2_message_versions["shared:persisted"] = "keep"
+
+    activated = store.close_session(closing.id)
+
+    assert activated is expected_neighbor
+    assert store.active_session_id == expected_neighbor.id
+    assert store.sessions() == [first, expected_neighbor]
+    _assert_native_owned_cleanup_state_absent(store, closing.id, {message.id})
+    assert store._sync_v2_message_versions == {"shared:persisted": "keep"}
+
+
 def test_store_adds_regenerated_variant_and_selects_it():
     store = ConsoleChatStore()
     session = store.ensure_session()
@@ -1664,12 +1984,14 @@ class FakePersistence:
         conversation_id,
         user_name_override,
         character_system_template,
+        character_name_snapshot,
     ):
         self.roleplay_updates.append(
             {
                 "conversation_id": conversation_id,
                 "user_name_override": user_name_override,
                 "character_system_template": character_system_template,
+                "character_name_snapshot": character_name_snapshot,
             }
         )
         return True
@@ -5078,6 +5400,7 @@ def test_first_persist_flushes_roleplay_context_after_conversation_exists():
             "conversation_id": conversation_id,
             "user_name_override": "Rowan",
             "character_system_template": "Speak with {{user}}.",
+            "character_name_snapshot": "Alraune",
         }
     ]
 
@@ -5278,6 +5601,7 @@ def test_character_roleplay_swap_persists_only_the_final_projection_and_context(
             "conversation_id": "conv-1",
             "user_name_override": None,
             "character_system_template": "Serve {{user}} as {{character}}.",
+            "character_name_snapshot": "Brynn",
         }
     ]
 
@@ -5294,7 +5618,13 @@ def test_first_persist_context_failure_does_not_force_atomic_promotion_legacy_pa
     assert store.persist_session_if_needed(saved.id) == "conv-1"
     assert saved.persisted_conversation_id == "conv-1"
 
-    temporary = store.create_session(ephemeral=True)
+    temporary = store.create_session(
+        ephemeral=True,
+        assistant_kind="character",
+        assistant_id="7",
+        character_id=7,
+        character_name="Alraune",
+    )
     temporary.user_display_name_override = "Rowan"
     conversation_id = store.promote_ephemeral_session(temporary.id)
 
@@ -5303,6 +5633,25 @@ def test_first_persist_context_failure_does_not_force_atomic_promotion_legacy_pa
     assert temporary.persisted_conversation_id == conversation_id
     roleplay = persistence.last_create_kwargs["metadata"]["console_roleplay_context"]
     assert roleplay["user_name_override"] == "Rowan"
+    assert roleplay["character_name_snapshot"] == "Alraune"
+
+
+def test_generic_roleplay_context_does_not_capture_a_character_name():
+    persistence = FakePersistence()
+    store = ConsoleChatStore(persistence=persistence)
+    session = store.create_session(settings=ConsoleSessionSettings(provider="llama_cpp"))
+    session.user_display_name_override = "Rowan"
+
+    conversation_id = store.persist_session_if_needed(session.id)
+
+    assert persistence.roleplay_updates == [
+        {
+            "conversation_id": conversation_id,
+            "user_name_override": "Rowan",
+            "character_system_template": None,
+            "character_name_snapshot": None,
+        }
+    ]
 
 
 def test_identical_real_seed_does_not_append_a_duplicate_greeting():
@@ -5405,6 +5754,11 @@ def test_prepare_roleplay_refresh_materializes_live_before_immutable_persistence
     assert persistence.updated_messages == []
     with pytest.raises(FrozenInstanceError):
         plan.generation = -1
+    assert plan.system_prompt_write is not None
+    assert plan.system_prompt_write.expected_roleplay_context == ConsoleRoleplayContext(
+        character_system_template="Speak with {{user}}.",
+        character_name_snapshot="Alraune",
+    )
 
     store.close_session(session.id)
     result = ConsoleChatStore.persist_roleplay_projection_plan(plan)
@@ -5459,6 +5813,7 @@ def test_forced_restored_roleplay_repair_accepts_owned_alpha_ancestor(tmp_path):
                 conversation_id=conversation_id,
                 user_name_override=None,
                 character_system_template="Speak with {{user}}.",
+                character_name_snapshot="Alraune",
             )
             is True
         )
@@ -5744,6 +6099,18 @@ def test_partial_projection_failure_retains_real_durable_ancestor_for_repair(
         conversation_id=conversation_id,
         user_name_override=None,
         character_system_template="Speak with {{user}}.",
+        character_name_snapshot="Alraune",
+    )
+    from tldw_chatbook.Chat.console_roleplay_metadata import (
+        parse_console_roleplay_context,
+    )
+
+    durable_context = parse_console_roleplay_context(
+        db.get_conversation_by_id(conversation_id)["metadata"]
+    )
+    assert durable_context == ConsoleRoleplayContext(
+        character_system_template="Speak with {{user}}.",
+        character_name_snapshot="Alraune",
     )
     metadata = MessageMetadata(
         template_kind="character_greeting",

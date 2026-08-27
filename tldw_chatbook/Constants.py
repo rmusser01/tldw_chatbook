@@ -54,6 +54,11 @@ LIBRARY_NAV_CONTEXT_OPEN_SOURCE_ID = "open_source_id"
 LIBRARY_NAV_CONTEXT_INGEST = "ingest_media"
 LIBRARY_MODE_CONVERSATIONS = "conversations"
 
+# Console navigation-context contract keys.
+CONSOLE_NAV_CONTEXT_RESUME_LOCAL_CONVERSATION_ID = (
+    "resume_local_conversation_id"
+)
+
 # Watchlists navigation-context contract keys and values.
 WATCHLISTS_NAV_CONTEXT_SECTION = "section"
 WATCHLISTS_NAV_CONTEXT_BACKEND = "backend"

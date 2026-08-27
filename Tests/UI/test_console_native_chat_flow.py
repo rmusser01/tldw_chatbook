@@ -100,6 +100,7 @@ from tldw_chatbook.Widgets.Console.console_workspace_details import (
     ConsoleWorkspaceDetailsTray,
 )
 from tldw_chatbook.Workspaces.registry_service import LocalWorkspaceRegistryService
+from tldw_chatbook import config as config_module
 from Tests.console_provider_doubles import provider_resolution, with_destination
 
 
@@ -135,10 +136,58 @@ def _build_console_send_test_app(*args, **kwargs):
     return app
 
 
-def _configure_openai_missing_api_key(app) -> None:
+def _persist_console_provider_config(
+    app,
+    *,
+    provider: str,
+    model: str,
+    provider_settings: dict[str, object],
+) -> None:
+    """Persist provider fixtures before mount, then refresh the app snapshot."""
+    assert config_module.save_settings_to_cli_config(
+        {
+            "chat_defaults": {"provider": provider, "model": model},
+            f"api_settings.{provider}": provider_settings,
+        }
+    )
+    app.app_config = config_module.load_settings(force_reload=True)
+
+
+def _apply_mounted_console_provider_config(
+    console: ChatScreen,
+    *,
+    provider: str,
+    model: str,
+    provider_settings: dict[str, object],
+) -> None:
+    """Mirror a successful provider save against an already-mounted session."""
+    _persist_console_provider_config(
+        console.app_instance,
+        provider=provider,
+        model=model,
+        provider_settings=provider_settings,
+    )
+    settings = console._session._ensure_active_console_session_settings()
+    console._session._replace_active_console_session_settings(
+        replace(
+            settings,
+            provider=provider,
+            model=model,
+            base_url=None,
+            source="user",
+        )
+    )
+    console._sync_console_control_bar()
+
+
+def _configure_openai_missing_api_key(app, model: str = "gpt-4o") -> None:
     """Keep setup-state tests on the API-key recovery path."""
-    app.app_config["chat_defaults"] = {"provider": "openai", "model": "gpt-4o"}
-    app.app_config["api_settings"] = {"openai": {"api_key": ""}}
+    _persist_console_provider_config(
+        app,
+        provider="openai",
+        model=model,
+        provider_settings={"api_key": ""},
+    )
 
 
 def _configure_native_ready_console(app, model: str = "local-model") -> None:
@@ -148,12 +197,35 @@ def _configure_native_ready_console(app, model: str = "local-model") -> None:
     blocking setup modal dismissed; a ready llama.cpp provider satisfies the
     readiness single source that drives it.
     """
-    app.app_config["chat_defaults"] = {"provider": "llama_cpp", "model": model}
-    app.app_config["api_settings"] = {
-        "llama_cpp": {"api_url": "http://127.0.0.1:9099", "model": model}
-    }
+    _persist_console_provider_config(
+        app,
+        provider="llama_cpp",
+        model=model,
+        provider_settings={
+            "api_url": "http://127.0.0.1:9099",
+            "model": model,
+        },
+    )
     app.chat_api_provider_value = "llama_cpp"
     app.chat_api_model_value = model
+
+
+def test_native_ready_console_config_survives_cache_invalidating_reload() -> None:
+    app = _build_test_app()
+    _configure_native_ready_console(app, model="prepared-model")
+
+    assert config_module.save_setting_to_cli_config(
+        "console.rail_state", "active_rail", "sessions"
+    )
+    reloaded = config_module.load_settings(force_reload=True)
+
+    assert reloaded["chat_defaults"]["provider"] == "llama_cpp"
+    assert reloaded["chat_defaults"]["model"] == "prepared-model"
+    assert (
+        reloaded["api_settings"]["llama_cpp"]["api_url"]
+        == "http://127.0.0.1:9099"
+    )
+    assert reloaded["api_settings"]["llama_cpp"]["model"] == "prepared-model"
 
 
 def test_console_store_uses_app_citation_repository_for_matching_database():
@@ -2443,8 +2515,7 @@ async def test_console_native_generic_provider_send_renders_completed_message(
     monkeypatch,
 ):
     app = _build_console_send_test_app()
-    app.app_config["chat_defaults"] = {"provider": "openai", "model": "gpt-4.1"}
-    app.app_config["api_settings"] = {}
+    _configure_openai_missing_api_key(app, model="gpt-4.1")
     captured_kwargs = []
 
     def fake_chat_api_call(**_kwargs):
@@ -2461,7 +2532,12 @@ async def test_console_native_generic_provider_send_renders_completed_message(
         console = host.screen_stack[-1]
         await _wait_for_selector(console, pilot, "#console-native-composer")
         gateway = console._ensure_console_provider_gateway()
-        app.app_config["api_settings"] = {"openai": {"api_key": DUMMY_OPENAI_API_KEY}}
+        _apply_mounted_console_provider_config(
+            console,
+            provider="openai",
+            model="gpt-4.1",
+            provider_settings={"api_key": DUMMY_OPENAI_API_KEY},
+        )
         # TASK-2154.6: mounted setup-blocked (no key) -> Send genuinely
         # disabled; re-sync after the config fix so the block lifts, exactly
         # as the Settings save path syncs after a real key fix.
@@ -2493,8 +2569,7 @@ async def test_console_native_generic_provider_send_renders_completed_message(
 @pytest.mark.asyncio
 async def test_console_native_send_button_click_dispatches_message(monkeypatch):
     app = _build_console_send_test_app()
-    app.app_config["chat_defaults"] = {"provider": "openai", "model": "gpt-4.1"}
-    app.app_config["api_settings"] = {}
+    _configure_openai_missing_api_key(app, model="gpt-4.1")
     captured_kwargs = []
 
     def fake_chat_api_call(**_kwargs):
@@ -2510,7 +2585,12 @@ async def test_console_native_send_button_click_dispatches_message(monkeypatch):
     async with host.run_test(size=(160, 48)) as pilot:
         console = host.screen_stack[-1]
         await _wait_for_selector(console, pilot, "#console-native-composer")
-        app.app_config["api_settings"] = {"openai": {"api_key": DUMMY_OPENAI_API_KEY}}
+        _apply_mounted_console_provider_config(
+            console,
+            provider="openai",
+            model="gpt-4.1",
+            provider_settings={"api_key": DUMMY_OPENAI_API_KEY},
+        )
         # TASK-2154.6: the console mounted setup-blocked (no key), so Send is
         # genuinely disabled; a raw post-mount config mutation only lifts the
         # block once the UI re-syncs -- the same umbrella sync the Settings
@@ -2533,8 +2613,12 @@ async def test_console_native_send_button_click_dispatches_message(monkeypatch):
 @pytest.mark.asyncio
 async def test_console_successful_send_does_not_leave_empty_send_tooltip(monkeypatch):
     app = _build_console_send_test_app()
-    app.app_config["chat_defaults"] = {"provider": "openai", "model": "gpt-4.1"}
-    app.app_config["api_settings"] = {"openai": {"api_key": DUMMY_OPENAI_API_KEY}}
+    _persist_console_provider_config(
+        app,
+        provider="openai",
+        model="gpt-4.1",
+        provider_settings={"api_key": DUMMY_OPENAI_API_KEY},
+    )
 
     def fake_chat_api_call(**_kwargs):
         return "sent response"
@@ -3348,14 +3432,16 @@ async def test_console_configured_model_reaches_gateway_when_ui_model_is_unset()
     # `"llama_cpp"` fallback instead of this test's intended
     # `"local_llamacpp"`, so `api_settings.llama_cpp` (never configured
     # here) produced no model and the send stayed blocked.
-    app.app_config["chat_defaults"] = {"provider": "local_llamacpp"}
-    app.console_provider_gateway_factory = lambda: gateway
-    app.app_config["api_settings"] = {
-        "local_llamacpp": {
+    _persist_console_provider_config(
+        app,
+        provider="local_llamacpp",
+        model="",
+        provider_settings={
             "api_url": "http://127.0.0.1:9099/v1/chat/completions",
             "model": "configured-model",
-        }
-    }
+        },
+    )
+    app.console_provider_gateway_factory = lambda: gateway
     host = ConsoleHarness(app)
 
     async with host.run_test(size=(160, 48)) as pilot:
@@ -8157,12 +8243,26 @@ async def test_console_workspace_conversation_row_resumes_persisted_conversation
         assert selected_row.has_class("console-workspace-conversation-row-selected")
         console._set_console_rail_preference(right_open=True, notify_on_failure=False)
         await pilot.pause(0.1)
+        console.query_one("#console-inspector-more-toggle", Button).focus()
+        await pilot.press("enter")
+        await pilot.pause()
         inspector_text = _visible_text(console.query_one("#console-right-rail"))
         assert "Selected Conversation" in inspector_text
-        assert "Selected conversation: Saved research chat" in inspector_text
-        assert "Conversation source: saved conversation" in inspector_text
-        assert "Resume state: restored from persisted-chat-1" in inspector_text
-        assert "Workspace: Default" in inspector_text
+        assert "Where: Default › Saved research chat" in inspector_text
+        conversation_source = console.query_one(
+            "#console-inspector-conversation-source", Static
+        )
+        resume_state = console.query_one("#console-inspector-resume-state", Static)
+        assert conversation_source.display
+        assert resume_state.display
+        assert (
+            str(conversation_source.renderable)
+            == "Conversation source: saved conversation"
+        )
+        assert (
+            str(resume_state.renderable)
+            == "Resume state: restored from persisted-chat-1"
+        )
         assert app.chat_conversation_scope_service.calls == [
             {
                 "conversation_id": "persisted-chat-1",
@@ -8248,11 +8348,6 @@ async def test_console_resume_restores_server_character_identity_without_local_l
             provider="llama_cpp",
             character_label="Wrong active character",
         )
-        local_lookup = AsyncMock(
-            side_effect=AssertionError("server identity must not use local cards")
-        )
-        console._resolve_resumed_character_name = local_lookup
-
         assert (
             await console._workspace._resume_console_workspace_conversation(
                 "server-scoped"
@@ -8312,7 +8407,6 @@ async def test_console_resume_restores_server_character_identity_without_local_l
         assert noncanonical.assistant_authority_id == "local-authority"
         assert noncanonical.character_id is None
         assert noncanonical.character_ref() is None
-        local_lookup.assert_not_awaited()
 
 
 @pytest.mark.asyncio
@@ -8354,9 +8448,6 @@ async def test_console_resume_rejects_character_identity_without_valid_source(
     async with host.run_test(size=(160, 48)) as pilot:
         console = host.screen_stack[-1]
         await _wait_for_selector(console, pilot, "#console-native-transcript")
-        local_lookup = AsyncMock(return_value="Must not resolve")
-        console._resolve_resumed_character_name = local_lookup
-
         assert (
             await console._workspace._resume_console_workspace_conversation(
                 "invalid-source"
@@ -8372,12 +8463,11 @@ async def test_console_resume_rejects_character_identity_without_valid_source(
         assert session.assistant_authority_id == "local-authority"
         assert session.character_id is None
         assert session.character_ref() is None
-        local_lookup.assert_not_awaited()
 
 
 @pytest.mark.asyncio
-async def test_console_resume_rehydrates_local_character_name_from_local_projection():
-    """Only a local character row drives the local card/name lookup."""
+async def test_console_resume_rehydrates_local_character_name_from_saved_snapshot():
+    """Saved roleplay metadata, not a current card, owns resumed identity."""
     app = _build_test_app()
     _configure_native_ready_console(app)
     app.chat_conversation_scope_service = StaticConversationTreeService(
@@ -8391,6 +8481,12 @@ async def test_console_resume_rehydrates_local_character_name_from_local_project
                     "assistant_id": "7",
                     "assistant_authority_id": "local-authority",
                     "character_id": 7,
+                    "metadata": {
+                        "console_roleplay_context": {
+                            "version": 2,
+                            "character_name_snapshot": "Alraune",
+                        }
+                    },
                 },
                 "root_threads": [],
             }
@@ -8401,9 +8497,6 @@ async def test_console_resume_rehydrates_local_character_name_from_local_project
     async with host.run_test(size=(160, 48)) as pilot:
         console = host.screen_stack[-1]
         await _wait_for_selector(console, pilot, "#console-native-transcript")
-        name_lookup = AsyncMock(return_value="Elara")
-        console._resolve_resumed_character_name = name_lookup
-
         assert (
             await console._workspace._resume_console_workspace_conversation(
                 "local-character"
@@ -8418,8 +8511,8 @@ async def test_console_resume_rehydrates_local_character_name_from_local_project
         assert session.assistant_id == "7"
         assert session.assistant_authority_id == "local-authority"
         assert session.character_id == 7
-        assert session.character_name == "Elara"
-        name_lookup.assert_awaited_once_with(7)
+        assert session.character_name == "Alraune"
+        assert session.settings.character_label == "Alraune"
 
 
 @pytest.mark.asyncio
@@ -8669,12 +8762,23 @@ async def test_console_workspace_conversation_resume_uses_real_local_services(tm
         left_rail_text = _visible_text(console.query_one("#console-left-rail"))
         console._set_console_rail_preference(right_open=True, notify_on_failure=False)
         await pilot.pause(0.1)
+        console.query_one("#console-inspector-more-toggle", Button).focus()
+        await pilot.press("enter")
+        await pilot.pause()
         inspector_text = _visible_text(console.query_one("#console-right-rail"))
         assert "Provider:" not in left_rail_text
         assert "Model:" not in left_rail_text
         assert "Session Settings" in inspector_text
         assert "Provider:" in inspector_text
-        assert "Selected conversation: Real saved chat" in inspector_text
+        assert "Where: Real Workspace › Real saved chat" in inspector_text
+        conversation_source = console.query_one(
+            "#console-inspector-conversation-source", Static
+        )
+        assert conversation_source.display
+        assert (
+            str(conversation_source.renderable)
+            == "Conversation source: saved conversation"
+        )
         saved_state = console.save_state()
 
     restored_host = RestoredConsoleHarness(app, saved_state)

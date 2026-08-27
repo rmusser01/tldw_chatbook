@@ -659,6 +659,7 @@ class ChatPersistenceService:
         conversation_id: str,
         user_name_override: str | None,
         character_system_template: str | None,
+        character_name_snapshot: str | None,
     ) -> bool:
         """Merge Console-owned roleplay identity context with one retry.
 
@@ -666,6 +667,16 @@ class ChatPersistenceService:
         essential: a concurrent metadata writer can add unrelated sibling
         keys after our first read. Merging only the fresh record preserves
         those keys while this method changes its owned context.
+
+        Args:
+            conversation_id: Durable conversation identifier.
+            user_name_override: Optional saved user display-name override.
+            character_system_template: Optional saved character prompt template.
+            character_name_snapshot: Optional historical character display name.
+
+        Returns:
+            True when the roleplay context was persisted; False when the
+            conversation no longer exists.
         """
         for attempt in range(2):
             record = self.db.get_conversation_by_id(str(conversation_id))
@@ -676,6 +687,7 @@ class ChatPersistenceService:
                 ConsoleRoleplayContext(
                     user_name_override=user_name_override,
                     character_system_template=character_system_template,
+                    character_name_snapshot=character_name_snapshot,
                 ),
             )
             try:

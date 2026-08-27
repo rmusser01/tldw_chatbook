@@ -6,6 +6,7 @@ from contextlib import contextmanager
 from dataclasses import dataclass, replace
 import asyncio
 from functools import partial
+import inspect
 import os
 from pathlib import Path
 import re
@@ -345,6 +346,7 @@ from ...Library.library_rag_state import (
     library_rag_profile_top_k,
 )
 from ...Constants import (
+    CONSOLE_NAV_CONTEXT_RESUME_LOCAL_CONVERSATION_ID,
     LIBRARY_NAV_CONTEXT_OPEN_SOURCE_ID,
     LIBRARY_NAV_CONTEXT_OPEN_SOURCE_TYPE,
     TAB_SETTINGS,
@@ -564,6 +566,7 @@ NATIVE_CONSOLE_STATE_VERSION = "1.0"
 _CHATDICT_MAX_TOKENS = 500
 _CHATDICT_STRATEGY = "sorted_evenly"
 _CONSOLE_RAIL_PREFERENCE_WRITE_LOCK = threading.Lock()
+_RESUME_LOCAL_CONVERSATION_ID_MAX_LENGTH = 256
 # Statuses during which the 0.2s transcript poll is actively ticking
 # (see `_start_console_transcript_sync_timer`) -- also used by the
 # sub-agent badge-count cache (Finding A) to decide whether a live run
@@ -3448,6 +3451,25 @@ class ChatScreen(BaseAppScreen):
     #: Class-level default so it is readable on a screen built by ``__new__``
     #: (several Console tests construct one without running ``__init__``).
     _console_mount_visit_refreshed: bool = False
+    _pending_resume_local_conversation_id: str | None = None
+    _resume_navigation_startup_in_progress: bool = False
+
+    def apply_navigation_context(self, context: Mapping[str, object]) -> None:
+        """Capture one valid saved-conversation ID for post-mount resume.
+
+        Args:
+            context: Memory-only navigation values supplied for this screen visit.
+        """
+        value = context.get(CONSOLE_NAV_CONTEXT_RESUME_LOCAL_CONVERSATION_ID)
+        if not isinstance(value, str):
+            return
+        conversation_id = value.strip()
+        if (
+            not conversation_id
+            or len(conversation_id) > _RESUME_LOCAL_CONVERSATION_ID_MAX_LENGTH
+        ):
+            return
+        self._pending_resume_local_conversation_id = conversation_id
 
     def __init__(self, app_instance: "TldwCli", **kwargs):
         super().__init__(app_instance, "chat", **kwargs)
@@ -7601,31 +7623,6 @@ class ChatScreen(BaseAppScreen):
         points at `self._message` directly, bypassing this delegation."""
         return self._message._console_messages_from_conversation_tree(tree)
 
-    async def _resolve_resumed_character_name(self, character_id: int) -> str:
-        """Return a resumed character's display name from its card, or ``""``.
-
-        Args:
-            character_id: The persisted conversation's character id.
-
-        Returns:
-            The character card's name, or an empty string when the DB is
-            unavailable, the card is missing, or the fetch fails (best-effort:
-            the caller keeps ``character_id`` set regardless).
-        """
-        db = getattr(self.app_instance, "chachanotes_db", None)
-        if db is None:
-            return ""
-        try:
-            card = await asyncio.to_thread(db.get_character_card_by_id, character_id)
-        except Exception:
-            logger.opt(exception=True).warning(
-                "Resume: character card fetch failed; identity row falls back."
-            )
-            return ""
-        if not card:
-            return ""
-        return str(card.get("name") or "").strip()
-
     def _set_console_conversation_row_loading(
         self, conversation_id: str, loading: bool
     ) -> None:
@@ -9794,7 +9791,8 @@ class ChatScreen(BaseAppScreen):
         self._apply_console_setup_block(blocking)
         if blocking:
             self._maybe_start_console_local_discovery()
-            self.call_after_refresh(modal.focus_primary_action)
+            if not self._resume_navigation_startup_in_progress:
+                self.call_after_refresh(modal.focus_primary_action)
 
     def _maybe_start_console_local_discovery(self) -> None:
         """Start the one-shot local-server discovery worker while blocked.
@@ -9973,6 +9971,9 @@ class ChatScreen(BaseAppScreen):
             return
         composer.can_focus = not blocking and not self._console_composer_collapsed
         if blocking and self._is_descendant_or_self(self.app.focused, composer):
+            if self._resume_navigation_startup_in_progress:
+                self.set_focus(None)
+                return
             # Pull keyboard focus off the covered composer so typing can't tunnel.
             try:
                 self.query_one(
@@ -10899,10 +10900,16 @@ class ChatScreen(BaseAppScreen):
         self._apply_focus_chrome()
         if not hasattr(self, "_console_h3_terminal_generations"):
             self._console_h3_terminal_generations: set[str] = set()
+        ordered_resume_pending = (
+            self._pending_resume_local_conversation_id is not None
+        )
+        self._resume_navigation_startup_in_progress = ordered_resume_pending
         # This handoff is session/config only and does not need mounted DOM.
         # Consume it before ordinary UI restoration can create a competing
-        # default session with a different identity.
-        self._session.consume_pending_console_first_chat_intent()
+        # default session with a different identity. An explicit Resume owns
+        # presentation first and settles this as its first ordered intent.
+        if not ordered_resume_pending:
+            self._session.consume_pending_console_first_chat_intent()
         self._notify_console_fleet_teardown_if_any()
         # PR3a-2 Task 5: claim staged auto-wakes SYNCHRONOUSLY, before any
         # timer or worker below can run the first tab sync -- whose
@@ -10914,24 +10921,27 @@ class ChatScreen(BaseAppScreen):
         # Restore collapsible states after mount
         self.set_timer(0.1, self._restore_collapsible_states)
         self.set_timer(0.05, self.sync_task_resume_state)
-        self.set_timer(0.15, self._consume_pending_chat_handoff)
-        self.set_timer(0.15, self._consume_pending_console_roleplay_repair)
-        # Mirrors the handoff timer above: the native composer is not
-        # guaranteed to exist in the DOM yet at this exact point (it can
-        # still be settling in immediately after mount, same reason every
-        # composer-touching test here awaits `_wait_for_selector` first) --
-        # a failed early attempt releases its claim for this screen's
-        # existing resume/user-triggered retry paths.
-        self.set_timer(0.15, self._consume_pending_console_prompt_insert)
-        self.set_timer(0.15, self.consume_pending_console_provider_intent)
-        # PR3a-2 Task 4: claim a background sub-agent completion's deep
-        # link (staged while Console was not mounted) and switch to the
-        # settled conversation's session. Same 0.15s settle hedge as the
-        # surrounding handoff timers.
-        self.set_timer(
-            0.15,
-            self._fleet.consume_pending_console_fleet_completion,
-        )
+        if ordered_resume_pending:
+            self.set_timer(0.15, self._start_resume_navigation_startup)
+        else:
+            self.set_timer(0.15, self._consume_pending_chat_handoff)
+            self.set_timer(0.15, self._consume_pending_console_roleplay_repair)
+            # Mirrors the handoff timer above: the native composer is not
+            # guaranteed to exist in the DOM yet at this exact point (it can
+            # still be settling in immediately after mount, same reason every
+            # composer-touching test here awaits `_wait_for_selector` first) --
+            # a failed early attempt releases its claim for this screen's
+            # existing resume/user-triggered retry paths.
+            self.set_timer(0.15, self._consume_pending_console_prompt_insert)
+            self.set_timer(0.15, self.consume_pending_console_provider_intent)
+            # PR3a-2 Task 4: claim a background sub-agent completion's deep
+            # link (staged while Console was not mounted) and switch to the
+            # settled conversation's session. Same 0.15s settle hedge as the
+            # surrounding handoff timers.
+            self.set_timer(
+                0.15,
+                self._fleet.consume_pending_console_fleet_completion,
+            )
         # PR3a-2 Task 4 (task-15664): mount hedge for the survivor tick --
         # the primary arming point is the transcript poll's self-stop
         # edge, but a controller wired at mount with survivors already
@@ -10946,16 +10956,48 @@ class ChatScreen(BaseAppScreen):
         # user's first activation attempt re-probes it.
         self.call_after_refresh(self._sync_console_dictation_availability)
         self.set_timer(0.15, self._sync_console_dictation_availability)
-        self.call_after_refresh(self._sync_native_console_chat_ui)
         self.call_after_refresh(self._image._reconcile_h3_image_edit_completions)
-        self.call_after_refresh(self._restore_console_workbench_focus)
-        self.set_timer(0.2, self._restore_console_workbench_focus)
+        if not ordered_resume_pending:
+            self.call_after_refresh(self._sync_native_console_chat_ui)
+            self.call_after_refresh(self._restore_console_workbench_focus)
+            self.set_timer(0.2, self._restore_console_workbench_focus)
         self.run_worker(
             self._skill._refresh_console_skill_candidates(), exclusive=False
         )
         # task-15475: claim this visit's refreshes; the ScreenResume Textual
         # posts for this very mount consumes the token and skips its own copy.
         self._console_mount_visit_refreshed = True
+
+    def _start_resume_navigation_startup(self) -> None:
+        """Start the one ordered worker for an explicit saved-chat resume."""
+        self.run_worker(
+            self._consume_resume_navigation_startup(),
+            exclusive=True,
+            group="console-resume-navigation-startup",
+        )
+
+    async def _consume_resume_navigation_startup(self) -> None:
+        """Consume older Console intents before the explicit resume target."""
+        target = self._pending_resume_local_conversation_id
+        self._pending_resume_local_conversation_id = None
+        try:
+            if target is None:
+                return
+            self._session.consume_pending_console_first_chat_intent(
+                defer_presentation=True,
+            )
+            await self._consume_pending_chat_handoff(
+                suppress_released_failure=True,
+            )
+            self._consume_pending_console_roleplay_repair()
+            await self._consume_pending_console_prompt_insert()
+            self.consume_pending_console_provider_intent()
+            fleet_result = self._fleet.consume_pending_console_fleet_completion()
+            if inspect.isawaitable(fleet_result):
+                await fleet_result
+            await self._workspace.open_console_workspace_conversation(target)
+        finally:
+            self._resume_navigation_startup_in_progress = False
 
     def _notify_console_fleet_teardown_if_any(self) -> None:
         """One-shot toasts reporting the LAST Console instance's teardown.
@@ -11425,13 +11467,33 @@ class ChatScreen(BaseAppScreen):
         self._console_runtime().remount_pending_approval()
         self.sync_task_resume_state()
 
-    async def _consume_pending_chat_handoff(self) -> None:
-        """Claim one Chat handoff and stage it directly in native Console."""
+    async def _consume_pending_chat_handoff(
+        self,
+        *,
+        suppress_released_failure: bool = False,
+    ) -> None:
+        """Claim one Chat handoff and stage it directly in native Console.
+
+        Args:
+            suppress_released_failure: Return after a transfer failure only
+                when this invocation released its exact claim for retry.
+        """
         if self._handoff_consumption_in_progress:
             return
 
-        store = self.app_instance.pending_handoffs
-        claim = store.claim(HandoffChannel.CHAT)
+        try:
+            store = self.app_instance.pending_handoffs
+            claim = store.claim(HandoffChannel.CHAT)
+        except asyncio.CancelledError:
+            raise
+        except Exception as exc:
+            logger.warning(
+                "Chat handoff acquisition failed "
+                "(channel={}, exception_category={})",
+                HandoffChannel.CHAT.value,
+                type(exc).__name__,
+            )
+            raise
         if claim is None:
             return
 
@@ -11452,10 +11514,29 @@ class ChatScreen(BaseAppScreen):
             self._stage_handoff_as_console_live_work(payload)
             store.acknowledge(claim)
         except asyncio.CancelledError:
-            store.release(claim)
+            try:
+                store.release(claim)
+            except Exception as exc:
+                logger.warning(
+                    "Chat handoff cancellation release failed "
+                    "(channel={}, revision={}, exception_category={})",
+                    claim.channel.value,
+                    claim.revision,
+                    type(exc).__name__,
+                )
             raise
         except Exception as exc:
-            store.release(claim)
+            try:
+                released = store.release(claim)
+            except Exception as release_exc:
+                released = False
+                logger.warning(
+                    "Chat handoff transfer release failed "
+                    "(channel={}, revision={}, exception_category={})",
+                    claim.channel.value,
+                    claim.revision,
+                    type(release_exc).__name__,
+                )
             logger.warning(
                 "Chat handoff transfer failed "
                 "(channel={}, revision={}, exception_category={})",
@@ -11463,6 +11544,8 @@ class ChatScreen(BaseAppScreen):
                 claim.revision,
                 type(exc).__name__,
             )
+            if suppress_released_failure and released:
+                return
             raise
         finally:
             self._handoff_consumption_in_progress = False
@@ -16144,10 +16227,13 @@ class ChatScreen(BaseAppScreen):
         # so every subsequent resume refreshes normally.
         mount_already_refreshed = self._console_mount_visit_refreshed
         self._console_mount_visit_refreshed = False
+        ordered_resume_active = self._resume_navigation_startup_in_progress
         # task-18310: reconcile the Console session against the registry's
-        # active workspace on EVERY resume, including the mount's own --
-        # deliberately NOT gated by `mount_already_refreshed` like the
-        # worker refreshes below. Every in-Console activation path (Alt+W
+        # active workspace on every ordinary resume, including the mount's
+        # own. An explicit saved-chat resume is the sole exception: its
+        # canonical opener activates the target workspace last, while this
+        # reconciliation can switch sessions and schedule an intermediate
+        # native sync. Every in-Console activation path (Alt+W
         # switcher, the shared create modal, conversation-browser row-open)
         # already keeps the registry and the store's active session in
         # lockstep, so the common case is an O(1) early exit; the mount
@@ -16159,13 +16245,15 @@ class ChatScreen(BaseAppScreen):
         # flow) only updates the registry -- this is the seam that repairs
         # the resulting drift. See
         # `ConsoleWorkspaceController._reconcile_console_session_with_registry`.
-        try:
-            self._workspace._reconcile_console_session_with_registry()
-        except Exception:
-            logger.opt(exception=True).debug(
-                "Unable to reconcile Console session with registry-active workspace"
-            )
-        self._session.consume_pending_console_first_chat_intent()
+        if not ordered_resume_active:
+            try:
+                self._workspace._reconcile_console_session_with_registry()
+            except Exception:
+                logger.opt(exception=True).debug(
+                    "Unable to reconcile Console session with registry-active workspace"
+                )
+        if not ordered_resume_active:
+            self._session.consume_pending_console_first_chat_intent()
         # Re-evaluate setup-card/model readiness before touching focus. Some
         # recovery flows (e.g. certain providers' API-key recovery) navigate to
         # the full Settings screen and back rather than completing setup via
@@ -16187,21 +16275,23 @@ class ChatScreen(BaseAppScreen):
         # -- that method settles `_console_visible_draft_session_id` itself,
         # immediately before inserting, so the insert is self-guarding
         # regardless of which lifecycle hook scheduled it.
-        self.set_timer(0.15, self._consume_pending_console_prompt_insert)
-        self.set_timer(0.15, self.consume_pending_console_provider_intent)
-        # PR3a-2 Task 4: mirrors the on_mount claim -- a completion staged
-        # while the user was on another screen is claimed on resume too.
-        self.set_timer(
-            0.15,
-            self._fleet.consume_pending_console_fleet_completion,
-        )
-        self.call_after_refresh(self._restore_console_workbench_focus)
-        repair_dispatched = self._consume_pending_console_roleplay_repair()
-        if (
-            not repair_dispatched
-            and not self._consume_pending_console_identity_refresh()
-        ):
-            self._dispatch_active_console_roleplay_refresh()
+        if not ordered_resume_active:
+            self.set_timer(0.15, self._consume_pending_console_prompt_insert)
+            self.set_timer(0.15, self.consume_pending_console_provider_intent)
+            # PR3a-2 Task 4: mirrors the on_mount claim -- a completion staged
+            # while the user was on another screen is claimed on resume too.
+            self.set_timer(
+                0.15,
+                self._fleet.consume_pending_console_fleet_completion,
+            )
+            self.call_after_refresh(self._restore_console_workbench_focus)
+        if not ordered_resume_active:
+            repair_dispatched = self._consume_pending_console_roleplay_repair()
+            if (
+                not repair_dispatched
+                and not self._consume_pending_console_identity_refresh()
+            ):
+                self._dispatch_active_console_roleplay_refresh()
         if not mount_already_refreshed:
             self.run_worker(
                 self._skill._refresh_console_skill_candidates(), exclusive=False

@@ -588,8 +588,19 @@ class ConsoleChatPersistence(Protocol):
         conversation_id: str,
         user_name_override: str | None,
         character_system_template: str | None,
+        character_name_snapshot: str | None,
     ) -> bool:
-        """Persist Console-owned roleplay identity context for a conversation."""
+        """Persist Console-owned roleplay identity context for a conversation.
+
+        Args:
+            conversation_id: Durable conversation identifier.
+            user_name_override: Optional saved user display-name override.
+            character_system_template: Optional saved character prompt template.
+            character_name_snapshot: Optional historical character display name.
+
+        Returns:
+            True when the roleplay context was persisted.
+        """
 
     def update_conversation_pinned_prefill(
         self,
@@ -1589,20 +1600,37 @@ class ConsoleChatStore:
             expected_settings=expected_settings,
         ):
             return False
-        self._messages_by_session.pop(session_id, None)
-        self._tool_markers_by_session.pop(session_id, None)
-        self._nodes_by_session.pop(session_id, None)
-        self._children_by_parent.pop(session_id, None)
-        self._active_leaf_by_session.pop(session_id, None)
-        self._context_summary_by_session.pop(session_id, None)
-        self._roleplay_system_projection_candidates.pop(session_id, None)
-        self._conversation_context_epochs.pop(session_id, None)
-        self._speech_preference_epochs.pop(session_id, None)
-        self._payload_revisions.pop(session_id, None)
-        self._pending_workspace_projections.pop(session_id, None)
-        if self.library_policy_coordinator is not None:
-            self.library_policy_coordinator.unregister_holder(session_id)
-        self._sessions.pop(session_id, None)
+        self._purge_session_runtime_state(session_id)
+        if self.active_session_id == session_id:
+            self._activate_session(
+                prior_active_session_id
+                if prior_active_session_id in self._sessions
+                else None
+            )
+        return True
+
+    def rollback_restored_session(
+        self,
+        session_id: str,
+        *,
+        expected_session: ConsoleChatSession,
+        prior_active_session_id: str | None,
+    ) -> bool:
+        """Remove only the exact runtime session created by a failed restore.
+
+        Args:
+            session_id: Runtime session identifier to remove.
+            expected_session: Exact restored session instance that still owns cleanup.
+            prior_active_session_id: Session to reactivate when it still exists.
+
+        Returns:
+            True when the exact restored session was removed; False when ownership
+            had changed and no cleanup was performed.
+        """
+
+        if self._sessions.get(session_id) is not expected_session:
+            return False
+        self._purge_session_runtime_state(session_id)
         if self.active_session_id == session_id:
             self._activate_session(
                 prior_active_session_id
@@ -1692,6 +1720,7 @@ class ConsoleChatStore:
                 project_instruction_state = decode_project_context_json(
                     raw_project_context
                 )
+        prior_active_session_id = self.active_session_id
         session = self.create_session(
             title=title,
             workspace_id=workspace_id,
@@ -1705,48 +1734,58 @@ class ConsoleChatStore:
             project_instruction_state=project_instruction_state,
             activate=activate,
         )
-        session.persisted_conversation_id = str(persisted_conversation_id)
-        self.hydrate_session_capture_policy(session.id)
-        self._hydrate_dispatch_recovery(
-            session.id,
-            str(persisted_conversation_id),
-        )
-        session.library_policy_hydrated = False
-        coordinator = self.library_policy_coordinator
-        if coordinator is not None:
-            session.library_policy_holder.snapshot = normalize_policy_read(None).snapshot
-            session.library_policy_holder.explicitly_staged = False
-            coordinator.register_holder(
+        try:
+            session.persisted_conversation_id = str(persisted_conversation_id)
+            self.hydrate_session_capture_policy(session.id)
+            self._hydrate_dispatch_recovery(
                 session.id,
-                session.persisted_conversation_id,
-                session.library_policy_holder,
+                str(persisted_conversation_id),
             )
-        if session.workspace_id != CONSOLE_GLOBAL_WORKSPACE_ID:
-            self._pending_workspace_projections[session.id] = (
-                session.persisted_conversation_id
+            session.library_policy_hydrated = False
+            coordinator = self.library_policy_coordinator
+            if coordinator is not None:
+                session.library_policy_holder.snapshot = normalize_policy_read(
+                    None
+                ).snapshot
+                session.library_policy_holder.explicitly_staged = False
+                coordinator.register_holder(
+                    session.id,
+                    session.persisted_conversation_id,
+                    session.library_policy_holder,
+                )
+            if session.workspace_id != CONSOLE_GLOBAL_WORKSPACE_ID:
+                self._pending_workspace_projections[session.id] = (
+                    session.persisted_conversation_id
+                )
+            self._restore_speech_preferences(session)
+            self._resolve_context_policy_on_resume(session.id)
+            restored_nodes = self._hydrate_provider_continuations_from_persistence(
+                session.id,
+                persisted_conversation_id,
+                list(all_nodes),
+                remote_active=remote_active,
             )
-        self._restore_speech_preferences(session)
-        self._resolve_context_policy_on_resume(session.id)
-        restored_nodes = self._hydrate_provider_continuations_from_persistence(
-            session.id,
-            persisted_conversation_id,
-            list(all_nodes),
-            remote_active=remote_active,
-        )
-        self._ingest_full_tree(
-            session.id,
-            restored_nodes,
-            active_leaf_persisted_id=active_leaf_persisted_id,
-        )
-        self._normalize_restored_provider_continuation(
-            session.id, str(persisted_conversation_id)
-        )
-        self._reconcile_restored_chat_sync_intents(
-            session.id, str(persisted_conversation_id)
-        )
-        self._hydrate_generation_metadata_from_persistence(session.id)
-        self._bump_payload_revision(session.id)
-        return session
+            self._ingest_full_tree(
+                session.id,
+                restored_nodes,
+                active_leaf_persisted_id=active_leaf_persisted_id,
+            )
+            self._normalize_restored_provider_continuation(
+                session.id, str(persisted_conversation_id)
+            )
+            self._reconcile_restored_chat_sync_intents(
+                session.id, str(persisted_conversation_id)
+            )
+            self._hydrate_generation_metadata_from_persistence(session.id)
+            self._bump_payload_revision(session.id)
+            return session
+        except BaseException:
+            self.rollback_restored_session(
+                session.id,
+                expected_session=session,
+                prior_active_session_id=prior_active_session_id,
+            )
+            raise
 
     def _hydrate_dispatch_recovery(
         self,
@@ -2827,6 +2866,24 @@ class ConsoleChatStore:
         session_ids = list(self._sessions.keys())
         closed_index = session_ids.index(session_id)
 
+        self._purge_session_runtime_state(session_id)
+
+        if self.active_session_id != session_id:
+            return self._sessions.get(self.active_session_id or "")
+
+        remaining_sessions = list(self._sessions.values())
+        if not remaining_sessions:
+            self._activate_session(None)
+            return None
+
+        next_index = min(closed_index, len(remaining_sessions) - 1)
+        next_session = remaining_sessions[next_index]
+        self._activate_session(next_session.id)
+        return next_session
+
+    def _purge_session_runtime_state(self, session_id: str) -> None:
+        """Delete one session's exact process-local ownership without DB writes."""
+
         # Purge EVERY message the session owns, not just the active-path view:
         # off-path tree nodes and dropped display-only TOOL markers both live in
         # ``_message_session_index`` (a superset of ``_nodes_by_session`` for the
@@ -2850,7 +2907,24 @@ class ConsoleChatStore:
             self._native_parent_by_message.pop(message_id, None)
             self._roleplay_message_projection_candidates.pop(message_id, None)
             self._exchange_blob_cache.pop(message_id, None)
+            self._abandoned_exchange_run_tags.pop(message_id, None)
             self._character_emote_captures.pop(message_id, None)
+            self._trajectory_timing.pop(message_id, None)
+            self._trajectory_written_ids.discard(message_id)
+            self._pending_trajectory_tool_rows.pop(message_id, None)
+            self._pending_trajectory_event_rows.pop(message_id, None)
+
+        unanchored = self._pending_trajectory_tool_rows.get("__unanchored__")
+        if unanchored is not None:
+            retained = [
+                entry
+                for entry in unanchored
+                if entry.get("session_id") != session_id
+            ]
+            if retained:
+                self._pending_trajectory_tool_rows["__unanchored__"] = retained
+            else:
+                self._pending_trajectory_tool_rows.pop("__unanchored__", None)
 
         self._messages_by_session.pop(session_id, None)
         self._tool_markers_by_session.pop(session_id, None)
@@ -2858,7 +2932,9 @@ class ConsoleChatStore:
         self._children_by_parent.pop(session_id, None)
         self._active_leaf_by_session.pop(session_id, None)
         self._context_summary_by_session.pop(session_id, None)
+        self._deferred_project_instruction_state_session_ids.discard(session_id)
         self._roleplay_system_projection_candidates.pop(session_id, None)
+        self._payload_revisions.pop(session_id, None)
         self._conversation_context_epochs.pop(session_id, None)
         self._speech_preference_epochs.pop(session_id, None)
         self._character_emote_feed_by_session.pop(session_id, None)
@@ -2867,6 +2943,7 @@ class ConsoleChatStore:
         self._dispatch_recovery_message_baselines.pop(session_id, None)
         self._dispatch_recovery_queue_hydration_pending.discard(session_id)
         self._pending_workspace_projections.pop(session_id, None)
+        self._session_turn_ids.pop(session_id, None)
         if self.library_policy_coordinator is not None:
             self.library_policy_coordinator.unregister_holder(session_id)
         self._sessions.pop(session_id, None)
@@ -2887,19 +2964,6 @@ class ConsoleChatStore:
             self._preparations_by_session.pop(session_id, None)
             if preparation is not None:
                 self._preparations_by_id.pop(preparation.preparation_id, None)
-
-        if self.active_session_id != session_id:
-            return self._sessions.get(self.active_session_id or "")
-
-        remaining_sessions = list(self._sessions.values())
-        if not remaining_sessions:
-            self._activate_session(None)
-            return None
-
-        next_index = min(closed_index, len(remaining_sessions) - 1)
-        next_session = remaining_sessions[next_index]
-        self._activate_session(next_session.id)
-        return next_session
 
     def sessions(self) -> list[ConsoleChatSession]:
         """Return native Console sessions in creation order."""
@@ -6743,6 +6807,11 @@ class ConsoleChatStore:
             expected_roleplay_context=ConsoleRoleplayContext(
                 user_name_override=session.user_display_name_override,
                 character_system_template=session.character_system_template,
+                character_name_snapshot=(
+                    session.character_name
+                    if session.assistant_kind == "character"
+                    else None
+                ),
             ),
             expected_system_prompts=expected_system_prompts,
             accepts_roleplay_context_guard=self._persistence_accepts_kwarg(
@@ -7112,6 +7181,11 @@ class ConsoleChatStore:
                     conversation_id=session.persisted_conversation_id,
                     user_name_override=session.user_display_name_override,
                     character_system_template=session.character_system_template,
+                    character_name_snapshot=(
+                        session.character_name
+                        if session.assistant_kind == "character"
+                        else None
+                    ),
                 )
             )
         except Exception as exc:
@@ -9085,6 +9159,7 @@ class ConsoleChatStore:
         if (
             session.user_display_name_override is not None
             or session.character_system_template is not None
+            or session.assistant_kind == "character"
         ) and not self._persist_roleplay_context(session):
             logger.warning("Failed to flush Console roleplay context on first persist.")
             if strict_roleplay_context:
@@ -9350,6 +9425,7 @@ class ConsoleChatStore:
         if (
             session.user_display_name_override is not None
             or session.character_system_template is not None
+            or session.assistant_kind == "character"
         ):
             metadata = json.loads(
                 merge_console_roleplay_context(
@@ -9357,6 +9433,11 @@ class ConsoleChatStore:
                     ConsoleRoleplayContext(
                         user_name_override=session.user_display_name_override,
                         character_system_template=session.character_system_template,
+                        character_name_snapshot=(
+                            session.character_name
+                            if session.assistant_kind == "character"
+                            else None
+                        ),
                     ),
                 )
             )
