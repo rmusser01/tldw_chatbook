@@ -90,6 +90,18 @@ Reason: Task 1 directly implements ADR-090's accepted importable exchange bounda
 retains ADR-063's separate continuation ownership; it introduces no new architecture
 decision.
 
+## Independent reviews
+
+Spec review APPROVED the final range through `406c78bec` after two bounded fix rounds.
+The closed gaps were explicit-null envelope rejection, tombstone ownership, fail-
+closed policy owner resolution, and empty-string unknown-policy warning. The final
+review gate passed 102 focused tests with a clean diff.
+
+Code-quality review APPROVED the same final range with no correctness, privacy,
+preflight-ordering, compatibility, maintainability, test-quality, or YAGNI finding.
+Canonical UTF-8 accounting, content-free failures, deterministic exchange, and whole-
+conversation validation before mutation were all confirmed.
+
 ## Spec-review fix round 1
 
 Four boundary issues were addressed with focused regression tests before production

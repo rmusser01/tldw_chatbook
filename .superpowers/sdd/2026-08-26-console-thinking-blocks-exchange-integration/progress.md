@@ -8,6 +8,29 @@ Execution: serial subagent-driven development with RED/GREEN evidence, spec revi
 
 Task 1: round-trip supported thinking and replay policy through selected-conversation JSON and Chatbook V2, with whole-conversation preflight and shared sensitivity warnings.
 
+Task 1 initial implementation: commit `3cda0c166a`. Selected JSON RED was 11
+failures; Chatbook V2 RED was 10 failures. The final implementer gate was 165 passed
+with scoped Ruff, `py_compile`, and `git diff --check` clean.
+
+Task 1 spec-review fix round 1: commit `94db09482c`. Present-null envelopes now
+reject in both formats, deleted V2 rows cannot carry thinking, raised metadata lookups
+fail closed, and empty-string policy warns while normalizing to Auto. RED was 11
+focused failures; GREEN was 43 focused and 221 Task-1/policy cases.
+
+Task 1 spec-review fix round 2: commit `406c78bec`. Any non-null selected-conversation
+owner now requires a DB and resolved conversation record; only an explicitly ownerless
+export keeps legacy Auto. RED was 2 failures; GREEN was 26 focused and 224 Task-1/
+policy cases.
+
+Task 1 final spec review: APPROVED at `406c78bec`. The reviewer reran 102 focused
+portability/continuation cases and confirmed canonical V1-only exchange, role/tombstone
+ownership, raw policy validation, aggregate preflight, warning privacy, and per-
+conversation isolation. `git diff --check` and worktree state were clean.
+
+Task 1 code-quality review: APPROVED at `406c78bec`. The reviewer found no correctness,
+privacy, preflight-ordering, compatibility, maintainability, test-quality, or
+over-engineering issue. The same 102 focused tests, scoped Ruff, and diff check passed.
+
 Task 1 RED (2026-08-26): `Tests/Chat/test_thinking_conversation_exchange.py`
 failed 11/11 and `Tests/Chatbooks/test_chatbook_thinking_round_trip.py` failed
 10/10 before production changes. Failures showed absent policy/thinking projections,
