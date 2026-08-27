@@ -87,6 +87,13 @@ configuration, styling, documentation, and tests in this scope. It leaves the
 Console source, realtime ownership/count projections, and diagnostic inventory
 unchanged.
 
+The subsequent delivery base `6c535bcd16` changes only the Library Prompt reader,
+its evidence, documentation, tests, styling, and generated diagnostic inventory in
+this scope. It leaves the Console source and realtime ownership/count projections
+unchanged; two additional Library TASK-494 diagnostics bring the aggregate
+inventory to 538 owners, 1,244 TASK-492 calls, 7,365 TASK-494 calls, and 8 sink
+files.
+
 ## Goals
 
 1. Give the 56 reviewed realtime policy methods one explicit, non-DOM owner.
