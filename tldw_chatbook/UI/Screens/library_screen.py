@@ -4384,6 +4384,20 @@ class LibraryScreen(BaseAppScreen):
             saving=snapshot.saving or self._library_note_autosave_state == "saving",
             dirty=snapshot.dirty,
         )
+        if self._library_note_shortcut_status:
+            status_channels = dataclasses.replace(
+                status_channels,
+                content_recovery=status_line,
+                safe_next_action=None,
+            )
+        elif snapshot.in_conflict or self._library_note_autosave_state in {
+            "error",
+            "validation",
+        }:
+            status_channels = dataclasses.replace(
+                status_channels,
+                content_recovery=status_line,
+            )
         return LibraryNotePresentationState(
             snapshot=snapshot,
             metadata_line=metadata_line,

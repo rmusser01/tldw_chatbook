@@ -483,6 +483,103 @@ def test_notes_header_status_channels_follow_approved_precedence(
     assert "\n" not in channels.authority_git
 
 
+@pytest.mark.asyncio
+async def test_database_note_status_header_paints_actionable_detail() -> None:
+    """Detailed failure/recovery copy survives the pure status projection."""
+    app = _build_test_app()
+    _seed_conversations(app, _two_conversations(), notes=_two_notes())
+    host = LibraryHarness(app)
+
+    async with host.run_test(size=(240, 48)) as pilot:
+        screen = _active_library_screen(host)
+        await _wait_for_library_shell(screen, pilot)
+        screen.query_one("#library-row-browse-notes", Button).press()
+        await _wait_for_selector(screen, pilot, "#library-notes-row-0")
+        await _open_note_editor(screen, pilot)
+        snapshot = screen._library_note_session.snapshot
+        assert snapshot is not None
+        cases = (
+            (
+                "validation",
+                False,
+                False,
+                "",
+                "Title is required before saving.",
+                "Next: Retry Save.",
+            ),
+            (
+                "error",
+                False,
+                False,
+                "",
+                "Save failed — database busy. Edits kept. Press Save to retry.",
+                "Next: Retry Save.",
+            ),
+            (
+                "conflict",
+                True,
+                False,
+                "",
+                "Draft changed — Reload not applied. Choose again.",
+                "Next: Review recovery.",
+            ),
+            (
+                "idle",
+                False,
+                True,
+                "Save unavailable — finish bulk selection first.",
+                "Saved",
+                "",
+            ),
+        )
+        missing: list[str] = []
+
+        for (
+            autosave_state,
+            in_conflict,
+            read_only,
+            shortcut_status,
+            status_message,
+            expected_next,
+        ) in cases:
+            screen._library_note_autosave_state = autosave_state
+            screen._library_note_shortcut_status = shortcut_status
+            screen._library_notes_select_mode = read_only
+            screen._library_note_session._snapshot = replace(
+                snapshot,
+                dirty=autosave_state != "idle",
+                saving=False,
+                in_conflict=in_conflict,
+                status_message=status_message,
+            )
+            screen._apply_library_note_presentation_state()
+            await pilot.pause()
+            expected = shortcut_status or status_message
+            status = screen.query_one("#library-note-status", Static)
+            rendered = " ".join(
+                status.render_line(row).text.strip()
+                for row in range(status.region.height)
+            )
+            painted = "\n".join(
+                strip.text for strip in screen._compositor.render_strips()
+            )
+            next_is_honest = (
+                expected_next in rendered if expected_next else "Next:" not in rendered
+            )
+            if (
+                expected not in rendered
+                or expected not in painted
+                or not next_is_honest
+            ):
+                missing.append(
+                    f"{autosave_state}: expected {expected!r}, rendered {rendered!r}, "
+                    f"status_region={status.region!r}, "
+                    f"actions_region={screen.query_one('#library-note-primary-actions').region!r}"
+                )
+
+        assert missing == []
+
+
 def test_folder_status_projects_reachable_read_only_recovery_and_bounds_git() -> None:
     """Folder header copy stays truthful, semantic, and bounded."""
     from rich.cells import cell_len
