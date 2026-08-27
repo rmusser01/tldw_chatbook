@@ -5,7 +5,7 @@ from __future__ import annotations
 import hashlib
 import json
 import unicodedata
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from ipaddress import ip_address
 from urllib.parse import urlsplit, urlunsplit
 
@@ -62,6 +62,21 @@ class ProjectInstructionControlState:
             Disabled control state with no selected binding or notice key.
         """
         return cls(project_instructions_enabled=False)
+
+
+def sanitize_fork_project_instruction_state(
+    source: ProjectInstructionControlState,
+) -> ProjectInstructionControlState:
+    """Retain declarative project controls without copying source consent.
+
+    Args:
+        source: Validated controls captured from the source session.
+
+    Returns:
+        The same declarative selection with a fresh notice boundary.
+    """
+
+    return replace(source, project_instruction_notice_key=None)
 
 
 def encode_project_context_json(state: ProjectInstructionControlState) -> str:

@@ -9,6 +9,7 @@ from tldw_chatbook.Chat.console_chat_models import (
     ConsoleChatMessage,
     ConsoleMessageRole,
 )
+from tldw_chatbook.Chat.console_chat_fork import ConsoleForkEligibility
 from tldw_chatbook.Chat.console_ephemeral import blocked_reason
 
 
@@ -18,6 +19,7 @@ ConsoleActionStatus = Literal[
     "blocked",
     "continue_requested",
     "edit_requested",
+    "fork_requested",
 ]
 ConsoleSpeechPresentationState = Literal[
     "idle",
@@ -36,6 +38,15 @@ class ConsoleMessageAction:
     label: str
     enabled: bool = True
     disabled_reason: str = ""
+
+
+@dataclass(frozen=True, slots=True)
+class ConsoleMessageActionGroups:
+    """Stable direct, overflow, and media action groups for one row."""
+
+    primary: tuple[ConsoleMessageAction, ...]
+    overflow: tuple[ConsoleMessageAction, ...]
+    media: tuple[ConsoleMessageAction, ...]
 
 
 @dataclass(frozen=True)
@@ -98,9 +109,7 @@ def resolve_console_header_speech(
             action=ConsoleMessageAction("speak", "🔊"),
             status_label="Failed",
         )
-    return ConsoleHeaderSpeechPresentation(
-        action=ConsoleMessageAction("speak", "🔊")
-    )
+    return ConsoleHeaderSpeechPresentation(action=ConsoleMessageAction("speak", "🔊"))
 
 
 @dataclass(frozen=True)
@@ -134,6 +143,7 @@ ACTION_GUIDE_SEGMENTS: tuple[tuple[str, str], ...] = (
     ("speak", "🔊 Speak"),
     ("speak-stop", "⏹ Stop speech"),
     ("edit", "e Edit"),
+    ("fork", "f Fork"),
     ("regenerate", "r ♻ Regenerate"),
     ("continue", "---> Continue"),
     ("feedback", "👍/👎 Rate"),
@@ -185,6 +195,7 @@ class ConsoleMessageActionService:
         ("speak", "🔊"),
         ("edit", "Edit"),
         ("save-as", "Save as..."),
+        ("fork", "Fork"),
         ("regenerate", "♻"),
         ("continue", "--->"),
         ("feedback", "Feedback"),
@@ -200,9 +211,7 @@ class ConsoleMessageActionService:
     #: TASK-1366: a diff-carrying marker whose stripped result FIT the
     #: preview has no fuller text to show -- expansion reveals the inline
     #: diff row instead, so the affordance says what it opens.
-    _TOOL_DIFF_ACTIONS: tuple[tuple[str, str], ...] = (
-        ("tool-output", "Diff"),
-    )
+    _TOOL_DIFF_ACTIONS: tuple[tuple[str, str], ...] = (("tool-output", "Diff"),)
     #: TASK-1972: offered only on a change-summary row (one carrying the
     #: run id it reviews). Opens the Change Review screen for THAT turn.
     _REVIEW_CHANGES_ACTIONS: tuple[tuple[str, str], ...] = (
@@ -214,7 +223,6 @@ class ConsoleMessageActionService:
     )
     _KEEP_ACTION: tuple[tuple[str, str], ...] = (("keep", "keep"),)
     _SPEAK_STOP_ACTION: tuple[str, str] = ("speak-stop", "⏹")
-    _FAILED_RETRY_ACTIONS: tuple[tuple[str, str], ...] = (("retry", "Retry"),)
     _IMAGE_VIEW_ACTIONS: tuple[tuple[str, str], ...] = (("toggle-image-view", "View"),)
     _SAVE_IMAGE_ACTIONS: tuple[tuple[str, str], ...] = (("save-image", "Save Image"),)
     #: task-3401.5: offered only on a video-generation message (one carrying
@@ -231,6 +239,30 @@ class ConsoleMessageActionService:
     )
     _VIEW_ORIGINAL_ATTEMPT_ACTION: tuple[tuple[str, str], ...] = (
         ("view-original-attempt", "View original attempt"),
+    )
+    _PRIMARY_ACTION_IDS = frozenset(
+        {
+            "copy",
+            "speak",
+            "speak-stop",
+            "edit",
+            "fork",
+            "regenerate",
+            "retry",
+            "continue",
+        }
+    )
+    _SPECIALIZED_ACTION_IDS = frozenset({"tool-output", "review-changes"})
+    _MEDIA_ACTION_IDS = frozenset(
+        {
+            "variant-previous",
+            "variant-next",
+            "keep",
+            "toggle-image-view",
+            "save-image",
+            "video-play",
+            "video-save-copy",
+        }
     )
 
     @staticmethod
@@ -269,10 +301,10 @@ class ConsoleMessageActionService:
     def _base_actions_with(
         cls, inserted: tuple[tuple[str, str], ...]
     ) -> list[tuple[str, str]]:
-        """Return the base action row with extra actions inserted before regenerate."""
+        """Return the base row with extras before the Fork/Regenerate pair."""
         actions: list[tuple[str, str]] = []
         for action_id, label in cls._COMPLETED_ACTIONS:
-            if action_id == "regenerate":
+            if action_id == "fork":
                 actions.extend(inserted)
             actions.append((action_id, label))
         return actions
@@ -287,6 +319,7 @@ class ConsoleMessageActionService:
         original_attempt_available: bool = False,
         ephemeral: bool = False,
         video_file_available: bool = False,
+        fork_eligibility: ConsoleForkEligibility = ConsoleForkEligibility(True),
     ) -> list[ConsoleMessageAction]:
         """Return canonical selected-message actions for a transcript message.
 
@@ -315,7 +348,12 @@ class ConsoleMessageActionService:
             ephemeral: Whether the active session is temporary, which blocks
                 the row actions that would write a derived artifact to disk
                 (currently just Save Image).
+            fork_eligibility: Store-derived active-prefix durability result.
+                Message-local settled/content checks remain presentation-only;
+                this service never infers persisted lineage from message fields.
         """
+        if not isinstance(fork_eligibility, ConsoleForkEligibility):
+            raise TypeError("fork_eligibility must be ConsoleForkEligibility")
         disabled_reason = self._disabled_reason(message)
         is_generation_message = generation_variant_count > 0
         completed_actions = list(self._COMPLETED_ACTIONS)
@@ -345,9 +383,7 @@ class ConsoleMessageActionService:
             else:
                 completed_actions = completed_actions + list(self._TOOL_DIFF_ACTIONS)
         if getattr(message, "change_review_run_id", None):
-            completed_actions = completed_actions + list(
-                self._REVIEW_CHANGES_ACTIONS
-            )
+            completed_actions = completed_actions + list(self._REVIEW_CHANGES_ACTIONS)
         if self._has_image(message):
             completed_actions = (
                 completed_actions
@@ -356,6 +392,12 @@ class ConsoleMessageActionService:
             )
         if getattr(message, "video_metadata", None) is not None:
             completed_actions = completed_actions + list(self._VIDEO_ACTIONS)
+        if not self._is_forkable_row(message):
+            completed_actions = [
+                (action_id, label)
+                for action_id, label in completed_actions
+                if action_id != "fork"
+            ]
         if not self._speak_visible(message):
             completed_actions = [
                 (action_id, label)
@@ -376,11 +418,9 @@ class ConsoleMessageActionService:
             # user re-sends from the composer instead). Speak is also absent
             # here (spec §1a) -- a failed row's content is not a completed
             # response worth reading aloud.
-            return [
-                ConsoleMessageAction(action_id, label)
-                for action_id, label in self._base_actions_with(
-                    self._FAILED_RETRY_ACTIONS
-                )
+            completed_actions = [
+                ("retry", "Retry") if action_id == "regenerate" else (action_id, label)
+                for action_id, label in completed_actions
                 if action_id != "speak"
             ]
         return [
@@ -395,6 +435,7 @@ class ConsoleMessageActionService:
                     generation_browsed_index=generation_browsed_index,
                     ephemeral=ephemeral,
                     video_file_available=video_file_available,
+                    fork_eligibility=fork_eligibility,
                 ),
                 disabled_reason=disabled_reason
                 or self._action_disabled_reason(
@@ -404,6 +445,7 @@ class ConsoleMessageActionService:
                     generation_browsed_index=generation_browsed_index,
                     ephemeral=ephemeral,
                     video_file_available=video_file_available,
+                    fork_eligibility=fork_eligibility,
                 ),
             )
             for action_id, label in completed_actions
@@ -411,7 +453,131 @@ class ConsoleMessageActionService:
 
     def plain_action_labels(self, message: ConsoleChatMessage) -> list[str]:
         """Return terminal-width labels for a message action row."""
-        return self.expand_plain_action_labels(self.available_actions(message))
+        return self.expand_plain_action_labels(self.selected_row_actions(message))
+
+    def action_groups(
+        self,
+        message: ConsoleChatMessage,
+        *,
+        generation_variant_count: int = 0,
+        generation_browsed_index: int = 0,
+        speaking_message_id: str | None = None,
+        original_attempt_available: bool = False,
+        ephemeral: bool = False,
+        video_file_available: bool = False,
+        fork_eligibility: ConsoleForkEligibility = ConsoleForkEligibility(True),
+    ) -> ConsoleMessageActionGroups:
+        """Resolve the row once, then split direct, overflow, and media actions.
+
+        Args:
+            message: Transcript message to resolve.
+            generation_variant_count: Generated-image variant count.
+            generation_browsed_index: Selected generated-image position.
+            speaking_message_id: Message currently driving speech playback.
+            original_attempt_available: Whether a safe original preview exists.
+            ephemeral: Whether disk-writing media actions must be blocked.
+            video_file_available: Whether the ephemeral video bytes still exist.
+            fork_eligibility: Store-derived active-prefix durability result.
+
+        Returns:
+            Immutable primary, overflow, and media action tuples.
+        """
+
+        actions = tuple(
+            self.available_actions(
+                message,
+                generation_variant_count=generation_variant_count,
+                generation_browsed_index=generation_browsed_index,
+                speaking_message_id=speaking_message_id,
+                original_attempt_available=original_attempt_available,
+                ephemeral=ephemeral,
+                video_file_available=video_file_available,
+                fork_eligibility=fork_eligibility,
+            )
+        )
+        if not self._is_forkable_row(message):
+            return ConsoleMessageActionGroups(
+                primary=tuple(
+                    action
+                    for action in actions
+                    if action.action_id in self._SPECIALIZED_ACTION_IDS
+                ),
+                overflow=(),
+                media=(),
+            )
+        overflow = self._overflow_actions(actions)
+        primary = tuple(
+            action for action in actions if action.action_id in self._PRIMARY_ACTION_IDS
+        )
+        if overflow:
+            overflow_enabled = any(action.enabled for action in overflow)
+            primary += (
+                ConsoleMessageAction(
+                    "more",
+                    "More…",
+                    enabled=overflow_enabled,
+                    disabled_reason=(
+                        "" if overflow_enabled else overflow[0].disabled_reason
+                    ),
+                ),
+            )
+        media = tuple(
+            action
+            for action in actions
+            if action.action_id in self._MEDIA_ACTION_IDS
+            and (
+                action.action_id not in {"variant-previous", "variant-next", "keep"}
+                or generation_variant_count > 0
+            )
+        )
+        return ConsoleMessageActionGroups(
+            primary=primary,
+            overflow=overflow,
+            media=media,
+        )
+
+    @staticmethod
+    def _overflow_actions(
+        actions: tuple[ConsoleMessageAction, ...],
+    ) -> tuple[ConsoleMessageAction, ...]:
+        overflow: list[ConsoleMessageAction] = []
+        for action in actions:
+            if action.action_id == "save-as":
+                overflow.append(
+                    ConsoleMessageAction(
+                        "save-as",
+                        "Save as…",
+                        action.enabled,
+                        action.disabled_reason,
+                    )
+                )
+            elif action.action_id == "feedback":
+                overflow.extend(
+                    (
+                        ConsoleMessageAction(
+                            "feedback-up",
+                            "Helpful",
+                            action.enabled,
+                            action.disabled_reason,
+                        ),
+                        ConsoleMessageAction(
+                            "feedback-down",
+                            "Not helpful",
+                            action.enabled,
+                            action.disabled_reason,
+                        ),
+                    )
+                )
+            elif action.action_id == "delete":
+                overflow.append(
+                    ConsoleMessageAction(
+                        "delete",
+                        "Delete",
+                        action.enabled,
+                        action.disabled_reason,
+                    )
+                )
+        return tuple(overflow)
 
     def selected_row_actions(
         self,
@@ -423,6 +589,7 @@ class ConsoleMessageActionService:
         original_attempt_available: bool = False,
         ephemeral: bool = False,
         video_file_available: bool = False,
+        fork_eligibility: ConsoleForkEligibility = ConsoleForkEligibility(True),
     ) -> list[ConsoleMessageAction]:
         """Return the selected-message action row, including Speak/Stop.
 
@@ -432,14 +599,17 @@ class ConsoleMessageActionService:
         only active-playback lifecycle status (generating/playing/stopped/
         failed) so playback stays controllable after deselection.
         """
-        return self.available_actions(
-            message,
-            generation_variant_count=generation_variant_count,
-            generation_browsed_index=generation_browsed_index,
-            speaking_message_id=speaking_message_id,
-            original_attempt_available=original_attempt_available,
-            ephemeral=ephemeral,
-            video_file_available=video_file_available,
+        return list(
+            self.action_groups(
+                message,
+                generation_variant_count=generation_variant_count,
+                generation_browsed_index=generation_browsed_index,
+                speaking_message_id=speaking_message_id,
+                original_attempt_available=original_attempt_available,
+                ephemeral=ephemeral,
+                video_file_available=video_file_available,
+                fork_eligibility=fork_eligibility,
+            ).primary
         )
 
     def plain_action_row(self, message: ConsoleChatMessage) -> str:
@@ -452,7 +622,7 @@ class ConsoleMessageActionService:
         Same un-keyworded ``available_actions`` call as ``plain_action_row``,
         so an export's legend names exactly the glyphs its action row shows.
         """
-        return action_row_guide(self.available_actions(message))
+        return action_row_guide(self.selected_row_actions(message))
 
     @classmethod
     def expand_plain_action_labels(
@@ -547,6 +717,13 @@ class ConsoleMessageActionService:
                 visible_copy="Opened Edit Message.",
                 target_message_id=message.id,
                 target_content=target_content,
+            )
+        if action_id == "fork":
+            return ConsoleActionResult(
+                action_id=action_id,
+                status="fork_requested",
+                visible_copy="Opened Fork chat.",
+                target_message_id=message.id,
             )
         if action_id in {"feedback-up", "feedback-down"}:
             feedback = "up" if action_id == "feedback-up" else "down"
@@ -671,9 +848,15 @@ class ConsoleMessageActionService:
         generation_browsed_index: int = 0,
         ephemeral: bool = False,
         video_file_available: bool = False,
+        fork_eligibility: ConsoleForkEligibility = ConsoleForkEligibility(True),
     ) -> bool:
         if action_id == "regenerate":
             return ConsoleMessageActionService._is_assistant_message(message)
+        if action_id == "fork":
+            return not ConsoleMessageActionService._fork_disabled_reason(
+                message,
+                fork_eligibility,
+            )
         if action_id == "save-image":
             return blocked_reason("save-image", ephemeral=ephemeral) is None
         if action_id in {"video-play", "video-save-copy"}:
@@ -694,12 +877,18 @@ class ConsoleMessageActionService:
         generation_browsed_index: int = 0,
         ephemeral: bool = False,
         video_file_available: bool = False,
+        fork_eligibility: ConsoleForkEligibility = ConsoleForkEligibility(True),
     ) -> str:
         if (
             action_id == "regenerate"
             and not ConsoleMessageActionService._is_assistant_message(message)
         ):
             return "Only assistant messages can be regenerated."
+        if action_id == "fork":
+            return ConsoleMessageActionService._fork_disabled_reason(
+                message,
+                fork_eligibility,
+            )
         if action_id == "save-image":
             return blocked_reason("save-image", ephemeral=ephemeral) or ""
         if action_id in {"video-play", "video-save-copy"} and not video_file_available:
@@ -720,3 +909,32 @@ class ConsoleMessageActionService:
     def _is_assistant_message(message: ConsoleChatMessage) -> bool:
         role = getattr(message.role, "value", message.role)
         return str(role).lower() == ConsoleMessageRole.ASSISTANT.value
+
+    @staticmethod
+    def _is_forkable_row(message: ConsoleChatMessage) -> bool:
+        role = getattr(message.role, "value", message.role)
+        return (
+            str(role).lower()
+            in {ConsoleMessageRole.USER.value, ConsoleMessageRole.ASSISTANT.value}
+            and message.activity_presentation is None
+        )
+
+    @staticmethod
+    def _fork_disabled_reason(
+        message: ConsoleChatMessage,
+        eligibility: ConsoleForkEligibility,
+    ) -> str:
+        if message.status in {"pending", "streaming"}:
+            return "Wait for this message to finish before forking."
+        if message.status == "discarded":
+            return "Discarded messages cannot be forked."
+        if message.status in {"stopped", "failed"} and not message.content.strip():
+            return "This partial response has no content to fork."
+        if (
+            message.status != "complete"
+            and not ConsoleMessageActionService._is_assistant_message(message)
+        ):
+            return "Only complete user messages can be forked."
+        if not eligibility.eligible:
+            return eligibility.reason or "This message cannot be forked."
+        return ""
