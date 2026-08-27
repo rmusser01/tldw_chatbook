@@ -5,7 +5,7 @@ variant fencing, current source contracts, and minimal retry ownership)
 
 Date: 2026-08-26
 
-Related Task: Not yet assigned
+Related Task: `TASK-23088`
 
 Related Spec: [Console chat fork from a message](../../Docs/superpowers/specs/2026-08-26-console-chat-fork-design.md)
 
@@ -292,6 +292,8 @@ Double submission is fenced and the button shows `Forking…` while in flight.
 ## Links
 
 - [Design spec](../../Docs/superpowers/specs/2026-08-26-console-chat-fork-design.md)
+- [Implementation plan](../../Docs/superpowers/plans/2026-08-26-console-chat-fork.md)
+- `TASK-23088`
 - [ADR-024: RAG citation provenance and source resolution](024-rag-citation-provenance-and-source-resolution.md)
 - [ADR-033: Application session state ownership](033-application-session-state-ownership.md)
 - [ADR-044: Ephemeral generated-video storage](044-ephemeral-generated-video-storage-playback-and-streaming.md)

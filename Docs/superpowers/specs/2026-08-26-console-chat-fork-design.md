@@ -2,10 +2,11 @@
 
 **Date:** 2026-08-26
 
-**Status:** Owner-approved direction; critique amendments incorporated; awaiting final
-written-spec approval
+**Status:** Approved for implementation
 
-**Task:** Not yet assigned
+**Task:** `TASK-23088`
+
+**Implementation plan:** [Console chat fork](../plans/2026-08-26-console-chat-fork.md)
 
 **ADR:** [ADR-092](../../../backlog/decisions/092-console-chat-fork-copy-and-authority-boundary.md)
 
@@ -279,7 +280,8 @@ if registration itself fails, no temporary fork remains.
 
 Opening the dialog captures only a lightweight fence, not a mutable object graph:
 
-- source session ID and session generation/revision;
+- source session ID and a composite fingerprint over the explicit forkable
+  configuration allowlist (the fork operation's session revision token);
 - source conversation ID and version when durable;
 - boundary native message ID and persisted message ID when available;
 - active-lineage identity through the boundary;
