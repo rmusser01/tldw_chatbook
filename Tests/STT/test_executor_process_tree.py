@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import ctypes
 import multiprocessing
 import os
 import shutil
@@ -67,11 +68,13 @@ class _FakeWindowsApi:
         calls: list[object],
         *,
         assign_error: bool = False,
-        job_exits: bool = True,
+        active_process_counts: tuple[int, ...] = (0,),
+        query_error: bool = False,
     ) -> None:
         self.calls = calls
         self.assign_error = assign_error
-        self.job_exits = job_exits
+        self.active_process_counts = active_process_counts
+        self.query_error = query_error
 
     def create_kill_on_close_job(self) -> int:
         self.calls.append("create_job")
@@ -86,11 +89,75 @@ class _FakeWindowsApi:
         self.calls.append(("terminate_job", job_handle))
 
     def wait_for_job_empty(self, job_handle: int, timeout: float) -> bool:
-        self.calls.append(("wait_job", job_handle, timeout))
-        return self.job_exits
+        if self.query_error:
+            self.calls.append(("query_job_error", job_handle))
+            raise OSError("query failed")
+        for active_processes in self.active_process_counts:
+            self.calls.append(("active_processes", job_handle, active_processes))
+            if active_processes == 0:
+                return True
+        return False
 
     def close_handle(self, job_handle: int) -> None:
         self.calls.append(("close_job", job_handle))
+
+
+class _FakeCFunction:
+    def __init__(self) -> None:
+        self.argtypes: object = None
+        self.restype: object = None
+
+    def __call__(self, *_args: object) -> int:
+        return 1
+
+
+class _FakeClock:
+    def __init__(self) -> None:
+        self.now = 100.0
+        self.sleeps: list[float] = []
+
+    def monotonic(self) -> float:
+        return self.now
+
+    def sleep(self, duration: float) -> None:
+        self.sleeps.append(duration)
+        self.now += duration
+
+
+def _querying_job_api(
+    active_process_counts: list[int],
+    calls: list[object],
+    *,
+    query_error: bool = False,
+) -> _WindowsJobApi:
+    api = object.__new__(_WindowsJobApi)
+
+    def query(
+        job_handle: int,
+        information_class: int,
+        information: object,
+        information_size: int,
+        _return_length: object,
+    ) -> int:
+        calls.append(("query", job_handle, information_class, information_size))
+        if query_error:
+            return 0
+        accounting = ctypes.cast(
+            information,
+            ctypes.POINTER(process_tree_module._JobObjectBasicAccountingInformation),
+        ).contents
+        accounting.ActiveProcesses = active_process_counts.pop(0)
+        return 1
+
+    api._ctypes = SimpleNamespace(  # type: ignore[attr-defined]
+        byref=ctypes.byref,
+        sizeof=ctypes.sizeof,
+        get_last_error=lambda: 5,
+    )
+    api._kernel32 = SimpleNamespace(  # type: ignore[attr-defined]
+        QueryInformationJobObject=query
+    )
+    return api
 
 
 def _receive(connection: object, timeout: float = 10.0) -> tuple[str, object]:
@@ -287,6 +354,94 @@ def test_windows_job_assignment_happens_before_admission() -> None:
     assert _WindowsJobApi.KILL_ON_JOB_CLOSE == 0x00002000
 
 
+def test_windows_job_api_binds_basic_accounting_query_with_native_layout(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from ctypes import wintypes
+
+    kernel32 = SimpleNamespace(
+        CreateJobObjectW=_FakeCFunction(),
+        SetInformationJobObject=_FakeCFunction(),
+        OpenProcess=_FakeCFunction(),
+        AssignProcessToJobObject=_FakeCFunction(),
+        TerminateJobObject=_FakeCFunction(),
+        CloseHandle=_FakeCFunction(),
+        QueryInformationJobObject=_FakeCFunction(),
+    )
+    monkeypatch.setattr(process_tree_module, "os", SimpleNamespace(name="nt"))
+    monkeypatch.setattr(
+        ctypes,
+        "WinDLL",
+        lambda *_args, **_kwargs: kernel32,
+        raising=False,
+    )
+
+    _WindowsJobApi()
+
+    accounting = process_tree_module._JobObjectBasicAccountingInformation
+    assert [name for name, _kind in accounting._fields_] == [
+        "TotalUserTime",
+        "TotalKernelTime",
+        "ThisPeriodTotalUserTime",
+        "ThisPeriodTotalKernelTime",
+        "TotalPageFaultCount",
+        "TotalProcesses",
+        "ActiveProcesses",
+        "TotalTerminatedProcesses",
+    ]
+    assert ctypes.sizeof(accounting) == 48
+    assert accounting.ActiveProcesses.offset == 40
+    assert kernel32.QueryInformationJobObject.argtypes == [
+        wintypes.HANDLE,
+        ctypes.c_int,
+        wintypes.LPVOID,
+        wintypes.DWORD,
+        ctypes.POINTER(ctypes.c_uint32),
+    ]
+    assert kernel32.QueryInformationJobObject.restype is wintypes.BOOL
+
+
+def test_windows_job_empty_polling_observes_active_process_transition(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    calls: list[object] = []
+    clock = _FakeClock()
+    api = _querying_job_api([2, 1, 0], calls)
+    monkeypatch.setattr(process_tree_module, "time", clock)
+
+    assert api.wait_for_job_empty(99, 1.0) is True
+    assert calls == [
+        ("query", 99, 1, 48),
+        ("query", 99, 1, 48),
+        ("query", 99, 1, 48),
+    ]
+    assert clock.sleeps == [0.01, 0.01]
+
+
+def test_windows_job_empty_polling_stops_at_monotonic_deadline(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    calls: list[object] = []
+    clock = _FakeClock()
+    api = _querying_job_api([1, 1, 1, 1], calls)
+    monkeypatch.setattr(process_tree_module, "time", clock)
+
+    assert api.wait_for_job_empty(99, 0.025) is False
+    assert len(calls) == 4
+    assert clock.sleeps == pytest.approx([0.01, 0.01, 0.005])
+    assert clock.now == pytest.approx(100.025)
+
+
+def test_windows_job_empty_query_failure_is_generic_oserror() -> None:
+    calls: list[object] = []
+    api = _querying_job_api([], calls, query_error=True)
+
+    with pytest.raises(OSError, match="QueryInformationJobObject failed"):
+        api.wait_for_job_empty(99, 1.0)
+
+    assert calls == [("query", 99, 1, 48)]
+
+
 def test_failed_windows_assignment_never_admits_and_reaps_worker() -> None:
     calls: list[object] = []
     process = _FakeProcess(calls)
@@ -314,7 +469,7 @@ def test_windows_dead_leader_still_terminates_and_proves_empty_job() -> None:
     calls: list[object] = []
     process = _FakeProcess(calls)
     admission = _RecordingEvent(calls)
-    api = _FakeWindowsApi(calls)
+    api = _FakeWindowsApi(calls, active_process_counts=(1, 0))
     identity = WorkerContainmentIdentity(pid=process.pid, process_group_id=None)
     tree = ExecutorProcessTree(
         process,
@@ -330,10 +485,35 @@ def test_windows_dead_leader_still_terminates_and_proves_empty_job() -> None:
     assert tree.terminate_tree(term_timeout=0.2, kill_timeout=0.3) is True
     assert calls == [
         ("terminate_job", 99),
-        ("wait_job", 99, 0.2),
+        ("active_processes", 99, 1),
+        ("active_processes", 99, 0),
         ("join", 0.2),
         ("close_job", 99),
     ]
+
+
+def test_windows_job_query_failure_quarantines_and_retains_owned_handle() -> None:
+    calls: list[object] = []
+    process = _FakeProcess(calls)
+    admission = _RecordingEvent(calls)
+    api = _FakeWindowsApi(calls, query_error=True)
+    identity = WorkerContainmentIdentity(pid=process.pid, process_group_id=None)
+    tree = ExecutorProcessTree(
+        process,
+        admission,
+        identity,
+        platform_name="nt",
+        windows_api=api,
+    )
+    tree.admit()
+    process._alive = False
+    calls.clear()
+
+    assert tree.terminate_tree(term_timeout=0.2, kill_timeout=0.3) is False
+    assert tree.quarantined is True
+    assert tree._job_handle == 99
+    assert calls.count(("query_job_error", 99)) == 2
+    assert ("close_job", 99) not in calls
 
 
 def test_cleanup_serializes_late_windows_admission_and_closes_job_once() -> None:
@@ -634,7 +814,7 @@ def test_terminate_tree_is_idempotent_after_proven_windows_cleanup() -> None:
 
     assert calls == first_calls
     assert calls.count(("terminate_job", 99)) == 1
-    assert calls.count(("wait_job", 99, 0.2)) == 1
+    assert calls.count(("active_processes", 99, 0)) == 1
     assert calls.count(("close_job", 99)) == 1
 
 

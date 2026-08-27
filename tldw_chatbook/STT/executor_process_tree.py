@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import ctypes
 import os
 import signal
 import threading
@@ -42,21 +43,33 @@ def enter_worker_containment() -> WorkerContainmentIdentity:
     return WorkerContainmentIdentity(pid=os.getpid(), process_group_id=None)
 
 
+class _JobObjectBasicAccountingInformation(ctypes.Structure):
+    _fields_ = [
+        ("TotalUserTime", ctypes.c_longlong),
+        ("TotalKernelTime", ctypes.c_longlong),
+        ("ThisPeriodTotalUserTime", ctypes.c_longlong),
+        ("ThisPeriodTotalKernelTime", ctypes.c_longlong),
+        ("TotalPageFaultCount", ctypes.c_uint32),
+        ("TotalProcesses", ctypes.c_uint32),
+        ("ActiveProcesses", ctypes.c_uint32),
+        ("TotalTerminatedProcesses", ctypes.c_uint32),
+    ]
+
+
 class _WindowsJobApi:
-    """Lazy ctypes wrapper for the four Job Object calls TASK-601 needs."""
+    """Lazy ctypes wrapper for the Job Object calls TASK-601 needs."""
 
     KILL_ON_JOB_CLOSE = 0x00002000
+    _BASIC_ACCOUNTING_INFORMATION = 1
     _EXTENDED_LIMIT_INFORMATION = 9
+    _EMPTY_POLL_SECONDS = 0.01
     _PROCESS_TERMINATE = 0x0001
     _PROCESS_SET_QUOTA = 0x0100
     _PROCESS_QUERY_LIMITED_INFORMATION = 0x1000
-    _WAIT_OBJECT_0 = 0
-    _WAIT_TIMEOUT = 258
 
     def __init__(self) -> None:
         if os.name != "nt":
             raise OSError("Windows Job Objects require Windows")
-        import ctypes
         from ctypes import wintypes
 
         self._ctypes = ctypes
@@ -116,10 +129,16 @@ class _WindowsJobApi:
         kernel32.AssignProcessToJobObject.restype = wintypes.BOOL
         kernel32.TerminateJobObject.argtypes = [wintypes.HANDLE, wintypes.UINT]
         kernel32.TerminateJobObject.restype = wintypes.BOOL
+        kernel32.QueryInformationJobObject.argtypes = [
+            wintypes.HANDLE,
+            ctypes.c_int,
+            wintypes.LPVOID,
+            wintypes.DWORD,
+            ctypes.POINTER(ctypes.c_uint32),
+        ]
+        kernel32.QueryInformationJobObject.restype = wintypes.BOOL
         kernel32.CloseHandle.argtypes = [wintypes.HANDLE]
         kernel32.CloseHandle.restype = wintypes.BOOL
-        kernel32.WaitForSingleObject.argtypes = [wintypes.HANDLE, wintypes.DWORD]
-        kernel32.WaitForSingleObject.restype = wintypes.DWORD
 
     def _last_error(self, operation: str) -> OSError:
         error = self._ctypes.get_last_error()
@@ -175,13 +194,23 @@ class _WindowsJobApi:
     def wait_for_job_empty(self, job_handle: int, timeout: float) -> bool:
         """Wait until every process assigned to one job has exited."""
 
-        milliseconds = min(max(int(max(0.0, timeout) * 1000), 0), 0xFFFFFFFE)
-        result = int(self._kernel32.WaitForSingleObject(job_handle, milliseconds))
-        if result == self._WAIT_OBJECT_0:
-            return True
-        if result == self._WAIT_TIMEOUT:
-            return False
-        raise self._last_error("WaitForSingleObject")
+        deadline = time.monotonic() + max(0.0, timeout)
+        while True:
+            accounting = _JobObjectBasicAccountingInformation()
+            if not self._kernel32.QueryInformationJobObject(
+                job_handle,
+                self._BASIC_ACCOUNTING_INFORMATION,
+                self._ctypes.byref(accounting),
+                self._ctypes.sizeof(accounting),
+                None,
+            ):
+                raise self._last_error("QueryInformationJobObject")
+            if accounting.ActiveProcesses == 0:
+                return True
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                return False
+            time.sleep(min(self._EMPTY_POLL_SECONDS, remaining))
 
     def close_handle(self, job_handle: int) -> None:
         """Close a Job Object handle if present."""
