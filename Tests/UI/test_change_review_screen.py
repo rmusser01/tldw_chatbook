@@ -17,12 +17,14 @@ from textual.app import App
 from textual.containers import Vertical
 from textual.widgets import Button, Input, Select, Static, Tree
 
+from Tests.UI.test_console_narrow_layout import _compositor_text
 from tldw_chatbook.DB.AgentRuns_DB import AgentRunsDB
 from tldw_chatbook.UI.Screens.change_review_screen import (
     AgentRunsChangeReviewProvider,
     ChangeReviewDiffPane,
     ChangeReviewScreen,
     _hunk_containing_line,
+    _window_labels,
 )
 from tldw_chatbook.Widgets.glyph_fallback import resolve_glyph
 from tldw_chatbook.Workspaces.change_tracking import ShadowRepoService
@@ -54,6 +56,76 @@ def _record_turn(db, tracker, root, run_id: str, mutate) -> None:
             untracked_oversize=rec.untracked_oversize,
             nested_repos=rec.nested_repos,
         )
+
+
+def _same_root_window_provider(tmp_path, kinds: tuple[str, ...]):
+    """Build real consecutive snapshot windows over one root and path."""
+    root = tmp_path / "root"
+    root.mkdir()
+    (root / "shared.txt").write_text("seed\n")
+
+    service = ShadowRepoService(data_dir=tmp_path / "appdata")
+    tracker = ChangeTurnTracker(service=service)
+    db = AgentRunsDB(tmp_path / "runs.db", client_id="t")
+    conv = "conv-1"
+    run_id = db.create_run(conversation_id=conv, agent_kind="primary")
+    markers = ("ALPHA_ONLY_MARKER", "BRAVO_ONLY_MARKER")
+
+    for kind, marker in zip(kinds, markers):
+        handle = tracker.begin_turn([root])
+        handle.await_baseline()
+        (root / "shared.txt").write_text(f"{marker}\n")
+        for rec in tracker.end_turn(handle):
+            db.record_change_snapshot(
+                run_id=run_id,
+                root=rec.root,
+                baseline_sha=rec.baseline_sha,
+                end_sha=rec.end_sha,
+                files_changed=rec.files_changed,
+                adds=rec.adds,
+                dels=rec.dels,
+                tracking_error=rec.tracking_error,
+                untracked_oversize=rec.untracked_oversize,
+                nested_repos=rec.nested_repos,
+                kind=kind,
+            )
+
+    rows = db.change_snapshots_for_run_review(run_id)
+    assert len(rows) == len(kinds), (
+        f"fixture must produce one row per window, got {rows}"
+    )
+    provider = AgentRunsChangeReviewProvider(
+        db=db, service=service, conversation_id=conv
+    )
+    return provider, root, run_id, tuple(int(row["id"]) for row in rows)
+
+
+@pytest.fixture()
+def same_root_windows_fixture(tmp_path):
+    from tldw_chatbook.Chat.console_agent_bridge import (
+        CHANGE_KIND_SUBAGENT_POST_TURN,
+        CHANGE_KIND_TURN,
+    )
+
+    return _same_root_window_provider(
+        tmp_path,
+        (CHANGE_KIND_TURN, CHANGE_KIND_SUBAGENT_POST_TURN),
+    )
+
+
+def test_same_root_window_label_taxonomy_is_complete_and_stable(tmp_path):
+    root = str(tmp_path / "root")
+    rows = [
+        {"root": root, "kind": "turn"},
+        {"root": root, "kind": "turn_concurrent_subagent"},
+        {"root": root, "kind": "subagent_post_turn"},
+    ]
+
+    assert [_window_labels(rows)[id(row)] for row in rows] == [
+        "Turn",
+        "Turn with sub-agent overlap",
+        "Sub-agent after turn",
+    ]
 
 
 @pytest.fixture()
@@ -996,71 +1068,143 @@ async def test_unknown_initial_path_falls_back_to_the_first_leaf(review_fixture)
 
 
 @pytest.mark.asyncio
-async def test_initial_snapshot_id_disambiguates_two_windows_on_same_path(tmp_path):
-    """TASK-18060 Task 3 (review-rail spec §2/§3): a run's ``change_snapshots``
-    can hold rows from TWO windows -- the turn's own window and its
-    surviving sub-agents' post-turn window -- and both can cover the SAME
-    path with DIFFERENT diff content (same fixture shape as
-    ``test_console_turn_file_card.py``'s
-    ``test_real_provider_two_windows_on_same_root_no_duplicates_own_diffs``).
-    Path-only selection is ambiguous here -- it can only ever reach the
-    FIRST-recorded window's leaf. ``initial_snapshot_id`` must pick the
-    leaf whose OWN row id matches, reaching either window on demand.
-    """
-    from tldw_chatbook.Chat.console_agent_bridge import (
-        CHANGE_KIND_SUBAGENT_POST_TURN,
-        CHANGE_KIND_TURN,
+async def test_same_root_windows_have_visible_source_labels_and_honest_counts(
+    same_root_windows_fixture,
+):
+    """Removing the window prefix makes two painted rows look identical."""
+    provider, _root, run_id, _window_ids = same_root_windows_fixture
+    turn = provider.turn_for_run(run_id)
+    assert turn is not None
+    assert "2 file changes +2 −2" in turn.label
+
+    app = _Harness(provider, initial_run_id=run_id)
+    async with app.run_test(size=(80, 24)) as pilot:
+        screen = await _wait_for(
+            pilot,
+            lambda: app.screen if isinstance(app.screen, ChangeReviewScreen) else None,
+            "review screen",
+        )
+        labels = await _wait_for(
+            pilot,
+            lambda: (lambda values: values if len(values) == 2 else None)(
+                [
+                    label
+                    for label in _tree_labels(
+                        screen.query_one("#change-review-tree", Tree)
+                    )
+                    if "shared.txt" in label
+                ]
+            ),
+            "both same-root window labels",
+        )
+        assert any(label.startswith("Turn · shared.txt") for label in labels), labels
+        assert any(
+            label.startswith("Sub-agent after turn · shared.txt") for label in labels
+        ), labels
+        assert str(screen.query_one("#change-review-totals", Static).renderable) == (
+            "2 file changes  +2 −2"
+        )
+        painted = _compositor_text(app.export_screenshot(simplify=True))
+        assert "Turn · shared.txt" in painted
+        assert "Sub-agent after turn · shared.txt" in painted
+
+
+@pytest.mark.asyncio
+async def test_unknown_same_root_window_kinds_receive_numbered_labels(tmp_path):
+    """Future or malformed duplicate kinds must never collapse visually."""
+    provider, _root, run_id, _window_ids = _same_root_window_provider(
+        tmp_path, ("future_kind", "future_kind")
     )
+    app = _Harness(provider, initial_run_id=run_id)
+    async with app.run_test(size=(80, 24)) as pilot:
+        screen = await _wait_for(
+            pilot,
+            lambda: app.screen if isinstance(app.screen, ChangeReviewScreen) else None,
+            "review screen",
+        )
+        labels = await _wait_for(
+            pilot,
+            lambda: (lambda values: values if len(values) == 2 else None)(
+                [
+                    label
+                    for label in _tree_labels(
+                        screen.query_one("#change-review-tree", Tree)
+                    )
+                    if "shared.txt" in label
+                ]
+            ),
+            "both unknown-kind window labels",
+        )
+        assert any(
+            label.startswith("Change window 1 · shared.txt") for label in labels
+        ), labels
+        assert any(
+            label.startswith("Change window 2 · shared.txt") for label in labels
+        ), labels
 
-    root = tmp_path / "root"
-    root.mkdir()
-    (root / "shared.txt").write_text("seed\n")
 
+@pytest.mark.asyncio
+async def test_ordinary_multi_root_labels_remain_unchanged(tmp_path):
+    """Distinct roots keep the existing path/stats/root label ordering."""
+    root_a = tmp_path / "alpha"
+    root_b = tmp_path / "beta"
+    root_a.mkdir()
+    root_b.mkdir()
     service = ShadowRepoService(data_dir=tmp_path / "appdata")
     tracker = ChangeTurnTracker(service=service)
     db = AgentRunsDB(tmp_path / "runs.db", client_id="t")
-    conv = "conv-1"
-    run_id = db.create_run(conversation_id=conv, agent_kind="primary")
+    run_id = db.create_run(conversation_id="conv-1", agent_kind="primary")
 
-    def _record_window(kind: str, mutate) -> None:
-        handle = tracker.begin_turn([root])
-        handle.await_baseline()
-        mutate()
-        for rec in tracker.end_turn(handle):
-            db.record_change_snapshot(
-                run_id=run_id,
-                root=rec.root,
-                baseline_sha=rec.baseline_sha,
-                end_sha=rec.end_sha,
-                files_changed=rec.files_changed,
-                adds=rec.adds,
-                dels=rec.dels,
-                tracking_error=rec.tracking_error,
-                untracked_oversize=rec.untracked_oversize,
-                nested_repos=rec.nested_repos,
-                kind=kind,
-            )
-
-    # Window 1: the turn's own window -- recorded FIRST.
-    _record_window(
-        CHANGE_KIND_TURN,
-        lambda: (root / "shared.txt").write_text("ALPHA_ONLY_MARKER\n"),
-    )
-    # Window 2: the post-turn window -- same run, same root, same path,
-    # recorded SECOND -- its baseline is window 1's end state.
-    _record_window(
-        CHANGE_KIND_SUBAGENT_POST_TURN,
-        lambda: (root / "shared.txt").write_text("BRAVO_ONLY_MARKER\n"),
-    )
-
-    rows = db.change_snapshots_for_run_review(run_id)
-    assert len(rows) == 2, f"fixture must produce exactly two windows, got {rows}"
-    window1_id, window2_id = int(rows[0]["id"]), int(rows[1]["id"])
-    assert window1_id != window2_id
+    handle = tracker.begin_turn([root_a, root_b])
+    handle.await_baseline()
+    (root_a / "alpha.txt").write_text("alpha\n")
+    (root_b / "beta.txt").write_text("beta\n")
+    for rec in tracker.end_turn(handle):
+        db.record_change_snapshot(
+            run_id=run_id,
+            root=rec.root,
+            baseline_sha=rec.baseline_sha,
+            end_sha=rec.end_sha,
+            files_changed=rec.files_changed,
+            adds=rec.adds,
+            dels=rec.dels,
+        )
 
     provider = AgentRunsChangeReviewProvider(
-        db=db, service=service, conversation_id=conv
+        db=db, service=service, conversation_id="conv-1"
     )
+    app = _Harness(provider, initial_run_id=run_id)
+    async with app.run_test(size=(120, 32)) as pilot:
+        screen = await _wait_for(
+            pilot,
+            lambda: app.screen if isinstance(app.screen, ChangeReviewScreen) else None,
+            "review screen",
+        )
+        labels = await _wait_for(
+            pilot,
+            lambda: (lambda values: values if len(values) == 2 else None)(
+                [
+                    label
+                    for label in _tree_labels(
+                        screen.query_one("#change-review-tree", Tree)
+                    )
+                    if ".txt" in label
+                ]
+            ),
+            "both multi-root labels",
+        )
+        assert "alpha.txt  +1 −0  · alpha" in labels
+        assert "beta.txt  +1 −0  · beta" in labels
+
+
+@pytest.mark.asyncio
+async def test_initial_snapshot_id_disambiguates_two_windows_on_same_path(
+    same_root_windows_fixture,
+):
+    """A snapshot id selects the matching same-path window's own diff."""
+    provider, _root, run_id, window_ids = same_root_windows_fixture
+    window1_id, window2_id = window_ids
+    assert window1_id != window2_id
 
     async def _opened_diff(snapshot_id: int) -> str:
         app = _Harness(
@@ -1072,34 +1216,78 @@ async def test_initial_snapshot_id_disambiguates_two_windows_on_same_path(tmp_pa
         async with app.run_test(size=(160, 48)) as pilot:
             screen = await _wait_for(
                 pilot,
-                lambda: app.screen
-                if isinstance(app.screen, ChangeReviewScreen)
-                else None,
+                lambda: (
+                    app.screen if isinstance(app.screen, ChangeReviewScreen) else None
+                ),
                 "review screen",
             )
-            await _wait_for(
-                pilot, lambda: screen._leaves or None, "leaves loaded"
-            )
-            assert len(screen._leaves) == 2, (
-                "both windows' leaves for shared.txt must both be present"
-            )
-            text = await _wait_for(
+            await _wait_for(pilot, lambda: screen._leaves or None, "leaves loaded")
+            assert len(screen._leaves) == 2
+            return await _wait_for(
                 pilot,
                 lambda: (
-                    lambda t: t
-                    if ("ALPHA_ONLY_MARKER" in t or "BRAVO_ONLY_MARKER" in t)
-                    else None
+                    lambda text: (
+                        text
+                        if (
+                            "ALPHA_ONLY_MARKER" in text
+                            or "BRAVO_ONLY_MARKER" in text
+                        )
+                        else None
+                    )
                 )(screen.diff_pane_text()),
                 "a window's diff rendered",
             )
-            return text
 
     window1_diff = await _opened_diff(window1_id)
-    assert "ALPHA_ONLY_MARKER" in window1_diff, window1_diff
-    assert "BRAVO_ONLY_MARKER" not in window1_diff, window1_diff
+    assert "ALPHA_ONLY_MARKER" in window1_diff
+    assert "BRAVO_ONLY_MARKER" not in window1_diff
 
     window2_diff = await _opened_diff(window2_id)
-    assert "BRAVO_ONLY_MARKER" in window2_diff, window2_diff
+    assert "BRAVO_ONLY_MARKER" in window2_diff
+
+
+@pytest.mark.asyncio
+async def test_undo_all_refuses_same_root_windows_before_preflight(
+    same_root_windows_fixture, monkeypatch
+):
+    """Removing the guard starts an order-sensitive whole-turn revert."""
+    provider, root, run_id, _window_ids = same_root_windows_fixture
+    preflight_calls: list[tuple[int, tuple[str, ...]]] = []
+    original_preflight = provider.preflight_revert
+
+    def record_preflight(row, paths):
+        preflight_calls.append((int(row["id"]), tuple(paths)))
+        return original_preflight(row, paths)
+
+    monkeypatch.setattr(provider, "preflight_revert", record_preflight)
+    app = _Harness(provider, initial_run_id=run_id)
+    notices: list[tuple[str, str | None]] = []
+    app.notify = lambda message, **kwargs: notices.append(
+        (str(message), kwargs.get("severity"))
+    )
+
+    async with app.run_test(size=(120, 32)) as pilot:
+        screen = await _wait_for(
+            pilot,
+            lambda: app.screen if isinstance(app.screen, ChangeReviewScreen) else None,
+            "review screen",
+        )
+        await _wait_for(pilot, lambda: screen._leaves or None, "turn files")
+        screen.action_undo_all()
+        await pilot.pause(0.2)
+
+        assert app.screen is screen, "ambiguous Undo All opened a confirm modal"
+        assert preflight_calls == [], (
+            "same-root windows reached order-sensitive revert preflight"
+        )
+        assert (root / "shared.txt").read_text() == "BRAVO_ONLY_MARKER\n"
+        assert notices == [
+            (
+                "This turn has multiple change windows for the same workspace. "
+                "Revert files individually from one labeled window at a time.",
+                "warning",
+            )
+        ]
 
 
 @pytest.mark.asyncio
