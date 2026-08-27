@@ -4,7 +4,7 @@ title: Resume prior character chats from Roleplay
 status: In Progress
 assignee: []
 created_date: '2026-08-26 15:14'
-updated_date: '2026-08-27 01:33'
+updated_date: '2026-08-27 02:28'
 labels:
   - roleplay
   - console
@@ -68,4 +68,6 @@ Detailed executable plan: Docs/superpowers/plans/2026-08-26-roleplay-resume-prio
 - Verification: the exact nine-file targeted gate passed 1202/1202 with zero failures or skips; CSS build and bundle sync passed; Ruff passed across all 22 changed Python/test files; diff checks passed; final whole-branch re-review found all findings addressed and reported Ready to merge. The full repository suite was not run, per repository instruction.
 
 Post-push Qodo follow-up: addressed all ten findings. Added the named resume-ID limit and Google-style public API documentation; bound preview ownership to the exact selected character; invalidated previews before character-detail awaits; and serialized token-guarded transcript replacement with two mounted race regressions. No new ADR is required because this hardens the existing Roleplay-read-only/Console-owner boundary without changing storage or cross-module authority.
+
+Final rebase/required-check follow-up: rebased onto origin/dev 6bed8d6f. Generated stylesheet conflicts were resolved by rebuilding from source modules. Investigated the failed Derived Artifacts gate, reviewed all six changed diagnostic statements (+4 workspace, +2 chat_screen), removed the raw conversation ID from the saved-chat presentation warning, added a regression proving the identifier is absent from persistent logs, and regenerated Docs/security/production-diagnostic-inventory.json. The complete six-check local equivalent of the required job passed, as did the rebased nine-file feature gate (1204/1204). ADR check remains unchanged: ADR-046 governs this boundary; no new ADR is required.
 <!-- SECTION:NOTES:END -->

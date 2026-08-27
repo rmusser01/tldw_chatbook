@@ -4074,7 +4074,7 @@ class ConsoleWorkspaceController:
             raise
         except Exception:
             logger.opt(exception=True).warning(
-                "Unable to present Console saved conversation {}", target
+                "Unable to present Console saved conversation"
             )
             if session is not None:
                 store.rollback_restored_session(

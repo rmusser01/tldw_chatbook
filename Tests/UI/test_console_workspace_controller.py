@@ -3261,14 +3261,24 @@ def _atomic_resume_controller(
 async def test_open_saved_conversation_atomic_rollback_on_presentation_failure(
     failure_boundary,
 ):
+    from loguru import logger as loguru_logger
+
     controller, store, prior, prior_settings, durable, notifications = (
         _atomic_resume_controller(
             failure_boundary=failure_boundary,
             failure=RuntimeError(f"failed {failure_boundary}"),
         )
     )
+    private_target = "resume-target-private"
+    warnings: list[str] = []
+    sink_id = loguru_logger.add(
+        lambda message: warnings.append(message.record["message"]), level="WARNING"
+    )
 
-    result = await controller.open_console_workspace_conversation("resume-target")
+    try:
+        result = await controller.open_console_workspace_conversation(private_target)
+    finally:
+        loguru_logger.remove(sink_id)
 
     assert result is None
     assert store.active_session_id == prior.id
@@ -3277,6 +3287,8 @@ async def test_open_saved_conversation_atomic_rollback_on_presentation_failure(
     assert prior.draft == "draft stays exact"
     assert durable.mutations == []
     assert notifications == [(RESUME_FAILURE_COPY, "error", {"timeout": 15})]
+    assert "Unable to present Console saved conversation" in warnings
+    assert all(private_target not in warning for warning in warnings)
 
 
 @pytest.mark.asyncio
