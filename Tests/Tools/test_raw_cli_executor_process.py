@@ -7,6 +7,7 @@ from multiprocessing.connection import wait
 import os
 from pathlib import Path
 import shlex
+import stat
 import subprocess
 import sys
 import tempfile
@@ -77,6 +78,20 @@ def _wait_for_pid_exit(pid: int, timeout: float = 5.0) -> bool:
     return _pid_has_exited(pid)
 
 
+@pytest.fixture
+def spool_owners(monkeypatch: pytest.MonkeyPatch) -> list[Any]:
+    owners: list[Any] = []
+    real_open_spool = raw_cli._open_spool
+
+    def recording_open_spool(max_record_bytes: int) -> Any:
+        owner = real_open_spool(max_record_bytes)
+        owners.append(owner)
+        return owner
+
+    monkeypatch.setattr(raw_cli, "_open_spool", recording_open_spool)
+    return owners
+
+
 def test_request_validation_happens_before_worker_start(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -137,6 +152,7 @@ def test_spawned_worker_reports_identity_and_waits_for_admission_before_shell(
 @pytest.mark.parametrize("admission_mode", ["false", "raise"])
 def test_failed_or_exceptional_admission_kills_waiting_worker_without_shell(
     tmp_path: Path,
+    spool_owners: list[Any],
     admission_mode: str,
 ) -> None:
     marker = tmp_path / "must-not-launch"
@@ -164,6 +180,8 @@ def test_failed_or_exceptional_admission_kills_waiting_worker_without_shell(
     assert result.exit_code is None
     assert marker.exists() is False
     assert captured_processes and captured_processes[0].is_alive() is False
+    assert len(spool_owners) == 1
+    assert spool_owners[0].closed is True
 
 
 def test_runtime_recheck_refusal_keeps_launch_gate_closed(
@@ -374,6 +392,7 @@ def test_streams_stay_distinct_invalid_utf8_is_replaced_and_nonzero_is_exited(
 
 def test_timeout_and_cancellation_share_idempotent_tree_cleanup(
     tmp_path: Path,
+    spool_owners: list[Any],
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     calls: list[int] = []
@@ -424,6 +443,8 @@ def test_timeout_and_cancellation_share_idempotent_tree_cleanup(
     assert result_box[0].terminal_state == "cancelled"
     assert len(calls) == 2
     assert len(set(calls)) == 2
+    assert len(spool_owners) == 2
+    assert all(owner.closed for owner in spool_owners)
 
 
 def test_execution_timeout_clock_starts_only_after_admission(
@@ -673,22 +694,12 @@ def test_ansi_osc_controls_are_removed_and_rich_markup_remains_literal(
     assert "title" not in result.record_output
 
 
-def test_spool_stays_memory_backed_pathless_and_bounded(
+def test_disk_spool_owner_closes_before_success_and_preserves_record_cap(
     tmp_path: Path,
+    spool_owners: list[Any],
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     record_limit = 128
-    created: list[Any] = []
-    options: list[dict[str, Any]] = []
-    real_spooled_file = tempfile.SpooledTemporaryFile
-
-    def recording_spooled_file(*args: Any, **kwargs: Any) -> Any:
-        spool = real_spooled_file(*args, **kwargs)
-        created.append(spool)
-        options.append(kwargs)
-        return spool
-
-    monkeypatch.setattr(tempfile, "SpooledTemporaryFile", recording_spooled_file)
     monkeypatch.setattr(raw_cli, "configured_max_record_bytes", lambda: record_limit)
 
     result = _executor().execute(
@@ -700,15 +711,43 @@ def test_spool_stays_memory_backed_pathless_and_bounded(
 
     assert result.terminal_state == "exited"
     assert len(result.record_output.encode("utf-8")) <= record_limit
-    assert len(created) == 1
-    assert options == [{"max_size": record_limit + 1, "mode": "w+b"}]
-    assert created[0]._rolled is False
-    assert created[0].name is None
-    assert created[0].closed is True
+    assert len(spool_owners) == 1
+    assert spool_owners[0].closed is True
+
+
+@pytest.mark.skipif(os.name != "posix", reason="native POSIX disk-spool evidence")
+def test_posix_spool_is_anonymous_disk_backed_and_mode_0600() -> None:
+    owner = raw_cli._open_spool(128)
+    assert hasattr(owner, "file"), "disk spool owner is missing"
+    spool = owner.file
+    descriptor = spool.fileno()
+
+    assert stat.S_ISREG(os.fstat(descriptor).st_mode)
+    assert stat.S_IMODE(os.fstat(descriptor).st_mode) == 0o600
+    assert not isinstance(spool.name, (str, bytes, os.PathLike))
+
+    owner.close()
+    assert owner.closed is True
+
+
+@pytest.mark.skipif(os.name != "nt", reason="native Windows disk-spool evidence")
+def test_windows_spool_uses_temporary_delete_on_close_storage() -> None:
+    owner = raw_cli._open_spool(128)
+    assert hasattr(owner, "file"), "disk spool owner is missing"
+    spool = owner.file
+    name = spool.name
+    assert spool.fileno() >= 0
+    assert isinstance(name, (str, bytes, os.PathLike))
+    assert Path(name).exists()
+
+    owner.close()
+    assert owner.closed is True
+    assert Path(name).exists() is False
 
 
 def test_spool_is_removed_after_spawn_failure(
     tmp_path: Path,
+    spool_owners: list[Any],
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     def fail_start(_process: Any) -> None:
@@ -724,6 +763,8 @@ def test_spool_is_removed_after_spawn_failure(
     )
 
     assert result.terminal_state == "spawn_failed"
+    assert len(spool_owners) == 1
+    assert spool_owners[0].closed is True
 
 
 def test_spool_setup_failure_exposes_no_private_path(
@@ -735,7 +776,11 @@ def test_spool_setup_failure_exposes_no_private_path(
     def fail_spool_setup(*_args: Any, **_kwargs: Any) -> Any:
         raise OSError(f"synthetic setup failure at {private_path}")
 
-    monkeypatch.setattr(tempfile, "SpooledTemporaryFile", fail_spool_setup)
+    monkeypatch.setattr(
+        tempfile,
+        "mkstemp" if os.name == "posix" else "TemporaryFile",
+        fail_spool_setup,
+    )
 
     with pytest.raises(OSError, match="raw CLI output spool unavailable") as error:
         _executor().execute(
@@ -748,54 +793,38 @@ def test_spool_setup_failure_exposes_no_private_path(
     assert private_path not in str(error.value)
 
 
-@pytest.mark.parametrize("spawn_fails", [False, True])
-def test_path_bearing_unlink_failure_is_irrelevant_without_named_spool(
+@pytest.mark.skipif(os.name != "posix", reason="POSIX unlink-before-write evidence")
+def test_transient_posix_setup_unlink_failure_is_retried_and_pathless(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
-    spawn_fails: bool,
 ) -> None:
-    unlink_calls: list[Any] = []
-    created: list[Any] = []
-    real_spooled_file = tempfile.SpooledTemporaryFile
+    real_mkstemp = tempfile.mkstemp
+    real_unlink = os.unlink
+    attempts: list[Path] = []
 
-    def fail_unlink(path: Any) -> None:
-        unlink_calls.append(path)
-        raise OSError(f"unlink failed for {path}")
+    def local_mkstemp(*_args: Any, **_kwargs: Any) -> tuple[int, str]:
+        return real_mkstemp(dir=tmp_path)
 
-    def recording_spooled_file(*args: Any, **kwargs: Any) -> Any:
-        spool = real_spooled_file(*args, **kwargs)
-        created.append(spool)
-        return spool
+    def transient_unlink(path: Any) -> None:
+        attempts.append(Path(path))
+        if len(attempts) == 1:
+            raise OSError(f"transient unlink failure at {path}")
+        real_unlink(path)
 
-    def fail_start(_process: Any) -> None:
-        raise OSError("spawn failed")
+    monkeypatch.setattr(tempfile, "mkstemp", local_mkstemp)
+    monkeypatch.setattr(raw_cli.os, "unlink", transient_unlink)
 
-    monkeypatch.setattr(raw_cli.os, "unlink", fail_unlink)
-    monkeypatch.setattr(tempfile, "SpooledTemporaryFile", recording_spooled_file)
-    if spawn_fails:
-        monkeypatch.setattr(
-            multiprocessing.context.SpawnProcess,
-            "start",
-            fail_start,
-        )
+    with pytest.raises(OSError, match="raw CLI output spool unavailable") as error:
+        raw_cli._open_spool(128)
 
-    result = _executor().execute(
-        _request(tmp_path, _python_command("print('pathless')")),
-        cancel_event=threading.Event(),
-        on_event=lambda _event: None,
-        admit_worker=_admit,
-    )
-
-    assert result.terminal_state == ("spawn_failed" if spawn_fails else "exited")
-    assert unlink_calls == []
-    assert len(created) == 1
-    assert created[0]._rolled is False
-    assert created[0].name is None
-    assert created[0].closed is True
+    assert len(attempts) >= 2
+    assert attempts[0].exists() is False
+    assert str(tmp_path) not in str(error.value)
 
 
 def test_spool_and_process_are_cleaned_when_event_callback_raises(
     tmp_path: Path,
+    spool_owners: list[Any],
 ) -> None:
     worker: list[Any] = []
 
@@ -820,22 +849,28 @@ def test_spool_and_process_are_cleaned_when_event_callback_raises(
         )
 
     assert worker and worker[0].is_alive() is False
+    assert len(spool_owners) == 1
+    assert spool_owners[0].closed is True
 
 
-def test_pathless_spool_close_failure_cannot_leak_file_or_exception(
+def test_disk_spool_close_retries_when_first_close_fails_before_closing(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     workers: list[Any] = []
-    underlying = tempfile.SpooledTemporaryFile(max_size=1025, mode="w+b")
+    underlying = tempfile.TemporaryFile(mode="w+b")
+    close_attempts = 0
 
     class CloseFailingSpool:
         def __getattr__(self, name: str) -> Any:
             return getattr(underlying, name)
 
         def close(self) -> None:
+            nonlocal close_attempts
+            close_attempts += 1
+            if close_attempts == 1:
+                raise OSError("synthetic close failure at /private/raw-cli-secret")
             underlying.close()
-            raise OSError("synthetic close failure at /private/raw-cli-secret")
 
     def admit(tree: ExecutorProcessTree, commit_launch: Any) -> bool:
         workers.append(tree._process)
@@ -843,7 +878,10 @@ def test_pathless_spool_close_failure_cannot_leak_file_or_exception(
         commit_launch()
         return True
 
-    monkeypatch.setattr(raw_cli, "_open_spool", lambda *_args: CloseFailingSpool())
+    owner_type = getattr(raw_cli, "_DiskSpoolOwner", None)
+    assert owner_type is not None, "disk spool owner is missing"
+    owner = owner_type(CloseFailingSpool())
+    monkeypatch.setattr(raw_cli, "_open_spool", lambda *_args: owner)
     result = _executor().execute(
         _request(tmp_path, _python_command("print('close failure')")),
         cancel_event=threading.Event(),
@@ -852,14 +890,15 @@ def test_pathless_spool_close_failure_cannot_leak_file_or_exception(
     )
 
     assert result.terminal_state == "exited"
-    assert underlying._rolled is False
-    assert underlying.name is None
+    assert close_attempts == 2
     assert underlying.closed is True
+    assert owner.closed is True
     assert workers and workers[0].is_alive() is False
 
 
 def test_spool_is_gone_before_a_downstream_run_log_failure(
     tmp_path: Path,
+    spool_owners: list[Any],
 ) -> None:
     result = _executor().execute(
         _request(tmp_path, _python_command("print('persist me')")),
@@ -867,6 +906,8 @@ def test_spool_is_gone_before_a_downstream_run_log_failure(
         on_event=lambda _event: None,
         admit_worker=_admit,
     )
+    assert len(spool_owners) == 1
+    assert spool_owners[0].closed is True
 
     def fail_run_log(_result: Any) -> None:
         raise OSError("simulated run-log failure")

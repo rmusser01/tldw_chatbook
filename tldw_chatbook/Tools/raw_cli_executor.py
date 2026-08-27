@@ -610,23 +610,64 @@ def _safe_close(value: Any | None) -> None:
         pass
 
 
-def _open_spool(max_record_bytes: int) -> BinaryIO:
-    """Create a bounded private spool that cannot roll to a named file."""
+class _DiskSpoolOwner:
+    """Own one anonymous/delete-on-close disk spool through proven close."""
+
+    def __init__(self, file: BinaryIO) -> None:
+        self.file = file
+
+    @property
+    def closed(self) -> bool:
+        return bool(self.file.closed)
+
+    def close(self) -> None:
+        for _attempt in range(2):
+            if self.closed:
+                return
+            try:
+                self.file.close()
+            except OSError:
+                pass
+        if not self.closed:
+            raise OSError("raw CLI output spool cleanup failed") from None
+
+
+def _open_spool(_max_record_bytes: int) -> _DiskSpoolOwner:
+    """Create disk storage that has no durable name before sensitive writes."""
+    if os.name != "posix":
+        try:
+            return _DiskSpoolOwner(tempfile.TemporaryFile(mode="w+b"))
+        except OSError:
+            raise OSError("raw CLI output spool unavailable") from None
+
+    descriptor: int | None = None
+    path: str | None = None
     try:
-        return tempfile.SpooledTemporaryFile(
-            max_size=max_record_bytes + 1,
-            mode="w+b",
-        )
+        descriptor, path = tempfile.mkstemp()
+        os.fchmod(descriptor, 0o600)
+        try:
+            os.unlink(path)
+        except OSError:
+            try:
+                os.unlink(path)
+            except OSError:
+                pass
+            raise OSError("raw CLI output spool unavailable") from None
+        file = os.fdopen(descriptor, "w+b", buffering=0)
+        descriptor = None
+        return _DiskSpoolOwner(file)
     except OSError:
+        if descriptor is not None:
+            try:
+                os.close(descriptor)
+            except OSError:
+                pass
+        if path is not None:
+            try:
+                os.unlink(path)
+            except OSError:
+                pass
         raise OSError("raw CLI output spool unavailable") from None
-
-
-def _close_spool(spool: BinaryIO) -> None:
-    """Close the pathless spool without exposing cleanup details."""
-    try:
-        spool.close()
-    except OSError:
-        pass
 
 
 def _cleanup_tree(tree: ExecutorProcessTree, *, terminate: bool) -> bool:
@@ -657,8 +698,8 @@ class RawShellExecutor:
             raise TypeError("on_event and admit_worker must be callable")
 
         record_limit = configured_max_record_bytes()
-        spool = _open_spool(record_limit)
-        accumulator = _OutputAccumulator(spool, record_limit)
+        spool_owner = _open_spool(record_limit)
+        accumulator = _OutputAccumulator(spool_owner.file, record_limit)
         process: Any | None = None
         tree: ExecutorProcessTree | None = None
         identity_receive: Any | None = None
@@ -795,7 +836,7 @@ class RawShellExecutor:
                     output_queue.join_thread()
                 except (OSError, ValueError):
                     pass
-            _close_spool(spool)
+            spool_owner.close()
 
     @staticmethod
     def _receive_identity(
