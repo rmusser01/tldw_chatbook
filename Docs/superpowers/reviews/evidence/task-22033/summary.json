@@ -6,8 +6,8 @@
     "status": "Read-only preview \u00b7 Not included in bulk selection",
     "svg": "prompts-bulk-readonly-preview.svg"
   },
-  "config": "/private/tmp/task22033-live-rebased-20260825/config/config.toml",
-  "data": "/private/tmp/task22033-live-rebased-20260825/prompts-data",
+  "config": "/private/tmp/task22033-qodo-full.vUtAA0/config/config.toml",
+  "data": "/private/tmp/task22033-qodo-full.vUtAA0/prompt-data",
   "detail_recovery": {
     "failure": {
       "editor_locked": true,
@@ -285,8 +285,8 @@
   "import": {
     "editor_hidden": true,
     "identities": [
-      5315011904,
-      4781808416
+      5110511184,
+      5112084336
     ],
     "import_path_visible": true,
     "items_retained": true,
@@ -300,7 +300,7 @@
     "history_title": "Retained history (3)",
     "mode": "info",
     "persisted_version": 3,
-    "prompt_uuid": "34d3f1d2-dd18-4602-91e4-89f93f162846",
+    "prompt_uuid": "f646a68a-cc2e-4cd6-ae07-5d3389e42270",
     "provenance": "Persisted source: Local \u00b7 Prompt \u00b7 structured format",
     "svg": "prompts-preservation-history.svg"
   },
