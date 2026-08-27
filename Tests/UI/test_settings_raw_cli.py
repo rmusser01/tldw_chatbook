@@ -16,6 +16,9 @@ from Tests.UI.test_destination_shells import (
 from Tests.UI.test_screen_navigation import _build_test_app
 from Tests.UI.test_settings_category_sweep import _click_settings_category
 from Tests.UI.test_settings_configuration_hub import StyledSettingsDestinationHarness
+import tldw_chatbook.UI.Screens.settings_screen as settings_screen_module
+from tldw_chatbook.config import RuntimeConfigSnapshot
+from tldw_chatbook.UI.Navigation.main_navigation import NavigateToScreen
 from tldw_chatbook.UI.Screens.settings_config_models import SettingsCategoryId
 from tldw_chatbook.UI.Screens.settings_screen import SettingsScreen
 from tldw_chatbook.Widgets.confirmation_dialog import ConfirmationDialog
@@ -54,6 +57,36 @@ async def _open_privacy(pilot):
 async def _wait_for_save(pilot) -> None:
     await pilot.app.workers.wait_for_complete()
     await pilot.pause()
+
+
+def _published_snapshot(
+    values: dict, *, generation: int | None = None
+) -> RuntimeConfigSnapshot:
+    if generation is None:
+        generation = settings_screen_module.get_runtime_config_snapshot().generation
+    return RuntimeConfigSnapshot(generation, values)
+
+
+def _install_runtime_generation_state(
+    monkeypatch, snapshot: RuntimeConfigSnapshot
+) -> None:
+    monkeypatch.setattr(
+        settings_screen_module,
+        "get_runtime_config_snapshot",
+        lambda **_kwargs: snapshot,
+    )
+
+    def guarded(expected_generation: int, action) -> bool:
+        if expected_generation != snapshot.generation:
+            return False
+        return action() is True
+
+    monkeypatch.setattr(
+        settings_screen_module,
+        "run_if_runtime_config_generation_current",
+        guarded,
+        raising=False,
+    )
 
 
 def _painted_relative_luminance(color) -> float:
@@ -246,7 +279,7 @@ async def test_raw_cli_confirmation_actions_are_serialized(monkeypatch):
     monkeypatch.setattr(
         SettingsScreen,
         "_save_raw_cli_permitted_value",
-        staticmethod(lambda _value: (True, loaded_config)),
+        staticmethod(lambda _value: (True, _published_snapshot(loaded_config))),
     )
     host = StyledSettingsDestinationHarness(app, "settings")
 
@@ -450,11 +483,11 @@ async def test_pending_raw_cli_save_preserves_a_newer_clean_draft(monkeypatch):
     release_save = threading.Event()
     save_calls: list[bool] = []
 
-    def blocked_save(value: bool) -> tuple[bool, dict | None]:
+    def blocked_save(value: bool) -> tuple[bool, RuntimeConfigSnapshot | None]:
         save_calls.append(value)
         save_started.set()
         assert release_save.wait(timeout=3)
-        return True, loaded_config
+        return True, _published_snapshot(loaded_config)
 
     monkeypatch.setattr(
         SettingsScreen,
@@ -501,6 +534,270 @@ async def test_pending_raw_cli_save_preserves_a_newer_clean_draft(monkeypatch):
 
 
 @pytest.mark.asyncio
+async def test_pending_raw_cli_save_vetoes_real_navigation_until_arrival(monkeypatch):
+    app = _build_test_app(config_overrides={"console": {"raw_cli_permitted": False}})
+    loaded_config = dict(app.app_config)
+    loaded_config["console"] = dict(app.app_config["console"])
+    loaded_config["console"]["raw_cli_permitted"] = True
+    save_started = threading.Event()
+    release_save = threading.Event()
+    save_calls: list[bool] = []
+
+    def blocked_save(value: bool) -> tuple[bool, RuntimeConfigSnapshot | None]:
+        save_calls.append(value)
+        save_started.set()
+        assert release_save.wait(timeout=3)
+        return True, _published_snapshot(loaded_config)
+
+    monkeypatch.setattr(
+        SettingsScreen,
+        "_save_raw_cli_permitted_value",
+        staticmethod(blocked_save),
+    )
+
+    async with app.run_test(size=(120, 35)) as pilot:
+        await _wait_until(
+            pilot,
+            lambda: getattr(app, "_initial_screen_pushed", False),
+            timeout=3,
+        )
+        await app.handle_screen_navigation(NavigateToScreen("settings"))
+        screen = app.screen
+        assert isinstance(screen, SettingsScreen)
+        assert screen._start_raw_cli_save(True) is True
+        await _wait_until(pilot, save_started.is_set)
+
+        try:
+            await app.handle_screen_navigation(NavigateToScreen("home"))
+            assert app.screen is screen
+            assert screen.is_mounted
+
+            await app.handle_screen_navigation(NavigateToScreen("settings"))
+            assert app.screen is screen
+            assert screen._start_raw_cli_save(True) is False
+            assert save_calls == [True]
+        finally:
+            release_save.set()
+            await _wait_until(
+                pilot,
+                lambda: not screen._raw_cli_save_pending,
+                timeout=3,
+            )
+
+        await app.handle_screen_navigation(NavigateToScreen("home"))
+        assert app.screen is not screen
+        assert type(app.screen).__name__ == "HomeScreen"
+
+        await app.handle_screen_navigation(NavigateToScreen("settings"))
+        assert isinstance(app.screen, SettingsScreen)
+        assert app.screen is not screen
+        assert app.screen._raw_cli_save_pending is False
+        assert save_calls == [True]
+
+
+@pytest.mark.asyncio
+async def test_stale_raw_cli_unlock_snapshot_reconciles_latest_lock_and_disarms(
+    monkeypatch,
+):
+    app = _build_test_app(config_overrides={"console": {"raw_cli_permitted": False}})
+    worker_values = dict(app.app_config)
+    worker_values["console"] = dict(app.app_config["console"])
+    worker_values["console"]["raw_cli_permitted"] = True
+    latest_values = dict(worker_values)
+    latest_values["console"] = dict(worker_values["console"])
+    latest_values["console"]["raw_cli_permitted"] = False
+    worker_snapshot = _published_snapshot(worker_values, generation=41)
+    latest_snapshot = _published_snapshot(latest_values, generation=42)
+    save_started = threading.Event()
+    release_save = threading.Event()
+
+    def blocked_save(_value: bool) -> tuple[bool, RuntimeConfigSnapshot | None]:
+        save_started.set()
+        assert release_save.wait(timeout=3)
+        return True, worker_snapshot
+
+    monkeypatch.setattr(
+        SettingsScreen,
+        "_save_raw_cli_permitted_value",
+        staticmethod(blocked_save),
+    )
+    host = StyledSettingsDestinationHarness(app, "settings")
+
+    async with host.run_test(size=(120, 35)) as pilot:
+        screen = await _open_privacy(pilot)
+        checkbox = screen.query_one("#settings-raw-cli-permitted", Checkbox)
+        checkbox.value = True
+        await pilot.pause()
+        screen.action_settings_save_category()
+        await _wait_until(pilot, lambda: isinstance(host.screen, ConfirmationDialog))
+        assert await pilot.click("#confirm-button")
+        await _wait_until(pilot, save_started.is_set)
+
+        _install_runtime_generation_state(monkeypatch, latest_snapshot)
+        app.app_config["console"]["raw_cli_permitted"] = True
+        assert app.raw_cli_runtime.arm().armed is True
+        release_save.set()
+        await _wait_for_save(pilot)
+
+        assert app.app_config["console"]["raw_cli_permitted"] is False
+        assert app.raw_cli_runtime.armed is False
+        assert SettingsCategoryId.PRIVACY_SECURITY not in screen._settings_drafts
+        assert checkbox.value is False
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("invalid_authority", (None, "true"), ids=("missing", "text"))
+async def test_successful_raw_cli_save_with_invalid_latest_authority_fails_closed(
+    monkeypatch,
+    invalid_authority,
+):
+    app = _build_test_app(config_overrides={"console": {"raw_cli_permitted": False}})
+    invalid_values = dict(app.app_config)
+    invalid_values["console"] = dict(app.app_config["console"])
+    if invalid_authority is None:
+        invalid_values["console"].pop("raw_cli_permitted", None)
+    else:
+        invalid_values["console"]["raw_cli_permitted"] = invalid_authority
+    invalid_snapshot = _published_snapshot(invalid_values, generation=47)
+    save_started = threading.Event()
+    release_save = threading.Event()
+
+    def blocked_save(_value: bool) -> tuple[bool, RuntimeConfigSnapshot | None]:
+        save_started.set()
+        assert release_save.wait(timeout=3)
+        return True, invalid_snapshot
+
+    monkeypatch.setattr(
+        SettingsScreen,
+        "_save_raw_cli_permitted_value",
+        staticmethod(blocked_save),
+    )
+    host = StyledSettingsDestinationHarness(app, "settings")
+
+    async with host.run_test(size=(120, 35)) as pilot:
+        screen = await _open_privacy(pilot)
+        checkbox = screen.query_one("#settings-raw-cli-permitted", Checkbox)
+        checkbox.value = True
+        await pilot.pause()
+        screen.action_settings_save_category()
+        await _wait_until(pilot, lambda: isinstance(host.screen, ConfirmationDialog))
+        assert await pilot.click("#confirm-button")
+        await _wait_until(pilot, save_started.is_set)
+
+        _install_runtime_generation_state(monkeypatch, invalid_snapshot)
+        app.app_config["console"]["raw_cli_permitted"] = True
+        assert app.raw_cli_runtime.arm().armed is True
+        release_save.set()
+        await _wait_for_save(pilot)
+
+        assert app.app_config["console"]["raw_cli_permitted"] is False
+        assert app.raw_cli_runtime.armed is False
+        assert SettingsCategoryId.PRIVACY_SECURITY not in screen._settings_drafts
+        assert checkbox.value is False
+
+
+@pytest.mark.asyncio
+async def test_stale_raw_cli_snapshot_reconciles_newer_true_without_clobbering(
+    monkeypatch,
+):
+    app = _build_test_app(config_overrides={"console": {"raw_cli_permitted": False}})
+    worker_values = dict(app.app_config)
+    worker_values["console"] = dict(app.app_config["console"])
+    worker_values["console"]["raw_cli_permitted"] = True
+    latest_values = dict(worker_values)
+    latest_values["unrelated_snapshot_value"] = "must not replace app_config"
+    worker_snapshot = _published_snapshot(worker_values, generation=51)
+    latest_snapshot = _published_snapshot(latest_values, generation=52)
+    save_started = threading.Event()
+    release_save = threading.Event()
+
+    def blocked_save(_value: bool) -> tuple[bool, RuntimeConfigSnapshot | None]:
+        save_started.set()
+        assert release_save.wait(timeout=3)
+        return True, worker_snapshot
+
+    monkeypatch.setattr(
+        SettingsScreen,
+        "_save_raw_cli_permitted_value",
+        staticmethod(blocked_save),
+    )
+    host = StyledSettingsDestinationHarness(app, "settings")
+
+    async with host.run_test(size=(120, 35)) as pilot:
+        screen = await _open_privacy(pilot)
+        checkbox = screen.query_one("#settings-raw-cli-permitted", Checkbox)
+        checkbox.value = True
+        await pilot.pause()
+        screen.action_settings_save_category()
+        await _wait_until(pilot, lambda: isinstance(host.screen, ConfirmationDialog))
+        assert await pilot.click("#confirm-button")
+        await _wait_until(pilot, save_started.is_set)
+
+        _install_runtime_generation_state(monkeypatch, latest_snapshot)
+        app.app_config["unrelated_runtime_change"] = {"marker": "preserve me"}
+        app.app_config["console"]["concurrent_runtime_marker"] = "preserve console"
+        release_save.set()
+        await _wait_for_save(pilot)
+
+        assert app.app_config["console"]["raw_cli_permitted"] is True
+        assert app.app_config["console"]["concurrent_runtime_marker"] == (
+            "preserve console"
+        )
+        assert app.app_config["unrelated_runtime_change"] == {"marker": "preserve me"}
+        assert "unrelated_snapshot_value" not in app.app_config
+        assert SettingsCategoryId.PRIVACY_SECURITY not in screen._settings_drafts
+
+
+@pytest.mark.asyncio
+async def test_newer_checkbox_edit_survives_stale_generation_reconciliation(
+    monkeypatch,
+):
+    app = _build_test_app(config_overrides={"console": {"raw_cli_permitted": False}})
+    worker_values = dict(app.app_config)
+    worker_values["console"] = dict(app.app_config["console"])
+    worker_values["console"]["raw_cli_permitted"] = True
+    worker_snapshot = _published_snapshot(worker_values, generation=61)
+    latest_snapshot = _published_snapshot(worker_values, generation=62)
+    save_started = threading.Event()
+    release_save = threading.Event()
+
+    def blocked_save(_value: bool) -> tuple[bool, RuntimeConfigSnapshot | None]:
+        save_started.set()
+        assert release_save.wait(timeout=3)
+        return True, worker_snapshot
+
+    monkeypatch.setattr(
+        SettingsScreen,
+        "_save_raw_cli_permitted_value",
+        staticmethod(blocked_save),
+    )
+    host = StyledSettingsDestinationHarness(app, "settings")
+
+    async with host.run_test(size=(120, 35)) as pilot:
+        screen = await _open_privacy(pilot)
+        checkbox = screen.query_one("#settings-raw-cli-permitted", Checkbox)
+        checkbox.value = True
+        await pilot.pause()
+        screen.action_settings_save_category()
+        await _wait_until(pilot, lambda: isinstance(host.screen, ConfirmationDialog))
+        assert await pilot.click("#confirm-button")
+        await _wait_until(pilot, save_started.is_set)
+
+        checkbox.value = False
+        await pilot.pause()
+        _install_runtime_generation_state(monkeypatch, latest_snapshot)
+        release_save.set()
+        await _wait_for_save(pilot)
+
+        draft = screen._settings_drafts[SettingsCategoryId.PRIVACY_SECURITY]
+        assert app.app_config["console"]["raw_cli_permitted"] is True
+        assert draft.originals == {"console.raw_cli_permitted": True}
+        assert draft.values == {"console.raw_cli_permitted": False}
+        assert draft.is_dirty
+        assert checkbox.value is False
+
+
+@pytest.mark.asyncio
 async def test_raw_cli_revert_is_blocked_while_save_is_pending(monkeypatch):
     app = _build_test_app(config_overrides={"console": {"raw_cli_permitted": False}})
     loaded_config = dict(app.app_config)
@@ -509,10 +806,10 @@ async def test_raw_cli_revert_is_blocked_while_save_is_pending(monkeypatch):
     save_started = threading.Event()
     release_save = threading.Event()
 
-    def blocked_save(_value: bool) -> tuple[bool, dict | None]:
+    def blocked_save(_value: bool) -> tuple[bool, RuntimeConfigSnapshot | None]:
         save_started.set()
         assert release_save.wait(timeout=3)
-        return True, loaded_config
+        return True, _published_snapshot(loaded_config)
 
     monkeypatch.setattr(
         SettingsScreen,
@@ -551,10 +848,10 @@ async def test_raw_cli_save_preserves_unrelated_runtime_config_changes(monkeypat
     save_started = threading.Event()
     release_save = threading.Event()
 
-    def blocked_save(_value: bool) -> tuple[bool, dict | None]:
+    def blocked_save(_value: bool) -> tuple[bool, RuntimeConfigSnapshot | None]:
         save_started.set()
         assert release_save.wait(timeout=3)
-        return True, loaded_config
+        return True, _published_snapshot(loaded_config)
 
     monkeypatch.setattr(
         SettingsScreen,
@@ -606,11 +903,11 @@ async def test_raw_cli_save_arrival_preserves_a_newer_mounted_checkbox_edit(
     save_started = threading.Event()
     release_save = threading.Event()
 
-    def blocked_save(value: bool) -> tuple[bool, dict | None]:
+    def blocked_save(value: bool) -> tuple[bool, RuntimeConfigSnapshot | None]:
         assert value is dispatched_value
         save_started.set()
         assert release_save.wait(timeout=3)
-        return True, loaded_config
+        return True, _published_snapshot(loaded_config)
 
     monkeypatch.setattr(
         SettingsScreen,

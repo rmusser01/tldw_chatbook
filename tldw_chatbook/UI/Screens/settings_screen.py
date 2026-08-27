@@ -142,6 +142,7 @@ from ...config import (
     MIN_CONSOLE_PASTE_COLLAPSE_THRESHOLD,
     MIN_CONSOLE_TOOL_RESULT_DISPLAY_CHARS,
     ProviderSettingsError,
+    RuntimeConfigSnapshot,
     _default_base_data_dir,
     apply_settings_mutation_to_cli_config,
     apply_console_capture_settings,
@@ -153,6 +154,7 @@ from ...config import (
     load_settings,
     provider_settings_for_key,
     runtime_capture_policy,
+    run_if_runtime_config_generation_current,
     save_settings_to_cli_config,
 )
 from ...LLM_Provider_Catalog.model_catalog_settings import (
@@ -684,6 +686,7 @@ MODEL_CATALOG_FIELD_IDS = frozenset(
 )
 
 RAW_CLI_PERMITTED_DRAFT_KEY = "console.raw_cli_permitted"
+RAW_CLI_CONFIG_RECONCILE_ATTEMPTS = 3
 RAW_CLI_DISCLOSURE_LINES = (
     "Commands run with the same OS permissions as Chatbook.",
     "Commands can read, modify, or delete any accessible file, including Chatbook's "
@@ -17182,7 +17185,14 @@ class SettingsScreen(BaseAppScreen):
             return
 
     async def flush_pending_work(self) -> bool:
-        """Protect a mounted global Speech/TTS draft before dismissal."""
+        """Protect pending Settings work before dismissal."""
+
+        if getattr(self, "_raw_cli_save_pending", False):
+            self.app.notify(
+                "Raw CLI unlock save is still in progress; staying in Settings.",
+                severity="warning",
+            )
+            return False
 
         attempt = (
             self._speech_tts_navigation_attempts.pop(0)
@@ -21716,7 +21726,9 @@ class SettingsScreen(BaseAppScreen):
         self._update_advanced_validation_status()
 
     @staticmethod
-    def _save_raw_cli_permitted_value(value: bool) -> tuple[bool, dict | None]:
+    def _save_raw_cli_permitted_value(
+        value: bool,
+    ) -> tuple[bool, RuntimeConfigSnapshot | None]:
         """Persist and reload the strict raw CLI unlock literal."""
         adapter = SettingsConfigAdapter()
         try:
@@ -21725,43 +21737,86 @@ class SettingsScreen(BaseAppScreen):
             )
             if not saved:
                 return False, None
-            loaded = adapter.load(force_reload=True)
+            snapshot = get_runtime_config_snapshot(force_reload=True)
         except Exception:
             logger.exception("Failed to persist and reload raw CLI unlock")
             return False, None
-        if not isinstance(loaded, dict):
+        if not isinstance(snapshot, RuntimeConfigSnapshot):
             return False, None
-        console = loaded.get("console")
-        if not isinstance(console, Mapping):
-            return False, None
-        loaded_value = console.get("raw_cli_permitted")
-        if type(loaded_value) is not bool or loaded_value is not bool(value):
-            return False, None
-        return True, loaded
+        return True, snapshot
+
+    @staticmethod
+    def _raw_cli_snapshot_authority(
+        snapshot: RuntimeConfigSnapshot | None,
+    ) -> tuple[int, bool] | None:
+        """Extract one guarded, fail-closed authority value from a snapshot."""
+        if not isinstance(snapshot, RuntimeConfigSnapshot):
+            return None
+        if type(snapshot.generation) is not int or snapshot.generation < 0:
+            return None
+        values = snapshot.values
+        console = values.get("console") if isinstance(values, Mapping) else None
+        loaded_value = (
+            console.get("raw_cli_permitted") if isinstance(console, Mapping) else None
+        )
+        return snapshot.generation, (
+            loaded_value if type(loaded_value) is bool else False
+        )
+
+    def _reconcile_raw_cli_runtime_authority(
+        self,
+        published_snapshot: RuntimeConfigSnapshot | None,
+    ) -> tuple[bool, bool]:
+        """Apply a stable runtime generation or fail closed after bounded retries."""
+        candidate = published_snapshot
+        for _attempt in range(RAW_CLI_CONFIG_RECONCILE_ATTEMPTS):
+            parsed = self._raw_cli_snapshot_authority(candidate)
+            if parsed is not None:
+                generation, authority = parsed
+
+                def _publish_authority() -> bool:
+                    self._console_settings()["raw_cli_permitted"] = authority
+                    return True
+
+                try:
+                    if run_if_runtime_config_generation_current(
+                        generation,
+                        _publish_authority,
+                    ):
+                        return authority, True
+                except Exception:
+                    logger.exception(
+                        "Failed to guard raw CLI runtime config reconciliation"
+                    )
+            try:
+                candidate = get_runtime_config_snapshot()
+            except Exception:
+                logger.exception("Failed to refresh raw CLI runtime config snapshot")
+                break
+
+        logger.warning(
+            "Raw CLI runtime config generation did not stabilize; failing closed"
+        )
+        self._console_settings()["raw_cli_permitted"] = False
+        return False, False
 
     def _apply_raw_cli_save_result(
         self,
         saved: bool,
-        loaded_config: dict | None,
+        published_snapshot: RuntimeConfigSnapshot | None,
         value: bool,
     ) -> None:
         category = SettingsCategoryId.PRIVACY_SECURITY
         self._raw_cli_save_pending = False
-        loaded_console = (
-            loaded_config.get("console") if isinstance(loaded_config, Mapping) else None
-        )
-        loaded_value = (
-            loaded_console.get("raw_cli_permitted")
-            if isinstance(loaded_console, Mapping)
-            else None
-        )
-        if not saved or type(loaded_value) is not bool or loaded_value is not value:
+        published = self._raw_cli_snapshot_authority(published_snapshot)
+        if not saved or published is None:
             self._update_draft_status_widgets(category)
             self._refresh_raw_cli_state()
             self.app.notify("Failed to save the raw CLI unlock.", severity="error")
             return
-        self._console_settings()["raw_cli_permitted"] = loaded_value
-        saved_value = loaded_value
+        saved_value, stable = self._reconcile_raw_cli_runtime_authority(
+            published_snapshot
+        )
         draft = self._settings_drafts.get(category)
         current_value = (
             draft.values.get(RAW_CLI_PERMITTED_DRAFT_KEY) is True
@@ -21776,24 +21831,30 @@ class SettingsScreen(BaseAppScreen):
                 saved_value,
                 current_value,
             )
-        if not value:
+        if not value or not saved_value:
             runtime = self._raw_cli_runtime()
             if runtime is not None:
                 runtime.disarm()
         self._sync_raw_cli_widgets()
         self._update_draft_status_widgets(category)
-        self.app.notify(
-            "Raw CLI unlock saved on." if value else "Raw CLI unlock saved off.",
-            severity="warning" if value else "information",
-        )
+        if stable and saved_value is value:
+            self.app.notify(
+                "Raw CLI unlock saved on." if value else "Raw CLI unlock saved off.",
+                severity="warning" if value else "information",
+            )
+        else:
+            self.app.notify(
+                "Raw CLI unlock reconciled to the latest saved state.",
+                severity="warning",
+            )
 
     @work(exclusive=True, group="settings-save-raw-cli", thread=True)
     def _settings_save_raw_cli_worker(self, value: bool) -> None:
-        saved, loaded_config = self._save_raw_cli_permitted_value(value)
+        saved, published_snapshot = self._save_raw_cli_permitted_value(value)
         self.app.call_from_thread(
             self._apply_raw_cli_save_result,
             saved,
-            loaded_config,
+            published_snapshot,
             value,
         )
 
