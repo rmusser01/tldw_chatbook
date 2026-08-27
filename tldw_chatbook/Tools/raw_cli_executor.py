@@ -77,7 +77,6 @@ _RAW_OUTPUT_QUEUE_SIZE = 16
 _RAW_OUTPUT_FLUSH_SECONDS = 0.05
 _RAW_STARTUP_TIMEOUT_SECONDS = 10.0
 _RAW_QUEUE_POLL_SECONDS = 0.05
-_RAW_SPOOL_PREFIX = "tldw_raw_cli_"
 
 
 @dataclass(frozen=True, slots=True)
@@ -611,36 +610,23 @@ def _safe_close(value: Any | None) -> None:
         pass
 
 
-def _open_spool() -> tuple[BinaryIO, str]:
-    """Create the private spool and remove it if setup cannot complete."""
-    descriptor, path = tempfile.mkstemp(prefix=_RAW_SPOOL_PREFIX)
+def _open_spool(max_record_bytes: int) -> BinaryIO:
+    """Create a bounded private spool that cannot roll to a named file."""
     try:
-        if hasattr(os, "fchmod"):
-            os.fchmod(descriptor, 0o600)
-        return os.fdopen(descriptor, "w+b", buffering=0), path
-    except BaseException:
-        try:
-            os.close(descriptor)
-        except OSError:
-            pass
-        try:
-            os.unlink(path)
-        except FileNotFoundError:
-            pass
-        raise
+        return tempfile.SpooledTemporaryFile(
+            max_size=max_record_bytes + 1,
+            mode="w+b",
+        )
+    except OSError:
+        raise OSError("raw CLI output spool unavailable") from None
 
 
-def _close_spool(spool: BinaryIO, path: str) -> None:
-    """Close and remove the private spool without exposing its path."""
+def _close_spool(spool: BinaryIO) -> None:
+    """Close the pathless spool without exposing cleanup details."""
     try:
         spool.close()
     except OSError:
         pass
-    finally:
-        try:
-            os.unlink(path)
-        except OSError:
-            pass
 
 
 def _cleanup_tree(tree: ExecutorProcessTree, *, terminate: bool) -> bool:
@@ -671,7 +657,7 @@ class RawShellExecutor:
             raise TypeError("on_event and admit_worker must be callable")
 
         record_limit = configured_max_record_bytes()
-        spool, spool_name = _open_spool()
+        spool = _open_spool(record_limit)
         accumulator = _OutputAccumulator(spool, record_limit)
         process: Any | None = None
         tree: ExecutorProcessTree | None = None
@@ -809,7 +795,7 @@ class RawShellExecutor:
                     output_queue.join_thread()
                 except (OSError, ValueError):
                     pass
-            _close_spool(spool, spool_name)
+            _close_spool(spool)
 
     @staticmethod
     def _receive_identity(
