@@ -91,6 +91,17 @@ class VirtualizedRawContent(ScrollView):
         self._match_lines: tuple[int, ...] = ()
         self._pending_reindex_width: int | None = None
         self._reindex_timer: Timer | None = None
+        # FINDING 1 fix: the first-occurrence offset of the active query
+        # within a SOURCE line, keyed by line index and invalidated on any
+        # query change. Static (the widget this replaces) ran exactly one
+        # `find` per SOURCE line, letting Rich wrap that single span across
+        # rows on its own; matching that here means searching the source
+        # line once, not the rendered segment on every row/repaint -- a
+        # heavily wrapped line (thousands of segments) would otherwise pay
+        # a full-line `find` on every visible row of that line, every time
+        # the widget repaints.
+        self._match_hit_cache: dict[int, int] = {}
+        self._match_hit_cache_query: str | None = None
 
     def on_resize(self, _event: Any = None) -> None:
         """Reindex on a width change, debounced after the first layout pass.
@@ -229,6 +240,33 @@ class VirtualizedRawContent(ScrollView):
             return
         self.scroll_to(y=self.wrap_index.line_start_row(line_index), animate=False)
 
+    def _hit_for_line(self, line_index: int) -> int:
+        """Return the first-occurrence offset of the active query in a source line.
+
+        Mirrors ``build_raw_content_highlight_plan``'s original behavior --
+        one ``str.find`` per SOURCE line, first occurrence only -- not per
+        rendered (wrapped) segment. The result is cached per line index and
+        invalidated whenever ``self._query`` changes, so scrolling a heavily
+        wrapped matching line (many rows, one source line) does not re-scan
+        the same line text on every row and every repaint.
+
+        Args:
+            line_index: The index of a source line (0-based) to search.
+
+        Returns:
+            The 0-based character offset of the query's first occurrence in
+            ``self.source_lines[line_index]`` (case-insensitive), or ``-1``
+            if it does not occur there.
+        """
+        if self._match_hit_cache_query != self._query:
+            self._match_hit_cache_query = self._query
+            self._match_hit_cache = {}
+        hit = self._match_hit_cache.get(line_index)
+        if hit is None:
+            hit = self.source_lines[line_index].lower().find(self._query.lower())
+            self._match_hit_cache[line_index] = hit
+        return hit
+
     def render_line(self, y: int) -> Strip:
         """Render a single visible row by mapping it through the wrap index.
 
@@ -253,18 +291,32 @@ class VirtualizedRawContent(ScrollView):
         piece = segments[segment_index] if segment_index < len(segments) else ""
         text = Text(piece, no_wrap=True, end="")
         if self._query:
-            hit = piece.lower().find(self._query.lower())
+            # FINDING 1 fix: search the SOURCE line (first occurrence only,
+            # exactly like the retired Static-backed highlighter), then map
+            # that source-character range onto THIS segment by intersecting
+            # it with the segment's own source-character span. A match
+            # straddling a wrap boundary is styled -- partially, where
+            # clipped -- on every row it covers, instead of only on the row
+            # whose OWN substring happens to contain the whole needle (which
+            # is "no row" when the needle itself straddles the boundary).
+            hit = self._hit_for_line(line_index)
             if hit >= 0:
-                active = (
-                    self._match_lines
-                    and line_index
-                    == self._match_lines[self._match_index % len(self._match_lines)]
-                )
-                text.stylize(
-                    ACTIVE_MATCH_STYLE if active else MATCH_STYLE,
-                    hit,
-                    hit + len(self._query),
-                )
+                match_end = hit + len(self._query)
+                segment_start = sum(len(s) for s in segments[:segment_index])
+                segment_end = segment_start + len(piece)
+                local_start = max(hit, segment_start) - segment_start
+                local_end = min(match_end, segment_end) - segment_start
+                if local_start < local_end:
+                    active = (
+                        self._match_lines
+                        and line_index
+                        == self._match_lines[self._match_index % len(self._match_lines)]
+                    )
+                    text.stylize(
+                        ACTIVE_MATCH_STYLE if active else MATCH_STYLE,
+                        local_start,
+                        local_end,
+                    )
         # Visual selection highlight: Static gets this for free from
         # Visual.to_strips reading widget.text_selection; a hand-rolled
         # render_line has to do it explicitly or a drag copies the right

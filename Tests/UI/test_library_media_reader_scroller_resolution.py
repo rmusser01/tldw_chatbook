@@ -121,6 +121,107 @@ async def _open_raw_view_ready(screen, pilot) -> LibraryMediaContentBody:
     return body
 
 
+def _markdown_wrapping_document(
+    target_line: int = 40, long_line_length: int = 400, trailing_lines: int = 60
+) -> str:
+    """Like ``_wrapping_document``, but content-sniffs as markdown.
+
+    ``LibraryMediaContentBody._normalize_mode`` forces every non-markdown
+    body into Raw regardless of the requested mode, so a rendered<->raw
+    round-trip is meaningless without a document ``is_markdown`` accepts
+    (see ``looks_like_markdown_content`` -- an ATX heading is enough). Line
+    2, not line 0, is the one padded to wrap; callers still index
+    ``target_line`` directly into the RETURNED document.
+    """
+    lines = ["# Heading", "", "A" * long_line_length]
+    lines.extend(f"filler line {index}" for index in range(3, target_line))
+    lines.append(f"line {target_line}: the target line")
+    lines.extend(
+        f"filler line {index}"
+        for index in range(target_line + 1, target_line + trailing_lines)
+    )
+    return "\n".join(lines)
+
+
+@pytest.mark.asyncio
+async def test_match_scroll_moves_the_visible_scroller_after_a_mode_round_trip():
+    """FINDING 2 regression: rendered -> raw -> rendered must scroll Rendered again.
+
+    ``body.raw_view`` is a LIFETIME accessor, not a mode check -- once Raw
+    mode has been mounted once it stays mounted (and non-``None``) for the
+    rest of the body's life, even after the user switches back to Rendered.
+    Before this fix, ``_scroll_library_media_content_to_line`` gated on
+    ``body.raw_view is not None`` and kept routing every subsequent match
+    scroll to the now-HIDDEN raw view, leaving the visible Rendered
+    scroller stuck at its rest position -- exactly the round-trip the
+    content search placeholder ("Search content (raw text)...") invites.
+    """
+    app, service = _flow_app(count=4)
+    host = LibraryProductionCSSHarness(app)
+    target_line = 40
+
+    async with host.run_test(size=WIDE_SIZE) as pilot:
+        screen = await _open_media_list(host, pilot)
+        canonical_id, backing_id, _title = _seed_row_document(
+            screen, service, 0, _markdown_wrapping_document(target_line)
+        )
+        # The fixture's media items are all video/audio/PDF, none of which
+        # `_is_markdown_media` ever considers -- force this one row's type
+        # into the allowlist so the content sniff above actually applies.
+        source = next(
+            item for item in service.media_items if item["id"] == f"media-{backing_id}"
+        )
+        source["type"] = "plaintext"
+
+        screen.query_one("#library-media-row-0", Button).press()
+        await _wait_for_detail_call(service, backing_id)
+        service.release(backing_id)
+        await _wait_for_condition(
+            pilot,
+            lambda: screen._library_media_reader_session.loaded_id == canonical_id,
+            message="Row never settled its detail.",
+        )
+        assert screen._library_media_content_mode == "rendered", (
+            "Fixture must default to Rendered for the round-trip to mean anything."
+        )
+
+        # rendered -> raw: builds and mounts the Raw view for the first time.
+        await screen._set_library_media_content_mode("raw")
+        await pilot.pause()
+        body = await _open_raw_view_ready(screen, pilot)
+        raw_view = body.raw_view
+        assert raw_view is not None
+
+        # raw -> rendered: the Raw view stays MOUNTED (lifetime, not mode).
+        await screen._set_library_media_content_mode("rendered")
+        await pilot.pause()
+        assert body.active_mode == "rendered"
+        assert body.raw_view is raw_view, "raw_view must stay mounted after leaving Raw."
+
+        markdown_scroll = body.scroller
+        assert markdown_scroll is not raw_view
+
+        # Move the now-HIDDEN raw view to a known, nonzero offset so a
+        # regression that still routes scrolling to it is observable
+        # (either it moves again, or the visible scroller never does).
+        raw_view.scroll_to(y=37, animate=False, immediate=True)
+        await pilot.pause()
+        raw_before = raw_view.scroll_offset.y
+        assert raw_before > 0, "Fixture scroll did not move -- test setup is broken."
+        assert markdown_scroll.scroll_y == 0, "Rendered scroller must start unscrolled."
+
+        screen._scroll_library_media_content_to_line(target_line)
+        await _wait_for_condition(
+            pilot,
+            lambda: markdown_scroll.scroll_y > 0,
+            message="Visible (Rendered) scroller never moved.",
+        )
+        assert raw_view.scroll_offset.y == raw_before, (
+            "The hidden Raw view must not move -- match scroll must target "
+            "the VISIBLE scroller."
+        )
+
+
 @pytest.mark.asyncio
 async def test_capture_progress_resolves_the_real_scroller_and_snapshots_its_offset():
     """``_capture_library_media_loaded_progress`` must find the real scroller.

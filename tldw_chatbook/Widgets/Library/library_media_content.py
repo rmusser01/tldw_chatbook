@@ -14,6 +14,7 @@ from textual.containers import (
 )
 from textual.widgets import Button, Input, Markdown, Static
 
+from tldw_chatbook.Library.library_media_viewer_state import find_content_matches
 from tldw_chatbook.Utils.markdown_parsing import front_matter_parser_factory
 from tldw_chatbook.Widgets.Library.library_media_raw_view import VirtualizedRawContent
 
@@ -26,6 +27,14 @@ def build_raw_content_match_lines(content: str, query: str) -> tuple[int, ...]:
     every query change) is gone. Only the line list survives -- which is
     all navigation and the "N of M" status ever consumed.
 
+    FINDING 5 fix: this is a thin wrapper over
+    ``library_media_viewer_state.find_content_matches`` -- the screen's own
+    match-navigation scan -- rather than a second, independently maintained
+    copy of the same predicate. The two used to be duplicated verbatim with
+    nothing pinning them to agree; delegating makes drift between "which
+    lines the status count/Prev/Next see" and "which lines the Raw view
+    highlights" structurally impossible instead of merely tested-against.
+
     Args:
         content: Source text to search.
         query: Case-insensitive search text to match.
@@ -34,14 +43,7 @@ def build_raw_content_match_lines(content: str, query: str) -> tuple[int, ...]:
         Ascending source-line indexes whose text contains ``query``,
         case-insensitively; empty when the query or content is blank.
     """
-    normalized = query.strip().lower()
-    if not normalized or not content:
-        return ()
-    return tuple(
-        index
-        for index, line in enumerate(content.split("\n"))
-        if normalized in line.lower()
-    )
+    return find_content_matches(content, query)
 
 
 class LibraryMediaContentBody(Container):
@@ -88,6 +90,12 @@ class LibraryMediaContentBody(Container):
     def raw_view(self) -> VirtualizedRawContent | None:
         """The mounted virtualized Raw view.
 
+        This is a LIFETIME accessor, not a mode check: once Raw mode has
+        been mounted once, it stays mounted (and this stays non-``None``)
+        for the rest of the body's life, even while Rendered is the
+        currently displayed mode. Use :attr:`active_mode` to ask which
+        mode is actually showing right now.
+
         Returns:
             The mounted ``VirtualizedRawContent``, or ``None`` if Raw mode
             has never been mounted yet.
@@ -95,7 +103,25 @@ class LibraryMediaContentBody(Container):
         return self._raw_widget
 
     @property
-    def scroller(self) -> ScrollableContainer:
+    def active_mode(self) -> str:
+        """The content mode this body is CURRENTLY displaying.
+
+        FINDING 2 fix: ``raw_view is not None`` was being used by callers
+        as a stand-in for "Raw mode is active", but it is a lifetime
+        accessor (see :attr:`raw_view`) -- once Raw had been shown once, a
+        subsequent Rendered<->Raw round-trip left it permanently
+        non-``None``, so that check kept treating Rendered mode as if Raw
+        were still on screen. This reflects the mode most recently passed
+        to :meth:`sync_mode` (or the constructor), which is the actually
+        visible one.
+
+        Returns:
+            ``"raw"`` or ``"rendered"``.
+        """
+        return self._desired_mode
+
+    @property
+    def scroller(self) -> ScrollableContainer | Container:
         """The scroller for the CURRENT mode.
 
         Callers used to query this container as a VerticalScroll inside
@@ -105,7 +131,8 @@ class LibraryMediaContentBody(Container):
         Returns:
             The Raw view when Raw is the active, mounted mode; the
             Rendered scroller when it is mounted; otherwise this container
-            itself (before either mode has mounted).
+            itself -- a plain ``Container``, not a ``ScrollableContainer``
+            -- before either mode has mounted.
         """
         if self._desired_mode == "raw" and self._raw_widget is not None:
             return self._raw_widget
@@ -140,7 +167,6 @@ class LibraryMediaContentBody(Container):
         """
         self._desired_mode = self._normalize_mode(mode)
         async with self._mount_lock:
-            await self._ensure_mode_mounted(self._desired_mode)
             desired = self._desired_mode
             await self._ensure_mode_mounted(desired)
             if self._raw_widget is not None:

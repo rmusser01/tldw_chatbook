@@ -7,6 +7,7 @@ document size, and virtual height must track the wrap index exactly.
 import time
 
 import pytest
+from rich.text import Text
 from textual.app import App, ComposeResult
 from textual.containers import VerticalScroll
 from textual.events import MouseMove
@@ -506,3 +507,182 @@ async def test_partial_drag_starting_and_ending_mid_line_across_a_tab_matches_st
     )
     assert raw_selected == static_selected
     assert "\t" in raw_selected
+
+
+# ---------------------------------------------------------------------------
+# FINAL WHOLE-BRANCH REVIEW FINDING 1: a match straddling a wrap boundary
+# used to lose its highlight entirely (the old code searched each RENDERED
+# segment independently instead of the SOURCE line, so a needle split across
+# two rows matched neither segment's own substring). These tests pin the
+# fix against the retired Static-backed highlighter's exact contract: one
+# `str.find` per SOURCE line, first occurrence only, styled `reverse` (or
+# `reverse bold` for the active match) -- reconstructed here since
+# `build_raw_content_highlight_plan` itself was deleted when the raw view
+# was virtualized (commit 75a3bfc01a).
+# ---------------------------------------------------------------------------
+
+
+def _highlighted_static_text(content: str, query: str) -> Text:
+    """Rebuild the retired ``build_raw_content_highlight_plan``'s output.
+
+    One ``str.find`` per SOURCE line (case-insensitive), first occurrence
+    only, always styled as the ACTIVE match (``reverse bold``) -- matching
+    what ``RawContentHighlightPlan.renderable(match_index)`` produced for
+    whichever line is the current match. Every fixture below has exactly
+    one matching line, so "the current match" and "the only match" are the
+    same line and there is no plain-vs-active distinction to reconstruct.
+
+    Args:
+        content: Source text to display.
+        query: Case-insensitive search text to highlight.
+
+    Returns:
+        A Rich ``Text`` with the first per-line occurrence of ``query``
+        styled ``"reverse bold"``.
+    """
+    needle = query.strip().lower()
+    text = Text()
+    for index, line in enumerate(content.split("\n")):
+        if index:
+            text.append("\n")
+        hit = line.lower().find(needle) if needle else -1
+        if hit < 0:
+            text.append(line)
+            continue
+        text.append(line[:hit])
+        text.append(line[hit : hit + len(needle)], style="reverse bold")
+        text.append(line[hit + len(needle) :])
+    return text
+
+
+class _QueryStaticHarness(App):
+    """Hosts the pre-virtualization Static, highlighted like the retired plan did."""
+
+    def __init__(self, content: str, query: str) -> None:
+        super().__init__()
+        self._content = content
+        self._query = query
+
+    def compose(self) -> ComposeResult:
+        with VerticalScroll():
+            yield Static(
+                _highlighted_static_text(self._content, self._query),
+                id="old",
+                markup=False,
+            )
+
+
+class _QueryHarness(App):
+    """Hosts the virtualized widget with a live query and a single active match."""
+
+    def __init__(self, content: str, query: str) -> None:
+        super().__init__()
+        self._content = content
+        self._query = query
+
+    def compose(self) -> ComposeResult:
+        yield VirtualizedRawContent(
+            content=self._content, query=self._query, match_index=0, id="raw"
+        )
+
+
+def _style_run(strip) -> list[tuple[bool, bool]]:
+    """Expand a Strip's segments into one ``(reverse, bold)`` pair per cell."""
+    cells: list[tuple[bool, bool]] = []
+    for segment in strip._segments:
+        style = segment.style
+        reverse = bool(style and style.reverse)
+        bold = bool(style and style.bold)
+        cells.extend([(reverse, bold)] * len(segment.text))
+    return cells
+
+
+async def _rendered_rows(app_cls, content, query, widget_id, widget_type, width, rows):
+    app = app_cls(content, query)
+    async with app.run_test(size=(width, rows + 4)) as pilot:
+        await pilot.pause()
+        widget = app.query_one(widget_id, widget_type)
+        if widget_type is VirtualizedRawContent:
+            widget.set_match_lines((0,))
+            widget.sync_search(query, 0)
+        return [widget.render_line(y) for y in range(rows)]
+
+
+def _assert_same_highlight(static_strip, raw_strip, *, row: int) -> None:
+    """Compare per-cell (reverse, bold) styling, ignoring trailing padding.
+
+    ``VirtualizedRawContent.render_line`` pads every Strip out to the full
+    viewport width via ``adjust_cell_length`` (so the compositor always gets
+    a full-width row); ``Static`` does not -- it only emits cells for its
+    actual (wrapped) text. That padding is a display detail unrelated to
+    highlight fidelity, so this truncates to Static's own (unpadded) length
+    before comparing, then confirms none of the raw view's extra padding
+    cells are styled either (a real regression could not "hide" a wrongly
+    painted cell out there without failing this).
+    """
+    static_cells = _style_run(static_strip)
+    raw_cells = _style_run(raw_strip)
+    assert raw_cells[: len(static_cells)] == static_cells, (
+        f"row {row} highlight mismatch: static={static_cells} "
+        f"raw={raw_cells[: len(static_cells)]}"
+    )
+    assert not any(reverse for reverse, _bold in raw_cells[len(static_cells) :]), (
+        f"row {row}: padding past the real text must never carry the match style"
+    )
+
+
+@pytest.mark.asyncio
+async def test_highlight_spans_a_wrap_boundary_matching_static():
+    """The exact proof case from the review: a needle split across a wrap
+    boundary must be painted -- partially, where clipped -- on BOTH rows it
+    covers, exactly like Static painted it when Rich wrapped one styled
+    span across two rows on its own."""
+    line = "x" * 40 + "NEEDLE" + "y" * 20
+    width = 42
+    query = "NEEDLE"
+
+    static_rows = await _rendered_rows(
+        _QueryStaticHarness, line, query, "#old", Static, width, 2
+    )
+    raw_rows = await _rendered_rows(
+        _QueryHarness, line, query, "#raw", VirtualizedRawContent, width, 2
+    )
+
+    for y in range(2):
+        _assert_same_highlight(static_rows[y], raw_rows[y], row=y)
+
+    # Guard against a vacuous pass: both rows must actually carry SOME
+    # reversed cells, or this would trivially agree by painting nothing.
+    assert any(reverse for reverse, _bold in _style_run(static_rows[0]))
+    assert any(reverse for reverse, _bold in _style_run(static_rows[1]))
+    # "NE" on row 0, "EDLE" on row 1 -- the split the review reported.
+    assert sum(reverse for reverse, _bold in _style_run(static_rows[0])) == 2
+    assert sum(reverse for reverse, _bold in _style_run(static_rows[1])) == 4
+
+
+@pytest.mark.asyncio
+async def test_highlight_styles_only_the_first_occurrence_on_a_wrapped_line():
+    """Second divergence from the review: a wrapped line with TWO
+    occurrences of the query must only highlight the FIRST -- matching
+    ``build_raw_content_highlight_plan``'s single ``str.find`` per line --
+    not both, even though the second occurrence renders on its own,
+    otherwise-unstyled row."""
+    query = "needle"
+    line = "needle" + "z" * 40 + "needle"  # first at [0:6], second at [46:52]
+    width = 42
+
+    static_rows = await _rendered_rows(
+        _QueryStaticHarness, line, query, "#old", Static, width, 2
+    )
+    raw_rows = await _rendered_rows(
+        _QueryHarness, line, query, "#raw", VirtualizedRawContent, width, 2
+    )
+
+    for y in range(2):
+        _assert_same_highlight(static_rows[y], raw_rows[y], row=y)
+
+    # Row 0 carries the first occurrence; row 1 (the second occurrence's
+    # own row) must carry NOTHING -- proving only the first was styled.
+    assert any(reverse for reverse, _bold in _style_run(static_rows[0]))
+    assert not any(reverse for reverse, _bold in _style_run(static_rows[1]))
+    assert not any(reverse for reverse, _bold in _style_run(raw_rows[1]))

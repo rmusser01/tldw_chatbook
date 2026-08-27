@@ -37360,12 +37360,19 @@ class LibraryScreen(BaseAppScreen):
     def _scroll_library_media_content_to_line(self, line_index: int) -> None:
         """Scroll the content region so the given source line is visible.
 
-        When the virtualized Raw view is mounted, ``line_index`` (a SOURCE
-        line index) is mapped to its virtual row through the view's wrap
-        index -- scrolling to the source-line index directly, as if it
-        were already a screen row, drifts once any line wraps. Otherwise
-        (Rendered mode, or Raw not yet mounted) this falls back to
-        scrolling the active scroller's Y axis by that index directly.
+        When Raw is the ACTIVE mode, ``line_index`` (a SOURCE line index)
+        is mapped to its virtual row through the Raw view's wrap index --
+        scrolling to the source-line index directly, as if it were already
+        a screen row, drifts once any line wraps. Otherwise (Rendered mode)
+        this falls back to scrolling the active scroller's Y axis by that
+        index directly.
+
+        Gated on ``body.active_mode`` rather than ``body.raw_view is not
+        None``: the latter is a LIFETIME accessor -- once Raw has been
+        mounted once it stays mounted (and non-``None``) for the rest of
+        the body's life -- so it kept routing scroll requests to the Raw
+        view even after the user had switched back to Rendered, silently
+        scrolling a hidden widget while the visible one never moved.
 
         Args:
             line_index: 0-based line index within the content text to
@@ -37378,7 +37385,7 @@ class LibraryScreen(BaseAppScreen):
         except (NoMatches, QueryError):
             return
         raw_view = body.raw_view
-        if raw_view is not None:
+        if body.active_mode == "raw" and raw_view is not None:
             raw_view.scroll_to_source_line(line_index)
             return
         body.scroller.scroll_to(y=line_index, animate=False)
