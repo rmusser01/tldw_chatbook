@@ -2223,6 +2223,17 @@ def _stream_fileno(stream: Any) -> int:
 # heavy-lane cap limits how many of these parse concurrently.
 _INGEST_HEAVY_TYPES = frozenset({"audio", "video"})
 
+# ebooklib retains the archive model while extractors build full DOM/text
+# representations, so ebook jobs have their own one-at-a-time memory lane.
+_INGEST_EBOOK_TYPES = frozenset({"ebook"})
+_INGEST_EBOOK_POOL_MODE = "ebook"
+_INGEST_GENERAL_POOL_MODE = "general"
+_INGEST_PARSE_POOL_RESTART_ERROR = (
+    "Library import workers could not shut down cleanly; "
+    "restart the app before retrying."
+)
+_INGEST_WORKER_SHUTDOWN_TIMEOUT_SECONDS = 10.0
+
 
 # (task 10, spec §9.1 AC 37/AC-24b) The named template errors the ingest
 # dispatch fails an item on: an unresolvable choice (deleted/renamed) and a
@@ -2384,6 +2395,7 @@ class LibraryIngestQueueMixin:
     - ``self._ingest_parse_pool``, ``self._ingest_parsed_payloads``,
       ``self._ingest_parse_pool_generation``,
       ``self._ingest_parse_jobs_by_generation``, and
+      ``self._ingest_parse_pool_mode``,
       ``self._ingest_shutdown``: the coordinator's own state, initialized
       once alongside ``library_ingest_jobs`` -- see ``TldwCli.__init__``.
     - Textual's ``App``/``Widget`` worker machinery (``@work`` and
@@ -2394,13 +2406,14 @@ class LibraryIngestQueueMixin:
 
     - **Parse stage (this mixin's coordinator, UI thread).** A lazily
       created spawn-context ``multiprocessing.Pool`` (see
-      ``_create_ingest_parse_pool``) fans file parsing out to worker
-      processes. ``_top_up_ingest_parse_pool`` keeps up to N jobs (the pool
-      size) ``PARSING`` at once -- called after every submission/retry and
-      after every parse completion. A pool completion is marshaled onto the
-      UI thread (``_on_ingest_parse_complete``); success stashes the parsed
-      payload and wakes the writer, failure goes straight to
-      ``mark_failed``.
+      ``_create_ingest_parse_pool``) fans ordinary file parsing out to N
+      workers. Ebook batches instead own one-worker generations, retired
+      before ordinary work resumes so parser high-water heaps cannot
+      accumulate across the configured pool. ``_top_up_ingest_parse_pool``
+      runs after every submission/retry and parse completion. A completion is
+      marshaled onto the UI thread (``_on_ingest_parse_complete``); success
+      stashes the parsed payload and wakes the writer, failure goes straight
+      to ``mark_failed``.
     - **Write stage (the writer, background thread, unchanged shape).**
       Exactly one job is ever being written at a time (SQLite has one
       writer). The writer's claim-or-release loop
@@ -2423,10 +2436,10 @@ class LibraryIngestQueueMixin:
     Shutdown (quit path) order, in ``_shutdown_ingest_parse_pool`` (called
     from ``TldwCli.on_unmount``): (1) ``_ingest_shutdown = True`` + executor
     and pool references detached, synchronously -- callbacks short-circuit
-    before ever marshaling; (2) executor close followed by
-    ``pool.terminate()`` + ``pool.join()`` on one detached daemon thread,
-    never the event-loop thread (deadlock rationale in that method's
-    docstring); (3) the writer thread is swept afterward by ``on_unmount``'s
+    before ever marshaling; (2) executor close followed by a bounded wait for
+    ``pool.terminate()`` + ``pool.join()`` on detached daemon threads, never
+    the event-loop thread (deadlock rationale in that method's docstring); (3)
+    the writer thread is swept afterward by ``on_unmount``'s
     generic worker cancellation, its in-flight DB write completing as
     before. Steps 2 and 3 run concurrently -- safe because the stages share
     no resources (parse workers never touch ``media_db``; the writer never
@@ -2472,6 +2485,9 @@ class LibraryIngestQueueMixin:
         self._ingest_parse_pool_stop_event: Optional[threading.Event] = None
         self._ingest_parse_progress_queue: Any | None = None
         self._ingest_parse_progress_thread: threading.Thread | None = None
+        self._ingest_parse_pool_mode: str | None = None
+        self._ingest_parse_pool_retiring = False
+        self._ingest_parse_pool_retirement_error: str | None = None
         self._ingest_parsed_payloads: dict[str, dict] = {}
         # RLock, not Lock: dev's STT dispatch work re-enters this guard.
         self._local_stt_executor_lock = threading.RLock()
@@ -2780,6 +2796,12 @@ class LibraryIngestQueueMixin:
         from tldw_chatbook.DB.Library_Ingest_Jobs_DB import LibraryIngestJobsDB
         from tldw_chatbook.Library.library_ingest_jobs import plan_restore
 
+        # Bound before the `try` so the failure path can tell "never opened"
+        # from "opened, then a later step failed" -- the second case owns a
+        # live SQLite connection (the store opens one in its constructor, via
+        # `_initialize_schema`) that nothing else will ever close, because the
+        # registry is left store-less.
+        store = None
         try:
             # `LibraryIngestJobsDB` opens with `check_same_thread=False`, so
             # the connection this thread creates stays usable from the UI
@@ -2804,6 +2826,13 @@ class LibraryIngestQueueMixin:
             logger.opt(exception=True).warning(
                 "Failed to restore persisted ingest job history; starting empty."
             )
+            if store is not None:
+                try:
+                    store.close()
+                except Exception:
+                    logger.opt(exception=True).debug(
+                        "Ingest job store close after failed restore failed."
+                    )
             return
 
         try:
@@ -2834,13 +2863,22 @@ class LibraryIngestQueueMixin:
         store attach stay here even though the I/O moved. Uses
         ``merge_restored`` rather than ``restore`` so a job submitted in the
         few milliseconds between ``on_mount`` and this callback survives.
+
+        The store is attached BEFORE the merge, not after: a job submitted in
+        that window was submitted while the registry was store-less, so its
+        own ``_persist`` was a no-op, and nothing later re-offers it. With
+        the store attached first, ``merge_restored`` writes those live jobs
+        through -- which also replaces any persisted row that happens to
+        share their id (both sessions allocate from ``ingest-job-1`` upward,
+        so a collision in this window is the likely case, and the stale row
+        would otherwise be restored in the live job's place next launch).
         """
         if getattr(self, "_ingest_shutdown", False):
             store.close()
             return
         self._library_ingest_jobs_store = store
-        self.library_ingest_jobs.merge_restored(plan.jobs, plan.next_id)
         self.library_ingest_jobs.attach_store(store)
+        self.library_ingest_jobs.merge_restored(plan.jobs, plan.next_id)
 
     def _expand_library_ingest_source(self, source_path: str) -> list[str] | None:
         """Expand a directory source into the files it contains.
@@ -3646,7 +3684,7 @@ class LibraryIngestQueueMixin:
             configured = 0
         return configured if configured > 0 else 1
 
-    def _create_ingest_parse_pool(self):
+    def _create_ingest_parse_pool(self, *, processes: int | None = None):
         """Create the Library ingest parse pool.
 
         UI-thread only. Test seam: monkeypatched to an inline-synchronous
@@ -3680,9 +3718,14 @@ class LibraryIngestQueueMixin:
         the redirect on every (re)construction is harmless. Queue and Pool
         creation are one atomic owner operation: if Pool creation fails, the
         already-created queue is closed before the exception escapes.
+
+        Args:
+            processes: Physical worker count for this generation. ``None``
+                uses the configured ordinary parse-pool size.
         """
         ctx = multiprocessing.get_context("spawn")
-        processes = self._ingest_parse_worker_count()
+        if processes is None:
+            processes = self._ingest_parse_worker_count()
 
         def _construct_resources() -> _IngestParsePoolResources:
             progress_queue = None
@@ -3719,13 +3762,21 @@ class LibraryIngestQueueMixin:
         with contextlib.redirect_stderr(_ingest_pool_real_stderr()):
             return _construct_resources()
 
-    def _ensure_ingest_parse_pool(self):
+    def _ensure_ingest_parse_pool(self, mode: str = _INGEST_GENERAL_POOL_MODE):
         """Return the current parse pool, lazily creating one if needed.
 
         UI-thread only.
+
+        Args:
+            mode: Resource class owned by a newly created generation.
         """
         if self._ingest_parse_pool is None:
-            resources = self._create_ingest_parse_pool()
+            processes = (
+                1
+                if mode == _INGEST_EBOOK_POOL_MODE
+                else self._ingest_parse_worker_count()
+            )
+            resources = self._create_ingest_parse_pool(processes=processes)
             pool = resources.pool
             progress_queue = resources.progress_queue
             try:
@@ -3747,6 +3798,7 @@ class LibraryIngestQueueMixin:
             self._ingest_parse_jobs_by_generation[generation] = set()
             self._ingest_parse_pool_stop_event = stop_event
             self._ingest_parse_pool = pool
+            self._ingest_parse_pool_mode = mode
             self._ingest_parse_progress_queue = progress_queue
             self._ingest_parse_progress_thread = None
             if progress_queue is not None:
@@ -4992,11 +5044,18 @@ class LibraryIngestQueueMixin:
         overall pool cap -- when that lane is full, ``next_queued`` is asked
         to skip those types so a queued document can fill the slot instead,
         letting document parses fan out wide while transcriptions stay
-        capped.
+        capped. Ebook jobs use a separate one-process pool generation. A pool
+        generation never mixes ebook and ordinary jobs, because sequential
+        ebooks scheduled through a wider persistent pool can still rotate
+        across workers and retain one high-water heap per process.
         """
         if self._ingest_shutdown:
             return
-        worker_count = self._ingest_parse_worker_count()
+        if self._ingest_parse_pool_retirement_error:
+            self._fail_queued_ingest_after_parse_pool_retirement()
+            return
+        if self._ingest_parse_pool_retiring:
+            return
         heavy_cap = self._ingest_heavy_lane_max_workers()
         pending_research = getattr(
             self,
@@ -5032,6 +5091,14 @@ class LibraryIngestQueueMixin:
                 for job in pending_research_jobs.values()
             ),
         )
+        ebook_parsing_count = max(
+            0,
+            self.library_ingest_jobs.parsing_count_for_types(_INGEST_EBOOK_TYPES)
+            - sum(
+                job.detected_type in _INGEST_EBOOK_TYPES
+                for job in pending_research_jobs.values()
+            ),
+        )
         provisional_local_jobs = []
         for provisional_job_id in self._ingest_local_stt_jobs:
             provisional = self.library_ingest_jobs.get_job(provisional_job_id)
@@ -5041,7 +5108,24 @@ class LibraryIngestQueueMixin:
         heavy_parsing_count += sum(
             job.detected_type in _INGEST_HEAVY_TYPES for job in provisional_local_jobs
         )
-        while parsing_count < worker_count:
+        while True:
+            pool_mode = self._ingest_parse_pool_mode
+            worker_count = (
+                1
+                if pool_mode == _INGEST_EBOOK_POOL_MODE
+                else self._ingest_parse_worker_count()
+            )
+            # Local STT owns a separate executor. It still participates in the
+            # ordinary global cap, but it must not consume the sole slot in an
+            # ebook pool generation or keep that worker resident after its
+            # ebook batch drains.
+            capacity_count = (
+                ebook_parsing_count
+                if pool_mode == _INGEST_EBOOK_POOL_MODE
+                else parsing_count
+            )
+            if capacity_count >= worker_count:
+                return
             # LocalSTTExecutor intentionally accepts one request at a time.
             # A legacy heavy-lane override above one must not turn the next
             # queued audio/video job into a spurious ExecutorBusyError.
@@ -5053,11 +5137,21 @@ class LibraryIngestQueueMixin:
             heavy_full = (
                 heavy_parsing_count >= heavy_cap or local_stt_busy or dictation_reserved
             )
+            ebook_full = ebook_parsing_count >= 1
+            skipped_types = (_INGEST_HEAVY_TYPES if heavy_full else frozenset()) | (
+                _INGEST_EBOOK_TYPES if ebook_full else frozenset()
+            )
+            only_types = None
+            if pool_mode == _INGEST_EBOOK_POOL_MODE:
+                only_types = _INGEST_EBOOK_TYPES
+            elif pool_mode == _INGEST_GENERAL_POOL_MODE:
+                skipped_types |= _INGEST_EBOOK_TYPES
             preclaimed = False
             eligible_pending = (
                 job
                 for job in pending_research_jobs.values()
-                if not (heavy_full and job.detected_type in _INGEST_HEAVY_TYPES)
+                if job.detected_type not in skipped_types
+                and (only_types is None or job.detected_type in only_types)
             )
             job = min(
                 eligible_pending,
@@ -5069,9 +5163,23 @@ class LibraryIngestQueueMixin:
                 pending_research_jobs.pop(job.job_id, None)
             else:
                 job = self.library_ingest_jobs.next_queued(
-                    skip_types=_INGEST_HEAVY_TYPES if heavy_full else frozenset()
+                    skip_types=skipped_types,
+                    only_types=only_types,
                 )
             if job is None:
+                if pool_mode is not None:
+                    generation_jobs = self._ingest_parse_jobs_by_generation.get(
+                        self._ingest_parse_pool_generation,
+                        set(),
+                    )
+                    queued_ebook = self.library_ingest_jobs.next_queued(
+                        only_types=_INGEST_EBOOK_TYPES
+                    )
+                    should_retire = (
+                        pool_mode == _INGEST_EBOOK_POOL_MODE or queued_ebook is not None
+                    )
+                    if not generation_jobs and should_retire:
+                        self._retire_idle_ingest_parse_pool()
                 return
             try:
                 options = self._ingest_job_options(job)
@@ -5170,8 +5278,15 @@ class LibraryIngestQueueMixin:
             parsing_count += 1
             if job.detected_type in _INGEST_HEAVY_TYPES:
                 heavy_parsing_count += 1
+            if job.detected_type in _INGEST_EBOOK_TYPES:
+                ebook_parsing_count += 1
             try:
-                pool = self._ensure_ingest_parse_pool()
+                mode = (
+                    _INGEST_EBOOK_POOL_MODE
+                    if job.detected_type in _INGEST_EBOOK_TYPES
+                    else _INGEST_GENERAL_POOL_MODE
+                )
+                pool = self._ensure_ingest_parse_pool(mode)
             except Exception as exc:
                 if preclaimed:
                     pending_research.discard(job_id)
@@ -5228,6 +5343,114 @@ class LibraryIngestQueueMixin:
                 # and can't be trusted to ever complete either.
                 self._handle_broken_ingest_parse_pool(generation, job_id, exc)
                 return
+
+    def _retire_idle_ingest_parse_pool(self) -> None:
+        """Release an empty pool generation, then resume queued work.
+
+        Pool termination and joining stay off the UI thread. New submissions
+        pause behind ``_ingest_parse_pool_retiring`` until teardown completes,
+        preventing an ebook worker's retained heap from overlapping the next
+        ordinary pool generation.
+        """
+        if self._ingest_parse_pool_retiring or self._ingest_parse_pool is None:
+            return
+        generation = self._ingest_parse_pool_generation
+        generation_jobs = self._ingest_parse_jobs_by_generation.get(generation)
+        if generation_jobs:
+            return
+
+        self._ingest_parse_jobs_by_generation.pop(generation, None)
+        pool = self._ingest_parse_pool
+        stop_event = self._ingest_parse_pool_stop_event
+        progress_queue = self._ingest_parse_progress_queue
+        progress_thread = self._ingest_parse_progress_thread
+        if stop_event is not None:
+            stop_event.set()
+        self._ingest_parse_pool = None
+        self._ingest_parse_pool_mode = None
+        self._ingest_parse_pool_stop_event = None
+        self._ingest_parse_progress_queue = None
+        self._ingest_parse_progress_thread = None
+        self._ingest_parse_pool_retiring = True
+
+        self._terminate_ingest_parse_pool_off_thread(
+            pool,
+            progress_queue,
+            progress_thread,
+            on_complete=self._resume_ingest_after_parse_pool_retirement,
+            on_failure=self._fail_ingest_after_parse_pool_retirement,
+        )
+
+    def _resume_ingest_after_parse_pool_retirement(self) -> None:
+        """Resume on the UI loop, or just release the gate after loop exit."""
+        if self._ingest_shutdown:
+            return
+        loop = getattr(self, "_loop", None)
+        if loop is None or not loop.is_running():
+            self._ingest_parse_pool_retiring = False
+            return
+        self._marshal_ingest_pool_call(self._on_ingest_parse_pool_retired)
+
+    def _fail_ingest_after_parse_pool_retirement(
+        self,
+        _exc: BaseException,
+    ) -> None:
+        """Surface teardown failure without releasing the no-overlap gate."""
+        if self._ingest_shutdown:
+            return
+        loop = getattr(self, "_loop", None)
+        if loop is None or not loop.is_running():
+            return
+        self._marshal_ingest_pool_call(self._on_ingest_parse_pool_retirement_failed)
+
+    def _on_ingest_parse_pool_retirement_failed(self) -> None:
+        """Fail queued local work when old workers cannot be proven stopped."""
+        if self._ingest_shutdown:
+            return
+        self._ingest_parse_pool_retirement_error = _INGEST_PARSE_POOL_RESTART_ERROR
+        self._fail_queued_ingest_after_parse_pool_retirement()
+
+    def _fail_queued_ingest_after_parse_pool_retirement(self) -> None:
+        """Fail local jobs submitted after an unrecoverable pool teardown."""
+        error = self._ingest_parse_pool_retirement_error
+        if not error:
+            return
+        pending_research = getattr(
+            self,
+            "_research_source_parse_dispatch_pending",
+            set(),
+        )
+        pending_job_ids = tuple(pending_research)
+        pending_research.difference_update(pending_job_ids)
+        for job_id in pending_job_ids:
+            job = self.library_ingest_jobs.get_job(job_id)
+            if (
+                job is None
+                or job.origin != "local"
+                or job.state is not IngestJobState.PARSING
+            ):
+                continue
+            self.library_ingest_jobs.mark_failed(
+                job.job_id,
+                error=error,
+                permanent=False,
+            )
+        for job in self.library_ingest_jobs.jobs():
+            if job.origin != "local" or job.state is not IngestJobState.QUEUED:
+                continue
+            self.library_ingest_jobs.mark_failed(
+                job.job_id,
+                error=error,
+                permanent=False,
+            )
+
+    def _on_ingest_parse_pool_retired(self) -> None:
+        """Finish one pool-mode transition on the UI thread."""
+        if self._ingest_shutdown:
+            return
+        self._ingest_parse_pool_retirement_error = None
+        self._ingest_parse_pool_retiring = False
+        self._top_up_ingest_parse_pool()
 
     def _marshal_ingest_pool_call(
         self,
@@ -5415,8 +5638,10 @@ class LibraryIngestQueueMixin:
         those (retryable) and dropping the pool reference is the only
         sound recovery (see the F3 design spec's "Worker-process death"
         section). The pool is rebuilt lazily by
-        ``_create_ingest_parse_pool`` the next time ``_top_up_ingest_parse_pool``
-        runs (i.e. on the next submission/retry).
+        ``_create_ingest_parse_pool`` after the broken generation has fully
+        terminated. Queued work resumes automatically from the retirement
+        callback, and submissions remain gated until then so generations
+        cannot overlap in memory.
 
         Payload-ready jobs are SPARED (Task 4 review fix): a job whose
         parse already completed sits ``PARSING`` with its payload in
@@ -5449,16 +5674,10 @@ class LibraryIngestQueueMixin:
             stop_event.set()
         self._ingest_parse_pool_stop_event = None
         self._ingest_parse_pool = None
+        self._ingest_parse_pool_mode = None
         self._ingest_parse_progress_queue = None
         self._ingest_parse_progress_thread = None
-        if any(
-            resource is not None for resource in (pool, progress_queue, progress_thread)
-        ):
-            self._terminate_ingest_parse_pool_off_thread(
-                pool,
-                progress_queue,
-                progress_thread,
-            )
+        self._ingest_parse_pool_retiring = True
 
         logger.opt(exception=exc).error(f"Library ingest parse pool failed: {exc}")
         for job in self.library_ingest_jobs.jobs():
@@ -5476,12 +5695,23 @@ class LibraryIngestQueueMixin:
         if self._ingest_parsed_payloads:
             self._start_library_ingest_queue_if_idle()
 
+        self._terminate_ingest_parse_pool_off_thread(
+            pool,
+            progress_queue,
+            progress_thread,
+            on_complete=self._resume_ingest_after_parse_pool_retirement,
+            on_failure=self._fail_ingest_after_parse_pool_retirement,
+        )
+
     @staticmethod
     def _terminate_ingest_parse_pool_off_thread(
         pool: Any | None,
         progress_queue: Any | None = None,
         progress_thread: threading.Thread | None = None,
-    ) -> threading.Thread:
+        *,
+        on_complete: Callable[[], None] | None = None,
+        on_failure: Callable[[BaseException], None] | None = None,
+    ) -> threading.Thread | None:
         """Clean up one detached parse generation away from the UI thread."""
         return LibraryIngestQueueMixin._shutdown_ingest_workers_off_thread(
             None,
@@ -5490,6 +5720,8 @@ class LibraryIngestQueueMixin:
             pool,
             progress_queue,
             progress_thread,
+            on_complete=on_complete,
+            on_failure=on_failure,
         )
 
     def _shutdown_ingest_parse_pool(self) -> Optional[threading.Thread]:
@@ -5503,7 +5735,7 @@ class LibraryIngestQueueMixin:
         point on) and drops every worker reference (nothing can submit to
         them anymore). Source/coordinator/executor close, parse-pool
         terminate/join, queue cleanup, and bounded drain-thread join then run
-        sequentially on one detached daemon thread,
+        on detached daemon threads with a bounded pool-shutdown wait,
         NEVER on the caller's (loop) thread: verifier close may wait and
         CPython's ``Pool._terminate_pool`` does an unbounded
         ``result_handler.join()``, and if that result-handler thread is at
@@ -5546,6 +5778,7 @@ class LibraryIngestQueueMixin:
             stop_event.set()
         self._ingest_parse_pool_stop_event = None
         self._ingest_parse_pool = None
+        self._ingest_parse_pool_mode = None
         self._ingest_parse_progress_queue = None
         self._ingest_parse_progress_thread = None
         if all(
@@ -5577,15 +5810,21 @@ class LibraryIngestQueueMixin:
         pool: Any | None,
         progress_queue: Any | None,
         progress_thread: threading.Thread | None,
-    ) -> threading.Thread:
+        *,
+        on_complete: Callable[[], None] | None = None,
+        on_failure: Callable[[BaseException], None] | None = None,
+    ) -> threading.Thread | None:
         """Close detached ingest workers without blocking the UI thread.
 
         Executor shutdown remains ahead of parse-pool teardown. The parse pool
-        is terminated and joined before its queue is closed/cancelled, then the
-        already-stopped daemon drain receives only a bounded join.
+        gets a bounded terminate/join window before its queue is
+        closed/cancelled, then the already-stopped daemon drain receives only a
+        bounded join. A timeout reports failure once and never calls the later
+        completion callback, so callers keep their no-overlap gate asserted.
         """
 
         def _shutdown_workers() -> None:
+            pool_failure: BaseException | None = None
             if source_service is not None:
                 try:
                     source_service.close()
@@ -5604,11 +5843,38 @@ class LibraryIngestQueueMixin:
                         "Error closing the Library local STT executor."
                     )
             if pool is not None:
+                pool_shutdown_done = threading.Event()
+                pool_failures: list[BaseException] = []
+
+                def _terminate_and_join_pool() -> None:
+                    try:
+                        pool.terminate()
+                        pool.join()
+                    except Exception as exc:
+                        pool_failures.append(exc)
+                    finally:
+                        pool_shutdown_done.set()
+
                 try:
-                    pool.terminate()
-                    pool.join()
-                except Exception:
-                    logger.opt(exception=True).error(
+                    pool_shutdown_thread = threading.Thread(
+                        target=_terminate_and_join_pool,
+                        name="library-ingest-parse-pool-shutdown",
+                        daemon=True,
+                    )
+                    pool_shutdown_thread.start()
+                except Exception as exc:
+                    pool_failure = exc
+                else:
+                    if not pool_shutdown_done.wait(
+                        timeout=_INGEST_WORKER_SHUTDOWN_TIMEOUT_SECONDS
+                    ):
+                        pool_failure = TimeoutError(
+                            "Library ingest parse pool shutdown timed out."
+                        )
+                    elif pool_failures:
+                        pool_failure = pool_failures[0]
+                if pool_failure is not None:
+                    logger.opt(exception=pool_failure).error(
                         "Error terminating the Library ingest parse pool."
                     )
             if progress_queue is not None:
@@ -5641,13 +5907,41 @@ class LibraryIngestQueueMixin:
                     logger.error(
                         "Error joining the Library ingest progress drain thread."
                     )
+            if pool_failure is not None:
+                if on_failure is not None:
+                    try:
+                        on_failure(pool_failure)
+                    except Exception:
+                        logger.opt(exception=True).error(
+                            "Error reporting Library ingest pool retirement failure."
+                        )
+            elif on_complete is not None:
+                try:
+                    on_complete()
+                except Exception:
+                    logger.opt(exception=True).error(
+                        "Error resuming Library ingest after pool retirement."
+                    )
 
-        thread = threading.Thread(
-            target=_shutdown_workers,
-            name="library-ingest-workers-shutdown",
-            daemon=True,
-        )
-        thread.start()
+        try:
+            thread = threading.Thread(
+                target=_shutdown_workers,
+                name="library-ingest-workers-shutdown",
+                daemon=True,
+            )
+            thread.start()
+        except Exception as exc:
+            logger.opt(exception=True).error(
+                "Could not start the Library ingest worker shutdown thread."
+            )
+            if on_failure is not None:
+                try:
+                    on_failure(exc)
+                except Exception:
+                    logger.opt(exception=True).error(
+                        "Error reporting Library ingest pool retirement failure."
+                    )
+            return None
         return thread
 
     # -- Remote poller (server-origin jobs) --------------------------------
@@ -14388,8 +14682,9 @@ class TldwCli(
             name="tldw-initial-screen-preimport",
             daemon=True,
         )
+        if not self._start_preimport_thread(thread):
+            return
         self._initial_screen_preimport_thread = thread
-        thread.start()
 
     def _schedule_screen_preimport(self) -> None:
         """Start the background screen-module pre-importer, at most once."""
@@ -14404,8 +14699,41 @@ class TldwCli(
             name="tldw-screen-preimport",
             daemon=True,
         )
+        if not self._start_preimport_thread(thread):
+            return
         self._screen_preimport_thread = thread
-        thread.start()
+
+    def _start_preimport_thread(self, thread: threading.Thread) -> bool:
+        """Start a pre-import thread; report whether it is running.
+
+        Args:
+            thread: The unstarted daemon thread to run.
+
+        Returns:
+            ``True`` when the thread started. ``False`` when the interpreter
+            refused to spawn it -- thread exhaustion, or a start during
+            interpreter shutdown -- in which case the caller must NOT record a
+            handle.
+
+        Both callers run from the splash-path timer/deferred-startup callback,
+        not a request/response path, so a ``RuntimeError`` out of ``start()``
+        would surface as an unhandled exception in a Textual timer task during
+        boot. Losing a speculative warm-up is the correct outcome there: every
+        module this would have pre-imported is still imported normally on
+        first navigation. Recording the handle only after a successful start
+        also keeps the once-guard honest -- a failed attempt leaves ``None``,
+        so a later call can try again.
+        """
+        try:
+            thread.start()
+        except RuntimeError as exc:
+            self.loguru_logger.debug(
+                "Screen pre-import thread could not start (name={}, error_type={})",
+                thread.name,
+                type(exc).__name__,
+            )
+            return False
+        return True
 
     def _schedule_tts_initialization(self) -> None:
         if self._tts_handler is not None:
@@ -14946,8 +15274,9 @@ class TldwCli(
         #   1. `_ingest_shutdown = True` + executor/pool references detached
         #      (synchronous, inside `_shutdown_ingest_parse_pool`) -- their
         #      callbacks short-circuit before marshaling from this point on.
-        #   2. Executor close, then `pool.terminate()` + `pool.join()`, on one
-        #      detached daemon thread, NEVER this (loop) thread -- terminating
+        #   2. Executor close, then a bounded `pool.terminate()` +
+        #      `pool.join()` wait on detached daemon threads, NEVER this (loop)
+        #      thread -- terminating
         #      inline here could deadlock against a result-handler thread
         #      parked inside `call_from_thread` (see that method's docstring).
         #      `terminate()` kills every in-flight light parse worker process

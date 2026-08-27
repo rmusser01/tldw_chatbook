@@ -7,11 +7,14 @@ is otherwise just the distinct roots across `change_snapshots` rows, which
 is empty until an agent run has written something. This module pins that
 wiring on the REAL opener seam (`ChatScreen._open_change_review`), reusing
 the same mounted-Console harness and file-backed `AgentRunsDB` /
-`ChangeTurnTracker` fixtures `test_console_changed_files_wiring.py` already
-built for this exact opener -- no hand-rolled fake provider shapes here.
+`ChangeTurnTracker` fixtures built for this exact opener -- no hand-rolled
+fake provider shapes here.
 """
 
 from __future__ import annotations
+
+from types import SimpleNamespace
+from unittest.mock import MagicMock
 
 import pytest
 
@@ -20,12 +23,45 @@ from Tests.UI.test_destination_shells import _wait_for_selector
 from Tests.UI.test_product_maturity_gate1_core_loop_screen_adaptation import (
     ConsoleHarness,
 )
-from Tests.UI.test_console_changed_files_wiring import (
-    _mount_console_session,
-    workspace_fixture,  # noqa: F401 -- imported for pytest fixture discovery
-)
-from tldw_chatbook.config import save_setting_to_cli_config
+from tldw_chatbook.Chat.console_agent_bridge import ConsoleAgentBridge
+from tldw_chatbook.DB.AgentRuns_DB import AgentRunsDB
 from tldw_chatbook.UI.Screens.change_review_screen import ChangeReviewScreen
+from tldw_chatbook.Workspaces.change_tracking import ShadowRepoService
+from tldw_chatbook.Workspaces.change_turn_tracker import ChangeTurnTracker
+
+
+class _Workspace:
+    def __init__(self, root, service, tracker, db) -> None:
+        self.root = root
+        self.service = service
+        self.tracker = tracker
+        self.db = db
+
+
+@pytest.fixture()
+def workspace_fixture(tmp_path) -> _Workspace:
+    root = tmp_path / "root"
+    root.mkdir()
+    (root / "a.py").write_text("line1\nline2\n")
+    service = ShadowRepoService(data_dir=tmp_path / "appdata")
+    tracker = ChangeTurnTracker(service=service)
+    db = AgentRunsDB(tmp_path / "runs.db", client_id="t")
+    return _Workspace(root, service, tracker, db)
+
+
+async def _mount_console_session(pilot, console, store, ws: _Workspace):
+    """Create a persisted-looking Console session with a real review bridge."""
+    await _wait_for_selector(console, pilot, "#console-native-composer")
+    session = store.create_session(session_id="conv-opener-roots")
+    session.persisted_conversation_id = session.id
+    console._ensure_console_chat_controller()
+    console._console_agent_bridge = ConsoleAgentBridge(
+        agent_runs_db=ws.db,
+        store=store,
+        provider_gateway=MagicMock(),
+        change_tracker=SimpleNamespace(service=ws.service),
+    )
+    return session
 
 
 async def _wait_for_change_review_screen(
@@ -41,21 +77,15 @@ async def _wait_for_change_review_screen(
 
 @pytest.mark.asyncio
 async def test_opener_passes_the_controllers_workspace_roots_to_the_screen(
+    monkeypatch,
     workspace_fixture,
 ):
-    """The `[console] workspace_root` the real turn-context accessor
-    resolves (`resolve_turn_execution_context(session_id).workspace_roots`,
-    the same field `console_chat_controller.py` turns into `change_roots`
-    for the tracker) must ride the screen constructor unchanged.
-    """
+    """The mounted turn-context provider passes folder-binding roots to Review."""
     ws = workspace_fixture
-    # `get_cli_setting` (what `resolve_turn_execution_context`'s fallback
-    # reads) is backed by `load_cli_config_and_ensure_existence`'s OWN
-    # cache -- a different cache than `load_settings()`, which is what
-    # `_build_test_app(config_overrides=...)` merges into. Writing through
-    # `save_setting_to_cli_config` is the real, disk-backed seam (the one
-    # the Settings screen itself uses) that both caches end up agreeing on.
-    save_setting_to_cli_config("console", "workspace_root", str(ws.root))
+    monkeypatch.setattr(
+        "tldw_chatbook.Tools.workspace_file_roots.folder_binding_roots",
+        lambda _workspace_id: (ws.root,),
+    )
 
     app = _build_test_app()
     host = ConsoleHarness(app)
@@ -67,17 +97,6 @@ async def test_opener_passes_the_controllers_workspace_roots_to_the_screen(
 
         controller = console._console_chat_controller
         assert controller is not None
-        # A mounted ChatScreen wires `_turn_context_provider` to the
-        # session's OWN accessor (`_build_console_turn_execution_context`,
-        # `UI/Console_Modules/session.py`), which derives `workspace_roots`
-        # from the folder-binding registry rather than the flat
-        # `[console] workspace_root` key. Clearing it exercises
-        # `resolve_turn_execution_context`'s own fallback implementation
-        # (`console_chat_controller.py`) -- the one the brief's accessor
-        # description matches -- without touching the pass-through code
-        # under test, which reads `.workspace_roots` off whatever
-        # `resolve_turn_execution_context` returns either way.
-        controller._turn_context_provider = None
 
         console._open_change_review()
         review = await _wait_for_change_review_screen(host, pilot)

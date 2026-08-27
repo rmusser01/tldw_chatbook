@@ -52,3 +52,25 @@ method owns a transaction, creates the conversation, writes the Library policy
 and returns a checkpoint; hand-copying that into a fake is the
 fake-validates-the-mistake trap, and it is what these doubles already did with
 `create_message`.
+
+
+## Update 2026-08-26 — measured: the seam is not merely stale, it is unreachable
+
+A spy over a real `ChatPersistenceService` was wired into
+`_ReadyCitationPersistence` to satisfy the "use real in-memory SQLite" rule
+(Qodo finding on #2104) while keeping the existing `create_calls` assertions.
+
+**It was inert.** Instrumenting the spy and running the whole module recorded
+**zero** `create_message` calls across all 95 tests. With ephemeral sessions no
+test reaches that seam at all, so the real service was never exercised and the
+rule was satisfied only cosmetically. The change was reverted rather than
+shipped.
+
+That sharpens this task: the assertions cannot be fixed by re-wiring the double.
+They can only be fixed by making the sessions DURABLE and asserting on rows —
+and that is blocked by TASK-22587, because two tests here close the session
+mid-collection and a durable session then raises
+"Durable postcommit fingerprint changed."
+
+Order of work: TASK-22587 first, then durable sessions here, then convert the 23
+tests' assertions from `create_calls` to row queries.

@@ -63,6 +63,16 @@ WHAT THIS CANNOT SEE, measured rather than assumed:
   real pin looks like: assert the index name IS in the plan, assert
   ``TEMP B-TREE`` is NOT, and keep a negative control proving the shape you
   rejected is still not chosen.
+
+  What it *does* now refuse to read as evidence is a mention that says the
+  opposite. The first version accepted any ``idx_...`` token anywhere in a
+  qualifying file, and measured against the tree that admitted two indexes
+  the file only ever asserts are **absent** from a plan --
+  ``idx_media_deleted`` and ``idx_keywords_deleted``, both named solely by
+  a ``#`` comment quoting the pre-fix plan and by ``assert "..." not in
+  plan``. Either census row could have been flipped to ``plan-pinned`` and
+  passed CI on evidence that the planner does not choose the index. See
+  ``_plan_evidence_strings``.
 * Indexes created outside ``DB/`` (e.g. a vector store's own schema).
 
 Usage:  python scripts/check_index_plan_pins.py
@@ -131,7 +141,13 @@ def _sql_texts(path: Path) -> list[str]:
 
 
 def declared_indexes() -> dict[str, set[str]]:
-    """Map index name -> the source files that declare it."""
+    """Find every index the schema sources under ``DB/`` create.
+
+    Returns:
+        Index name -> the repository-relative source paths whose SQL
+        declares it. A name created by more than one file (a fresh-schema
+        string and a migration step, typically) maps to both.
+    """
     found: dict[str, set[str]] = {}
     sources: list[tuple[Path, list[str]]] = []
     for py in sorted(DB_DIR.rglob("*.py")):
@@ -148,7 +164,22 @@ def declared_indexes() -> dict[str, set[str]]:
 
 
 def read_census() -> dict[str, tuple[str, str]]:
-    """Map index name -> (status, note). Raises SystemExit on a malformed row."""
+    """Parse ``index_plan_pin_census.tsv``.
+
+    Blank lines and ``#`` comments are skipped; the note column is optional.
+
+    Returns:
+        Index name -> ``(status, note)``, where status is one of
+        ``VALID_STATUSES`` and note is ``""`` when the row omits it.
+
+    Raises:
+        SystemExit: With code 1, after printing the offending line, when the
+            census file is missing, a row has fewer than two TAB-separated
+            columns, a row's status is outside ``VALID_STATUSES``, or an
+            index name appears twice. Malformed input is a hard stop rather
+            than a skipped row: a census that silently drops what it cannot
+            parse is a guard that reports success for rows nobody read.
+    """
     if not CENSUS.exists():
         print(f"FAIL: census file missing: {CENSUS.relative_to(REPO_ROOT)}")
         raise SystemExit(1)
@@ -175,27 +206,111 @@ def read_census() -> dict[str, tuple[str, str]]:
     return rows
 
 
+def _plan_evidence_strings(tree: ast.AST) -> list[str]:
+    """String literals in a test module that can carry POSITIVE plan evidence.
+
+    Two kinds of occurrence are dropped, because both are a claim that an
+    index is *not* what the planner uses:
+
+    * **docstrings and ``#`` comments** -- prose *about* an index, not an
+      assertion *on* one. ``test_media_db_schema_v9.py`` names
+      ``idx_media_deleted`` in a docstring and in two comments quoting the
+      pre-fix plan it replaced;
+    * the **member operand of a ``not in`` comparison** --
+      ``assert "idx_media_deleted" not in plan`` is evidence the planner
+      does NOT choose it, and counting it as a pin inverts the guard.
+
+    A name survives if it appears even once outside those positions, so a
+    file that asserts an index IS in one plan and is NOT in another still
+    pins it.
+
+    Args:
+        tree: The parsed module.
+
+    Returns:
+        Every qualifying string literal, in no particular order.
+    """
+    docstrings: set[int] = set()
+    for node in ast.walk(tree):
+        if not isinstance(
+            node, (ast.Module, ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)
+        ):
+            continue
+        body = node.body
+        if (
+            body
+            and isinstance(body[0], ast.Expr)
+            and isinstance(body[0].value, ast.Constant)
+            and isinstance(body[0].value.value, str)
+        ):
+            docstrings.add(id(body[0].value))
+
+    negated: set[int] = set()
+    for node in ast.walk(tree):
+        if not isinstance(node, ast.Compare):
+            continue
+        operands = [node.left, *node.comparators]
+        for offset, operator in enumerate(node.ops):
+            member = operands[offset]
+            if isinstance(operator, ast.NotIn) and isinstance(member, ast.Constant):
+                negated.add(id(member))
+
+    return [
+        node.value
+        for node in ast.walk(tree)
+        if isinstance(node, ast.Constant)
+        and isinstance(node.value, str)
+        and id(node) not in docstrings
+        and id(node) not in negated
+    ]
+
+
 def plan_pinning_files() -> dict[str, set[str]]:
-    """Map index name -> test files that plan-pin it, with stats absent."""
+    """Find the test files that plan-pin each index, with stats absent.
+
+    A file qualifies only if it contains both ``EXPLAIN QUERY PLAN`` and a
+    ``sqlite_stat1`` mention; within a qualifying file an index counts as
+    pinned only where ``_plan_evidence_strings`` admits the name.
+
+    Returns:
+        Index name -> the repository-relative test files that pin it. Names
+        that no qualifying file mentions positively are simply absent.
+    """
     pins: dict[str, set[str]] = {}
     if not TESTS_DIR.exists():
         return pins
     for path in sorted(TESTS_DIR.rglob("test_*.py")):
         try:
-            text = path.read_text(encoding="utf-8")
+            source = path.read_text(encoding="utf-8")
         except UnicodeDecodeError:
             continue
-        if _PLAN_CALL not in text or _NO_STATS not in text:
+        if _PLAN_CALL not in source or _NO_STATS not in source:
+            continue
+        try:
+            tree = ast.parse(source)
+        except SyntaxError:
             continue
         rel = str(path.relative_to(REPO_ROOT))
-        for name in set(_CREATE_INDEX.findall(_strip_sql_comments(text))) | set(
-            re.findall(r"\bidx_[A-Za-z0-9_]+\b", text)
-        ):
-            pins.setdefault(name, set()).add(rel)
+        for text in _plan_evidence_strings(tree):
+            stripped = _strip_sql_comments(text)
+            for name in set(_CREATE_INDEX.findall(stripped)) | set(
+                re.findall(r"\bidx_[A-Za-z0-9_]+\b", text)
+            ):
+                pins.setdefault(name, set()).add(rel)
     return pins
 
 
 def main() -> int:
+    """Check the census against the tree and report every discrepancy.
+
+    Three failure classes are reported together rather than short-circuiting
+    on the first: an index created but absent from the census, a census row
+    naming an index nothing creates any more, and a row recorded
+    ``plan-pinned`` that no test file positively pins.
+
+    Returns:
+        0 when the census covers the tree exactly, 1 otherwise.
+    """
     declared = declared_indexes()
     census = read_census()
     pins = plan_pinning_files()

@@ -663,6 +663,17 @@ class LibraryIngestJobRegistry:
         the likely case, and two entries sharing a ``job_id`` would make
         every id-keyed mutation ambiguous. ``_next_id`` takes the maximum so
         no future allocation can collide either.
+
+        Unlike the restored jobs -- already in the store by definition -- the
+        live ones are written through here when a store is attached. They
+        were submitted while the registry was still store-less, so their own
+        ``submit`` reached a ``_persist`` that was a no-op, and nothing else
+        ever re-offers them: without this they were silently absent from the
+        store, gone after the next launch, and any stale persisted row that
+        shared their id was restored in their place. Attach the store BEFORE
+        calling this (see ``TldwCli._apply_ingest_job_restore``); with none
+        attached the write-through is a no-op and the pure/in-memory contract
+        is unchanged.
         """
         live = self._jobs
         if not live:
@@ -678,6 +689,8 @@ class LibraryIngestJobRegistry:
         )
         self._jobs = restored + live
         self._next_id = max(next_id, self._next_id)
+        for job in live:
+            self._persist(job)
         self._notify_listeners()
 
     # -- listeners -----------------------------------------------------
@@ -854,7 +867,10 @@ class LibraryIngestJobRegistry:
         return _copy_job(job)
 
     def next_queued(
-        self, *, skip_types: frozenset[str] = frozenset()
+        self,
+        *,
+        skip_types: frozenset[str] = frozenset(),
+        only_types: frozenset[str] | None = None,
     ) -> LibraryIngestJob | None:
         """Return the oldest still-``QUEUED`` job, or ``None`` if none.
 
@@ -863,17 +879,21 @@ class LibraryIngestJobRegistry:
                 returns the oldest queued job of any type; a non-empty set
                 returns the oldest queued job whose ``detected_type`` is not
                 in the set (skip-ahead for the heavy-lane cap).
+            only_types: Optional set of ``detected_type`` values eligible for
+                selection. Used when a parse-pool generation owns one resource
+                class, such as ebooks.
 
         Returns:
             A copy of the oldest queued job in FIFO submission order whose
-            ``detected_type`` is not in ``skip_types``, or ``None`` when no
-            such job is queued.
+            ``detected_type`` passes both filters, or ``None`` when no such
+            job is queued.
         """
         for job in self._jobs:
             if (
                 job.state == IngestJobState.QUEUED
                 and not job.dispatch_held
                 and job.detected_type not in skip_types
+                and (only_types is None or job.detected_type in only_types)
             ):
                 return _copy_job(job)
         return None

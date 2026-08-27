@@ -256,10 +256,7 @@ class EventStateRepository(BaseDB):
             try:
                 entry.conn.execute("SELECT 1")
             except (sqlite3.ProgrammingError, sqlite3.OperationalError):
-                try:
-                    entry.conn.close()
-                except Exception:  # noqa: BLE001 - already unusable
-                    pass
+                self._close_quietly(entry.conn)
                 with self._held_lock:
                     if self._held.get(key) is entry:
                         del self._held[key]
@@ -371,10 +368,36 @@ class EventStateRepository(BaseDB):
                 # that no longer exist.
                 self._schema_ready = False
         for conn in closable:
-            try:
-                conn.close()
-            except Exception:  # noqa: BLE001 - best-effort teardown
-                pass
+            self._close_quietly(conn)
+
+    @staticmethod
+    def _close_quietly(conn: sqlite3.Connection) -> None:
+        """Close ``conn``, recording a failure instead of discarding it.
+
+        Best-effort by design -- the entry is already out of ``_held`` and a
+        re-close of a handle whose first close raised would keep a broken
+        connection reachable, which is worse than dropping it. What was
+        missing is the record: a swallowed close error left an untracked
+        handle with nothing to debug from. TASK-21131 already lost time to
+        exactly that (a cross-thread ``close()`` was raising and being
+        swallowed, which kept a wrong test green until the cause was found at
+        the mechanism), and both sibling stores --
+        ``Research_Interop.local_research_service`` and
+        ``Writing_Interop.local_writing_service`` -- log this case.
+
+        Type name only, matching those siblings: a sqlite3 message can carry
+        the database path, and this store's teardown is not a place to emit
+        one.
+
+        Args:
+            conn: The connection to close.
+        """
+        try:
+            conn.close()
+        except Exception as exc:  # noqa: BLE001 - best-effort teardown
+            logger.debug(
+                "Event state connection close failed: {}", type(exc).__name__
+            )
 
     def _initialize_schema(self) -> None:
         # Raw connection: runs under _ensure_schema's lock (TASK-21105), so

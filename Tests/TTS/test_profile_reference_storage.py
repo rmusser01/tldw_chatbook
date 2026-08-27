@@ -1278,6 +1278,10 @@ profile_schema.open_profile_store(Path({path!r}))
 """
 
 
+@pytest.mark.skipif(
+    os.name != "posix",
+    reason="POSIX SIGKILL: signal.SIGKILL does not exist on Windows",
+)
 def test_v3_to_v4_migration_survives_sigkill_mid_transaction(tmp_path: Path) -> None:
     """A real SIGKILL inside the climb must leave v3, then re-enter cleanly.
 

@@ -28,6 +28,10 @@ from tldw_chatbook.Library.library_media_reader_state import (
     settle_failure,
     settle_success,
 )
+from tldw_chatbook.Utils.library_rail_width import (
+    LIBRARY_REFERENCE_WIDTH,
+    project_default_library_width,
+)
 
 
 def test_media_layout_public_names_remain_importable() -> None:
@@ -45,6 +49,10 @@ def test_default_preferences_are_both_open_and_fixed() -> None:
         library_width=LIBRARY_TARGET_WIDTH,
         items_width=ITEMS_TARGET_WIDTH,
     )
+
+
+def test_default_library_preference_uses_the_shared_reference_width() -> None:
+    assert LIBRARY_TARGET_WIDTH == LIBRARY_REFERENCE_WIDTH == 31
 
 
 @pytest.mark.parametrize(
@@ -107,7 +115,7 @@ def test_responsive_collapse_does_not_mutate_preferences() -> None:
 
 @pytest.mark.parametrize(
     ("width", "library_open", "items_open"),
-    [(160, True, True), (120, False, True), (80, False, False)],
+    [(160, True, True), (120, True, True), (80, False, False)],
 )
 def test_normal_resolution_collapses_library_then_items(
     width: int, library_open: bool, items_open: bool
@@ -177,7 +185,7 @@ def test_returning_width_restores_target_widths_not_intermediate_widths() -> Non
 
     wide = resolve_media_reader_layout(160, preferences, previous=narrow)
 
-    assert wide.library_width == LIBRARY_TARGET_WIDTH
+    assert wide.library_width == project_default_library_width(160)
     assert wide.items_width == ITEMS_TARGET_WIDTH
     assert wide.priority_pane is None
 
@@ -197,7 +205,7 @@ def test_hysteresis_prevents_one_column_resize_thrashing() -> None:
     preferences = normalize_media_reader_preferences({})
     nominal_width = (
         2 * PANE_GRIP_WIDTH
-        + LIBRARY_TARGET_WIDTH
+        + project_default_library_width(120)
         + ITEMS_TARGET_WIDTH
         + MEDIA_READER_LAYOUT_PROFILE.work_min_width
     )
@@ -216,7 +224,9 @@ def test_hysteresis_prevents_one_column_resize_thrashing() -> None:
     assert collapsed.library_open is False
     assert boundary.library_open is False
     assert reopened.library_open is True
-    assert reopened.library_width == LIBRARY_TARGET_WIDTH
+    assert reopened.library_width == project_default_library_width(
+        nominal_width + LAYOUT_HYSTERESIS_WIDTH
+    )
 
 
 def test_shrink_expand_cycles_are_idempotent() -> None:

@@ -142,21 +142,52 @@ def _no_tiktoken_bpe_download(monkeypatch):
     time, so patching it here covers callers that imported
     ``count_tokens_tiktoken``/``estimate_tokens`` by name.
 
-    Returning ``None`` drives the already-tested no-tokenizer branch
-    (`count_tokens_tiktoken`'s character estimate) — which is what a default
-    install actually does, since tiktoken is not a base dependency
-    (task-2526). No test's LOGICAL coverage changes, only its network access,
-    and the result stops depending on whether this machine happens to have a
-    warm ``$TMPDIR/data-gym-cache`` (which the HOME sandbox does not
-    redirect). A test that needs the real encoding monkeypatches it back
-    within its own scope, exactly as with `_disable_model_catalog_refresh`
-    above.
-    """
+    ``TIKTOKEN_AVAILABLE`` is what selects the tier, and it is forced off
+    here rather than only stubbing the encoding, because those are NOT the
+    same accounting. With the flag left True, `estimate_tokens` still enters
+    `count_tokens_tiktoken`, whose no-encoding fallback is a bare
+    ``int(len(text) * 0.25)``: no CJK weighting, no headroom, and no
+    non-empty floor. Measured against `gpt-4`/`openai` on this venv:
 
+    ==========================  ====  =============  ==============
+    text                        real  encoding=None  tiktoken off
+    ==========================  ====  =============  ==============
+    ``"hi"``                       1              0               1
+    a repeated ASCII sentence     31             33              40
+    repeated CJK                  50             17              84
+    ==========================  ====  =============  ==============
+
+    The middle column is a tier no install runs, it undercounts CJK by ~3x
+    against the real tokenizer, and it re-introduces the zero-for-short-text
+    truncation that `_chars_estimate`'s ``max(1, ...)`` exists to prevent.
+    The right-hand column IS what a default install does, since tiktoken is
+    not a base dependency (task-2526). The encoding stub stays as a second
+    line of defence for anything that calls it directly.
+
+    `_ESTIMATE_CACHE` is cleared on both sides of the test: it is
+    process-global and keyed by ``(model, provider, len, hash(text))`` with
+    no tokenizer identity in the key, so without this a value computed under
+    the real tokenizer elsewhere in the session is served here (and one
+    computed here leaks the other way). pytest-randomly shuffles the run
+    order, so "Tests/Chat happens to run first" is not a defence.
+
+    No test's LOGICAL coverage changes, only its network access, and the
+    result stops depending on whether this machine happens to have a warm
+    ``$TMPDIR/data-gym-cache`` (which the HOME sandbox does not redirect) or
+    on what estimated the same string earlier in the session. A test that
+    needs the real encoding monkeypatches it back within its own scope,
+    exactly as with `_disable_model_catalog_refresh` above.
+    """
+    from tldw_chatbook.Utils import token_counter
+
+    monkeypatch.setattr(token_counter, "TIKTOKEN_AVAILABLE", False)
     monkeypatch.setattr(
         "tldw_chatbook.Utils.token_counter.get_tiktoken_encoding",
         lambda _model: None,
     )
+    token_counter.clear_estimate_cache()
+    yield
+    token_counter.clear_estimate_cache()
 
 
 @pytest_asyncio.fixture

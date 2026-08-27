@@ -767,11 +767,23 @@ async def test_the_client_side_filter_reads_content_and_author_too():
         }, "content- and author-only matches must survive the client filter"
 
 
-async def test_the_new_items_pill_shows_and_click_dismisses_and_reloads():
-    """TASK-3791 plan task 5: the pill is a notice you can act on, not a
-    verb -- it appears with the count a refresh produced, and clicking it
-    asks for a reload (the strip's existing RefreshItemsRequested) while
-    dismissing itself."""
+async def test_snapshot_count_copy_is_screen_seeded_and_updates_in_place():
+    app = ArticleListHarness()
+    async with app.run_test(size=(120, 40)) as pilot:
+        pane = app.query_one(ArticleListPane)
+        count = pane.query_one("#items-snapshot-count", Static)
+
+        pane.snapshot_count = 50
+        await pilot.pause()
+        assert str(count.renderable) == "50 items in snapshot"
+
+        pane.snapshot_count = 1
+        await pilot.pause()
+        assert str(count.renderable) == "1 item in snapshot"
+
+
+async def test_the_new_items_pill_click_requests_refresh_without_dismissing():
+    """The committed arrival notice survives until refresh succeeds."""
     app = ArticleListHarness()
     async with app.run_test(size=(120, 40)) as pilot:
         pane = app.query_one(ArticleListPane)
@@ -794,7 +806,8 @@ async def test_the_new_items_pill_shows_and_click_dismisses_and_reloads():
 
         pane.on_click(SimpleNamespace(widget=pill, stop=lambda: None))
         await pilot.pause()
-        assert pill.display is False, "the click dismisses the pill"
+        assert pill.display is True, "the click must not pre-empt refresh success"
+        assert pane.new_items_note == "3 new items"
         assert ("refresh_items_requested", None) in app.captured_messages, (
             "the click asks for the same reload the refresh button posts"
         )

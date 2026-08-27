@@ -488,3 +488,50 @@ def test_mark_presented_for_an_unknown_event_leaves_the_store_usable(repo):
         repo, limit=20, mark_presented=True, **_FEED_SCOPE
     )
     assert feed["total"] == 1
+
+
+def test_a_failing_close_is_recorded_rather_than_discarded(repo, monkeypatch):
+    """A swallowed `conn.close()` error left an untracked handle to debug.
+
+    Best-effort teardown is deliberate -- the entry is already out of `_held`
+    and re-closing a handle whose close raised would keep a broken connection
+    reachable. What must not happen is losing the fact that it happened.
+    """
+    repo.record_event_and_advance_processed_cursor(_event(0))
+
+    recorded: list[tuple] = []
+    monkeypatch.setattr(
+        esr_module.logger, "debug", lambda *args, **kwargs: recorded.append(args)
+    )
+
+    class _RefusesToClose:
+        """`sqlite3.Connection.close` is read-only, so stand in for the handle."""
+
+        def close(self):
+            # A real sqlite3 message can carry the database path; use one.
+            raise sqlite3.OperationalError("unable to close /private/db.sqlite")
+
+    held = list(repo._held.values())
+    assert held, "no held connection to close, so the assertion would be vacuous"
+    real_conns = []
+    for entry in held:
+        real_conns.append(entry.conn)
+        entry.conn = _RefusesToClose()
+
+    try:
+        repo.close()
+    finally:
+        for conn in real_conns:
+            conn.close()
+
+    rendered = " ".join(str(part) for call in recorded for part in call)
+    assert "close failed" in rendered, (
+        f"a failing close was discarded silently: {recorded}"
+    )
+    assert "OperationalError" in rendered, (
+        f"the failure type was not recorded: {recorded}"
+    )
+    # Type name ONLY: a sqlite3 message can carry the database path.
+    assert "/private/db.sqlite" not in rendered, (
+        f"the close diagnostic leaked the database path: {recorded}"
+    )

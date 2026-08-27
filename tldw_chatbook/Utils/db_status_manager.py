@@ -21,7 +21,12 @@ if TYPE_CHECKING:
 
 
 class DBStatusManager:
-    """Manages database size telemetry and footer token-count updates."""
+    """Manages database size telemetry.
+
+    Footer token-count updates used to live here too; task-21133 retired
+    that half after task-17653 removed its whole consumer surface (see the
+    module docstring).
+    """
 
     def __init__(self, app: "App"):
         """

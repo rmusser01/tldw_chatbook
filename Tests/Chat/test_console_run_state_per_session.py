@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import threading
+from pathlib import Path
 
 import pytest
 
@@ -123,6 +124,23 @@ def test_in_flight_run_count_and_run_states_snapshot(controller_with_two_session
     # Snapshot is a copy: mutating it must not affect the controller's map.
     snapshot[session_a] = ConsoleRunState()
     assert controller.run_state_for(session_a).status is ConsoleRunStatus.STREAMING
+
+
+def test_workspace_probe_sees_background_session_captured_roots(
+    controller_with_two_sessions, tmp_path
+):
+    controller, session_a, session_b = controller_with_two_sessions
+    root_a = Path(tmp_path / "alpha").resolve()
+    root_b = Path(tmp_path / "beta").resolve()
+    controller._active_workspace_roots_by_session[session_a] = (str(root_a),)
+    controller._set_run_state(
+        ConsoleRunState(ConsoleRunStatus.STREAMING, "run A"), session_id=session_a
+    )
+    controller.store.switch_session(session_b)
+
+    assert controller.run_state.is_send_allowed
+    assert controller.run_active_for_workspace(str(root_a))
+    assert not controller.run_active_for_workspace(str(root_b))
 
 
 def test_send_refusal_is_per_session_and_capped(controller_with_two_sessions, monkeypatch):

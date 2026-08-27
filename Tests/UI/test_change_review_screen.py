@@ -8,11 +8,12 @@ wait on conditions, not pause counts.
 """
 from __future__ import annotations
 
+import threading
 import time
 from pathlib import Path
 
 import pytest
-from textual.app import App, ComposeResult
+from textual.app import App
 from textual.containers import Vertical
 from textual.widgets import Button, Input, Select, Static, Tree
 
@@ -176,9 +177,11 @@ async def test_groups_render_for_every_change_kind(review_fixture):
         )
         labels = await _wait_for(
             pilot,
-            lambda: (lambda ls: ls if any("new.txt" in l for l in ls) else None)(
-                _tree_labels(tree)
-            ),
+            lambda: (
+                lambda labels: labels
+                if any("new.txt" in label for label in labels)
+                else None
+            )(_tree_labels(tree)),
             "latest turn's files",
         )
         text = "\n".join(labels)
@@ -204,9 +207,7 @@ async def test_diff_pane_renders_markup_verbatim(review_fixture):
             lambda: app.screen if isinstance(app.screen, ChangeReviewScreen) else None,
             "review screen",
         )
-        await _wait_for(
-            pilot, lambda: screen.query(Tree) or None, "tree mounted"
-        )
+        await _wait_for(pilot, lambda: screen.query(Tree) or None, "tree mounted")
         screen.select_file("markup.txt")
         rendered = await _wait_for(
             pilot,
@@ -348,13 +349,13 @@ async def test_turn_selector_navigates_to_a_previous_turn(review_fixture):
             lambda: app.screen if isinstance(app.screen, ChangeReviewScreen) else None,
             "review screen",
         )
-        tree = await _wait_for(pilot, lambda: screen.query(Tree) or None, "tree")
+        await _wait_for(pilot, lambda: screen.query(Tree) or None, "tree")
         screen.select_turn(run1)
         labels = await _wait_for(
             pilot,
             lambda: (
-                lambda ls: ls
-                if any("first_turn.txt" in l for l in ls)
+                lambda labels: labels
+                if any("first_turn.txt" in label for label in labels)
                 else None
             )(_tree_labels(screen.query_one(Tree))),
             "previous turn's files",
@@ -402,6 +403,68 @@ async def test_u_reverts_the_focused_file_through_the_confirm(review_fixture):
             lambda: (root / "edit.txt").read_text() == "before\n" or None,
             "disk restored to baseline",
         )
+
+
+@pytest.mark.asyncio
+async def test_revert_preflight_and_apply_run_off_the_ui_thread(
+    review_fixture, monkeypatch
+):
+    """Full-file hashing and restoration cannot block Textual's owner thread."""
+    from tldw_chatbook.UI.Screens.change_review_screen import (
+        ChangeRevertConfirmModal,
+    )
+
+    provider, root, _run1, _run2 = review_fixture
+    ui_thread = threading.get_ident()
+    preflight_threads: list[int] = []
+    revert_threads: list[int] = []
+    original_preflight = provider.preflight_revert
+    original_revert = provider.revert
+
+    def record_preflight(row, paths):
+        preflight_threads.append(threading.get_ident())
+        return original_preflight(row, paths)
+
+    def record_revert(row, paths):
+        revert_threads.append(threading.get_ident())
+        return original_revert(row, paths)
+
+    monkeypatch.setattr(provider, "preflight_revert", record_preflight)
+    monkeypatch.setattr(provider, "revert", record_revert)
+    app = _Harness(provider)
+    async with app.run_test(size=(160, 48)) as pilot:
+        screen = await _wait_for(
+            pilot,
+            lambda: app.screen if isinstance(app.screen, ChangeReviewScreen) else None,
+            "review screen",
+        )
+        await _wait_for(
+            pilot,
+            lambda: (screen.query(Tree) and screen._leaves) or None,
+            "leaves loaded",
+        )
+        screen.select_file("edit.txt")
+        await pilot.press("u")
+        await _wait_for(
+            pilot,
+            lambda: app.screen
+            if isinstance(app.screen, ChangeRevertConfirmModal)
+            else None,
+            "confirm modal",
+        )
+        await pilot.click("#change-revert-yes")
+        await _wait_for(
+            pilot,
+            lambda: (root / "edit.txt").read_text() == "before\n" or None,
+            "disk restored to baseline",
+        )
+
+    assert preflight_threads and all(
+        thread_id != ui_thread for thread_id in preflight_threads
+    )
+    assert revert_threads and all(
+        thread_id != ui_thread for thread_id in revert_threads
+    )
 
 
 @pytest.mark.asyncio
@@ -462,7 +525,7 @@ async def test_revert_refusal_during_active_run_reaches_the_user(review_fixture)
             ChangeRevertConfirmModal,
         )
 
-        modal = await _wait_for(
+        await _wait_for(
             pilot,
             lambda: app.screen
             if isinstance(app.screen, ChangeRevertConfirmModal)
@@ -580,7 +643,7 @@ async def test_nested_repo_banner_names_the_holes(tmp_path, monkeypatch):
         text = str(screen.query_one("#change-review-banner", Static).renderable)
         assert "1 nested repository" in text
         labels = _tree_labels(screen.query_one("#change-review-tree", Tree))
-        assert not any("inner.txt" in l for l in labels), (
+        assert not any("inner.txt" in label for label in labels), (
             "the nested edit leaked into the tree"
         )
 
@@ -686,13 +749,15 @@ async def test_badge_marks_files_no_write_tool_touched(tmp_path):
         tree = screen.query_one("#change-review-tree", Tree)
         labels = await _wait_for(
             pilot,
-            lambda: (lambda ls: ls if any("scripted.txt" in l for l in ls) else None)(
-                _tree_labels(tree)
-            ),
+            lambda: (
+                lambda labels: labels
+                if any("scripted.txt" in label for label in labels)
+                else None
+            )(_tree_labels(tree)),
             "turn files",
         )
-        scripted = next(l for l in labels if "scripted.txt" in l)
-        tooled = next(l for l in labels if "tooled.txt" in l)
+        scripted = next(label for label in labels if "scripted.txt" in label)
+        tooled = next(label for label in labels if "tooled.txt" in label)
         assert BADGE_COPY in scripted, scripted
         assert BADGE_COPY not in tooled, (
             "a write_file-touched file must NOT be badged"
@@ -713,12 +778,14 @@ async def test_run_with_no_recorded_steps_renders_no_badges(review_fixture):
         tree = screen.query_one("#change-review-tree", Tree)
         labels = await _wait_for(
             pilot,
-            lambda: (lambda ls: ls if any("new.txt" in l for l in ls) else None)(
-                _tree_labels(tree)
-            ),
+            lambda: (
+                lambda labels: labels
+                if any("new.txt" in label for label in labels)
+                else None
+            )(_tree_labels(tree)),
             "turn files",
         )
-        assert not any(BADGE_COPY in l for l in labels), (
+        assert not any(BADGE_COPY in label for label in labels), (
             "a stepless run badged its files"
         )
 
@@ -777,13 +844,15 @@ async def test_deleted_and_renamed_rows_badge_even_when_path_was_tool_touched(
         tree = screen.query_one("#change-review-tree", Tree)
         labels = await _wait_for(
             pilot,
-            lambda: (lambda ls: ls if any("doomed.txt" in l for l in ls) else None)(
-                _tree_labels(tree)
-            ),
+            lambda: (
+                lambda labels: labels
+                if any("doomed.txt" in label for label in labels)
+                else None
+            )(_tree_labels(tree)),
             "turn files",
         )
-        doomed = next(l for l in labels if "doomed.txt" in l)
-        renamed = next(l for l in labels if "new.txt" in l)
+        doomed = next(label for label in labels if "doomed.txt" in label)
+        renamed = next(label for label in labels if "new.txt" in label)
         assert BADGE_COPY in doomed, f"deletion unbadged: {doomed}"
         assert BADGE_COPY in renamed, f"rename unbadged: {renamed}"
 
@@ -825,7 +894,9 @@ async def test_initial_run_id_opens_directly_on_that_turn(review_fixture):
         labels = await _wait_for(
             pilot,
             lambda: (
-                lambda ls: ls if any("first_turn.txt" in l for l in ls) else None
+                lambda labels: labels
+                if any("first_turn.txt" in label for label in labels)
+                else None
             )(_tree_labels(screen.query_one(Tree))),
             "run1's files on initial open",
         )
@@ -852,7 +923,9 @@ async def test_unknown_initial_run_id_falls_back_to_the_latest_turn(review_fixtu
         labels = await _wait_for(
             pilot,
             lambda: (
-                lambda ls: ls if any("new.txt" in l for l in ls) else None
+                lambda labels: labels
+                if any("new.txt" in label for label in labels)
+                else None
             )(_tree_labels(screen.query_one(Tree))),
             "the latest turn's files as fallback",
         )

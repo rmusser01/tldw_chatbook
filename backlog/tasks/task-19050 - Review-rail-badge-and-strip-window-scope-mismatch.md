@@ -1,9 +1,10 @@
 ---
 id: TASK-19050
 title: Review-rail badge and strip window-scope mismatch
-status: To Do
+status: Done
 assignee: []
 created_date: '2026-08-20'
+updated_date: '2026-08-26 18:04'
 labels:
   - console
   - change-review
@@ -34,8 +35,18 @@ screen pointing at it. Final-review Minor #4, 2026-08-20.
 <!-- SECTION:DESCRIPTION:END -->
 
 ## Acceptance Criteria
-
 <!-- AC:BEGIN -->
-- [ ] #1 Clicking a badged file in the rail always lands the user somewhere the counted note is actually visible -- either by widening the initial selection to the specific window the note belongs to, badging per-window instead of per-(root, path), or giving the strip an explicit hint naming the sibling window that holds the note
-- [ ] #2 The notes strip's existing snapshot-scoped filtering (a note only renders under its own window, never a sibling's) has no regression -- covered by a test asserting both windows' behavior together, not just the fixed click-through
+- [x] #1 The duplicate Inspector Changed files surface is retired; per-turn cards and Review remain available
 <!-- AC:END -->
+
+## Implementation Plan
+
+<!-- SECTION:PLAN:BEGIN -->
+1. Supersede the mismatched Inspector projection by removing that duplicate surface under TASK-22305 and ADR-089 while preserving per-turn cards and Review.
+<!-- SECTION:PLAN:END -->
+
+## Implementation Notes
+
+<!-- SECTION:NOTES:BEGIN -->
+Superseded by TASK-22305 and ADR-089. The rail surface that created the badge/window mismatch was removed; per-turn cards now own inline changed-file review and safe Undo All, while ambiguous same-root runs open Review.
+<!-- SECTION:NOTES:END -->

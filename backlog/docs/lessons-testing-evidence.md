@@ -8966,3 +8966,24 @@ Also: `for f in $CONF` does not word-split in zsh (a conflicted-file loop saw on
 and reported everything as unhandled) — iterate with `while read`. And a rebase-conflict loop
 that exits on error leaves a **detached HEAD**; `git push` then reports "Everything
 up-to-date" while pushing nothing. Check `git symbolic-ref -q HEAD` before trusting any push.
+
+---
+
+## A logical concurrency cap does not bound a long-lived process pool's resident memory
+
+**TASK-22508, 2026-08-26.** A first fix limited EPUB admission to one job at
+a time inside the existing three-process Library parse pool. The coordinator
+test passed, yet the same three-EPUB queue-to-SQLite reproduction still peaked
+at about 750 MiB. Per-process sampling exposed why: the pool assigned the
+sequential books to different workers, and all three retained their parser
+high-water heaps, about 410 MiB combined, after the batch. Isolating the batch
+in one physical worker and retiring that generation reduced the measured peak
+to about 496 MiB on the final dev-based branch and left no parse worker resident.
+
+**What to do.** For memory-heavy multiprocessing work, measure the whole
+process tree and record RSS by PID after each logical task; an admission count
+only proves how many functions run at once. If workers retain high-water heaps,
+bound the number of physical processes that can own that resource class and
+retire or recycle those owners at a verified idle boundary. A green scheduler
+fake cannot prove this property because it has neither OS worker selection nor
+allocator retention.

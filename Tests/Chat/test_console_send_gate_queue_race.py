@@ -22,6 +22,7 @@ real interleavings rather than reasoning about them:
 from __future__ import annotations
 
 import asyncio
+import threading
 from pathlib import Path
 from types import SimpleNamespace
 from typing import Any
@@ -120,40 +121,93 @@ async def test_queued_follow_up_cannot_be_admitted_while_the_durable_commit_runs
     gateway.hold = False
     controller.provider_gateway = gateway
     create_conversation = persistence.create_conversation
-    observed: list[tuple[bool, bool, bool, QueueMutationStatus, int]] = []
 
-    def observe_inside_the_open_transaction(**kwargs: Any):
-        # `commit_durable_turn` creates the conversation inside its own
-        # `BEGIN IMMEDIATE`, so this runs with the durable turn half-written.
-        snapshot = controller.prompt_queue_registry.snapshot("session-1")
-        activity = controller.activity_for("session-1")
-        admitted = controller.queue_prompt(
-            "session-1",
-            text="follow-up offered mid-commit",
-            expected_revision=snapshot.revision,
-        )
-        observed.append(
-            (
-                db.get_connection().in_transaction,
-                activity.accepted_live_turn,
-                store.dispatch_recovery_blocks_submission("session-1"),
-                admitted.status,
-                snapshot.total_count,
-            )
-        )
+    commit_is_open = threading.Event()
+    draft_was_offered = threading.Event()
+    # Sampled on the COMMIT's thread; the offer is made on the event loop.
+    transaction_open: list[bool] = []
+    offered_inside_the_window: list[bool] = []
+    observed: list[tuple[bool, bool, QueueMutationStatus, int]] = []
+
+    def hold_the_open_transaction(**kwargs: Any):
+        # Worker thread. `commit_durable_turn` creates the conversation
+        # inside its own `BEGIN IMMEDIATE`, so the durable turn is
+        # half-written here -- and since TASK-22205 (#2091) that whole
+        # transaction runs under `asyncio.to_thread`, off the event loop.
+        # `get_connection()` is thread-local, so the open transaction can
+        # only be observed HERE; the loop thread holds a different
+        # connection that is not in a transaction at all.
+        transaction_open.append(db.get_connection().in_transaction)
+        commit_is_open.set()
+        # Hold the write transaction open across the whole offer. Bounded,
+        # so a broken observer fails an assertion instead of hanging the
+        # run; whether the offer landed inside the window is recorded
+        # rather than assumed.
+        offered_inside_the_window.append(draft_was_offered.wait(timeout=10))
+        transaction_open.append(db.get_connection().in_transaction)
         return create_conversation(**kwargs)
 
     monkeypatch.setattr(
-        persistence, "create_conversation", observe_inside_the_open_transaction
+        persistence, "create_conversation", hold_the_open_transaction
     )
 
+    async def offer_a_draft_while_the_commit_is_open() -> None:
+        """Press Send from the thread a real user's Send runs on.
+
+        Before #2091 the commit occupied the event loop, so the only way to
+        interleave with it was to reach into the queue from inside the
+        transaction -- which happened to be the same thread. That is now
+        both unfaithful and impossible: the queue registry asserts its
+        owner thread (`_assert_owner_thread`, added 2026-08-23), and no
+        user submission ever originates on a persistence worker thread.
+        Since #2091 the loop is FREE while the commit runs, so this
+        interleaving is one a user can now actually produce -- the race got
+        more reachable, not less.
+        """
+        try:
+            if not await asyncio.to_thread(commit_is_open.wait, 10):
+                return
+            snapshot = controller.prompt_queue_registry.snapshot("session-1")
+            activity = controller.activity_for("session-1")
+            admitted = controller.queue_prompt(
+                "session-1",
+                text="follow-up offered mid-commit",
+                expected_revision=snapshot.revision,
+            )
+            observed.append(
+                (
+                    activity.accepted_live_turn,
+                    store.dispatch_recovery_blocks_submission("session-1"),
+                    admitted.status,
+                    snapshot.total_count,
+                )
+            )
+        finally:
+            draft_was_offered.set()
+
+    observer = asyncio.create_task(offer_a_draft_while_the_commit_is_open())
     result = await controller.run_prompt_chain("first", session_id="session-1")
+    # Deliberately longer than both inner waits combined. A tighter bound
+    # cancels the observer mid-wait and reports `CancelledError` instead of
+    # the assertion that names what actually went wrong -- which is how a
+    # staging failure gets mistaken for a flake.
+    await asyncio.wait_for(observer, timeout=30)
 
     assert result.accepted is True
-    # The hook fired exactly once, genuinely inside the commit transaction.
+    # POSITIVE proof that the race was actually staged, asserted before
+    # anything about its outcome. Without these three, a turn refused early
+    # -- for any unrelated reason -- leaves `observed` empty and every
+    # "nothing bad happened" assertion below passes vacuously. That is not
+    # hypothetical: between #2088 and #2091 this test went red for exactly
+    # that shape, and a careless repair would have made it green and blind.
+    assert transaction_open == [True, True], (
+        "the commit transaction was not open across the whole offer"
+    )
+    assert offered_inside_the_window == [True], (
+        "the draft was not offered before the commit hold timed out"
+    )
     assert len(observed) == 1
-    in_transaction, accepted_live, blocks, status, queued_before = observed[0]
-    assert in_transaction is True
+    accepted_live, blocks, status, queued_before = observed[0]
     # Nothing is accepted yet, so there is no chain and no owner at all --
     # admission cannot happen, and there is nothing to block submission with.
     assert accepted_live is False

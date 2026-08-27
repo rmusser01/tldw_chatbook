@@ -3,7 +3,7 @@ import logging
 import threading
 from inspect import isawaitable
 from types import SimpleNamespace
-from unittest.mock import Mock
+from unittest.mock import AsyncMock, Mock, patch
 
 import pytest
 
@@ -16,6 +16,111 @@ from tldw_chatbook.Subscriptions import LocalWatchlistsService
 from tldw_chatbook.Subscriptions import monitoring_engine
 from tldw_chatbook.Subscriptions.monitoring_engine import ContentExtractor
 from tldw_chatbook.Subscriptions.watchlist_bundle_service import WatchlistBundleService
+from tldw_chatbook.Subscriptions.watchlist_item_page import (
+    WatchlistItemCursor,
+    WatchlistItemPage,
+)
+
+
+@pytest.mark.asyncio
+async def test_list_reader_items_page_normalizes_rows_and_runs_db_off_loop():
+    cursor = WatchlistItemCursor("2026-08-25 12:00:00", 21)
+    raw_page = WatchlistItemPage(
+        items=(
+            {
+                "id": 21,
+                "subscription_id": 7,
+                "title": "Reader post",
+                "effective_date": "2026-08-25 12:00:00",
+            },
+        ),
+        has_more=True,
+        snapshot_max_item_id=42,
+        snapshot_count=6,
+        next_cursor=cursor,
+    )
+    db = Mock()
+    db.get_reader_items_page.return_value = raw_page
+    service = LocalWatchlistsService(db_factory=lambda: db)
+
+    async def execute(_db, func, *args, **kwargs):
+        return func(*args, **kwargs)
+
+    offload = AsyncMock(side_effect=execute)
+    with patch(
+        "tldw_chatbook.Subscriptions.local_watchlists_service.run_db_off_loop",
+        offload,
+    ):
+        page = await service.list_reader_items_page(
+            source_id="7",
+            statuses=["new", "reviewed", "ingested"],
+            snapshot_max_item_id=42,
+            after=cursor,
+        )
+
+    assert offload.await_count == 1
+    db.get_reader_items_page.assert_called_once_with(
+        subscription_id=7,
+        status=None,
+        limit=50,
+        run_id=None,
+        watchlist_id=None,
+        unassigned_only=False,
+        statuses=["new", "reviewed", "ingested"],
+        is_flagged=None,
+        search=None,
+        since=None,
+        snapshot_max_item_id=42,
+        after=cursor,
+    )
+    assert page.items[0]["id"] == "local:watchlist_item:21"
+    assert page.items[0]["effective_date"] == "2026-08-25 12:00:00"
+    assert page.has_more is True
+    assert page.snapshot_max_item_id == 42
+    assert page.snapshot_count == 6
+    assert page.next_cursor is cursor
+
+
+@pytest.mark.asyncio
+async def test_count_reader_item_arrivals_forwards_scope_off_loop():
+    db = Mock()
+    db.count_reader_item_arrivals.return_value = 3
+    service = LocalWatchlistsService(db_factory=lambda: db)
+
+    async def execute(_db, func, *args, **kwargs):
+        return func(*args, **kwargs)
+
+    offload = AsyncMock(side_effect=execute)
+    with patch(
+        "tldw_chatbook.Subscriptions.local_watchlists_service.run_db_off_loop",
+        offload,
+    ):
+        count = await service.count_reader_item_arrivals(
+            snapshot_max_item_id=42,
+            source_id="7",
+            status="new",
+            run_id="8",
+            watchlist_id="9",
+            unassigned_only=True,
+            is_flagged=True,
+            search="reader",
+            since="2026-08-25 00:00:00",
+        )
+
+    assert offload.await_count == 1
+    db.count_reader_item_arrivals.assert_called_once_with(
+        snapshot_max_item_id=42,
+        subscription_id=7,
+        status="new",
+        run_id=8,
+        watchlist_id=9,
+        unassigned_only=True,
+        statuses=None,
+        is_flagged=True,
+        search="reader",
+        since="2026-08-25 00:00:00",
+    )
+    assert count == 3
 
 
 def test_local_watchlists_service_publishes_create_form_source_types():

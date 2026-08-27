@@ -9,6 +9,7 @@ from rich.markup import escape as escape_markup
 from rich.text import Text
 from textual.app import ComposeResult
 from textual.containers import Horizontal, Vertical
+from textual.css.scalar import Scalar
 from textual.css.query import NoMatches
 from textual.events import Focus, Key, MouseDown, Resize
 from textual.widget import Widget
@@ -17,6 +18,11 @@ from textual.widgets import Button, Input, Static
 from tldw_chatbook.Library.library_rail_state import (
     LibraryLifecycle,
     LibraryRailPreferences,
+)
+from tldw_chatbook.Utils.library_rail_width import (
+    LIBRARY_DEFAULT_MAX_WIDTH,
+    LIBRARY_MIN_WIDTH,
+    OrdinaryRailStyleContract,
 )
 from tldw_chatbook.Library.library_shell_state import (
     LIBRARY_ROW_CREATE_NOTE,
@@ -332,8 +338,109 @@ class LibraryRail(PostRecomposeCallback, RecomposeCaptureGuard, Vertical):
         self.top_action_factory = top_action_factory
         self.lifecycle = lifecycle
         self.onboarding_all_empty = onboarding_all_empty
-        self.styles.width = "3fr"
-        self.styles.min_width = 24
+        self._last_ordinary_width_contract: OrdinaryRailStyleContract | None = None
+        self.apply_ordinary_width_contract(
+            OrdinaryRailStyleContract(
+                True,
+                "3fr",
+                LIBRARY_MIN_WIDTH,
+                LIBRARY_DEFAULT_MAX_WIDTH,
+            )
+        )
+
+    @staticmethod
+    def _ordinary_width_inline_declarations(
+        styles: Any,
+    ) -> tuple[
+        bool | None,
+        tuple[float, object, object] | None,
+        tuple[float, object, object] | None,
+        tuple[float, object, object] | None,
+    ]:
+        """Return the four inline declarations in a Scalar-safe comparison shape."""
+        inline_styles = styles.inline
+
+        def scalar_rule(rule_name: str) -> tuple[float, object, object] | None:
+            if not inline_styles.has_rule(rule_name):
+                return None
+            value = inline_styles.get_rule(rule_name)
+            if not isinstance(value, Scalar):
+                return None
+            return (value.value, value.unit, value.percent_unit)
+
+        display = (
+            inline_styles.get_rule("display") == "block"
+            if inline_styles.has_rule("display")
+            else None
+        )
+        return (
+            display,
+            scalar_rule("width"),
+            scalar_rule("min_width"),
+            scalar_rule("max_width"),
+        )
+
+    @staticmethod
+    def _ordinary_width_contract_declarations(
+        contract: OrdinaryRailStyleContract,
+    ) -> tuple[
+        bool,
+        tuple[float, object, object] | None,
+        tuple[float, object, object] | None,
+        tuple[float, object, object] | None,
+    ]:
+        """Normalize contract scalars to Textual's inline declaration form."""
+
+        def scalar_value(
+            value: str | int | None,
+        ) -> tuple[float, object, object] | None:
+            if value is None:
+                return None
+            scalar = (
+                Scalar.parse(value)
+                if isinstance(value, str)
+                else Scalar.from_number(value)
+            )
+            return (scalar.value, scalar.unit, scalar.percent_unit)
+
+        return (
+            contract.display,
+            scalar_value(contract.width),
+            scalar_value(contract.min_width),
+            scalar_value(contract.max_width),
+        )
+
+    def apply_ordinary_width_contract(
+        self, contract: OrdinaryRailStyleContract
+    ) -> None:
+        """Apply ordinary-shell geometry as reversible inline declarations.
+
+        ``None`` width values deliberately remove the matching inline rule,
+        allowing the next ordinary presentation to re-establish its exact
+        bounded declaration.
+        """
+        expected = self._ordinary_width_contract_declarations(contract)
+        if (
+            self._last_ordinary_width_contract == contract
+            and self._ordinary_width_inline_declarations(self.styles) == expected
+        ):
+            return
+
+        self.styles.display = "block" if contract.display else "none"
+        for rule_name, value in (
+            ("width", contract.width),
+            ("min_width", contract.min_width),
+            ("max_width", contract.max_width),
+        ):
+            if value is None:
+                self.styles.clear_rule(rule_name)
+            else:
+                setattr(self.styles, rule_name, value)
+        self._last_ordinary_width_contract = contract
+
+    def invalidate_width_contract_owner(self) -> None:
+        """Require the next ordinary application to reclaim rail geometry."""
+        self._last_ordinary_width_contract = None
 
     def sync_state(
         self,

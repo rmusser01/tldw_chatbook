@@ -94,6 +94,7 @@ from tldw_chatbook.Chat.console_chat_store import (
     ConsoleChatSession,
     ConsoleChatStore,
     ConsoleDispatchSettlementError,
+    ConsoleDurableAcceptanceRetired,
     ConsoleDurableAcceptanceFingerprint,
     ConsoleDurableTurnCommit,
     TerminalCitationFinalizer,
@@ -1784,6 +1785,12 @@ class _DurablePostcommitContinuation:
     turn_context: ConsoleTurnExecutionContext
     prepared: _PreparedSendContinuation | None
     committed_context_epoch: int
+    #: TASK-22302: the durable turn commits in `_accept_durable_turn` and
+    #: publishes its live owners in `resume_durable_postcommit`; the terminal
+    #: citation finalizer has to survive that hand-off. It did not -- the
+    #: publish site passed a hard-coded None -- so no durable Console turn
+    #: persisted any citation provenance from `a26cdafd8` onward.
+    terminal_citation_finalizer: TerminalCitationFinalizer | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -2175,6 +2182,11 @@ class ConsoleChatController:
         # by the ACTIVE (viewed) session -- see its own docstring.
         self._active_assistant_message_ids: dict[str, str] = {}
         self._active_stream_tasks: dict[str, asyncio.Task] = {}
+        # Exact workspace authority captured for each live provider dispatch.
+        # Undo/commit probes run on worker threads, so snapshot reads and the
+        # stream-lifecycle writes share this lock.
+        self._active_workspace_roots_lock = threading.Lock()
+        self._active_workspace_roots_by_session: dict[str, tuple[str, ...]] = {}
         # Volatile-only Task-13 owner fence. It starts before submit's first
         # await and ends only after the submit finalizer; Task 14 will add
         # durable recovery/checkpoint semantics.
@@ -2562,6 +2574,36 @@ class ConsoleChatController:
             map, including entries for sessions the store has since closed.
         """
         return dict(self._run_states)
+
+    def run_active_for_workspace(self, root: str) -> bool:
+        """Whether any live session is executing against the given root.
+
+        The roots come from each dispatch's immutable execution context, not
+        from the currently viewed session or mutable workspace selection.
+
+        Args:
+            root: Workspace root about to be mutated.
+
+        Returns:
+            True when a non-terminal run captured the same canonical root.
+        """
+
+        def _canonical(value: str) -> str:
+            try:
+                return os.path.normcase(str(Path(value).expanduser().resolve()))
+            except OSError:
+                return os.path.normcase(
+                    os.path.abspath(os.path.expanduser(str(value)))
+                )
+
+        target = _canonical(root)
+        with self._active_workspace_roots_lock:
+            captured = tuple(self._active_workspace_roots_by_session.items())
+        return any(
+            not self.run_state_for(session_id).is_send_allowed
+            and any(_canonical(candidate) == target for candidate in roots)
+            for session_id, roots in captured
+        )
 
     def activity_for(self, session_id: str) -> ConsoleControllerActivity:
         """Return the single queue-aware activity projection for ``session_id``."""
@@ -5619,13 +5661,34 @@ class ConsoleChatController:
             if inspect.isawaitable(result):
                 result = await result
         except BaseException:
-            self.store.abandon_durable_postcommit_effect(
+            # TASK-22587: releasing the claim must never REPLACE the failure
+            # that sent us here. Bookkeeping is strictly less informative than
+            # the original exception, and this arm also runs for CancelledError.
+            try:
+                self.store.abandon_durable_postcommit_effect(
+                    preparation_id, effect_name, fingerprint=fingerprint
+                )
+            except Exception as release_exc:
+                logger.warning(
+                    "Durable postcommit effect release failed; keeping the "
+                    "original failure (effect={}, release_exception_type={})",
+                    effect_name,
+                    type(release_exc).__name__,
+                )
+            raise
+        try:
+            self.store.complete_durable_postcommit_effect(
                 preparation_id, effect_name, fingerprint=fingerprint
             )
-            raise
-        self.store.complete_durable_postcommit_effect(
-            preparation_id, effect_name, fingerprint=fingerprint
-        )
+        except ConsoleDurableAcceptanceRetired:
+            # TASK-22587: the session was closed while this effect ran. The
+            # work itself succeeded; there is simply no ledger left to record
+            # it in. Closing a chat is not an error.
+            logger.debug(
+                "Durable postcommit effect completed after retirement "
+                "(effect={})",
+                effect_name,
+            )
         return result
 
     def _durable_db_call_offloadable(self) -> bool:
@@ -5831,6 +5894,7 @@ class ConsoleChatController:
             turn_context=turn_context,
             prepared=prepared_continuation,
             committed_context_epoch=committed_context_epoch,
+            terminal_citation_finalizer=terminal_citation_finalizer,
         )
         with self.store.durable_preparation_lock:
             self.store.validate_durable_acceptance_fingerprint(fingerprint)
@@ -5843,6 +5907,44 @@ class ConsoleChatController:
                 continuation
             )
         return await self.resume_durable_postcommit(preparation.preparation_id)
+
+    def _postcommit_stopped_by_close(
+        self,
+        *,
+        preparation_id: str,
+        session_id: str,
+        commit: Any,
+        continuation: Any,
+    ) -> ConsoleSubmitResult:
+        """Terminal benign outcome when the chat closed mid-postcommit.
+
+        TASK-22587. Runs the same continuation cleanup the normal tail runs --
+        settle, drop the continuation, release prepared evidence -- but not the
+        owner-changed check (the owner is legitimately gone) and not `retire`
+        (closing already did it, and it is idempotent besides).
+        """
+
+        logger.debug("Durable postcommit sequence stopped: session closed")
+        self.store.release_durable_postcommit_activity(preparation_id)
+        self._settle_accepted_preparation(preparation_id)
+        with self.store.durable_preparation_lock:
+            current = self._durable_postcommit_continuations.pop(preparation_id, None)
+            if current is not None:
+                self._release_retired_prepared_evidence(current)
+        return ConsoleSubmitResult(
+            True,
+            True,
+            "",
+            session_id=session_id,
+            user_message_id=commit.user_message_id,
+            assistant_message_id=commit.assistant_message_id,
+            terminal_status=self.run_state_for(session_id).status,
+            origin=continuation.origin,
+            queue_entry_id=continuation.queue_entry_id,
+            committed_context_epoch=continuation.committed_context_epoch,
+            preparation_id=preparation_id,
+            provider_started=True,
+        )
 
     async def resume_durable_postcommit(
         self,
@@ -5874,10 +5976,21 @@ class ConsoleChatController:
         commit = continuation.commit
         fingerprint = continuation.fingerprint
         session_id = continuation.session_id
-        existing_effects = self.store.durable_postcommit_effects_for(
-            preparation_id,
-            fingerprint=fingerprint,
-        )
+        try:
+            existing_effects = self.store.durable_postcommit_effects_for(
+                preparation_id,
+                fingerprint=fingerprint,
+            )
+        except ConsoleDurableAcceptanceRetired:
+            # TASK-22587: the chat was closed before this resume began, so the
+            # whole sequence is moot. This lookup sits BEFORE the try block
+            # below, which is why guarding only the sequence was not enough.
+            return self._postcommit_stopped_by_close(
+                preparation_id=preparation_id,
+                session_id=session_id,
+                commit=commit,
+                continuation=continuation,
+            )
         if (
             existing_effects is not None
             and "checkpoint_transition" in existing_effects.completed
@@ -5908,7 +6021,7 @@ class ConsoleChatController:
             _user, assistant = self.store.publish_durable_turn_owners(
                 session_id,
                 commit,
-                terminal_citation_finalizer=None,
+                terminal_citation_finalizer=continuation.terminal_citation_finalizer,
                 defer_terminal_persistence=(
                     continuation.citation_repair_session is not None
                 ),
@@ -6139,6 +6252,17 @@ class ConsoleChatController:
                 ),
                 fingerprint=fingerprint,
             )
+        except ConsoleDurableAcceptanceRetired:
+            # TASK-22587: the user closed the chat mid-sequence. Every REMAINING
+            # effect validates against a preparation that no longer exists, so
+            # retirement is terminal-benign for the whole orchestration, not
+            # just the effect that noticed it first.
+            return self._postcommit_stopped_by_close(
+                preparation_id=preparation_id,
+                session_id=session_id,
+                commit=commit,
+                continuation=continuation,
+            )
         except ConsoleDispatchSettlementError:
             self._restore_dispatch_recovery_after_settlement_failure(
                 session_id,
@@ -6161,12 +6285,14 @@ class ConsoleChatController:
                 provider_started=True,
             )
         except BaseException:
-            state = self.store.durable_postcommit_effects_for(
+            # TASK-22587: this lookup runs inside the failure handler, so it
+            # must not raise -- a close mid-turn retires the ledger and the
+            # raise would REPLACE the failure being handled. The tombstone
+            # keeps `completed`, so the answer survives the close.
+            completed = self.store.durable_completed_effects_for(
                 preparation_id, fingerprint=fingerprint
             )
-            provider_started = bool(
-                state is not None and "checkpoint_transition" in state.completed
-            )
+            provider_started = "checkpoint_transition" in completed
             if self.store.dispatch_recovery_for_session(session_id) is None:
                 self.store.publish_durable_recovery_owner(
                     session_id,
@@ -6206,6 +6332,7 @@ class ConsoleChatController:
             self._durable_postcommit_continuations.pop(preparation_id, None)
             self._release_retired_prepared_evidence(current)
             self.store.retire_durable_acceptance(preparation_id, fingerprint)
+        self.store.release_durable_postcommit_activity(preparation_id)
         if not isinstance(stream_result, ConsoleSubmitResult):
             stream_result = ConsoleSubmitResult(True, True)
         return replace(
@@ -13982,6 +14109,10 @@ class ConsoleChatController:
             assistant_message_id,
         )
         active_task = asyncio.current_task()
+        with self._active_workspace_roots_lock:
+            self._active_workspace_roots_by_session[owner_id] = (
+                turn_context.workspace_roots
+            )
         self._active_assistant_message_ids[owner_id] = assistant_message_id
         self._active_stream_tasks[owner_id] = active_task
         self._stop_requested = False
@@ -14057,6 +14188,8 @@ class ConsoleChatController:
             ):
                 self._active_stream_tasks.pop(owner_id, None)
                 self._active_assistant_message_ids.pop(owner_id, None)
+                with self._active_workspace_roots_lock:
+                    self._active_workspace_roots_by_session.pop(owner_id, None)
                 self._stop_requested = False
                 if (
                     self._active_citation_repair_sessions.get(owner_id)

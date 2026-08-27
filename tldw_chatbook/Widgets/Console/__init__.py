@@ -24,10 +24,6 @@ from .console_inspector_ownership import (
     InspectorOwnershipPolicy,
     UnownedInspectorContentError,
 )
-from .console_changed_files_section import (
-    ConsoleChangedFilesSection,
-    ConsoleChangedFilesState,
-)
 from .console_citation_sources_modal import (
     ConsoleCitationSourceRow,
     ConsoleCitationSourcesModal,
@@ -88,8 +84,6 @@ __all__ = [
     "ConsoleCommandPopup",
     "ConsoleBackgroundEffect",
     "ConsoleBoundedSection",
-    "ConsoleChangedFilesSection",
-    "ConsoleChangedFilesState",
     "ConsoleCitationSourceRow",
     "ConsoleCitationSourcesModal",
     "ConsoleControlBar",

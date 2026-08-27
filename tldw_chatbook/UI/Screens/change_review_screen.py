@@ -46,9 +46,7 @@ from textual.screen import ModalScreen, Screen
 from textual.widgets import Button, Checkbox, Input, Select, Static, Tree
 
 from tldw_chatbook.Chat.console_display_state import (
-    ConversationFileEntry,
     DiffHunk,
-    conversation_file_summary,
     hunk_excerpt,
     split_unified_diff,
 )
@@ -211,6 +209,9 @@ class AgentRunsChangeReviewProvider:
         #: workspace. The revert engine refuses while one is live -- the
         #: per-root lock covers git ops, not the agent's own file tools.
         self.run_active = run_active if run_active is not None else (lambda: False)
+        self.run_active_for_root: Callable[[str], bool] = (
+            lambda _root: self.run_active()
+        )
         if diff_display_max_lines is None:
             diff_display_max_lines = self._configured_cap()
         # Review finding: an explicit 0/negative/non-int cap would defeat
@@ -449,7 +450,11 @@ class AgentRunsChangeReviewProvider:
         from tldw_chatbook.Workspaces.change_revert import revert_paths
 
         return revert_paths(
-            self._service, self._db, row, paths, run_active=self.run_active
+            self._service,
+            self._db,
+            row,
+            paths,
+            run_active=lambda: self.run_active_for_root(str(row["root"])),
         )
 
     def diff_text(self, row: dict, path: str) -> str:
@@ -558,94 +563,6 @@ class AgentRunsChangeReviewProvider:
             One dict per note row (all columns), oldest first.
         """
         return self._db.notes_for_run(run_id)
-
-    def conversation_changed_files(
-        self,
-        row_cache: "dict[int, list[ChangedFile]] | None" = None,
-    ) -> "tuple[list[ConversationFileEntry], int]":
-        """Cross-turn latest-state summary of the WHOLE conversation.
-
-        TASK-18060 Task 2 (review-rail spec §1): reads every clean
-        ``change_snapshots`` row for :attr:`_conversation_id`, calls
-        :meth:`changed_files` on each (one shadow-repo diff -- a git
-        subprocess pair -- PER ROW), joins per-file note counts in one
-        query, and delegates assembly to
-        :func:`conversation_file_summary`.
-
-        A row is "clean" the same way :meth:`changed_files` itself already
-        guards: ``tracking_error`` falsy AND ``end_sha`` truthy. A clean
-        row can still raise :class:`ChangeTrackingError` when retention
-        pruned its snapshots out from under it (:meth:`snapshots_pruned`)
-        -- that row is skipped and counted in ``pruned_rows`` rather than
-        failing the whole summary (spec §1's honest "history pruned for N
-        turns" tail line; the Review screen's own ``_load_turn`` uses the
-        identical per-row try/except posture).
-
-        **NEVER call this on the UI thread** -- unlike this screen's own
-        synchronous diff-on-focus reads, this walks the conversation's
-        ENTIRE snapshot history and can run many git subprocesses in one
-        call. Callers (the Inspector rail's cached-summary worker, §2)
-        must run it off-thread (``asyncio.to_thread`` or a worker) and
-        land the result via ``call_from_thread``.
-
-        Args:
-            row_cache: Optional per-row git-diff memo, keyed by the
-                owning ``change_snapshots`` row's own DB ``id`` (spec §2's
-                stated per-row memo, fix round). A row already present is
-                reused verbatim instead of re-running :meth:`changed_files`
-                (a git subprocess pair) for it; a row not yet present is
-                computed and then stored into this SAME dict, in place --
-                so a caller that reuses one dict across repeated calls
-                (the rail's cached-summary worker) only pays git cost for
-                turns it has not diffed before (measured: ~18ms per
-                row-pair: a degenerate hundred-turn conversation's
-                recompute cost is otherwise quadratic across the
-                conversation's lifetime, ~900ms already by turn 50).
-                ``None`` (the default -- every pre-fix-round caller,
-                including :class:`ConsoleTurnFileCard`'s per-turn reads
-                via other methods) computes every row fresh each call,
-                byte-identical to behavior before this parameter existed.
-                A row that raises :class:`ChangeTrackingError` (pruned) is
-                NEVER cached -- there is nothing valid to store, and a
-                pruned row is rare enough that re-probing it each call is
-                an acceptable, disclosed cost.
-
-        Returns:
-            ``(entries, pruned_rows)`` -- the cross-turn summary and how
-            many otherwise-clean rows were skipped because retention
-            pruned their snapshots.
-        """
-        rows = self._db.change_snapshots_for_conversation(self._conversation_id)
-        clean_rows = [
-            row
-            for row in rows
-            if not row.get("tracking_error") and row.get("end_sha")
-        ]
-        rows_with_files: list[tuple[dict, list[ChangedFile]]] = []
-        pruned_rows = 0
-        for row in clean_rows:
-            row_id = row.get("id")
-            cached = (
-                row_cache.get(row_id)
-                if row_cache is not None and row_id is not None
-                else None
-            )
-            if cached is not None:
-                rows_with_files.append((row, cached))
-                continue
-            try:
-                files = self.changed_files(row)
-            except ChangeTrackingError:
-                pruned_rows += 1
-                continue
-            if row_cache is not None and row_id is not None:
-                row_cache[row_id] = files
-            rows_with_files.append((row, files))
-        note_counts = self._db.change_note_counts_for_conversation(
-            self._conversation_id
-        )
-        entries = conversation_file_summary(rows_with_files, note_counts)
-        return entries, pruned_rows
 
     # -- Git modes (TASK-16801 arc B) -----------------------------------
     #
@@ -839,7 +756,11 @@ class AgentRunsChangeReviewProvider:
         )
 
         return _commit_selected(
-            Path(root), files, message, new_branch, run_active=self.run_active
+            Path(root),
+            files,
+            message,
+            new_branch,
+            run_active=lambda: self.run_active_for_root(root),
         )
 
     def push_current(
@@ -2441,8 +2362,7 @@ class ChangeReviewScreen(Screen):
         in flight. Textual's exclusive-worker group cancels the prior
         worker TASK, but a ``call_from_thread`` callback it had already
         queued still runs -- without this check those working-tree rows
-        land inside a turn view (the ``chat_screen``
-        ``_land_console_changed_files`` precedent).
+        land inside a turn view.
 
         Args:
             token: The identity captured at dispatch time.
@@ -2591,7 +2511,7 @@ class ChangeReviewScreen(Screen):
             self.notify(COMMIT_CLEAN_TREE_REASON, severity="warning")
             return
         try:
-            refused = bool(self._provider.run_active())
+            refused = bool(self._provider.run_active_for_root(root))
         except Exception:  # noqa: BLE001 -- a broken probe must not block work
             logger.opt(exception=True).warning(
                 "change_review: run_active probe failed; deferring to the "
@@ -3993,17 +3913,31 @@ class ChangeReviewScreen(Screen):
         # Multi-root Undo-all: one confirm covering everything, then the
         # engine runs per root row.
         rows_paths = list(by_row.values())
+        self.run_worker(
+            self._prepare_undo_all(rows_paths, total),
+            group="change-review-preflight",
+            exit_on_error=False,
+        )
+
+    async def _prepare_undo_all(
+        self, rows_paths: list[tuple[dict, list[str]]], total: int
+    ) -> None:
+        """Read whole-turn overwrite warnings without blocking Textual."""
         all_edited: list[str] = []
         for row, paths in rows_paths:
-            all_edited.extend(self._provider.preflight_revert(row, paths).edited_since)
+            preflight = await asyncio.to_thread(
+                self._provider.preflight_revert, row, paths
+            )
+            all_edited.extend(preflight.edited_since)
 
         def _apply(confirmed: bool | None) -> None:
             if not confirmed:
                 return
-            outcomes = []
-            for row, paths in rows_paths:
-                outcomes.extend(self._run_revert(row, paths))
-            self._report_outcomes(outcomes)
+            self.run_worker(
+                self._revert_rows(rows_paths),
+                group="change-review-revert",
+                exit_on_error=False,
+            )
 
         self.app.push_screen(
             ChangeRevertConfirmModal(
@@ -4013,22 +3947,45 @@ class ChangeReviewScreen(Screen):
         )
 
     def _confirm_and_revert(self, row: dict, paths: list[str], summary: str) -> None:
-        edited = self._provider.preflight_revert(row, paths).edited_since
+        self.run_worker(
+            self._prepare_confirm_and_revert(row, paths, summary),
+            group="change-review-preflight",
+            exit_on_error=False,
+        )
+
+    async def _prepare_confirm_and_revert(
+        self, row: dict, paths: list[str], summary: str
+    ) -> None:
+        """Prepare one confirmation without hashing files on the UI thread."""
+        preflight = await asyncio.to_thread(self._provider.preflight_revert, row, paths)
 
         def _apply(confirmed: bool | None) -> None:
             if not confirmed:
                 return
-            self._report_outcomes(self._run_revert(row, paths))
+            self.run_worker(
+                self._revert_rows([(row, paths)]),
+                group="change-review-revert",
+                exit_on_error=False,
+            )
 
         self.app.push_screen(
-            ChangeRevertConfirmModal(summary, edited), callback=_apply
+            ChangeRevertConfirmModal(summary, preflight.edited_since), callback=_apply
         )
 
-    def _run_revert(self, row: dict, paths: list[str]) -> list:
+    async def _revert_rows(
+        self, rows_paths: list[tuple[dict, list[str]]]
+    ) -> None:
+        """Apply one confirmed selection off-thread, then update the screen."""
+        outcomes = []
+        for row, paths in rows_paths:
+            outcomes.extend(await self._run_revert(row, paths))
+        self._report_outcomes(outcomes)
+
+    async def _run_revert(self, row: dict, paths: list[str]) -> list:
         from tldw_chatbook.Workspaces.change_revert import RevertRefusedError
 
         try:
-            return self._provider.revert(row, paths)
+            return await asyncio.to_thread(self._provider.revert, row, paths)
         except RevertRefusedError as exc:
             self.notify(str(exc), severity="warning")
             return []

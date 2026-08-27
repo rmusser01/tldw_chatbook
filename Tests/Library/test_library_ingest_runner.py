@@ -311,7 +311,9 @@ class _IngestRunnerHarness(LibraryIngestQueueMixin, App):
         self._heavy_lane_override = heavy_lane
         self._local_stt_dispatch_factory = local_stt_dispatch_factory
 
-    def _create_ingest_parse_pool(self):
+    def _create_ingest_parse_pool(
+        self, *, processes: int | None = None
+    ) -> _app_module._IngestParsePoolResources:
         self._pool_create_count += 1
         pool_or_resources = self._pool_factory()
         if isinstance(pool_or_resources, _app_module._IngestParsePoolResources):
@@ -616,7 +618,9 @@ def test_local_research_retry_claim_waits_for_and_uses_parse_capacity(
             self.calls.append((function, args, callback, error_callback))
 
     pool = _Pool()
-    app._ensure_ingest_parse_pool = lambda: pool  # type: ignore[method-assign]
+    app._ensure_ingest_parse_pool = (  # type: ignore[method-assign]
+        lambda _mode="general": pool
+    )
 
     app._dispatch_research_source_catalog_job(retry.job_id)
 
@@ -634,6 +638,37 @@ def test_local_research_retry_claim_waits_for_and_uses_parse_capacity(
     assert progress_context == (1, retry.job_id)
     assert app._research_source_parse_dispatch_pending == set()
     assert app.library_ingest_jobs.next_queued() is None
+    ingest_store.close()
+
+
+def test_local_research_retry_fails_after_parse_pool_retirement_failure(
+    tmp_path: Path,
+) -> None:
+    """A preclaimed Research retry must not hang behind a failed pool gate."""
+
+    app = _IngestRunnerHarness(_make_db(tmp_path))
+    ingest_store = LibraryIngestJobsDB(tmp_path / "failed-pool-retry.sqlite")
+    app.library_ingest_jobs.attach_store(ingest_store)
+    app._on_ingest_parse_pool_retirement_failed()
+
+    source = app.library_ingest_jobs.submit(
+        source_path=str(tmp_path / "research.txt"),
+        detected_type="document",
+        research_source_operation_id="research-op-after-pool-failure",
+    )
+    app.library_ingest_jobs.mark_failed(source.job_id, error="Temporary failure")
+    retry = app._requeue_research_source_catalog_job(source.job_id)
+    assert retry is not None
+
+    app._dispatch_research_source_catalog_job(retry.job_id)
+
+    failed = app.library_ingest_jobs.get_job(retry.job_id)
+    assert failed is not None
+    assert failed.state is IngestJobState.FAILED
+    assert "restart" in failed.error.lower()
+    assert failed.permanent is False
+    assert app._research_source_parse_dispatch_pending == set()
+    assert app._pool_create_count == 0
     ingest_store.close()
 
 
@@ -1450,11 +1485,15 @@ async def test_broken_pool_fails_all_parsing_jobs_and_rebuilds_on_next_submit(
         assert jobs_by_id[job2.job_id].permanent is False
         assert app._ingest_parse_pool is None
 
-        # Retry -- the next submission must rebuild a fresh pool.
+        # Retry -- it stays gated until teardown joins, then rebuilds.
         requeued = app.retry_library_ingest_job(job1.job_id)
         assert requeued is not None
+        for _ in range(_POLL_ATTEMPTS):
+            if len(pools) == 2:
+                break
+            await pilot.pause(_POLL_INTERVAL)
         assert len(pools) == 2, (
-            "a fresh pool must be created lazily on the next submission"
+            "a fresh pool must be created after broken-generation teardown"
         )
 
 
@@ -1563,8 +1602,17 @@ async def test_real_pool_worker_exit_is_reported_for_owning_generation(
         target_pool: Any,
         progress_queue: Any | None = None,
         progress_thread: threading.Thread | None = None,
+        *,
+        on_complete: Callable[[], None] | None = None,
+        on_failure: Callable[[BaseException], None] | None = None,
     ) -> threading.Thread:
-        thread = real_terminate(target_pool, progress_queue, progress_thread)
+        thread = real_terminate(
+            target_pool,
+            progress_queue,
+            progress_thread,
+            on_complete=on_complete,
+            on_failure=on_failure,
+        )
         teardown_threads.append(thread)
         return thread
 
@@ -1591,6 +1639,16 @@ async def test_real_pool_worker_exit_is_reported_for_owning_generation(
             assert failed.permanent is False
             assert app._ingest_parse_pool is None
             assert generation not in app._ingest_parse_jobs_by_generation
+            for _ in range(500):
+                if (
+                    not app._ingest_parse_pool_retiring
+                    and teardown_threads
+                    and not teardown_threads[0].is_alive()
+                ):
+                    break
+                await pilot.pause(_POLL_INTERVAL)
+            assert app._ingest_parse_pool_retiring is False
+            assert teardown_threads and not teardown_threads[0].is_alive()
     finally:
         if pool is not None:
             if teardown_threads:
@@ -1744,6 +1802,312 @@ async def test_heavy_lane_caps_transcriptions_while_documents_fill_pool(
             app, pilot, paths["a2.mp3"].job_id, IngestJobState.PARSING
         )
         assert len(pool.calls) == 4
+
+
+@pytest.mark.asyncio
+async def test_ebook_batch_uses_one_process_then_documents_use_general_pool(
+    tmp_path: Path,
+) -> None:
+    db = _make_db(tmp_path)
+    pools: list[_FakeIngestParsePool] = []
+    requested_processes: list[int | None] = []
+
+    class GenerationHarness(_IngestRunnerHarness):
+        def _create_ingest_parse_pool(
+            self, processes: int | None = None
+        ) -> _app_module._IngestParsePoolResources:
+            self._pool_create_count += 1
+            requested_processes.append(processes)
+            pool = _FakeIngestParsePool(auto_run=False)
+            pools.append(pool)
+            return _app_module._IngestParsePoolResources(
+                pool,
+                queue.Queue(maxsize=INGEST_PARSE_PROGRESS_QUEUE_MAXSIZE),
+            )
+
+    app = GenerationHarness(db, worker_count=3, heavy_lane=1)
+
+    async with app.run_test() as pilot:
+        paths = {}
+        for name in ("book-1.epub", "book-2.epub", "doc-1.txt", "doc-2.txt"):
+            path = tmp_path / name
+            path.write_text("x", encoding="utf-8")
+            paths[name] = app.submit_library_ingest_job(source_path=str(path))
+        await pilot.pause()
+
+        assert requested_processes == [1]
+        assert len(pools[0].calls) == 1
+        states = {job.job_id: job.state for job in app.library_ingest_jobs.jobs()}
+        assert states[paths["book-1.epub"].job_id] == IngestJobState.PARSING
+        assert states[paths["book-2.epub"].job_id] == IngestJobState.QUEUED
+        assert states[paths["doc-1.txt"].job_id] == IngestJobState.QUEUED
+        assert states[paths["doc-2.txt"].job_id] == IngestJobState.QUEUED
+
+        pools[0].trigger_success(0, {"ok": True, "payload": {}})
+        await _wait_for_job_state(
+            app, pilot, paths["book-2.epub"].job_id, IngestJobState.PARSING
+        )
+        assert len(pools[0].calls) == 2
+
+        pools[0].trigger_success(1, {"ok": True, "payload": {}})
+        for _ in range(_POLL_ATTEMPTS):
+            if len(pools) == 2 and len(pools[1].calls) == 2:
+                break
+            await pilot.pause(_POLL_INTERVAL)
+        else:
+            raise AssertionError(
+                "ordinary parse pool was not started after ebook retirement"
+            )
+
+        assert requested_processes == [1, 3]
+        assert pools[0].terminated is True
+        states = {job.job_id: job.state for job in app.library_ingest_jobs.jobs()}
+        assert states[paths["doc-1.txt"].job_id] == IngestJobState.PARSING
+        assert states[paths["doc-2.txt"].job_id] == IngestJobState.PARSING
+
+
+@pytest.mark.asyncio
+async def test_ebook_waits_for_existing_general_pool_to_retire(
+    tmp_path: Path,
+) -> None:
+    db = _make_db(tmp_path)
+    pools: list[_FakeIngestParsePool] = []
+    requested_processes: list[int | None] = []
+
+    class GenerationHarness(_IngestRunnerHarness):
+        def _create_ingest_parse_pool(
+            self, *, processes: int | None = None
+        ) -> _app_module._IngestParsePoolResources:
+            self._pool_create_count += 1
+            requested_processes.append(processes)
+            pool = _FakeIngestParsePool(auto_run=False)
+            pools.append(pool)
+            return _app_module._IngestParsePoolResources(
+                pool,
+                queue.Queue(maxsize=INGEST_PARSE_PROGRESS_QUEUE_MAXSIZE),
+            )
+
+    app = GenerationHarness(db, worker_count=3)
+
+    async with app.run_test() as pilot:
+        document_path = tmp_path / "doc.txt"
+        document_path.write_text("x", encoding="utf-8")
+        document = app.submit_library_ingest_job(source_path=str(document_path))
+        ebook_path = tmp_path / "book.epub"
+        ebook_path.write_text("x", encoding="utf-8")
+        ebook = app.submit_library_ingest_job(source_path=str(ebook_path))
+        await pilot.pause()
+
+        assert requested_processes == [3]
+        assert len(pools[0].calls) == 1
+        assert app.library_ingest_jobs.get_job(ebook.job_id).state is IngestJobState.QUEUED
+
+        pools[0].trigger_success(0, {"ok": True, "payload": {}})
+        for _ in range(_POLL_ATTEMPTS):
+            if len(pools) == 2 and pools[1].calls:
+                break
+            await pilot.pause(_POLL_INTERVAL)
+        else:
+            raise AssertionError("ebook pool did not start after general retirement")
+
+        assert requested_processes == [3, 1]
+        assert pools[0].terminated is True
+        assert (
+            app.library_ingest_jobs.get_job(document.job_id).state
+            is not IngestJobState.QUEUED
+        )
+        assert app.library_ingest_jobs.get_job(ebook.job_id).state is IngestJobState.PARSING
+
+
+@pytest.mark.asyncio
+async def test_local_stt_does_not_consume_the_ebook_pool_slot(tmp_path: Path) -> None:
+    """The independent STT lane must not stall or retain an ebook worker."""
+    pools: list[_FakeIngestParsePool] = []
+    executor = _FakeLocalSTTExecutor()
+
+    def _pool_factory() -> _FakeIngestParsePool:
+        pool = _FakeIngestParsePool(auto_run=False)
+        pools.append(pool)
+        return pool
+
+    app = _IngestRunnerHarness(
+        _make_db(tmp_path),
+        pool_factory=_pool_factory,
+        worker_count=3,
+        local_stt_executor=executor,
+        local_stt_dispatch_factory=_fake_local_stt_dispatch,
+    )
+
+    async with app.run_test() as pilot:
+        audio_path = tmp_path / "speech.wav"
+        audio_path.write_bytes(b"fixture")
+        audio = app.submit_library_ingest_job(
+            source_path=str(audio_path),
+            ingest_options={
+                "audio_video": {"transcription_provider": "parakeet-onnx"}
+            },
+        )
+        ebooks = []
+        for name in ("book-1.epub", "book-2.epub"):
+            path = tmp_path / name
+            path.write_text("fixture", encoding="utf-8")
+            ebooks.append(app.submit_library_ingest_job(source_path=str(path)))
+        await pilot.pause()
+
+        assert app.library_ingest_jobs.get_job(audio.job_id).state is IngestJobState.PARSING
+        assert len(executor.calls) == 1
+        assert len(pools) == 1
+        assert len(pools[0].calls) == 1
+        assert app.library_ingest_jobs.get_job(ebooks[0].job_id).state is IngestJobState.PARSING
+        assert app.library_ingest_jobs.get_job(ebooks[1].job_id).state is IngestJobState.QUEUED
+
+        pools[0].trigger_success(0, {"ok": True, "payload": {}})
+        await _wait_for_job_state(
+            app,
+            pilot,
+            ebooks[1].job_id,
+            IngestJobState.PARSING,
+        )
+
+        assert len(pools[0].calls) == 2
+        assert app.library_ingest_jobs.get_job(audio.job_id).state is IngestJobState.PARSING
+
+
+@pytest.mark.asyncio
+async def test_broken_ebook_pool_gates_rebuild_until_teardown_completes(
+    tmp_path: Path,
+) -> None:
+    """Queued work resumes only after the broken generation has joined."""
+    teardown_release = threading.Event()
+    teardown_started = threading.Event()
+    pools: list[_FakeIngestParsePool] = []
+
+    class BlockingJoinPool(_FakeIngestParsePool):
+        def join(self) -> None:
+            teardown_started.set()
+            assert teardown_release.wait(_FAKE_POOL_JOIN_TIMEOUT)
+            super().join()
+
+    def _pool_factory() -> _FakeIngestParsePool:
+        pool = (
+            BlockingJoinPool(auto_run=False)
+            if not pools
+            else _FakeIngestParsePool(auto_run=False)
+        )
+        pools.append(pool)
+        return pool
+
+    app = _IngestRunnerHarness(
+        _make_db(tmp_path),
+        pool_factory=_pool_factory,
+        worker_count=3,
+    )
+
+    try:
+        async with app.run_test() as pilot:
+            first_path = tmp_path / "book-1.epub"
+            first_path.write_text("fixture", encoding="utf-8")
+            first = app.submit_library_ingest_job(source_path=str(first_path))
+            second_path = tmp_path / "book-2.epub"
+            second_path.write_text("fixture", encoding="utf-8")
+            second = app.submit_library_ingest_job(source_path=str(second_path))
+            document_path = tmp_path / "note.txt"
+            document_path.write_text("fixture", encoding="utf-8")
+            document = app.submit_library_ingest_job(source_path=str(document_path))
+            await pilot.pause()
+
+            pools[0].trigger_error(0, RuntimeError("simulated ebook worker death"))
+            await _wait_for_job_state(app, pilot, first.job_id, IngestJobState.FAILED)
+            for _ in range(_POLL_ATTEMPTS):
+                if teardown_started.is_set():
+                    break
+                await pilot.pause(_POLL_INTERVAL)
+            assert teardown_started.is_set()
+            assert app._ingest_parse_pool_retiring is True
+
+            late_path = tmp_path / "late.txt"
+            late_path.write_text("fixture", encoding="utf-8")
+            late = app.submit_library_ingest_job(source_path=str(late_path))
+            await pilot.pause()
+            assert len(pools) == 1
+            for job in (second, document, late):
+                assert app.library_ingest_jobs.get_job(job.job_id).state is IngestJobState.QUEUED
+
+            teardown_release.set()
+            await _wait_for_job_state(
+                app,
+                pilot,
+                second.job_id,
+                IngestJobState.PARSING,
+            )
+            assert len(pools) == 2
+            assert app._ingest_parse_pool_retiring is False
+    finally:
+        teardown_release.set()
+
+
+@pytest.mark.asyncio
+async def test_failed_ebook_pool_join_keeps_gate_and_fails_queued_work(
+    tmp_path: Path,
+) -> None:
+    """A replacement must not overlap workers that failed to join."""
+    pools: list[_FakeIngestParsePool] = []
+
+    class JoinFailurePool(_FakeIngestParsePool):
+        def join(self) -> None:
+            raise RuntimeError("simulated join failure")
+
+    def _pool_factory() -> _FakeIngestParsePool:
+        pool = (
+            JoinFailurePool(auto_run=False)
+            if not pools
+            else _FakeIngestParsePool(auto_run=False)
+        )
+        pools.append(pool)
+        return pool
+
+    app = _IngestRunnerHarness(
+        _make_db(tmp_path),
+        pool_factory=_pool_factory,
+        worker_count=3,
+    )
+
+    async with app.run_test() as pilot:
+        ebook_path = tmp_path / "book.epub"
+        ebook_path.write_text("fixture", encoding="utf-8")
+        ebook = app.submit_library_ingest_job(source_path=str(ebook_path))
+        document_path = tmp_path / "note.txt"
+        document_path.write_text("fixture", encoding="utf-8")
+        document = app.submit_library_ingest_job(source_path=str(document_path))
+        await pilot.pause()
+
+        pools[0].trigger_error(0, RuntimeError("simulated worker failure"))
+        await _wait_for_job_state(app, pilot, ebook.job_id, IngestJobState.FAILED)
+        failed_document = await _wait_for_job_state(
+            app,
+            pilot,
+            document.job_id,
+            IngestJobState.FAILED,
+        )
+
+        assert "restart" in failed_document.error.lower()
+        assert failed_document.permanent is False
+        assert app._ingest_parse_pool_retiring is True
+        assert app._ingest_parse_pool is None
+        assert len(pools) == 1
+
+        late_path = tmp_path / "late.txt"
+        late_path.write_text("fixture", encoding="utf-8")
+        late = app.submit_library_ingest_job(source_path=str(late_path))
+        failed_late = await _wait_for_job_state(
+            app,
+            pilot,
+            late.job_id,
+            IngestJobState.FAILED,
+        )
+        assert "restart" in failed_late.error.lower()
+        assert failed_late.permanent is False
+        assert len(pools) == 1
 
 
 @pytest.mark.asyncio
@@ -3792,11 +4156,12 @@ def test_create_pool_returns_progress_resources_and_uses_combined_initializer(
     monkeypatch.setattr(multiprocessing, "get_context", lambda _name: _Context())
 
     resources = LibraryIngestQueueMixin._create_ingest_parse_pool(
-        _bare_ingest_mixin()
+        _bare_ingest_mixin(), processes=1
     )
 
     assert resources.progress_queue is captured["progress_queue"]
     assert captured["maxsize"] == INGEST_PARSE_PROGRESS_QUEUE_MAXSIZE
+    assert captured["processes"] == 1
     assert captured["initializer"] is initialize_ingest_parse_worker
     assert captured["initargs"] == (resources.progress_queue,)
 
@@ -3902,6 +4267,83 @@ def test_detached_progress_queue_cleanup_logs_operation_and_resource() -> None:
         "Error cleaning up the Library ingest progress queue "
         "(operation=cancel_join_thread, queue_type=_FailingDetachedQueue).",
     ]
+
+
+def test_worker_shutdown_thread_start_failure_reports_retirement_failure(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A refused teardown thread must take the fail-closed callback path."""
+    failure: list[BaseException] = []
+    completed: list[bool] = []
+
+    def refuse_start(_thread: threading.Thread) -> None:
+        raise RuntimeError("simulated teardown thread start failure")
+
+    monkeypatch.setattr(threading.Thread, "start", refuse_start)
+
+    teardown = LibraryIngestQueueMixin._shutdown_ingest_workers_off_thread(
+        None,
+        None,
+        None,
+        _FakeIngestParsePool(auto_run=False),
+        None,
+        None,
+        on_complete=lambda: completed.append(True),
+        on_failure=failure.append,
+    )
+
+    assert teardown is None
+    assert completed == []
+    assert len(failure) == 1
+    assert "start failure" in str(failure[0])
+
+
+def test_worker_shutdown_timeout_reports_failure_without_late_completion(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A stuck pool join must fail closed once and never resume work later."""
+    join_started = threading.Event()
+    join_release = threading.Event()
+    join_finished = threading.Event()
+    failure: list[BaseException] = []
+    completed: list[bool] = []
+
+    class BlockingShutdownPool(_FakeIngestParsePool):
+        def join(self) -> None:
+            join_started.set()
+            join_release.wait()
+            join_finished.set()
+
+    monkeypatch.setattr(
+        _app_module,
+        "_INGEST_WORKER_SHUTDOWN_TIMEOUT_SECONDS",
+        0.01,
+        raising=False,
+    )
+    teardown = LibraryIngestQueueMixin._shutdown_ingest_workers_off_thread(
+        None,
+        None,
+        None,
+        BlockingShutdownPool(auto_run=False),
+        None,
+        None,
+        on_complete=lambda: completed.append(True),
+        on_failure=failure.append,
+    )
+
+    assert teardown is not None
+    try:
+        assert join_started.wait(1.0)
+        teardown.join(timeout=1.0)
+        assert not teardown.is_alive()
+        assert len(failure) == 1
+        assert isinstance(failure[0], TimeoutError)
+        assert completed == []
+    finally:
+        join_release.set()
+
+    assert join_finished.wait(1.0)
+    assert completed == []
 
 
 @pytest.mark.asyncio

@@ -456,7 +456,7 @@ def _message_attachment_chips(message: ConsoleChatMessage) -> list[str]:
 
 
 #: Inline markdown + roleplay flavor handled in-transcript: **bold**, `code`,
-#: *action/inner-monologue*, and "quoted speech" (straight or curly). Matched
+#: *action*, 'inner thought', and "quoted speech" (straight or curly). Matched
 #: as closed pairs only, so an unclosed marker mid-stream stays literal until
 #: it closes. Order matters: ** before * so bold never half-matches as
 #: italics, and a quote swallows any markers inside it (task-1536).
@@ -465,40 +465,49 @@ _INLINE_MD_RE = re.compile(
     r"|`([^`]+)`"
     r"|(\"[^\"\n]+\")"
     r"|(“[^”\n]+”)"
+    r"|((?<!\w)'(?:[^'\n]|(?<=\w)'(?=\w))+?'(?!\w))"
+    r"|((?<!\w)‘(?:[^’\n]|(?<=\w)’(?=\w))+?’(?!\w))"
     r"|\*([^*\n]+)\*"
 )
 _HEADING_RE = re.compile(r"^(#{1,6})\s+(.*\S)\s*$")
 
 #: Roleplay flavor styles (task-1536). Concrete colors, not theme variables:
 #: Content span styles are parsed directly and never resolve CSS ``$`` vars.
-#: All three read on the dark default theme and stay distinct from each
+#: All four read on the dark default theme and stay distinct from each
 #: other and from plain narration.
 _BOLD_STYLE = "bold #f7d774"
 _SPEECH_STYLE = "#8ecdf7"
+_THOUGHT_STYLE = "italic #7de3c3"
 _ACTION_STYLE = "italic #b596d8"
 
 _CONSOLE_RP_SPEECH_COMPONENT = "console-rp-speech"
+_CONSOLE_RP_THOUGHT_COMPONENT = "console-rp-thought"
 _CONSOLE_RP_ACTION_COMPONENT = "console-rp-action"
 _CONSOLE_RP_STRONG_COMPONENT = "console-rp-strong"
 _CONSOLE_RP_COMPONENTS = frozenset(
     {
         _CONSOLE_RP_SPEECH_COMPONENT,
+        _CONSOLE_RP_THOUGHT_COMPONENT,
         _CONSOLE_RP_ACTION_COMPONENT,
         _CONSOLE_RP_STRONG_COMPONENT,
     }
 )
 _ROLEPLAY_SPEECH_RE = re.compile(r'"[^"\n]+"|“[^”\n]+”')
+_ROLEPLAY_THOUGHT_RE = re.compile(
+    r"(?<!\w)'(?:[^'\n]|(?<=\w)'(?=\w))+?'(?!\w)"
+    r"|(?<!\w)‘(?:[^’\n]|(?<=\w)’(?=\w))+?’(?!\w)"
+)
 
 
 def _inline_markdown_spans(line: str) -> list:
     """Split one line into Content segments, styling inline flavor.
 
-    ``**bold**``, ``“quoted”``/``"quoted"`` speech, and
-    ``*action/inner monologue*`` each get a distinct style; `code` keeps its
-    plain italic. Text is always emitted literally (styles are applied via
-    ``(text, style)`` tuples, never markup parsing), so message text can
-    never inject Rich markup. Quotation marks stay visible inside the
-    styled speech span; bold/action marker characters are stripped.
+    ``**bold**``, ``“quoted”``/``"quoted"`` speech, ``'inner thought'``, and
+    ``*action*`` each get a distinct style; `code` keeps its plain italic.
+    Text is always emitted literally (styles are applied via ``(text, style)``
+    tuples, never markup parsing), so message text can never inject Rich
+    markup. Quotation marks stay visible inside speech and thought spans;
+    bold/action marker characters are stripped.
 
     Args:
         line: A single raw text line.
@@ -511,7 +520,9 @@ def _inline_markdown_spans(line: str) -> list:
     for match in _INLINE_MD_RE.finditer(line):
         if match.start() > pos:
             out.append(line[pos : match.start()])
-        bold, code, quote, curly_quote, action = match.groups()
+        bold, code, quote, curly_quote, thought, curly_thought, action = (
+            match.groups()
+        )
         if bold is not None:
             out.append((bold, _BOLD_STYLE))
         elif code is not None:
@@ -520,6 +531,10 @@ def _inline_markdown_spans(line: str) -> list:
             out.append((quote, _SPEECH_STYLE))
         elif curly_quote is not None:
             out.append((curly_quote, _SPEECH_STYLE))
+        elif thought is not None:
+            out.append((thought, _THOUGHT_STYLE))
+        elif curly_thought is not None:
+            out.append((curly_thought, _THOUGHT_STYLE))
         else:
             out.append((action, _ACTION_STYLE))
         pos = match.end()
@@ -604,9 +619,21 @@ def _roleplay_flavor_content(content: Content) -> Content:
         return remaining
 
     flavor_spans: list[Span] = []
-    for match in _ROLEPLAY_SPEECH_RE.finditer(content.plain):
+    speech_ranges = [match.span() for match in _ROLEPLAY_SPEECH_RE.finditer(content.plain)]
+    for match_start, match_end in speech_ranges:
         flavor_spans.extend(
             Span(start, end, f".{_CONSOLE_RP_SPEECH_COMPONENT}")
+            for start, end in unprotected_ranges(match_start, match_end)
+            if start < end
+        )
+    for match in _ROLEPLAY_THOUGHT_RE.finditer(content.plain):
+        if any(
+            speech_start <= match.start() and match.end() <= speech_end
+            for speech_start, speech_end in speech_ranges
+        ):
+            continue
+        flavor_spans.extend(
+            Span(start, end, f".{_CONSOLE_RP_THOUGHT_COMPONENT}")
             for start, end in unprotected_ranges(match.start(), match.end())
             if start < end
         )

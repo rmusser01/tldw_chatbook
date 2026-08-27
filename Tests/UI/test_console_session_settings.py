@@ -48,6 +48,7 @@ from tldw_chatbook.config import (
     API_MODELS_BY_PROVIDER,
     DEFAULT_CONFIG_FROM_TOML,
     RuntimeConfigSnapshot,
+    save_setting_to_cli_config,
 )
 from tldw_chatbook.LLM_Provider_Catalog.model_discovery_contracts import (
     MergedModelEntry,
@@ -4787,10 +4788,14 @@ async def test_console_settings_modal_provider_change_uses_model_alias_fallbacks
 async def test_console_settings_modal_can_select_runtime_discovered_model_with_warning() -> (
     None
 ):
+    assert save_setting_to_cli_config(
+        "api_settings.openai",
+        "api_key",
+        "test-key",
+    )
     app = _build_test_app()
     app.providers_models = {"openai": ["gpt-4.1"]}
     app.app_config["chat_defaults"] = {"provider": "OpenAI", "model": "gpt-4.1"}
-    app.app_config["api_settings"] = {"openai": {"api_key": "test-key"}}
     app.llm_provider_catalog_scope_service = FakeConsoleModelDiscoveryScope(
         (
             _merged_model("gpt-4.1"),
@@ -5111,12 +5116,11 @@ async def test_console_settings_modal_restores_freeform_model_after_provider_rou
 
 @pytest.mark.asyncio
 async def test_console_inspector_hosts_staged_context_above_source_readiness() -> None:
-    """Task-400: the Context section tops the Inspector, not the left rail.
+    """The pinned preamble precedes staged and readiness content.
 
-    The tray is the FIRST child of the Inspector rail body so it is visible
-    without scrolling and reads above the run inspector's "Source Readiness"
-    section; the bottom "Live work sources" card keeps its pre-move slot
-    after the run-inspector block.
+    Project status and next-send authority form the pinned preamble above the
+    Inspector rail body. The staged-context tray is the body's first child,
+    ahead of the run inspector and its source-readiness content.
     """
     app = _build_test_app()
     host = ConsoleHarness(app)
@@ -5127,21 +5131,26 @@ async def test_console_inspector_hosts_staged_context_above_source_readiness() -
 
         staged_context = console.query_one("#console-staged-context-tray")
         settings = console.query_one("#console-settings-summary")
+        rail = console.query_one("#console-right-rail")
         rail_body = console.query_one("#console-inspector-rail-body")
         run_inspector = console.query_one("#console-run-inspector")
         readiness = console.query_one("#console-live-work-source-readiness")
         live_work = console.query_one("#console-live-work-section")
         project_status = console.query_one("#console-project-instruction-status")
+        authority = console.query_one("#console-send-authority-summary")
         left_rail = console.query_one("#console-left-rail")
 
-        # DOM order: tray first, then the run-inspector block (which renders
-        # the Source Readiness section), then the bottom readiness card.
+        # The pinned preamble stays outside the scroll body. Within the body,
+        # staged context precedes the run inspector and live-work card.
         assert settings.parent.id == "console-run-inspector"
         assert staged_context.parent is rail_body
         assert readiness in live_work.query("*")
+        assert project_status.parent is rail
+        assert authority.parent is rail
+        assert project_status not in tuple(rail_body.query("*"))
+        assert authority not in tuple(rail_body.query("*"))
         children = list(rail_body.children)
-        assert children.index(project_status) == 0
-        assert children.index(project_status) < children.index(staged_context)
+        assert children[0] is staged_context
         assert children.index(staged_context) < children.index(run_inspector)
         assert children.index(run_inspector) < children.index(live_work)
 
@@ -5151,9 +5160,8 @@ async def test_console_inspector_hosts_staged_context_above_source_readiness() -
         assert not list(console.query("#console-rail-section-header-context"))
         assert not list(console.query("#console-rail-section-body-context"))
 
-        # With the Inspector opened, the tray measures at the top of the rail
-        # body, above the run inspector's "Source Readiness" heading (the
-        # section the user sees) and above the bottom readiness card.
+        # With the Inspector opened, the pinned preamble measures above staged
+        # context, which remains above both source-readiness presentations.
         await pilot.click("#console-inspector-rail-open")
         readiness_heading = console.query_one(
             "#console-inspector-source-readiness-heading"
@@ -5162,8 +5170,8 @@ async def test_console_inspector_hosts_staged_context_above_source_readiness() -
             if staged_context.region.height > 0 and readiness_heading.region.height > 0:
                 break
             await pilot.pause(0.05)
-        assert project_status.region.y == rail_body.region.y
-        assert project_status.region.y < staged_context.region.y
+        assert project_status.region.y < authority.region.y
+        assert authority.region.y < staged_context.region.y
         assert staged_context.region.y < readiness_heading.region.y
         assert staged_context.region.y < readiness.region.y
 
@@ -5975,15 +5983,6 @@ async def test_mounted_console_cancel_latest_waiter_keeps_durable_c() -> None:
 async def test_mounted_console_unmount_times_out_hung_refresh_and_repairs_on_resume(
     monkeypatch: pytest.MonkeyPatch,
 ):
-    # This test owns the roleplay writer lifecycle. Task 5's independent
-    # Changed Files thread worker may outlive the popped screen in Textual's
-    # executor context, so keep it outside this weakref/GC assertion.
-    monkeypatch.setattr(
-        ChatScreen,
-        "_console_changed_files_section_enabled",
-        staticmethod(lambda: False),
-    )
-
     class HungFirstWritePersistence:
         """One shared-store double: the FIRST system-prompt write blocks.
 

@@ -185,6 +185,21 @@ class ConsoleDispatchSettlementError(RuntimeError):
     """An owned dispatch terminal could not commit atomically."""
 
 
+class ConsoleDurableAcceptanceRetired(RuntimeError):
+    """The preparation was retired underneath an in-flight postcommit effect.
+
+    TASK-22587: closing a Console session retires its durable preparation, so
+    an effect still in flight finds its fingerprint gone. That is an ORDINARY
+    consequence of the user closing a chat, and it is not the same event as a
+    fingerprint that changed unexpectedly -- which is a bug, and which must
+    keep raising the bare ``RuntimeError`` the postcommit APIs already document.
+
+    Retirement is decidable rather than inferred: ``retire_durable_acceptance``
+    leaves a tombstone carrying the SAME fingerprint, so a matching tombstone
+    proves the preparation was retired rather than mutated.
+    """
+
+
 def _refuse_roleplay_projection_write(**_kwargs: object) -> bool:
     """Represent a missing durable projection seam in an immutable plan."""
     return False
@@ -966,6 +981,11 @@ class ConsoleChatStore:
         self._durable_fingerprint_by_preparation: dict[
             str, ConsoleDurableAcceptanceFingerprint
         ] = {}
+        #: Preparations whose postcommit sequence has begun and has not yet
+        #: been released. Their tombstones are the ONLY proof that an
+        #: in-flight effect's preparation was retired rather than mutated,
+        #: so FIFO eviction must not reclaim them first (TASK-22587).
+        self._durable_active_postcommit: set[str] = set()
         self._durable_tombstones: OrderedDict[str, _ConsoleDurableTombstone] = (
             OrderedDict()
         )
@@ -990,15 +1010,6 @@ class ConsoleChatStore:
         self._tool_markers_by_session: dict[
             str, list[tuple[str | None, ConsoleChatMessage]]
         ] = {}
-        #: TASK-21121: single-slot VERIFIED memo behind
-        #: ``newest_change_review_run_id`` --
-        #: ``(session_id, view_list, len(view_list), newest_run_id)``. Holding
-        #: the view LIST itself (not its ``id()``) is what makes the identity
-        #: check sound: a memoized list can never be freed and have its address
-        #: recycled under us. See that method for the invariant this rests on.
-        self._newest_change_review_memo: (
-            tuple[str, list[ConsoleChatMessage], int, str | None] | None
-        ) = None
         self._message_session_index: dict[str, str] = {}
         #: Full conversation tree -- ALL branches, on- and off-path. ``_nodes``
         #: maps a native id to the LIVE ``ConsoleChatMessage`` (never a copy --
@@ -1519,7 +1530,6 @@ class ConsoleChatStore:
         ):
             return False
         self._messages_by_session.pop(session_id, None)
-        self._drop_newest_change_review_memo(session_id)
         self._tool_markers_by_session.pop(session_id, None)
         self._nodes_by_session.pop(session_id, None)
         self._children_by_parent.pop(session_id, None)
@@ -1782,6 +1792,22 @@ class ConsoleChatStore:
         second manual turn, and a queued follow-up is only *submitted* from
         ``_drain_waiting``, which runs after the previous turn reaches a
         terminal status -- by which point settlement has popped this owner.
+
+        Args:
+            session_id: Native Console session id. ``None`` -- and equally an
+                empty string or any non-``str`` -- means "no session to have
+                an owner", which ``dispatch_recovery_for_session`` answers
+                with ``None``, so the gate is open. Callers on a screen with
+                no active session therefore need no guard of their own.
+
+        Returns:
+            ``True`` only when that session has a recovery owner the user is
+            currently being shown a card for AND its kind is one of the five
+            unresolved source-local kinds above. ``False`` for no owner, for
+            a healthy in-flight owner (``recovery_needed=False``), and for
+            the three kinds outside that set (``REMOTE_ACCEPTED``,
+            ``REMOTE_DISPATCH_STARTED``, ``CONTINUATION``) -- i.e. the send
+            is admitted.
         """
 
         recovery = self.dispatch_recovery_for_presentation(session_id)
@@ -2766,7 +2792,6 @@ class ConsoleChatStore:
             self._character_emote_captures.pop(message_id, None)
 
         self._messages_by_session.pop(session_id, None)
-        self._drop_newest_change_review_memo(session_id)
         self._tool_markers_by_session.pop(session_id, None)
         self._nodes_by_session.pop(session_id, None)
         self._children_by_parent.pop(session_id, None)
@@ -3743,6 +3768,7 @@ class ConsoleChatStore:
         self._session_or_raise(session_id)
         with self._preparation_lock:
             self._require_durable_fingerprint_locked(preparation_id, fingerprint)
+            self._durable_active_postcommit.add(preparation_id)
             existing = self._durable_effects_by_preparation.get(preparation_id)
             if existing is not None:
                 if (
@@ -3772,6 +3798,30 @@ class ConsoleChatStore:
         with self._preparation_lock:
             self._require_durable_fingerprint_locked(preparation_id, fingerprint)
             return self._durable_effects_by_preparation.get(preparation_id)
+
+    def durable_completed_effects_for(
+        self,
+        preparation_id: str,
+        *,
+        fingerprint: ConsoleDurableAcceptanceFingerprint,
+    ) -> frozenset[str]:
+        """Return completed effect names from the live ledger OR a tombstone.
+
+        TASK-22587: recovery needs to know whether the checkpoint transition
+        ran, and it asks *after* a failure -- by which point the user may have
+        closed the chat and retired the preparation. Reading the ledger
+        directly raises there, which masked the original failure. The tombstone
+        retains `completed` for exactly this reason, so the answer survives a
+        close instead of becoming an exception.
+        """
+
+        with self._preparation_lock:
+            if self._durable_retired_locked(preparation_id, fingerprint):
+                tombstone = self._durable_tombstones.get(preparation_id)
+                return tombstone.completed if tombstone is not None else frozenset()
+            self._require_durable_fingerprint_locked(preparation_id, fingerprint)
+            effects = self._durable_effects_by_preparation.get(preparation_id)
+            return effects.completed if effects is not None else frozenset()
 
     def durable_turn_commit_for(
         self,
@@ -3839,6 +3889,12 @@ class ConsoleChatStore:
         """Release a failed effect claim without recording completion."""
 
         with self._preparation_lock:
+            if self._durable_retired_locked(preparation_id, fingerprint):
+                # TASK-22587: `retire_durable_acceptance` already dropped every
+                # in-flight key for this preparation, so there is nothing left
+                # to release and nothing left to protect. Raising here would
+                # only mask the failure that sent us down the release path.
+                return
             self._require_durable_fingerprint_locked(preparation_id, fingerprint)
             self._durable_effects_in_flight.discard((preparation_id, effect_name))
 
@@ -3850,7 +3906,21 @@ class ConsoleChatStore:
         if not isinstance(fingerprint, ConsoleDurableAcceptanceFingerprint):
             raise TypeError("fingerprint must be ConsoleDurableAcceptanceFingerprint")
         if self._durable_fingerprint_by_preparation.get(preparation_id) != fingerprint:
+            if self._durable_retired_locked(preparation_id, fingerprint):
+                raise ConsoleDurableAcceptanceRetired(
+                    "Durable acceptance was retired."
+                )
             raise RuntimeError("Durable postcommit fingerprint changed.")
+
+    def _durable_retired_locked(
+        self,
+        preparation_id: str,
+        fingerprint: ConsoleDurableAcceptanceFingerprint,
+    ) -> bool:
+        """True when this exact preparation was retired, not mutated."""
+
+        tombstone = self._durable_tombstones.get(preparation_id)
+        return tombstone is not None and tombstone.fingerprint == fingerprint
 
     def retire_durable_acceptance(
         self,
@@ -3862,6 +3932,12 @@ class ConsoleChatStore:
         with self._preparation_lock:
             current = self._durable_fingerprint_by_preparation.get(preparation_id)
             if current != fingerprint:
+                if self._durable_retired_locked(preparation_id, fingerprint):
+                    # TASK-22587: closing a chat retires the preparation, and
+                    # the postcommit sequence retires it again when it ends.
+                    # Retiring what is already retired is a no-op, not a bug --
+                    # the tombstone proves this is the SAME acceptance.
+                    return
                 raise RuntimeError("Durable acceptance fingerprint changed.")
             effects = self._durable_effects_by_preparation.get(preparation_id)
             completed = effects.completed if effects is not None else frozenset()
@@ -3879,8 +3955,46 @@ class ConsoleChatStore:
                 fingerprint=fingerprint,
                 completed=completed,
             )
-            while len(self._durable_tombstones) > self.DURABLE_TOMBSTONE_CAP:
+            self._evict_durable_tombstones_locked()
+
+    def _evict_durable_tombstones_locked(self) -> None:
+        """Hold the cap while preserving retirement proof still in use.
+
+        TASK-22587 (Qodo review of #2123): a plain FIFO `popitem` could reclaim
+        the tombstone of a preparation whose postcommit sequence was STILL
+        RUNNING, and that tombstone is the only proof its retirement was an
+        ordinary close rather than a mutation. Losing it put the generic
+        fingerprint-change error back on the in-flight effect -- making
+        correctness depend on unrelated session-close volume.
+
+        Protected entries are skipped, oldest-first, so the cap still holds:
+        if every entry is protected the oldest is evicted anyway, because a
+        bounded cache that can be pinned open without limit is a leak.
+        """
+
+        while len(self._durable_tombstones) > self.DURABLE_TOMBSTONE_CAP:
+            victim = next(
+                (
+                    key
+                    for key in self._durable_tombstones
+                    if key not in self._durable_active_postcommit
+                ),
+                None,
+            )
+            if victim is None:
                 self._durable_tombstones.popitem(last=False)
+                continue
+            self._durable_tombstones.pop(victim, None)
+
+    def release_durable_postcommit_activity(self, preparation_id: str) -> None:
+        """Allow this preparation's tombstone to be evicted again.
+
+        Called once the postcommit sequence is finished with the preparation,
+        by either the normal tail or the closed-session path (TASK-22587).
+        """
+
+        with self._preparation_lock:
+            self._durable_active_postcommit.discard(preparation_id)
 
     def discard_uncommitted_durable_preparation(self, preparation_id: str) -> None:
         """Forget staged content for an acceptance which never committed."""
@@ -4014,6 +4128,19 @@ class ConsoleChatStore:
         if assistant.role is not ConsoleMessageRole.ASSISTANT:
             raise RuntimeError("Committed assistant owner changed role.")
         assistant.persisted_message_id = commit.assistant_message_id
+        # TASK-22302: arm here, AFTER the durable id is assigned.
+        # `append_message` gates arming on its own `persist` flag, which is
+        # False on this path and correctly so -- the checkpoint already wrote
+        # the row. But "this call does not create the row" is not "this message
+        # has no durable row", and arming needs the latter.
+        if (
+            terminal_citation_finalizer is not None
+            and self._citation_persistence_ready()
+        ):
+            self._terminal_citation_finalizers[assistant.id] = (
+                terminal_citation_finalizer
+            )
+            self._terminal_persistence_deferred_ids.add(assistant.id)
         return user, assistant
 
     def publish_committed_identity(
@@ -5292,127 +5419,6 @@ class ConsoleChatStore:
                 snapshot.content = "".join(buffer)
             snapshots.append(snapshot)
         return snapshots
-
-    def newest_change_review_run_id(self, session_id: str) -> str | None:
-        """Newest ``change_review_run_id`` on the session's active-path view.
-
-        TASK-21121. The Console rail's changed-files guard needs exactly this
-        one string on every 0.2s run tick, and used to get it by calling
-        ``messages_for_session`` and reverse-scanning the result -- which
-        ``dataclasses.replace``-copies EVERY message in the session first, so
-        the reverse scan's early break bought nothing and a several-hundred
-        message session paid a full O(messages) copy pass five times a second
-        (the docstring of the old caller conceded the worst case; it was the
-        common case, because a session with no change-review marker at all
-        never breaks early).
-
-        **Verified memo, no invalidation protocol** -- deliberately the
-        :class:`~tldw_chatbook.Chat.console_cost_tracker.TokenEstimateCache`
-        shape: a hit is served only after re-checking the full signature the
-        answer depends on, so a missed "bump" can cost a recompute but can
-        never serve a stale run id. **That guarantee rests on the signature
-        being sampled BEFORE the scan, not after** -- see the comment at the
-        `length = len(view)` line below; a length taken after the loop can
-        outrun the answer it is stored with, and the memo then keeps
-        matching on a signature the answer never had. The signature is
-        ``(session_id, the view list OBJECT, its length)``, and it is exact
-        because of two store invariants:
-
-        * ``change_review_run_id`` is write-once -- set in the
-          ``ConsoleChatMessage`` constructor (live markers via
-          ``append_message``, resume-derived ones built by
-          ``ConsoleAgentBridge.resume_marker_messages``) and never reassigned
-          anywhere. So an unchanged list of unchanged elements has an
-          unchanged answer, even though streaming mutates those same message
-          objects' ``content`` in place.
-        * Every write to ``_messages_by_session[session_id]`` either installs
-          a NEW list object (``_recompute_active_path`` -- the single writer,
-          reached by send/edit/delete/variant/branch-switch/ingest;
-          ``apply_resume_marker_overlay``; ``create_session``;
-          ``restore_state``) or appends to the existing one (the TOOL-marker
-          branch of ``append_message``, the ONLY in-place mutation). Identity
-          catches the first, length catches the second.
-
-        Those two components carry the correctness. ``session_id`` is kept as
-        cheap defence-in-depth, not as a load-bearing check: a view list is
-        uniquely owned by one session and the memo pins that list alive, so
-        identity alone already cannot match across sessions.
-
-        Single-slot on purpose: the only caller asks about the ACTIVE session
-        every tick, so one slot hits ~always and retains exactly one list.
-        ``close_session``/``rollback_created_pristine_session`` drop the slot
-        explicitly -- purely to stop it pinning a dead session's whole view
-        (and therefore every ``ConsoleChatMessage`` in it) for an unbounded
-        time when the closed session was the active one and nothing queries
-        again. Dropping a memo can only cost a recompute, so that is hygiene,
-        not an invalidation protocol; ``restore_state`` needs no such hook
-        because the next query re-derives against a new list anyway.
-
-        Args:
-            session_id: Native Console session id.
-
-        Returns:
-            The ``change_review_run_id`` of the LAST message in the active-path
-            view that carries one, or ``None`` when no such message is on the
-            path (the common case, and the one this memo exists to make free).
-
-        Raises:
-            KeyError: The session id is unknown -- same contract as
-                ``messages_for_session``, whose callers already catch it.
-        """
-        self._session_or_raise(session_id)
-        view = self._messages_by_session.get(session_id)
-        if not view:
-            return None
-        memo = self._newest_change_review_memo
-        if (
-            memo is not None
-            and memo[0] == session_id
-            and memo[1] is view
-            and memo[2] == len(view)
-        ):
-            return memo[3]
-        # Sample the length BEFORE the scan, never after (review fix
-        # round). A marker append can land concurrently -- the agent
-        # bridge's marker seam runs on the worker thread with no
-        # `call_from_thread` marshalling while `run_reply` is under
-        # `asyncio.to_thread` -- and `reversed()` snapshots the size when
-        # its iterator is created, so the answer below describes the list
-        # as it was HERE. Sampling afterwards would pair a pre-append
-        # answer with a post-append length: a signature that keeps
-        # matching, so the stale answer is served for as long as the list
-        # object survives. Recording a length that is short can only cost
-        # an extra miss; recording one that is long is a stale hit.
-        length = len(view)
-        newest: str | None = None
-        for message in reversed(view):
-            run_id = getattr(message, "change_review_run_id", None)
-            if run_id:
-                newest = str(run_id)
-                break
-        self._newest_change_review_memo = (session_id, view, length, newest)
-        return newest
-
-    def _drop_newest_change_review_memo(self, session_id: str) -> None:
-        """Release the memo slot if it belongs to ``session_id``.
-
-        Called from the two session-teardown paths. Purely a RETENTION
-        fix, never a correctness one: the slot pins the session's whole
-        view list, and hence every ``ConsoleChatMessage`` in it, and the
-        usual "the next query for another session evicts it" argument
-        fails exactly when the closed session was the ACTIVE one --
-        `_console_changed_files_scope` then short-circuits on a falsy
-        `active_session_id` and never queries again, so nothing evicts it
-        for the remaining life of the store. Dropping a memo can only
-        cost a recompute, so this adds no invalidation protocol to get
-        wrong.
-
-        Args:
-            session_id: Session being torn down.
-        """
-        memo = self._newest_change_review_memo
-        if memo is not None and memo[0] == session_id:
-            self._newest_change_review_memo = None
 
     def get_message(self, message_id: str) -> ConsoleChatMessage:
         """Return a message by native message ID."""
@@ -8081,6 +8087,12 @@ class ConsoleChatStore:
             recovery is not None
             and recovery.assistant_message_id == message.id
             and recovery.in_flight
+            # TASK-22302: do not let this shortcut swallow a turn that still
+            # owes a terminal citation write -- `finalizer` is popped above, so
+            # returning here discards it. Scoped to an actual finalizer, not
+            # `terminal_persistence`, which is also true for a merely DEFERRED
+            # turn that has no citation to seal.
+            and finalizer is None
         ):
             message.status = "complete"
             self._bump_message_speech_revision(message.id)
@@ -8130,6 +8142,21 @@ class ConsoleChatStore:
             self._bump_payload_revision(session_id)
             self._settle_failed_retry_context(message, provider_visible=True)
             try:
+                if message.persisted_message_id is not None:
+                    # TASK-22302: the dispatch checkpoint already wrote this row
+                    # with EMPTY content, so the final body must be flushed with
+                    # an UPDATE -- `create_message`'s existing-row handling lives
+                    # inside its `prepared_citation is not None` branch and
+                    # verifies rather than updates, so it cannot carry the body.
+                    #
+                    # This matters most on the FAIL-CLOSED path: `finalize()`
+                    # returns None when the builder cannot seal, leaving no
+                    # `citation_write` at all. Guarding this flush on one would
+                    # leave the durable row empty while the in-memory message
+                    # reads complete -- the answer lost, silently.
+                    self._persist_existing_message(
+                        message, preserve_provider_continuation=True
+                    )
                 self._persist_new_message(
                     session_id=session_id,
                     message=message,

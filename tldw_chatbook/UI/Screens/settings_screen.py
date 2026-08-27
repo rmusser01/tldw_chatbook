@@ -1437,15 +1437,15 @@ def _build_field_search_index() -> None:
                 ("settings-appearance-smooth-scrolling", "Smooth scrolling"),
                 (
                     "settings-appearance-library-media-library-open",
-                    "Shared Library pane",
+                    "Shared Library rail",
                 ),
                 (
                     "settings-appearance-library-media-custom-widths",
-                    "Shared Library reader widths",
+                    "Shared Library rail width mode",
                 ),
                 (
                     "settings-appearance-library-media-library-width",
-                    "Shared Library pane width",
+                    "Preferred Library rail width",
                 ),
                 *(
                     (
@@ -6654,10 +6654,10 @@ class SettingsScreen(BaseAppScreen):
         return "Enabled" if bool(self._appearance_setting_values()[key]) else "Disabled"
 
     def _appearance_media_layout_label(self, key: str) -> str:
-        """Return state-in-text labels for Media layout preference buttons."""
+        """Return state-in-text labels for Library layout preference buttons."""
         enabled = bool(self._appearance_setting_values()[key])
         if key == "library_reader_custom_widths_enabled":
-            return "Custom widths" if enabled else "Fixed default widths"
+            return "Custom widths" if enabled else "Automatic widths"
         return "Open" if enabled else "Collapsed"
 
     def _appearance_summary_text(self) -> str:
@@ -11923,10 +11923,14 @@ class SettingsScreen(BaseAppScreen):
             "settings-appearance-library-media-library-width",
         }:
             return (
-                ("Focused setting", "Shared Library reader geometry"),
+                ("Focused setting", "Shared Library rail"),
                 (
                     "Purpose",
-                    "Sets the shared Library pane and width mode; responsive collapse remains session-only. Destination Items preferences are saved under library.<destination>_reader.",
+                    "Sets the shared Library rail and width mode. Automatic width "
+                    "follows 3:13 within 24–34 cells; custom width accepts 24–48 "
+                    "and may shrink temporarily to preserve 40 content cells. "
+                    "Adaptive collapse remains session-only. Destination Items "
+                    "preferences are saved under library.<destination>_reader.",
                 ),
                 ("Saved as", "library.reader"),
                 (
@@ -15680,9 +15684,9 @@ class SettingsScreen(BaseAppScreen):
                         id="settings-appearance-smooth-scrolling",
                         tooltip="Toggle smooth scrolling defaults where supported.",
                     )
-                yield Static("Shared Library reader", classes="destination-section")
+                yield Static("Shared Library rail", classes="destination-section")
                 with Horizontal(classes="settings-input-row"):
-                    yield Static("Library pane", classes="settings-input-label")
+                    yield Static("Library rail", classes="settings-input-label")
                     yield Button(
                         self._appearance_media_layout_label(
                             "library_reader_library_open"
@@ -15701,7 +15705,7 @@ class SettingsScreen(BaseAppScreen):
                     )
                 custom_widths = bool(values["library_reader_custom_widths_enabled"])
                 with Horizontal(classes="settings-input-row"):
-                    yield Static("Library width", classes="settings-input-label")
+                    yield Static("Preferred rail width", classes="settings-input-label")
                     yield Input(
                         value=str(values["library_reader_library_width"]),
                         id="settings-appearance-library-media-library-width",
@@ -15709,6 +15713,14 @@ class SettingsScreen(BaseAppScreen):
                         restrict=r"^[0-9]*$",
                         disabled=not custom_widths,
                     )
+                yield Static(
+                    "Automatic: 3:13, bounded to 24–34 cells. Custom: preferred "
+                    "24–48 cells; it may shrink temporarily to keep 40 content "
+                    "cells. Adaptive readers may collapse panes. In ordinary "
+                    "views below 64 columns, use ‹ Library (< Library in ASCII) "
+                    "to return to the rail.",
+                    classes="settings-help-copy",
+                )
                 yield Static("Destination list panes", classes="destination-section")
                 for destination, label in LIBRARY_READER_DESTINATIONS:
                     open_key = f"library_{destination}_items_open"
@@ -18515,9 +18527,7 @@ class SettingsScreen(BaseAppScreen):
         key = keys.get(str(event.input.id or ""))
         if key is None:
             return
-        self._stage_appearance_value(
-            key, self._normalise_appearance_int(event.value)
-        )
+        self._stage_appearance_value(key, self._normalise_appearance_int(event.value))
         self._mark_appearance_settings_staged()
 
     @on(Button.Pressed, "#settings-appearance-library-media-reset")
@@ -18531,8 +18541,14 @@ class SettingsScreen(BaseAppScreen):
             "library_reader_library_open",
             "library_reader_custom_widths_enabled",
             "library_reader_library_width",
-            *(f"library_{destination}_items_open" for destination, _label in LIBRARY_READER_DESTINATIONS),
-            *(f"library_{destination}_items_width" for destination, _label in LIBRARY_READER_DESTINATIONS),
+            *(
+                f"library_{destination}_items_open"
+                for destination, _label in LIBRARY_READER_DESTINATIONS
+            ),
+            *(
+                f"library_{destination}_items_width"
+                for destination, _label in LIBRARY_READER_DESTINATIONS
+            ),
         ):
             self._stage_appearance_value(key, getattr(defaults, key))
         self._sync_appearance_widgets()
@@ -22385,14 +22401,17 @@ class SettingsScreen(BaseAppScreen):
 
     def _signal_library_reader_layout_refresh(self) -> None:
         """Publish saved reader layout defaults to live Library screens."""
-        generation = int(
-            getattr(
-                self.app_instance,
-                "_library_reader_layout_refresh_generation",
-                0,
+        generation = (
+            int(
+                getattr(
+                    self.app_instance,
+                    "_library_reader_layout_refresh_generation",
+                    0,
+                )
+                or 0
             )
-            or 0
-        ) + 1
+            + 1
+        )
         self.app_instance._library_reader_layout_refresh_generation = generation
         signalled: set[int] = set()
         for app in (self.app, self.app_instance):
@@ -23135,9 +23154,9 @@ class SettingsScreen(BaseAppScreen):
                 ),
             ):
                 try:
-                    self.query_one(selector, Button).label = (
-                        self._appearance_media_layout_label(key)
-                    )
+                    self.query_one(
+                        selector, Button
+                    ).label = self._appearance_media_layout_label(key)
                 except QueryError:
                     pass
             custom_widths = bool(values["library_reader_custom_widths_enabled"])

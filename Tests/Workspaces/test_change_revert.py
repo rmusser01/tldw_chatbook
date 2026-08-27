@@ -1,8 +1,6 @@
 """TASK-1974: revert engine — restore-to-B with guards, against real git."""
 from __future__ import annotations
 
-from pathlib import Path
-
 import pytest
 
 from tldw_chatbook.DB.AgentRuns_DB import AgentRunsDB
@@ -90,6 +88,8 @@ def test_preflight_names_files_the_user_edited_after_the_turn(turn):
     assert report.edited_since == ["edit.txt"], (
         "the confirm dialog cannot name what it does not know"
     )
+    assert report.disk_state["edit.txt"].startswith("sha256:")
+    assert report.disk_state["new.txt"].startswith("sha256:")
 
 
 def test_preflight_names_the_old_path_of_a_rename(turn):
