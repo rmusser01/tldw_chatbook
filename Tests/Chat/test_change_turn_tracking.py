@@ -2617,6 +2617,92 @@ def test_child_write_path_normalization_failure_is_best_effort(
     assert child_states[0].touched_paths == {str(sibling)}
 
 
+def test_scratch_root_normalization_failure_keeps_child_step_processing(
+    tmp_path, root, tracker, monkeypatch
+):
+    import tldw_chatbook.config as config_module
+
+    monkeypatch.setattr(
+        config_module,
+        "get_cli_setting",
+        lambda section, key=None, default=None: (
+            True if section == "tools" and key == "write_file_enabled" else default
+        ),
+    )
+
+    target = root / "raw-relative-output.txt"
+    sentinel = "the scratch authority still handled this WRITE\n"
+    child_write_gate = threading.Event()
+    child_settled = threading.Event()
+    normalization_failed = threading.Event()
+
+    class FailingProjectionRoot(type(root)):
+        def resolve(self, *args, **kwargs):
+            if self == root and not normalization_failed.is_set():
+                normalization_failed.set()
+                raise OSError("synthetic scratch-root normalization failure")
+            return super().resolve(*args, **kwargs)
+
+    scratch_root = FailingProjectionRoot(root)
+
+    def settle_child_before_parent_final() -> None:
+        assert gateway.child_started.wait(5), "child never reached its WRITE gate"
+        child_write_gate.set()
+        _join_fleet_threads()
+        child_settled.set()
+
+    gateway = _FleetSurvivorGateway(
+        parent_scripts=[
+            [_spawn_fence("write after scratch projection failure")],
+            ["parent done"],
+        ],
+        gate=child_write_gate,
+        child_scripts=[
+            [_write_fence(Path(target.name), sentinel)],
+            ["child done"],
+        ],
+        parent_side_effect=settle_child_before_parent_final,
+        parent_side_effect_on_call=2,
+    )
+    bridge, db, store, session, aid = _bridge_with(tmp_path, gateway, tracker)
+    child_states: list[_ChildChangeState] = []
+    original_scope = bridge._child_run_scope
+
+    @contextlib.contextmanager
+    def capture_child_state(conversation_id, adapter, child_change_state):
+        child_states.append(child_change_state)
+        with original_scope(conversation_id, adapter, child_change_state):
+            yield
+
+    monkeypatch.setattr(bridge, "_child_run_scope", capture_child_state)
+    try:
+        _, outcome = _run(
+            bridge,
+            session,
+            aid,
+            root,
+            builtin_gate=_FakeBuiltinGateForRegistry(refuse=False),
+            scratch_root=scratch_root,
+            scratch_lease=lambda: contextlib.nullcontext(scratch_root),
+        )
+    finally:
+        child_write_gate.set()
+        _join_fleet_threads()
+
+    assert normalization_failed.is_set(), "the scratch-root failure did not fire"
+    assert outcome.status == "done"
+    assert child_settled.is_set(), "child did not fully settle before parent E"
+    assert target.read_text() == sentinel
+    child_runs = [
+        row for row in db.list_runs("conv-1") if row["agent_kind"] == "subagent"
+    ]
+    assert len(child_runs) == 1, child_runs
+    assert child_runs[0]["status"] == "done"
+    assert len(child_states) == 1
+    assert child_states[0].run_ids
+    assert child_states[0].touched_paths == {target.name}
+
+
 def test_a_survivors_write_after_its_turn_lands_in_a_change_record(
     tmp_path, root, tracker
 ):

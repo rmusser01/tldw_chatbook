@@ -4312,9 +4312,15 @@ class ConsoleAgentBridge:
         # under its OWN run id -- can never land in it.
         primary_live_key = uuid4().hex
         child_change_state = _ChildChangeState(owner_key=primary_live_key)
-        child_path_root = (
-            scratch_root.expanduser().resolve() if scratch_root is not None else None
-        )
+        child_path_root = None
+        if scratch_root is not None:
+            try:
+                child_path_root = scratch_root.expanduser().resolve()
+            except (OSError, RuntimeError, ValueError):
+                logger.warning(
+                    "change_review: could not normalize the attributed child "
+                    "WRITE root"
+                )
         live_steps = _LiveStepFeed()
         subagents: list[SubAgentSummary] = []
         #: run key -> that run's own live step feed. The primary's entry is
