@@ -178,6 +178,19 @@ was therefore appropriate. The regenerated guard passes with 537 owners, 1,243
 TASK-492 calls, 7,341 TASK-494 calls, and 8 sink files. Independent reviews, isolated
 live verification, and Backlog closeout remain root-owned.
 
+Task 3 final spec review: APPROVED at `3df136697f`. The reviewer confirmed fresh and
+resumed refusal ownership, manual Retry/Bypass and queued reclaim recovery,
+model-specific local capability/replay, atomic deletion, ADR precedence, lifecycle,
+exchange, privacy, documentation, and the regenerated diagnostic inventory. Fresh
+review evidence included 107 round-2 cases and 476 wider regressions with only the two
+documented loopback-permission skips.
+
+Task 3 final code-quality review: APPROVED at `3df136697f`. The prior preparation-
+ownership P1 and ADR-governance P2 are fully resolved. No queue claim leak, double
+settlement, stale-state overwrite, artificial test seam, privacy regression, or
+remaining YAGNI issue was found. Root's isolated live Console verification and Backlog
+closeout remain pending.
+
 Task 3 specification-review fix round 1 (2026-08-27): RED proved that one local
 endpoint classified both a recognized Qwen reasoner and a plain Llama model as
 displayable, and replay ignored the selected model. The existing local controls now

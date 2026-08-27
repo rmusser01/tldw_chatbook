@@ -178,6 +178,18 @@ No derived-check residual remains. Root still owns independent specification/cod
 quality reviews, isolated live Console verification, and Backlog closeout. This task
 does not claim the root-owned live gate and does not mark any Backlog task Done.
 
+## Independent review outcome
+
+The final specification review APPROVED the full Task 3 range at `3df136697f`. It
+confirmed owner-aware fresh/resumed refusal, recoverable manual and queued paths,
+model-specific local replay, atomic tombstone ownership, explicit ADR precedence, and
+all prior lifecycle/exchange/privacy/documentation contracts.
+
+The final code-quality review also APPROVED that revision. It found no remaining race,
+claim-settlement error, stale identity overwrite, duplicated cleanup, artificial test
+evidence, architecture contradiction, private diagnostic leak, or useful
+simplification. Root's isolated live verification is the remaining acceptance gate.
+
 ## Specification review fix round 1 — model-specific local compatibility
 
 Review found that local thinking capability was frozen only from the execution key,
