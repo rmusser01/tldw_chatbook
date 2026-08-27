@@ -129,6 +129,9 @@ from tldw_chatbook.UI.Navigation.screen_state_store import (
 from tldw_chatbook.Widgets.Library.library_prompts_canvas import (
     LibraryPromptsListCanvas,
 )
+from tldw_chatbook.Widgets.Library.library_prompt_work_pane import (
+    LibraryPromptWorkPane,
+)
 from tldw_chatbook.Widgets.Library.prompt_delete_confirmation_modal import (
     PromptDeleteConfirmationModal,
     PromptDeleteDecision,
@@ -582,6 +585,25 @@ async def test_prompt_basic_unavailable_forces_explained_advanced_without_hiding
 
 
 @pytest.mark.asyncio
+async def test_prompt_info_remains_visible_when_basic_is_unavailable():
+    app = _CanvasHost(
+        None,
+        mode="editor",
+        editor_state=_structured_editor_state(artifact_type="recipe"),
+        editor_mode="info",
+        basic_unavailable_reason="Recipes require Advanced view.",
+    )
+
+    async with app.run_test(size=(100, 30)) as pilot:
+        await pilot.pause()
+        canvas = app.query_one("#library-prompts-canvas", LibraryPromptsListCanvas)
+
+        assert canvas.query_one("#library-prompt-basic-region").display is False
+        assert canvas.query_one("#library-prompt-advanced-region").display is False
+        assert canvas.query_one("#library-prompt-info-region").display is True
+
+
+@pytest.mark.asyncio
 async def test_prompt_basic_edit_updates_stable_block_and_hidden_advanced_editor():
     state = _structured_editor_state()
     original_block = state.block_editor_state.definition.lanes[1].blocks[0]
@@ -616,7 +638,12 @@ async def test_prompt_basic_edit_updates_stable_block_and_hidden_advanced_editor
 
 @pytest.mark.parametrize(
     ("stored_mode", "expected"),
-    [(None, "basic"), ("future", "basic"), ("advanced", "advanced")],
+    [
+        (None, "basic"),
+        ("future", "basic"),
+        ("advanced", "advanced"),
+        ("info", "info"),
+    ],
 )
 def test_library_prompt_editor_mode_reads_profile_preference_fail_closed(
     stored_mode,
@@ -1318,7 +1345,12 @@ async def test_prompts_canvas_supported_artifact_uses_shared_editor_and_read_onl
     size: tuple[int, int],
 ):
     editor_state = _structured_editor_state(artifact_type="recipe")
-    app = _CanvasHost(None, mode="editor", editor_state=editor_state)
+    app = _CanvasHost(
+        None,
+        mode="editor",
+        editor_state=editor_state,
+        editor_mode="advanced",
+    )
 
     async with app.run_test(size=size) as pilot:
         editor = pilot.app.query_one(PromptBlockEditor)
@@ -1348,7 +1380,12 @@ async def test_prompts_canvas_supported_artifact_uses_shared_editor_and_read_onl
 @pytest.mark.asyncio
 async def test_prompts_canvas_shared_editor_patches_preview_without_recomposing_textareas():
     editor_state = _structured_editor_state()
-    app = _CanvasHost(None, mode="editor", editor_state=editor_state)
+    app = _CanvasHost(
+        None,
+        mode="editor",
+        editor_state=editor_state,
+        editor_mode="advanced",
+    )
 
     async with app.run_test(size=(120, 40)) as pilot:
         editor = pilot.app.query_one(PromptBlockEditor)
@@ -1393,7 +1430,12 @@ async def test_prompts_canvas_guarded_foreign_artifact_is_read_only_with_convers
         "user_prompt": "compat user",
     }
     editor_state = build_prompt_editor_state(detail)
-    app = _CanvasHost(None, mode="editor", editor_state=editor_state)
+    app = _CanvasHost(
+        None,
+        mode="editor",
+        editor_state=editor_state,
+        editor_mode="advanced",
+    )
 
     async with app.run_test() as pilot:
         assert len(pilot.app.query(PromptBlockEditor)) == 0
@@ -4448,6 +4490,7 @@ async def test_library_prompt_back_restores_applied_scope_after_failed_request(
             requests.append((scope, focus_identity))
 
         monkeypatch.setattr(screen, "_request_library_prompts_browse", record_request)
+        await _wait_for_selector(screen, pilot, "#library-prompt-back")
         screen.query_one("#library-prompt-back", Button).press()
         for _ in range(100):
             if requests:
@@ -4632,6 +4675,31 @@ async def test_library_prompts_retry_recovers_service_error():
         assert (
             screen._library_prompt_browse_controller.result.request_token > first_token
         )
+        assert screen._library_prompt_browse_controller.result.status == "ready"
+
+
+@pytest.mark.asyncio
+async def test_library_prompts_fast_failure_reconciles_after_reader_transition():
+    """A failure racing the adaptive-shell mount must still expose Retry."""
+    app = _build_test_app()
+    _wire_empty_non_prompt_services(app)
+    service = _FakePromptScopeServiceWithList(
+        [{"id": 5, "name": "Recovered", "version": 1}],
+        browse_failures=1,
+    )
+    app.prompt_scope_service = service
+    host = LibraryProductionCSSHarness(app)
+
+    async with host.run_test(size=(100, 30)) as pilot:
+        screen = _active_library_screen(host)
+        await _wait_for_library_shell(screen, pilot)
+        screen.query_one("#library-row-browse-prompts", Button).press()
+        await _wait_for_selector(screen, pilot, "#library-prompts-retry")
+
+        screen.query_one("#library-prompts-retry", Button).press()
+        await _wait_for_selector(screen, pilot, "#library-prompt-row-5")
+
+        assert len(service.browse_calls) == 2
         assert screen._library_prompt_browse_controller.result.status == "ready"
 
 
@@ -5522,7 +5590,7 @@ async def test_library_prompt_mode_switch_is_targeted_and_remembered(
         await _wait_for_library_shell(screen, pilot)
         await _open_prompt_editor(screen, pilot, prompt_id)
         canvas = screen.query_one(
-            "#library-prompts-canvas", LibraryPromptsListCanvas
+            "#library-prompt-work-pane", LibraryPromptWorkPane
         )
         name = canvas.query_one("#library-prompt-name", Input)
         system = canvas.query_one("#library-prompt-system", TextArea)
@@ -6802,7 +6870,7 @@ async def test_library_prompt_mutation_vetoes_every_import_seam(tmp_path):
         try:
             button = Button()
             path_input = Input()
-            screen.handle_library_prompts_import(Button.Pressed(button))
+            await screen.handle_library_prompts_import(Button.Pressed(button))
             screen.handle_library_prompts_import_cancel(Button.Pressed(button))
             screen.handle_library_prompts_import_browse(Button.Pressed(button))
             screen.handle_library_prompts_import_path_changed(
@@ -6898,9 +6966,22 @@ async def test_library_prompt_conflict_overwrite_blocks_delete_admission(tmp_pat
 
         try:
             screen.handle_library_prompt_delete(Button.Pressed(Button()))
-            await pilot.pause()
+            await _wait_for_condition(
+                pilot,
+                lambda: isinstance(host.screen, PromptDeleteConfirmationModal),
+                message="Prompt delete confirmation modal never mounted.",
+            )
+            await _wait_for_selector(
+                host.screen,
+                pilot,
+                "#prompt-delete-confirm",
+            )
             host.screen.query_one("#prompt-delete-confirm", Button).press()
-            await pilot.pause(0.2)
+            await _wait_for_condition(
+                pilot,
+                lambda: bool(host._notifications),
+                message="Prompt mutation-in-flight notification never arrived.",
+            )
             admitted_delete_calls = list(delete_calls)
             admitted_mutation = screen._library_prompts_mutation_in_flight
             admitted_view = screen._library_prompts_view
@@ -9413,6 +9494,12 @@ async def test_library_prompt_save_write_time_conflict_shows_conflict_bar(tmp_pa
         await _open_prompt_editor(screen, pilot, prompt_id)
         assert screen._library_prompt_version == 1
 
+        # This journey specifically verifies the structured editor remains
+        # live through a conflict. Select Advanced explicitly now that Basic
+        # is the product default; do not inherit mode from another test.
+        screen.query_one("#library-prompt-mode-advanced", Button).press()
+        await _wait_for_selector(screen, pilot, ".prompt-block-content")
+
         screen.query_one("#library-prompt-author", Input).value = "Race Author"
         await pilot.pause()
         screen.query_one("#library-prompt-save", Button).press()
@@ -9443,9 +9530,12 @@ async def test_library_prompt_save_write_time_conflict_shows_conflict_bar(tmp_pa
 
         # The conflict banner leaves the shared block editor live. Edits made
         # after the conflict must belong to the detached copy rather than be
-        # overwritten by the snapshot captured when the conflict first arose.
-        live_block = screen.query(".prompt-block-content").first()
-        assert isinstance(live_block, TextArea)
+        # overwritten by the snapshot captured when the conflict arose.
+        live_block = next(
+            area
+            for area in screen.query(".prompt-block-content")
+            if isinstance(area, TextArea) and area.text == "x"
+        )
         live_block.text = "Edited during conflict"
         await pilot.pause()
 
@@ -10531,9 +10621,11 @@ async def test_library_prompts_import_button_opens_row(tmp_path):
 
         assert len(screen.query("#library-prompts-import-path")) == 0
         screen.query_one("#library-prompts-import", Button).press()
-        await pilot.pause()
+        import_path = await _wait_for_selector(
+            screen, pilot, "#library-prompts-import-path"
+        )
 
-        assert screen.query_one("#library-prompts-import-path", Input)
+        assert isinstance(import_path, Input)
 
 
 @pytest.mark.asyncio
@@ -11137,7 +11229,7 @@ async def test_library_prompt_basic_and_advanced_geometry_uses_production_css(
         await _open_prompt_editor(screen, pilot, prompt_id)
 
         canvas = screen.query_one(
-            "#library-prompts-canvas", LibraryPromptsListCanvas
+            "#library-prompt-work-pane", LibraryPromptWorkPane
         )
         shell = canvas.query_one("#library-prompt-editor-shell")
         content = canvas.query_one("#library-prompt-editor-content", VerticalScroll)
@@ -11251,7 +11343,7 @@ async def test_library_prompt_editor_geometry_keeps_actions_visible_without_cove
             screen.refresh(recompose=True)
             await pilot.pause()
 
-        canvas = screen.query_one("#library-prompts-canvas")
+        canvas = screen.query_one("#library-prompt-work-pane")
         shell = screen.query_one("#library-prompt-editor-shell")
         content = screen.query_one("#library-prompt-editor-content")
         actions = screen.query_one("#library-prompt-editor-actions")
@@ -11322,6 +11414,7 @@ async def test_library_prompt_history_geometry_uses_only_the_outer_editor_scroll
     app = _StyledCanvasHost(
         None,
         mode="editor",
+        editor_mode="info",
         editor_state=_structured_editor_state(),
         history_state=history,
         dirty=history_mode == "dirty",
@@ -11998,9 +12091,13 @@ async def test_library_prompt_copy_after_compatibility_recipe_conversion_uses_pr
         assert str(screen.query_one("#library-prompt-meta", Static).renderable) == (
             "New prompt · • Unsaved changes"
         )
-        converted_content = screen.query_one(
-            "#prompt-block-content-legacy-system-1", TextArea
-        )
+        for _ in range(100):
+            basic_region = screen.query_one("#library-prompt-basic-region")
+            if basic_region.display:
+                break
+            await pilot.pause(0.01)
+        assert basic_region.display is True
+        converted_content = screen.query_one("#library-prompt-system", TextArea)
         converted_content.text = "Converted system"
         await pilot.pause()
 

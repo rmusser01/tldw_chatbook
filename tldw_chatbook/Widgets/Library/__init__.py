@@ -43,6 +43,7 @@ from .library_prompts_canvas import (
     PROMPT_DISCARD_TOOLTIP_DIRTY,
     LibraryPromptsListCanvas,
 )
+from .library_prompt_work_pane import LibraryPromptWorkPane
 from .library_rail import (
     LIBRARY_RAIL_ROW_PREFIX,
     LibraryNavigationRailHandle,
@@ -124,6 +125,7 @@ __all__ = [
     "LibraryNavigationRailHandle",
     "PaneToggleRequested",
     "LibraryPromptsListCanvas",
+    "LibraryPromptWorkPane",
     "LibraryRail",
     "LibrarySearchRagPanel",
     "LibraryStudyHandoffCanvas",
