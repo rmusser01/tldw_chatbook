@@ -773,16 +773,9 @@ class WatchlistScopeService:
                     isinstance(launched, Mapping)
                     and launched.get("_claim_acquired") is False
                 ):
-                    while True:
-                        winner = await self._maybe_await(
-                            service.get_run(resolved_run_id)
-                        )
-                        if str(winner.get("status") or "").lower() not in {
-                            "queued",
-                            "running",
-                        }:
-                            return winner
-                        await asyncio.sleep(0.01)
+                    return await self._maybe_await(
+                        service.wait_for_terminal_run(resolved_run_id)
+                    )
                 try:
                     return await self._maybe_await(execute_run(resolved_run_id))
                 except asyncio.CancelledError:

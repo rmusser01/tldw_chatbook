@@ -433,6 +433,22 @@ def test_source_claim_has_no_stale_winner_resolution_gap(tmp_path: Path) -> None
     loser.close()
 
 
+def test_source_claim_does_not_hide_non_unique_integrity_error(tmp_path: Path) -> None:
+    db = SubscriptionsDB(tmp_path / "run-claim-integrity.db", client_id="test")
+    source_id = db.add_subscription(
+        name="Claimed", type="rss", source="https://example.test/feed"
+    )
+    db.accept_watchlist_run(
+        source_id, created_at="2026-08-10T00:00:00+00:00"
+    )
+
+    with pytest.raises(sqlite3.IntegrityError) as raised:
+        db.accept_watchlist_run(source_id, created_at=None)  # type: ignore[arg-type]
+
+    assert raised.value.sqlite_errorcode == sqlite3.SQLITE_CONSTRAINT_NOTNULL
+    db.close()
+
+
 def test_two_database_owners_resolve_briefing_claim_and_terminal_releases_it(
     tmp_path: Path,
 ) -> None:
@@ -528,3 +544,22 @@ def test_briefing_claim_has_no_stale_winner_resolution_gap(tmp_path: Path) -> No
     assert receipt["_claim_acquired"] is False
     winner.close()
     loser.close()
+
+
+def test_briefing_claim_does_not_hide_non_unique_integrity_error(
+    tmp_path: Path,
+) -> None:
+    db = SubscriptionsDB(tmp_path / "briefing-claim-integrity.db", client_id="test")
+    with db.transaction() as conn:
+        watchlist_id = conn.execute(
+            "INSERT INTO watchlists (name) VALUES ('Claimed')"
+        ).lastrowid
+    db.accept_briefing(
+        watchlist_id, created_at="2026-08-10T00:00:00+00:00"
+    )
+
+    with pytest.raises(sqlite3.IntegrityError) as raised:
+        db.accept_briefing(watchlist_id, created_at=None)  # type: ignore[arg-type]
+
+    assert raised.value.sqlite_errorcode == sqlite3.SQLITE_CONSTRAINT_NOTNULL
+    db.close()

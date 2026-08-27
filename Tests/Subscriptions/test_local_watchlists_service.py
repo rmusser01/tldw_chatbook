@@ -14,7 +14,7 @@ from tldw_chatbook.Notifications import (
     NotificationDispatchService,
 )
 from tldw_chatbook.Subscriptions import LocalWatchlistsService, WatchlistScopeService
-from tldw_chatbook.Subscriptions import monitoring_engine
+from tldw_chatbook.Subscriptions import local_watchlists_service, monitoring_engine
 from tldw_chatbook.Subscriptions.monitoring_engine import ContentExtractor
 from tldw_chatbook.Subscriptions.watchlist_bundle_service import WatchlistBundleService
 from tldw_chatbook.Subscriptions.watchlist_item_page import (
@@ -270,6 +270,58 @@ async def test_two_scope_services_execute_one_durable_source_claim(tmp_path):
     assert [receipt["status"] for receipt in receipts] == ["completed", "completed"]
     durable = await first_service.get_run(receipts[0]["run_id"])
     assert durable["status"] == "completed"
+
+
+@pytest.mark.asyncio
+async def test_wait_for_terminal_run_has_bounded_backoff(monkeypatch):
+    service = LocalWatchlistsService(db_factory=Mock())
+    service.get_run = AsyncMock(return_value={"run_id": 7, "status": "running"})
+    ticks = iter((0.0, 0.0, 0.01, 0.03))
+    sleeps: list[float] = []
+
+    async def sleep(delay: float) -> None:
+        sleeps.append(delay)
+
+    monkeypatch.setattr(
+        local_watchlists_service, "_RUN_CLAIM_WAIT_TIMEOUT_SECONDS", 0.025
+    )
+    monkeypatch.setattr(
+        local_watchlists_service,
+        "time",
+        SimpleNamespace(monotonic=lambda: next(ticks)),
+    )
+    monkeypatch.setattr(
+        local_watchlists_service, "asyncio", SimpleNamespace(sleep=sleep)
+    )
+
+    with pytest.raises(TimeoutError, match="Timed out waiting for watchlist run 7"):
+        await service.wait_for_terminal_run(7)
+
+    assert service.get_run.await_count == 3
+    assert sleeps == pytest.approx([0.01, 0.015])
+
+
+@pytest.mark.asyncio
+async def test_wait_for_terminal_run_is_cancellable() -> None:
+    service = LocalWatchlistsService(db_factory=Mock())
+    polled = asyncio.Event()
+    queries = 0
+
+    async def get_run(_run_id: int) -> dict[str, object]:
+        nonlocal queries
+        queries += 1
+        polled.set()
+        return {"run_id": 7, "status": "running"}
+
+    service.get_run = get_run
+    waiting = asyncio.create_task(service.wait_for_terminal_run(7))
+    await asyncio.wait_for(polled.wait(), timeout=1)
+    waiting.cancel()
+
+    with pytest.raises(asyncio.CancelledError):
+        await waiting
+
+    assert queries == 1
 
 
 @pytest.mark.asyncio

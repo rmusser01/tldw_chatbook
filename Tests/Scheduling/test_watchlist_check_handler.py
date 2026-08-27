@@ -1,10 +1,14 @@
+import asyncio
+import threading
+
 import pytest
 from unittest.mock import AsyncMock, MagicMock, patch
 
+from tldw_chatbook.DB.Subscriptions_DB import SubscriptionsDB
 from tldw_chatbook.Scheduling.scheduler.handlers.watchlist_check_handler import (
     WatchlistCheckHandler,
 )
-from tldw_chatbook.Subscriptions import LocalWatchlistsService
+from tldw_chatbook.Subscriptions import LocalWatchlistsService, WatchlistScopeService
 
 
 def _task(subscription_id: int | str = 42, **overrides) -> dict:
@@ -126,6 +130,82 @@ async def test_every_executable_type_is_launched_as_a_run(handler, sub_type):
     # The handler's own monitors belong to the shadow path now.
     handler.feed_monitor.check_feed.assert_not_awaited()
     handler.url_monitor.check_url.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_scheduler_and_scope_share_one_durable_winner(tmp_path):
+    path = tmp_path / "subscriptions.db"
+    scope_db = SubscriptionsDB(path, "scope")
+    scheduler_db = SubscriptionsDB(path, "scheduler")
+    executor_started = asyncio.Event()
+    release_executor = asyncio.Event()
+    loser_accepted = threading.Event()
+    scheduler_receipts: list[dict] = []
+    executor_calls = 0
+
+    async def executor(_subscription):
+        nonlocal executor_calls
+        executor_calls += 1
+        executor_started.set()
+        await release_executor.wait()
+        return {"items": []}
+
+    scope_service = LocalWatchlistsService(
+        db_factory=lambda: scope_db, run_executor=executor
+    )
+    scheduler_service = LocalWatchlistsService(
+        db_factory=lambda: scheduler_db, run_executor=executor
+    )
+    source = await scope_service.create_source(
+        {
+            "name": "Feed",
+            "url": "https://example.com/feed.xml",
+            "source_type": "rss",
+        }
+    )
+    original_accept = scheduler_db.accept_watchlist_run
+
+    def accept_loser(source_id: int, *, created_at: str):
+        receipt = original_accept(source_id, created_at=created_at)
+        if receipt["_claim_acquired"] is False:
+            loser_accepted.set()
+        return receipt
+
+    scheduler_db.accept_watchlist_run = accept_loser
+    original_wait = scheduler_service.wait_for_terminal_run
+
+    async def observe_winner(run_id):
+        receipt = await original_wait(run_id)
+        scheduler_receipts.append(receipt)
+        return receipt
+
+    scheduler_service.wait_for_terminal_run = observe_winner
+    scope = WatchlistScopeService(local_service=scope_service, server_service=None)
+    handler = WatchlistCheckHandler(
+        subscriptions_db=scheduler_db,
+        watchlists_service=scheduler_service,
+    )
+
+    scope_task = asyncio.create_task(
+        scope.launch_run(runtime_backend="local", source_id=source["source_id"])
+    )
+    await asyncio.wait_for(executor_started.wait(), timeout=2)
+    scheduler_task = asyncio.create_task(handler.handle(_task(source["source_id"])))
+    assert await asyncio.to_thread(loser_accepted.wait, 2)
+    release_executor.set()
+    scope_receipt, _ = await asyncio.gather(scope_task, scheduler_task)
+
+    assert executor_calls == 1
+    assert len(scheduler_receipts) == 1
+    scheduler_receipt = scheduler_receipts[0]
+    assert scheduler_receipt["run_id"] == scope_receipt["run_id"]
+    assert scheduler_receipt["status"] == scope_receipt["status"] == "completed"
+    assert scheduler_receipt["error_msg"] is scope_receipt["error_msg"] is None
+    durable = await scope_service.get_run(scope_receipt["run_id"])
+    assert durable["status"] == "completed"
+    assert durable["error_msg"] is None
+    scope_db.close()
+    scheduler_db.close()
 
 
 @pytest.mark.asyncio

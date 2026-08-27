@@ -87,6 +87,10 @@ _DISPOSITION_COUNTERS: tuple[str, ...] = (
     "skipped",
 )
 
+_RUN_CLAIM_WAIT_TIMEOUT_SECONDS = 300.0
+_RUN_CLAIM_POLL_INITIAL_SECONDS = 0.01
+_RUN_CLAIM_POLL_MAX_SECONDS = 0.5
+
 
 def _disposition_count_keys() -> dict[tuple[str, str | None], str]:
     """`check_url`'s `(kind, reason)` -> the run-stats counter it increments.
@@ -1519,6 +1523,31 @@ class LocalWatchlistsService:
         if row is None:
             raise KeyError(f"Watchlist run not found: {run_id}")
         return self._normalize_run_row(row)
+
+    async def wait_for_terminal_run(self, run_id: Any) -> dict[str, Any]:
+        """Observe a durable winner until terminal, deadline, or cancellation.
+
+        Args:
+            run_id: Durable run identifier returned by a losing claim receipt.
+
+        Returns:
+            The terminal normalized run receipt.
+
+        Raises:
+            TimeoutError: The winner stayed active through the bounded wait.
+            asyncio.CancelledError: The caller cancelled observation.
+        """
+        deadline = time.monotonic() + _RUN_CLAIM_WAIT_TIMEOUT_SECONDS
+        delay = _RUN_CLAIM_POLL_INITIAL_SECONDS
+        while True:
+            winner = await self.get_run(run_id)
+            if str(winner.get("status") or "").lower() not in {"queued", "running"}:
+                return winner
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                raise TimeoutError(f"Timed out waiting for watchlist run {run_id}")
+            await asyncio.sleep(min(delay, remaining))
+            delay = min(delay * 2, _RUN_CLAIM_POLL_MAX_SECONDS)
 
     def _select_run_row(self, db: SubscriptionsDB, run_id: int) -> Any:
         """Read one run row, source title and watchlist names included."""

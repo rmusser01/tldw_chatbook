@@ -156,6 +156,7 @@ class WatchlistCheckHandler:
         subscription_type = "unknown"
         status = _STATUS_MISSING
         run_id: Any = None
+        claim_acquired = True
         had_url_errors = False
 
         try:
@@ -202,11 +203,15 @@ class WatchlistCheckHandler:
                 source_id=subscription_id
             )
             run_id = launched["run_id"]
+            claim_acquired = launched.get("_claim_acquired") is not False
             # `execute_run` records its own result -- including
             # `record_check_result` -- and does not re-raise a fetch failure, so
             # this handler must neither record a second time nor expect an
             # exception for the ordinary failure case.
-            executed = await self.watchlists_service.execute_run(run_id)
+            if claim_acquired:
+                executed = await self.watchlists_service.execute_run(run_id)
+            else:
+                executed = await self.watchlists_service.wait_for_terminal_run(run_id)
             run_status = str(executed.get("status") or "")
             stats = executed.get("stats") or {}
             if run_status == "failed":
@@ -256,7 +261,8 @@ class WatchlistCheckHandler:
         except Exception as exc:
             status = _STATUS_ERROR
             logger.error(f"Error checking subscription {subscription_id}: {exc}")
-            await self._record_failure(subscription_id, run_id, exc)
+            if claim_acquired:
+                await self._record_failure(subscription_id, run_id, exc)
 
         finally:
             duration = time.time() - start_time

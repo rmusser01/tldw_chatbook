@@ -4091,7 +4091,12 @@ class SubscriptionsDB(BaseDB):
                 receipt = dict(row)
                 receipt["_claim_acquired"] = True
                 return receipt
-            except sqlite3.IntegrityError:
+            except sqlite3.IntegrityError as exc:
+                if (
+                    getattr(exc, "sqlite_errorcode", None)
+                    != sqlite3.SQLITE_CONSTRAINT_UNIQUE
+                ):
+                    raise
                 winner = conn.execute(
                     "SELECT * FROM local_watchlist_runs "
                     "WHERE source_id = ? AND status IN ('queued', 'running') "
@@ -4175,7 +4180,12 @@ class SubscriptionsDB(BaseDB):
                 receipt = dict(row)
                 receipt["_claim_acquired"] = True
                 return receipt
-            except sqlite3.IntegrityError:
+            except sqlite3.IntegrityError as exc:
+                if (
+                    getattr(exc, "sqlite_errorcode", None)
+                    != sqlite3.SQLITE_CONSTRAINT_UNIQUE
+                ):
+                    raise
                 winner = conn.execute(
                     "SELECT * FROM briefings "
                     "WHERE watchlist_id = ? AND status = 'generating' "

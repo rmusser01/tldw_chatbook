@@ -1,4 +1,4 @@
-from unittest.mock import Mock
+from unittest.mock import AsyncMock, Mock
 
 import pytest
 
@@ -521,6 +521,29 @@ async def test_scope_service_executes_local_runs_when_local_backend_supports_exe
     assert [item["operation_id"] for item in local_report] == [
         "watchlists.groups.local"
     ]
+
+
+@pytest.mark.asyncio
+async def test_scope_service_observes_losing_claim_without_executing_it():
+    local = Mock()
+    local.launch_run = AsyncMock(
+        return_value={
+            "run_id": 7,
+            "status": "running",
+            "_claim_acquired": False,
+        }
+    )
+    local.wait_for_terminal_run = AsyncMock(
+        return_value={"run_id": 7, "status": "completed"}
+    )
+    local.execute_run = AsyncMock()
+    scope = WatchlistScopeService(local_service=local, server_service=None)
+
+    receipt = await scope.launch_run(runtime_backend="local", source_id=42)
+
+    assert receipt == {"run_id": 7, "status": "completed"}
+    local.wait_for_terminal_run.assert_awaited_once_with("7")
+    local.execute_run.assert_not_awaited()
 
 
 @pytest.mark.asyncio
