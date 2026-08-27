@@ -9689,32 +9689,69 @@ UPDATE db_schema_version
             raise
 
     def get_conversations_for_character(
-        self, character_id: int, limit: int = 50, offset: int = 0
-    ) -> List[Dict[str, Any]]:
+        self,
+        character_id: int,
+        limit: int = 50,
+        offset: int = 0,
+        *,
+        before_last_modified: str | None = None,
+        before_id: str | None = None,
+    ) -> list[dict[str, Any]]:
         """
         Lists conversations associated with a specific character ID.
 
-        Only non-deleted conversations are returned, ordered by `last_modified` descending.
+        Only non-deleted global conversations are returned, ordered by
+        ``last_modified`` descending with ``id`` as a deterministic tie-breaker.
 
         Args:
             character_id: The integer ID of the character.
             limit: The maximum number of conversations to return. Defaults to 50.
             offset: The number of conversations to skip. Defaults to 0.
+            before_last_modified: Last-modified value of the final row from the
+                previous seek page.
+            before_id: Conversation ID of the final row from the previous seek
+                page.
 
         Returns:
             A list of dictionaries, each representing a conversation. Can be empty.
 
         Raises:
+            InputError: If only one cursor value is supplied, or a complete
+                cursor is combined with a nonzero offset.
             CharactersRAGDBError: For database errors.
         """
+        cursor_supplied = before_last_modified is not None or before_id is not None
+        if (before_last_modified is None) != (before_id is None):
+            raise InputError(
+                "before_last_modified and before_id must be provided together."
+            )
+        if cursor_supplied and offset != 0:
+            raise InputError("A seek cursor cannot be combined with a nonzero offset.")
+
         start_time = time.time()
-        query = (
-            "SELECT * FROM conversations "
-            "WHERE character_id = ? AND deleted = 0 AND scope_type = 'global' "
-            "ORDER BY last_modified DESC LIMIT ? OFFSET ?"
-        )
+        if cursor_supplied:
+            query = (
+                "SELECT * FROM conversations "
+                "WHERE character_id = ? AND deleted = 0 AND scope_type = 'global' "
+                "AND (last_modified < ? OR (last_modified = ? AND id < ?)) "
+                "ORDER BY last_modified DESC, id DESC LIMIT ?"
+            )
+            params = (
+                character_id,
+                before_last_modified,
+                before_last_modified,
+                before_id,
+                limit,
+            )
+        else:
+            query = (
+                "SELECT * FROM conversations "
+                "WHERE character_id = ? AND deleted = 0 AND scope_type = 'global' "
+                "ORDER BY last_modified DESC, id DESC LIMIT ? OFFSET ?"
+            )
+            params = (character_id, limit, offset)
         try:
-            cursor = self.execute_query(query, (character_id, limit, offset))
+            cursor = self.execute_query(query, params)
             results = [dict(row) for row in cursor.fetchall()]
 
             # Log metrics
