@@ -19747,7 +19747,10 @@ class LibraryScreen(BaseAppScreen):
         self._set_library_lifecycle(lifecycle)
         self._library_rail_collapsed = False
         await self.recompose()
-        self._focus_library_rail_action("#library-search-input")
+        self.call_after_refresh(
+            self._focus_library_rail_action,
+            "#library-search-input",
+        )
 
     @on(Button.Pressed, "#library-hub-retry-evidence")
     def _retry_library_onboarding_evidence(self, event: Button.Pressed) -> None:
