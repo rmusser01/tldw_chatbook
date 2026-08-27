@@ -1,18 +1,16 @@
-import asyncio
 import json
+from concurrent.futures import ThreadPoolExecutor
+from threading import Event
 
 import pytest
 
+from tldw_chatbook.DB.Subscriptions_DB import SubscriptionsDB
+from tldw_chatbook.Subscriptions.watchlist_bundle_service import WatchlistBundleService
 from tldw_chatbook.Tools.watchlists_command_service import WatchlistsCommandService
 
 
-def _bridge(factory):
-    with asyncio.Runner() as runner:
-        return runner.run(factory())
-
-
 def _service(*, runtime="local", create_sources=None, create_collection=None, update=None):
-    async def default_sources(rows):
+    def default_sources(rows):
         return [
             {
                 "input_index": index,
@@ -22,14 +20,14 @@ def _service(*, runtime="local", create_sources=None, create_collection=None, up
             for index, _row in enumerate(rows)
         ]
 
-    async def default_collection(**kwargs):
+    def default_collection(**kwargs):
         return {
             "outcome": "created",
             "watchlist": {"id": 7, "name": kwargs["name"]},
             "membership_count": len(kwargs["source_ids"]),
         }
 
-    async def default_update(**kwargs):
+    def default_update(**kwargs):
         return {
             "watchlist_id": kwargs["watchlist_id"],
             "added": len(kwargs["add_ids"]),
@@ -39,17 +37,60 @@ def _service(*, runtime="local", create_sources=None, create_collection=None, up
 
     return WatchlistsCommandService(
         runtime_source_loader=lambda: runtime,
-        app_loop_bridge=_bridge,
         create_sources_batch=create_sources or default_sources,
         create_collection=create_collection or default_collection,
         update_collection_sources=update or default_update,
     )
 
 
+def test_delayed_collection_mutation_returns_only_after_definitive_commit(tmp_path):
+    database = SubscriptionsDB(tmp_path / "subscriptions.db", "test")
+    owner = WatchlistBundleService(database)
+    entered = Event()
+    release = Event()
+
+    def delayed_create(**kwargs):
+        entered.set()
+        assert release.wait(timeout=2)
+        return owner.create_with_sources(**kwargs)
+
+    try:
+        service = WatchlistsCommandService(
+            runtime_source_loader=lambda: "local",
+            create_sources_batch=lambda _rows: [],
+            create_collection=delayed_create,
+            update_collection_sources=lambda **_kwargs: {},
+        )
+    except TypeError:
+        pytest.fail("short mutations still require the unsafe app-loop bridge")
+
+    with ThreadPoolExecutor(max_workers=1) as pool:
+        future = pool.submit(
+            service.create_collection,
+            {"name": "Threat intel", "if_exists": "auto_suffix"},
+        )
+        assert entered.wait(timeout=2)
+        assert not future.done(), "a failure response preceded the pending commit"
+        release.set()
+        first = json.loads(future.result(timeout=2))
+
+    second = json.loads(
+        service.create_collection(
+            {"name": "Threat intel", "if_exists": "auto_suffix"}
+        )
+    )
+
+    assert first["status"] == second["status"] == "ok"
+    assert [row["name"] for row in owner.list_watchlists()] == [
+        "Threat intel",
+        "Threat intel (2)",
+    ]
+
+
 def test_create_sources_validates_rows_before_one_bounded_write_and_redacts_urls():
     calls = []
 
-    async def create(rows):
+    def create(rows):
         calls.append(rows)
         return [
             {"input_index": 0, "outcome": "created", "source": {"source_id": 11}},
@@ -90,7 +131,7 @@ def test_create_sources_validates_rows_before_one_bounded_write_and_redacts_urls
 def test_create_sources_rejects_boolean_integer_and_over_50_without_storage():
     calls = []
 
-    async def create(rows):
+    def create(rows):
         calls.append(rows)
         return []
 
@@ -114,7 +155,7 @@ def test_create_sources_rejects_boolean_integer_and_over_50_without_storage():
 def test_unhashable_enum_values_are_invalid_without_storage():
     calls = []
 
-    async def create(*args, **kwargs):
+    def create(*args, **kwargs):
         calls.append((args, kwargs))
         return {}
 
@@ -137,7 +178,7 @@ def test_unhashable_enum_values_are_invalid_without_storage():
 def test_create_sources_rejects_parser_ambiguous_urls_without_storage():
     calls = []
 
-    async def create(rows):
+    def create(rows):
         calls.append(rows)
         return []
 
@@ -162,10 +203,41 @@ def test_create_sources_rejects_parser_ambiguous_urls_without_storage():
     assert calls == []
 
 
+@pytest.mark.parametrize(
+    "url",
+    [
+        "https://.example.com/feed",
+        "https://example..com/feed",
+        "https://bad_label.example/feed",
+        "https://-bad.example/feed",
+        "https://bad-.example/feed",
+        "https://\ud800.example/feed",
+        "https://example.com/\x00feed",
+        "https://example.com/\x1ffeed",
+        "https://example.com/\x7ffeed",
+        "https://example.com/\x85feed",
+    ],
+)
+def test_create_sources_rejects_invalid_host_labels_and_controls_before_storage(url):
+    calls = []
+
+    def create(rows):
+        calls.append(rows)
+        return []
+
+    result = json.loads(
+        _service(create_sources=create).create_sources({"sources": [{"url": url}]})
+    )
+
+    assert result["status"] == "invalid_argument"
+    assert result["results"][0]["outcome"] == "invalid"
+    assert calls == []
+
+
 def test_create_sources_trims_only_outer_url_whitespace():
     calls = []
 
-    async def create(rows):
+    def create(rows):
         calls.append(rows)
         return [
             {"input_index": 0, "outcome": "created", "source": {"source_id": 3}}
@@ -195,16 +267,15 @@ def test_create_sources_trims_only_outer_url_whitespace():
         ),
     ],
 )
-def test_server_mode_refuses_before_storage_or_bridge_resolution(method, arguments):
+def test_server_mode_refuses_before_storage_resolution(method, arguments):
     calls = []
 
-    async def create(*args, **kwargs):
+    def create(*args, **kwargs):
         calls.append((args, kwargs))
         return {}
 
     service = WatchlistsCommandService(
         runtime_source_loader=lambda: "server",
-        app_loop_bridge=lambda factory: (_ for _ in ()).throw(AssertionError("bridge")),
         create_sources_batch=create,
         create_collection=create,
         update_collection_sources=create,
@@ -219,7 +290,7 @@ def test_server_mode_refuses_before_storage_or_bridge_resolution(method, argumen
 def test_create_collection_shapes_explicit_policy_and_canonical_ids():
     calls = []
 
-    async def create(**kwargs):
+    def create(**kwargs):
         calls.append(kwargs)
         return {
             "outcome": "existing",
@@ -259,7 +330,7 @@ def test_create_collection_shapes_explicit_policy_and_canonical_ids():
 def test_update_collection_sources_rejects_overlap_before_mutation():
     calls = []
 
-    async def update(**kwargs):
+    def update(**kwargs):
         calls.append(kwargs)
         return {}
 
@@ -278,7 +349,7 @@ def test_update_collection_sources_rejects_overlap_before_mutation():
 
 
 def test_unexpected_errors_are_scrubbed_and_retryable():
-    async def create(_rows):
+    def create(_rows):
         raise RuntimeError(
             "db /Users/alice/private/subs.db https://example.com/?signed=secret"
         )
@@ -298,13 +369,13 @@ def test_unexpected_errors_are_scrubbed_and_retryable():
 
 @pytest.mark.parametrize("command", ["sources", "collection", "update"])
 def test_malformed_domain_success_is_scrubbed(command):
-    async def incomplete_sources(_rows):
+    def incomplete_sources(_rows):
         return []
 
-    async def incomplete_collection(**_kwargs):
+    def incomplete_collection(**_kwargs):
         return {"outcome": "created"}
 
-    async def incomplete_update(**_kwargs):
+    def incomplete_update(**_kwargs):
         return {"added": 1}
 
     service = _service(

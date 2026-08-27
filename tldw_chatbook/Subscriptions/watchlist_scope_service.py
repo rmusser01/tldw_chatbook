@@ -1155,14 +1155,19 @@ class WatchlistScopeService:
                     existing_count += 1
                 else:
                     source = await self._maybe_await(service.create_source(payload))
-                    created.append(dict(source))
                     source_id = source.get("source_id")
+                    if str(source.get("creation_outcome") or "created").casefold() == (
+                        "existing"
+                    ):
+                        existing_count += 1
+                    else:
+                        created.append(dict(source))
                 if url and source_id is not None:
                     source_ids_by_url[url] = int(source_id)
             folder = str(payload.get("folder") or "").strip()
             if not folder or source_id is None:
                 continue
-            key = folder.lower()
+            key = folder.casefold()
             if key not in resolved_folders:
                 watchlist, was_created = await self._maybe_await(
                     service.resolve_or_create_watchlist(folder)

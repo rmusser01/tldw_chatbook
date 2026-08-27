@@ -1,5 +1,6 @@
 import sqlite3
 from concurrent.futures import ThreadPoolExecutor
+from threading import Event
 
 import pytest
 
@@ -99,6 +100,68 @@ def test_create_sources_exact_batch_serializes_two_database_instances(tmp_path):
     assert first.conn.execute(
         "SELECT COUNT(*) FROM subscriptions WHERE source = ?", (row["source"],)
     ).fetchone()[0] == 1
+
+
+def test_create_sources_exact_batch_blocks_second_lookup_until_first_commit(tmp_path):
+    """Pin the lock boundary at lookup, not merely the eventual row count.
+
+    A deferred-transaction implementation lets both owners observe absence
+    before either inserts.  ``BEGIN IMMEDIATE`` must keep the second owner
+    outside the lookup seam until the first outcome is committed.
+    """
+    assert hasattr(SubscriptionsDB, "_find_exact_source_id")
+    first_lookup_entered = Event()
+    release_first_lookup = Event()
+    second_lookup_entered = Event()
+
+    class CoordinatedSubscriptionsDB(SubscriptionsDB):
+        def __init__(self, *args, pause_first: bool, **kwargs):
+            super().__init__(*args, **kwargs)
+            self._pause_first = pause_first
+            self._did_coordinate_lookup = False
+
+        def _find_exact_source_id(self, conn, source):
+            source_id = super()._find_exact_source_id(conn, source)
+            if self._did_coordinate_lookup:
+                return source_id
+            self._did_coordinate_lookup = True
+            if self._pause_first:
+                first_lookup_entered.set()
+                if not release_first_lookup.wait(3):
+                    raise AssertionError("first lookup gate was never released")
+            else:
+                second_lookup_entered.set()
+            return source_id
+
+    path = tmp_path / "controlled-race.db"
+    first = CoordinatedSubscriptionsDB(
+        str(path), client_id="first", pause_first=True
+    )
+    second = CoordinatedSubscriptionsDB(
+        str(path), client_id="second", pause_first=False
+    )
+    row = {
+        "name": "Race",
+        "type": "rss",
+        "source": "https://feeds.example/controlled-race",
+    }
+
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        first_result = pool.submit(first.create_sources_exact_batch, [row])
+        assert first_lookup_entered.wait(3), "first owner never reached lookup"
+        second_result = pool.submit(second.create_sources_exact_batch, [row])
+        try:
+            crossed_lock_boundary = second_lookup_entered.wait(0.5)
+        finally:
+            release_first_lookup.set()
+        results = [first_result.result(timeout=3), second_result.result(timeout=3)]
+
+    assert not crossed_lock_boundary, (
+        "the second owner reached lookup before the first transaction committed"
+    )
+    assert second_lookup_entered.is_set(), "second owner never resumed after commit"
+    assert [result[0]["outcome"] for result in results] == ["created", "existing"]
+    assert results[0][0]["source_id"] == results[1][0]["source_id"]
 
 
 def test_item_content_columns_created(db):

@@ -88,6 +88,44 @@ def test_create_with_sources_conflict_leaves_existing_unchanged(service, db):
     assert service.list_sources(existing["id"]) == []
 
 
+@pytest.mark.parametrize(
+    ("existing_name", "requested_name"),
+    [("ÄI", "äi"), ("Straße", "STRASSE")],
+)
+@pytest.mark.parametrize("policy", ["conflict", "return_existing", "auto_suffix"])
+def test_create_with_sources_uses_unicode_casefold_for_every_collision_policy(
+    service, existing_name, requested_name, policy
+):
+    existing = service.create(existing_name)
+
+    if policy == "conflict":
+        with pytest.raises(ValueError, match="already exists"):
+            service.create_with_sources(
+                requested_name,
+                description=None,
+                tags=None,
+                source_ids=[],
+                if_exists=policy,
+            )
+        assert service.list_watchlists() == [existing]
+        return
+
+    result = service.create_with_sources(
+        requested_name,
+        description=None,
+        tags=None,
+        source_ids=[],
+        if_exists=policy,
+    )
+
+    if policy == "return_existing":
+        assert result["outcome"] == "existing"
+        assert result["watchlist"] == existing
+    else:
+        assert result["outcome"] == "created"
+        assert result["watchlist"]["name"] == f"{requested_name} (2)"
+
+
 def test_create_with_sources_rolls_back_collection_when_source_is_missing(service):
     with pytest.raises(KeyError, match="source"):
         service.create_with_sources(
@@ -173,6 +211,29 @@ def test_update_sources_is_atomic_and_rejects_missing_sources(service, db):
     assert result["added"] == 0
     assert result["removed"] == 1
     assert service.list_sources(watchlist["id"]) == [keep]
+
+
+def test_update_sources_rolls_back_add_when_later_remove_fails(service, db):
+    watchlist = service.create("Security")
+    remove = db.add_subscription(
+        name="Remove", type="rss", source="https://feeds.example/remove"
+    )
+    add = db.add_subscription(
+        name="Add", type="rss", source="https://feeds.example/add"
+    )
+    service.add_source(watchlist["id"], remove)
+    db.conn.execute(
+        "CREATE TRIGGER reject_watchlist_membership_delete "
+        "BEFORE DELETE ON watchlist_sources "
+        "BEGIN SELECT RAISE(ABORT, 'blocked removal'); END"
+    )
+
+    with pytest.raises(sqlite3.IntegrityError, match="blocked removal"):
+        service.update_sources(
+            watchlist["id"], add_ids=[add], remove_ids=[remove]
+        )
+
+    assert service.list_sources(watchlist["id"]) == [remove]
 
 
 def test_rename_also_avoids_collision(service):

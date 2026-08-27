@@ -161,9 +161,11 @@ The components are:
 1. `WatchlistsToolService`: bounded, synchronous, read-only queries for source,
    collection, item, operation, and briefing data.
 2. `WatchlistsCommandService`: Console-only adapters for validated domain
-   mutations. Short mutations complete synchronously. Long work is accepted
-   only after its existing durable run/briefing receipt exists, then proceeds
-   asynchronously on the application's event loop.
+   mutations. Short database-local mutations run synchronously on the Console
+   tool worker against application-owned domain/database owners; their tool
+   result follows definitive commit or rollback, never a non-cancellable
+   timeout. Long work is accepted only after its existing durable run/briefing
+   receipt exists, then proceeds asynchronously on the application's event loop.
 3. `LocalToolSpec` exposure and approval-effect metadata: one code-derived
    declaration states whether a tool is available to Console and external MCP
    or Console only, plus whether it reads private data, mutates local state,

@@ -16,7 +16,6 @@ import threading
 import time
 from collections import OrderedDict
 from collections.abc import Iterable, Mapping
-from concurrent.futures import TimeoutError as FutureTimeoutError
 from dataclasses import dataclass, replace
 from datetime import UTC, datetime
 from enum import Enum
@@ -9946,47 +9945,24 @@ class ConsoleChatController:
         )
         local_watchlists_service = getattr(self.app, "local_watchlists_service", None)
         watchlist_bundle_service = getattr(self.app, "watchlist_bundle_service", None)
-        try:
-            app_loop = asyncio.get_running_loop()
-        except RuntimeError:
-            app_loop = None
 
-        def _app_loop_bridge(factory: Callable[[], Awaitable[Any]]) -> Any:
-            if app_loop is None or not app_loop.is_running():
-                raise RuntimeError("Watchlists app loop unavailable")
-            try:
-                current_loop = asyncio.get_running_loop()
-            except RuntimeError:
-                current_loop = None
-            if current_loop is app_loop:
-                raise RuntimeError("Watchlists command cannot block the app loop")
-            future = asyncio.run_coroutine_threadsafe(factory(), app_loop)
-            try:
-                return future.result(timeout=5.0)
-            except FutureTimeoutError as exc:
-                future.cancel()
-                raise RuntimeError("Watchlists app loop bridge timed out") from exc
-
-        async def _create_collection(**kwargs: Any) -> Any:
+        def _create_collection(**kwargs: Any) -> Any:
             if watchlist_bundle_service is None:
                 raise RuntimeError("Watchlists collection service unavailable")
-            return await asyncio.to_thread(
-                watchlist_bundle_service.create_with_sources, **kwargs
-            )
+            return watchlist_bundle_service.create_with_sources(**kwargs)
 
-        async def _update_collection_sources(**kwargs: Any) -> Any:
+        def _update_collection_sources(**kwargs: Any) -> Any:
             if watchlist_bundle_service is None:
                 raise RuntimeError("Watchlists collection service unavailable")
-            return await asyncio.to_thread(watchlist_bundle_service.update_sources, **kwargs)
+            return watchlist_bundle_service.update_sources(**kwargs)
 
-        async def _create_sources_batch(rows: list[Mapping[str, Any]]) -> Any:
+        def _create_sources_batch(rows: list[Mapping[str, Any]]) -> Any:
             if local_watchlists_service is None:
                 raise RuntimeError("Watchlists source service unavailable")
-            return await local_watchlists_service.create_sources_exact_batch(rows)
+            return local_watchlists_service.create_sources_exact_batch_sync(rows)
 
         watchlists_command_service = WatchlistsCommandService(
             runtime_source_loader=load_default_runtime_source_state,
-            app_loop_bridge=_app_loop_bridge,
             create_sources_batch=_create_sources_batch,
             create_collection=_create_collection,
             update_collection_sources=_update_collection_sources,

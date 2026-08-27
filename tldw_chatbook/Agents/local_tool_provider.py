@@ -1250,15 +1250,14 @@ def _default_specs(
             runtime_source_loader=lambda: "local",
         )
     if watchlists_command_service is None:
-        def _unavailable_bridge(_factory: Callable[[], Any]) -> Any:
+        def _unavailable_command(*_args: Any, **_kwargs: Any) -> Any:
             raise RuntimeError("Watchlists command service unavailable")
 
         watchlists_command_service = WatchlistsCommandService(
             runtime_source_loader=lambda: "local",
-            app_loop_bridge=_unavailable_bridge,
-            create_sources_batch=lambda _rows: None,
-            create_collection=lambda **_kwargs: None,
-            update_collection_sources=lambda **_kwargs: None,
+            create_sources_batch=_unavailable_command,
+            create_collection=_unavailable_command,
+            update_collection_sources=_unavailable_command,
         )
 
     collection_scope_schema = {

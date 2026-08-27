@@ -9,12 +9,14 @@ honestly observable every-24-hours schedule.
 
 **Architecture:** A synchronous `WatchlistsCommandService` validates and shapes
 Console tool calls but delegates all state changes to application-owned domain
-services. Short mutations cross onto the app loop through an injected bounded
-bridge. Long work is accepted durably, then owned by one app-lifetime
-`WatchlistsOperationCoordinator`; navigation and model timeouts cannot cancel
-it. `SchedulerLoop` owns queue reload acknowledgement and wake-up.
+services. Short database-local mutations execute directly on the Console tool
+worker through application-owned synchronous domain seams and return only
+after commit or rollback. Long work is accepted durably, then owned by one
+app-lifetime `WatchlistsOperationCoordinator`; navigation and model timeouts
+cannot cancel it. `SchedulerLoop` owns queue reload acknowledgement and wake-up.
 
-**Tech stack:** Python asyncio plus thread-safe loop submission, SQLite
+**Tech stack:** Python worker execution plus app-loop ownership for accepted
+long work, SQLite
 transactions/partial constraints from TASK-22860, Textual state/cards, pytest
 and pytest-asyncio.
 
@@ -64,11 +66,11 @@ mapping carries `input_index`, `outcome`, and canonical `source_id` when one
 exists.
 
 The method enters `BEGIN IMMEDIATE` before lookup/insert and preserves input
-order. Add `LocalWatchlistsService.create_sources_exact_batch(rows:
-Sequence[Mapping[str, Any]]) -> list[dict[str, Any]]` as the async/off-loop
-domain wrapper used by the command facade and direct UI. Route its existing
-`create_source()` and OPML's source creation through the same DB-owner seam so
-no caller can bypass serialization.
+order. Add synchronous and async/off-loop `LocalWatchlistsService` wrappers
+around the same owner operation. The command facade uses the synchronous seam
+on its existing Console tool worker; direct async UI and OPML paths retain the
+async wrapper. Route existing `create_source()` through the same DB-owner seam
+so no caller can bypass serialization.
 
 Run:
 
@@ -139,9 +141,10 @@ class WatchlistsCommandService:
 
 Reuse canonical ID/redaction/bounding utilities extracted from
 `watchlists_tool_service.py` into a small shared helper only when two real
-callers exist. The loop bridge must have a short bounded wait and return a
-structured transient failure if the app loop is unavailable; never call
-`asyncio.run()`.
+callers exist. Invoke the injected synchronous mutation seams directly on the
+existing Console tool worker. Do not submit short SQLite mutations back to the
+app loop, wrap them in a non-cancellable timeout, or call `asyncio.run()`; a
+tool result is emitted only after the owner has committed or rolled back.
 
 Run:
 

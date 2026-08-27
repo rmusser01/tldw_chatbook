@@ -744,10 +744,9 @@ class LocalWatchlistsService:
             )
         )
 
-    async def create_sources_exact_batch(
+    def _source_batch_rows(
         self, payloads: Sequence[Mapping[str, Any]]
     ) -> list[dict[str, Any]]:
-        """Create an ordered source batch through the database-owner lock."""
         rows: list[dict[str, Any]] = []
         for payload in payloads:
             rows.append(
@@ -766,30 +765,52 @@ class LocalWatchlistsService:
                     **self._subscription_config_fields(payload),
                 }
             )
+        return rows
+
+    @staticmethod
+    def _create_source_rows_exact_batch(
+        db: SubscriptionsDB, rows: Sequence[Mapping[str, Any]]
+    ) -> list[dict[str, Any]]:
+        outcomes = db.create_sources_exact_batch(rows)
+        return [
+            {
+                "input_index": int(outcome["input_index"]),
+                "outcome": str(outcome["outcome"]),
+                "source": normalize_local_subscription_row(
+                    db.get_subscription(int(outcome["source_id"]))
+                ),
+            }
+            for outcome in outcomes
+        ]
+
+    def create_sources_exact_batch_sync(
+        self, payloads: Sequence[Mapping[str, Any]]
+    ) -> list[dict[str, Any]]:
+        """Create an ordered source batch on the current Console worker."""
+        rows = self._source_batch_rows(payloads)
         db = self._db()
-        outcomes = await run_db_off_loop(
+        return self._create_source_rows_exact_batch(db, rows)
+
+    async def create_sources_exact_batch(
+        self, payloads: Sequence[Mapping[str, Any]]
+    ) -> list[dict[str, Any]]:
+        """Create an ordered source batch through the database-owner lock."""
+        rows = self._source_batch_rows(payloads)
+        db = self._db()
+        return await run_db_off_loop(
             db,
-            db.create_sources_exact_batch,
+            self._create_source_rows_exact_batch,
+            db,
             rows,
         )
-        results: list[dict[str, Any]] = []
-        for outcome in outcomes:
-            row = await run_db_off_loop(
-                db, db.get_subscription, int(outcome["source_id"])
-            )
-            results.append(
-                {
-                    "input_index": int(outcome["input_index"]),
-                    "outcome": str(outcome["outcome"]),
-                    "source": normalize_local_subscription_row(row),
-                }
-            )
-        return results
 
     async def create_source(self, payload: Mapping[str, Any]) -> dict[str, Any]:
         """Create or resolve one exact configured source."""
         result = await self.create_sources_exact_batch([payload])
-        return result[0]["source"]
+        return {
+            **result[0]["source"],
+            "creation_outcome": result[0]["outcome"],
+        }
 
     async def update_source(
         self, source_id: Any, payload: Mapping[str, Any]

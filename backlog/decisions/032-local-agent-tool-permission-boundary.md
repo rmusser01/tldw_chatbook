@@ -202,6 +202,16 @@ model timeout, Console navigation, and screen reconstruction do not own or
 silently cancel accepted work. Receipt queries are the cross-surface status
 contract.
 
+Short database-local authoring mutations use the complementary ownership
+boundary: they execute synchronously on the existing Console tool worker
+against the application's shared database/domain owners, and return only after
+the transaction commits or rolls back. They are not submitted to the app loop
+behind a bounded wait. A timed-out `asyncio.to_thread()` mutation cannot be
+cancelled and could otherwise commit after a failure response, making a retry
+create an unintended duplicate (notably under `auto_suffix`). The app loop is
+reserved here for durable, accepted long-running work with an observable
+receipt; short authoring responses are definitive outcomes.
+
 Completed briefings preserve immutable, ordered evidence snapshots rather than
 depending on mutable live source/item joins. The focused Subscriptions schema
 migration records selected and cited order, sanitized source/item identity,

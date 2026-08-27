@@ -78,16 +78,17 @@ class WatchlistBundleService:
         """
         base = name.strip()
         params: list[Any] = []
-        query = "SELECT LOWER(name) FROM watchlists"
+        query = "SELECT name FROM watchlists"
         if exclude_id is not None:
             query += " WHERE id != ?"
             params.append(exclude_id)
-        taken = {row[0] for row in conn.execute(query, params)}
+        taken = {str(row[0]).strip().casefold() for row in conn.execute(query, params)}
 
-        if base.lower() not in taken:
+        folded_base = base.casefold()
+        if folded_base not in taken:
             return base
         suffix = 2
-        while f"{base.lower()} ({suffix})" in taken:
+        while f"{folded_base} ({suffix})" in taken:
             suffix += 1
         return f"{base} ({suffix})"
 
@@ -164,7 +165,7 @@ class WatchlistBundleService:
                         "SELECT id, name, description, tags, is_active, sort_order "
                         "FROM watchlists ORDER BY id"
                     )
-                    if str(row[1]).strip().lower() == cleaned_name.lower()
+                    if str(row[1]).strip().casefold() == cleaned_name.casefold()
                 ),
                 None,
             )

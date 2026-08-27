@@ -2,9 +2,11 @@
 
 from __future__ import annotations
 
+import ipaddress
 import json
 import re
-from collections.abc import Awaitable, Callable, Mapping
+import unicodedata
+from collections.abc import Callable, Mapping
 from typing import Any
 from urllib.parse import urlsplit
 
@@ -22,6 +24,7 @@ _UPDATE_KEYS = frozenset(
     {"collection_id", "add_source_ids", "remove_source_ids"}
 )
 _COLLISION_POLICIES = frozenset({"conflict", "return_existing", "auto_suffix"})
+_HOST_LABEL = re.compile(r"[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\Z", re.IGNORECASE)
 
 
 class WatchlistsCommandService:
@@ -31,13 +34,11 @@ class WatchlistsCommandService:
         self,
         *,
         runtime_source_loader: Callable[[], object],
-        app_loop_bridge: Callable[[Callable[[], Awaitable[Any]]], Any],
-        create_sources_batch: Callable[[list[Mapping[str, Any]]], Awaitable[Any]],
-        create_collection: Callable[..., Awaitable[Any]],
-        update_collection_sources: Callable[..., Awaitable[Any]],
+        create_sources_batch: Callable[[list[Mapping[str, Any]]], Any],
+        create_collection: Callable[..., Any],
+        update_collection_sources: Callable[..., Any],
     ) -> None:
         self._runtime_source_loader = runtime_source_loader
-        self._bridge = app_loop_bridge
         self._create_sources_batch = create_sources_batch
         self._create_collection = create_collection
         self._update_collection_sources = update_collection_sources
@@ -112,11 +113,39 @@ class WatchlistsCommandService:
         return tags
 
     @staticmethod
+    def _valid_hostname(hostname: str) -> bool:
+        try:
+            ipaddress.ip_address(hostname)
+            return True
+        except ValueError:
+            pass
+        try:
+            ascii_hostname = hostname.encode("idna").decode("ascii")
+        except UnicodeError:
+            return False
+        labels = ascii_hostname.split(".")
+        if len(ascii_hostname) > 253 or any(not label for label in labels):
+            return False
+        for label in labels:
+            if _HOST_LABEL.fullmatch(label) is None:
+                return False
+            if label.casefold().startswith("xn--"):
+                try:
+                    decoded = label.encode("ascii").decode("idna")
+                    round_trip = decoded.encode("idna").decode("ascii")
+                except UnicodeError:
+                    return False
+                if round_trip.casefold() != label.casefold():
+                    return False
+        return True
+
+    @staticmethod
     def _source_url(value: object) -> tuple[str | None, str | None]:
         if (
             not isinstance(value, str)
             or not value.strip()
             or len(value) > 2_048
+            or any(unicodedata.category(character) == "Cc" for character in value)
         ):
             return None, "Source URL must be an absolute HTTP(S) URL."
         source = value.strip()
@@ -130,7 +159,11 @@ class WatchlistsCommandService:
             return None, "Source URL must be an absolute HTTP(S) URL."
         if parsed.username is not None or parsed.password is not None:
             return None, "Source URL must not include credentials."
-        if parsed.scheme.casefold() not in {"http", "https"} or not hostname:
+        if (
+            parsed.scheme.casefold() not in {"http", "https"}
+            or not hostname
+            or not WatchlistsCommandService._valid_hostname(hostname)
+        ):
             return None, "Source URL must be an absolute HTTP(S) URL."
         return source, None
 
@@ -263,7 +296,7 @@ class WatchlistsCommandService:
                 }
             )
         try:
-            outcomes = self._bridge(lambda: self._create_sources_batch(valid))
+            outcomes = self._create_sources_batch(valid)
             for outcome in outcomes:
                 valid_index = outcome["input_index"]
                 if type(valid_index) is not int or not 0 <= valid_index < len(valid):
@@ -325,14 +358,12 @@ class WatchlistsCommandService:
         if not isinstance(policy, str) or policy not in _COLLISION_POLICIES:
             return self._invalid("Collection collision policy is invalid.")
         try:
-            outcome = self._bridge(
-                lambda: self._create_collection(
-                    name=name,
-                    description=description,
-                    tags=self._tags(tags) if tags is not None else None,
-                    source_ids=source_ids,
-                    if_exists=policy,
-                )
+            outcome = self._create_collection(
+                name=name,
+                description=description,
+                tags=self._tags(tags) if tags is not None else None,
+                source_ids=source_ids,
+                if_exists=policy,
             )
         except ValueError as exc:
             if "already exists" in str(exc):
@@ -405,12 +436,10 @@ class WatchlistsCommandService:
         if set(add_ids) & set(remove_ids):
             return self._invalid("A source cannot be both added and removed.")
         try:
-            outcome = self._bridge(
-                lambda: self._update_collection_sources(
-                    watchlist_id=watchlist_id,
-                    add_ids=add_ids,
-                    remove_ids=remove_ids,
-                )
+            outcome = self._update_collection_sources(
+                watchlist_id=watchlist_id,
+                add_ids=add_ids,
+                remove_ids=remove_ids,
             )
         except KeyError:
             return self._json(

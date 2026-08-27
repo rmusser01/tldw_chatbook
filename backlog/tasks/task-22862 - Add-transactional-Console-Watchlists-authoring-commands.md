@@ -44,11 +44,11 @@ Let a user create multiple sources, create a collection, and update collection m
 <!-- SECTION:PLAN:BEGIN -->
 1. Add race and validation RED tests, then implement one BEGIN IMMEDIATE database-owner exact-source batch used by Console, direct UI, and OPML.
 2. Add collision-policy and atomic-membership RED tests, then implement explicit conflict/return-existing/auto-suffix creation and all-or-nothing membership updates.
-3. Build the synchronous WatchlistsCommandService with exact schemas, bounded app-loop bridging, structured outcomes, redaction, server-mode refusal, and no implicit follow-on work.
+3. Build the synchronous WatchlistsCommandService with exact schemas, direct Console-worker calls into application-owned synchronous mutation seams, definitive commit/rollback outcomes, redaction, server-mode refusal, and no implicit follow-on work.
 4. Register the three mutation descriptors as Console-only with code-owned mutation effects/tags and sanitized destination presentation; prove read-only bindings and external MCP omit them.
 5. Run complete task-targeted tests, Ruff, diff checks, self-review, and independent review.
 
 ADR required: yes
 ADR path: backlog/decisions/032-local-agent-tool-permission-boundary.md
-Reason: ADR-032 and its approved addendum already define the Console-only mutation and approval boundary; this task implements that existing decision without a new architecture choice.
+Reason: ADR-032 and its approved addendum define the Console-only mutation and approval boundary. Its TASK-22862 execution-ownership amendment records why short SQLite mutations return definitively from the Console tool worker instead of crossing a non-cancellable timeout bridge; no duplicate ADR is required.
 <!-- SECTION:PLAN:END -->

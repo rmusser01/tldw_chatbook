@@ -2054,6 +2054,16 @@ class SubscriptionsDB(BaseDB):
 
     # --- Core Subscription Management ---
 
+    def _find_exact_source_id(
+        self, conn: sqlite3.Connection, source: str
+    ) -> Optional[int]:
+        """Return the first source ID matching the exact stored identity."""
+        row = conn.execute(
+            "SELECT id FROM subscriptions WHERE source = ? ORDER BY id LIMIT 1",
+            (source,),
+        ).fetchone()
+        return None if row is None else int(row[0])
+
     def create_sources_exact_batch(
         self, rows: Sequence[Mapping[str, Any]]
     ) -> List[Dict[str, Any]]:
@@ -2075,12 +2085,8 @@ class SubscriptionsDB(BaseDB):
             for input_index, raw_row in enumerate(rows):
                 row = dict(raw_row)
                 source = str(row.pop("source")).strip()
-                existing = conn.execute(
-                    "SELECT id FROM subscriptions WHERE source = ? ORDER BY id LIMIT 1",
-                    (source,),
-                ).fetchone()
-                if existing is not None:
-                    source_id = int(existing[0])
+                source_id = self._find_exact_source_id(conn, source)
+                if source_id is not None:
                     outcome = "existing"
                 else:
                     source_id = self.add_subscription(source=source, **row)

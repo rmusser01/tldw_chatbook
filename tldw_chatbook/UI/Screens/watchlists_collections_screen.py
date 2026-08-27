@@ -6482,10 +6482,28 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
             # keeps the "the toast cannot lie" property and adds the one bit
             # it was missing: that something did not go to plan.
             degraded = watchlist_id is not None and destination == "Unassigned"
+            creation_outcome = str(
+                created.get("creation_outcome") or "created"
+            ).casefold()
+            if creation_outcome == "existing":
+                if degraded:
+                    message = (
+                        "Source already exists. The watchlist you chose could "
+                        "not be used."
+                    )
+                elif watchlist_id is None:
+                    message = "Source already exists; no collection membership changed."
+                else:
+                    message = f"Existing source is available in {destination}."
+            else:
+                message = f"Source created in {destination}." + (
+                    " The watchlist you chose could not be used."
+                    if degraded
+                    else ""
+                )
             # markup=False: the destination is a user-typed watchlist name.
             self._notify_watchlists(
-                f"Source created in {destination}."
-                + (" The watchlist you chose could not be used." if degraded else ""),
+                message,
                 severity="warning" if degraded else "information",
                 markup=False,
             )

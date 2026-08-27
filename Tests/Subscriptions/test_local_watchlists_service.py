@@ -1718,6 +1718,24 @@ async def test_create_sources_exact_batch_preserves_order_and_reports_existing(t
     assert results[0]["source"]["source_id"] == results[1]["source"]["source_id"]
 
 
+def test_create_sources_exact_batch_sync_uses_database_owner_directly(tmp_path):
+    db = SubscriptionsDB(tmp_path / "subscriptions.db", "test")
+    service = LocalWatchlistsService(db_factory=lambda: db)
+
+    assert hasattr(service, "create_sources_exact_batch_sync"), (
+        "Console worker mutations need a synchronous domain seam"
+    )
+    results = service.create_sources_exact_batch_sync(
+        [
+            {"name": "One", "source_type": "rss", "url": "https://example.com/feed"},
+            {"name": "Again", "source_type": "rss", "url": "https://example.com/feed"},
+        ]
+    )
+
+    assert [row["outcome"] for row in results] == ["created", "existing"]
+    assert results[0]["source"]["source_id"] == results[1]["source"]["source_id"]
+
+
 @pytest.mark.asyncio
 async def test_create_source_uses_exact_batch_and_reuses_existing(tmp_path):
     db = SubscriptionsDB(tmp_path / "subscriptions.db", "test")
@@ -1730,6 +1748,8 @@ async def test_create_source_uses_exact_batch_and_reuses_existing(tmp_path):
         {"name": "Two", "source_type": "rss", "url": "https://example.com/feed"}
     )
 
+    assert first["creation_outcome"] == "created"
+    assert second["creation_outcome"] == "existing"
     assert second["source_id"] == first["source_id"]
     assert db.conn.execute("SELECT COUNT(*) FROM subscriptions").fetchone()[0] == 1
 
