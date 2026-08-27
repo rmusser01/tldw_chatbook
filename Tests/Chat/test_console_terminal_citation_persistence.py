@@ -2314,3 +2314,288 @@ def test_one_terminal_write_ready_finalizer_fails_closed_to_ordinary_message() -
     assert persistence.create_calls[0]["message_id"] == message.id
     assert persistence.create_calls[0]["content"] == completed.content
     assert "citation_write" not in persistence.create_calls[0]
+
+
+# ---------------------------------------------------------------------------
+# TASK-22617: does a settlement failure lose the citation trace?
+#
+# `resume_durable_postcommit`'s `except BaseException:` arm publishes a
+# recovery owner with `terminal_citation_finalizer=None` hard-coded, while the
+# enclosing continuation's finalizer IS in scope. Two readings were filed: the
+# same data-loss class as TASK-22302, or a deliberate guard against attributing
+# content whose delivery is unknown.
+#
+# These tests establish the answer empirically, one per ordering of failure vs
+# finalizer arming. The verdict is NOT data loss, and the mechanism is
+# structural (measured, not read):
+#
+#   - `durable_owner_publication` -- the effect that ARMS the finalizer -- also
+#     registers the session's dispatch recovery (`publish_durable_turn_owners`
+#     -> `publish_durable_dispatch_checkpoint` -> `_dispatch_recoveries_by_
+#     session[...] = recovery`). The failure arm only publishes a recovery
+#     owner when no recovery exists, so the None publish is UNREACHABLE once a
+#     finalizer is armed. Instrumented: across both orderings it fired exactly
+#     once, in the pre-arming test.
+#   - In the one reachable ordering (failure BEFORE owner publication) nothing
+#     was ever armed, the continuation survives the failure, and the resume's
+#     owner-publication effect forwards `continuation.terminal_citation_
+#     finalizer` (TASK-22302) -- re-arming and persisting the trace.
+#   - The unreachability above holds only at EFFECT granularity. Inside owner
+#     publication itself, arming precedes the checkpoint call that registers
+#     the recovery, so a failure in that window DOES reach the None publish
+#     with a finalizer armed (Qodo caught this ordering gap on #2146; the
+#     window test below confirms it empirically). There the store's
+#     non-clearing contract is load-bearing, not defence in depth: a None
+#     publish never clears armed state, only declines to arm -- pinned both
+#     through the realistic window and directly at store level.
+# ---------------------------------------------------------------------------
+
+
+def _spy_recovery_publish(stack, monkeypatch: pytest.MonkeyPatch) -> list[bool]:
+    """Record each `publish_durable_recovery_owner` call's finalizer-presence.
+
+    The mechanism TASK-22617 rests on is WHETHER the failure arm's None publish
+    runs, and a post-hoc `dispatch_recovery_for_session` check cannot see that:
+    the arm itself restores a recovery after its publish gate, so the recovery
+    is non-None afterwards in every ordering (a mutation proved that assert
+    vacuous). Observe the call, not the aftermath.
+    """
+
+    calls: list[bool] = []
+    original = stack.store.publish_durable_recovery_owner
+
+    def spy(*args, **kwargs):
+        calls.append(kwargs.get("terminal_citation_finalizer") is not None)
+        return original(*args, **kwargs)
+
+    monkeypatch.setattr(stack.store, "publish_durable_recovery_owner", spy)
+    return calls
+
+
+@pytest.mark.asyncio
+async def test_settlement_failure_before_arming_still_persists_the_trace(
+    real_citation_stack_factory,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Failure BEFORE `durable_owner_publication`: nothing armed yet.
+
+    The recovery owner is published with `terminal_citation_finalizer=None`
+    while no finalizer has ever been armed. If the resume did not re-arm via
+    the continuation, the trace would be unpersistable from here on.
+    """
+
+    stack = real_citation_stack_factory("settle-early")
+    builder, prompt_id = _real_captured_builder(stack.repository)
+    controller = _real_controller(stack, builder, prompt_id)
+
+    original = stack.store.publish_durable_turn_identity
+    calls = 0
+
+    def fail_once(*args, **kwargs):
+        nonlocal calls
+        calls += 1
+        if calls == 1:
+            raise RuntimeError("injected identity publication")
+        return original(*args, **kwargs)
+
+    monkeypatch.setattr(stack.store, "publish_durable_turn_identity", fail_once)
+    publish_calls = _spy_recovery_publish(stack, monkeypatch)
+    first = await controller.submit_draft("question")
+    assert first.accepted is True, "harness precondition: the turn was accepted"
+    assert publish_calls == [False], (
+        "positive control: the failure arm's recovery publish (with a None "
+        "finalizer) must RUN in the pre-arming ordering -- if it stopped "
+        "running, the sibling test's zero-calls assertion proves nothing"
+    )
+    assert first.preparation_id in controller._durable_postcommit_continuations
+    assert stack.store._terminal_citation_finalizers == {}, (
+        "harness precondition violated: the finalizer was already armed, so "
+        "this test would no longer cover the fail-BEFORE-arming ordering"
+    )
+    assert _citation_row_counts(stack.db)["rag_citation_traces"] == 0
+
+    resumed = await controller.resume_durable_postcommit(first.preparation_id)
+
+    assert resumed.accepted is True
+    assert calls == 2, "harness precondition: the resume re-ran the effect"
+    assistant = _real_assistant(stack.store)
+    assert assistant.content == _BODY_SENTINEL
+    assert _citation_row_counts(stack.db)["rag_citation_traces"] == 1, (
+        "a settlement failure before finalizer arming lost the citation "
+        "trace: the recovery owner's None was load-bearing after all"
+    )
+
+
+@pytest.mark.asyncio
+async def test_settlement_failure_after_arming_keeps_the_armed_finalizer(
+    real_citation_stack_factory,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Failure AFTER `durable_owner_publication`: the finalizer is armed.
+
+    The None publish in the failure arm is UNREACHABLE here, and that is the
+    load-bearing fact this test pins: the same effect that armed the finalizer
+    already registered the dispatch recovery, so the arm's `dispatch_recovery_
+    for_session is None` gate skips the publish. The armed finalizer survives
+    untouched and fires when the resume completes the turn.
+    """
+
+    stack = real_citation_stack_factory("settle-late")
+    builder, prompt_id = _real_captured_builder(stack.repository)
+    controller = _real_controller(stack, builder, prompt_id)
+
+    original = stack.store._project_workspace_membership_after_commit
+    calls = 0
+
+    def fail_once(*args, **kwargs):
+        nonlocal calls
+        calls += 1
+        if calls == 1:
+            raise RuntimeError("injected workspace projection")
+        return original(*args, **kwargs)
+
+    monkeypatch.setattr(
+        stack.store, "_project_workspace_membership_after_commit", fail_once
+    )
+    publish_calls = _spy_recovery_publish(stack, monkeypatch)
+    first = await controller.submit_draft("question")
+    assert first.accepted is True, "harness precondition: the turn was accepted"
+    assert first.preparation_id in controller._durable_postcommit_continuations
+    assert stack.store._terminal_citation_finalizers != {}, (
+        "harness precondition violated: owner publication did not arm the "
+        "finalizer, so this test no longer covers the fail-AFTER-arming "
+        "ordering (did the effect order change?)"
+    )
+    assert publish_calls == [], (
+        "the mechanism this test pins broke: the failure arm's None publish "
+        "RAN while a finalizer was armed. Owner publication is supposed to "
+        "have registered the dispatch recovery already, gating that publish "
+        "off -- re-examine TASK-22617 before trusting the None"
+    )
+
+    resumed = await controller.resume_durable_postcommit(first.preparation_id)
+
+    assert resumed.accepted is True
+    assert calls == 2, "harness precondition: the resume re-ran the effect"
+    assistant = _real_assistant(stack.store)
+    assert assistant.content == _BODY_SENTINEL
+    assert _citation_row_counts(stack.db)["rag_citation_traces"] == 1, (
+        "publishing the recovery owner with terminal_citation_finalizer=None "
+        "cleared the already-armed finalizer and lost the citation trace"
+    )
+
+
+@pytest.mark.asyncio
+async def test_a_none_recovery_publish_never_clears_an_armed_finalizer(
+    real_citation_stack_factory,
+) -> None:
+    """Defence in depth for TASK-22617, pinned where it is reachable.
+
+    The realistic route to this state is the arming-to-registration window
+    inside owner publication (see the window test above). This pins the same
+    property directly at store level, with no controller in the loop: a None
+    publish must never CLEAR armed state, only decline to arm.
+    """
+
+    stack = real_citation_stack_factory("settle-sticky")
+    builder, prompt_id = _real_captured_builder(stack.repository)
+    controller = _real_controller(stack, builder, prompt_id)
+
+    # A completed turn retires its acceptance (its cached commit then raises
+    # ConsoleDurableAcceptanceRetired), so use a turn whose settlement FAILED:
+    # the acceptance stays live and the commit stays retrievable.
+    def fail_always(*args, **kwargs):
+        raise RuntimeError("injected identity publication")
+
+    original = stack.store.publish_durable_turn_identity
+    stack.store.publish_durable_turn_identity = fail_always
+    try:
+        result = await controller.submit_draft("question")
+    finally:
+        stack.store.publish_durable_turn_identity = original
+    assert result.accepted is True
+
+    session_id = stack.store.active_session_id
+    assistant = _real_assistant(stack.store)
+    finalizer = object()
+    stack.store._terminal_citation_finalizers[assistant.id] = finalizer
+    commit = stack.store.durable_turn_commit_for(
+        result.preparation_id,
+        fingerprint=stack.store.durable_acceptance_fingerprint_for(
+            result.preparation_id
+        ),
+    )
+    assert commit is not None, "harness precondition: the commit is cached"
+
+    stack.store.publish_durable_recovery_owner(
+        session_id,
+        commit,
+        terminal_citation_finalizer=None,
+    )
+
+    assert stack.store._terminal_citation_finalizers.get(assistant.id) is finalizer, (
+        "a None recovery publish cleared an armed terminal citation finalizer"
+    )
+
+
+@pytest.mark.asyncio
+async def test_settlement_failure_inside_owner_publication_window(
+    real_citation_stack_factory,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Failure BETWEEN arming and recovery registration (Qodo #2 on #2146).
+
+    Inside `publish_durable_turn_owners`, `_hydrate_durable_turn_owner_messages`
+    ARMS the finalizer before `publish_durable_dispatch_checkpoint` registers
+    the dispatch recovery. A failure in that window reaches the failure arm
+    with a finalizer armed AND no recovery registered -- so the None publish
+    RUNS while armed, which the effect-granular ordering tests above cannot
+    reach. This is where the store's non-clearing behaviour stops being
+    defence in depth and becomes load-bearing: the None publish must leave the
+    armed finalizer alone, and the resume must still persist the trace.
+    """
+
+    stack = real_citation_stack_factory("settle-window")
+    builder, prompt_id = _real_captured_builder(stack.repository)
+    controller = _real_controller(stack, builder, prompt_id)
+
+    original_checkpoint = stack.store.publish_durable_dispatch_checkpoint
+    checkpoint_calls = 0
+
+    def checkpoint_fail_once(*args, **kwargs):
+        nonlocal checkpoint_calls
+        checkpoint_calls += 1
+        if checkpoint_calls == 1:
+            raise RuntimeError("injected checkpoint publication")
+        return original_checkpoint(*args, **kwargs)
+
+    monkeypatch.setattr(
+        stack.store, "publish_durable_dispatch_checkpoint", checkpoint_fail_once
+    )
+    publish_calls = _spy_recovery_publish(stack, monkeypatch)
+    first = await controller.submit_draft("question")
+    assert first.accepted is True, "harness precondition: the turn was accepted"
+    assert stack.store._terminal_citation_finalizers != {}, (
+        "harness precondition violated: arming no longer precedes checkpoint "
+        "publication inside owner publication, so the window this test covers "
+        "has closed -- re-examine TASK-22617's ordering model"
+    )
+    assert publish_calls == [False], (
+        "harness precondition violated: the failure arm's None publish did "
+        "not run in the arming-to-registration window; this test no longer "
+        "covers the armed+None combination"
+    )
+    assert stack.store._terminal_citation_finalizers != {}, (
+        "the None recovery publish cleared the armed finalizer -- the store's "
+        "non-clearing behaviour is load-bearing in this window and broke"
+    )
+
+    resumed = await controller.resume_durable_postcommit(first.preparation_id)
+
+    assert resumed.accepted is True
+    assistant = _real_assistant(stack.store)
+    assert assistant.content == _BODY_SENTINEL
+    assert _citation_row_counts(stack.db)["rag_citation_traces"] == 1, (
+        "a settlement failure between finalizer arming and recovery "
+        "registration lost the citation trace"
+    )
