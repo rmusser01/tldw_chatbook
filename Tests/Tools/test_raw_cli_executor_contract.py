@@ -3,6 +3,7 @@
 from dataclasses import FrozenInstanceError, fields, is_dataclass
 import importlib
 import importlib.util
+import ntpath
 from pathlib import Path
 from types import SimpleNamespace
 from typing import get_args
@@ -117,6 +118,44 @@ def test_raw_request_rejects_empty_whitespace_and_nul(raw_cli, tmp_path, command
         _required(raw_cli, "validate_raw_cli_request")(request)
 
 
+@pytest.mark.parametrize(
+    ("field", "value"),
+    [
+        ("caller", "system"),
+        ("caller", None),
+        ("shell", "zsh"),
+        ("shell", None),
+    ],
+)
+def test_raw_request_rejects_invalid_caller_or_shell(raw_cli, tmp_path, field, value):
+    request = _request(raw_cli, tmp_path, **{field: value})
+
+    with pytest.raises(ValueError, match=field):
+        _required(raw_cli, "validate_raw_cli_request")(request)
+
+
+@pytest.mark.parametrize(
+    ("field", "value"),
+    [
+        ("invocation_id", None),
+        ("invocation_id", 42),
+        ("invocation_id", ""),
+        ("invocation_id", " \t\n"),
+        ("console_session_id", None),
+        ("console_session_id", 42),
+        ("console_session_id", ""),
+        ("console_session_id", " \t\n"),
+    ],
+)
+def test_raw_request_requires_nonblank_string_identifiers(
+    raw_cli, tmp_path, field, value
+):
+    request = _request(raw_cli, tmp_path, **{field: value})
+
+    with pytest.raises(ValueError, match=field):
+        _required(raw_cli, "validate_raw_cli_request")(request)
+
+
 def test_raw_request_enforces_16_kib_utf8_boundary(raw_cli, tmp_path):
     validate = _required(raw_cli, "validate_raw_cli_request")
     validate(_request(raw_cli, tmp_path, command="x" * (16 * 1024)))
@@ -218,9 +257,9 @@ def test_cmd_argv_disables_autorun(raw_cli):
         ("posix", {"sh": "/bin/sh"}, ("/bin/sh", "-c", "echo hello")),
         (
             "nt",
-            {"pwsh": "pwsh.exe", "cmd.exe": "cmd.exe"},
+            {"pwsh": r"C:\Tools\pwsh.exe", "cmd.exe": r"C:\Windows\cmd.exe"},
             (
-                "pwsh.exe",
+                r"C:\Tools\pwsh.exe",
                 "-NoLogo",
                 "-NoProfile",
                 "-NonInteractive",
@@ -230,9 +269,9 @@ def test_cmd_argv_disables_autorun(raw_cli):
         ),
         (
             "nt",
-            {"powershell": "powershell.exe"},
+            {"powershell": r"C:\Windows\powershell.exe"},
             (
-                "powershell.exe",
+                r"C:\Windows\powershell.exe",
                 "-NoLogo",
                 "-NoProfile",
                 "-NonInteractive",
@@ -242,8 +281,8 @@ def test_cmd_argv_disables_autorun(raw_cli):
         ),
         (
             "nt",
-            {"cmd.exe": "cmd.exe"},
-            ("cmd.exe", "/D", "/S", "/C", "echo hello"),
+            {"cmd.exe": r"C:\Windows\cmd.exe"},
+            (r"C:\Windows\cmd.exe", "/D", "/S", "/C", "echo hello"),
         ),
     ],
 )
@@ -258,6 +297,53 @@ def test_auto_shell_resolution_uses_platform_fallback_order(
     )
 
     assert argv == expected
+
+
+def test_relative_posix_shell_lookup_is_made_absolute_at_lookup_time(
+    raw_cli, tmp_path, monkeypatch
+):
+    monkeypatch.chdir(tmp_path)
+
+    argv = _required(raw_cli, "resolve_shell_argv")(
+        "bash",
+        "echo hello",
+        executable_lookup=_lookup({"bash": "tools/bash"}),
+        platform_name="posix",
+    )
+
+    assert argv[0] == str(tmp_path / "tools" / "bash")
+    assert Path(argv[0]).is_absolute()
+
+
+def test_relative_windows_shell_lookup_uses_windows_path_semantics(
+    raw_cli, tmp_path, monkeypatch
+):
+    monkeypatch.chdir(tmp_path)
+
+    argv = _required(raw_cli, "resolve_shell_argv")(
+        "powershell",
+        "Write-Output hello",
+        executable_lookup=_lookup({"pwsh": r"tools\pwsh.exe"}),
+        platform_name="nt",
+    )
+
+    assert argv[0] == ntpath.abspath(r"tools\pwsh.exe")
+    assert ntpath.isabs(argv[0])
+
+
+@pytest.mark.parametrize(
+    "executable",
+    [r"C:\Tools\pwsh.exe", r"\\server\share\pwsh.exe"],
+)
+def test_absolute_windows_shell_lookup_is_preserved(raw_cli, executable):
+    argv = _required(raw_cli, "resolve_shell_argv")(
+        "powershell",
+        "Write-Output hello",
+        executable_lookup=_lookup({"pwsh": executable}),
+        platform_name="nt",
+    )
+
+    assert argv[0] == executable
 
 
 @pytest.mark.parametrize("selector", ["bash", "powershell", "cmd", "auto"])

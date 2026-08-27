@@ -5,8 +5,10 @@ from __future__ import annotations
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 import math
+import ntpath
 import os
 from pathlib import Path
+import posixpath
 import shutil
 from typing import Literal, TypeAlias
 
@@ -105,6 +107,14 @@ class RawCliResult:
 
 def validate_raw_cli_request(request: RawCliRequest) -> None:
     """Reject a request that cannot safely cross the executor boundary."""
+    if request.caller not in ("user", "model"):
+        raise ValueError("raw CLI caller must be user or model")
+    if request.shell not in ("auto", "bash", "powershell", "cmd"):
+        raise ValueError("raw CLI shell must be auto, bash, powershell, or cmd")
+    for field_name in ("invocation_id", "console_session_id"):
+        value = getattr(request, field_name)
+        if not isinstance(value, str) or not value.strip():
+            raise ValueError(f"raw CLI {field_name} must be a nonblank string")
     if not isinstance(request.command, str) or not request.command.strip():
         raise ValueError("raw CLI command must not be empty or whitespace")
     if "\x00" in request.command:
@@ -167,6 +177,9 @@ def resolve_shell_argv(
     for shell_name in candidates:
         executable = executable_lookup(shell_name)
         if executable:
+            if not (posixpath.isabs(executable) or ntpath.isabs(executable)):
+                path_module = ntpath if platform_name == "nt" else posixpath
+                executable = path_module.abspath(executable)
             break
     else:
         raise FileNotFoundError(f"raw CLI shell unavailable for selector {selector!r}")
