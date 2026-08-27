@@ -3859,6 +3859,213 @@ def test_successor_b_freezes_paths_atomically_with_older_publication(
     assert window.close_done.is_set()
 
 
+def test_inherited_child_write_waits_for_claimed_successor_baseline(
+    tmp_path, root, tracker, monkeypatch
+):
+    import tldw_chatbook.config as config_module
+    from tldw_chatbook.Tools.file_operation_tools import WriteFileTool
+
+    monkeypatch.setattr(
+        config_module,
+        "get_cli_setting",
+        lambda section, key=None, default=None: (
+            True if section == "tools" and key == "write_file_enabled" else default
+        ),
+    )
+
+    target = root / "inherited-after-successor-b.txt"
+    sentinel = "written by the inherited child after successor B\n"
+    child_release = threading.Event()
+    child_joined = threading.Event()
+
+    def join_child_before_successor_final() -> None:
+        _join_fleet_threads()
+        child_joined.set()
+
+    gateway = _FleetSurvivorGateway(
+        parent_scripts=[
+            [_spawn_fence("write after the next turn starts")],
+            ["first turn done"],
+            [_calc_fence()],
+            ["successor done"],
+        ],
+        gate=child_release,
+        child_scripts=[
+            [_write_fence(Path(target.name), sentinel)],
+            ["child done"],
+        ],
+        parent_side_effect=join_child_before_successor_final,
+        parent_side_effect_on_call=4,
+    )
+    bridge, db, store, session, aid = _bridge_with(tmp_path, gateway, tracker)
+    run_1, outcome_1 = _run(
+        bridge,
+        session,
+        aid,
+        root,
+        builtin_gate=_FakeBuiltinGateForRegistry(refuse=False),
+        scratch_root=root,
+        scratch_lease=lambda: contextlib.nullcontext(root),
+    )
+    assert outcome_1.status == "done"
+    assert gateway.child_started.wait(5), "inherited child never started"
+    assert not target.exists(), "inherited child wrote before its turn returned"
+    with bridge._change_window_lock:
+        old_window = bridge._post_turn_change_windows.get("conv-1")
+    assert old_window is not None
+
+    successor_before_add = threading.Event()
+    release_successor_add = threading.Event()
+    successor_handle_ready = threading.Event()
+    successor_handle: dict[str, object] = {}
+    real_repo_for_root = tracker.service.repo_for_root
+    real_begin = tracker.begin_turn
+
+    def block_successor_baseline_add(requested_root):
+        repo = real_repo_for_root(requested_root)
+        real_run = repo._run
+
+        def run_git(*args, **kwargs):
+            if (
+                threading.current_thread().name == "change-review-baseline"
+                and args[:4] == ("add", "-A", "--", ".")
+                and not successor_before_add.is_set()
+            ):
+                successor_before_add.set()
+                assert release_successor_add.wait(5), (
+                    "successor baseline add was never released"
+                )
+            return real_run(*args, **kwargs)
+
+        repo._run = run_git
+        return repo
+
+    def capture_successor_handle(roots, touched_paths=()):
+        handle = real_begin(roots, touched_paths=touched_paths)
+        successor_handle["value"] = handle
+        successor_handle_ready.set()
+        return handle
+
+    monkeypatch.setattr(
+        tracker.service,
+        "repo_for_root",
+        block_successor_baseline_add,
+    )
+    monkeypatch.setattr(tracker, "begin_turn", capture_successor_handle)
+
+    write_finished = threading.Event()
+    child_claim_wait_started = threading.Event()
+    child_reached_boundary = threading.Event()
+    real_write_execute = WriteFileTool.execute
+
+    async def observe_real_write(tool, **kwargs):
+        result = await real_write_execute(tool, **kwargs)
+        if Path(str(kwargs.get("file_path", ""))).name == target.name:
+            write_finished.set()
+            child_reached_boundary.set()
+        return result
+
+    monkeypatch.setattr(WriteFileTool, "execute", observe_real_write)
+    results: list[object] = []
+    failures: list[BaseException] = []
+
+    def run_successor() -> None:
+        try:
+            results.append(
+                _run(
+                    bridge,
+                    session,
+                    _next_turn(store, session),
+                    root,
+                    builtin_gate=_FakeBuiltinGateForRegistry(refuse=False),
+                    scratch_root=root,
+                    scratch_lease=lambda: contextlib.nullcontext(root),
+                )
+            )
+        except BaseException as exc:  # noqa: BLE001 -- asserted below
+            failures.append(exc)
+
+    successor = threading.Thread(target=run_successor, name="claimed-successor")
+    successor.start()
+    try:
+        assert successor_before_add.wait(5), (
+            "successor B never reached its pre-add barrier"
+        )
+        assert successor_handle_ready.wait(5), "successor handle was not published"
+        handle = successor_handle["value"]
+        real_await_baseline = handle.await_baseline
+
+        def observe_child_claim_wait(*args, **kwargs):
+            if threading.current_thread().name.startswith("fleet-"):
+                child_claim_wait_started.set()
+                child_reached_boundary.set()
+            return real_await_baseline(*args, **kwargs)
+
+        handle.await_baseline = observe_child_claim_wait
+        with bridge._change_window_lock:
+            claim = old_window.successor_claim
+        assert claim is not None
+        assert claim.ready.wait(5), "successor claim attachment did not publish"
+        with bridge._change_window_lock:
+            assert claim.handle is handle
+            assert not claim.failed
+
+        child_release.set()
+        assert child_reached_boundary.wait(5), (
+            "inherited child reached neither its baseline gate nor its WRITE"
+        )
+        wrote_before_b_release = write_finished.is_set()
+        waited_before_write = child_claim_wait_started.is_set()
+        target_existed_before_b_release = target.exists()
+    finally:
+        child_release.set()
+        release_successor_add.set()
+        successor.join(10)
+        _join_fleet_threads()
+
+    assert not successor.is_alive()
+    assert failures == []
+    run_2, outcome_2 = results[0]
+    assert outcome_2.status == "done"
+    assert child_joined.is_set(), "successor E raced the inherited child"
+    assert write_finished.is_set(), "the real WRITE tool never completed"
+    handle.await_baseline()
+    repo = tracker.service.repo_for_root(root)
+    baseline = handle.baselines[str(root.resolve())]
+    assert repo.file_bytes(baseline, target.name) is None, (
+        "the inherited WRITE was absorbed into successor B"
+    )
+    assert waited_before_write
+    assert not wrote_before_b_release
+    assert not target_existed_before_b_release
+    assert target.read_text() == sentinel
+
+    def changed_paths(row):
+        if not row["baseline_sha"] or not row["end_sha"]:
+            return []
+        return [
+            item.path
+            for item in repo.changed_files(row["baseline_sha"], row["end_sha"])
+        ]
+
+    assert not any(
+        target.name in changed_paths(row)
+        for row in db.change_snapshots_for_run(run_1)
+    )
+    successor_rows = [
+        row
+        for row in db.change_snapshots_for_run(run_2)
+        if target.name in changed_paths(row)
+    ]
+    assert len(successor_rows) == 1, db.change_snapshots_for_run(run_2)
+    assert successor_rows[0]["kind"] == "turn_concurrent_subagent"
+    assert any(
+        "earlier turn" in message.content and "sub-agent" in message.content
+        for message in _tool_rows(store, session)
+    )
+    assert old_window.close_done.is_set()
+
+
 def test_successor_e_waits_for_close_time_index_priming(
     tmp_path, root, tracker, monkeypatch
 ):

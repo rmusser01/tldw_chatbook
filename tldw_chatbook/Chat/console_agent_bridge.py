@@ -4382,6 +4382,7 @@ class ConsoleAgentBridge:
             if agent_kind != AGENT_KIND_PRIMARY and run_id:
                 touched_paths = ChangeTurnTracker.tool_touched_paths((step,))
                 normalized_paths: list[str] = []
+                inherited_claim = None
                 for raw_path in touched_paths:
                     try:
                         path = Path(raw_path)
@@ -4401,6 +4402,44 @@ class ConsoleAgentBridge:
                 with self._change_window_lock:
                     child_change_state.run_ids.add(run_id)
                     child_change_state.touched_paths.update(normalized_paths)
+                    window = self._post_turn_change_windows.get(conversation_id)
+                    if (
+                        touched_paths
+                        and window is not None
+                        and window.successor_claim is not None
+                        and any(
+                            state is child_change_state
+                            for state in window.child_states
+                        )
+                    ):
+                        inherited_claim = window.successor_claim
+                if inherited_claim is not None:
+                    try:
+                        claim_ready = inherited_claim.ready.wait(
+                            _CHANGE_BOUNDARY_WAIT_SECONDS
+                        )
+                    except Exception:  # noqa: BLE001 -- tracking is best effort
+                        claim_ready = False
+                    claim_failed = True
+                    claim_handle = None
+                    if claim_ready:
+                        with self._change_window_lock:
+                            claim_failed = inherited_claim.failed
+                            claim_handle = inherited_claim.handle
+                    baseline_trusted = False
+                    if not claim_failed and claim_handle is not None:
+                        try:
+                            claim_handle.await_baseline()
+                            baselines = dict(claim_handle.baselines)
+                            roots = tuple(claim_handle.roots)
+                            baseline_trusted = not claim_handle.errors and all(
+                                baselines.get(str(root)) for root in roots
+                            )
+                        except Exception:  # noqa: BLE001 -- tracking is best effort
+                            baseline_trusted = False
+                    if not baseline_trusted:
+                        with self._change_window_lock:
+                            inherited_claim.failed = True
             buddy_run_id = run_id or live_key
             buddy_sink = self._buddy_sink
             if buddy_sink is not None:
