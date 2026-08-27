@@ -45,10 +45,7 @@ from tldw_chatbook.Workspaces.change_bounds import (
     DEFAULT_MAX_FILE_BYTES,
     change_review_setting,
 )
-from tldw_chatbook.Workspaces.change_tracking import (
-    ChangeTrackingError,
-    ShadowRepoService,
-)
+from tldw_chatbook.Workspaces.change_tracking import ShadowRepoService
 
 #: Tools whose path arguments are force-added at E time (the .gitignore
 #: carve-out). WRITE tools only — see the module docstring for why reads
