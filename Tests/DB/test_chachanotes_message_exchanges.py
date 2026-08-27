@@ -30,6 +30,7 @@ from tldw_chatbook.Chat.console_exchange_capture import (
 # Matches CharactersRAGDB._SCHEMA_NAME, per the sibling migration tests
 # (e.g. Tests/DB/test_chachanotes_message_usage_migration.py).
 SCHEMA_NAME = "rag_char_chat_schema"
+CAPTURE_DETAIL_INDEX = "idx_message_exchanges_capture_detail"
 
 
 @pytest.fixture
@@ -200,6 +201,65 @@ def test_hard_delete_cascades(db):
         count = cursor.execute(
             "SELECT COUNT(*) FROM message_exchanges").fetchone()[0]
     assert count == 0
+
+
+def test_full_capture_queries_use_capture_detail_index_without_stats(db):
+    connection = db.get_connection()
+    assert connection.execute(
+        "SELECT 1 FROM sqlite_master WHERE type='table' AND name='sqlite_stat1'"
+    ).fetchone() is None, (
+        "the plan must match production's no-ANALYZE state, not a test-only "
+        "sqlite_stat1-assisted plan"
+    )
+
+    conversation_id = db.add_conversation({"title": "target"})
+    message_id = db.add_message(
+        {
+            "conversation_id": conversation_id,
+            "sender": "assistant",
+            "content": "captured",
+        }
+    )
+    db.append_message_exchanges_local(
+        message_id,
+        [
+            {
+                "run_tag": "full",
+                "seq": 0,
+                "status": "complete",
+                "abandoned": False,
+                "capture_detail": "full",
+                "capture_blob": b"full",
+                "created_at": "t",
+            }
+        ],
+    )
+
+    queries = (
+        """
+        SELECT exchange.message_id, exchange.run_tag, exchange.seq
+          FROM message_exchanges AS exchange
+          JOIN messages AS message ON message.id = exchange.message_id
+         WHERE message.conversation_id = ?
+           AND exchange.capture_detail = 'full'
+        """,
+        """
+        DELETE FROM message_exchanges
+         WHERE capture_detail = 'full'
+           AND message_id IN (
+               SELECT id FROM messages WHERE conversation_id = ?
+           )
+        """,
+    )
+    for query in queries:
+        plan = " | ".join(
+            str(row[-1])
+            for row in connection.execute(
+                "EXPLAIN QUERY PLAN " + query, (conversation_id,)
+            )
+        )
+        assert plan, "an empty query plan would make the index assertion vacuous"
+        assert CAPTURE_DETAIL_INDEX in plan
 
 
 def test_full_exchange_purge_scopes_by_conversation_including_deleted_messages(db):

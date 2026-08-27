@@ -111,6 +111,7 @@ idx_mediachunks_uuid	pre-convention	plan never captured without stats
 idx_mediakeywords_keyword_id	pre-convention	plan never captured without stats
 idx_mediakeywords_media_id	pre-convention	plan never captured without stats
 idx_message_attachments_message	pre-convention	plan never captured without stats
+idx_message_exchanges_capture_detail	plan-pinned	Tests/DB/test_chachanotes_message_exchanges.py
 idx_message_exchanges_message	pre-convention	plan never captured without stats
 idx_message_trajectory_conv_seq	pre-convention	plan never captured without stats
 idx_message_trajectory_msg	pre-convention	plan never captured without stats
