@@ -542,6 +542,7 @@ Run only the targeted commands listed below. Do not run the full suite unless th
 - Modify: `Tests/UI/test_focus_accessibility.py`
 - Modify: `Tests/UI/test_library_honesty_accessibility.py`
 - Modify: `Tests/UI/test_library_file_notes_workspace.py`
+- Modify: `Tests/UI/test_library_shell.py` only for the stale Notes `Ctrl+S` behavior assertion; preserve unrelated dirty hunks.
 - Modify: `Tests/UI/test_css_staleness_manifest.py` only if a builder-contract test is required; do not change it merely to bless stale output.
 
 - [ ] **Step 1: Add failing focus-style tests.**
@@ -581,7 +582,7 @@ Run only the targeted commands listed below. Do not run the full suite unless th
 - [ ] **Step 7: Commit the focus and shortcut slice.**
 
   ```bash
-  git add tldw_chatbook/css/components/_forms.tcss tldw_chatbook/css/tldw_cli_modular.tcss tldw_chatbook/css/.css-build-manifest.json tldw_chatbook/UI/Screens/library_screen.py Tests/UI/test_focus_accessibility.py Tests/UI/test_library_honesty_accessibility.py Tests/UI/test_library_file_notes_workspace.py Tests/UI/test_css_staleness_manifest.py
+  git add tldw_chatbook/css/components/_forms.tcss tldw_chatbook/css/tldw_cli_modular.tcss tldw_chatbook/css/.css-build-manifest.json tldw_chatbook/UI/Screens/library_screen.py Tests/UI/test_focus_accessibility.py Tests/UI/test_library_honesty_accessibility.py Tests/UI/test_library_file_notes_workspace.py Tests/UI/test_library_shell.py Tests/UI/test_css_staleness_manifest.py
   git commit -m "fix(library): quiet Notes editor focus"
   ```
 
