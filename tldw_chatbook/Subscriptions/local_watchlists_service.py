@@ -10,7 +10,7 @@ import sqlite3
 import threading
 import time
 from datetime import datetime, timezone
-from typing import Any, Awaitable, Callable, Mapping
+from typing import Any, Awaitable, Callable, Mapping, Sequence
 
 from loguru import logger
 
@@ -744,28 +744,52 @@ class LocalWatchlistsService:
             )
         )
 
-    async def create_source(self, payload: Mapping[str, Any]) -> dict[str, Any]:
-        local_type = self._local_type_for_source_type(payload.get("source_type"))
+    async def create_sources_exact_batch(
+        self, payloads: Sequence[Mapping[str, Any]]
+    ) -> list[dict[str, Any]]:
+        """Create an ordered source batch through the database-owner lock."""
+        rows: list[dict[str, Any]] = []
+        for payload in payloads:
+            rows.append(
+                {
+                    "name": str(payload.get("name") or "Untitled subscription"),
+                    "type": self._local_type_for_source_type(payload.get("source_type")),
+                    "source": str(
+                        payload.get("url")
+                        or payload.get("source")
+                        or self._first_configured_url(payload)
+                        or ""
+                    ),
+                    "tags": list(payload.get("tags") or []),
+                    "description": payload.get("description"),
+                    "is_active": bool(payload.get("active", True)),
+                    **self._subscription_config_fields(payload),
+                }
+            )
         db = self._db()
-        source = str(
-            payload.get("url")
-            or payload.get("source")
-            or self._first_configured_url(payload)
-            or ""
-        )
-        source_id = await run_db_off_loop(
+        outcomes = await run_db_off_loop(
             db,
-            db.add_subscription,
-            name=str(payload.get("name") or "Untitled subscription"),
-            type=local_type,
-            source=source,
-            tags=list(payload.get("tags") or []),
-            description=payload.get("description"),
-            is_active=bool(payload.get("active", True)),
-            **self._subscription_config_fields(payload),
+            db.create_sources_exact_batch,
+            rows,
         )
-        row = await run_db_off_loop(db, db.get_subscription, source_id)
-        return normalize_local_subscription_row(row)
+        results: list[dict[str, Any]] = []
+        for outcome in outcomes:
+            row = await run_db_off_loop(
+                db, db.get_subscription, int(outcome["source_id"])
+            )
+            results.append(
+                {
+                    "input_index": int(outcome["input_index"]),
+                    "outcome": str(outcome["outcome"]),
+                    "source": normalize_local_subscription_row(row),
+                }
+            )
+        return results
+
+    async def create_source(self, payload: Mapping[str, Any]) -> dict[str, Any]:
+        """Create or resolve one exact configured source."""
+        result = await self.create_sources_exact_batch([payload])
+        return result[0]["source"]
 
     async def update_source(
         self, source_id: Any, payload: Mapping[str, Any]

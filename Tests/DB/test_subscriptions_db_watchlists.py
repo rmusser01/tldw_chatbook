@@ -1,4 +1,5 @@
 import sqlite3
+from concurrent.futures import ThreadPoolExecutor
 
 import pytest
 
@@ -37,6 +38,67 @@ def test_watchlist_tables_created(db):
     tables = _tables(db)
     assert "watchlists" in tables
     assert "watchlist_sources" in tables
+
+
+def test_create_sources_exact_batch_preserves_identity_order_and_duplicates(db):
+    rows = [
+        {"name": "First", "type": "rss", "source": "  https://feeds.example/a?b=2&a=1  "},
+        {"name": "Duplicate", "type": "rss", "source": "https://feeds.example/a?b=2&a=1"},
+        {"name": "Different query order", "type": "rss", "source": "https://feeds.example/a?a=1&b=2"},
+    ]
+
+    results = db.create_sources_exact_batch(rows)
+
+    assert [row["input_index"] for row in results] == [0, 1, 2]
+    assert [row["outcome"] for row in results] == ["created", "existing", "created"]
+    assert results[0]["source_id"] == results[1]["source_id"]
+    assert results[2]["source_id"] != results[0]["source_id"]
+    stored = db.conn.execute("SELECT source FROM subscriptions ORDER BY id").fetchall()
+    assert [row[0] for row in stored] == [
+        "https://feeds.example/a?b=2&a=1",
+        "https://feeds.example/a?a=1&b=2",
+    ]
+
+
+def test_create_sources_exact_batch_resolves_preexisting_exact_identity(db):
+    source_id = db.add_subscription(
+        name="Existing",
+        type="rss",
+        source="https://feeds.example/existing?b=2&a=1",
+    )
+
+    result = db.create_sources_exact_batch(
+        [
+            {
+                "name": "Again",
+                "type": "rss",
+                "source": "  https://feeds.example/existing?b=2&a=1  ",
+            }
+        ]
+    )
+
+    assert result == [
+        {"input_index": 0, "outcome": "existing", "source_id": source_id}
+    ]
+    assert db.conn.execute("SELECT COUNT(*) FROM subscriptions").fetchone()[0] == 1
+
+
+def test_create_sources_exact_batch_serializes_two_database_instances(tmp_path):
+    path = tmp_path / "race.db"
+    first = SubscriptionsDB(str(path), client_id="first")
+    second = SubscriptionsDB(str(path), client_id="second")
+    row = {"name": "Race", "type": "rss", "source": "https://feeds.example/race"}
+
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        results = list(
+            pool.map(lambda owner: owner.create_sources_exact_batch([row]), (first, second))
+        )
+
+    assert sorted(result[0]["outcome"] for result in results) == ["created", "existing"]
+    assert results[0][0]["source_id"] == results[1][0]["source_id"]
+    assert first.conn.execute(
+        "SELECT COUNT(*) FROM subscriptions WHERE source = ?", (row["source"],)
+    ).fetchone()[0] == 1
 
 
 def test_item_content_columns_created(db):

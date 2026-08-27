@@ -392,6 +392,9 @@ def test_catalog_lists_default_specs_with_local_ids(tmp_path):
         "local:watchlists_get_briefing",
         "local:watchlists_get_operations_status",
         "local:watchlists_get_operation_status",
+        "local:watchlists_create_sources",
+        "local:watchlists_create_collection",
+        "local:watchlists_update_collection_sources",
     ]
     assert entries[0].name == "fs_list" and entries[0].source == "local"
     schema = p.load_schema("local:fs_list")
@@ -433,6 +436,9 @@ def test_catalog_exposure_and_effects_are_explicit_and_queryable(tmp_path):
         "watchlists_search_items",
         "watchlists_get_item",
         "watchlists_get_briefing",
+        "watchlists_create_sources",
+        "watchlists_create_collection",
+        "watchlists_update_collection_sources",
     }
     assert provider.approval_effects_for("fs_read") == (
         LocalApprovalEffect.PRIVATE_READ,
@@ -513,6 +519,9 @@ def test_hub_tools_lists_every_spec_under_the_local_server_key(tmp_path):
         "watchlists_get_briefing",
         "watchlists_get_operations_status",
         "watchlists_get_operation_status",
+        "watchlists_create_sources",
+        "watchlists_create_collection",
+        "watchlists_update_collection_sources",
     ]
     for hub in hubs:
         assert hub.server_key == "local:__local__"
@@ -569,6 +578,76 @@ class RecordingWatchlistsService:
         return self.result
 
 
+class RecordingWatchlistsCommandService:
+    def __init__(self) -> None:
+        self.calls: list[tuple[str, dict]] = []
+
+    def create_sources(self, arguments: object) -> str:
+        self.calls.append(("create_sources", dict(arguments)))
+        return '{"status":"ok"}'
+
+    def create_collection(self, arguments: object) -> str:
+        self.calls.append(("create_collection", dict(arguments)))
+        return '{"status":"ok"}'
+
+    def update_collection_sources(self, arguments: object) -> str:
+        self.calls.append(("update_collection_sources", dict(arguments)))
+        return '{"status":"ok"}'
+
+    @staticmethod
+    def approval_source_destinations(arguments):
+        return {"source_count": len(arguments["sources"]), "destination_hosts": ["example.com"]}
+
+
+def test_watchlists_authoring_specs_are_console_only_mutations_with_safe_approval(tmp_path):
+    commands = RecordingWatchlistsCommandService()
+    provider = make_provider(
+        root=tmp_path,
+        state=ASK,
+        watchlists_command_service=commands,
+    )
+    names = {entry.name for entry in provider.list_catalog()}
+    authoring = {
+        "watchlists_create_sources",
+        "watchlists_create_collection",
+        "watchlists_update_collection_sources",
+    }
+
+    assert authoring <= names
+    assert authoring <= {
+        spec.name
+        for spec in provider.specs_for_exposure(LocalToolExposure.CONSOLE_ONLY)
+    }
+    for name in authoring:
+        assert provider.approval_effects_for(name) == (
+            LocalApprovalEffect.MUTATES_LOCAL,
+        )
+        assert provider.hub_tool_for(name).tags == ("mutates",)
+        assert provider.load_schema(name).parameters["additionalProperties"] is False
+
+    gate = provider.pending_gate_for(
+        "watchlists_create_sources",
+        {
+            "sources": [
+                {"url": "https://example.com/feed?token=secret#fragment", "type": "rss"}
+            ]
+        },
+    )
+    assert gate is not None
+    assert gate.arguments == {
+        "source_count": 1,
+        "destination_hosts": ["example.com"],
+    }
+    assert "secret" not in repr(gate)
+
+    read_only = make_provider(
+        root=tmp_path,
+        allow_write=False,
+        watchlists_command_service=commands,
+    )
+    assert authoring.isdisjoint({entry.name for entry in read_only.list_catalog()})
+
+
 def test_watchlists_catalog_has_exact_read_only_schemas_and_trust_warnings(tmp_path):
     provider = make_provider(root=tmp_path)
     watchlists_entries = {
@@ -585,6 +664,9 @@ def test_watchlists_catalog_has_exact_read_only_schemas_and_trust_warnings(tmp_p
         "local:watchlists_get_briefing",
         "local:watchlists_get_operations_status",
         "local:watchlists_get_operation_status",
+        "local:watchlists_create_sources",
+        "local:watchlists_create_collection",
+        "local:watchlists_update_collection_sources",
     }
 
     shared_names = {
@@ -2844,6 +2926,9 @@ def test_web_deep_search_pinned_catalog_list_unchanged_by_default(tmp_path):
         "watchlists_get_briefing",
         "watchlists_get_operations_status",
         "watchlists_get_operation_status",
+        "watchlists_create_sources",
+        "watchlists_create_collection",
+        "watchlists_update_collection_sources",
     ]
 
 

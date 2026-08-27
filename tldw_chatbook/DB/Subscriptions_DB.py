@@ -31,7 +31,7 @@ from contextlib import closing, contextmanager
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import List, Dict, Any, Optional, Sequence, TYPE_CHECKING, Union
+from typing import List, Dict, Any, Mapping, Optional, Sequence, TYPE_CHECKING, Union
 from urllib.parse import urlparse, urlunparse
 from urllib.parse import urlsplit, urlunsplit
 
@@ -2053,6 +2053,46 @@ class SubscriptionsDB(BaseDB):
             self._local.transaction_depth = 0
 
     # --- Core Subscription Management ---
+
+    def create_sources_exact_batch(
+        self, rows: Sequence[Mapping[str, Any]]
+    ) -> List[Dict[str, Any]]:
+        """Create an ordered exact-identity source batch under one write lock.
+
+        ``source`` identity trims outer whitespace only. Callers own payload
+        validation; this database-owner seam owns serialization so independent
+        processes cannot both pass lookup before either insert commits.
+
+        Args:
+            rows: Validated subscription mappings accepted by
+                :meth:`add_subscription`.
+
+        Returns:
+            One ordered outcome mapping per input row.
+        """
+        results: List[Dict[str, Any]] = []
+        with self.transaction(immediate=True) as conn:
+            for input_index, raw_row in enumerate(rows):
+                row = dict(raw_row)
+                source = str(row.pop("source")).strip()
+                existing = conn.execute(
+                    "SELECT id FROM subscriptions WHERE source = ? ORDER BY id LIMIT 1",
+                    (source,),
+                ).fetchone()
+                if existing is not None:
+                    source_id = int(existing[0])
+                    outcome = "existing"
+                else:
+                    source_id = self.add_subscription(source=source, **row)
+                    outcome = "created"
+                results.append(
+                    {
+                        "input_index": input_index,
+                        "outcome": outcome,
+                        "source_id": source_id,
+                    }
+                )
+        return results
 
     def add_subscription(
         self,

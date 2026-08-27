@@ -4,6 +4,7 @@ The hook tests mirror build_mcp_review_hook's discipline: clear-first
 stamps, ONE approval round trip per batch, verdicts only ever "proceed".
 """
 
+import asyncio
 import json
 import weakref
 from types import SimpleNamespace
@@ -44,6 +45,8 @@ from tldw_chatbook.Chat.console_turn_context import (
     ConsoleTurnExecutionContext,
 )
 from tldw_chatbook.DB.Subscriptions_DB import SubscriptionsDB
+from tldw_chatbook.Subscriptions.local_watchlists_service import LocalWatchlistsService
+from tldw_chatbook.Subscriptions.watchlist_bundle_service import WatchlistBundleService
 from tldw_chatbook.MCP.permission_store import EffectiveToolState
 from tldw_chatbook.runtime_policy.bootstrap import default_runtime_policy_path
 from tldw_chatbook.runtime_policy.source_state import RuntimeSourceStateStore
@@ -597,6 +600,68 @@ def test_compose_local_provider_reuses_app_database_and_loads_runtime_source_per
         ),
     }
     assert database.searches == 1
+
+
+@pytest.mark.asyncio
+async def test_compose_local_provider_wires_transactional_watchlists_commands(
+    monkeypatch, tmp_path
+):
+    monkeypatch.setattr(
+        controller_mod,
+        "get_cli_setting",
+        _console_settings(workspace_root=str(tmp_path)),
+    )
+    profile = tmp_path / "profile" / "config.toml"
+    profile.parent.mkdir()
+    profile.write_text("", encoding="utf-8")
+    monkeypatch.setenv("TLDW_CONFIG_PATH", str(profile))
+    RuntimeSourceStateStore(default_runtime_policy_path()).save(RuntimeSourceState())
+    database = SubscriptionsDB(tmp_path / "subscriptions.db")
+    local_service = LocalWatchlistsService(db_factory=lambda: database)
+    bundle_service = WatchlistBundleService(database)
+    controller = _bare_controller(
+        SimpleNamespace(
+            unified_mcp_service=_FakeService(state=ALLOW),
+            subscriptions_db=database,
+            local_watchlists_service=local_service,
+            watchlist_bundle_service=bundle_service,
+        )
+    )
+
+    provider, _hook = _compose_local_provider(controller)
+    result = await asyncio.to_thread(
+        provider.invoke,
+        "local:watchlists_create_sources",
+        {"sources": [{"url": "https://example.test/feed?token=private"}]},
+    )
+
+    assert result.ok is True
+    payload = json.loads(result.content)
+    assert payload.get("results") == [
+        {
+            "input_index": 0,
+            "outcome": "created",
+            "source_id": "local:subscription:1",
+        }
+    ]
+    assert database.conn.execute("SELECT COUNT(*) FROM subscriptions").fetchone()[0] == 1
+
+    created_collection = await asyncio.to_thread(
+        provider.invoke,
+        "local:watchlists_create_collection",
+        {"name": "Threat intel", "source_ids": ["local:subscription:1"]},
+    )
+    conflict = await asyncio.to_thread(
+        provider.invoke,
+        "local:watchlists_create_collection",
+        {"name": "threat INTEL", "if_exists": "conflict"},
+    )
+    assert json.loads(created_collection.content)["status"] == "ok"
+    assert json.loads(conflict.content) == {
+        "status": "conflict",
+        "retryable": False,
+        "message": "A collection with that name already exists.",
+    }
 
 
 def test_console_watchlists_real_reads_leave_app_owned_state_unchanged(

@@ -55,6 +55,7 @@ from .session_todo_store import (
 )
 
 if TYPE_CHECKING:
+    from tldw_chatbook.Tools.watchlists_command_service import WatchlistsCommandService
     from tldw_chatbook.Tools.watchlists_tool_service import WatchlistsToolService
 from .tool_catalog import ToolPathTarget, redact_root_locator
 
@@ -239,6 +240,7 @@ class LocalToolSpec:
     exposure: LocalToolExposure
     approval_effects: tuple[LocalApprovalEffect, ...]
     tags: tuple[str, ...] = ()
+    approval_arguments: Callable[[Mapping[str, Any]], Mapping[str, Any]] | None = None
 
     def __post_init__(self) -> None:
         """Fail closed when descriptor policy is missing or not code-owned."""
@@ -254,6 +256,10 @@ class LocalToolSpec:
             raise ValueError(
                 "LocalToolSpec approval_effects must be LocalApprovalEffect values"
             )
+        if self.approval_arguments is not None and not callable(
+            self.approval_arguments
+        ):
+            raise ValueError("LocalToolSpec approval_arguments must be callable")
 
 
 def _fit_result(text: str) -> str:
@@ -341,6 +347,7 @@ class LocalToolProvider:
         todo_store: SessionTodoStore | None = None,
         on_todo_change: TodoChangeCallback | None = None,
         watchlists_service: WatchlistsToolService | None = None,
+        watchlists_command_service: WatchlistsCommandService | None = None,
         no_callback_refusal: str | None = None,
         allow_write: bool = True,
         root_guard: Callable[[], bool] | None = None,
@@ -363,6 +370,7 @@ class LocalToolProvider:
                 todo_store=todo_store,
                 on_todo_change=on_todo_change,
                 watchlists_service=watchlists_service,
+                watchlists_command_service=watchlists_command_service,
             )
         )
         if not allow_write:
@@ -782,7 +790,11 @@ class LocalToolProvider:
             server_key=LOCAL_SERVER_KEY,
             tool_name=name,
             server_label=LOCAL_SERVER_LABEL,
-            arguments=args,
+            arguments=dict(
+                self._specs[name].approval_arguments(args)
+                if self._specs[name].approval_arguments is not None
+                else args
+            ),
             reason=reason,
             effects=self._specs[name].approval_effects,
         )
@@ -1210,9 +1222,11 @@ def _default_specs(
     todo_store: SessionTodoStore | None = None,
     on_todo_change: TodoChangeCallback | None = None,
     watchlists_service: WatchlistsToolService | None = None,
+    watchlists_command_service: WatchlistsCommandService | None = None,
 ) -> list[LocalToolSpec]:
     from tldw_chatbook.Tools.git_tool_impls import GIT_LOG_DEFAULT_COUNT
     from tldw_chatbook.Tools.watchlists_tool_service import WatchlistsToolService
+    from tldw_chatbook.Tools.watchlists_command_service import WatchlistsCommandService
     from tldw_chatbook.Tools.web_tool_impls import (
         CRAWL_DEFAULT_MAX_DEPTH,
         CRAWL_DEFAULT_MAX_PAGES,
@@ -1234,6 +1248,17 @@ def _default_specs(
         watchlists_service = WatchlistsToolService(
             db_resolver=lambda: None,
             runtime_source_loader=lambda: "local",
+        )
+    if watchlists_command_service is None:
+        def _unavailable_bridge(_factory: Callable[[], Any]) -> Any:
+            raise RuntimeError("Watchlists command service unavailable")
+
+        watchlists_command_service = WatchlistsCommandService(
+            runtime_source_loader=lambda: "local",
+            app_loop_bridge=_unavailable_bridge,
+            create_sources_batch=lambda _rows: None,
+            create_collection=lambda **_kwargs: None,
+            update_collection_sources=lambda **_kwargs: None,
         )
 
     collection_scope_schema = {
@@ -1981,6 +2006,138 @@ def _default_specs(
             exposure=LocalToolExposure.CONSOLE_AND_EXTERNAL_MCP,
             approval_effects=(LocalApprovalEffect.PRIVATE_READ,),
             tags=(),
+        ),
+        LocalToolSpec(
+            name="watchlists_create_sources",
+            description=(
+                "Create 1-50 local Watchlists sources as one exact-identity batch. "
+                "Partial results require explicit confirmation before dependent work."
+            ),
+            parameters={
+                "type": "object",
+                "properties": {
+                    "sources": {
+                        "type": "array",
+                        "minItems": 1,
+                        "maxItems": 50,
+                        "items": {
+                            "type": "object",
+                            "properties": {
+                                "url": {"type": "string", "minLength": 1, "maxLength": 2_048},
+                                "name": {"type": "string", "minLength": 1, "maxLength": 512},
+                                "type": {"type": "string", "enum": ["rss", "atom", "url"]},
+                                "tags": {
+                                    "type": "array",
+                                    "items": {"type": "string", "minLength": 1, "maxLength": 64},
+                                    "maxItems": 20,
+                                },
+                                "active": {"type": "boolean"},
+                                "check_frequency": {
+                                    "type": "integer",
+                                    "minimum": 60,
+                                    "maximum": 2_678_400,
+                                },
+                            },
+                            "required": ["url"],
+                            "additionalProperties": False,
+                        },
+                    }
+                },
+                "required": ["sources"],
+                "additionalProperties": False,
+            },
+            handler=watchlists_command_service.create_sources,
+            exposure=LocalToolExposure.CONSOLE_ONLY,
+            approval_effects=(LocalApprovalEffect.MUTATES_LOCAL,),
+            tags=("mutates",),
+            approval_arguments=watchlists_command_service.approval_source_destinations,
+        ),
+        LocalToolSpec(
+            name="watchlists_create_collection",
+            description=(
+                "Create one local Watchlists collection with up to 100 source "
+                "members under an explicit collision policy."
+            ),
+            parameters={
+                "type": "object",
+                "properties": {
+                    "name": {"type": "string", "minLength": 1, "maxLength": 256},
+                    "description": {"type": "string", "maxLength": 2_048},
+                    "tags": {
+                        "type": "array",
+                        "items": {"type": "string", "minLength": 1, "maxLength": 64},
+                        "maxItems": 20,
+                    },
+                    "source_ids": {
+                        "type": "array",
+                        "items": {
+                            "type": "string",
+                            "pattern": r"^local:subscription:[1-9][0-9]*$",
+                            "maxLength": 40,
+                        },
+                        "maxItems": 100,
+                        "uniqueItems": True,
+                    },
+                    "if_exists": {
+                        "type": "string",
+                        "enum": ["conflict", "return_existing", "auto_suffix"],
+                        "default": "conflict",
+                    },
+                },
+                "required": ["name"],
+                "additionalProperties": False,
+            },
+            handler=watchlists_command_service.create_collection,
+            exposure=LocalToolExposure.CONSOLE_ONLY,
+            approval_effects=(LocalApprovalEffect.MUTATES_LOCAL,),
+            tags=("mutates",),
+        ),
+        LocalToolSpec(
+            name="watchlists_update_collection_sources",
+            description=(
+                "Atomically add or remove up to 100 canonical source memberships "
+                "from one local Watchlists collection."
+            ),
+            parameters={
+                "type": "object",
+                "properties": {
+                    "collection_id": {
+                        "type": "string",
+                        "pattern": r"^local:watchlist:[1-9][0-9]*$",
+                        "maxLength": 36,
+                    },
+                    "add_source_ids": {
+                        "type": "array",
+                        "items": {
+                            "type": "string",
+                            "pattern": r"^local:subscription:[1-9][0-9]*$",
+                            "maxLength": 40,
+                        },
+                        "maxItems": 100,
+                        "uniqueItems": True,
+                    },
+                    "remove_source_ids": {
+                        "type": "array",
+                        "items": {
+                            "type": "string",
+                            "pattern": r"^local:subscription:[1-9][0-9]*$",
+                            "maxLength": 40,
+                        },
+                        "maxItems": 100,
+                        "uniqueItems": True,
+                    },
+                },
+                "required": ["collection_id"],
+                "anyOf": [
+                    {"required": ["add_source_ids"]},
+                    {"required": ["remove_source_ids"]},
+                ],
+                "additionalProperties": False,
+            },
+            handler=watchlists_command_service.update_collection_sources,
+            exposure=LocalToolExposure.CONSOLE_ONLY,
+            approval_effects=(LocalApprovalEffect.MUTATES_LOCAL,),
+            tags=("mutates",),
         ),
     ]
     if todo_store is not None:

@@ -1,10 +1,11 @@
 ---
 id: TASK-22862
 title: Add transactional Console Watchlists authoring commands
-status: To Do
-assignee: []
+status: In Progress
+assignee:
+  - '@codex'
 created_date: '2026-08-27 04:14'
-updated_date: '2026-08-27 04:17'
+updated_date: '2026-08-27 19:29'
 labels:
   - watchlists
   - console
@@ -13,8 +14,10 @@ labels:
 dependencies:
   - TASK-22859
 references:
-  - Docs/superpowers/specs/2026-08-26-console-driven-watchlists-workflow-uat-remediation-design.md
-  - Docs/superpowers/plans/2026-08-27-console-watchlists-commands-and-operations.md
+  - >-
+    Docs/superpowers/specs/2026-08-26-console-driven-watchlists-workflow-uat-remediation-design.md
+  - >-
+    Docs/superpowers/plans/2026-08-27-console-watchlists-commands-and-operations.md
   - backlog/decisions/032-local-agent-tool-permission-boundary.md
 priority: high
 ---
@@ -35,3 +38,17 @@ Let a user create multiple sources, create a collection, and update collection m
 - [ ] #6 `watchlists_update_collection_sources` rejects overlapping add/remove sets and missing/ambiguous IDs, then applies all validated membership changes or none.
 - [ ] #7 All three commands are Console-only, carry mutation approval effects/tags, reject server mode before storage access, and have concurrency/rollback/redaction/provider-schema coverage.
 <!-- AC:END -->
+
+## Implementation Plan
+
+<!-- SECTION:PLAN:BEGIN -->
+1. Add race and validation RED tests, then implement one BEGIN IMMEDIATE database-owner exact-source batch used by Console, direct UI, and OPML.
+2. Add collision-policy and atomic-membership RED tests, then implement explicit conflict/return-existing/auto-suffix creation and all-or-nothing membership updates.
+3. Build the synchronous WatchlistsCommandService with exact schemas, bounded app-loop bridging, structured outcomes, redaction, server-mode refusal, and no implicit follow-on work.
+4. Register the three mutation descriptors as Console-only with code-owned mutation effects/tags and sanitized destination presentation; prove read-only bindings and external MCP omit them.
+5. Run complete task-targeted tests, Ruff, diff checks, self-review, and independent review.
+
+ADR required: yes
+ADR path: backlog/decisions/032-local-agent-tool-permission-boundary.md
+Reason: ADR-032 and its approved addendum already define the Console-only mutation and approval boundary; this task implements that existing decision without a new architecture choice.
+<!-- SECTION:PLAN:END -->

@@ -1702,6 +1702,39 @@ async def test_create_source_persists_check_frequency(tmp_path):
 
 
 @pytest.mark.asyncio
+async def test_create_sources_exact_batch_preserves_order_and_reports_existing(tmp_path):
+    db = SubscriptionsDB(tmp_path / "subscriptions.db", "test")
+    service = LocalWatchlistsService(db_factory=lambda: db)
+
+    results = await service.create_sources_exact_batch(
+        [
+            {"name": "One", "source_type": "rss", "url": " https://example.com/feed "},
+            {"name": "Again", "source_type": "rss", "url": "https://example.com/feed"},
+        ]
+    )
+
+    assert [row["input_index"] for row in results] == [0, 1]
+    assert [row["outcome"] for row in results] == ["created", "existing"]
+    assert results[0]["source"]["source_id"] == results[1]["source"]["source_id"]
+
+
+@pytest.mark.asyncio
+async def test_create_source_uses_exact_batch_and_reuses_existing(tmp_path):
+    db = SubscriptionsDB(tmp_path / "subscriptions.db", "test")
+    service = LocalWatchlistsService(db_factory=lambda: db)
+
+    first = await service.create_source(
+        {"name": "One", "source_type": "rss", "url": " https://example.com/feed "}
+    )
+    second = await service.create_source(
+        {"name": "Two", "source_type": "rss", "url": "https://example.com/feed"}
+    )
+
+    assert second["source_id"] == first["source_id"]
+    assert db.conn.execute("SELECT COUNT(*) FROM subscriptions").fetchone()[0] == 1
+
+
+@pytest.mark.asyncio
 async def test_execute_run_persists_items_and_evaluates_filters(tmp_path):
     db = SubscriptionsDB(tmp_path / "subscriptions.db", "test")
 
