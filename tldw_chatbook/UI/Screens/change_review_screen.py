@@ -160,6 +160,68 @@ _GROUPS: tuple[tuple[str, str], ...] = (
 )
 _OTHER_GROUP = "Other"
 
+#: A repeated-root turn has order-sensitive snapshot windows. The compact
+#: card already uses this wording when it routes the user here; Review adds
+#: the recovery because its whole-turn shortcut must not replay those rows.
+MULTI_WINDOW_UNDO_REFUSAL = (
+    "This turn has multiple change windows for the same workspace. "
+    "Revert files individually from one labeled window at a time."
+)
+
+#: User-facing provenance for the three persisted window kinds. Keep this
+#: local to Review: importing the Console bridge for three storage literals
+#: would invert the display/runtime dependency.
+_WINDOW_KIND_LABELS = {
+    "turn": "Turn",
+    "turn_concurrent_subagent": "Turn with sub-agent overlap",
+    "subagent_post_turn": "Sub-agent after turn",
+}
+
+
+def _snapshot_root_key(row: dict) -> str:
+    """Return the card-compatible comparison key for a snapshot root."""
+    root = str(row.get("root") or "")
+    return os.path.normcase(os.path.normpath(root)) if root else ""
+
+
+def _window_labels(rows: "Sequence[dict]") -> dict[int, str]:
+    """Label rows only where one canonical root owns multiple windows.
+
+    Known kinds use concise provenance. Repeated or unknown kinds gain a
+    stable ordinal so every affected row remains distinguishable.
+
+    Args:
+        rows: One run's snapshot rows in storage order.
+
+    Returns:
+        Row-object identities mapped to their visible window labels.
+    """
+    by_root: dict[str, list[dict]] = {}
+    for row in rows:
+        by_root.setdefault(_snapshot_root_key(row), []).append(row)
+
+    labels: dict[int, str] = {}
+    for root_rows in by_root.values():
+        if len(root_rows) < 2:
+            continue
+        base_labels = [
+            _WINDOW_KIND_LABELS.get(str(row.get("kind") or ""), "Change window")
+            for row in root_rows
+        ]
+        totals = {base: base_labels.count(base) for base in set(base_labels)}
+        seen: dict[str, int] = {}
+        for row, base in zip(root_rows, base_labels):
+            seen[base] = seen.get(base, 0) + 1
+            labels[id(row)] = f"{base} {seen[base]}" if totals[base] > 1 else base
+    return labels
+
+
+def _file_count_noun(count: int, *, repeated_root: bool) -> str:
+    """Name an aggregate without calling repeated paths unique files."""
+    if repeated_root:
+        return "file change" if count == 1 else "file changes"
+    return "files"
+
 
 @dataclass(frozen=True)
 class ReviewTurn:
@@ -337,9 +399,14 @@ class AgentRunsChangeReviewProvider:
         adds = sum(int(r["adds"] or 0) for r in rows)
         dels = sum(int(r["dels"] or 0) for r in rows)
         stamp = str(rows[0].get("created_at", ""))[:19].replace("T", " ")
+        repeated_root = bool(_window_labels(rows))
         return ReviewTurn(
             run_id=run_id,
-            label=f"{stamp} · {files} files +{adds} −{dels}",
+            label=(
+                f"{stamp} · {files} "
+                f"{_file_count_noun(files, repeated_root=repeated_root)} "
+                f"+{adds} −{dels}"
+            ),
             rows=tuple(rows),
         )
 
@@ -1839,6 +1906,7 @@ class ChangeReviewScreen(Screen):
         self._diff_cache_error = None
         self._active_turn = turn
         multi_root = len(turn.rows) > 1
+        window_labels = _window_labels(turn.rows)
         tree = self.query_one("#change-review-tree", Tree)
         tree.clear()
         tree.root.expand()
@@ -1917,7 +1985,13 @@ class ChangeReviewScreen(Screen):
                 return True
             return change.path not in touched
 
-        self._populate_tree(tree, grouped, multi_root, _badged)
+        self._populate_tree(
+            tree,
+            grouped,
+            multi_root,
+            _badged,
+            window_labels=window_labels,
+        )
 
         self._turn_banner_lines = banners
         # A turn view carries no current-mode per-root failures.
@@ -1930,7 +2004,8 @@ class ChangeReviewScreen(Screen):
         totals = self.query_one("#change-review-totals", Static)
         adds = sum(int(r["adds"] or 0) for r in turn.rows)
         dels = sum(int(r["dels"] or 0) for r in turn.rows)
-        totals.update(f"{len(self._leaves)} files  +{adds} −{dels}")
+        noun = _file_count_noun(len(self._leaves), repeated_root=bool(window_labels))
+        totals.update(f"{len(self._leaves)} {noun}  +{adds} −{dels}")
 
         # TASK-18060 Task 3: the initials are constructor state consumed
         # exactly ONCE -- cleared here, UNCONDITIONALLY, so a later turn
@@ -1972,6 +2047,8 @@ class ChangeReviewScreen(Screen):
         grouped: "dict[str, list[tuple[dict, ChangedFile]]]",
         multi_root: bool,
         badge: "Callable[[dict, ChangedFile], bool]",
+        *,
+        window_labels: "dict[int, str] | None" = None,
     ) -> None:
         """Fill the changed-file tree and ``self._leaves`` from ``grouped``.
 
@@ -1987,7 +2064,10 @@ class ChangeReviewScreen(Screen):
             badge: Per-leaf "changed outside direct file tools" predicate
                 (TASK-1978). Always False in `current` mode -- provenance
                 is a property of a recorded run, not of the working tree.
+            window_labels: Optional visible provenance for repeated-root
+                snapshot rows. Current mode and ordinary turns pass none.
         """
+        labels_by_row = window_labels or {}
         known = {code for code, _label in _GROUPS}
         for code, label in _GROUPS:
             entries = grouped.get(code, [])
@@ -1999,7 +2079,11 @@ class ChangeReviewScreen(Screen):
                 # selection can load the diff (j/k was the only loader).
                 branch.add_leaf(
                     self._leaf_label(
-                        row, change, multi_root, badge=badge(row, change)
+                        row,
+                        change,
+                        multi_root,
+                        badge=badge(row, change),
+                        window_label=labels_by_row.get(id(row)),
                     ),
                     data=len(self._leaves),
                 )
@@ -2017,7 +2101,11 @@ class ChangeReviewScreen(Screen):
                 # selection can load the diff (j/k was the only loader).
                 branch.add_leaf(
                     self._leaf_label(
-                        row, change, multi_root, badge=badge(row, change)
+                        row,
+                        change,
+                        multi_root,
+                        badge=badge(row, change),
+                        window_label=labels_by_row.get(id(row)),
                     ),
                     data=len(self._leaves),
                 )
@@ -3170,6 +3258,7 @@ class ChangeReviewScreen(Screen):
         change: ChangedFile,
         multi_root: bool,
         badge: bool = False,
+        window_label: str | None = None,
     ) -> Text:
         """Build one leaf label as a PLAIN rich Text.
 
@@ -3189,7 +3278,12 @@ class ChangeReviewScreen(Screen):
             from pathlib import Path as _P
 
             parts.append(f"· {_P(str(row['root'])).name}")
-        label = Text("  ".join(parts))
+        label = Text()
+        if window_label:
+            # Provenance leads because the tree is fixed at 46 columns: a
+            # trailing qualifier disappears first for realistic long paths.
+            label.append(f"{window_label} · ")
+        label.append("  ".join(parts))
         if badge:
             # TASK-1978: exact spec copy — 'outside direct file tools',
             # never 'not by the agent' (script writes are agent work too,
@@ -3895,7 +3989,7 @@ class ChangeReviewScreen(Screen):
         self._confirm_and_revert(row, [change.path], f"Revert {change.path}?")
 
     def action_undo_all(self) -> None:
-        """Revert every file in the active turn, per root (confirmed)."""
+        """Revert every unambiguous file in the active turn (confirmed)."""
         # TASK-16801 arc B (spec §4.1): same gate as `action_revert_file`,
         # and it must come BEFORE the `_active_turn is None` check below --
         # current mode holds no active turn, so without this the key would
@@ -3904,6 +3998,9 @@ class ChangeReviewScreen(Screen):
             self.notify(CURRENT_MODE_REVERT_REFUSAL, severity="warning")
             return
         if self._active_turn is None or not self._leaves:
+            return
+        if _window_labels(self._active_turn.rows):
+            self.notify(MULTI_WINDOW_UNDO_REFUSAL, severity="warning")
             return
         by_row: dict[int, tuple[dict, list[str]]] = {}
         for row, change in self._leaves:
