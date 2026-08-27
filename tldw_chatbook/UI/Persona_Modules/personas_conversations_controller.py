@@ -10,15 +10,15 @@ the thin ``@on`` handlers that delegate here, mirroring the
 
 from __future__ import annotations
 
+from collections.abc import Mapping
 from functools import partial
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 from loguru import logger
 from textual.css.query import QueryError
 from textual.widgets import Button
 
 from ...Character_Chat.Character_Chat_Lib import (
-    list_character_conversations,
     retrieve_conversation_messages_for_ui,
 )
 from ...Constants import (
@@ -47,6 +47,10 @@ _CONVERSATION_VIEW_ID = "#personas-conversation-transcript-view"
 #: Cap on the transcript text staged into a Console handoff body.
 _HANDOFF_TRANSCRIPT_CHAR_LIMIT = 6000
 
+#: Visible rows per saved-conversation page; one extra row is the sentinel.
+_CONVERSATIONS_PAGE_SIZE = 20
+_CONVERSATIONS_FETCH_LIMIT = _CONVERSATIONS_PAGE_SIZE + 1
+
 
 class PersonasConversationsController:
     """Handles the saved-conversations region for ``PersonasScreen``."""
@@ -68,64 +72,255 @@ class PersonasConversationsController:
         self._failed_conversation_id: str | None = None
         self._preview_attempt: object | None = None
         self._resume_in_flight_attempts: dict[str, object] = {}
+        self._list_character_id: str | None = None
+        self._loaded_conversation_ids: set[str] = set()
+        self._next_conversation_cursor: tuple[Any, str] | None = None
+        self._has_more_conversations = False
+        self._conversation_list_phase: str | None = None
+        self._conversation_list_attempt: object | None = None
 
     def reset(self) -> None:
+        self._reset_conversation_browse()
         self.close_conversation_preview()
-        self._conversation_rows = {}
         self._resume_in_flight_attempts = {}
 
     # ===== Listing =====
 
     def load_conversations(self, character_id: str) -> None:
-        """Schedule the conversation listing on the screen's worker pool."""
+        """Reset browsing for ``character_id`` and schedule its first page."""
+        self._reset_conversation_browse(str(character_id))
+        self._start_conversation_page(initial=True)
+
+    async def request_older_conversations(self) -> None:
+        """Handle the actionable Load/Retry tail without starting duplicates."""
+        if self._conversation_list_attempt is not None:
+            return
+        phase = self._conversation_list_phase
+        if phase == "initial-retry":
+            initial = True
+        elif phase == "append-retry" or (
+            phase == "ready" and self._has_more_conversations
+        ):
+            initial = False
+        else:
+            return
+
+        attempt = self._claim_conversation_page(initial=initial)
+        if attempt is None:
+            return
+        try:
+            inspector = self.screen.query_one(PersonasInspectorPane)
+            if initial:
+                await inspector.show_conversations_loading()
+            else:
+                await inspector.show_older_conversations_loading()
+        except Exception:
+            logger.opt(exception=True).warning(
+                "Could not render the conversations loading state."
+            )
+        if self._conversation_list_attempt is attempt:
+            self._schedule_conversation_page(initial=initial, attempt=attempt)
+
+    def _reset_conversation_browse(self, character_id: str | None = None) -> None:
+        """Invalidate an active list read and clear memory-only browse state."""
+        self._conversation_list_attempt = None
+        self._list_character_id = character_id
+        self._conversation_rows = {}
+        self._loaded_conversation_ids = set()
+        self._next_conversation_cursor = None
+        self._has_more_conversations = False
+        self._conversation_list_phase = None
+
+    def _start_conversation_page(self, *, initial: bool) -> None:
+        attempt = self._claim_conversation_page(initial=initial)
+        if attempt is not None:
+            self._schedule_conversation_page(initial=initial, attempt=attempt)
+
+    def _claim_conversation_page(self, *, initial: bool) -> object | None:
+        character_id = self._list_character_id
+        if character_id is None or self._conversation_list_attempt is not None:
+            return None
+        attempt = object()
+        self._conversation_list_attempt = attempt
+        self._conversation_list_phase = (
+            "initial-loading" if initial else "append-loading"
+        )
+        return attempt
+
+    def _schedule_conversation_page(self, *, initial: bool, attempt: object) -> None:
+        character_id = self._list_character_id
+        if character_id is None or self._conversation_list_attempt is not attempt:
+            return
+        cursor = self._next_conversation_cursor
         self.screen.run_worker(
-            partial(self._load_conversations_sync, character_id),
+            partial(
+                self._load_conversations_sync,
+                character_id,
+                cursor,
+                initial,
+                attempt,
+            ),
             thread=True,
             exclusive=True,
             group="personas-conversations",
         )
 
-    def _load_conversations_sync(self, character_id: str) -> None:
-        """List the character's saved conversations off the UI thread."""
+    def _load_conversations_sync(
+        self,
+        character_id: str,
+        cursor: tuple[Any, str] | None,
+        initial: bool,
+        attempt: object,
+    ) -> None:
+        """Fetch one saved-conversation page off the UI thread."""
         try:
-            records = (
-                list_character_conversations(
-                    self.screen._character_db(), int(character_id), limit=20
+            db = self.screen._character_db()
+            if cursor is None:
+                records = db.get_conversations_for_character(
+                    int(character_id), limit=_CONVERSATIONS_FETCH_LIMIT
                 )
-                or []
-            )
+            else:
+                records = db.get_conversations_for_character(
+                    int(character_id),
+                    limit=_CONVERSATIONS_FETCH_LIMIT,
+                    before_last_modified=cursor[0],
+                    before_id=cursor[1],
+                )
+            records = tuple(records or ())
         except Exception:
             logger.opt(exception=True).warning(
                 f"Could not list conversations for character {character_id}.",
             )
-            records = []
-        rows = tuple(
-            (str(record.get("id")), str(record.get("title") or "Untitled conversation"))
-            for record in records
-            if record.get("id") is not None
-        )
+            self.screen.app.call_from_thread(
+                self.apply_conversation_page_failure,
+                character_id,
+                cursor,
+                initial,
+                attempt,
+            )
+            return
         self.screen.app.call_from_thread(
-            self.apply_conversation_rows, character_id, rows
+            self.apply_conversation_page,
+            character_id,
+            cursor,
+            initial,
+            attempt,
+            records,
         )
 
-    async def apply_conversation_rows(
-        self, character_id: str, rows: tuple[tuple[str, str], ...]
-    ) -> None:
-        """UI-thread continuation: render rows unless the selection moved on."""
+    def _owns_conversation_page(
+        self,
+        character_id: str,
+        cursor: tuple[Any, str] | None,
+        attempt: object,
+    ) -> bool:
+        """Return whether a list continuation still owns the visible context."""
         screen = self.screen
-        if not screen.is_mounted or screen.state.active_mode != "characters":
+        return bool(
+            screen.is_mounted
+            and screen.state.active_mode == "characters"
+            and screen.state.runtime_source == "local"
+            and screen.state.selected_entity_kind == "character"
+            and str(screen.state.selected_entity_id) == str(character_id)
+            and self._list_character_id == str(character_id)
+            and self._next_conversation_cursor == cursor
+            and self._conversation_list_attempt is attempt
+        )
+
+    async def apply_conversation_page_failure(
+        self,
+        character_id: str,
+        cursor: tuple[Any, str] | None,
+        initial: bool,
+        attempt: object,
+    ) -> None:
+        """Render a retry tail when the exact failed attempt still owns it."""
+        if not self._owns_conversation_page(character_id, cursor, attempt):
             return
-        if screen.state.selected_entity_kind != "character" or str(
-            screen.state.selected_entity_id
-        ) != str(character_id):
-            return
-        self._conversation_rows = dict(rows)
+        self._conversation_list_attempt = None
+        self._conversation_list_phase = "initial-retry" if initial else "append-retry"
         try:
-            # An empty result (including a tolerated listing failure) shows
-            # readable empty-state copy rather than a silently blank panel.
-            await screen.query_one(PersonasInspectorPane).show_conversations(
-                rows, empty_copy="No saved conversations."
+            await self.screen.query_one(
+                PersonasInspectorPane
+            ).show_conversations_failure(initial=initial)
+        except Exception:
+            logger.opt(exception=True).warning(
+                "Could not render the conversations retry state."
             )
+
+    async def apply_conversation_page(
+        self,
+        character_id: str,
+        cursor: tuple[Any, str] | None,
+        initial: bool,
+        attempt: object,
+        records: tuple[object, ...],
+    ) -> None:
+        """Validate, commit, and render one still-owned page."""
+        if not self._owns_conversation_page(character_id, cursor, attempt):
+            return
+        self._conversation_list_attempt = None
+
+        accepted: list[tuple[str, str, Any]] = []
+        page_ids: set[str] = set()
+        for record in records[:_CONVERSATIONS_PAGE_SIZE]:
+            if not isinstance(record, Mapping):
+                continue
+            raw_id = record.get("id")
+            last_modified = record.get("last_modified")
+            if raw_id is None or last_modified is None:
+                continue
+            conversation_id = str(raw_id).strip()
+            if (
+                not conversation_id
+                or conversation_id in self._loaded_conversation_ids
+                or conversation_id in page_ids
+            ):
+                continue
+            page_ids.add(conversation_id)
+            accepted.append(
+                (
+                    conversation_id,
+                    str(record.get("title") or "Untitled conversation"),
+                    last_modified,
+                )
+            )
+
+        has_more = len(records) > _CONVERSATIONS_PAGE_SIZE
+        if records and not accepted:
+            logger.warning(
+                f"Conversation page for character {character_id} contained "
+                "records but no new valid durable rows; treating it as exhausted."
+            )
+            has_more = False
+
+        rows = tuple((conversation_id, title) for conversation_id, title, _ in accepted)
+        if initial:
+            self._conversation_rows = dict(rows)
+            self._loaded_conversation_ids = {
+                conversation_id for conversation_id, _ in rows
+            }
+        else:
+            self._conversation_rows.update(rows)
+            self._loaded_conversation_ids.update(
+                conversation_id for conversation_id, _ in rows
+            )
+        if accepted:
+            last_id, _, last_modified = accepted[-1]
+            self._next_conversation_cursor = (last_modified, last_id)
+        self._has_more_conversations = has_more
+        self._conversation_list_phase = "ready"
+
+        try:
+            inspector = self.screen.query_one(PersonasInspectorPane)
+            if initial:
+                await inspector.show_conversations(
+                    rows,
+                    empty_copy="No saved conversations.",
+                    has_more=has_more,
+                )
+            else:
+                await inspector.append_conversations(rows, has_more=has_more)
         except Exception:
             logger.opt(exception=True).warning(
                 "Could not render the conversations panel."
