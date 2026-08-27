@@ -1,11 +1,9 @@
 from __future__ import annotations
 
-import pathlib
-import tempfile
-
-import gc
 import asyncio
+import gc
 import logging
+from uuid import uuid4
 import threading
 import time
 import weakref
@@ -96,6 +94,28 @@ def _first(matches, *, what: str):
     assert value is not None, f"no {what} was produced by the turn under test"
     return value
 
+
+
+#: Every `_ReadyCitationPersistence` opened during a test, so its database
+#: connections can be closed afterwards rather than left to the garbage
+#: collector. A shared-cache in-memory database lives exactly as long as one
+#: connection to it stays open, so leaking connections leaks memory for the
+#: whole session (Qodo review of #2128).
+_OPEN_PERSISTENCES: list["_ReadyCitationPersistence"] = []
+
+
+@pytest.fixture(autouse=True)
+def _close_citation_persistences():
+    """Close every database this module's tests opened."""
+
+    _OPEN_PERSISTENCES.clear()
+    yield
+    while _OPEN_PERSISTENCES:
+        persistence = _OPEN_PERSISTENCES.pop()
+        try:
+            persistence.db.close_connection()
+        except Exception:  # pragma: no cover - cleanup must not mask failures
+            pass
 
 
 class _RequestBuilder:
@@ -240,16 +260,24 @@ class _ReadyCitationPersistence:
 
     def __init__(self) -> None:
         self.create_calls: list[dict[str, Any]] = []
-        # FILE-backed, not ":memory:" (TASK-22301). `CharactersRAGDB` opens a
-        # THREAD-LOCAL connection, and TASK-22205 offloads durable DB calls to a
-        # worker thread -- with ":memory:" that worker gets its OWN empty
-        # database, so writes made there are invisible to assertions on this
-        # thread. Measured: citation traces wrote successfully and
-        # `rag_citation_traces` still read 0 rows.
-        self._db_dir = tempfile.mkdtemp(prefix="citation-boundary-")
+        # IN-MEMORY, but with a SHARED CACHE and a unique name.
+        #
+        # A plain ":memory:" does not work here: `CharactersRAGDB` opens a
+        # THREAD-LOCAL connection and TASK-22205 offloads durable DB calls to a
+        # worker thread, so that worker gets its OWN empty database and writes
+        # made there are invisible to assertions on this thread. Measured:
+        # citation traces wrote successfully and `rag_citation_traces` still
+        # read 0 rows.
+        #
+        # A shared-cache URI keeps the database in memory (no temp files, no
+        # cleanup) while making it visible across threads. The uuid keeps each
+        # instance isolated -- a shared cache is keyed by NAME, so a fixed name
+        # would silently join every test to one database.
+        self._db_name = f"citation-boundary-{uuid4().hex}"
         self.db = CharactersRAGDB(
-            pathlib.Path(self._db_dir) / "boundary.sqlite", "citation-boundary"
+            f"file:{self._db_name}?mode=memory&cache=shared", "citation-boundary"
         )
+        _OPEN_PERSISTENCES.append(self)
         # The old fake hard-coded `canonical_citation_writes_ready = True`. The
         # real service COMPUTES it, and a service built without a citation
         # repository reports False -- which silently skips every citation write,
@@ -344,7 +372,8 @@ class _ReadyCitationPersistence:
             sql += " AND sender = ?"
             params = (sender,)
         sql += " ORDER BY rowid"
-        cursor = self.db.get_connection().execute(sql, params)
+        with self.db.transaction() as cursor:
+            rows = cursor.execute(sql, params).fetchall()
         return [
             {
                 "message_id": row[0],
@@ -353,16 +382,17 @@ class _ReadyCitationPersistence:
                 "sender": row[3],
                 "content": row[4],
             }
-            for row in cursor.fetchall()
+            for row in rows
         ]
 
     def citation_trace_rows(self) -> list[dict[str, Any]]:
         """Sealed citation traces, joined to the message each belongs to."""
 
-        cursor = self.db.get_connection().execute(
-            "SELECT trace_id, legacy_message_id, lifecycle, visibility_state "
-            "FROM rag_citation_traces ORDER BY rowid"
-        )
+        with self.db.transaction() as cursor:
+            rows = cursor.execute(
+                "SELECT trace_id, legacy_message_id, lifecycle, visibility_state "
+                "FROM rag_citation_traces ORDER BY rowid"
+            ).fetchall()
         return [
             {
                 "trace_id": row[0],
@@ -370,7 +400,7 @@ class _ReadyCitationPersistence:
                 "lifecycle": row[2],
                 "visibility_state": row[3],
             }
-            for row in cursor.fetchall()
+            for row in rows
         ]
 
 
@@ -2551,8 +2581,11 @@ async def test_citation_repair_agent_ineligible_outcomes_never_dispatch(
         "controller swallows it, leaving an empty assistant row. PRE-EXISTING "
         "-- one of the original 40 failures here, not introduced by the "
         "durable-session conversion. Measured: the bridge runs (its calls "
-        "list is non-empty) but never reaches its own replacement code."
+        "list is non-empty) but never reaches its own replacement code. "
+        "Narrowed to AssertionError so only the empty-row symptom is expected; "
+        "an error or a different exception still fails."
     ),
+    raises=AssertionError,
 )
 async def test_citation_repair_agent_missing_placeholder_keeps_runtime_row_without_repair():
     store = _recording_citation_store()
@@ -2560,6 +2593,11 @@ async def test_citation_repair_agent_missing_placeholder_keeps_runtime_row_witho
     contract = _repair_contract()
 
     class _ReplacingBridge(_AgentBridge):
+        #: Set when `run_reply` reaches its replacement append. Declared here so
+        #: a bridge that never gets that far fails as a readable assertion
+        #: rather than an AttributeError from the test's own bookkeeping.
+        replacement_id: str | None = None
+
         def run_reply(self, **kwargs):
             self.calls.append(kwargs)
             original_id = kwargs["assistant_message_id"]
@@ -2909,13 +2947,17 @@ async def test_citation_repair_late_chunk_privacy_sentinels(
 @pytest.mark.asyncio
 @pytest.mark.xfail(
     strict=False,
+    raises=RuntimeError,
     reason=(
         "TASK-22690: closing a chat during an in-flight durable postcommit "
         "raises 'Durable continuation owner changed.' -- a fourth raise site "
         "of the class TASK-22587 fixed. TASK-22587 predicted these two tests "
         "would reach a durable-path failure once their sessions stopped being "
-        "ephemeral. Not skipped: this still runs and will report if it starts "
-        "passing."
+        "ephemeral. NARROWED to RuntimeError (Qodo review of #2128): an "
+        "unconditional xfail would also swallow failures in privacy cleanup, "
+        "session removal, message resurrection and cancellation -- everything "
+        "else these tests assert. Not skipped: it still runs and reports if it "
+        "starts passing."
     ),
 )
 async def test_citation_repair_session_close_privacy_sentinels(
@@ -3342,13 +3384,17 @@ async def test_citation_repair_shutdown_during_collection_privacy_has_no_user_st
 @pytest.mark.asyncio
 @pytest.mark.xfail(
     strict=False,
+    raises=RuntimeError,
     reason=(
         "TASK-22690: closing a chat during an in-flight durable postcommit "
         "raises 'Durable continuation owner changed.' -- a fourth raise site "
         "of the class TASK-22587 fixed. TASK-22587 predicted these two tests "
         "would reach a durable-path failure once their sessions stopped being "
-        "ephemeral. Not skipped: this still runs and will report if it starts "
-        "passing."
+        "ephemeral. NARROWED to RuntimeError (Qodo review of #2128): an "
+        "unconditional xfail would also swallow failures in privacy cleanup, "
+        "session removal, message resurrection and cancellation -- everything "
+        "else these tests assert. Not skipped: it still runs and reports if it "
+        "starts passing."
     ),
 )
 async def test_citation_repair_close_during_collection_never_resurrects_session_or_message():
