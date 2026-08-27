@@ -87,6 +87,28 @@ def test_seek_pages_order_ties_and_filter_nonmatching_rows(db):
     assert set(_ids(first_page)).isdisjoint(_ids(second_page))
 
 
+def test_seek_cursor_treats_naive_datetime_as_utc(db):
+    for conversation_id, last_modified in [
+        ("newest", "2026-08-27T05:00:00.000Z"),
+        ("tie-z", "2026-08-27T04:00:00.000Z"),
+        ("tie-a", "2026-08-27T04:00:00.000Z"),
+        ("older", "2026-08-27T03:00:00.000Z"),
+    ]:
+        _seed_conversation(db, conversation_id, last_modified)
+
+    first_page = db.get_conversations_for_character(1, limit=2)
+    cursor = first_page[-1]
+    naive_last_modified = cursor["last_modified"].replace(tzinfo=None)
+
+    second_page = db.get_conversations_for_character(
+        1,
+        limit=2,
+        before_last_modified=naive_last_modified,
+        before_id=cursor["id"],
+    )
+    assert _ids(second_page) == ["tie-a", "older"]
+
+
 def test_legacy_positional_limit_and_offset_return_expected_slice(db):
     for conversation_id, last_modified in [
         ("newest", "2026-08-27T05:00:00Z"),

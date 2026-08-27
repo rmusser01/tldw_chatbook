@@ -9694,7 +9694,7 @@ UPDATE db_schema_version
         limit: int = 50,
         offset: int = 0,
         *,
-        before_last_modified: str | None = None,
+        before_last_modified: str | datetime | None = None,
         before_id: str | None = None,
     ) -> list[dict[str, Any]]:
         """
@@ -9707,8 +9707,10 @@ UPDATE db_schema_version
             character_id: The integer ID of the character.
             limit: The maximum number of conversations to return. Defaults to 50.
             offset: The number of conversations to skip. Defaults to 0.
-            before_last_modified: Last-modified value of the final row from the
-                previous seek page.
+            before_last_modified: Canonical timestamp text or the SQLite-returned
+                DATETIME value from the final row of the previous seek page. Naive
+                datetime values are treated as UTC before canonical millisecond-Z
+                binding.
             before_id: Conversation ID of the final row from the previous seek
                 page.
 
