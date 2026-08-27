@@ -2,6 +2,10 @@
 
 from __future__ import annotations
 
+import asyncio
+import threading
+from dataclasses import fields
+from typing import get_args
 import pytest
 from textual.widgets import Button, Input, Static, TextArea
 
@@ -13,20 +17,327 @@ from Tests.UI.test_library_shell import (
     _active_library_screen,
     _build_test_app,
     _open_note_editor,
+    _press_note_back,
     _seed_conversations,
     _two_conversations,
     _two_notes,
+    _wait_for_condition,
     _wait_for_library_shell,
     _wait_for_condition,
     _wait_for_selector,
 )
 from tldw_chatbook.UI.Screens import library_screen as library_screen_module
 from tldw_chatbook.UI.Screens.library_screen import LibraryScreen
+from tldw_chatbook.UI.Library_Modules.library_notes_work_session import (
+    NotesWorkSessionEvent,
+    NotesWorkSessionPhase,
+)
 from tldw_chatbook.Widgets.Library import (
     LibraryAdaptiveReaderShell,
     LibraryNoteWorkPane,
     LibraryNotesCanvas,
 )
+
+
+@pytest.mark.asyncio
+async def test_notes_reader_persistence_authorities_reconcile_independently(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Database and Folder Items writes cannot supersede or roll back each other."""
+    app = _build_test_app()
+    app.app_config.setdefault("library", {}).setdefault("notes_reader", {}).update(
+        {
+            "items_open": True,
+            "items_width": 33,
+            "files_tree_open": True,
+            "files_tree_width": 44,
+        }
+    )
+    notifications: list[tuple[str, dict[str, object]]] = []
+    app.notify = lambda message, **kwargs: notifications.append((message, kwargs))
+    screen = LibraryScreen(app)
+    writes: list[tuple[str, str, bool]] = []
+
+    def save(section: str, key: str, value: bool) -> bool:
+        writes.append((section, key, value))
+        return key != "items_open"
+
+    monkeypatch.setattr(library_screen_module, "save_setting_to_cli_config", save)
+
+    database_generation = screen._claim_library_reader_persistence("notes", "items")
+    screen._replace_library_reader_preference("notes", "items_open", False)
+    screen._mirror_library_notes_reader_preference("items_open", False)
+    assert screen._library_notes_reader_preferences.items_open is False
+    assert app.app_config["library"]["notes_reader"]["items_open"] is False
+
+    folder_generation = screen._claim_library_reader_persistence("notes_files", "items")
+    screen._replace_library_reader_preference("notes_files", "items_open", False)
+    screen._mirror_library_file_notes_reader_preference("items_open", False)
+    assert screen._library_file_notes_reader_preferences.items_open is False
+    assert app.app_config["library"]["notes_reader"]["files_tree_open"] is False
+
+    await screen._persist_library_reader_preference(
+        "notes_files", "items", False, folder_generation
+    )
+    await screen._persist_library_reader_preference(
+        "notes", "items", False, database_generation
+    )
+
+    assert writes == [
+        ("library.notes_reader", "files_tree_open", False),
+        ("library.notes_reader", "items_open", False),
+    ]
+    assert screen._library_file_notes_reader_preferences.items_open is False
+    assert screen._library_notes_reader_preferences.items_open is True
+    assert app.app_config["library"]["notes_reader"] == {
+        "items_open": True,
+        "items_width": 33,
+        "files_tree_open": False,
+        "files_tree_width": 44,
+    }
+    assert all(key not in {"items_width", "files_tree_width"} for _, key, _ in writes)
+    assert notifications == [
+        (
+            "Library reader layout could not be saved; the previous pane choice was restored.",
+            {"severity": "warning"},
+        )
+    ]
+
+    notifications.clear()
+    monkeypatch.setattr(
+        screen,
+        "_read_library_reader_persisted_preference",
+        lambda *_args, **_kwargs: asyncio.sleep(0, result=None),
+    )
+    verify_generation = screen._claim_library_reader_persistence("notes", "items")
+    screen._replace_library_reader_preference("notes", "items_open", False)
+    screen._mirror_library_notes_reader_preference("items_open", False)
+    await screen._persist_library_reader_preference(
+        "notes",
+        "items",
+        False,
+        verify_generation,
+        verify_failure_from_config=True,
+    )
+
+    assert screen._library_notes_reader_preferences.items_open is False
+    assert screen._library_file_notes_reader_preferences.items_open is False
+    assert notifications == [
+        (
+            "Library reader layout could not be verified from configuration; the current pane choice was kept.",
+            {"severity": "warning"},
+        )
+    ]
+
+
+@pytest.mark.asyncio
+async def test_notes_reader_opposite_generation_races_stay_authority_local(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Opposite completion order converges each Items authority independently."""
+    app = _build_test_app()
+    app.app_config.setdefault("library", {}).setdefault("notes_reader", {}).update(
+        {"items_open": True, "files_tree_open": True}
+    )
+    screen = LibraryScreen(app)
+    notes_reader = app.app_config["library"]["notes_reader"]
+    initial_items_width = notes_reader["items_width"]
+    initial_files_tree_width = notes_reader["files_tree_width"]
+    database_started = threading.Event()
+    folder_started = threading.Event()
+    release_database = threading.Event()
+    release_folder = threading.Event()
+    writes: list[tuple[str, bool]] = []
+
+    def save(_section: str, key: str, value: bool) -> bool:
+        writes.append((key, value))
+        if value is False and key == "items_open":
+            database_started.set()
+            assert release_database.wait(5)
+        elif value is False and key == "files_tree_open":
+            folder_started.set()
+            assert release_folder.wait(5)
+        return True
+
+    monkeypatch.setattr(library_screen_module, "save_setting_to_cli_config", save)
+
+    database_old = screen._claim_library_reader_persistence("notes", "items")
+    screen._replace_library_reader_preference("notes", "items_open", False)
+    screen._mirror_library_notes_reader_preference("items_open", False)
+    folder_old = screen._claim_library_reader_persistence("notes_files", "items")
+    screen._replace_library_reader_preference("notes_files", "items_open", False)
+    screen._mirror_library_file_notes_reader_preference("items_open", False)
+    database_task = asyncio.create_task(
+        screen._persist_library_reader_preference("notes", "items", False, database_old)
+    )
+    folder_task = asyncio.create_task(
+        screen._persist_library_reader_preference(
+            "notes_files", "items", False, folder_old
+        )
+    )
+    assert await asyncio.to_thread(database_started.wait, 5)
+    assert await asyncio.to_thread(folder_started.wait, 5)
+
+    database_new = screen._claim_library_reader_persistence("notes", "items")
+    screen._replace_library_reader_preference("notes", "items_open", True)
+    screen._mirror_library_notes_reader_preference("items_open", True)
+    folder_new = screen._claim_library_reader_persistence("notes_files", "items")
+    screen._replace_library_reader_preference("notes_files", "items_open", True)
+    screen._mirror_library_file_notes_reader_preference("items_open", True)
+    database_new_task = asyncio.create_task(
+        screen._persist_library_reader_preference("notes", "items", True, database_new)
+    )
+    folder_new_task = asyncio.create_task(
+        screen._persist_library_reader_preference(
+            "notes_files", "items", True, folder_new
+        )
+    )
+
+    release_folder.set()
+    await folder_task
+    await folder_new_task
+    assert screen._library_reader_durable_preferences["notes_file_items"] is True
+    assert screen._library_reader_durable_preferences["notes_items"] is True
+
+    release_database.set()
+    await database_task
+    await database_new_task
+
+    assert set(writes[:2]) == {
+        ("items_open", False),
+        ("files_tree_open", False),
+    }
+    assert writes[2:] == [("files_tree_open", True), ("items_open", True)]
+    assert screen._library_notes_reader_preferences.items_open is True
+    assert screen._library_file_notes_reader_preferences.items_open is True
+    assert screen._library_reader_durable_preferences["notes_items"] is True
+    assert screen._library_reader_durable_preferences["notes_file_items"] is True
+    assert notes_reader["items_open"] is True
+    assert notes_reader["files_tree_open"] is True
+    assert notes_reader["items_width"] == initial_items_width
+    assert notes_reader["files_tree_width"] == initial_files_tree_width
+
+
+@pytest.mark.asyncio
+async def test_database_notes_work_session_activates_once_and_resets_exactly(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    app = _build_test_app()
+    app.app_config.setdefault("library", {}).setdefault("reader", {})[
+        "library_open"
+    ] = True
+    _seed_conversations(app, _two_conversations(), notes=_two_notes())
+    writes: list[tuple[str, str, bool]] = []
+    monkeypatch.setattr(
+        library_screen_module,
+        "save_setting_to_cli_config",
+        lambda section, key, value: (writes.append((section, key, value)), True)[1],
+    )
+    host = LibraryHarness(app)
+
+    async with host.run_test(size=(160, 45)) as pilot:
+        screen = _active_library_screen(host)
+        await _wait_for_library_shell(screen, pilot)
+        screen.query_one("#library-row-browse-notes", Button).press()
+        await _wait_for_selector(screen, pilot, "#library-notes-row-0")
+        shell = screen.query_one(
+            "#library-notes-reader-shell", LibraryAdaptiveReaderShell
+        )
+
+        assert (
+            screen._library_notes_work_session_phase is NotesWorkSessionPhase.INACTIVE
+        )
+        assert shell.effective_layout.library_open is True
+        assert writes == []
+
+        screen.query_one("#library-notes-row-0", Button).press()
+        await _wait_for_selector(screen, pilot, "#library-note-body")
+        await _wait_for_condition(
+            pilot,
+            lambda: (
+                screen._library_notes_work_session_phase is NotesWorkSessionPhase.ACTIVE
+                and not shell.effective_layout.library_open
+            ),
+            message="Database editable open did not activate work-first layout",
+        )
+        assert screen._library_notes_reader_preferences.library_open is True
+        assert writes == []
+
+        shell.library_grip.press()
+        await _wait_for_condition(
+            pilot,
+            lambda: (
+                screen._library_notes_work_session_phase
+                is NotesWorkSessionPhase.MANUALLY_CANCELLED
+                and shell.effective_layout.library_open
+            ),
+            message="Saved-open manual expansion did not cancel work-first",
+        )
+        assert writes == []
+
+        for event in (
+            NotesWorkSessionEvent.SELECTION_CHANGED,
+            NotesWorkSessionEvent.ITEM_CHANGED,
+            NotesWorkSessionEvent.EDIT_MODE_CHANGED,
+            NotesWorkSessionEvent.PREVIEW_MODE_CHANGED,
+            NotesWorkSessionEvent.INFO_MODE_CHANGED,
+            NotesWorkSessionEvent.MANAGE_MODE_CHANGED,
+            NotesWorkSessionEvent.SAVE,
+            NotesWorkSessionEvent.CONFLICT,
+            NotesWorkSessionEvent.RECOVERY,
+            NotesWorkSessionEvent.RESIZE,
+        ):
+            screen._dispatch_library_notes_work_session(event)
+        assert (
+            screen._library_notes_work_session_phase
+            is NotesWorkSessionPhase.MANUALLY_CANCELLED
+        )
+        assert shell.effective_layout.library_open is True
+        assert writes == []
+
+        _press_note_back(screen)
+        await _wait_for_condition(
+            pilot,
+            lambda: (
+                screen._library_notes_work_session_phase
+                is NotesWorkSessionPhase.INACTIVE
+            ),
+            message="Database identity clear did not reset work session",
+        )
+        shell.library_grip.press()
+        await _wait_for_condition(
+            pilot,
+            lambda: writes == [("library.reader", "library_open", False)],
+            message="Explicit saved-closed Library request did not persist",
+        )
+        assert screen._library_notes_reader_preferences.library_open is False
+
+        writes.clear()
+        screen.query_one("#library-notes-row-1", Button).press()
+        await _wait_for_condition(
+            pilot,
+            lambda: (
+                screen._library_notes_work_session_phase is NotesWorkSessionPhase.ACTIVE
+            ),
+            message="A new Database work session did not activate",
+        )
+        assert writes == []
+        shell.library_grip.press()
+        await _wait_for_condition(
+            pilot,
+            lambda: writes == [("library.reader", "library_open", True)],
+            message="Saved-closed manual expansion did not persist exactly once",
+        )
+        assert (
+            screen._library_notes_work_session_phase
+            is NotesWorkSessionPhase.MANUALLY_CANCELLED
+        )
+        assert screen._library_notes_reader_preferences.library_open is True
+
+        await screen._select_library_rail_row("browse-media")
+        assert (
+            screen._library_notes_work_session_phase is NotesWorkSessionPhase.INACTIVE
+        )
 
 
 @pytest.mark.asyncio
@@ -513,8 +824,24 @@ async def test_wide_editor_deep_link_keeps_reader_navigation_and_local_back() ->
         screen = _active_library_screen(host)
         await _wait_for_library_shell(screen, pilot)
         await _wait_for_selector(screen, pilot, "#library-note-body")
+        await _wait_for_condition(
+            pilot,
+            lambda: (
+                screen._library_notes_work_session_phase is NotesWorkSessionPhase.ACTIVE
+            ),
+            message=lambda: (
+                "Deep-linked Database editor did not settle work-first: "
+                f"phase={screen._library_notes_work_session_phase!r}, "
+                f"pending={screen._library_notes_work_session_activation_pending!r}, "
+                f"selected={screen._selected_note_id!r}, "
+                f"view={screen._library_notes_view!r}, "
+                f"source={screen._library_notes_source!r}, "
+                f"snapshot={screen._library_note_session.snapshot is not None!r}, "
+                f"reader_width={screen._library_notes_work_session_reader_width()!r}"
+            ),
+        )
 
-        assert screen.query_one("#library-rail").display is True
+        assert screen.query_one("#library-rail").display is False
         assert screen.query_one("#library-canvas").display is True
         assert screen.query_one("#library-notes-task-return", Button).display is False
         assert screen.query_one("#library-note-back", Button).display is True

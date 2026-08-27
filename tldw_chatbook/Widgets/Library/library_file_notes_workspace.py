@@ -209,7 +209,6 @@ def resolve_file_note_status_channels(
         authority = _middle_elide_cells(authority, 60)
     return NotesStatusChannels(content, authority, safe)
 
-
 class _FileNotesWorkspaceMessage(Message):
     """Message whose control is the retained Folder Files workspace."""
 

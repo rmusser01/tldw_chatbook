@@ -1491,6 +1491,20 @@ async def test_notes_authority_switch_restores_visible_focus_and_typing_owner(
             lambda: bool(screen.query("#library-note-body")),
             "Database editor did not mount",
         )
+        await _wait_for_condition(
+            pilot,
+            lambda: screen._library_note_editor_armed,
+            message="Database editor did not settle before retained editing",
+        )
+        if size[0] >= 120:
+            await _wait_for_condition(
+                pilot,
+                lambda: (
+                    screen._library_notes_work_session_phase
+                    is NotesWorkSessionPhase.ACTIVE
+                ),
+                message="Database work-first did not settle before retained editing",
+            )
         database_editor = screen.query_one("#library-note-body", TextArea)
         _replace_editor_text(database_editor, "database retained")
         database_editor.selection = database_editor.selection.__class__(
