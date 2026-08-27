@@ -272,8 +272,9 @@ def fail_network(*_args, **_kwargs):
     raise AssertionError("failed installed bundle attempted an upstream read")
 
 tiktoken.load.read_file = fail_network
-url = "https://openaipublic.blob.core.windows.net/gpt-2/encodings/main/vocab.bpe"
-expected_hash = "1ce1664773c50f3e0cc8842619a93edc4624525b728b188a9e0be33b7726adc5"
+url = "https://openaipublic.blob.core.windows.net/encodings/cl100k_base.tiktoken"
+expected_hash = "223921b76ee99bde995b7ff738513eef100fb51d18c93597a113bcffe865b2a7"
+model = "gpt-3.5-turbo"
 try:
     tiktoken_runtime._read_bundled_file(url, expected_hash)
 except tiktoken_runtime.BundledTiktokenAssetError:
@@ -290,7 +291,7 @@ messages = []
 sink = logger.add(messages.append, format="{message}", level="ERROR")
 try:
     text = "abcdefghijklmnop"
-    estimate = token_counter.estimate_tokens(text, model="gpt2", provider="openai")
+    estimate = token_counter.estimate_tokens(text, model=model, provider="openai")
 finally:
     logger.remove(sink)
     token_counter.clear_estimate_cache()
@@ -308,12 +309,17 @@ from tldw_chatbook.Chunking import Chunk_Lib
 from tldw_chatbook.Chunking.engine.strategies.tokens import TokenChunkingStrategy
 
 tiktoken.registry.ENCODINGS.clear()
-TokenChunkingStrategy._failed_tokenizers.discard("gpt2")
+TokenChunkingStrategy._failed_tokenizers.discard(model)
 try:
     Chunk_Lib.improved_chunking_process(
         "one two three four five",
-        {"method": "tokens", "max_size": 4, "overlap": 0},
-        tokenizer_name_or_path="gpt2",
+        {
+            "method": "tokens",
+            "max_size": 4,
+            "overlap": 0,
+            "tokenizer_name_or_path": model,
+        },
+        tokenizer_name_or_path=model,
     )
 except Chunk_Lib.ChunkingError as error:
     assert "tiktoken" in str(error)
@@ -2278,9 +2284,9 @@ def test_installed_tiktoken_bundle_missing_or_corrupt_falls_back_without_writes(
         / "tldw_chatbook"
         / "assets"
         / "tiktoken_cache"
-        / "6d1cbeee0f20b3d9449abfede4726ed8212e3aee"
+        / "9b5ad71b2ce5302211f9c61530b329a4922fc6a4"
     )
-    assert asset.is_file(), "the installed wheel did not contain the reviewed GPT-2 table"
+    assert asset.is_file(), "the installed wheel did not contain the reviewed cl100k table"
     if mutation == "missing":
         asset.unlink()
     else:
