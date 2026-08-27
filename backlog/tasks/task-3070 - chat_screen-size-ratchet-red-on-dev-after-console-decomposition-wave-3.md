@@ -1,11 +1,11 @@
 ---
 id: TASK-3070
 title: chat_screen size ratchet red on dev after console decomposition wave 3
-status: In Progress
+status: Done
 assignee:
   - '@codex'
 created_date: '2026-08-07 18:20'
-updated_date: '2026-08-13 18:05'
+updated_date: '2026-08-27 23:07'
 labels:
   - console
   - architecture-gate
@@ -13,7 +13,8 @@ labels:
 dependencies: []
 references:
   - Docs/superpowers/specs/2026-08-13-console-decomposition-wave6-design.md
-  - Docs/superpowers/specs/2026-08-23-console-decomposition-wave6-closeout-amendment.md
+  - >-
+    Docs/superpowers/specs/2026-08-23-console-decomposition-wave6-closeout-amendment.md
 priority: medium
 ---
 
@@ -32,11 +33,11 @@ either budget to accept growth.
 
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
-- [ ] #1 On the final rebased dev base, both the `chat_screen.py` line-count and `ChatScreen` method-count ratchets pass without increasing either budget.
-- [ ] #2 The source-inspected Wave 6 move/delegate/stay inventory is enforced by AST ownership tests; exact screen/region-owned stays remain in place, and every retained delegate is framework-required, has a real caller, and its complete definition span (decorators excluded) is bounded to five physical source lines.
-- [ ] #3 Image/H3, video, conversation-browser, retrieval/RAG, skill, character, fleet/wake, first-chat, auto-speak, realtime, and review/selection ownership moves to the reviewed controllers without changing DOM or ADR-068 review-note ownership, persistence ordering, worker groups, session/tap/sink and cancellation identity, transcript/usage/fallback ordering, remount/shutdown behavior, privacy, or user-visible outcomes.
-- [ ] #4 Every extracted family has isolated controller coverage using plain fakes without mounting Textual, including the Workspace browser extension, and the mounted product suites continue to cover screen/region integration.
-- [ ] #5 The coordinated child tasks TASK-3070.1 through TASK-3070.14 are completed independently with their focused verification evidence before this parent is closed.
+- [x] #1 On the final rebased dev base, both the `chat_screen.py` line-count and `ChatScreen` method-count ratchets pass without increasing either budget.
+- [x] #2 The source-inspected Wave 6 move/delegate/stay inventory is enforced by AST ownership tests; exact screen/region-owned stays remain in place, and every retained delegate is framework-required, has a real caller, and its complete definition span (decorators excluded) is bounded to five physical source lines.
+- [x] #3 Image/H3, video, conversation-browser, retrieval/RAG, skill, character, fleet/wake, first-chat, auto-speak, realtime, and review/selection ownership moves to the reviewed controllers without changing DOM or ADR-068 review-note ownership, persistence ordering, worker groups, session/tap/sink and cancellation identity, transcript/usage/fallback ordering, remount/shutdown behavior, privacy, or user-visible outcomes.
+- [x] #4 Every extracted family has isolated controller coverage using plain fakes without mounting Textual, including the Workspace browser extension, and the mounted product suites continue to cover screen/region integration.
+- [x] #5 The coordinated child tasks TASK-3070.1 through TASK-3070.14 are completed independently with their focused verification evidence before this parent is closed.
 <!-- AC:END -->
 
 ## Implementation Plan
@@ -88,4 +89,10 @@ is 2,336 (4,320 on dev) does exactly that: anyone triaging reads "21 lines, tran
 and moves on. The budget is deliberately NOT raised here — `Tests/Architecture/
 test_screen_size_ratchet.py` documents it as a one-way ratchet, and raising it is the
 decomposition owner's call, not a passing PR's.
+
+2026-08-27 closeout: TASK-3070.1 through TASK-3070.14 and the related TASK-21201 are complete with checked acceptance criteria, plans, implementation notes, and focused evidence. On final dev c4e52794e2, `chat_screen.py` is 17,037 physical lines with 565 direct `ChatScreen` definitions and 535 unique method names, lowering the immutable historical 17,727/593 ceiling by 690 lines and 28 definitions. Source-inspected inventory and AST boundary tests enforce the approved move/delegate/stay rules, and the reviewed controller families retain isolated plain-fake coverage plus focused mounted integration evidence.
+
+The latest base passed the 61-test Console architecture set and 323 Research Workspace/import-closure tests; earlier current-branch evidence includes 97 citation-persistence tests and 51 character-pagination/provider-continuation tests. Required Derived Artifacts run 33123813806 passed on head 5858b7eb4d. Tests run 33123813819 passed the workflow-shape and all three native artifact-lease legs before a repository-wide external cancellation stopped non-required shards, with no code failure. Targeted Ruff, format, compile, privacy, diagnostic inventory, backlog-ID, ancestry, and diff gates passed; no local full suite was run. Qodo reported zero bugs, zero rule violations, zero requirement gaps, and no inline threads.
+
+ADR required: no. Existing ADR-068 and the approved Console decomposition designs govern the completed ownership boundaries. No new lesson was warranted because the work applies the existing final-rebase ratchet lesson.
 <!-- SECTION:NOTES:END -->
