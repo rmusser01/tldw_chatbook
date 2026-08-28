@@ -4,7 +4,7 @@ title: Make Console provider Apply update and persist conversation settings
 status: To Do
 assignee: []
 created_date: '2026-08-28 05:52'
-updated_date: '2026-08-28 05:56'
+updated_date: '2026-08-28 06:07'
 labels: []
 dependencies: []
 references:
@@ -29,7 +29,7 @@ Ensure the Console Provider/Model popover and full Console Settings apply provid
 - [ ] #4 Reopening a persisted conversation after restart restores its applied generation settings without storing credentials or endpoints.
 - [ ] #5 Changing providers cannot retain the previous provider endpoint or incompatible provider-specific settings.
 - [ ] #6 Unsaved conversations stage settings until first persistence, while temporary conversations remain non-durable unless promoted.
-- [ ] #7 Compaction remains independently owned and cannot gate Provider modal Apply or dismissal.
-- [ ] #8 Invalid input and dismissed deferred callbacks cannot create a false-success close or teardown error.
-- [ ] #9 Targeted tests cover routed mouse clicks, keyboard Apply, persistence and resume, metadata conflicts, and stale-endpoint prevention.
+- [ ] #7 Invalid input and dismissed deferred callbacks cannot create a false-success close or teardown error.
+- [ ] #8 Targeted tests cover routed mouse clicks, keyboard Apply, persistence and resume, metadata conflicts, and stale-endpoint prevention.
+- [ ] #9 The Provider/Model popover contains and returns no compaction controls or values; compaction remains independently available in full Console Settings.
 <!-- AC:END -->

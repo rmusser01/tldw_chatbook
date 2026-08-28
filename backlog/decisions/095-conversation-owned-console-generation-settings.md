@@ -39,34 +39,41 @@ The snapshot never contains `base_url`, credentials, credential references,
 credential resolution remains provider-configuration-owned. System prompt and
 pinned prefill keep their existing conversation-owned persistence paths.
 
-Both Console settings surfaces call one conversation-settings commit seam. The
-quick popover supplies a rebased `ConsoleSessionSettings` snapshot after editing
-its provider, model, temperature, and streaming controls; the full modal supplies
-the same snapshot after editing its broader set of generation controls. The
-persistence seam serializes the complete safe allowlist so a provider change
-cannot leave stale provider-specific fields in the durable overlay.
+Both Console settings surfaces call one conversation-settings commit seam. Each
+surface submits its validated target values plus the fields it exposes; neither
+surface rebases settings itself. The session controller is the sole rebase and
+commit owner. It serializes the resulting complete safe allowlist so a provider
+change cannot leave stale provider-specific fields in the durable overlay.
 
-On a provider change, settings are rebased from defaults for the selected
-provider. The prior provider's endpoint and incompatible provider-specific fields
-are not carried forward. The selected provider's endpoint is resolved afresh from
-environment/configuration. Conversation resume performs the same provider-first
-rebase before applying the saved safe snapshot.
+When the provider is unchanged, the controller preserves compatible current values
+and overlays the fields exposed by the submitting surface. On a provider change,
+it starts from defaults for the selected provider/model, resolves that provider's
+endpoint afresh, overlays only fields exposed by the surface and supported by the
+target, and clears unsupported reasoning/thinking fields. The quick popover never
+submits an endpoint. The full modal may submit a session-only endpoint only when
+the endpoint draft is explicitly bound to the selected provider; otherwise the
+controller uses the configured endpoint. Conversation resume performs the same
+provider-first rebase before applying the saved safe snapshot.
 
-Metadata writes preserve sibling keys and use the existing optimistic
-conversation-version discipline, including bounded conflict retry. Missing or
-malformed objects fail closed to current defaults. A future unsupported version is
-preserved and is never overwritten by an older client without an explicit user
-reset.
+Each live Apply increments a process-local settings revision on the exact session.
+Metadata persistence carries that revision plus the captured conversation identity.
+A retry proceeds only while both still match and the owned metadata value has not
+been superseded; sibling-only version conflicts may reload, merge, and retry within
+the existing bounded policy. Missing or malformed objects fail closed to current
+defaults. A future unsupported version is preserved and is never overwritten by an
+older client without an explicit user reset.
 
 An unsaved ordinary session stages its live generation settings and writes the
 safe snapshot when the conversation is first persisted. A temporary conversation
 remains non-durable; promotion writes its current safe snapshot into the promoted
-conversation. Forks copy the effective safe generation snapshot under ADR-092's
-declarative future-work configuration rule.
+conversation. The serializer and provider-rebase helper remain reusable by the
+future fork implementation governed by ADR-092, but TASK-22515 does not implement
+or test a conversation-fork flow.
 
-Compaction is not part of this settings commit. Its existing control, owner,
-storage, and failure behavior remain independent and cannot delay, veto, qualify,
-or otherwise affect Provider/Model Apply or modal dismissal.
+The Provider/Model popover contains and returns no compaction controls or values.
+Compaction remains in the full Settings Context view with its existing owner,
+storage, and behavior. It cannot delay, veto, qualify, or otherwise affect
+Provider/Model Apply or modal dismissal.
 
 ## Context
 
@@ -108,7 +115,9 @@ data.
   requires the existing Save-as-default path to survive restart.
 - Apply remains successful in live session state even if metadata persistence
   fails; the user receives a precise warning that the change could not be saved
-  for restart. Compaction state is not mentioned in that outcome.
+  for restart. Compaction is absent from the popover and the outcome.
+- A per-session settings revision prevents an older persistence completion or
+  retry from overwriting a newer Apply or a rebound conversation identity.
 - Metadata parsing and serialization require a small versioned helper with an
   explicit allowlist and sibling-preserving merge.
 - Provider changes must use one provider-aware rebase path from both settings

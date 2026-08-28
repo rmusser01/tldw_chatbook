@@ -32,25 +32,30 @@ Apply means **apply to this conversation now**.
   the notification states that the setting is active now but was not saved for
   restart.
 
-Compaction has no role in this contract. Its existing UI and persistence path are
-unchanged and cannot affect Provider/Model Apply, success, or dismissal.
+The Provider/Model popover contains no compaction controls and returns no compaction
+value. Compaction remains available in the full Settings Context view through its
+existing independent owner and persistence path.
 
 ## Selected Architecture
 
 The existing Console session remains the live owner. The existing conversation row
 becomes the durable owner of an allowlisted generation-settings snapshot.
 
-One session-controller commit accepts:
+One session-controller commit accepts a typed intent containing:
 
 - the stable originating session ID;
-- a complete validated `ConsoleSessionSettings` snapshot;
-- the expected conversation/version identity when persistence already exists.
+- the conversation identity captured when the surface opened, if one exists;
+- the validated target provider/model and values submitted by the surface;
+- the exact set of fields exposed by that surface;
+- a full-modal endpoint only when its draft is bound to the target provider.
 
-The commit validates that the origin still exists, rebases the settings when the
-provider changed, replaces that session's live settings, synchronizes the Console
-summary/control bar immediately, and persists the safe snapshot when the session
-has a conversation row. It never falls back to the currently active session. If
-the origin closed, it reports `Chat closed; nothing applied`.
+The controller is the only provider-rebase owner. The commit validates that the
+origin still exists and still has the captured conversation identity, rebases the
+settings, replaces that session's live settings, increments its monotonic settings
+revision, synchronizes the Console summary/control bar immediately, and persists
+the safe snapshot when the session has a conversation row. It never falls back to
+the currently active session. If the origin closed or was rebound, it reports
+`Chat closed; nothing applied`.
 
 The quick popover and full modal both call this seam. No parallel quick-settings
 service, new database table, or compaction transaction is introduced.
@@ -96,21 +101,27 @@ The metadata helper follows the existing roleplay/speech patterns:
 - use optimistic conversation versions and bounded conflict retry;
 - refuse to overwrite a future unsupported version.
 
-Persisting the complete safe snapshot on either settings surface prevents a prior
-provider's hidden tuning fields from surviving a provider switch.
+Persisting the complete rebased safe snapshot on either settings surface prevents a
+prior provider's hidden tuning fields from surviving a provider switch.
 
 ## Provider Rebase
 
-A provider change is not implemented with a field-only `replace(...)`.
+A provider change is not implemented with a field-only `replace(...)`. The session
+controller owns this operation for both settings surfaces.
 
 1. Normalize the selected provider and model.
-2. Build provider/model defaults for the selected provider.
-3. Resolve the selected provider's configured endpoint through the existing
+2. If the provider is unchanged, preserve compatible current values and overlay the
+   submitted surface fields.
+3. If the provider changed, build provider/model defaults for the selected provider.
+4. Resolve the selected provider's configured endpoint through the existing
    provider-resolution path.
-4. Discard the previous provider's endpoint and incompatible provider-specific
+5. Discard the previous provider's endpoint and incompatible provider-specific
    reasoning/thinking values.
-5. Apply the validated user-editable values from the modal.
-6. Mark the resulting snapshot as user-authored and commit it to the exact session.
+6. Overlay only values exposed by the submitting surface and supported by the
+   selected provider.
+7. Accept a full-modal session endpoint only when the endpoint draft is explicitly
+   bound to the selected provider; the quick popover never submits an endpoint.
+8. Mark the resulting snapshot as user-authored and commit it to the exact session.
 
 Conversation hydration performs the same ordering: parse the saved provider first,
 build defaults for that provider, then overlay the remaining saved fields. A model
@@ -120,18 +131,22 @@ silent fallback.
 
 ## Apply Flow
 
-1. Opening either settings surface captures the origin session ID before catalog
-   loading or other asynchronous work.
+1. Opening either settings surface captures the origin session ID and current
+   conversation identity before catalog loading or other asynchronous work.
 2. Widget edits remain a local draft until Apply.
 3. Apply validates provider, model, and numeric fields. Validation failure keeps the
    surface open and focuses the first invalid control.
-4. Provider-aware rebasing produces one immutable settings snapshot.
-5. The session controller commits that snapshot to the origin session.
+4. The surface submits its typed intent to the session controller.
+5. The controller performs provider-aware rebasing, commits the immutable settings
+   snapshot to the origin session, and increments that session's settings revision.
 6. Mounted summaries and provider/model controls synchronize immediately.
 7. The modal dismisses.
 8. If the session is already persisted, its safe metadata snapshot is written with
-   sibling-preserving optimistic concurrency. If it is unsaved, the live snapshot
-   is serialized during first conversation persistence.
+   sibling-preserving optimistic concurrency. A retry proceeds only while the
+   settings revision and conversation identity still match and the owned metadata
+   key has not been superseded. Sibling-only conflicts may be merged and retried.
+   If the session is unsaved, the live snapshot is serialized during first
+   conversation persistence.
 9. Persistence failure leaves the live change applied and emits one precise warning:
    `Applied to this conversation, but could not save for restart.`
 
@@ -165,6 +180,9 @@ state machine or additional configuration sections.
 - Unsaved chat copy: `Saved with the conversation after its first message`
 - Temporary chat copy: `Temporary until this chat is promoted`
 
+The current compaction threshold, help, and mode controls are removed from this
+popover. Compaction remains available in the full Settings Context view.
+
 Temperature parsing no longer silently restores the old value. Invalid input shows
 an inline error and keeps the draft intact. Success uses one concise notification;
 there is no `Next send` label because the conversation setting changes immediately.
@@ -182,7 +200,7 @@ System prompt and pinned prefill retain their existing storage paths; the shared
 commit coordinates live `ConsoleSessionSettings` replacement without duplicating
 their durable data in `console_generation_settings`.
 
-## Resume, First Persistence, and Forks
+## Resume and First Persistence
 
 - **Resume:** Build defaults for the saved overlay provider, apply the validated
   safe snapshot, resolve endpoint/configuration afresh, and set `source="user"`.
@@ -190,8 +208,9 @@ their durable data in `console_generation_settings`.
   include its serialized safe form when first creating the conversation row.
 - **Temporary chat:** Do not create durability merely because Apply was clicked.
   Promotion writes the current safe snapshot with the new conversation.
-- **Fork:** Copy the effective safe generation snapshot as declarative future-work
-  configuration under ADR-092. Do not copy endpoints or credentials.
+
+The serializer and provider-rebase helper are reusable by the future fork flow under
+ADR-092, but this task does not implement or test that unshipped flow.
 
 ## Error Handling
 
@@ -199,8 +218,9 @@ their durable data in `console_generation_settings`.
 - Invalid fields: keep the modal open with inline feedback.
 - Unsupported saved metadata version: preserve it, warn once when relevant, and do
   not overwrite it automatically.
-- Metadata version conflict: reload, merge the owned key with sibling preservation,
-  and retry within the existing bounded policy.
+- Metadata version conflict: reload and retry only for sibling-only changes while
+  the session settings revision, conversation identity, and owned metadata base
+  still match. Abort an obsolete Apply rather than overwriting a newer one.
 - Persistence failure: retain the live applied settings and report only the restart
   consequence. Do not mention compaction.
 - Unconfigured saved provider: preserve the selection and expose the normal blocked
@@ -226,10 +246,10 @@ Focused tests cover:
 9. Metadata writes preserve speech, roleplay, prefill, and unrelated sibling keys;
    bounded conflict retry cannot let an older Apply overwrite a newer one.
 10. Corrupt and future-version overlays fail closed without destructive overwrite.
-11. Unsaved-first-persistence, temporary-promotion, and fork flows preserve the
-    defined durability boundary.
-12. Compaction behavior and its existing tests remain unchanged; provider Apply does
-    not call or await the compaction repository.
+11. Unsaved-first-persistence and temporary-promotion flows preserve the defined
+    durability boundary.
+12. The quick popover contains and returns no compaction controls or value; full
+    Settings Context compaction behavior and its existing tests remain unchanged.
 
 Verification uses only affected pytest modules plus targeted lint/format and
 `git diff --check`. A full-suite sweep requires explicit user approval under the
@@ -240,7 +260,9 @@ repository testing policy.
 - No global provider/default mutation from Apply.
 - No endpoint or credential persistence in conversation metadata.
 - No new database table or schema migration.
-- No compaction ownership, storage, transaction, error, or UX changes.
+- No compaction ownership, storage, transaction, error, or full-Settings UX changes;
+  the unrelated controls are removed only from the Provider/Model popover.
+- No conversation-fork implementation or integration test.
 - No attempt to mutate a request that already captured its execution context.
 - No live model-catalog refresh inside Apply.
 - No generic Console settings refactor outside the shared commit and rebase seams.
@@ -261,7 +283,8 @@ provider-resolution precedence, and the cross-surface settings contract.
 - **AC4:** metadata serialization plus provider-first hydration.
 - **AC5:** provider-aware rebase and endpoint exclusion regression.
 - **AC6:** first-persistence, temporary, and promotion behavior.
-- **AC7:** explicit compaction non-goal and dependency guard.
+- **AC7:** removal of compaction from the Provider/Model popover and preservation of
+  the independent full-Settings owner.
 - **AC8:** inline validation and deferred-callback regression.
 - **AC9:** focused interaction, persistence, concurrency, hydration, and endpoint
   coverage.
