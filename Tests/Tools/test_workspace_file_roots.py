@@ -254,7 +254,8 @@ def test_all_consumers_share_validation_and_write_prefilters(
         )
     assert set(wfr.folder_binding_roots("ws-a")) == {ro_root, rw_root}
     note = wfr.workspace_context_note("ws-a", launch_cwd=tmp_path, registry=registry)
-    assert "ro" in note and "rw" in note
+    assert "  - ro (read-only)" in note.splitlines()
+    assert "  - rw" in note.splitlines()
     assert seen == [
         (rw_binding.binding_id,),
         (ro_binding.binding_id, rw_binding.binding_id),
@@ -267,9 +268,14 @@ def test_change_review_gates_precede_binding_validation(tmp_path, monkeypatch) -
     root = tmp_path / "root"
     root.mkdir()
     registry.add_folder_binding("ws-a", root)
-    monkeypatch.setattr(wfr, "_registry_factory", lambda: registry)
     monkeypatch.setenv("TLDW_CHANGE_REVIEW_ENABLED", "1")
+    factory_calls = 0
     calls = 0
+
+    def registry_factory():
+        nonlocal factory_calls
+        factory_calls += 1
+        return registry
 
     def accept_all(bindings):
         nonlocal calls
@@ -277,32 +283,31 @@ def test_change_review_gates_precede_binding_validation(tmp_path, monkeypatch) -
         for binding in bindings:
             yield binding, Path(binding.locator)
 
+    monkeypatch.setattr(wfr, "_registry_factory", registry_factory)
     monkeypatch.setattr(
         wfr, "_iter_valid_folder_bindings", accept_all, raising=False
     )
     assert wfr.folder_binding_roots("ws-a") == (root,)
+    assert factory_calls == 1
     assert calls == 1
 
     monkeypatch.setenv("TLDW_CHANGE_REVIEW_ENABLED", "0")
-    monkeypatch.setattr(
-        wfr,
-        "_registry_factory",
-        lambda: (_ for _ in ()).throw(AssertionError("registry touched")),
-    )
     assert wfr.folder_binding_roots("ws-a") == ()
+    assert factory_calls == 1
     assert calls == 1
 
     monkeypatch.setenv("TLDW_CHANGE_REVIEW_ENABLED", "1")
     registry.set_change_review_enabled("ws-a", False)
-    monkeypatch.setattr(wfr, "_registry_factory", lambda: registry)
-    monkeypatch.setattr(
-        registry,
-        "list_folder_bindings",
-        lambda _workspace_id: (_ for _ in ()).throw(
-            AssertionError("bindings listed")
-        ),
-    )
+    listing_calls = 0
+
+    def list_bindings(_workspace_id):
+        nonlocal listing_calls
+        listing_calls += 1
+        return ()
+
+    monkeypatch.setattr(registry, "list_folder_bindings", list_bindings)
     assert wfr.folder_binding_roots("ws-a") == ()
+    assert listing_calls == 0
     assert calls == 1
 
 
