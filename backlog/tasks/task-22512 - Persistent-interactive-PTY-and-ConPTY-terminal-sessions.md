@@ -36,14 +36,14 @@ Add a deliberately separate, user-controlled interactive terminal experience for
 - [ ] #6 The UI makes full OS-user authority and the absence of workspace confinement unmistakable before a session starts.
 - [ ] #7 Session concurrency and resource limits are explicit and produce predictable refusal behavior.
 - [ ] #8 Stop, shutdown, app-process-failure cleanup, descendant cleanup, and honest cleanup-unproven behavior have focused POSIX and Windows verification.
-- [ ] #9 The implementation task records an ADR decision before code work because this introduces a long-lived runtime and UX boundary.
+- [x] #9 The implementation task records an ADR decision before code work because this introduces a long-lived runtime and UX boundary.
 - [ ] #10 User documentation distinguishes persistent terminals from raw ! commands, model shell_exec, and virtual_cli.
 <!-- AC:END -->
 
 ## Implementation Plan
 
 <!-- SECTION:PLAN:BEGIN -->
-1. Finalize and independently review the persistent-terminal design and proposed ADR before code work.
+1. Use the owner-approved, independently reviewed persistent-terminal design and accepted ADR-099 as the implementation boundary.
 2. Qualify pyte, the terminal-specific scrubbed environments, and Windows pywinpty against the required shell, terminal-protocol, packaging, and real-platform matrices; record results in `Docs/superpowers/reviews/evidence/task-22512/dependency-qualification.md`, fail the affected backend if a mandatory row fails, and require a new or superseding ADR decision before changing the pinned dependency/API boundary.
 3. Implement the app-global session contracts, authorization states, resource limits, and terminal screen model through focused test-driven slices.
 4. Add the admission-gated POSIX PTY and Windows ConPTY backends with one authoritative reaper, bounded control channels, and platform-native cleanup evidence.

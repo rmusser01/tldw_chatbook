@@ -1,6 +1,6 @@
 # ADR-099: Persistent Terminal Session Runtime Boundary
 
-Status: Proposed
+Status: Accepted
 Date: 2026-08-28
 Related Task: [TASK-22512 - Persistent interactive PTY and ConPTY terminal sessions](../tasks/task-22512%20-%20Persistent-interactive-PTY-and-ConPTY-terminal-sessions.md)
 Design: [Persistent terminal sessions design](../../Docs/superpowers/specs/2026-08-28-persistent-terminal-sessions-design.md)
