@@ -2490,7 +2490,11 @@ def load_subject_sources(
     repo: Path, subject: Subject
 ) -> tuple[dict[str, bytes], dict[str, str]]:
     """Read the three executable sources from the admitted Git object tree."""
-    if _git(repo, "rev-parse", f"{subject.commit}^{{tree}}") != subject.tree:
+    try:
+        resolved_tree = _git(repo, "rev-parse", f"{subject.commit}^{{tree}}")
+    except subprocess.CalledProcessError:
+        raise CloseoutError("subject_tree_mismatch") from None
+    if resolved_tree != subject.tree:
         raise CloseoutError("subject_tree_mismatch")
     sources: dict[str, bytes] = {}
     for filename in SOURCE_ARTIFACTS:
@@ -3008,8 +3012,20 @@ def parse_options(arguments: list[str] | None = None) -> ParentOptions:
         raise CloseoutError("development_promotion_conflict")
     if parsed.development_run and verify_evidence_provided:
         raise CloseoutError("development_verify_evidence_conflict")
+    if verify_evidence_provided and (
+        subject_revision_provided
+        or parsed.promote
+        or parsed.no_promote
+        or live_case_provided
+        or parsed.live_only
+    ):
+        raise CloseoutError("verify_evidence_mode_conflict")
     if live_case_provided and parsed.live_only:
         raise CloseoutError("live_selection_conflict")
+    if live_case_provided and parsed.live_case not in EXECUTABLE_LIVE_ROOTS:
+        raise CloseoutError("scenario_not_defined")
+    if not parsed.development_run and (live_case_provided or parsed.live_only):
+        raise CloseoutError("production_live_selection_conflict")
     if subject_revision_provided and not parsed.subject_revision.strip():
         raise CloseoutError("subject_revision_empty")
     if verify_evidence_provided and not parsed.verify_evidence.strip():
@@ -3018,9 +3034,6 @@ def parse_options(arguments: list[str] | None = None) -> ParentOptions:
         raise CloseoutError("promotion_subject_required")
     if parsed.promote and parsed.no_promote:
         raise CloseoutError("promotion_mode_conflict")
-    if live_case_provided and parsed.live_case not in EXECUTABLE_LIVE_ROOTS:
-        raise CloseoutError("scenario_not_defined")
-
     live_cases = (
         EXECUTABLE_LIVE_ROOTS
         if parsed.live_only
@@ -3044,30 +3057,222 @@ validate_catalogue(CATALOGUE)
 
 
 def main(arguments: list[str] | None = None) -> int:
-    """Execute the development-only Task 4 live path."""
+    """Execute development, production, or retained-evidence verification."""
+    production_raw_active = False
     try:
         options = parse_options(arguments)
-        if not options.development_run:
-            raise CloseoutError("run_mode_not_implemented")
-        if not options.live_cases:
-            raise CloseoutError("live_selection_required")
         checkout = Path(__file__).resolve().parents[5]
+        if options.development_run:
+            if not options.live_cases:
+                raise CloseoutError("live_selection_required")
+            with tempfile.TemporaryDirectory(prefix="task23019-") as raw:
+                results = run_development_live_cases(
+                    checkout=checkout,
+                    scratch=Path(raw),
+                    live_cases=options.live_cases,
+                )
+            print(
+                json.dumps(
+                    {"live_count": len(results), "results": results}, sort_keys=True
+                )
+            )
+            return 0
+
+        if options.verify_evidence is not None:
+            artifacts = _read_artifact_tree(options.verify_evidence, raw=False)
+            assert isinstance(artifacts, dict)
+            try:
+                manifest = json.loads(artifacts["manifest.json"])
+            except (KeyError, UnicodeError, json.JSONDecodeError, RecursionError):
+                raise CloseoutError("promotion_collision") from None
+            if (
+                not isinstance(manifest, dict)
+                or not isinstance(manifest.get("subject_commit"), str)
+                or not isinstance(manifest.get("subject_tree"), str)
+            ):
+                raise CloseoutError("promotion_collision")
+            subject = Subject(
+                commit=manifest["subject_commit"], tree=manifest["subject_tree"]
+            )
+            subject_sources, _subject_hashes = load_subject_sources(checkout, subject)
+            _validate_bundle(
+                options.verify_evidence,
+                subject=subject,
+                subject_sources=subject_sources,
+            )
+            print(
+                json.dumps(
+                    {
+                        "status": "PASS",
+                        "subject_commit": subject.commit,
+                        "subject_tree": subject.tree,
+                        "verified_evidence": str(options.verify_evidence),
+                    },
+                    sort_keys=True,
+                )
+            )
+            return 0
+
+        if not options.promote and not options.no_promote:
+            raise CloseoutError("run_mode_not_implemented")
+        if options.subject_revision is None:
+            raise CloseoutError("subject_revision_required")
+        environment_revision = os.environ.get("TASK23019_SUBJECT_REVISION")
+        if not environment_revision or not environment_revision.strip():
+            raise CloseoutError("subject_revision_environment_required")
+        if environment_revision != options.subject_revision:
+            raise CloseoutError("subject_revision_environment_mismatch")
+
+        subject = admit_subject(checkout, options.subject_revision)
+        subject_sources, subject_hashes = load_subject_sources(checkout, subject)
+        live_cases = options.live_cases or EXECUTABLE_LIVE_ROOTS
+        production_raw_active = True
         with tempfile.TemporaryDirectory(prefix="task23019-") as raw:
-            results = run_development_live_cases(
+            raw_root = Path(raw)
+            automated_results: dict[str, object] = {}
+            declared_selectors = tuple(
+                selector
+                for contract in CATALOGUE.values()
+                for selector in contract.automated_nodes
+            )
+            if not options.live_only:
+                for index, relative in enumerate(CURATED_PYTEST_FILES):
+                    result = run_closeout_child(
+                        checkout=checkout,
+                        scratch=raw_root / f"raw-results/automated/{index:02}",
+                        mode="pytest",
+                        target=checkout / relative,
+                    )
+                    if result.error is not None:
+                        raise CloseoutError(result.error, result.details)
+                    if result.result_path is None:
+                        raise CloseoutError("child_failed")
+                    payload, result_problem = _read_json_object(result.result_path)
+                    if result_problem is not None or payload is None:
+                        raise CloseoutError(
+                            "child_failed",
+                            {"result_parse": result_problem or "missing"},
+                        )
+                    retained_payload = {
+                        node_id: value
+                        for node_id, value in payload.items()
+                        if any(
+                            matching_node_ids(selector, (node_id,))
+                            for selector in declared_selectors
+                        )
+                    }
+                    if automated_results.keys() & retained_payload.keys():
+                        raise CloseoutError("automated_result_duplicate")
+                    automated_results.update(retained_payload)
+
+            live_results = run_development_live_cases(
                 checkout=checkout,
-                scratch=Path(raw),
-                live_cases=options.live_cases,
+                scratch=raw_root,
+                live_cases=live_cases,
+            )
+            validate_complete_results(CATALOGUE, automated_results, live_results)
+
+            retained = raw_root / "retained"
+            facts = retained / "facts"
+            captures = retained / "captures"
+            facts.mkdir(parents=True)
+            captures.mkdir()
+            (retained / "summary.json").write_bytes(
+                _json_bytes(_canonical_summary(automated_results, live_results))
+            )
+            inventory = [
+                *(
+                    ("automated", name, value)
+                    for name, value in automated_results.items()
+                ),
+                *(("live", name, value) for name, value in live_results.items()),
+            ]
+            for index, (kind, name, value) in enumerate(sorted(inventory)):
+                (facts / f"result-{index:03}.json").write_bytes(
+                    _json_bytes(
+                        {
+                            "kind": kind,
+                            "result_name": name,
+                            "status": _result_status(value),
+                        }
+                    )
+                )
+            live_capture_root = (
+                raw_root / "raw-results/common_matrix/raw-evidence/captures"
+            )
+            results_by_kind = {
+                "automated": automated_results,
+                "live": live_results,
+            }
+            for stem, (kind, name) in REPRESENTATIVE_CAPTURES.items():
+                body = b"Automated route-cycle contract completed.\n"
+                if kind == "live":
+                    try:
+                        body = _read_regular_file(
+                            live_capture_root / f"{stem}.txt",
+                            limit=TEXT_ARTIFACT_BYTE_LIMIT,
+                        )
+                    except OSError:
+                        raise CloseoutError("representative_capture_missing") from None
+                (captures / f"{stem}.txt").write_bytes(
+                    (
+                        f"result_name: {name}\n"
+                        f"status: {_result_status(results_by_kind[kind][name])}\n"
+                    ).encode()
+                    + body
+                )
+            raw_artifacts = collect_raw_artifacts(retained)
+            normalization_roots = {
+                "checkout": checkout,
+                "runtime": Path(sys.prefix),
+                "scratch": raw_root,
+            }
+        production_raw_active = False
+
+        verify_subject_tree(checkout, subject)
+        if options.promote:
+            promote_evidence(
+                destination=checkout / SOURCE_DIRECTORY,
+                raw_root=raw_root,
+                subject=subject,
+                subject_sources=subject_sources,
+                subject_hashes=subject_hashes,
+                raw_artifacts=raw_artifacts,
+                catalogue=CATALOGUE,
+                automated_results=automated_results,
+                live_results=live_results,
+                normalization_roots=normalization_roots,
             )
         print(
-            json.dumps({"live_count": len(results), "results": results}, sort_keys=True)
+            json.dumps(
+                {
+                    "status": "PASS",
+                    "subject_commit": subject.commit,
+                    "subject_tree": subject.tree,
+                    "automated_count": len(automated_results),
+                    "live_count": len(live_results),
+                    "promoted": options.promote,
+                },
+                sort_keys=True,
+            )
         )
         return 0
     except CloseoutError as error:
         failure = {"error": error.category}
         if error.details:
             failure["details"] = error.details
-        print(json.dumps(failure, sort_keys=True), file=sys.stderr)
-        return 2
+    except OSError as error:
+        if not production_raw_active:
+            raise
+        primary = error.__context__
+        if isinstance(primary, CloseoutError):
+            failure = {"error": primary.category}
+            if primary.details:
+                failure["details"] = primary.details
+        else:
+            failure = {"error": "production_evidence_io_failed"}
+    print(json.dumps(failure, sort_keys=True), file=sys.stderr)
+    return 2
 
 
 if __name__ == "__main__":

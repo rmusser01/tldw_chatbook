@@ -776,20 +776,60 @@ def test_development_run_is_always_non_promoting():
 def test_parent_cli_accepts_each_declared_option():
     module = _load_runner()
 
-    promotable = module.parse_options(
-        ["--subject-revision", "abc", "--promote", "--live-case", "common_matrix"]
-    )
+    promotable = module.parse_options(["--subject-revision", "abc", "--promote"])
     assert promotable.subject_revision == "abc"
     assert promotable.promote is True
-    assert promotable.live_cases == ("common_matrix",)
+    assert promotable.live_cases == ()
 
-    live_only = module.parse_options(["--live-only", "--no-promote"])
+    selected = module.parse_options(
+        ["--development-run", "--live-case", "common_matrix"]
+    )
+    assert selected.live_cases == ("common_matrix",)
+
+    live_only = module.parse_options(["--development-run", "--live-only"])
     assert live_only.live_only is True
     assert live_only.no_promote is True
     assert live_only.live_cases == module.EXECUTABLE_LIVE_ROOTS
 
     evidence = module.parse_options(["--verify-evidence", "some/bundle"])
     assert evidence.verify_evidence == Path("some/bundle")
+
+
+@pytest.mark.parametrize(
+    "arguments",
+    [
+        ["--subject-revision", "abc", "--promote", "--live-case", "common_matrix"],
+        ["--subject-revision", "abc", "--promote", "--live-only"],
+        ["--subject-revision", "abc", "--no-promote", "--live-case", "common_matrix"],
+        ["--subject-revision", "abc", "--no-promote", "--live-only"],
+    ],
+)
+def test_production_rejects_partial_live_selection(arguments):
+    module = _load_runner()
+
+    with pytest.raises(module.CloseoutError) as error:
+        module.parse_options(arguments)
+
+    assert error.value.category == "production_live_selection_conflict"
+
+
+@pytest.mark.parametrize(
+    "conflicting",
+    [
+        ["--subject-revision", "abc"],
+        ["--promote"],
+        ["--no-promote"],
+        ["--live-case", "common_matrix"],
+        ["--live-only"],
+    ],
+)
+def test_verify_evidence_is_exclusive_with_execution_options(conflicting):
+    module = _load_runner()
+
+    with pytest.raises(module.CloseoutError) as error:
+        module.parse_options(["--verify-evidence", "bundle", *conflicting])
+
+    assert error.value.category == "verify_evidence_mode_conflict"
 
 
 @pytest.mark.parametrize("durable_key", ("resize_purity", "single_app_route_cycle"))
@@ -5285,3 +5325,414 @@ def test_non_object_manifest_json_is_a_stable_promotion_collision(tmp_path):
         module.promote_evidence(**second)
 
     assert error.value.category == "promotion_collision"
+
+
+def _install_passing_production_main_fakes(module, monkeypatch):
+    subject = _promotion_subject(module)
+    sources, source_hashes = _promotion_sources(module)
+    automated, live = _canonical_promotion_results(module)
+    observed = {
+        "admissions": [],
+        "automated_targets": [],
+        "live_cases": [],
+        "live_scratch": [],
+        "tree_checks": [],
+    }
+
+    def admit(repo, requested):
+        observed["admissions"].append((repo, requested))
+        return subject
+
+    def load_sources(repo, admitted):
+        assert admitted == subject
+        return sources, source_hashes
+
+    def run_child(*, checkout, scratch, mode, target, **_kwargs):
+        assert mode == "pytest"
+        relative = target.relative_to(checkout).as_posix()
+        observed["automated_targets"].append(relative)
+        payload = {
+            name: value
+            for name, value in automated.items()
+            if name.partition("::")[0] == relative
+        }
+        payload[f"{relative}::test_unlisted_curated_smoke"] = "PASS"
+        result_path = scratch / "automated-results.json"
+        result_path.parent.mkdir(parents=True, exist_ok=True)
+        result_path.write_text(json.dumps(payload), encoding="utf-8")
+        return module.ChildRunResult(0, None, result_path)
+
+    def run_live(*, checkout, scratch, live_cases):
+        observed["live_cases"].append(live_cases)
+        observed["live_scratch"].append(scratch)
+        captures = scratch / "raw-results/common_matrix/raw-evidence/captures"
+        captures.mkdir(parents=True)
+        for stem, (kind, _name) in module.REPRESENTATIVE_CAPTURES.items():
+            if kind == "live":
+                (captures / f"{stem}.txt").write_text(
+                    f"production compositor for {stem}\n", encoding="utf-8"
+                )
+        return live
+
+    def verify_tree(repo, admitted):
+        observed["tree_checks"].append((repo, admitted))
+
+    monkeypatch.setattr(module, "admit_subject", admit)
+    monkeypatch.setattr(module, "load_subject_sources", load_sources)
+    monkeypatch.setattr(module, "run_closeout_child", run_child)
+    monkeypatch.setattr(module, "run_development_live_cases", run_live)
+    monkeypatch.setattr(module, "verify_subject_tree", verify_tree)
+    return subject, sources, source_hashes, automated, live, observed
+
+
+def test_production_main_runs_complete_subject_and_promotes_after_raw_cleanup(
+    monkeypatch, capsys
+):
+    module = _load_runner()
+    subject, sources, source_hashes, automated, live, observed = (
+        _install_passing_production_main_fakes(module, monkeypatch)
+    )
+    monkeypatch.setenv("TASK23019_SUBJECT_REVISION", subject.commit)
+    validations = []
+    promotions = []
+    validate_complete = module.validate_complete_results
+
+    def validate(*args, **kwargs):
+        validations.append((args, kwargs))
+        return validate_complete(*args, **kwargs)
+
+    def promote(**kwargs):
+        assert not kwargs["raw_root"].exists()
+        promotions.append(kwargs)
+
+    monkeypatch.setattr(module, "validate_complete_results", validate)
+    monkeypatch.setattr(module, "promote_evidence", promote)
+
+    assert module.main(["--subject-revision", subject.commit, "--promote"]) == 0
+
+    assert observed["admissions"] == [(REPO_ROOT, subject.commit)]
+    assert observed["automated_targets"] == list(module.CURATED_PYTEST_FILES)
+    assert observed["live_cases"] == [module.EXECUTABLE_LIVE_ROOTS]
+    assert observed["tree_checks"] == [(REPO_ROOT, subject)]
+    assert len(validations) == 1
+    assert len(promotions) == 1
+    promoted = promotions[0]
+    assert promoted["destination"] == REPO_ROOT / module.SOURCE_DIRECTORY
+    assert promoted["subject"] == subject
+    assert promoted["subject_sources"] == sources
+    assert promoted["subject_hashes"] == source_hashes
+    assert promoted["automated_results"] == automated
+    assert promoted["live_results"] == live
+    assert json.loads(promoted["raw_artifacts"]["summary.json"]) == (
+        module._canonical_summary(automated, live)
+    )
+    assert {
+        path for path in promoted["raw_artifacts"] if path.startswith("captures/")
+    } == {f"captures/{stem}.txt" for stem in module.REPRESENTATIVE_CAPTURES}
+    assert all(not scratch.exists() for scratch in observed["live_scratch"])
+    assert json.loads(capsys.readouterr().out)["status"] == "PASS"
+
+
+def test_production_no_promote_executes_and_validates_without_repository_writes(
+    monkeypatch, capsys
+):
+    module = _load_runner()
+    subject, _sources, _hashes, _automated, _live, observed = (
+        _install_passing_production_main_fakes(module, monkeypatch)
+    )
+    monkeypatch.setenv("TASK23019_SUBJECT_REVISION", subject.commit)
+    validations = []
+    validate_complete = module.validate_complete_results
+
+    def validate(*args, **kwargs):
+        validations.append((args, kwargs))
+        return validate_complete(*args, **kwargs)
+
+    monkeypatch.setattr(module, "validate_complete_results", validate)
+    monkeypatch.setattr(
+        module,
+        "promote_evidence",
+        lambda **_kwargs: pytest.fail("no-promote attempted a repository write"),
+    )
+
+    assert module.main(["--subject-revision", subject.commit, "--no-promote"]) == 0
+
+    assert observed["automated_targets"] == list(module.CURATED_PYTEST_FILES)
+    assert observed["live_cases"] == [module.EXECUTABLE_LIVE_ROOTS]
+    assert observed["tree_checks"] == [(REPO_ROOT, subject)]
+    assert len(validations) == 1
+    assert all(not scratch.exists() for scratch in observed["live_scratch"])
+    assert json.loads(capsys.readouterr().out)["promoted"] is False
+
+
+def test_verify_evidence_validates_bundle_without_executing_tests(
+    monkeypatch, tmp_path, capsys
+):
+    module = _load_runner()
+    subject = _promotion_subject(module)
+    sources, source_hashes = _promotion_sources(module)
+    evidence = tmp_path / "task-23019"
+    manifest = {
+        "subject_commit": subject.commit,
+        "subject_tree": subject.tree,
+    }
+    monkeypatch.setattr(
+        module,
+        "_read_artifact_tree",
+        lambda root, **_kwargs: {"manifest.json": json.dumps(manifest).encode("utf-8")},
+    )
+    monkeypatch.setattr(
+        module,
+        "load_subject_sources",
+        lambda repo, admitted: (sources, source_hashes),
+    )
+    validations = []
+
+    def validate_bundle(root, *, subject, subject_sources):
+        validations.append((root, subject, subject_sources))
+        return {}, (1, 2, 3, "receipt")
+
+    monkeypatch.setattr(module, "_validate_bundle", validate_bundle)
+    monkeypatch.setattr(
+        module,
+        "run_closeout_child",
+        lambda **_kwargs: pytest.fail("verification executed automated tests"),
+    )
+    monkeypatch.setattr(
+        module,
+        "run_development_live_cases",
+        lambda **_kwargs: pytest.fail("verification executed live tests"),
+    )
+    monkeypatch.setattr(
+        module,
+        "promote_evidence",
+        lambda **_kwargs: pytest.fail("verification attempted promotion"),
+    )
+
+    assert module.main(["--verify-evidence", str(evidence)]) == 0
+
+    assert validations == [(evidence, subject, sources)]
+    emitted = json.loads(capsys.readouterr().out)
+    assert emitted == {
+        "status": "PASS",
+        "subject_commit": subject.commit,
+        "subject_tree": subject.tree,
+        "verified_evidence": str(evidence),
+    }
+
+
+@pytest.mark.parametrize(
+    "category", ("subject_revision_mismatch", "subject_worktree_not_clean")
+)
+def test_production_subject_admission_failure_blocks_execution_and_promotion(
+    monkeypatch, category, capsys
+):
+    module = _load_runner()
+    requested = "a" * 40
+    monkeypatch.setenv("TASK23019_SUBJECT_REVISION", requested)
+    monkeypatch.setattr(
+        module,
+        "admit_subject",
+        lambda *_args: (_ for _ in ()).throw(module.CloseoutError(category)),
+    )
+    monkeypatch.setattr(
+        module,
+        "run_closeout_child",
+        lambda **_kwargs: pytest.fail("failed subject executed tests"),
+    )
+    monkeypatch.setattr(
+        module,
+        "promote_evidence",
+        lambda **_kwargs: pytest.fail("failed subject attempted promotion"),
+    )
+
+    assert module.main(["--subject-revision", requested, "--promote"]) == 2
+    assert json.loads(capsys.readouterr().err) == {"error": category}
+
+
+@pytest.mark.parametrize("failed_kind", ("automated_result", "live_result"))
+def test_failed_production_result_blocks_promotion(monkeypatch, failed_kind, capsys):
+    module = _load_runner()
+    subject, _sources, _hashes, automated, live, _observed = (
+        _install_passing_production_main_fakes(module, monkeypatch)
+    )
+    monkeypatch.setenv("TASK23019_SUBJECT_REVISION", subject.commit)
+    if failed_kind == "automated_result":
+        failed = next(iter(automated))
+        automated[failed] = "FAIL"
+    else:
+        failed = next(iter(live))
+        live[failed] = "FAIL"
+    monkeypatch.setattr(
+        module,
+        "promote_evidence",
+        lambda **_kwargs: pytest.fail("failed result attempted promotion"),
+    )
+
+    assert module.main(["--subject-revision", subject.commit, "--promote"]) == 2
+    assert json.loads(capsys.readouterr().err) == {"error": "result_status_invalid"}
+
+
+@pytest.mark.parametrize(
+    ("environment_revision", "arguments", "category"),
+    [
+        (
+            None,
+            ["--subject-revision", "a" * 40, "--promote"],
+            "subject_revision_environment_required",
+        ),
+        (
+            "b" * 40,
+            ["--subject-revision", "a" * 40, "--promote"],
+            "subject_revision_environment_mismatch",
+        ),
+        ("a" * 40, ["--no-promote"], "subject_revision_required"),
+    ],
+)
+def test_production_subject_argument_and_environment_must_agree_stably(
+    monkeypatch, environment_revision, arguments, category, capsys
+):
+    module = _load_runner()
+    if environment_revision is None:
+        monkeypatch.delenv("TASK23019_SUBJECT_REVISION", raising=False)
+    else:
+        monkeypatch.setenv("TASK23019_SUBJECT_REVISION", environment_revision)
+    monkeypatch.setattr(
+        module,
+        "admit_subject",
+        lambda *_args: pytest.fail("invalid revision agreement admitted subject"),
+    )
+
+    assert module.main(arguments) == 2
+    assert json.loads(capsys.readouterr().err) == {"error": category}
+
+
+def test_production_raw_materialization_failure_is_stable_and_does_not_promote(
+    monkeypatch, capsys
+):
+    module = _load_runner()
+    subject, *_rest = _install_passing_production_main_fakes(module, monkeypatch)
+    monkeypatch.setenv("TASK23019_SUBJECT_REVISION", subject.commit)
+    original_write_bytes = Path.write_bytes
+
+    def fail_summary_write(path, payload):
+        if path.name == "summary.json":
+            raise OSError("injected raw write failure")
+        return original_write_bytes(path, payload)
+
+    monkeypatch.setattr(Path, "write_bytes", fail_summary_write)
+    monkeypatch.setattr(
+        module,
+        "promote_evidence",
+        lambda **_kwargs: pytest.fail("failed raw materialization promoted evidence"),
+    )
+
+    assert module.main(["--subject-revision", subject.commit, "--promote"]) == 2
+    assert json.loads(capsys.readouterr().err) == {
+        "error": "production_evidence_io_failed"
+    }
+
+
+def test_production_raw_cleanup_failure_is_stable_and_does_not_promote(
+    monkeypatch, tmp_path, capsys
+):
+    module = _load_runner()
+    subject, *_rest = _install_passing_production_main_fakes(module, monkeypatch)
+    monkeypatch.setenv("TASK23019_SUBJECT_REVISION", subject.commit)
+    raw_root = tmp_path / "raw-root"
+
+    class FailingCleanup:
+        def __enter__(self):
+            raw_root.mkdir()
+            return str(raw_root)
+
+        def __exit__(self, *_args):
+            raise OSError("injected cleanup failure")
+
+    monkeypatch.setattr(
+        module.tempfile, "TemporaryDirectory", lambda **_kwargs: FailingCleanup()
+    )
+    monkeypatch.setattr(
+        module,
+        "promote_evidence",
+        lambda **_kwargs: pytest.fail("failed raw cleanup promoted evidence"),
+    )
+
+    assert module.main(["--subject-revision", subject.commit, "--promote"]) == 2
+    assert raw_root.exists()
+    assert json.loads(capsys.readouterr().err) == {
+        "error": "production_evidence_io_failed"
+    }
+
+
+def test_production_cleanup_failure_preserves_primary_closeout_error(
+    monkeypatch, tmp_path, capsys
+):
+    module = _load_runner()
+    subject, *_rest = _install_passing_production_main_fakes(module, monkeypatch)
+    monkeypatch.setenv("TASK23019_SUBJECT_REVISION", subject.commit)
+    raw_root = tmp_path / "raw-root"
+
+    class FailingCleanup:
+        def __enter__(self):
+            raw_root.mkdir()
+            return str(raw_root)
+
+        def __exit__(self, *_args):
+            raise OSError("injected cleanup failure")
+
+    monkeypatch.setattr(
+        module.tempfile, "TemporaryDirectory", lambda **_kwargs: FailingCleanup()
+    )
+    monkeypatch.setattr(
+        module,
+        "run_closeout_child",
+        lambda **_kwargs: (_ for _ in ()).throw(
+            module.CloseoutError("primary_child_failure")
+        ),
+    )
+    monkeypatch.setattr(
+        module,
+        "promote_evidence",
+        lambda **_kwargs: pytest.fail("failed run promoted evidence"),
+    )
+
+    assert module.main(["--subject-revision", subject.commit, "--promote"]) == 2
+    assert raw_root.exists()
+    assert json.loads(capsys.readouterr().err) == {"error": "primary_child_failure"}
+
+
+def test_verify_evidence_unresolvable_manifest_subject_fails_stably(
+    monkeypatch, tmp_path, capsys
+):
+    module = _load_runner()
+    evidence = tmp_path / "bundle"
+    monkeypatch.setattr(
+        module,
+        "_read_artifact_tree",
+        lambda *_args, **_kwargs: {
+            "manifest.json": json.dumps(
+                {"subject_commit": "not-a-revision", "subject_tree": "not-a-tree"}
+            ).encode()
+        },
+    )
+    monkeypatch.setattr(
+        module,
+        "_git",
+        lambda *_args: (_ for _ in ()).throw(
+            subprocess.CalledProcessError(128, ["git", "rev-parse"])
+        ),
+    )
+    monkeypatch.setattr(
+        module,
+        "run_closeout_child",
+        lambda **_kwargs: pytest.fail("invalid evidence subject executed tests"),
+    )
+    monkeypatch.setattr(
+        module,
+        "promote_evidence",
+        lambda **_kwargs: pytest.fail("invalid evidence subject promoted"),
+    )
+
+    assert module.main(["--verify-evidence", str(evidence)]) == 2
+    assert json.loads(capsys.readouterr().err) == {"error": "subject_tree_mismatch"}
