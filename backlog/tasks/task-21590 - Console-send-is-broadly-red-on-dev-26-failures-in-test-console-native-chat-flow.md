@@ -1,18 +1,24 @@
 ---
 id: TASK-21590
 title: >-
-  Console send is broadly red on dev   26 failures in test console native chat flow
-status: To Do
-assignee: []
+  Console send is broadly red on dev   26 failures in test console native chat
+  flow
+status: Done
+assignee:
+  - '@codex'
 created_date: '2026-08-23'
+updated_date: '2026-08-28 21:55'
 labels:
   - testing
   - dev-red
   - console
+dependencies: []
 priority: high
 ---
+
 ## Description
 
+<!-- SECTION:DESCRIPTION:BEGIN -->
 `Tests/UI/test_console_native_chat_flow.py` fails 26 tests on pristine dev. The failures span
 generic-provider send, the retry/regenerate/continue family, and the first-send-flag pair — the
 core Console send path. This is either a stale harness or a real break in sending, and until
@@ -21,14 +27,15 @@ exactly the app's most-used flow.
 
 A scratch probe on pristine dev shows the draft is **neither sent nor cleared after Enter**, and
 a single-line control fails the same way — so it is not shift+enter specific.
+<!-- SECTION:DESCRIPTION:END -->
 
 ## Acceptance Criteria
-
-- [x] A determination is recorded, with evidence, of whether Console send is genuinely broken in the shipped app or only in the test harness
-- [x] If the app is broken, the send path is fixed and a test pins the behaviour that regressed
-- [x] If the harness is stale, the harness is repaired so the tests exercise the real send path again — not deleted, and not relaxed until they pass
-- [ ] `Tests/UI/test_console_native_chat_flow.py` is green on dev — **24 of 26 repaired; 2 deliberately left red, see Implementation Notes and TASK-22000**
-- [x] The fix is verified by mutation: breaking send makes these tests fail again
+<!-- AC:BEGIN -->
+- [x] #1 A determination is recorded, with evidence, of whether Console send is genuinely broken in the shipped app or only in the test harness
+- [x] #2 If the app is broken, the send path is fixed and a test pins the behaviour that regressed
+- [x] #3 If the harness is stale, the harness is repaired so the tests exercise the real send path again — not deleted, and not relaxed until they pass
+- [x] #4 `Tests/UI/test_console_native_chat_flow.py` is green on dev — **304 passed on current dev; TASK-22000 repaired the final 2 queue-contract failures**
+- [x] #5 The fix is verified by mutation: breaking send makes these tests fail again
 
 ## Evidence (verified first-hand on dev 33ff5b754, 2026-08-23)
 
@@ -40,8 +47,18 @@ pytest Tests/UI/test_console_native_chat_flow.py -q -p no:randomly
 Surfaced by the TASK-21501/21123 implementer, which classified rather than waved through the
 composer-suite reds it inherited: 9 of its 12 composer-suite failures trace to this same root
 cause. Independently reproduced here before filing.
+<!-- AC:END -->
 
 ## Implementation Plan
+
+<!-- SECTION:PLAN:BEGIN -->
+ADR required: no
+
+ADR path: `backlog/decisions/046-visible-bounded-console-prompt-queue.md`
+
+Reason: this is a verification and backlog-closeout pass for the already accepted
+ADR-046 behavior and TASK-22000 repair; it introduces no storage, ownership,
+runtime-boundary, or long-lived UX decision.
 
 1. Trace one representative failure through the real send path (button press -> screen
    handler -> prompt-queue dispatch -> controller) instead of reading the tests first, and
@@ -55,9 +72,11 @@ cause. Independently reproduced here before filing.
    factory app is missing, do not delete/xfail/relax any test.
 5. Mutation-check every repaired test: break the production gate and confirm each goes red.
 6. Re-run the file and the related composer suite; run `./scripts/preflight.sh`.
+<!-- SECTION:PLAN:END -->
 
 ## Implementation Notes
 
+<!-- SECTION:NOTES:BEGIN -->
 **Console send is not broken for real users.** A headless Pilot run of the real `TldwCli`
 (no `_build_test_app` stubs) under an isolated `HOME`/`XDG_*`/`TLDW_CONFIG_PATH` sandbox, with
 only `chat_api_call` stubbed, sends normally: `store.persistence = ChatPersistenceService`,
@@ -186,3 +205,18 @@ with **0 blocked-egress attempts and 0 teardown errors** — the same 26 failure
 same 13 modules as before this change. Those tests still stop at the durable gate, so
 they never reached the tokenizer; the fixture pre-empts the seam for whenever they are
 repaired.
+
+## Closeout verification (2026-08-28)
+
+Current `origin/dev` at `473e7c9298` includes TASK-22000's queue-contract repair. The exact
+acceptance file now passes **304 tests** in 380.03 seconds. The adjacent composer and durable
+queue/recovery scope passes **54 tests** in 45.68 seconds. No production or test changes were
+required in this closeout; this branch only reconciles TASK-21590's stale acceptance and status
+metadata with the merged behavior. The repository derived-artifact preflight also passed all six
+guards (CSS bundles, profile-owned paths, production diagnostics, backlog IDs, schema allowlist,
+and index-plan pins).
+
+ADR required: no. ADR-046 remains authoritative, and this verification introduced no new
+architecture decision. The closeout surfaced no new incident-backed lesson beyond the testing
+evidence already recorded above.
+<!-- SECTION:NOTES:END -->
