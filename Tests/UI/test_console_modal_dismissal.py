@@ -33,6 +33,7 @@ from tldw_chatbook.Chat.console_prompt_queue import ConsolePromptQueueRegistry
 from tldw_chatbook.Chat.console_session_settings import (
     ConsoleSessionSettings,
     ConsoleSettingsContextEstimate,
+    ConsoleSettingsReadiness,
 )
 from tldw_chatbook.Chat.console_settings_apply import (
     ConsoleSettingsAction,
@@ -348,6 +349,9 @@ def _model_popover_factory(
         durability_copy="Temporary until this chat is promoted",
         draft_rebaser=lambda state, **_kwargs: state,
         live_committer=commit,
+        default_readiness_resolver=lambda _provider, _model: (
+            ConsoleSettingsReadiness("Ready", "Ready.", True)
+        ),
     )
 
 

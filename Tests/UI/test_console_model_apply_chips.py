@@ -18,7 +18,10 @@ from textual.widgets import Select, Static
 from Tests.UI.app_factory import _build_test_app
 from tldw_chatbook.Chat.console_chat_controller import ConsoleChatController
 from tldw_chatbook.Chat.console_context_policy import ConsoleContextPolicyOverrides
-from tldw_chatbook.Chat.console_session_settings import ConsoleSessionSettings
+from tldw_chatbook.Chat.console_session_settings import (
+    ConsoleSessionSettings,
+    ConsoleSettingsReadiness,
+)
 from tldw_chatbook.Chat.console_settings_apply import (
     QUICK_MODEL_DEFAULT_FIELDS,
     ConsoleSettingsCommittedSubmission,
@@ -182,6 +185,9 @@ async def test_model_apply_popover_commits_selected_provider_and_model_once() ->
         durability_copy="Temporary until this chat is promoted",
         draft_rebaser=rebase,
         live_committer=commit,
+        default_readiness_resolver=lambda _provider, _model: (
+            ConsoleSettingsReadiness("Ready", "Ready.", True)
+        ),
     )
     async with harness.run_test(size=(100, 38)) as pilot:
         await harness.push_screen(modal, callback=results.append)

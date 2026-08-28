@@ -20,15 +20,19 @@ from tldw_chatbook.Chat.console_context_repository import ConsoleMemoryRecord
 from tldw_chatbook.Chat.console_session_settings import (
     ConsoleSessionSettings,
     ConsoleSettingsContextEstimate,
+    ConsoleSettingsReadiness,
+    build_console_settings_readiness,
+    build_target_default_console_session_settings,
 )
 from tldw_chatbook.Chat.console_settings_apply import (
+    ConsoleEndpointDraft,
+    ConsoleModelDraft,
     ConsoleSettingsAction,
     ConsoleSettingsCommittedSubmission,
     ConsoleSettingsDraftState,
     ConsoleSettingsFieldDraft,
     ConsoleSettingsFieldProvenance,
     ConsoleSettingsLiveCommit,
-    ConsoleModelDraft,
     ConsoleSettingsOrigin,
     ConsoleSettingsSubmission,
     ConsoleSettingsTransfer,
@@ -170,6 +174,7 @@ def _popover(
     scope_copy: str = "Applies to this conversation",
     durability_copy: str = "Saved with the conversation after its first message",
     live_committer=_accept_live_submission,
+    default_readiness_resolver=None,
 ) -> ConsoleModelPopover:
     session_settings = settings or _settings()
     controls = context_state or _state()
@@ -184,6 +189,18 @@ def _popover(
             "api_settings": {session_settings.provider: {}},
         }
     )
+
+    def resolve_default_readiness(
+        provider: str,
+        model: str | None,
+    ) -> ConsoleSettingsReadiness:
+        target = build_target_default_console_session_settings(
+            config,
+            provider,
+            model,
+        )
+        return build_console_settings_readiness(target, app_config=config)
+
     return ConsoleModelPopover(
         origin=ConsoleSettingsOrigin("session-a", None, 0),
         app_config=config,
@@ -202,6 +219,11 @@ def _popover(
         durability_copy=durability_copy,
         draft_rebaser=_rebase_quick_draft,
         live_committer=live_committer,
+        default_readiness_resolver=(
+            default_readiness_resolver
+            if default_readiness_resolver is not None
+            else resolve_default_readiness
+        ),
     )
 
 
@@ -407,6 +429,54 @@ async def test_popover_defaults_disable_console_unsupported_provider() -> None:
         assert make_default.disabled
         assert "Unavailable" in reason
         assert "not available in Console yet" in reason
+
+
+@pytest.mark.asyncio
+async def test_popover_make_default_uses_config_owned_target_readiness() -> None:
+    app = _ContextHarness()
+    config = {
+        "chat_defaults": {"provider": "ollama", "model": "llama3"},
+        "api_settings": {
+            "ollama": {"api_url": "http://127.0.0.1:11434"},
+        },
+    }
+    settings = ConsoleSessionSettings(
+        provider="ollama",
+        model="llama3",
+        base_url="http://127.0.0.1:22468",
+    )
+    resolved_targets: list[ConsoleSessionSettings] = []
+
+    def resolve_config_owned_target(
+        provider: str,
+        model: str | None,
+    ) -> ConsoleSettingsReadiness:
+        target = build_target_default_console_session_settings(
+            config,
+            provider,
+            model,
+        )
+        resolved_targets.append(target)
+        return build_console_settings_readiness(target, app_config=config)
+
+    async with app.run_test(size=(90, 34)) as pilot:
+        await app.push_screen(
+            _popover(
+                settings=settings,
+                providers_models={"ollama": ["llama3"]},
+                app_config=config,
+                default_readiness_resolver=resolve_config_owned_target,
+            )
+        )
+        await pilot.click("#console-popover-defaults")
+        await pilot.pause()
+
+        assert resolved_targets
+        assert resolved_targets[-1].base_url == "http://127.0.0.1:11434"
+        assert resolved_targets[-1].base_url != settings.base_url
+        assert not app.screen.query_one(
+            "#console-popover-make-new-chat-default", Button
+        ).disabled
 
 
 @pytest.mark.asyncio
@@ -737,6 +807,244 @@ async def test_popover_full_settings_transfers_draft_without_committing() -> Non
         if field.name == "temperature"
     )
     assert temperature.dirty
+
+
+@pytest.mark.asyncio
+async def test_popover_custom_model_typing_preserves_mode_and_each_character() -> (
+    None
+):
+    app = _ContextHarness()
+    settings = ConsoleSessionSettings(
+        provider="ollama",
+        model=None,
+        base_url="http://127.0.0.1:11434",
+    )
+    async with app.run_test(size=(100, 38)) as pilot:
+        popover = _popover(
+            settings=settings,
+            providers_models={"ollama": []},
+            app_config={
+                "api_settings": {
+                    "ollama": {"api_url": "http://127.0.0.1:11434"}
+                }
+            },
+        )
+        await app.push_screen(popover)
+        await pilot.pause()
+        await pilot.click("#model-search-picker-custom")
+        picker = app.screen.query_one("#console-popover-model-search")
+        custom_input = picker.query_one("#model-search-picker-input", Input)
+
+        expected = ""
+        for character in "private-model-v1":
+            await pilot.press(character)
+            await pilot.pause()
+            expected += character
+            assert picker.custom_mode
+            assert custom_input.value == expected
+            assert popover._draft.settings.model == expected
+
+
+def _draft_with_endpoint_intent(
+    settings: ConsoleSessionSettings,
+) -> tuple[ConsoleSettingsDraftState, ConsoleEndpointDraft]:
+    endpoint = ConsoleEndpointDraft(
+        value=str(settings.base_url),
+        bound_provider_config_key=settings.provider,
+        dirty=True,
+        checked=True,
+    )
+    draft = _draft(settings)
+    return (
+        replace(
+            draft,
+            model_drafts=(
+                ConsoleModelDraft(
+                    provider=settings.provider,
+                    model=settings.model,
+                    settings=settings,
+                    field_drafts=draft.field_drafts,
+                    endpoint_draft=endpoint,
+                ),
+            ),
+            endpoint_draft=endpoint,
+        ),
+        endpoint,
+    )
+
+
+@pytest.mark.parametrize(
+    ("button_id", "expected_action"),
+    (
+        ("#console-popover-apply", ConsoleSettingsAction.APPLY_TO_CHAT),
+        (
+            "#console-popover-save-model-default",
+            ConsoleSettingsAction.SAVE_MODEL_DEFAULT,
+        ),
+        (
+            "#console-popover-make-new-chat-default",
+            ConsoleSettingsAction.MAKE_NEW_CHAT_DEFAULT,
+        ),
+    ),
+)
+@pytest.mark.asyncio
+async def test_popover_quick_commits_strip_initial_endpoint_intent(
+    button_id: str,
+    expected_action: ConsoleSettingsAction,
+) -> None:
+    app = _ContextHarness()
+    settings = ConsoleSessionSettings(
+        provider="ollama",
+        model="llama3",
+        base_url="http://127.0.0.1:11434",
+    )
+    draft, _endpoint = _draft_with_endpoint_intent(settings)
+    submissions: list[ConsoleSettingsSubmission] = []
+
+    def commit(submission: ConsoleSettingsSubmission) -> ConsoleSettingsLiveCommit:
+        submissions.append(submission)
+        return _accept_live_submission(submission)
+
+    async with app.run_test(size=(100, 38)) as pilot:
+        popover = _popover(
+            settings=settings,
+            initial_draft=draft,
+            providers_models={"ollama": ["llama3"]},
+            app_config={
+                "api_settings": {
+                    "ollama": {"api_url": "http://127.0.0.1:11434"}
+                }
+            },
+            live_committer=commit,
+        )
+        await app.push_screen(popover, callback=app.capture)
+        if expected_action is not ConsoleSettingsAction.APPLY_TO_CHAT:
+            await pilot.click("#console-popover-defaults")
+        await pilot.click(button_id)
+        await pilot.pause()
+
+    assert len(submissions) == 1
+    assert submissions[0].action is expected_action
+    assert submissions[0].draft.endpoint_draft is None
+    assert submissions[0].draft.settings.base_url == settings.base_url
+    assert all(
+        remembered.endpoint_draft is None
+        for remembered in submissions[0].draft.model_drafts
+    )
+    assert all(
+        remembered.settings.base_url == settings.base_url
+        for remembered in submissions[0].draft.model_drafts
+    )
+
+
+@pytest.mark.asyncio
+async def test_popover_full_settings_preserves_initial_endpoint_intent() -> None:
+    app = _ContextHarness()
+    settings = ConsoleSessionSettings(
+        provider="ollama",
+        model="llama3",
+        base_url="http://127.0.0.1:11434",
+    )
+    draft, endpoint = _draft_with_endpoint_intent(settings)
+
+    async with app.run_test(size=(100, 38)) as pilot:
+        await app.push_screen(
+            _popover(
+                settings=settings,
+                initial_draft=draft,
+                providers_models={"ollama": ["llama3"]},
+                app_config={
+                    "api_settings": {
+                        "ollama": {"api_url": "http://127.0.0.1:11434"}
+                    }
+                },
+            ),
+            callback=app.capture,
+        )
+        await pilot.click("#console-popover-full-settings")
+        await pilot.pause()
+
+    assert isinstance(app.result, ConsoleSettingsTransfer)
+    assert app.result.draft.endpoint_draft == endpoint
+    assert app.result.draft.endpoint_draft.checked
+    assert app.result.draft.settings.base_url == settings.base_url
+    assert all(
+        remembered.settings.base_url == settings.base_url
+        for remembered in app.result.draft.model_drafts
+    )
+
+
+@pytest.mark.parametrize("transfer_to_full_settings", (False, True))
+@pytest.mark.asyncio
+async def test_popover_rebase_created_endpoint_is_stripped_only_from_quick_commit(
+    transfer_to_full_settings: bool,
+) -> None:
+    app = _ContextHarness()
+    settings = ConsoleSessionSettings(
+        provider="llama_cpp",
+        model="model-a",
+        base_url="http://127.0.0.1:9100",
+    )
+    config = {
+        "api_settings": {
+            "llama_cpp": {"api_url": "http://127.0.0.1:9100"},
+            "vllm": {"api_url": "http://127.0.0.1:9200"},
+        }
+    }
+    submissions: list[ConsoleSettingsSubmission] = []
+
+    def commit(submission: ConsoleSettingsSubmission) -> ConsoleSettingsLiveCommit:
+        submissions.append(submission)
+        return _accept_live_submission(submission)
+
+    async with app.run_test(size=(100, 38)) as pilot:
+        popover = _popover(
+            settings=settings,
+            providers_models={
+                "llama_cpp": ["model-a"],
+                "vllm": ["model-b"],
+            },
+            app_config=config,
+            live_committer=commit,
+        )
+        await app.push_screen(popover, callback=app.capture)
+        app.screen.query_one("#console-popover-provider", Select).value = "vllm"
+        await pilot.pause()
+        picker = app.screen.query_one("#console-popover-model-search")
+        picker.set_model_value("model-b")
+        picker.post_message(picker.ModelSelected("model-b"))
+        await pilot.pause()
+        rebased_endpoint = popover._draft.endpoint_draft
+        assert rebased_endpoint is not None
+        assert rebased_endpoint.value == "http://127.0.0.1:9200"
+
+        await pilot.click(
+            "#console-popover-full-settings"
+            if transfer_to_full_settings
+            else "#console-popover-apply"
+        )
+        await pilot.pause()
+
+    if transfer_to_full_settings:
+        assert submissions == []
+        assert isinstance(app.result, ConsoleSettingsTransfer)
+        assert app.result.draft.endpoint_draft == rebased_endpoint
+        result_draft = app.result.draft
+    else:
+        assert len(submissions) == 1
+        assert submissions[0].draft.endpoint_draft is None
+        assert all(
+            remembered.endpoint_draft is None
+            for remembered in submissions[0].draft.model_drafts
+        )
+        result_draft = submissions[0].draft
+    assert result_draft.settings.base_url == "http://127.0.0.1:9200"
+    target_draft = next(
+        remembered
+        for remembered in result_draft.model_drafts
+        if remembered.provider == "vllm" and remembered.model == "model-b"
+    )
+    assert target_draft.settings.base_url == "http://127.0.0.1:9200"
 
 
 @pytest.mark.asyncio

@@ -23,9 +23,9 @@ from tldw_chatbook.Chat.console_context_policy import (
 from tldw_chatbook.Chat.console_session_settings import (
     ConsoleSessionSettings,
     ConsoleSettingsContextEstimate,
+    ConsoleSettingsReadiness,
     build_console_model_options,
     build_console_provider_options,
-    build_console_settings_readiness,
 )
 from tldw_chatbook.Chat.console_settings_apply import (
     QUICK_MODEL_DEFAULT_FIELDS,
@@ -86,6 +86,16 @@ class DraftRebaser(Protocol):
 
 LiveCommitter = Callable[[ConsoleSettingsSubmission], ConsoleSettingsLiveCommit]
 PopoverSubmitAction = ConsoleSettingsAction | Literal["full_settings"]
+
+
+class DefaultReadinessResolver(Protocol):
+    """Injected configuration-owned readiness seam."""
+
+    def __call__(
+        self,
+        provider: str,
+        model: str | None,
+    ) -> ConsoleSettingsReadiness: ...
 
 
 def _temperature_in_range(value: float) -> bool:
@@ -251,6 +261,7 @@ class ConsoleModelPopover(
         durability_copy: str,
         draft_rebaser: DraftRebaser,
         live_committer: LiveCommitter,
+        default_readiness_resolver: DefaultReadinessResolver,
         **kwargs: Any,
     ) -> None:
         """Initialize one exact-origin quick settings transaction.
@@ -266,6 +277,8 @@ class ConsoleModelPopover(
             durability_copy: Exact unsaved or temporary durability label.
             draft_rebaser: Controller-owned provider/model rebase callback.
             live_committer: Synchronous exact-origin live commit callback.
+            default_readiness_resolver: Controller-owned readiness for the
+                configuration-backed provider/model target.
             **kwargs: Forwarded to ``ModalScreen``.
         """
         super().__init__(**kwargs)
@@ -290,6 +303,7 @@ class ConsoleModelPopover(
         self._durability_copy = durability_copy
         self._draft_rebaser = draft_rebaser
         self._live_committer = live_committer
+        self._default_readiness_resolver = default_readiness_resolver
         self._streaming = bool(initial_draft.settings.streaming)
         self._temperature_mount_value = (
             ""
@@ -723,7 +737,13 @@ class ConsoleModelPopover(
         self._draft = remember_model_draft(self._draft)
         return self._draft
 
-    def _rebase_to(self, provider: str, model: str | None) -> None:
+    def _rebase_to(
+        self,
+        provider: str,
+        model: str | None,
+        *,
+        preserve_custom_model_input: bool = False,
+    ) -> None:
         source = (self._draft.settings.provider, self._draft.settings.model)
         if source == (provider, model):
             return
@@ -743,9 +763,17 @@ class ConsoleModelPopover(
             for field in rebased.field_drafts
             if field.provenance is ConsoleSettingsFieldProvenance.CARRIED
         }
-        self._sync_controls_from_draft(source_provider=source[0])
+        self._sync_controls_from_draft(
+            source_provider=source[0],
+            preserve_custom_model_input=preserve_custom_model_input,
+        )
 
-    def _sync_controls_from_draft(self, *, source_provider: str) -> None:
+    def _sync_controls_from_draft(
+        self,
+        *,
+        source_provider: str,
+        preserve_custom_model_input: bool = False,
+    ) -> None:
         if not self.is_mounted:
             return
         settings = self._draft.settings
@@ -782,6 +810,8 @@ class ConsoleModelPopover(
                     settings.provider,
                     current_model=settings.model,
                 )
+            elif preserve_custom_model_input and picker.custom_mode:
+                pass
             else:
                 picker.set_model_value(settings.model)
             self.query_one("#console-popover-response-max", Static).update(
@@ -825,9 +855,9 @@ class ConsoleModelPopover(
                 pass
 
         settings = self._draft.settings
-        readiness = build_console_settings_readiness(
-            settings,
-            app_config=self._app_config,
+        readiness = self._default_readiness_resolver(
+            settings.provider,
+            settings.model,
         )
         if not settings.model:
             block_copy = "Unavailable: choose a model first."
@@ -885,7 +915,11 @@ class ConsoleModelPopover(
         if self._updating_controls:
             return
         provider = str(self.query_one("#console-popover-provider", Select).value)
-        self._rebase_to(provider, event.model_id)
+        self._rebase_to(
+            provider,
+            event.model_id,
+            preserve_custom_model_input=event.custom,
+        )
 
     @on(Button.Pressed, "#console-popover-streaming")
     def _toggle_streaming(self, event: Button.Pressed) -> None:
@@ -1019,6 +1053,21 @@ class ConsoleModelPopover(
         if self.app.mouse_captured is not None:
             self.app.capture_mouse(None)
 
+    @staticmethod
+    def _without_endpoint_intent(
+        draft: ConsoleSettingsDraftState,
+    ) -> ConsoleSettingsDraftState:
+        """Return a quick-submission draft with no endpoint save intent."""
+
+        return replace(
+            draft,
+            model_drafts=tuple(
+                replace(remembered, endpoint_draft=None)
+                for remembered in draft.model_drafts
+            ),
+            endpoint_draft=None,
+        )
+
     def on_click(self, event: events.Click) -> None:  # type: ignore[override]
         """Recover control clicks redirected through a captured input."""
         self._recover_redirected_control_click(event)
@@ -1074,6 +1123,7 @@ class ConsoleModelPopover(
             self.dismiss_safe_once(ConsoleSettingsTransfer(self._origin, draft))
             return
 
+        draft = self._without_endpoint_intent(draft)
         submission = ConsoleSettingsSubmission(
             submission_id=uuid4().hex,
             action=action,
