@@ -59,6 +59,11 @@ Both calls use `severity="error"` and `markup=False`. The messages contain no
 dynamic data, so they neither disclose a service exception nor allow remote or
 user-authored text to reach Rich markup parsing.
 
+Because one mounted scope change can resolve the same rows for more than one
+surface, `scoped_source_rows` emits that toast only on the first consecutive
+failure. A successful scoped read clears the episode state so a later outage
+is reported again.
+
 No new notification abstraction is introduced. `_notify_watchlists` already
 degrades safely when the app or a test harness has no callable notifier and is
 the established screen-local boundary for markup policy.
@@ -119,6 +124,10 @@ double and assert:
 - `markup` is explicitly false; and
 - neither the exception message nor any sentinel bracket-shaped content reaches
   the toast.
+
+A mounted navigation regression also proves that repeated reads during one
+scope change emit one toast, consecutive failures remain suppressed, and one
+successful read re-arms notification for the next failure episode.
 
 The structural test is also run against the pre-fix code during TDD. It must
 fail by naming `_load_source_rows_for_tree` and `scoped_source_rows`, proving

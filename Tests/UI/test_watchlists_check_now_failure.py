@@ -619,13 +619,19 @@ async def test_synchronous_source_loader_failure_is_safely_reported(
         sentinel = "service exploded at [/bold]/private/watchlists.db"
 
         class ExplodingBundleService:
-            def list_source_rows(self, watchlist_id):
-                raise RuntimeError(sentinel)
+            failing = False
 
-        app.watchlist_bundle_service = ExplodingBundleService()
+            def list_source_rows(self, watchlist_id):
+                if self.failing:
+                    raise RuntimeError(sentinel)
+                return []
+
+        service = ExplodingBundleService()
+        app.watchlist_bundle_service = service
         screen.tree_scope = TreeScope(kind="watchlist", watchlist_id=73)
         await pilot.pause()
 
+        service.failing = True
         notifications.clear()
         if method_name == "_load_source_rows_for_tree":
             result = screen._load_source_rows_for_tree(73)
@@ -639,6 +645,51 @@ async def test_synchronous_source_loader_failure_is_safely_reported(
         assert args == ()
         assert kwargs == {"severity": "error", "markup": False}
         assert sentinel not in repr(notifications)
+
+
+@pytest.mark.asyncio
+async def test_scoped_source_failure_notifies_once_per_failure_episode():
+    """Repeated mounted reads share one toast until a successful recovery."""
+    app = _build_test_app()
+    _seed_source(app)
+    notifications: list[tuple[str, tuple, dict]] = []
+
+    def capture_notification(message, *args, **kwargs) -> None:
+        notifications.append((str(message), args, kwargs))
+
+    class ToggleBundleService:
+        failing = True
+
+        def list_source_rows(self, watchlist_id):
+            if self.failing:
+                raise RuntimeError("private scoped read failure")
+            return []
+
+    service = ToggleBundleService()
+    app.notify = capture_notification
+    host = DestinationHarness(app, "watchlists_collections")
+    async with host.run_test(size=(180, 50)) as pilot:
+        await pilot.pause(0.2)
+        screen, _pane = await _open_sources(pilot, host)
+        app.watchlist_bundle_service = service
+
+        notifications.clear()
+        screen.tree_scope = TreeScope(kind="watchlist", watchlist_id=73)
+        await pilot.pause()
+
+        expected = "Failed to resolve sources for the selected scope."
+        matching = [entry for entry in notifications if entry[0] == expected]
+        assert matching == [(expected, (), {"severity": "error", "markup": False})]
+
+        service.failing = False
+        assert screen.scoped_source_rows() == []
+
+        service.failing = True
+        notifications.clear()
+        assert screen.scoped_source_rows() == []
+        assert screen.scoped_source_rows() == []
+        matching = [entry for entry in notifications if entry[0] == expected]
+        assert matching == [(expected, (), {"severity": "error", "markup": False})]
 
 
 def _own_nodes(node):
