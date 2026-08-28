@@ -197,8 +197,10 @@ def test_copy_visible_warns_that_file_names_and_search_terms_remain() -> None:
     LogsWindow._on_copy_visible(_Window())
 
     assert copied == ["visible diagnostic"]
-    assert len(notifications) == 1
-    assert "file names and search terms were not" in notifications[0]
+    assert notifications == [
+        "Copied 1 visible log lines. Recognised key formats and your account name "
+        "were removed; file names and search terms were not."
+    ]
 
 
 def test_schema_validated_metadata_records_survive_the_share_artifact() -> None:
