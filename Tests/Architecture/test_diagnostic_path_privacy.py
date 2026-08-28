@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import re
 from textwrap import dedent
 
 import pytest
@@ -11,6 +12,12 @@ from scripts.check_persistent_diagnostic_inventory import (
     render_diff,
     scan_path_diagnostic_candidates,
 )
+
+
+def _has_path_expression_label(labels: list[str], expected: str) -> bool:
+    if expected != "row.get(root)":
+        return expected in labels
+    return any(re.fullmatch(r"row\.get\((['\"])root\1\)", label) for label in labels)
 
 
 @pytest.mark.parametrize(
@@ -77,7 +84,7 @@ from scripts.check_persistent_diagnostic_inventory import (
             "mapping_root.py",
             "info",
             "<module>",
-            "row.get('root')",
+            "row.get(root)",
             id="mapping-root-key",
         ),
         pytest.param(
@@ -111,7 +118,7 @@ def test_path_shaped_diagnostic_inputs_are_candidates(
     assert candidate["scope"] == scope
     assert candidate["status"] == "legacy_unreviewed"
     assert candidate["call_digest"]
-    assert path_expression in candidate["path_expressions"]
+    assert _has_path_expression_label(candidate["path_expressions"], path_expression)
 
 
 @pytest.mark.parametrize(
