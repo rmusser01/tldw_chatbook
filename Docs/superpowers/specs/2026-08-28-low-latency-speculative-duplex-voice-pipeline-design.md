@@ -116,6 +116,10 @@ semantics.
 - ADR-097 requires a durable reservation before ordinary Capture On provider dispatch.
   A provisional voice attempt is intentionally pre-acceptance and receives the narrow
   capture exception defined below.
+- `dictation.acoustic_barge_in` is also consumed by the separate Realtime engine. It
+  cannot be repurposed for the new pipeline without violating the Realtime non-goal.
+  `dictation.handsfree_send_delay_seconds` belongs to the superseded countdown rather
+  than the new rolling-transcript timer.
 
 ## Core invariants
 
@@ -267,8 +271,14 @@ attempt remains fenced immediately.
 The first three attempts in any rolling ten-second window use the configured threshold.
 Additional attempts temporarily use 1.5 seconds until an attempt completes or the turn
 remains continuously quiet. At most two obsolete provider attempts may clean up
-concurrently. Reaching that bound pauses new speculative dispatch; a cleanup timeout
-switches the remainder of the logical turn to non-speculative mode.
+concurrently. Reaching that bound pauses new dispatch until at least one obsolete
+attempt exits. If cooperative cleanup exceeds two seconds, the coordinator enters
+`serialized_conservative` for the remainder of the logical turn: it waits for two
+seconds of stable silence and zero obsolete attempts, dispatches exactly one active
+attempt, and still fences that attempt immediately if speech resumes. It never overlaps
+a replacement with cleanup in this state. Only successful turn promotion, explicit
+turn cancellation, hands-free exit, or session teardown resets the mode for a later
+logical turn.
 
 The successful boundary is the estimated time the winning attempt's final audible
 sample reaches the output device. Speech whose capture timestamp begins no later than
@@ -276,6 +286,21 @@ that boundary extends the existing turn; later speech begins a new turn. If no a
 produced, the terminal generation/TTS outcome supplies the equivalent boundary. TTS
 failure waits for text generation to finish, commits the completed textual response if
 no newer speech exists, reports the speech failure, and reopens admission.
+
+All transcript, render, and control events enter one serialized coordinator mailbox.
+Before promotion, the coordinator asks the transcript engine to seal revisions through
+the last admitted audio timestamp and drains every already-produced material revision.
+A material correction produced before the terminal render boundary wins the race,
+fences the attempt, and restarts it even if its callback arrived after the playback
+terminal callback. Promotion closes that revision boundary; revisions produced after
+the seal cannot mutate the committed turn.
+
+A manual **barge-in** action while generating or speaking follows the same
+fence-and-continue path as admitted speech and reopens listening for the same logical
+turn, including in half-duplex mode. Explicit Stop, Esc, mic-toggle exit, session close,
+and hands-free exit instead cancel and discard the whole provisional turn. Merely
+silencing playback without fencing generation is not a valid action in the new
+pipeline.
 
 ## Tool-effect barrier
 
@@ -302,10 +327,16 @@ resources do not survive screen navigation and the user's requirement that cance
 attempts leave no conversation artifacts.
 
 For a no-tool winning attempt, the exact transcript snapshot and assistant response are
-promoted through one persistence transaction. A mounted view may project their
-provisional rows before promotion, but ordinary history observes only the committed
-pair. Failure preserves the user transcript as an editable voice draft rather than
-persisting a partial pair.
+promoted through the existing durable-turn terminalization contract. One ChaChaNotes
+transaction writes the user/assistant pair, mints ADR-094's stable terminal receipt,
+and writes the exact `console_unseen:<receipt-id>` local mark. Promotion registers an
+already-complete accepted voice turn and terminalizes it atomically; it does not create
+a second runtime task for provider work that already ended. A mounted view clears only
+that exact receipt after synchronizing the committed pair. If navigation wins the race,
+the mark survives for the next view. A mounted view may project provisional rows before
+promotion, but ordinary history observes only the committed pair. Failure preserves the
+user transcript as an editable voice draft rather than persisting a partial pair or
+receipt.
 
 Ordinary ADR-097 Capture On reservation cannot run before a provisional provider call
 without persisting cancelled prompt content. The narrow amendment is:
@@ -326,6 +357,15 @@ honestly retry from the winning in-memory envelope; shutdown does not persist th
 envelope merely to enable later repair. Tool-barrier turns discard their speculative
 envelope and use the ordinary ADR-097 captured pipeline on re-dispatch.
 
+Temporary conversations retain their existing ADR-097 restriction. Speculative voice
+remains usable, but the status explicitly says exchange capture is unavailable for the
+temporary chat. Winning message rows and the winning envelope remain process-local;
+neither pre-dispatch reservation nor post-dispatch capture promotion is attempted. A
+later Save persists the conversation messages under ordinary temporary-chat promotion
+rules but does not retroactively invent capture for an earlier provider call. Tool
+barrier expiry uses the existing Save & Send requirement before ordinary captured agent
+dispatch.
+
 ## Settings and UI
 
 The canonical `Settings -> Speech & TTS` surface owns the controls. Deprecated settings
@@ -341,6 +381,24 @@ surfaces receive no new fields.
 
 Values below 700 ms are labeled more likely to restart during mid-thought pauses. The
 existing dictation segment-finalization and non-hands-free settings remain independent.
+
+Legacy setting ownership is explicit:
+
+- `dictation.acoustic_barge_in` remains the unchanged compatibility key for the
+  provider-native Realtime engine. The qualified speculative pipeline does not read it;
+  acoustic interruption there follows AEC health and is default-on.
+- `dictation.handsfree_send_delay_seconds` remains readable only by the legacy
+  pre-speculative pipeline during the internal rollout gate. Once the new pipeline is
+  qualified, it is retired from active Settings and ignored by the speculative path.
+  Its value is not migrated into response eagerness because countdown-after-final-STT
+  and silence-to-dispatch are different semantics.
+- `dictation.pipeline_aec_enabled`, default true, is the troubleshooting-only AEC
+  switch. False forces half duplex and does not affect Realtime.
+
+The app preserves old config keys so older releases can still read them and shows one
+bounded migration note when a legacy hands-free delay or acoustic setting no longer
+controls the qualified pipeline. No startup write mutates the user's config merely to
+acknowledge the new ownership.
 
 AEC is default-on. Its off switch lives under troubleshooting and always forces safe
 half duplex. The Console status projection uses user-readable states: `listening`,
@@ -434,12 +492,15 @@ underruns, and device resets.
   stale jobs, coverage timestamps, and backend failure.
 - Coordinator tests use an injected clock for silence deadlines, freshness gating,
   every cancellation race, correction coalescing, attempt epochs, restart governor,
-  cleanup cap, tool barrier, terminal outcomes, and timestamp turn boundaries.
+  cleanup cap, serialized-conservative entry/dispatch/reset, tool barrier, manual
+  barge-in versus explicit exit, terminal outcomes, and timestamp turn boundaries.
 - Phrase tests cover punctuation, bounded fallback, ordering, cancellation, incomplete
   Markdown, links, fenced code, abbreviations, and synthesis failure.
 - Persistence tests prove cancelled attempts create no content-bearing durable owner,
   winning pairs commit atomically, capture promotion is labeled and best-effort, and
-  tool turns use ordinary pre-dispatch capture after the barrier.
+  tool turns use ordinary pre-dispatch capture after the barrier. They also prove the
+  ADR-094 receipt and exact unseen mark share the winning-pair transaction, mounted and
+  navigation-racing acknowledgement behavior, and temporary-chat no-capture behavior.
 - Integration uses a deterministic fake duplex transport with streaming and batch STT,
   cancellable and cancellation-resistant LLMs, streaming and file-producing TTS,
   health transitions, and device changes.
@@ -491,6 +552,10 @@ independent acceptance criteria and targeted verification.
 | Speculative tools produce irreversible effects | Two-second effect barrier and ordinary agent re-dispatch |
 | Cancelled text leaks through Console capture | Memory-only attempt sink; winning-only promoted trace |
 | Winning capture conflicts with ADR-097 reservation | Explicit `provisional_voice_promoted` post-dispatch provenance and ADR-098 amendment |
+| Legacy settings retain old behavior | New pipeline-specific AEC/eagerness keys; old acoustic key remains Realtime-owned and old delay remains legacy-only |
+| Temporary chat has no durable capture lineage | Explicit capture-unavailable status; no retroactive trace invention on Save |
+| Promotion races a late STT correction | Serialized mailbox plus transcript seal through the last admitted audio timestamp |
+| Winning promotion bypasses ADR-094 attention | Existing terminalization transaction mints the exact receipt and unseen mark |
 | Audio device switches invalidate AEC timing | Fence playback, rebuild one clock domain, keep transcript, regenerate |
 | Aggressive mode increases usage | Usage split, duplicated-STT duration, restart governor, Settings disclosure |
 | Native dependency becomes unmaintained | Narrow ABI, reproducible wheels, SBOM, license/update policy, capability fallback |

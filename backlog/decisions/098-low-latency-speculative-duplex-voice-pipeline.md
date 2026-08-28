@@ -79,9 +79,13 @@ preference.
 
 6. **Bound speculation.** The first three attempts within ten seconds use the configured
    threshold; later attempts temporarily use 1.5 seconds. No more than two obsolete
-   provider attempts may clean up concurrently. A cleanup timeout makes the remainder
-   of that logical turn non-speculative. These bounds limit cost and uncooperative
-   provider work without weakening immediate audio cancellation.
+   provider attempts may clean up concurrently. Reaching the cap pauses dispatch. If
+   cleanup exceeds two seconds, the remainder of that logical turn enters a serialized
+   conservative state: wait for two seconds of stable silence and zero obsolete
+   attempts, allow only one active request, and still fence it immediately on resumed
+   speech. Only turn promotion/cancellation or hands-free/session teardown resets the
+   state. These bounds limit cost and uncooperative provider work without weakening
+   immediate audio cancellation.
 
 7. **Speak only current-attempt safe prose.** The phrase sequencer releases punctuation-
    terminated prose first and uses a bounded word/time fallback only after resolving
@@ -101,7 +105,11 @@ preference.
    conversation history while provisional. Navigation away, hands-free exit, session
    close, or shutdown fences and discards them without terminal receipts. This preserves
    ADR-094's view-scoped microphone/audio rule. A winning transcript/assistant pair is
-   promoted atomically only after generation and speech reach their terminal boundary.
+   promoted only after generation, speech, and transcript sealing reach their terminal
+   boundary. Promotion uses the existing durable-turn terminalization transaction to
+   write the pair, mint ADR-094's stable terminal receipt, and write the exact local
+   unseen mark. It registers and terminalizes an already-complete accepted voice turn
+   atomically rather than creating a second provider task.
 
 10. **Use winning-only post-dispatch exchange-capture promotion.** The ordinary ADR-097
     durable reservation is not written before a provisional provider request. The
@@ -113,19 +121,43 @@ preference.
     conversation or exchange trace. Capture settlement failure never rolls back the
     conversation. Tool-barrier re-dispatch uses unchanged ADR-097 semantics.
 
+    Temporary chats remain unable to create durable capture lineage. Speculative voice
+    may run with explicit capture-unavailable status; its winning messages and envelope
+    remain process-local. Later Save may persist the messages but never retroactively
+    invents the earlier exchange trace. Tool-barrier dispatch retains the existing Save
+    & Send prerequisite.
+
 11. **Use timestamped terminal boundaries.** Speech starting no later than the estimated
     final hardware-rendered sample extends the same logical turn; later speech starts a
     new one. Audible stop targets 150 ms p95. If speech output fails, text may commit only
     after generation finishes without a newer speech/revision event.
 
-12. **Expose honest capability and cost state.** Settings distinguish native live STT
+    Transcript, render, and control events are serialized. Before promotion the
+    transcript engine seals through the last admitted audio timestamp. A material
+    revision produced before the terminal render boundary fences and restarts the
+    attempt even when delivered after the playback callback; promotion closes the
+    revision boundary. Manual barge-in fences and continues the same logical turn,
+    including in half duplex. Explicit Stop/Esc/mic-toggle/hands-free exit discards the
+    provisional turn.
+
+12. **Separate new pipeline settings from legacy and Realtime compatibility keys.**
+    `dictation.response_eagerness_ms` belongs only to the speculative pipeline.
+    `dictation.pipeline_aec_enabled`, default true, is its troubleshooting-only AEC
+    switch and false forces half duplex. `dictation.acoustic_barge_in` remains unchanged
+    for the Realtime engine; the speculative pipeline does not read it.
+    `dictation.handsfree_send_delay_seconds` remains legacy-pipeline-only during rollout
+    and is ignored after qualification rather than being mistranslated into eagerness.
+    Existing keys are preserved for older releases and no startup migration writes the
+    config.
+
+13. **Expose honest capability and cost state.** Settings distinguish native live STT
     from rolling-window emulation, disclose overlapping remote batch processing and
     increased speculative usage, and offer response eagerness plus troubleshooting-only
     AEC disable. UI status distinguishes listening, transcribing, responding, speaking,
     response update, AEC warming, and half-duplex degradation. Logs and diagnostics
     contain no transcript or audio body.
 
-13. **Qualify every platform before default enablement.** Native package, DSP corpus,
+14. **Qualify every platform before default enablement.** Native package, DSP corpus,
     deterministic integration, latency, soak, and physical speaker/microphone gates must
     pass on macOS, Windows, and Linux. Bluetooth may pass through explicit safe
     half-duplex degradation but not unsafe full duplex. After qualification, AEC and
@@ -199,6 +231,10 @@ with an honest durability label.
 - ADR-097 gains one explicitly weaker crash-provenance class for a promoted winning
   voice call. The trace remains semantically useful but cannot claim pre-dispatch
   reservation.
+- A successful no-tool promotion still participates in ADR-094 terminal receipts and
+  exact unseen-mark acknowledgement even though its provider work was pre-acceptance.
+- Temporary chats run speculative voice without durable capture and never synthesize a
+  posthoc trace when later saved.
 - AEC-unhealthy routes remain functional but half duplex. Safe degradation is a passing
   capability result rather than a hidden failure.
 - Implementation requires several dependency-ordered Backlog tasks; each task must be
