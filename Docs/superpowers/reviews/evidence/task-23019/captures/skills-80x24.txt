@@ -1,0 +1,26 @@
+result_name: skills-80x24
+status: PASS
+                     ╭────────────╮                                             
+ ⌃1 Home  ⌃2 Console │ ⌃3 Library │ F10 Research  ⌃4 Artifacts  ⌃5 Rol  More ▾  
+────────────────────────────────────────────────────────────────────────────────
+ Library | Local                                                                
+     Skills (2)                            ┃   Overview   ┃       Edit          
+     ▊▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▎     review-skill                          
+     ▊ Filter skills… (Enter)       ▎     Review skill                          
+     ▊▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▎     You and the agent can invoke this     
+                                          Skill.                                
+         sort: Name        Import…        Version: 1                            
+      ✓ release-notes                     Trust: trusted                        
+     invocable: user & agent ·                                                  
+     Release notes                                                              
+--->                                 <---                                       
+      › ✓ review-skill                                                          
+     invocable: user & agent · Review                                           
+     skill                                                                      
+                                                                                
+                                                                                
+                                                                                
+                                                                                
+                                                                                
+                                                                                
+  / focus search | F6 next pane | F1 · Ctrl+P · Ctrl+Q                          

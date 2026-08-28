@@ -1,0 +1,5 @@
+{
+  "kind": "automated",
+  "result_name": "Tests/Library/test_library_adaptive_reader_state.py::test_resolution_never_mutates_saved_preferences",
+  "status": "PASS"
+}
