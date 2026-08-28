@@ -107,7 +107,7 @@ async def test_a_woken_turns_gated_tool_still_raises_the_approval_card(tmp_path)
             [_fence("mcp__srv__run", {"x": 1})],
             ["acted on the wake."],
         ]
-        controller, store, runs_db = _controller(tmp_path, scripts, durable=True)
+        controller, store, runs_db = _controller(tmp_path, scripts)
         received: list[dict | None] = []
         service = FakeMCPService(
             catalog_records=[_catalog_record("srv", [_tool_dict("run")])]
@@ -198,7 +198,7 @@ async def test_a_wake_defers_behind_a_pending_card_and_cannot_resolve_it(
             ["manual turn done."],
             ["woke after approval."],
         ]
-        controller, store, runs_db = _controller(tmp_path, scripts, durable=True)
+        controller, store, runs_db = _controller(tmp_path, scripts)
         received: list[dict | None] = []
         service = FakeMCPService(
             catalog_records=[_catalog_record("srv", [_tool_dict("run")])]

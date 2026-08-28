@@ -12823,6 +12823,11 @@ class ChatScreen(BaseAppScreen):
             and self._console_visible_draft_session_id == session_id
         ):
             composer.clear_history()
+        # A send can finish while navigation is tearing this screen down. Do
+        # not create a coroutine that Textual will reject after unmounting;
+        # the next mounted view rebuilds from the durable chat store.
+        if not self.is_mounted:
+            return
         # task-351(a): echo the just-appended USER message immediately rather
         # than waiting up to a full 0.2s transcript-poll cycle (and a heavy
         # first poll after it). The composer clears here at acceptance, so

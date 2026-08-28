@@ -7031,6 +7031,7 @@ async def test_console_sibling_swipe_buttons_navigate_between_regenerated_siblin
 @pytest.mark.asyncio
 async def test_console_native_tab_strip_creates_and_switches_sessions():
     app = _build_test_app()
+    _configure_native_ready_console(app)
     host = ConsoleHarness(app)
 
     async with host.run_test(size=(160, 48)) as pilot:
@@ -7056,6 +7057,7 @@ async def test_console_native_tab_strip_creates_and_switches_sessions():
 async def test_console_native_tab_switch_restores_transcript_messages():
     """Verify native tab switching restores the prior session transcript."""
     app = _build_test_app()
+    _configure_native_ready_console(app)
     host = ConsoleHarness(app)
 
     async with host.run_test(size=(160, 48)) as pilot:
@@ -7080,7 +7082,7 @@ async def test_console_native_tab_switch_restores_transcript_messages():
         await pilot.click("#console-new-chat-tab")
         second = await _wait_for_active_session_change(store, pilot, previous)
         await _wait_for_selector(console, pilot, f"#console-session-tab-{second}")
-        await _wait_for_text(console, pilot, "Get started")
+        await _wait_for_text(console, pilot, "Ready — type a message to begin.")
         assert "first tab assistant reply" not in _visible_text(console)
 
         await pilot.click(f"#console-session-tab-{first.id}")
@@ -7756,6 +7758,7 @@ async def test_console_conversation_browser_long_list_keeps_readiness_rows_reach
 @pytest.mark.asyncio
 async def test_console_new_chat_tab_appears_in_workspace_conversation_rail():
     app = _build_test_app()
+    _configure_native_ready_console(app)
     service = app.workspace_registry_service
     active_workspace = service.get_active_workspace()
     service.link_membership(
@@ -7992,6 +7995,7 @@ async def test_console_workspace_tree_restores_and_persists_disclosure_preferenc
 @pytest.mark.asyncio
 async def test_console_new_chat_tab_promotes_active_native_session_in_workspace_rail():
     app = _build_test_app()
+    _configure_native_ready_console(app)
     service = app.workspace_registry_service
     active_workspace = service.get_active_workspace()
     for index in range(5):
@@ -8030,6 +8034,7 @@ async def test_console_new_chat_tab_promotes_active_native_session_in_workspace_
 @pytest.mark.asyncio
 async def test_console_workspace_new_conversation_button_is_not_under_composer():
     app = _build_test_app()
+    _configure_native_ready_console(app)
     host = ConsoleHarness(app)
 
     async with host.run_test(size=(160, 48)) as pilot:
@@ -8053,6 +8058,7 @@ async def test_console_workspace_new_conversation_button_is_not_under_composer()
 @pytest.mark.asyncio
 async def test_console_workspace_new_conversation_button_is_hit_target_in_named_workspace():
     app = _build_test_app()
+    _configure_native_ready_console(app)
     service = app.workspace_registry_service
     service.create_workspace(workspace_id="ws-a", name="Workspace A")
     service.create_workspace(workspace_id="ws-b", name="Workspace B")
@@ -8077,6 +8083,7 @@ async def test_console_workspace_new_conversation_button_is_hit_target_in_named_
 @pytest.mark.asyncio
 async def test_console_workspace_rail_new_conversation_creates_default_workspace_session():
     app = _build_test_app()
+    _configure_native_ready_console(app)
     service = app.workspace_registry_service
     active_workspace = service.get_active_workspace()
     assert active_workspace is not None
@@ -8137,6 +8144,7 @@ async def test_console_workspace_rail_new_conversation_creates_default_workspace
 @pytest.mark.asyncio
 async def test_console_workspace_rail_new_conversation_stays_scoped_to_active_workspace():
     app = _build_test_app()
+    _configure_native_ready_console(app)
     service = app.workspace_registry_service
     service.create_workspace(workspace_id="ws-a", name="Workspace A")
     service.create_workspace(workspace_id="ws-b", name="Workspace B")
@@ -9284,6 +9292,7 @@ def test_console_tab_label_end_truncates_with_visible_ellipsis():
 @pytest.mark.asyncio
 async def test_console_native_active_tab_title_opens_rename_modal():
     app = _build_test_app()
+    _configure_native_ready_console(app)
     host = ConsoleHarness(app)
 
     async with host.run_test(size=(160, 48)) as pilot:
@@ -9315,6 +9324,7 @@ async def test_console_native_active_tab_title_opens_rename_modal():
 @pytest.mark.asyncio
 async def test_console_native_rename_modal_buttons_are_not_clipped():
     app = _build_test_app()
+    _configure_native_ready_console(app)
     host = ConsoleHarness(app)
 
     async with host.run_test(size=(160, 48)) as pilot:
@@ -9341,6 +9351,7 @@ async def test_console_native_rename_modal_buttons_are_not_clipped():
 @pytest.mark.asyncio
 async def test_console_native_tab_rename_escape_restores_existing_title():
     app = _build_test_app()
+    _configure_native_ready_console(app)
     host = ConsoleHarness(app)
 
     async with host.run_test(size=(160, 48)) as pilot:
@@ -9368,6 +9379,7 @@ async def test_console_native_tab_rename_escape_restores_existing_title():
 @pytest.mark.asyncio
 async def test_console_close_tab_with_messages_shows_confirmation():
     app = _build_test_app()
+    _configure_native_ready_console(app)
     host = ConsoleHarness(app)
 
     async with host.run_test(size=(160, 48)) as pilot:

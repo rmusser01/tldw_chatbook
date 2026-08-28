@@ -338,7 +338,7 @@ def _mcp_tests_keep_a_small_catalog(monkeypatch):
     monkeypatch.setattr(controller_module, "get_cli_setting", _small_catalog)
 
 
-def _controller(tmp_path, scripts, *, child_scripts=(), enabled=True, durable=False):
+def _controller(tmp_path, scripts, *, child_scripts=(), enabled=True):
     gateway = _Gateway(scripts, child_scripts)
     # A real persistence, as production always wires one when the DB opens
     # (`ConsoleRuntime.ensure_chat_store`). A bare `ConsoleChatStore()` has
@@ -1478,8 +1478,16 @@ async def test_agent_runtime_gate_refreshes_without_screen_teardown():
     app.app_config["console"]["agent_runtime"] = False
     screen._sync_console_chat_core_state()
 
+    scheduled_syncs = []
+
+    def capture_run_worker(work, **kwargs):
+        work.close()
+        scheduled_syncs.append(kwargs)
+
+    screen.run_worker = capture_run_worker
     result = await controller.submit_draft("hello")
     assert result.accepted is True
+    assert scheduled_syncs == []
     assert fake_bridge.calls == 0  # legacy path used, not the agent bridge
     store = screen._ensure_console_chat_store()
     messages = store.messages_for_session(store.active_session_id)
@@ -1719,7 +1727,7 @@ async def test_mcp_tool_call_executes_end_to_end_when_state_allows(tmp_path):
         [_fence("mcp__srv__run", {"x": 1})],
         ["done with mcp."],
     ]
-    controller, store, _db = _controller(tmp_path, scripts, durable=True)
+    controller, store, _db = _controller(tmp_path, scripts)
     service = FakeMCPService(
         catalog_records=[_catalog_record("srv", [_tool_dict("run")])],
         default_state=EffectiveToolState(state="allow", origin="tool_override"),
@@ -1747,7 +1755,7 @@ async def test_mcp_tool_call_ask_state_routes_through_review_hook_and_approves(
         [_fence("mcp__srv__run", {"x": 1})],
         ["approved and done."],
     ]
-    controller, store, _db = _controller(tmp_path, scripts, durable=True)
+    controller, store, _db = _controller(tmp_path, scripts)
     received: list[dict | None] = []
     service = FakeMCPService(
         catalog_records=[_catalog_record("srv", [_tool_dict("run")])]
@@ -1793,7 +1801,7 @@ async def test_mcp_tool_call_session_approval_suppresses_card_on_next_turn(tmp_p
         [_fence("mcp__srv__run", {"x": 2})],
         ["turn two done."],
     ]
-    controller, store, _db = _controller(tmp_path, scripts, durable=True)
+    controller, store, _db = _controller(tmp_path, scripts)
     received: list[dict | None] = []
     service = FakeMCPService(
         catalog_records=[_catalog_record("srv", [_tool_dict("run")])]
@@ -1853,7 +1861,7 @@ async def test_mcp_tool_call_ask_state_times_out_denies(tmp_path):
         [_fence("mcp__srv__run", {"x": 1})],
         ["it was refused."],
     ]
-    controller, store, _db = _controller(tmp_path, scripts, durable=True)
+    controller, store, _db = _controller(tmp_path, scripts)
     service = FakeMCPService(
         catalog_records=[_catalog_record("srv", [_tool_dict("run")])]
     )
@@ -1994,7 +2002,7 @@ async def test_mcp_tool_call_gates_subagent_call_same_as_primary(tmp_path):
         ["child refused."],  # child: final answer
     ]
     controller, store, db = _controller(
-        tmp_path, scripts, child_scripts=child_scripts, durable=True
+        tmp_path, scripts, child_scripts=child_scripts
     )
     service = FakeMCPService(
         catalog_records=[_catalog_record("srv", [_tool_dict("run")])]
@@ -2041,7 +2049,7 @@ async def test_mcp_review_hook_raise_fails_open_but_invoke_gate_still_refuses(tm
         [_fence("mcp__srv__run", {"x": 1})],
         ["it was refused too."],
     ]
-    controller, store, _db = _controller(tmp_path, scripts, durable=True)
+    controller, store, _db = _controller(tmp_path, scripts)
     service = FakeMCPService(
         catalog_records=[_catalog_record("srv", [_tool_dict("run")])]
     )
