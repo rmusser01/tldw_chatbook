@@ -798,6 +798,31 @@ async def run_media_capability() -> dict[str, Any]:
             )
             assert len(service.media_items) == item_count
             assert id(shell.work) == work_id
+            screen.query_one("#library-media-select-toggle", Button).press()
+
+            def capture_is_settled() -> bool:
+                session = screen._library_media_reader_session
+                matching_rows = [
+                    row
+                    for row in screen.query(".library-media-row")
+                    if str(getattr(row, "media_id", "")) == str(selected)
+                ]
+                return bool(
+                    not screen._library_media_select_mode
+                    and session.selected_id == session.loaded_id == selected
+                    and session.pending_request is None
+                    and len(matching_rows) == 1
+                    and matching_rows[0].is_mounted
+                    and matching_rows[0].display
+                    and matching_rows[0].region.area
+                    and matching_rows[0].has_class("library-media-row-selected")
+                )
+
+            await _wait_for_condition(
+                pilot,
+                capture_is_settled,
+                message="Media selection did not settle after leaving bulk mode",
+            )
             observations = {
                 "catalogue_ids": ["ME-01", "ME-02"],
                 "find_status": find_status,

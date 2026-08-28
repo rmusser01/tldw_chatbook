@@ -2840,6 +2840,23 @@ async def test_common_matrix_records_one_failed_cell_and_continues(
     assert len(calls) == 2
 
 
+@pytest.mark.asyncio
+async def test_media_capability_captures_settled_visible_selected_row(
+    monkeypatch, tmp_path
+):
+    module = _load_scenarios()
+    monkeypatch.setenv("TASK23019_RAW_ROOT", str(tmp_path))
+
+    facts = await module.run_media_capability()
+
+    assert facts["status"] == "PASS"
+    assert facts["record"]["selected"] == facts["record"]["loaded"]
+    assert facts["record"]["pending"] is None
+    assert facts["selected_row"]["selected"] is True
+    assert facts["selected_row"]["region"]["width"] > 0
+    assert facts["selected_row"]["region"]["height"] > 0
+
+
 def test_scenario_cleanup_failure_is_not_suppressed(tmp_path):
     module = _load_scenarios()
     context = module.ScenarioContext(tmp_path)
