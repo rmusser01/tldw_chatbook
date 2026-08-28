@@ -51,6 +51,7 @@ from tldw_chatbook.Chat.console_chat_models import (
     GenerationVariantMeta,
 )
 from tldw_chatbook.Chat.console_chat_store import ConsoleChatSession, ConsoleChatStore
+from tldw_chatbook.Chat.console_chat_fork import ConsoleForkEligibility
 from tldw_chatbook.Chat.console_turn_grouping import project_thinking_activities
 from tldw_chatbook.Chat.thinking_blocks import (
     DisplayableThinkingBlock,
@@ -227,10 +228,7 @@ def test_native_ready_console_config_survives_cache_invalidating_reload() -> Non
 
     assert reloaded["chat_defaults"]["provider"] == "llama_cpp"
     assert reloaded["chat_defaults"]["model"] == "prepared-model"
-    assert (
-        reloaded["api_settings"]["llama_cpp"]["api_url"]
-        == "http://127.0.0.1:9099"
-    )
+    assert reloaded["api_settings"]["llama_cpp"]["api_url"] == "http://127.0.0.1:9099"
     assert reloaded["api_settings"]["llama_cpp"]["model"] == "prepared-model"
 
 
@@ -431,16 +429,18 @@ class _PromptImprovementGateway:
         self.stream_calls = 0
 
     async def resolve_for_send(self, selection):
-        return with_destination(ConsoleProviderResolution(
-            provider="llama_cpp",
-            base_url=selection.base_url or "http://127.0.0.1:9099",
-            model=selection.explicit_model
-            or selection.configured_model
-            or "local-model",
-            ready=True,
-            readiness_key="llama_cpp",
-            execution_key="llama_cpp",
-        ))
+        return with_destination(
+            ConsoleProviderResolution(
+                provider="llama_cpp",
+                base_url=selection.base_url or "http://127.0.0.1:9099",
+                model=selection.explicit_model
+                or selection.configured_model
+                or "local-model",
+                ready=True,
+                readiness_key="llama_cpp",
+                execution_key="llama_cpp",
+            )
+        )
 
     async def complete_auxiliary(self, request):
         self.auxiliary_calls += 1
@@ -699,12 +699,14 @@ async def test_prompt_auto_improvement_applies_once_and_menu_undo_restores_exact
             )
             == "Draft improved"
         )
-        assert composer.query_one(
-            "#console-prompt-improvement-undo", Button
-        ).disabled is False
-        assert composer.query_one(
-            "#console-prompt-improvement-review", Button
-        ).disabled is False
+        assert (
+            composer.query_one("#console-prompt-improvement-undo", Button).disabled
+            is False
+        )
+        assert (
+            composer.query_one("#console-prompt-improvement-review", Button).disabled
+            is False
+        )
         assert gateway.auxiliary_calls == 1
         assert gateway.stream_calls == 0
         assert (
@@ -785,12 +787,10 @@ async def test_prompt_improvement_review_compares_and_can_keep_or_restore() -> N
         assert composer.capture_draft_snapshot().segments == before.segments
         assert composer.draft_text() == "Draft answer"
         assert composer.improvement_undo_available is False
+        assert store.session_draft(store.active_session_id) == "Draft answer"
         assert (
-            store.session_draft(store.active_session_id) == "Draft answer"
+            composer.query_one("#console-prompt-improvement-recovery").display is False
         )
-        assert composer.query_one(
-            "#console-prompt-improvement-recovery"
-        ).display is False
 
 
 @pytest.mark.asyncio
@@ -865,9 +865,7 @@ async def test_direct_recipe_defers_resolution_and_preserves_system_opt_out() ->
         modal = host.screen_stack[-1]
 
         assert gateway.resolve_calls == []
-        include_system = modal.query_one(
-            "#console-prompts-include-system", Checkbox
-        )
+        include_system = modal.query_one("#console-prompts-include-system", Checkbox)
         include_system.value = False
         await pilot.pause()
         modal.query_one("#console-prompts-structured-recipe", Button).press()
@@ -878,8 +876,7 @@ async def test_direct_recipe_defers_resolution_and_preserves_system_opt_out() ->
         modal.query_one("#console-prompts-recipe-blank", Button).press()
         await pilot.pause()
         assert (
-            modal.query_one("#console-prompts-include-system", Checkbox).value
-            is False
+            modal.query_one("#console-prompts-include-system", Checkbox).value is False
         )
         assert gateway.resolve_calls == []
 
@@ -1608,12 +1605,12 @@ class RestoredConsoleHarness(ConsolidatedCSSApp):
 class BlockedGateway:
     async def resolve_for_send(self, selection):
         return provider_resolution(
-                   provider="llama_cpp",
-                   base_url=selection.base_url or "",
-                   model="test-model",
-                   ready=False,
-                   visible_copy="Provider blocked: llama.cpp unavailable.",
-               )
+            provider="llama_cpp",
+            base_url=selection.base_url or "",
+            model="test-model",
+            ready=False,
+            visible_copy="Provider blocked: llama.cpp unavailable.",
+        )
 
     async def stream_chat(self, resolution, messages, **kwargs):
         raise AssertionError("Blocked gateway should not stream")
@@ -1949,6 +1946,18 @@ async def _wait_for_focus(app, pilot, widget, *, attempts: int = 40) -> None:
         f"Focus did not reach {getattr(widget, 'id', widget)!r}; "
         f"focused={getattr(focused, 'id', focused)!r}"
     )
+
+
+async def _choose_message_more_action(
+    console, pilot, message_id: str, action_id: str
+) -> None:
+    """Open one captured-target More menu and choose its labelled action."""
+    opener = f"#console-message-action-more-{message_id}"
+    choice = f"#console-message-more-{action_id}"
+    await _wait_for_selector(console, pilot, opener)
+    await pilot.click(opener)
+    await _wait_for_selector(console, pilot, choice)
+    await pilot.click(choice)
 
 
 async def _wait_for_active_session_change(
@@ -4105,8 +4114,9 @@ async def test_console_original_attempt_preview_toggles_without_changing_selecte
         transcript = console.query_one("#console-native-transcript", ConsoleTranscript)
         transcript.select_message(message.id)
         await console._sync_native_console_chat_ui()
-        view_selector = f"#console-message-action-view-original-attempt-{message.id}"
-        await _wait_for_selector(console, pilot, view_selector)
+        assert not console.query(
+            f"#console-message-action-view-original-attempt-{message.id}"
+        )
 
         async def assert_repaired_consumers() -> None:
             selected = store.get_message(message.id)
@@ -4160,7 +4170,9 @@ async def test_console_original_attempt_preview_toggles_without_changing_selecte
                 assert original not in str(output)
 
         await assert_repaired_consumers()
-        await pilot.click(view_selector)
+        await _choose_message_more_action(
+            console, pilot, message.id, "view-original-attempt"
+        )
         await _wait_for_selector(
             console,
             pilot,
@@ -4169,9 +4181,9 @@ async def test_console_original_attempt_preview_toggles_without_changing_selecte
         assert console._console_original_attempt_previews == {message.id: original}
         await assert_repaired_consumers()
 
-        view_button = console.query_one(view_selector, Button)
-        view_button.focus()
-        await pilot.press("enter")
+        await _choose_message_more_action(
+            console, pilot, message.id, "view-original-attempt"
+        )
         await pilot.pause()
         assert console._console_original_attempt_previews == {}
         assert len(console.query(f"#console-original-attempt-{message.id}")) == 0
@@ -4384,7 +4396,7 @@ async def test_console_message_action_keyboard_focus_stays_inside_action_row():
     # just enough to keep every button in-bounds and genuinely clickable
     # here. This is a test-harness gap, not a CSS bug: the real app loads
     # the bundle and renders the row far narrower.
-    async with host.run_test(size=(200, 48)) as pilot:
+    async with host.run_test(size=(160, 48)) as pilot:
         console = host.screen_stack[-1]
         await _wait_for_selector(console, pilot, "#console-native-transcript")
         store = console._ensure_console_chat_store()
@@ -4400,16 +4412,10 @@ async def test_console_message_action_keyboard_focus_stays_inside_action_row():
         transcript.select_message(message.id)
         await console._sync_native_console_chat_ui()
         await _wait_for_selector(
-            console, pilot, f"#console-message-action-delete-{message.id}"
+            console, pilot, f"#console-message-action-more-{message.id}"
         )
 
-        transcript.focus_action(message.id, "delete")
-        delete_button = console.query_one(
-            f"#console-message-action-delete-{message.id}", Button
-        )
-        await _wait_for_focus(console.app, pilot, delete_button)
-
-        await pilot.press("tab")
+        transcript.focus_action(message.id, "copy")
         copy_button = console.query_one(
             f"#console-message-action-copy-{message.id}", Button
         )
@@ -4430,29 +4436,16 @@ async def test_console_message_action_keyboard_focus_stays_inside_action_row():
         )
         await _wait_for_focus(console.app, pilot, edit_button)
 
-        await pilot.press("tab")
-        save_as_button = console.query_one(
-            f"#console-message-action-save-as-{message.id}", Button
-        )
-        await _wait_for_focus(console.app, pilot, save_as_button)
-
-        # task-17656: walk the rest of the row full circle back to Delete —
-        # every stop of a completed assistant reply is Tab-reachable in
-        # visual order, and focus never escapes the row.
-        for action_id in (
-            "regenerate",
-            "continue",
-            "feedback-up",
-            "feedback-down",
-            "delete",
-        ):
+        for action_id in ("fork", "regenerate", "continue", "more"):
             await pilot.press("tab")
             stop = console.query_one(
                 f"#console-message-action-{action_id}-{message.id}", Button
             )
             await _wait_for_focus(console.app, pilot, stop)
 
-        transcript.focus_action(message.id, "save-as")
+        await pilot.press("enter")
+        await _wait_for_selector(console, pilot, "#console-message-more-menu")
+        save_as_button = console.query_one("#console-message-more-save-as", Button)
         await _wait_for_focus(console.app, pilot, save_as_button)
         await pilot.press("enter")
         await _wait_for_selector(host.screen_stack[-1], pilot, "#console-save-as-modal")
@@ -5579,7 +5572,7 @@ async def test_console_selected_message_updates_inspector_action_guidance():
         )
         assert "Selected message: Assistant message" in inspector_text
         assert (
-            "Message actions: Copy, Edit, Save as..., Regenerate, Continue, Feedback, Delete"
+            "Message actions: Copy, Edit, Fork, Regenerate/Retry, Continue, More…"
             in inspector_text
         )
         assert (
@@ -5761,16 +5754,84 @@ async def test_console_selected_message_feedback_action_records_rating():
         transcript.select_message(message.id)
         await console._sync_native_console_chat_ui()
         await _wait_for_selector(
-            console, pilot, f"#console-message-action-feedback-up-{message.id}"
+            console, pilot, f"#console-message-action-more-{message.id}"
         )
 
-        await pilot.click(f"#console-message-action-feedback-up-{message.id}")
+        await _choose_message_more_action(console, pilot, message.id, "feedback-up")
         await pilot.pause()
 
     updated = store.get_message(message.id)
     assert updated.feedback == "up"
     assert console._last_console_action.action_id == "feedback-up"
     assert console._last_console_action.visible_copy == "Marked message feedback: up."
+
+
+@pytest.mark.asyncio
+async def test_console_more_menu_click_away_closes_without_action():
+    app = _build_test_app()
+    host = ConsoleHarness(app)
+
+    async with host.run_test(size=(160, 48)) as pilot:
+        console = host.screen_stack[-1]
+        await _wait_for_selector(console, pilot, "#console-native-transcript")
+        store = console._ensure_console_chat_store()
+        session = store.ensure_session()
+        message = store.append_message(
+            session.id,
+            role=ConsoleMessageRole.ASSISTANT,
+            content="answer",
+        )
+        await console._sync_native_console_chat_ui()
+        transcript = console.query_one(ConsoleTranscript)
+        transcript.select_message(message.id)
+        await console._sync_native_console_chat_ui()
+        opener = f"#console-message-action-more-{message.id}"
+        await _wait_for_selector(console, pilot, opener)
+        before = console._last_console_action
+
+        await pilot.click(opener)
+        await _wait_for_selector(console, pilot, "#console-message-more-menu")
+        await pilot.click("#console-native-composer")
+        await pilot.pause()
+
+        assert not console.query("#console-message-more-menu")
+        assert console._last_console_action is before
+
+
+@pytest.mark.asyncio
+async def test_console_more_delete_double_activation_stops_at_confirmation():
+    app = _build_test_app()
+    host = ConsoleHarness(app)
+
+    async with host.run_test(size=(160, 48)) as pilot:
+        console = host.screen_stack[-1]
+        await _wait_for_selector(console, pilot, "#console-native-transcript")
+        store = console._ensure_console_chat_store()
+        session = store.ensure_session()
+        message = store.append_message(
+            session.id,
+            role=ConsoleMessageRole.ASSISTANT,
+            content="answer",
+        )
+        await console._sync_native_console_chat_ui()
+        transcript = console.query_one(ConsoleTranscript)
+        transcript.select_message(message.id)
+        await console._sync_native_console_chat_ui()
+        opener = console.query_one(f"#console-message-action-more-{message.id}", Button)
+        opener.press()
+        await _wait_for_selector(console, pilot, "#console-message-more-delete")
+        delete = console.query_one("#console-message-more-delete", Button)
+
+        delete.press()
+        delete.press()
+        await pilot.pause()
+
+        assert store.messages_for_session(session.id) == [message]
+        assert console._last_console_action.action_id == "delete"
+        assert (
+            console._last_console_action.visible_copy
+            == "Press Delete again to remove this message."
+        )
 
 
 @pytest.mark.asyncio
@@ -5800,10 +5861,10 @@ async def test_console_selected_message_delete_action_removes_message_from_trans
         transcript.select_message(message.id)
         await console._sync_native_console_chat_ui()
         await _wait_for_selector(
-            console, pilot, f"#console-message-action-delete-{message.id}"
+            console, pilot, f"#console-message-action-more-{message.id}"
         )
 
-        await pilot.click(f"#console-message-action-delete-{message.id}")
+        await _choose_message_more_action(console, pilot, message.id, "delete")
         await pilot.pause()
 
         assert store.messages_for_session(session.id) == [message]
@@ -5813,10 +5874,7 @@ async def test_console_selected_message_delete_action_removes_message_from_trans
             == "Press Delete again to remove this message."
         )
 
-        delete_button = console.query_one(
-            f"#console-message-action-delete-{message.id}", Button
-        )
-        delete_button.press()
+        await _choose_message_more_action(console, pilot, message.id, "delete")
         await pilot.pause()
 
     assert store.messages_for_session(session.id) == []
@@ -5865,18 +5923,9 @@ async def test_console_original_attempt_delete_clears_parent_and_descendant_prev
         transcript = console.query_one("#console-native-transcript", ConsoleTranscript)
         transcript.select_message(parent.id)
         await console._sync_native_console_chat_ui()
-        await _wait_for_selector(
-            console,
-            pilot,
-            f"#console-message-action-delete-{parent.id}",
-        )
-        delete_button = console.query_one(
-            f"#console-message-action-delete-{parent.id}",
-            Button,
-        )
-        delete_button.press()
+        await _choose_message_more_action(console, pilot, parent.id, "delete")
         await pilot.pause()
-        delete_button.press()
+        await _choose_message_more_action(console, pilot, parent.id, "delete")
         await pilot.pause()
 
         assert controller._original_attempts == {}
@@ -5916,11 +5965,7 @@ async def test_console_delete_confirmation_resets_when_selection_changes():
         transcript = console.query_one("#console-native-transcript", ConsoleTranscript)
         transcript.select_message(first_message.id)
         await console._sync_native_console_chat_ui()
-        await _wait_for_selector(
-            console, pilot, f"#console-message-action-delete-{first_message.id}"
-        )
-
-        await pilot.click(f"#console-message-action-delete-{first_message.id}")
+        await _choose_message_more_action(console, pilot, first_message.id, "delete")
         await pilot.pause()
         assert (
             console._last_console_action.visible_copy
@@ -5931,14 +5976,7 @@ async def test_console_delete_confirmation_resets_when_selection_changes():
         await pilot.pause()
         transcript.select_message(first_message.id)
         await console._sync_native_console_chat_ui()
-        await _wait_for_selector(
-            console, pilot, f"#console-message-action-delete-{first_message.id}"
-        )
-
-        delete_button = console.query_one(
-            f"#console-message-action-delete-{first_message.id}", Button
-        )
-        delete_button.press()
+        await _choose_message_more_action(console, pilot, first_message.id, "delete")
         await pilot.pause()
 
     assert [message.id for message in store.messages_for_session(session.id)] == [
@@ -6205,6 +6243,43 @@ async def test_console_sync_skips_transcript_refresh_when_messages_unchanged(
 
 
 @pytest.mark.asyncio
+async def test_console_sync_reconciles_hydrated_fork_eligibility(monkeypatch):
+    app = _build_test_app()
+    host = ConsoleHarness(app)
+    eligibility = ConsoleForkEligibility(False, "Fork policy is still loading.")
+
+    async with host.run_test(size=(160, 48)) as pilot:
+        console = host.screen_stack[-1]
+        await _wait_for_selector(console, pilot, "#console-native-transcript")
+        monkeypatch.setattr(
+            console, "_console_fork_eligibility", lambda _message_id: eligibility
+        )
+        store = console._ensure_console_chat_store()
+        session = store.ensure_session()
+        message = store.append_message(
+            session.id,
+            role=ConsoleMessageRole.ASSISTANT,
+            content="answer",
+        )
+        await console._sync_native_console_chat_ui()
+
+        transcript = console.query_one(ConsoleTranscript)
+        transcript.select_message(message.id)
+        await console._sync_native_console_chat_ui()
+        await pilot.pause()
+        selector = f"#console-message-action-fork-{message.id}"
+        fork = console.query_one(selector, Button)
+        assert fork.disabled
+        assert fork.tooltip == "Fork policy is still loading."
+
+        eligibility = ConsoleForkEligibility(True)
+        await console._sync_native_console_chat_ui()
+        await pilot.pause()
+
+        assert not console.query_one(selector, Button).disabled
+
+
+@pytest.mark.asyncio
 async def test_console_selected_message_save_as_action_opens_modal():
     app = _build_test_app()
     host = ConsoleHarness(app)
@@ -6225,10 +6300,10 @@ async def test_console_selected_message_save_as_action_opens_modal():
         transcript.select_message(message.id)
         await console._sync_native_console_chat_ui()
         await _wait_for_selector(
-            console, pilot, f"#console-message-action-save-as-{message.id}"
+            console, pilot, f"#console-message-action-more-{message.id}"
         )
 
-        await pilot.click(f"#console-message-action-save-as-{message.id}")
+        await _choose_message_more_action(console, pilot, message.id, "save-as")
         await _wait_for_selector(host.screen_stack[-1], pilot, "#console-save-as-modal")
 
     assert console._last_console_action.action_id == "save-as"
@@ -6261,10 +6336,10 @@ async def _open_save_as_modal_for_message(host, pilot, console, role, content):
     transcript.select_message(message.id)
     await console._sync_native_console_chat_ui()
     await _wait_for_selector(
-        console, pilot, f"#console-message-action-save-as-{message.id}"
+        console, pilot, f"#console-message-action-more-{message.id}"
     )
 
-    await pilot.click(f"#console-message-action-save-as-{message.id}")
+    await _choose_message_more_action(console, pilot, message.id, "save-as")
     await _wait_for_selector(host.screen_stack[-1], pilot, "#console-save-as-modal")
     return message, host.screen_stack[-1]
 

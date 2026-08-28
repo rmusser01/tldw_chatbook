@@ -30,6 +30,12 @@ from .console_citation_sources_modal import (
     build_console_citation_source_rows,
 )
 from .console_edit_message_modal import ConsoleEditMessageModal, ConsoleEditResult
+from .console_fork_chat_modal import (
+    ConsoleForkChatModal,
+    ConsoleForkDialogSummary,
+    ConsoleForkSubmitResult,
+)
+from .console_message_more_menu import ConsoleMessageMoreMenu
 from .console_rail_handle import ConsoleRailHandle
 from .console_prompts_modal import ConsolePromptsModal
 from .console_prompts_state import ConsolePromptsState, PromptBrowseResult
@@ -94,6 +100,10 @@ __all__ = [
     "ConsoleContextControlState",
     "ConsoleEditMessageModal",
     "ConsoleEditResult",
+    "ConsoleForkChatModal",
+    "ConsoleForkDialogSummary",
+    "ConsoleForkSubmitResult",
+    "ConsoleMessageMoreMenu",
     "InspectorOwnershipPolicy",
     "ConsoleRailHandle",
     "ConsolePromptsModal",

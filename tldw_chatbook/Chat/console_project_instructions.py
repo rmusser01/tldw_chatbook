@@ -64,6 +64,41 @@ class ProjectInstructionControlState:
         return cls(project_instructions_enabled=False)
 
 
+def sanitize_fork_project_instruction_state(
+    source: ProjectInstructionControlState,
+) -> ProjectInstructionControlState:
+    """Retain declarative project controls without copying source consent.
+
+    Args:
+        source: Validated controls captured from the source session.
+
+    Returns:
+        The same declarative selection with a fresh notice boundary.
+
+    Raises:
+        TypeError: If the source or any scalar control field is malformed.
+    """
+
+    if type(source) is not ProjectInstructionControlState:
+        raise TypeError("source must be ProjectInstructionControlState")
+    if type(source.project_instructions_enabled) is not bool:
+        raise TypeError("project_instructions_enabled must be a bool")
+    for field_name in (
+        "working_folder_binding_id",
+        "working_folder_locator_fingerprint",
+        "project_instruction_notice_key",
+    ):
+        value = getattr(source, field_name)
+        if value is not None and type(value) is not str:
+            raise TypeError(f"{field_name} must be a string or None")
+    return ProjectInstructionControlState(
+        project_instructions_enabled=source.project_instructions_enabled,
+        working_folder_binding_id=source.working_folder_binding_id,
+        working_folder_locator_fingerprint=(source.working_folder_locator_fingerprint),
+        project_instruction_notice_key=None,
+    )
+
+
 def encode_project_context_json(state: ProjectInstructionControlState) -> str:
     """Encode only the versioned four-field control contract.
 

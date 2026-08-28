@@ -56,6 +56,9 @@ class VideoGenerationMetadata:
         source_image_message_id: For image-to-video, the persisted id of the
             image message this video was animated from (task-3401.8), or
             ``None``.
+        is_unavailable_tombstone: Process-local/persisted proof that this row
+            is a fork's canonical unavailable-video tombstone rather than a
+            live generated-video marker.
 
     Raises:
         ValueError: If ``name`` or ``backend`` is empty -- refused at
@@ -76,12 +79,17 @@ class VideoGenerationMetadata:
     ratio: str | None = None
     source_image_message_id: str | None = None
     container: str = "mp4"
+    is_unavailable_tombstone: bool = False
 
     def __post_init__(self) -> None:
         if not str(self.name).strip():
-            raise ValueError("name must be non-empty (it is the only durable reference)")
+            raise ValueError(
+                "name must be non-empty (it is the only durable reference)"
+            )
         if not str(self.backend).strip():
             raise ValueError("backend must be non-empty")
+        if type(self.is_unavailable_tombstone) is not bool:
+            raise ValueError("is_unavailable_tombstone must be a bool")
         canonical_video_extension(self.container)
 
     def to_json(self) -> str:
@@ -105,6 +113,7 @@ class VideoGenerationMetadata:
             "height": self.height,
             "ratio": self.ratio,
             "source_image_message_id": self.source_image_message_id,
+            "is_unavailable_tombstone": self.is_unavailable_tombstone,
         }
         return json.dumps({VIDEO_METADATA_TOP_KEY: payload}, sort_keys=True)
 
@@ -138,6 +147,9 @@ class VideoGenerationMetadata:
         if not isinstance(payload, dict):
             return None
         container = "mp4" if "container" not in payload else payload["container"]
+        tombstone = payload.get("is_unavailable_tombstone", False)
+        if type(tombstone) is not bool:
+            return None
         try:
             return cls(
                 name=_as_text(payload.get("name")),
@@ -152,7 +164,10 @@ class VideoGenerationMetadata:
                 width=_as_optional_int(payload.get("width")),
                 height=_as_optional_int(payload.get("height")),
                 ratio=_as_optional_text(payload.get("ratio")),
-                source_image_message_id=_as_optional_text(payload.get("source_image_message_id")),
+                source_image_message_id=_as_optional_text(
+                    payload.get("source_image_message_id")
+                ),
+                is_unavailable_tombstone=tombstone,
             )
         except ValueError:
             return None

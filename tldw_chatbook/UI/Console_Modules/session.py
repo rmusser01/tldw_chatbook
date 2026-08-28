@@ -116,12 +116,14 @@ otherwise suggest belong here, for the reasons noted:
 
 from __future__ import annotations
 
-from collections.abc import Callable, Mapping
+from collections.abc import Callable, Mapping, Sequence
 from dataclasses import asdict, dataclass, replace
+from functools import partial
 import json
 from sqlite3 import Error as SQLiteError
 from typing import Any, Optional, TYPE_CHECKING
 import asyncio
+import inspect
 import re
 import threading
 import time
@@ -130,6 +132,7 @@ import weakref
 
 from loguru import logger
 from loguru import logger as loguru_logger
+from rich.text import Text
 from textual.css.query import QueryError
 from textual.widgets import Select
 
@@ -140,6 +143,13 @@ from ...Chat.console_chat_models import (
     DEFAULT_CONSOLE_SESSION_TITLE,
     ConsoleLifecycleImpact,
     ConsoleMessageRole,
+    ConsoleChatMessage,
+)
+from ...Chat.console_chat_fork import (
+    ConsoleChatForkSnapshot,
+    ConsoleForkFence,
+    ConsoleForkImageSelectionFence,
+    default_fork_title,
 )
 from ...Chat.console_chat_store import ConsoleChatSession, ConsoleChatStore
 from ...Chat.console_chat_controller import (
@@ -211,6 +221,9 @@ from ...Widgets.Console import (
     ConsoleComposerUndoHistory,
     ConsoleProjectInstructionStatusRow,
     ConsoleRenameSessionModal,
+    ConsoleForkChatModal,
+    ConsoleForkDialogSummary,
+    ConsoleForkSubmitResult,
     ProjectInstructionBindingOption,
     ProjectInstructionNoticeModal,
     ProjectInstructionSetupModal,
@@ -251,12 +264,49 @@ class ConsoleSessionCloseImpact:
         return bool(self.transcript_message_count or self.lifecycle.has_loss_risk)
 
 
+@dataclass(slots=True)
+class _ConsoleForkRequest:
+    """Controller-owned identity and recovery state for one fork dialog."""
+
+    fence: ConsoleForkFence
+    fork_session_id: str
+    fork_conversation_id: str | None
+    modal: ConsoleForkChatModal
+    title: str
+    snapshot: ConsoleChatForkSnapshot | None = None
+    committed: bool = False
+    registered: bool = False
+    projection_pending: bool = False
+
+
 # -- Module-level pure helpers this cluster owns (see module docstring) -----
 
 
 def _is_empty_select_value(value: Any) -> bool:
     """Return True for Textual's blank/null select sentinels."""
     return value is None or value == Select.BLANK or str(value).startswith("Select.")
+
+
+def _console_fork_excerpt(content: str, *, max_cells: int = 104) -> str:
+    """Collapse and cell-truncate one untrusted message excerpt."""
+
+    excerpt = " ".join(str(content or "").split()) or "(No text)"
+    rendered = Text(excerpt)
+    rendered.truncate(max_cells, overflow="ellipsis", pad=False)
+    return rendered.plain
+
+
+def _console_fork_copy_failure(error: ValueError) -> str:
+    """Name safe content classes without exposing exception details."""
+
+    lowered = str(error).lower()
+    for content_class in ("image", "attachment", "citation", "video"):
+        if content_class in lowered:
+            return (
+                f"The fork's {content_class} could not be copied safely. "
+                f"Review the {content_class} and retry."
+            )
+    return "This fork cannot be copied safely. Close and review the source."
 
 
 def _has_selected_text(value: Any) -> bool:
@@ -592,6 +642,17 @@ class ConsoleSessionController:
         first_chat_presentation_snapshot: Callable[[], tuple[Any, Any, object | None]],
         apply_first_chat_control_selection: Callable[[Any, Any], None],
         restore_first_chat_focus: Callable[[object | None], None],
+        capture_fork_image_selections: Callable[
+            [Sequence[ConsoleChatMessage]], tuple[ConsoleForkImageSelectionFence, ...]
+        ],
+        validate_fork_image_selections: Callable[
+            [
+                Sequence[ConsoleChatMessage],
+                Sequence[ConsoleForkImageSelectionFence],
+            ],
+            bool,
+        ],
+        workspace_display_name: Callable[[str], str],
     ) -> None:
         """Build the controller and bind everything its moved bodies need.
 
@@ -761,6 +822,9 @@ class ConsoleSessionController:
         self._first_chat_presentation_snapshot_fn = first_chat_presentation_snapshot
         self._apply_first_chat_control_selection_fn = apply_first_chat_control_selection
         self._restore_first_chat_focus_fn = restore_first_chat_focus
+        self._capture_fork_image_selections_fn = capture_fork_image_selections
+        self._validate_fork_image_selections_fn = validate_fork_image_selections
+        self._workspace_display_name_fn = workspace_display_name
 
         # This cluster's own state, moved verbatim from `ChatScreen.__init__`.
         self._console_visible_draft_session_id: str | None = None
@@ -783,6 +847,8 @@ class ConsoleSessionController:
             str, tuple[tuple[Any, Any], float]
         ] = {}
         self._first_chat_handoff_notified_revision: int | None = None
+        self._fork_validation_generation = 0
+        self._active_fork_request: _ConsoleForkRequest | None = None
 
     # -- Framework services (live-read via `@property`) --------------------
 
@@ -1850,6 +1916,443 @@ class ConsoleSessionController:
             ConsoleRenameSessionModal(title=session.title),
             callback=_apply_rename,
         )
+
+    def _fork_prefix_messages(
+        self,
+        store: ConsoleChatStore,
+        fence: ConsoleForkFence,
+    ) -> tuple[ConsoleChatMessage, ...] | None:
+        """Re-resolve the captured prefix by identity without changing source state."""
+
+        try:
+            return tuple(
+                store.get_message(entry.native_message_id) for entry in fence.lineage
+            )
+        except KeyError:
+            return None
+
+    def _fork_dialog_summary(
+        self,
+        fence: ConsoleForkFence,
+        messages: Sequence[ConsoleChatMessage],
+    ) -> ConsoleForkDialogSummary:
+        """Build bounded presentation facts from one already-captured fence."""
+
+        boundary = fence.lineage[-1]
+        role_label = "User" if boundary.role is ConsoleMessageRole.USER else "Assistant"
+        boundary_label = f"Through {role_label} {len(fence.lineage)}"
+        if boundary.role is ConsoleMessageRole.USER:
+            boundary_label += " · No reply will be generated"
+        elif boundary.status == "stopped":
+            boundary_label += " · Partial response"
+        elif boundary.status == "failed":
+            boundary_label += " · Failed partial response"
+
+        response_variant = None
+        if boundary.visible_variant_id and len(boundary.sibling_identity) > 1:
+            try:
+                index = boundary.sibling_identity.index(boundary.visible_variant_id) + 1
+            except ValueError:
+                index = 1
+            response_variant = (
+                f"showing response {index} of {len(boundary.sibling_identity)}"
+            )
+
+        temporary = fence.source_durability == "temporary"
+        source_session = next(
+            session
+            for session in self._ensure_console_chat_store().sessions()
+            if session.id == fence.source_session_id
+        )
+        if temporary:
+            destination = "Temporary chat · Save later to keep it"
+        elif source_session.workspace_id == CONSOLE_GLOBAL_WORKSPACE_ID:
+            destination = "Saved chat · Chats"
+        else:
+            destination = (
+                "Saved chat · "
+                f"{self._workspace_display_name_fn(source_session.workspace_id)}"
+            )
+        return ConsoleForkDialogSummary(
+            default_title=default_fork_title(fence.source_title),
+            boundary_label=boundary_label,
+            boundary_excerpt=_console_fork_excerpt(boundary.visible_content),
+            message_count=len(fence.lineage),
+            response_variant=response_variant,
+            destination=destination,
+            temporary=temporary,
+            includes_attachments=any(message.attachments for message in messages),
+            includes_citations=any(
+                message.citation_presentation is not None for message in messages
+            ),
+            contains_video=any(
+                message.video_metadata is not None for message in messages
+            ),
+        )
+
+    def request_console_chat_fork(self, message_id: str) -> None:
+        """Capture one boundary and open its presentation-only naming dialog."""
+
+        if self._active_fork_request is not None:
+            self.app_instance.notify(
+                "Finish or close the current fork dialog first.",
+                severity="warning",
+            )
+            return
+        store = self._ensure_console_chat_store()
+        try:
+            session_id = store.session_id_for_message(message_id)
+            prefix_ids = store.active_path_message_ids(session_id)
+            prefix_ids = prefix_ids[: prefix_ids.index(message_id) + 1]
+            prefix = tuple(store.get_message(item) for item in prefix_ids)
+            image_selections = self._capture_fork_image_selections_fn(prefix)
+            fence = store.issue_fork_fence(
+                message_id,
+                image_selections=image_selections,
+            )
+            title = default_fork_title(fence.source_title)
+        except (KeyError, TypeError, ValueError) as exc:
+            self.app_instance.notify(str(exc), severity="warning")
+            return
+
+        modal: ConsoleForkChatModal
+
+        def submit(result: ConsoleForkSubmitResult) -> None:
+            self._submit_console_chat_fork(modal, result)
+
+        def cancel() -> None:
+            self._cancel_console_chat_fork(modal)
+
+        def open_existing() -> None:
+            self._open_created_console_chat_fork(modal)
+
+        modal = ConsoleForkChatModal(
+            self._fork_dialog_summary(fence, prefix),
+            on_submit=submit,
+            on_cancel=cancel,
+            on_open=open_existing,
+        )
+        self._active_fork_request = _ConsoleForkRequest(
+            fence=fence,
+            fork_session_id=str(uuid.uuid4()),
+            fork_conversation_id=(
+                None if fence.source_durability == "temporary" else str(uuid.uuid4())
+            ),
+            modal=modal,
+            title=title,
+        )
+        self.push_screen(modal)
+
+    def _cancel_console_chat_fork(self, modal: ConsoleForkChatModal) -> None:
+        request = self._active_fork_request
+        if request is None or request.modal is not modal:
+            return
+        self._fork_validation_generation += 1
+        self._active_fork_request = None
+
+    def _submit_console_chat_fork(
+        self,
+        modal: ConsoleForkChatModal,
+        result: ConsoleForkSubmitResult,
+    ) -> None:
+        request = self._active_fork_request
+        if request is None or request.modal is not modal:
+            return
+        if (
+            request.snapshot is not None
+            and not request.committed
+            and request.snapshot.title != result.title
+        ):
+            request.snapshot = None
+        request.title = result.title
+        self._fork_validation_generation += 1
+        generation = self._fork_validation_generation
+        self.run_app_worker(
+            self._run_console_chat_fork(request, generation),
+            group="console-chat-fork",
+            exit_on_error=False,
+        )
+
+    def _open_created_console_chat_fork(self, modal: ConsoleForkChatModal) -> None:
+        request = self._active_fork_request
+        if request is None or request.modal is not modal:
+            return
+        self.run_app_worker(
+            self._recover_created_console_chat_fork(request),
+            group="console-chat-fork-open",
+            exit_on_error=False,
+        )
+
+    def _fork_request_is_current(
+        self,
+        request: _ConsoleForkRequest,
+        generation: int,
+    ) -> bool:
+        return (
+            self._active_fork_request is request
+            and self._fork_validation_generation == generation
+            and request.modal.state == "validating"
+        )
+
+    async def _run_fork_io(
+        self,
+        operation: Callable[..., Any],
+        /,
+        *args: object,
+        **kwargs: object,
+    ) -> Any:
+        """Keep production SQLite work off-loop while supporting memory fixtures."""
+
+        store = self._ensure_console_chat_store()
+        db = getattr(store.persistence, "db", None)
+        call = partial(operation, *args, **kwargs)
+        if bool(getattr(db, "is_memory_db", False)):
+            return call()
+        return await asyncio.to_thread(call)
+
+    @staticmethod
+    def _fork_conversation_kwargs(
+        snapshot: ConsoleChatForkSnapshot,
+    ) -> dict[str, object]:
+        configuration = snapshot.configuration
+        global_scope = configuration.workspace_id == CONSOLE_GLOBAL_WORKSPACE_ID
+        return {
+            "conversation_title": snapshot.title,
+            "scope_type": "global" if global_scope else "workspace",
+            "workspace_id": None if global_scope else configuration.workspace_id,
+            "system_prompt": configuration.settings.system_prompt,
+            "runtime_backend": configuration.runtime_backend,
+            "assistant_kind": configuration.assistant_kind,
+            "assistant_id": configuration.assistant_id,
+            "assistant_authority_id": configuration.assistant_authority_id,
+            "persona_memory_mode": configuration.persona_memory_mode,
+            "character_id": configuration.character_id,
+            "character_name": configuration.character_name,
+            "speech_preferences": configuration.speech_preferences,
+        }
+
+    def _registered_fork_exists(
+        self,
+        store: ConsoleChatStore,
+        request: _ConsoleForkRequest,
+    ) -> bool:
+        return any(
+            session.id == request.fork_session_id
+            and session.persisted_conversation_id == request.fork_conversation_id
+            for session in store.sessions()
+        )
+
+    async def _register_console_chat_fork(
+        self,
+        store: ConsoleChatStore,
+        request: _ConsoleForkRequest,
+    ) -> bool:
+        if request.registered or self._registered_fork_exists(store, request):
+            request.registered = True
+            return True
+        snapshot = request.snapshot
+        if snapshot is None:
+            return False
+        try:
+            store.register_fork_snapshot(snapshot, activate=False)
+        except Exception:  # noqa: BLE001 -- controller recovery boundary
+            return False
+        request.registered = True
+        if request.projection_pending and request.fork_conversation_id is not None:
+            store._pending_workspace_projections[request.fork_session_id] = (  # noqa: SLF001
+                request.fork_conversation_id
+            )
+        return True
+
+    async def _commit_durable_console_chat_fork(
+        self,
+        store: ConsoleChatStore,
+        request: _ConsoleForkRequest,
+    ) -> bool:
+        snapshot = request.snapshot
+        if snapshot is None:
+            return False
+        if request.committed:
+            return True
+        persistence = store.persistence
+        try:
+            result = await self._run_fork_io(
+                persistence.fork_console_conversation_bundle,
+                snapshot=snapshot,
+                conversation_kwargs=self._fork_conversation_kwargs(snapshot),
+                policy_candidate=snapshot.configuration.library_policy,
+                project_context_json=encode_project_context_json(
+                    snapshot.configuration.project_instruction_state
+                ),
+            )
+        except Exception:  # noqa: BLE001 -- every ambiguous write must reconcile
+            try:
+                result = await self._run_fork_io(
+                    persistence.resolve_console_fork_commit,
+                    snapshot,
+                )
+            except Exception as exc:  # noqa: BLE001 -- collision fails closed
+                collision = "collision" in str(exc).lower()
+                request.modal.show_precommit_error(
+                    (
+                        "Fork identity conflict. Close this dialog and choose Fork again."
+                        if collision
+                        else "Fork could not be verified. Close this dialog and try again."
+                    ),
+                    retryable=not collision,
+                )
+                return False
+            if result is None:
+                request.modal.show_precommit_error(
+                    "Fork could not be created. Check storage and retry."
+                )
+                return False
+        if result is None:
+            request.modal.show_precommit_error(
+                "Fork could not be created. Check storage and retry."
+            )
+            return False
+        request.committed = True
+
+        if snapshot.configuration.workspace_id != CONSOLE_GLOBAL_WORKSPACE_ID:
+            try:
+                await self._run_fork_io(
+                    persistence.project_workspace_membership,
+                    snapshot.fork_conversation_id,
+                )
+            except Exception:  # noqa: BLE001 -- durable row remains authoritative
+                request.projection_pending = True
+        return True
+
+    def _show_created_not_opened(
+        self,
+        request: _ConsoleForkRequest,
+        detail: str,
+    ) -> None:
+        identity = request.fork_conversation_id or request.fork_session_id
+        request.modal.show_created_not_opened(
+            title=request.title,
+            identity=identity,
+            detail=detail,
+        )
+
+    async def _run_console_chat_fork(
+        self,
+        request: _ConsoleForkRequest,
+        generation: int,
+    ) -> None:
+        barrier = getattr(self, "_fork_validation_barrier", None)
+        if callable(barrier):
+            pending = barrier(generation)
+            if inspect.isawaitable(pending):
+                await pending
+        if not self._fork_request_is_current(request, generation):
+            return
+
+        store = self._ensure_console_chat_store()
+        prefix = self._fork_prefix_messages(store, request.fence)
+        if (
+            prefix is None
+            or not self._validate_fork_image_selections_fn(
+                prefix,
+                request.fence.image_selections,
+            )
+            or not store.validate_fork_fence(
+                request.fence,
+                image_selections=request.fence.image_selections,
+            )
+        ):
+            request.modal.show_stale_source()
+            return
+        if not self._fork_request_is_current(request, generation):
+            return
+        if request.snapshot is None:
+            try:
+                request.snapshot = store.stage_fork_snapshot(
+                    request.fence,
+                    title=request.title,
+                    fork_session_id=request.fork_session_id,
+                    fork_conversation_id=request.fork_conversation_id,
+                )
+            except ValueError as exc:
+                if "source changed" in str(exc).lower():
+                    request.modal.show_stale_source()
+                else:
+                    request.modal.show_precommit_error(_console_fork_copy_failure(exc))
+                return
+        if not self._fork_request_is_current(request, generation):
+            return
+
+        request.modal.show_committing()
+        snapshot = request.snapshot
+        assert snapshot is not None
+        if snapshot.durable:
+            if not await self._commit_durable_console_chat_fork(store, request):
+                return
+        if not await self._register_console_chat_fork(store, request):
+            if snapshot.durable and request.committed:
+                self._show_created_not_opened(
+                    request,
+                    "The fork was created but could not be opened.",
+                )
+            else:
+                request.modal.show_precommit_error(
+                    "The temporary fork could not be created. Retry."
+                )
+            return
+        await self._finish_opening_console_chat_fork(store, request)
+
+    async def _finish_opening_console_chat_fork(
+        self,
+        store: ConsoleChatStore,
+        request: _ConsoleForkRequest,
+    ) -> None:
+        try:
+            if request.snapshot is not None and request.snapshot.durable:
+                await store.hydrate_session_library_policy(request.fork_session_id)
+            await self._activate_native_console_session(request.fork_session_id)
+        except Exception:  # noqa: BLE001 -- registered target stays recoverable
+            self._show_created_not_opened(
+                request,
+                "The fork was created but could not be opened.",
+            )
+            return
+        opening_copy = (
+            "Fork created and opened."
+            if request.fork_conversation_id
+            else "Temporary fork created and opened."
+        )
+        projection_copy = (
+            " Workspace placement is pending and will be retried."
+            if request.projection_pending
+            else ""
+        )
+        self.app_instance.notify(
+            f"{opening_copy} The original chat is still open. "
+            f'"{request.title}" is active.{projection_copy}'
+        )
+        request.modal.close_after_success()
+        self._active_fork_request = None
+
+    async def _recover_created_console_chat_fork(
+        self,
+        request: _ConsoleForkRequest,
+    ) -> None:
+        if self._active_fork_request is not request:
+            return
+        store = self._ensure_console_chat_store()
+        if not await self._register_console_chat_fork(store, request):
+            self._show_created_not_opened(
+                request,
+                "The fork exists but is not available in Console yet.",
+            )
+            return
+        if request.projection_pending:
+            if await store.reconcile_pending_workspace_projection(
+                request.fork_session_id
+            ):
+                request.projection_pending = False
+        await self._finish_opening_console_chat_fork(store, request)
 
     async def _activate_native_console_session(self, session_id: str) -> None:
         """Activate a native Console session through the shared activation sequence.
@@ -3274,6 +3777,7 @@ class ConsoleSessionController:
             "assistant_kind": session.assistant_kind,
             "assistant_id": session.assistant_id,
             "assistant_authority_id": session.assistant_authority_id,
+            "persona_memory_mode": session.persona_memory_mode,
             "character_id": session.local_character_id(),
             "character_name": session.character_name,
             "user_display_name_override": session.user_display_name_override,
@@ -3376,6 +3880,7 @@ class ConsoleSessionController:
                 "assistant_kind",
                 "assistant_id",
                 "assistant_authority_id",
+                "persona_memory_mode",
             ):
                 value = raw_session.get(key)
                 session_kwargs[key] = value if type(value) is str else None

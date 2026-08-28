@@ -40,7 +40,7 @@ from __future__ import annotations
 
 import asyncio
 from dataclasses import replace
-from unittest.mock import AsyncMock
+from unittest.mock import AsyncMock, Mock
 
 import pytest
 
@@ -64,6 +64,9 @@ from tldw_chatbook.DB.ChaChaNotes_DB import CharactersRAGDB
 from tldw_chatbook.Widgets.Console.console_rename_session_modal import (
     ConsoleRenameSessionModal,
 )
+from tldw_chatbook.Widgets.Console.console_fork_chat_modal import (
+    ConsoleForkChatModal,
+)
 from tldw_chatbook.Widgets.Console.console_session_switcher_modal import (
     ConsoleSwitcherChoice,
 )
@@ -84,8 +87,8 @@ async def test_character_handoff_reuses_untouched_chat_one(monkeypatch):
     sync = AsyncMock()
     focus_calls: list[bool] = []
     screen._session._sync_native_console_chat_ui_fn = sync
-    screen._session._focus_composer_if_needed_fn = (
-        lambda *, force=False: focus_calls.append(force)
+    screen._session._focus_composer_if_needed_fn = lambda *, force=False: (
+        focus_calls.append(force)
     )
 
     assert await screen._session._start_character_console_session(
@@ -274,6 +277,24 @@ def test_typed_then_cleared_work_marker_survives_screen_state_restore(monkeypatc
     restored = screen._session._console_session_from_state(payload)
 
     assert restored.has_user_work is True
+
+
+def test_persona_memory_mode_survives_screen_state_restore(monkeypatch):
+    screen = _character_screen(monkeypatch, _roleplay_card(name="Alba"))
+    store = screen._ensure_console_chat_store()
+    session = store.create_session(
+        title="Persona chat",
+        settings=screen._session._default_console_session_settings(),
+        assistant_kind="persona",
+        assistant_id="persona-1",
+        persona_memory_mode="read_write",
+    )
+
+    payload = screen._session._console_session_to_state(session)
+    restored = screen._session._console_session_from_state(payload)
+
+    assert payload["persona_memory_mode"] == "read_write"
+    assert restored.persona_memory_mode == "read_write"
 
 
 @pytest.mark.asyncio
@@ -575,9 +596,7 @@ async def test_apply_console_switcher_choice_activate_uses_shared_activation_pat
         await pilot.pause()
 
         assert store.active_session_id == target.id
-        assert registry_service.get_active_workspace().workspace_id == (
-            "ws-switcher"
-        )
+        assert registry_service.get_active_workspace().workspace_id == ("ws-switcher")
 
 
 @pytest.mark.asyncio
@@ -745,3 +764,695 @@ async def test_promote_console_temporary_session_no_active_session_touches_nothi
         # Must not raise even though there is nothing to promote.
         await console._session._promote_console_temporary_session()
         await pilot.pause()
+
+
+async def _wait_for_fork_modal_state(pilot, modal, state: str) -> None:
+    for _ in range(200):
+        if modal.state == state:
+            return
+        await pilot.pause(0.01)
+    raise AssertionError(f"Fork modal did not reach {state!r}; got {modal.state!r}")
+
+
+@pytest.mark.asyncio
+async def test_cancelled_fork_validation_generation_cannot_publish_late_result():
+    """A late validator is fenced even if it ignores task cancellation."""
+
+    app = _build_test_app()
+    host = ConsoleHarness(app)
+    old_started = asyncio.Event()
+    release_old = asyncio.Event()
+    new_started = asyncio.Event()
+    release_new = asyncio.Event()
+    calls = 0
+
+    async with host.run_test(size=(100, 30)) as pilot:
+        console = host.screen_stack[-1]
+        await _wait_for_selector(console, pilot, "#console-native-transcript")
+        store = console._ensure_console_chat_store()
+        source = store.create_session(
+            title="Temporary source",
+            settings=console._session._default_console_session_settings(),
+            ephemeral=True,
+        )
+        boundary = store.append_message(
+            source.id,
+            role=ConsoleMessageRole.USER,
+            content="fork boundary",
+        )
+        original_session_ids = {session.id for session in store.sessions()}
+
+        async def barrier(_generation: int) -> None:
+            nonlocal calls
+            calls += 1
+            if calls == 1:
+                old_started.set()
+                await release_old.wait()
+            else:
+                new_started.set()
+                await release_new.wait()
+
+        console._session._fork_validation_barrier = barrier
+        register = Mock(wraps=store.register_fork_snapshot)
+        store.register_fork_snapshot = register
+        activate = AsyncMock(wraps=console._session._activate_native_console_session)
+        console._session._activate_native_console_session = activate
+
+        console._session.request_console_chat_fork(boundary.id)
+        await pilot.pause()
+        first = host.screen_stack[-1]
+        assert isinstance(first, ConsoleForkChatModal)
+        first_panel = first.query_one("#console-fork-chat-modal")
+        await pilot.press("enter")
+        await asyncio.wait_for(old_started.wait(), timeout=2)
+        await first.action_request_safe_cancel()
+        assert not first_panel.is_attached
+
+        console._session.request_console_chat_fork(boundary.id)
+        await pilot.pause()
+        second = host.screen_stack[-1]
+        assert isinstance(second, ConsoleForkChatModal)
+        await pilot.press("enter")
+        await asyncio.wait_for(new_started.wait(), timeout=2)
+
+        release_old.set()
+        await pilot.pause(0.05)
+        assert second.state == "validating"
+        assert {session.id for session in store.sessions()} == original_session_ids
+        register.assert_not_called()
+        activate.assert_not_awaited()
+
+        release_new.set()
+        for _ in range(200):
+            if len(store.sessions()) == len(original_session_ids) + 1:
+                break
+            await pilot.pause(0.01)
+        assert len(store.sessions()) == len(original_session_ids) + 1
+        register.assert_called_once()
+        activate.assert_awaited_once()
+        # Textual pops the modal from the stack before its scheduled screen
+        # replacement physically detaches it. Pin the terminal lifecycle
+        # boundary so test teardown cannot overlap the resumed chat recompose.
+        for _ in range(200):
+            if not second.is_attached:
+                break
+            await pilot.pause(0.01)
+        assert not second.is_attached
+        assert console._session._active_fork_request is None
+
+
+@pytest.mark.asyncio
+async def test_fork_validation_freezes_the_accepted_title_until_retry():
+    app = _build_test_app()
+    host = ConsoleHarness(app)
+    validation_started = asyncio.Event()
+    release_validation = asyncio.Event()
+    validation_generations: list[int] = []
+
+    async with host.run_test(size=(100, 30)) as pilot:
+        console = host.screen_stack[-1]
+        await _wait_for_selector(console, pilot, "#console-native-transcript")
+        store = console._ensure_console_chat_store()
+        source = store.create_session(
+            title="Source",
+            settings=console._session._default_console_session_settings(),
+            ephemeral=True,
+        )
+        boundary = store.append_message(
+            source.id,
+            role=ConsoleMessageRole.USER,
+            content="fork boundary",
+        )
+
+        async def barrier(generation: int) -> None:
+            validation_generations.append(generation)
+            validation_started.set()
+            await release_validation.wait()
+
+        console._session._fork_validation_barrier = barrier
+        register = Mock(wraps=store.register_fork_snapshot)
+        store.register_fork_snapshot = register
+
+        console._session.request_console_chat_fork(boundary.id)
+        await pilot.pause()
+        modal = host.screen_stack[-1]
+        assert isinstance(modal, ConsoleForkChatModal)
+        title = modal.query_one("#console-fork-chat-title")
+        accepted_title = title.value
+
+        await pilot.press("enter")
+        await asyncio.wait_for(validation_started.wait(), timeout=2)
+
+        assert modal.state == "validating"
+        assert not title.disabled
+        assert title.has_focus
+        await pilot.press("x", "y", "z")
+        await pilot.press("enter", "enter")
+        await pilot.pause()
+
+        assert title.value == accepted_title
+        assert title.has_focus
+        assert modal.state == "validating"
+        assert len(validation_generations) == 1
+        assert not modal.query_one("#console-fork-chat-exclusions").display
+        register.assert_not_called()
+
+        release_validation.set()
+        for _ in range(200):
+            if register.called:
+                break
+            await pilot.pause(0.01)
+        register.assert_called_once()
+        assert register.call_args.args[0].title == accepted_title
+
+
+@pytest.mark.asyncio
+async def test_durable_fork_orders_commit_projection_registration_and_activation(
+    tmp_path,
+):
+    app = _build_test_app()
+    db = _real_chachanotes_db(tmp_path)
+    app.chachanotes_db = db
+    app.workspace_registry_service.create_workspace(
+        workspace_id="ws-fork",
+        name="Fork workspace",
+        description="Fork ordering test",
+    )
+    host = ConsoleHarness(app)
+    events: list[str] = []
+
+    try:
+        async with host.run_test(size=(120, 35)) as pilot:
+            console = host.screen_stack[-1]
+            await _wait_for_selector(console, pilot, "#console-native-transcript")
+            store = console._ensure_console_chat_store()
+            source = store.create_session(
+                title="Durable source",
+                workspace_id="ws-fork",
+                settings=console._session._default_console_session_settings(),
+            )
+            boundary = store.append_message(
+                source.id,
+                role=ConsoleMessageRole.USER,
+                content="saved fork boundary",
+                persist=True,
+            )
+            source_id = source.persisted_conversation_id
+            assert source_id is not None
+            source_before = dict(db.get_conversation_by_id(source_id))
+            messages_before = tuple(
+                dict(row) for row in db.get_messages_for_conversation(source_id)
+            )
+
+            persistence = store.persistence
+            real_commit = persistence.fork_console_conversation_bundle
+            real_project = persistence.project_workspace_membership
+            real_register = store.register_fork_snapshot
+            real_activate = console._session._activate_native_console_session
+
+            def commit(**kwargs):
+                events.append("commit")
+                return real_commit(**kwargs)
+
+            def project(conversation_id):
+                events.append("project")
+                return real_project(conversation_id)
+
+            def register(snapshot, *, activate=False):
+                events.append("register")
+                return real_register(snapshot, activate=activate)
+
+            async def activate(session_id):
+                events.append("activate")
+                await real_activate(session_id)
+
+            persistence.fork_console_conversation_bundle = commit
+            persistence.project_workspace_membership = project
+            store.register_fork_snapshot = register
+            console._session._activate_native_console_session = activate
+
+            console._session.request_console_chat_fork(boundary.id)
+            await pilot.pause()
+            modal = host.screen_stack[-1]
+            assert isinstance(modal, ConsoleForkChatModal)
+            await pilot.press("enter")
+            for _ in range(300):
+                if host.screen_stack[-1] is console and len(store.sessions()) >= 3:
+                    break
+                await pilot.pause(0.01)
+
+            assert events == ["commit", "project", "register", "activate"]
+            fork = next(
+                session
+                for session in store.sessions()
+                if session.id not in {source.id}
+                and session.persisted_conversation_id not in {None, source_id}
+            )
+            assert store.active_session_id == fork.id
+            assert source in store.sessions()
+            assert dict(db.get_conversation_by_id(source_id)) == source_before
+            assert (
+                tuple(dict(row) for row in db.get_messages_for_conversation(source_id))
+                == messages_before
+            )
+    finally:
+        db.close()
+
+
+@pytest.mark.asyncio
+async def test_fork_dialog_boundary_uses_absolute_lineage_ordinal():
+    app = _build_test_app()
+    host = ConsoleHarness(app)
+
+    async with host.run_test(size=(100, 30)) as pilot:
+        console = host.screen_stack[-1]
+        await _wait_for_selector(console, pilot, "#console-native-transcript")
+        store = console._ensure_console_chat_store()
+        source = store.create_session(
+            title="Ordinal source",
+            settings=console._session._default_console_session_settings(),
+            ephemeral=True,
+        )
+        boundary = None
+        for ordinal in range(1, 9):
+            boundary = store.append_message(
+                source.id,
+                role=(
+                    ConsoleMessageRole.USER
+                    if ordinal % 2
+                    else ConsoleMessageRole.ASSISTANT
+                ),
+                content=f"message {ordinal}",
+            )
+        assert boundary is not None
+
+        console._session.request_console_chat_fork(boundary.id)
+        await pilot.pause()
+        modal = host.screen_stack[-1]
+
+        assert isinstance(modal, ConsoleForkChatModal)
+        assert modal.summary.boundary_label == "Through Assistant 8"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("content_class", ["attachment", "image"])
+async def test_fork_stage_error_names_safe_content_class_only(content_class):
+    app = _build_test_app()
+    host = ConsoleHarness(app)
+
+    async with host.run_test(size=(100, 30)) as pilot:
+        console = host.screen_stack[-1]
+        await _wait_for_selector(console, pilot, "#console-native-transcript")
+        store = console._ensure_console_chat_store()
+        source = store.create_session(
+            title="Temporary source",
+            settings=console._session._default_console_session_settings(),
+            ephemeral=True,
+        )
+        boundary = store.append_message(
+            source.id,
+            role=ConsoleMessageRole.USER,
+            content="fork boundary",
+        )
+        original_session_ids = {session.id for session in store.sessions()}
+        store.stage_fork_snapshot = Mock(
+            side_effect=ValueError(
+                f"Console fork {content_class} is unavailable at /secret/project."
+            )
+        )
+
+        console._session.request_console_chat_fork(boundary.id)
+        await pilot.pause()
+        modal = host.screen_stack[-1]
+        await pilot.press("enter")
+        await _wait_for_fork_modal_state(pilot, modal, "precommit_error")
+        status = str(modal.query_one("#console-fork-chat-status").render()).lower()
+
+        assert content_class in status
+        assert "/secret/project" not in status
+        assert {session.id for session in store.sessions()} == original_session_ids
+
+
+@pytest.mark.asyncio
+async def test_ambiguous_durable_collision_fails_closed_without_publication(tmp_path):
+    app = _build_test_app()
+    db = _real_chachanotes_db(tmp_path)
+    app.chachanotes_db = db
+    host = ConsoleHarness(app)
+
+    try:
+        async with host.run_test(size=(100, 30)) as pilot:
+            console = host.screen_stack[-1]
+            await _wait_for_selector(console, pilot, "#console-native-transcript")
+            store = console._ensure_console_chat_store()
+            source = store.create_session(
+                title="Saved source",
+                settings=console._session._default_console_session_settings(),
+            )
+            boundary = store.append_message(
+                source.id,
+                role=ConsoleMessageRole.USER,
+                content="saved boundary",
+                persist=True,
+            )
+            original_session_ids = {session.id for session in store.sessions()}
+
+            console._session.request_console_chat_fork(boundary.id)
+            await pilot.pause()
+            request = console._session._active_fork_request
+            assert request is not None and request.fork_conversation_id is not None
+            db.add_conversation(
+                {"id": request.fork_conversation_id, "title": "Unrelated collision"}
+            )
+            commit = Mock(side_effect=RuntimeError("ambiguous write result"))
+            store.persistence.fork_console_conversation_bundle = commit
+
+            await pilot.press("enter")
+            await _wait_for_fork_modal_state(pilot, request.modal, "precommit_error")
+
+            assert {session.id for session in store.sessions()} == original_session_ids
+            assert request.snapshot is not None
+            assert request.snapshot.fork_conversation_id == request.fork_conversation_id
+            assert (
+                request.modal.query_one("#console-fork-chat-confirm").display is False
+            )
+            assert "Close" in str(
+                request.modal.query_one("#console-fork-chat-status").render()
+            )
+            commit.assert_called_once()
+    finally:
+        db.close()
+
+
+@pytest.mark.asyncio
+async def test_workspace_projection_failure_keeps_one_open_fork_pending_retry(tmp_path):
+    app = _build_test_app()
+    db = _real_chachanotes_db(tmp_path)
+    app.chachanotes_db = db
+    app.workspace_registry_service.create_workspace(
+        workspace_id="ws-fork-pending",
+        name="Pending workspace",
+        description="Projection failure test",
+    )
+    host = ConsoleHarness(app)
+
+    try:
+        async with host.run_test(size=(100, 30)) as pilot:
+            console = host.screen_stack[-1]
+            await _wait_for_selector(console, pilot, "#console-native-transcript")
+            store = console._ensure_console_chat_store()
+            source = store.create_session(
+                title="Saved source",
+                workspace_id="ws-fork-pending",
+                settings=console._session._default_console_session_settings(),
+            )
+            boundary = store.append_message(
+                source.id,
+                role=ConsoleMessageRole.USER,
+                content="saved boundary",
+                persist=True,
+            )
+            persistence = store.persistence
+            commit = Mock(wraps=persistence.fork_console_conversation_bundle)
+            persistence.fork_console_conversation_bundle = commit
+            persistence.project_workspace_membership = Mock(
+                side_effect=RuntimeError("registry unavailable")
+            )
+
+            console._session.request_console_chat_fork(boundary.id)
+            await pilot.pause()
+            request = console._session._active_fork_request
+            assert request is not None
+            fork_session_id = request.fork_session_id
+            fork_conversation_id = request.fork_conversation_id
+            await pilot.press("enter")
+            for _ in range(300):
+                if host.screen_stack[-1] is console:
+                    break
+                await pilot.pause(0.01)
+
+            assert store.active_session_id == fork_session_id
+            assert store.has_pending_workspace_projection(fork_session_id)
+            assert db.get_conversation_by_id(fork_conversation_id) is not None
+            assert (
+                len(
+                    [
+                        session
+                        for session in store.sessions()
+                        if session.persisted_conversation_id == fork_conversation_id
+                    ]
+                )
+                == 1
+            )
+            commit.assert_called_once()
+    finally:
+        db.close()
+
+
+@pytest.mark.asyncio
+async def test_temporary_registration_retry_reuses_id_and_publishes_once():
+    app = _build_test_app()
+    host = ConsoleHarness(app)
+
+    async with host.run_test(size=(100, 30)) as pilot:
+        console = host.screen_stack[-1]
+        await _wait_for_selector(console, pilot, "#console-native-transcript")
+        store = console._ensure_console_chat_store()
+        source = store.create_session(
+            title="Temporary source",
+            settings=console._session._default_console_session_settings(),
+            ephemeral=True,
+        )
+        boundary = store.append_message(
+            source.id,
+            role=ConsoleMessageRole.USER,
+            content="temporary boundary",
+        )
+        original_session_ids = {session.id for session in store.sessions()}
+        real_register = store.register_fork_snapshot
+        registration_ids: list[str] = []
+
+        def fail_once(snapshot, *, activate=False):
+            registration_ids.append(snapshot.fork_session_id)
+            if len(registration_ids) == 1:
+                raise RuntimeError("registration unavailable")
+            return real_register(snapshot, activate=activate)
+
+        store.register_fork_snapshot = fail_once
+        console._session.request_console_chat_fork(boundary.id)
+        await pilot.pause()
+        modal = host.screen_stack[-1]
+        await pilot.press("enter")
+        await _wait_for_fork_modal_state(pilot, modal, "precommit_error")
+
+        assert {session.id for session in store.sessions()} == original_session_ids
+        modal.query_one("#console-fork-chat-confirm").press()
+        for _ in range(300):
+            if host.screen_stack[-1] is console:
+                break
+            await pilot.pause(0.01)
+
+        assert registration_ids == [registration_ids[0], registration_ids[0]]
+        assert store.active_session_id == registration_ids[0]
+        assert (
+            len(
+                [
+                    session
+                    for session in store.sessions()
+                    if session.id == registration_ids[0]
+                ]
+            )
+            == 1
+        )
+
+
+@pytest.mark.asyncio
+async def test_temporary_activation_failure_open_reuses_registered_id_once():
+    app = _build_test_app()
+    host = ConsoleHarness(app)
+
+    async with host.run_test(size=(100, 30)) as pilot:
+        console = host.screen_stack[-1]
+        await _wait_for_selector(console, pilot, "#console-native-transcript")
+        store = console._ensure_console_chat_store()
+        source = store.create_session(
+            title="Temporary source",
+            settings=console._session._default_console_session_settings(),
+            ephemeral=True,
+        )
+        boundary = store.append_message(
+            source.id,
+            role=ConsoleMessageRole.USER,
+            content="temporary boundary",
+        )
+        real_activate = console._session._activate_native_console_session
+        activation_ids: list[str] = []
+
+        async def fail_once(session_id):
+            activation_ids.append(session_id)
+            if len(activation_ids) == 1:
+                raise RuntimeError("tab unavailable")
+            await real_activate(session_id)
+
+        console._session._activate_native_console_session = fail_once
+        console._session.request_console_chat_fork(boundary.id)
+        await pilot.pause()
+        modal = host.screen_stack[-1]
+        request = console._session._active_fork_request
+        assert request is not None
+        await pilot.press("enter")
+        await _wait_for_fork_modal_state(pilot, modal, "created_not_opened")
+
+        assert (
+            len(
+                [
+                    session
+                    for session in store.sessions()
+                    if session.id == request.fork_session_id
+                ]
+            )
+            == 1
+        )
+        modal.query_one("#console-fork-chat-open").press()
+        for _ in range(300):
+            if host.screen_stack[-1] is console:
+                break
+            await pilot.pause(0.01)
+
+        assert activation_ids == [request.fork_session_id, request.fork_session_id]
+        assert store.active_session_id == request.fork_session_id
+        assert (
+            len(
+                [
+                    session
+                    for session in store.sessions()
+                    if session.id == request.fork_session_id
+                ]
+            )
+            == 1
+        )
+
+
+@pytest.mark.asyncio
+async def test_ambiguous_durable_commit_reconciles_without_second_bundle(tmp_path):
+    app = _build_test_app()
+    db = _real_chachanotes_db(tmp_path)
+    app.chachanotes_db = db
+    host = ConsoleHarness(app)
+
+    try:
+        async with host.run_test(size=(100, 30)) as pilot:
+            console = host.screen_stack[-1]
+            await _wait_for_selector(console, pilot, "#console-native-transcript")
+            store = console._ensure_console_chat_store()
+            source = store.create_session(
+                title="Saved source",
+                settings=console._session._default_console_session_settings(),
+            )
+            boundary = store.append_message(
+                source.id,
+                role=ConsoleMessageRole.USER,
+                content="saved boundary",
+                persist=True,
+            )
+            persistence = store.persistence
+            real_commit = persistence.fork_console_conversation_bundle
+            calls = 0
+
+            def commit_then_lose_result(**kwargs):
+                nonlocal calls
+                calls += 1
+                real_commit(**kwargs)
+                raise RuntimeError("connection result lost")
+
+            persistence.fork_console_conversation_bundle = commit_then_lose_result
+
+            console._session.request_console_chat_fork(boundary.id)
+            await pilot.pause()
+            await pilot.press("enter")
+            for _ in range(300):
+                if host.screen_stack[-1] is console and len(store.sessions()) >= 3:
+                    break
+                await pilot.pause(0.01)
+
+            assert calls == 1
+            durable_forks = [
+                session
+                for session in store.sessions()
+                if session.persisted_conversation_id
+                and session.persisted_conversation_id
+                != source.persisted_conversation_id
+            ]
+            assert len(durable_forks) == 1
+            assert (
+                db.get_conversation_by_id(durable_forks[0].persisted_conversation_id)
+                is not None
+            )
+    finally:
+        db.close()
+
+
+@pytest.mark.asyncio
+async def test_postcommit_registration_failure_open_retry_reuses_identity(tmp_path):
+    app = _build_test_app()
+    db = _real_chachanotes_db(tmp_path)
+    app.chachanotes_db = db
+    host = ConsoleHarness(app)
+
+    try:
+        async with host.run_test(size=(100, 30)) as pilot:
+            console = host.screen_stack[-1]
+            await _wait_for_selector(console, pilot, "#console-native-transcript")
+            store = console._ensure_console_chat_store()
+            source = store.create_session(
+                title="Saved source",
+                settings=console._session._default_console_session_settings(),
+            )
+            boundary = store.append_message(
+                source.id,
+                role=ConsoleMessageRole.USER,
+                content="saved boundary",
+                persist=True,
+            )
+            real_register = store.register_fork_snapshot
+            registration_ids: list[str] = []
+
+            def fail_once(snapshot, *, activate=False):
+                registration_ids.append(snapshot.fork_session_id)
+                if len(registration_ids) == 1:
+                    raise RuntimeError("live registration unavailable")
+                return real_register(snapshot, activate=activate)
+
+            store.register_fork_snapshot = fail_once
+
+            console._session.request_console_chat_fork(boundary.id)
+            await pilot.pause()
+            modal = host.screen_stack[-1]
+            await pilot.press("enter")
+            await _wait_for_fork_modal_state(pilot, modal, "created_not_opened")
+            committed_id = (
+                console._session._active_fork_request.snapshot.fork_conversation_id
+            )
+            assert committed_id is not None
+            assert db.get_conversation_by_id(committed_id) is not None
+
+            modal.query_one("#console-fork-chat-open").press()
+            for _ in range(300):
+                if host.screen_stack[-1] is console:
+                    break
+                await pilot.pause(0.01)
+
+            assert registration_ids == [registration_ids[0], registration_ids[0]]
+            assert store.active_session_id == registration_ids[0]
+            assert (
+                len(
+                    [
+                        session
+                        for session in store.sessions()
+                        if session.persisted_conversation_id == committed_id
+                    ]
+                )
+                == 1
+            )
+    finally:
+        db.close()

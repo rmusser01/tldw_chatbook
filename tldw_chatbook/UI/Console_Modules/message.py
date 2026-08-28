@@ -103,7 +103,7 @@ call-site edit / stays, with reasons) is in the task-1 extraction report.
 
 from __future__ import annotations
 
-from collections.abc import Callable
+from collections.abc import Callable, Sequence
 from dataclasses import replace
 from pathlib import Path
 from typing import Any, Dict, Iterable, Optional, TYPE_CHECKING
@@ -125,6 +125,7 @@ from ...Chat.console_chat_models import (
     MessageAttachment,
 )
 from ...Chat.console_chat_store import ConsoleChatStore
+from ...Chat.console_chat_fork import ConsoleForkEligibility
 from ...Chat.console_conversation_hydration import (
     console_messages_from_conversation_tree,
 )
@@ -227,9 +228,13 @@ class ConsoleMessageController:
         keep_console_generation_variant: Callable[[Any], None],
         handle_console_toggle_image_view: Callable[[str], None],
         invalidate_console_persisted_rows_cache: Callable[[], None],
+        invalidate_console_fork_image_selections: (
+            Callable[[Sequence[str]], None] | None
+        ) = None,
         play_console_video: Callable[[str], Any] | None = None,
         save_console_video_copy: Callable[[str], Any] | None = None,
         regenerate_console_video_message: Callable[[str], Any] | None = None,
+        request_console_chat_fork: Callable[[str], Any] | None = None,
     ) -> None:
         """Build the controller and bind everything its moved bodies need.
 
@@ -370,9 +375,15 @@ class ConsoleMessageController:
         self._invalidate_console_persisted_rows_cache_fn = (
             invalidate_console_persisted_rows_cache
         )
+        self._invalidate_console_fork_image_selections_fn = (
+            invalidate_console_fork_image_selections or (lambda _message_ids: None)
+        )
         self._play_console_video_fn = play_console_video
         self._save_console_video_copy_fn = save_console_video_copy
         self._regenerate_console_video_message_fn = regenerate_console_video_message
+        self._request_console_chat_fork_fn = request_console_chat_fork or (
+            lambda _message_id: None
+        )
 
         # This cluster's own state, moved verbatim from `ChatScreen.__init__`.
         # `ChatScreen` keeps proxy properties under the original attribute
@@ -489,6 +500,10 @@ class ConsoleMessageController:
     @property
     def _invalidate_console_persisted_rows_cache(self) -> Any:
         return self._invalidate_console_persisted_rows_cache_fn
+
+    @property
+    def _invalidate_console_fork_image_selections(self) -> Any:
+        return self._invalidate_console_fork_image_selections_fn
 
     @property
     def _play_console_video(self) -> Any:
@@ -1182,10 +1197,7 @@ class ConsoleMessageController:
         for other_id, state in tuple(self._console_speech_states.items()):
             if other_id == message_id:
                 continue
-            if (
-                other_id != prior_message_id
-                or state in {"stopped", "failed"}
-            ):
+            if other_id != prior_message_id or state in {"stopped", "failed"}:
                 self._console_speech_states.pop(other_id, None)
         self._console_speech_request_generation += 1
         self._console_speech_states[message_id] = "generating"
@@ -1244,8 +1256,7 @@ class ConsoleMessageController:
             try:
                 return bool(
                     self._ensure_console_chat_store() is store
-                    and self._console_speech_lifetime_generation
-                    == lifetime_generation
+                    and self._console_speech_lifetime_generation == lifetime_generation
                     and store.active_session_id == session_id
                     and store.active_session_epoch() == session_epoch
                 )
@@ -1418,6 +1429,12 @@ class ConsoleMessageController:
             )
             return True
 
+        if action_id == "fork":
+            eligibility = self.console_fork_eligibility(message_id)
+            if not eligibility.eligible:
+                self.app_instance.notify(eligibility.reason, severity="warning")
+                return True
+
         presentation = self._console_message_presentation(message)
         result = self._console_message_action_service.dispatch(action_id, message)
         if result.clipboard_text is not None:
@@ -1428,6 +1445,11 @@ class ConsoleMessageController:
         ):
             result = replace(result, target_content=presentation.content)
         self._last_console_action = result
+        if action_id == "fork" and result.status == "fork_requested":
+            requested = self._request_console_chat_fork_fn(message_id)
+            if inspect.isawaitable(requested):
+                await requested
+            return True
         if action_id == "view-original-attempt" and result.status == "completed":
             controller = self._ensure_console_chat_controller()
             original_attempt = controller.original_attempt_for_message(message_id)
@@ -1651,7 +1673,9 @@ class ConsoleMessageController:
             # descendant-to-session identity is still available.
             controller.clear_original_attempts_for_session(session_id)
             self._console_original_attempt_previews.clear()
+            subtree_ids = store.subtree_message_ids(message_id)
             store.delete_message(message_id)
+            self._invalidate_console_fork_image_selections(subtree_ids)
             # TASK-251: a deleted message can change what the browser row
             # shows for this conversation (title/updated_at) -- invalidate
             # so the next sync reflects it immediately.
@@ -1675,6 +1699,13 @@ class ConsoleMessageController:
         severity = "information" if result.status in {"completed", "wip"} else "warning"
         self.app_instance.notify(result.visible_copy, severity=severity)
         return True
+
+    def console_fork_eligibility(self, message_id: str) -> ConsoleForkEligibility:
+        """Return the store-owned frozen eligibility for one rendered boundary."""
+        try:
+            return self._ensure_console_chat_store().fork_eligibility(message_id)
+        except (KeyError, ValueError):
+            return ConsoleForkEligibility(False, "Message is not forkable.")
 
     def _console_message_presentation(
         self, message: ConsoleChatMessage
@@ -2299,6 +2330,7 @@ class ConsoleMessageController:
             ("console-message-action-speak-", "speak"),
             ("console-message-action-copy-", "copy"),
             ("console-message-action-edit-", "edit"),
+            ("console-message-action-fork-", "fork"),
         )
         for prefix, action_id in prefixes:
             if button_id.startswith(prefix):

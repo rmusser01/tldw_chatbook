@@ -994,6 +994,24 @@ def build_console_controllers(
         restore_first_chat_focus=(
             lambda token: _restore_first_chat_focus(screen, token)
         ),
+        capture_fork_image_selections=(
+            lambda messages: screen._image.capture_console_fork_image_selections(
+                messages
+            )
+        ),
+        validate_fork_image_selections=(
+            lambda messages, expected: (
+                screen._image.validate_console_fork_image_selections(
+                    messages,
+                    expected,
+                )
+            )
+        ),
+        workspace_display_name=(
+            lambda workspace_id: screen._workspace._console_workspace_display_name(
+                workspace_id
+            )
+        ),
     )
     #: Dictation's own state and lifecycle moved to
     #: `ConsoleDictationController` (wave-1 console decomposition,
@@ -1252,6 +1270,11 @@ def build_console_controllers(
         invalidate_console_persisted_rows_cache=(
             lambda: screen._workspace._invalidate_console_persisted_rows_cache()
         ),
+        invalidate_console_fork_image_selections=(
+            lambda message_ids: screen._image.invalidate_console_fork_image_selections(
+                message_ids
+            )
+        ),
         play_console_video=(
             lambda message_id: screen._video._play_console_video(message_id)
         ),
@@ -1262,6 +1285,11 @@ def build_console_controllers(
             lambda message_id: screen._video._regenerate_console_video_message(
                 message_id
             )
+        ),
+        request_console_chat_fork=(
+            lambda message_id: getattr(
+                screen._session, "request_console_chat_fork", lambda _message_id: None
+            )(message_id)
         ),
     )
     screen._console_auto_speak = ConsoleAutoSpeakCoordinator(
