@@ -9,8 +9,10 @@ import time
 import pytest
 from rich.text import Text
 from textual.app import App, ComposeResult
+from textual.color import Color
 from textual.containers import VerticalScroll
 from textual.events import MouseMove
+from textual.filter import Monochrome
 from textual.geometry import Offset
 from textual.selection import Selection
 from textual.widgets import Static
@@ -159,6 +161,18 @@ async def test_square_brackets_render_literally():
         await pilot.pause()
         strip = widget.render_line(0)
         assert "[Imported]" in strip.text
+
+
+@pytest.mark.asyncio
+async def test_short_row_padding_is_safe_for_monochrome_rendering():
+    """No-color terminals must accept the padding added to short raw rows."""
+    app = _Harness("short")
+    async with app.run_test(size=(60, 10)) as pilot:
+        widget = app.query_one("#raw", VirtualizedRawContent)
+        await pilot.pause()
+        strip = widget.render_line(0)
+
+        Monochrome().apply(list(strip), Color(0, 0, 0))
 
 
 @pytest.mark.asyncio
