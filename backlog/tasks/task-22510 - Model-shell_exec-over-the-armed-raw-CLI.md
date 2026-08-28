@@ -1,10 +1,10 @@
 ---
 id: TASK-22510
 title: Model shell_exec over the armed raw CLI
-status: To Do
+status: In Progress
 assignee: []
 created_date: '2026-08-27 04:53'
-updated_date: '2026-08-27 04:54'
+updated_date: '2026-08-28 15:11'
 labels:
   - console
   - tools
@@ -39,3 +39,9 @@ Let a model request the same dangerous one-shot host-shell executor as the Conso
 - [ ] #10 Focused tests cover catalog and invocation gate matrices, stored-Allow coercion, per-call approval isolation, session grant lifetime, approval-disarm races, and mounted approval and Tools UI behavior
 - [ ] #11 The Console tools and Privacy and Security documentation distinguish direct user commands from model shell_exec authorization
 <!-- AC:END -->
+
+## Implementation Plan
+
+<!-- SECTION:PLAN:BEGIN -->
+Execute Docs/superpowers/plans/2026-08-26-model-shell-exec.md in seven test-driven slices: 1. Define the shell_exec schema and Ask/Off-only resolver. 2. Add command-visible per-call approval and process-memory session grants. 3. Register the provider only while unlock, arm, local-tools, and global-kill-switch gates permit it. 4. Revoke pending approvals and active commands on disarm. 5. Correlate live executor progress with the existing agent tool marker. 6. Show always-visible Ask/Off-only policy and availability in Tools. 7. Document, live-verify, self-review, and complete focused verification. ADR required: yes. ADR path: backlog/decisions/094-raw-and-virtual-cli-execution-boundaries.md. Reason: ADR-094 defines conditional model shell exposure, Ask/Off-only permission, command-visible approval, process-memory session grants, shared executor reuse, and disarm race behavior.
+<!-- SECTION:PLAN:END -->
