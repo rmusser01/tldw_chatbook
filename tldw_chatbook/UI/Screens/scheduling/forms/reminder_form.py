@@ -151,6 +151,16 @@ def preset_to_cron(preset: str, time_of_day: str) -> str | None:
     return f"{minute} {hour} * * {dow}"
 
 
+def _is_ascii_digit(value: str) -> bool:
+    """True for plain ASCII digits only.
+
+    ``str.isdigit()`` alone accepts unicode digits like '²' that
+    ``int()`` then refuses -- a synced or DB-sourced cron with such a
+    field must map to custom, not crash (review F14).
+    """
+    return bool(value) and value.isascii() and value.isdigit()
+
+
 def cron_to_preset(cron: str) -> tuple[str, str]:
     """Map a cron expression back to ``(preset, "HH:MM")``.
 
@@ -162,7 +172,12 @@ def cron_to_preset(cron: str) -> tuple[str, str]:
     parts = cron.split()
     if len(parts) == 5:
         minute, hour, dom, month, dow = parts
-        if minute.isdigit() and hour.isdigit() and dom == "*" and month == "*":
+        if (
+            _is_ascii_digit(minute)
+            and _is_ascii_digit(hour)
+            and dom == "*"
+            and month == "*"
+        ):
             time_text = f"{int(hour):02d}:{int(minute):02d}"
             for preset, preset_dow in _PRESET_DOW.items():
                 if dow == preset_dow:
@@ -443,6 +458,16 @@ class ReminderForm(ModalScreen):
         if self._reminder_task.cron is not None:
             self.query_one("#reminder-cron", Input).value = self._reminder_task.cron
             self._apply_cron_to_preset_fields(self._reminder_task.cron)
+            self._update_cron_preview()
+        else:
+            # Editing a one-time task (review F2): initialize the preset
+            # fields exactly like create mode, so switching Kind to
+            # Recurring reveals a coherent preset + time (not both
+            # sub-groups at once with a preset that silently overrides a
+            # typed cron on save).
+            self.query_one("#reminder-preset-time", Input).value = "09:00"
+            self.query_one("#reminder-cron", Input).value = "0 9 * * *"
+            self._update_preset_field_visibility("daily")
             self._update_cron_preview()
         self._update_schedule_field_visibility(self._reminder_task.schedule_kind.value)
         self.call_after_refresh(self._mark_ready)

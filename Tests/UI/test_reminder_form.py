@@ -107,6 +107,75 @@ def test_humanize_cron_covers_the_weekday_preset():
     assert _humanize_cron("30 7 * * 1-5", "UTC") == "Weekdays at 07:30 UTC"
 
 
+def test_unicode_digit_cron_maps_to_custom_instead_of_crashing():
+    """Review F14: '²'.isdigit() is True but int('²') raises -- a synced or
+    DB-sourced cron with unicode digits must not crash the edit form."""
+    assert cron_to_preset("² 9 * * *") == ("custom", "")
+    assert cron_to_preset("0 ² * * *") == ("custom", "")
+
+
+def test_unicode_digit_cron_does_not_crash_humanize():
+    """Same digit-class bug in _humanize_cron (hit on every detail render)."""
+    from tldw_chatbook.UI.Screens.scheduling.task_detail import _humanize_cron
+
+    rendered = _humanize_cron("² 9 * * *", "UTC")  # must not raise
+    assert "²" in rendered  # falls back to showing the raw expression
+
+
+@pytest.mark.asyncio
+async def test_editing_one_time_task_initializes_preset_fields():
+    """Review F2 (live-verified): editing a one-time task (cron None) never
+    initialized the preset sub-groups; Kind->Recurring showed BOTH the
+    time-of-day and raw cron fields, and _save took the default preset,
+    silently discarding a typed cron."""
+    task = ReminderTask(
+        id="task-ot",
+        title="One-timer",
+        schedule_kind=ScheduleKind.ONE_TIME,
+        run_at=datetime(2099, 7, 20, 14, 0, tzinfo=timezone.utc),
+    )
+    app = FormTestApp()
+    async with app.run_test(size=(120, 40)) as pilot:
+        await app.push_screen(ReminderForm(task))
+        await pilot.pause()
+        form = pilot.app.screen
+        form.query_one("#reminder-kind", Select).value = ScheduleKind.RECURRING.value
+        await pilot.pause()
+
+        # Preset fields initialized like create mode: daily preset, time
+        # visible, raw cron hidden.
+        assert str(form.query_one("#reminder-cron-preset", Select).value) == "daily"
+        assert form.query_one("#reminder-preset-time-group").display
+        assert not form.query_one("#reminder-cron-custom-group").display
+        assert form.query_one("#reminder-preset-time", Input).value == "09:00"
+
+
+@pytest.mark.asyncio
+async def test_editing_one_time_task_to_custom_cron_saves_the_typed_cron():
+    """Review F2: the typed custom cron must be saved, not the preset's."""
+    task = ReminderTask(
+        id="task-ot2",
+        title="One-timer",
+        schedule_kind=ScheduleKind.ONE_TIME,
+        run_at=datetime(2099, 7, 20, 14, 0, tzinfo=timezone.utc),
+    )
+    app = FormTestApp()
+    async with app.run_test(size=(120, 40)) as pilot:
+        await app.push_screen(ReminderForm(task))
+        await pilot.pause()
+        form = pilot.app.screen
+        form.query_one("#reminder-kind", Select).value = ScheduleKind.RECURRING.value
+        await pilot.pause()
+        form.query_one("#reminder-cron-preset", Select).value = "custom"
+        await pilot.pause()
+        form.query_one("#reminder-cron", Input).value = "*/5 * * * *"
+        await pilot.click("#reminder-save")
+        await pilot.pause()
+
+        assert app.submitted is not None
+        assert app.submitted["cron"] == "*/5 * * * *"
+
+
 class FormTestApp(App):
     """Minimal app used to host the modal form under test."""
 

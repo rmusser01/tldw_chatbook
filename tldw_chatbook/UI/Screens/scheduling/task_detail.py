@@ -185,7 +185,9 @@ def _humanize_cron(cron: str | None, timezone: str | None = None) -> str:
         return value == "*"
 
     def _is_digit(value: str) -> bool:
-        return value.isdigit()
+        # ASCII only: '²'.isdigit() is True but int('²') raises, and this
+        # runs on every detail render of a synced cron (review F14).
+        return bool(value) and value.isascii() and value.isdigit()
 
     if (
         _is_digit(minute)
