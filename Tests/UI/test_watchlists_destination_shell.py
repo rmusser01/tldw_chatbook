@@ -1948,6 +1948,59 @@ async def test_rerun_busy_state_survives_a_mounted_runs_pane_rebuild():
 
 
 @pytest.mark.asyncio
+async def test_unmounting_during_rerun_cleans_state_without_refreshing():
+    app = _build_test_app()
+    screen = WatchlistsCollectionsScreen(app)
+    host = WatchlistsContextHarness(screen)
+    started = asyncio.Event()
+    cancelled = asyncio.Event()
+    app.notify = Mock()
+
+    async def launch(**kwargs):
+        started.set()
+        try:
+            await asyncio.Event().wait()
+        except asyncio.CancelledError:
+            cancelled.set()
+            raise
+
+    async with host.run_test(size=(180, 50)) as pilot:
+        screen._controller.launch_run = AsyncMock(side_effect=launch)
+        screen._request_runs_refresh = Mock()
+        app.notify.reset_mock()
+        operation_key = screen._rerun_operation_key("local", 5)
+
+        screen.post_message(
+            RerunRunRequested(
+                runtime_backend="local", target_id=5, name="Feed [five]"
+            )
+        )
+        for _ in range(40):
+            await pilot.pause()
+            if started.is_set():
+                break
+
+        assert started.is_set(), "the gated Re-run must reach launch_run"
+        assert operation_key in screen._checks_in_flight
+        assert operation_key in screen._reruns_in_flight
+
+        await screen.remove()
+        for _ in range(40):
+            await pilot.pause()
+            if cancelled.is_set() and not screen._checks_in_flight:
+                break
+
+        assert cancelled.is_set(), "unmount must cancel the screen-owned worker"
+        assert screen._checks_in_flight == set()
+        assert screen._reruns_in_flight == set()
+        screen._request_runs_refresh.assert_not_called()
+        assert not any(
+            "failed" in str(call.args[0]).lower()
+            for call in app.notify.call_args_list
+        )
+
+
+@pytest.mark.asyncio
 async def test_external_local_check_now_paints_the_selected_run_as_checking():
     app = _build_test_app()
     screen = WatchlistsCollectionsScreen(app)
@@ -2157,6 +2210,63 @@ async def test_server_rerun_reports_started_and_launches_by_job_id(status):
     assert screen._checks_in_flight == set()
     assert screen._reruns_in_flight == set()
     screen._request_runs_refresh.assert_called_once_with()
+
+
+@pytest.mark.asyncio
+async def test_running_server_rerun_with_skipped_stats_reports_started():
+    app = _build_test_app()
+    screen = WatchlistsCollectionsScreen(app)
+    screen.runtime_backend = "server"
+    app.notify = Mock()
+    screen._controller.launch_run = AsyncMock(
+        return_value={
+            "status": "running",
+            "stats": {"dispositions": {"skipped": 1}},
+        }
+    )
+    screen._request_runs_refresh = Mock()
+    operation_key = screen._rerun_operation_key("server", "job-7")
+    screen._checks_in_flight.add(operation_key)
+    screen._reruns_in_flight.add(operation_key)
+
+    await screen._rerun_run(
+        runtime_backend="server",
+        target_id="job-7",
+        operation_key=operation_key,
+        name="Feed [seven]",
+    )
+
+    app.notify.assert_called_once_with(
+        "Re-run started: Feed [seven].",
+        severity="information",
+        markup=False,
+    )
+
+
+@pytest.mark.asyncio
+async def test_unexpected_rerun_status_does_not_claim_the_run_started():
+    app = _build_test_app()
+    screen = WatchlistsCollectionsScreen(app)
+    screen.runtime_backend = "server"
+    app.notify = Mock()
+    screen._controller.launch_run = AsyncMock(return_value={"status": "cancelled"})
+    screen._request_runs_refresh = Mock()
+    operation_key = screen._rerun_operation_key("server", "job-7")
+    screen._checks_in_flight.add(operation_key)
+    screen._reruns_in_flight.add(operation_key)
+
+    await screen._rerun_run(
+        runtime_backend="server",
+        target_id="job-7",
+        operation_key=operation_key,
+        name="Feed [seven]",
+    )
+
+    app.notify.assert_called_once_with(
+        "Re-run returned an unexpected status: Feed [seven].",
+        severity="warning",
+        markup=False,
+    )
 
 
 @pytest.mark.asyncio

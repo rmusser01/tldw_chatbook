@@ -6572,6 +6572,7 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
         operation_key: str,
         name: str,
     ) -> None:
+        cancelled = False
         try:
             result = await self._controller.launch_run(
                 runtime_backend=runtime_backend,
@@ -6586,34 +6587,44 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
                     severity="error",
                     markup=False,
                 )
-            elif self._check_was_entirely_skipped(result):
-                self._notify_watchlists(
-                    f"Re-run skipped: {name} — "
-                    "a check of this source is already running.",
-                    severity="warning",
-                    markup=False,
-                )
             elif status in self._TERMINAL_RUN_STATUSES:
-                found = (result or {}).get("found_count")
-                processed = (result or {}).get("processed_count")
-                if found is not None or processed is not None:
-                    message = (
-                        f"Re-run complete: {name} — "
-                        f"{found or 0} found, {processed or 0} new."
+                if self._check_was_entirely_skipped(result):
+                    self._notify_watchlists(
+                        f"Re-run skipped: {name} — "
+                        "a check of this source is already running.",
+                        severity="warning",
+                        markup=False,
                     )
                 else:
-                    message = f"Re-run complete: {name}."
-                self._notify_watchlists(
-                    message,
-                    severity="information",
-                    markup=False,
-                )
-            else:
+                    found = (result or {}).get("found_count")
+                    processed = (result or {}).get("processed_count")
+                    if found is not None or processed is not None:
+                        message = (
+                            f"Re-run complete: {name} — "
+                            f"{found or 0} found, {processed or 0} new."
+                        )
+                    else:
+                        message = f"Re-run complete: {name}."
+                    self._notify_watchlists(
+                        message,
+                        severity="information",
+                        markup=False,
+                    )
+            elif status in {"queued", "running"}:
                 self._notify_watchlists(
                     f"Re-run started: {name}.",
                     severity="information",
                     markup=False,
                 )
+            else:
+                self._notify_watchlists(
+                    f"Re-run returned an unexpected status: {name}.",
+                    severity="warning",
+                    markup=False,
+                )
+        except asyncio.CancelledError:
+            cancelled = True
+            raise
         except Exception:
             logger.opt(exception=True).warning("Failed to re-run watchlist target.")
             self._notify_watchlists(
@@ -6626,7 +6637,8 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
             self._reruns_in_flight.discard(operation_key)
             if runtime_backend == self.runtime_backend:
                 self._set_check_now_busy()
-            self._request_runs_refresh()
+            if not cancelled:
+                self._request_runs_refresh()
 
     @on(PreviewRequested)
     def handle_preview_requested(self, event: PreviewRequested) -> None:
