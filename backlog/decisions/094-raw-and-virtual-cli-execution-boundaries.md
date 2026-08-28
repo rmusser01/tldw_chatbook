@@ -1,4 +1,4 @@
-# ADR-093: Raw and Virtual CLI Execution Boundaries
+# ADR-094: Raw and Virtual CLI Execution Boundaries
 
 Status: Accepted
 Date: 2026-08-26

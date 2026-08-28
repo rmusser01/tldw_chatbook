@@ -13,7 +13,7 @@ labels:
 dependencies:
   - TASK-18926
 references:
-  - backlog/decisions/093-raw-and-virtual-cli-execution-boundaries.md
+  - backlog/decisions/094-raw-and-virtual-cli-execution-boundaries.md
   - Docs/superpowers/specs/2026-08-26-raw-and-virtual-cli-design.md
 priority: medium
 ---

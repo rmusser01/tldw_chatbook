@@ -12,9 +12,9 @@
 
 **ADR required:** yes
 
-**ADR path:** `backlog/decisions/093-raw-and-virtual-cli-execution-boundaries.md`
+**ADR path:** `backlog/decisions/094-raw-and-virtual-cli-execution-boundaries.md`
 
-**Reason:** ADR-093 establishes conditional model exposure, Ask/Off-only permission, process-memory session grants, command-visible approval, shared executor reuse, and disarm race behavior.
+**Reason:** ADR-094 establishes conditional model exposure, Ask/Off-only permission, process-memory session grants, command-visible approval, shared executor reuse, and disarm race behavior.
 
 **Prerequisites:** TASK-18926 and TASK-22509 are complete. Do not start by copying their executor, output, or call-identity code.
 
@@ -446,13 +446,13 @@ Expected: PASS. Do not run the full pytest suite unless the user explicitly asks
 
 Using isolated config/data, verify schema absence/presence across every gate, exact approval card content, Run once, Allow for this Console session, Deny, mixed repeated-call batch, live output, Stop, Disarm while pending/running, navigation, and restart clearing both arm and session grants. Inspect the real provider request/history and local run log to prove model results are ordinary bounded tool messages and direct-user records remain model-excluded.
 
-- [ ] **Step 5: Self-review against ADR-093**
+- [ ] **Step 5: Self-review against ADR-094**
 
 Search for a copied executor, persistent raw Allow/session grant, schema-only gate, incomplete command approvals, call-name de-duplication, post-disarm launch window, ambient environment inheritance, command/output generic logs, and model calls creating `local_command` rows.
 
 - [ ] **Step 6: Complete Backlog hygiene after evidence exists**
 
-Move TASK-22510 In Progress immediately before implementation and attach this plan via the CLI. At completion, check every criterion, add concise Implementation Notes/evidence and ADR-093, then set Done. Add a lesson only if an actual generalizable incident occurred.
+Move TASK-22510 In Progress immediately before implementation and attach this plan via the CLI. At completion, check every criterion, add concise Implementation Notes/evidence and ADR-094, then set Done. Add a lesson only if an actual generalizable incident occurred.
 
 - [ ] **Step 7: Commit documentation and task completion**
 

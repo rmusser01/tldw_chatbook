@@ -12,7 +12,7 @@ labels:
   - ux
 dependencies: []
 references:
-  - backlog/decisions/093-raw-and-virtual-cli-execution-boundaries.md
+  - backlog/decisions/094-raw-and-virtual-cli-execution-boundaries.md
   - Docs/superpowers/specs/2026-08-26-raw-and-virtual-cli-design.md
 priority: high
 ---
@@ -43,8 +43,8 @@ Give advanced users an unmistakably dangerous direct one-shot host-shell escape 
 
 <!-- SECTION:PLAN:BEGIN -->
 ADR required: yes
-ADR path: backlog/decisions/093-raw-and-virtual-cli-execution-boundaries.md
-Reason: ADR-093 authorizes the host-authority shell boundary and fixes the false-by-default unlock, per-launch arm, process-ownership, persistence, and no-sandbox contracts.
+ADR path: backlog/decisions/094-raw-and-virtual-cli-execution-boundaries.md
+Reason: ADR-094 authorizes the host-authority shell boundary and fixes the false-by-default unlock, per-launch arm, process-ownership, persistence, and no-sandbox contracts.
 
 Detailed plan: Docs/superpowers/plans/2026-08-26-raw-cli-user-command.md
 
@@ -63,7 +63,7 @@ Detailed plan: Docs/superpowers/plans/2026-08-26-raw-cli-user-command.md
 <!-- SECTION:NOTES:BEGIN -->
 Implemented the user-only raw CLI boundary, danger gates, typed-prefix routing,
 admitted process-tree execution, bounded transcript/persistence, and model-facing
-exclusions. Updated the Console and Settings guides, recorded ADR-093 as the
+exclusions. Updated the Console and Settings guides, recorded ADR-094 as the
 governing decision, and marked ADR-033 partially superseded for this user-only
 exception.
 
@@ -90,4 +90,8 @@ The production diagnostic inventory was regenerated after reviewing all six
 new fixed-string diagnostics. None interpolates user content, command text,
 output, secrets, paths, or URLs; persistent-sink topology remains unchanged at
 eight files, and the canonical inventory verification passes.
+
+After `dev` assigned ADR-093 to the offline tiktoken runtime, this feature's
+decision was renumbered to ADR-094 and every raw/virtual CLI reference and
+decision-index entry was updated. The exact backlog duplicate-ID guard passes.
 <!-- SECTION:NOTES:END -->

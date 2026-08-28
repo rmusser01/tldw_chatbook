@@ -12,9 +12,9 @@
 
 **ADR required:** yes
 
-**ADR path:** `backlog/decisions/093-raw-and-virtual-cli-execution-boundaries.md`
+**ADR path:** `backlog/decisions/094-raw-and-virtual-cli-execution-boundaries.md`
 
-**Reason:** ADR-093 establishes the model-only no-shell boundary, reserved synthetic principal, independent command permissions, and default-Ask behavior.
+**Reason:** ADR-094 establishes the model-only no-shell boundary, reserved synthetic principal, independent command permissions, and default-Ask behavior.
 
 **Prerequisite:** None. This plan is independent of the raw executor and may be implemented before or after TASK-18926.
 
@@ -459,13 +459,13 @@ Expected: PASS. Do not run the full pytest suite unless the user explicitly requ
 
 With isolated config/data and a disposable repository, verify each Tools row, Ask approval, mixed repeated-call batch, session decision isolation, outside-root/sensitive-path refusal, and Git denylist behavior. Inspect the actual model request to confirm there is one `virtual_cli` schema and no raw-shell schema from this task.
 
-- [ ] **Step 5: Self-review against ADR-093**
+- [ ] **Step 5: Self-review against ADR-094**
 
 Search for `shell=True`, shell-string parsing, virtual-to-raw fallback, duplicated filesystem/Git implementations, shared permission names, unreserved external profile records, default-Allow behavior, and catalog-only gating.
 
 - [ ] **Step 6: Complete Backlog hygiene after evidence exists**
 
-Move TASK-22509 In Progress immediately before implementation and add this plan path through the CLI. At completion, check all criteria, add concise Implementation Notes/evidence and ADR-093, then set Done. Record a lesson only for a genuinely generalizable incident.
+Move TASK-22509 In Progress immediately before implementation and add this plan path through the CLI. At completion, check all criteria, add concise Implementation Notes/evidence and ADR-094, then set Done. Record a lesson only for a genuinely generalizable incident.
 
 - [ ] **Step 7: Commit documentation and task completion**
 

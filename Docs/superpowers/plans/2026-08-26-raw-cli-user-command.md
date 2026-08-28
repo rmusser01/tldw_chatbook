@@ -12,9 +12,9 @@
 
 **ADR required:** yes
 
-**ADR path:** `backlog/decisions/093-raw-and-virtual-cli-execution-boundaries.md`
+**ADR path:** `backlog/decisions/094-raw-and-virtual-cli-execution-boundaries.md`
 
-**Reason:** ADR-093 authorizes the host-authority shell boundary, partially supersedes ADR-033, and fixes the two-gate, no-sandbox, process-ownership, and persistence contracts used here.
+**Reason:** ADR-094 authorizes the host-authority shell boundary, partially supersedes ADR-033, and fixes the two-gate, no-sandbox, process-ownership, and persistence contracts used here.
 
 ---
 
@@ -626,7 +626,7 @@ git commit -m "feat: persist resumable local command markers"
 
 - [ ] **Step 1: Update user and authority documentation**
 
-Document exact `! ` syntax, `\! ` escape, typed-prefix/paste rule, supported shells, non-interactive stdin, timeout, Stop, per-launch re-arm, config key, local persistence, environment scrubbing limitations, and cleanup uncertainty. State plainly that raw CLI has OS-user authority and is not confined to a workspace. Add ADR-093's partial-supersession link to ADR-033.
+Document exact `! ` syntax, `\! ` escape, typed-prefix/paste rule, supported shells, non-interactive stdin, timeout, Stop, per-launch re-arm, config key, local persistence, environment scrubbing limitations, and cleanup uncertainty. State plainly that raw CLI has OS-user authority and is not confined to a workspace. Add ADR-094's partial-supersession link to ADR-033.
 
 - [ ] **Step 2: Run the focused raw suite**
 
@@ -658,13 +658,13 @@ Expected: PASS with no warnings/errors. Do not run the full pytest suite unless 
 
 Launch Chatbook with isolated config/data directories. Verify Locked refusal, saved unlock, Arm, red composer state, a command with separate stdout/stderr, Stop on a long command, Disarm cleanup, navigation away/back, and restart returning to Unlocked/not armed. Capture rendered frames or screenshots as evidence; widget existence alone is not visual verification.
 
-- [ ] **Step 5: Self-review against ADR-093 and TASK-18926**
+- [ ] **Step 5: Self-review against ADR-094 and TASK-18926**
 
 Search for accidental command/output diagnostic logging, ambient `os.environ.copy()`, `shell=True`, persisted arm/session grants, “sandbox/confined” raw copy, unbounded queues/buffers, provider-history insertion, and generic agent queries that include `local_command`.
 
 - [ ] **Step 6: Finish Backlog hygiene only after all evidence exists**
 
-Check every acceptance criterion, add concise Implementation Notes listing the exact files/decisions/evidence, keep ADR-093 linked, record any actual new lesson only if the work exposed one, and set TASK-18926 Done through the Backlog CLI.
+Check every acceptance criterion, add concise Implementation Notes listing the exact files/decisions/evidence, keep ADR-094 linked, record any actual new lesson only if the work exposed one, and set TASK-18926 Done through the Backlog CLI.
 
 - [ ] **Step 7: Commit documentation and task completion**
 

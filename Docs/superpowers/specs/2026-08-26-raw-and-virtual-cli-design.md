@@ -4,7 +4,7 @@
 **Status:** Approved
 **Related tasks:** TASK-18926, TASK-22509, TASK-22510, TASK-22512
 **ADR required:** yes
-**ADR path:** `backlog/decisions/093-raw-and-virtual-cli-execution-boundaries.md`
+**ADR path:** `backlog/decisions/094-raw-and-virtual-cli-execution-boundaries.md`
 **Reason:** This reverses the raw-shell portion of ADR-033 and establishes new
 security, runtime, permission, persistence, and cross-platform process
 boundaries.
@@ -501,5 +501,5 @@ Update:
 - Privacy & Security guide: unlock versus launch arm and full authority warning.
 - Tools guide: virtual command list, independent permissions, and raw Ask/Off.
 - Configuration reference: false-by-default `raw_cli_permitted`.
-- ADR-033 links/notes so readers see ADR-093's partial supersession.
+- ADR-033 links/notes so readers see ADR-094's partial supersession.
 - TASK-18926 plan and acceptance criteria before implementation begins.
