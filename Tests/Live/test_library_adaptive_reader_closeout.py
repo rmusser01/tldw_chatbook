@@ -1,14 +1,17 @@
 from __future__ import annotations
 
 import builtins
+import hashlib
 import importlib.util
 import json
 import os
+import shutil
 import socket
 import subprocess
 import sys
 import textwrap
 import time
+import urllib.parse
 from pathlib import Path
 
 import pytest
@@ -3272,3 +3275,2013 @@ def test_child_tripwire_is_installed_before_scenario_module_import(tmp_path):
     )
 
     _assert_containment_attempt(module, result, scratch, "network_denied")
+
+
+def _promotion_subject(module):
+    return module.Subject(commit="a" * 40, tree="b" * 40)
+
+
+def _promotion_sources(module):
+    sources = {
+        "task23019_closeout.py": b"# parent\n",
+        "task23019_closeout_child.py": b"# child\n",
+        "task23019_scenarios.py": b"# scenarios\n",
+    }
+    hashes = {
+        name: hashlib.sha256(payload).hexdigest() for name, payload in sources.items()
+    }
+    return sources, hashes
+
+
+def _canonical_promotion_results(module):
+    automated = {
+        selector: "PASS"
+        for contract in module.CATALOGUE.values()
+        for selector in contract.automated_nodes
+    }
+    live = {name: "PASS" for name in module.EXPECTED_CONCRETE_LIVE_RESULTS}
+    return automated, live
+
+
+def _raw_promotion_artifacts(
+    module,
+    root: Path,
+    *,
+    summary: str = "first",
+    automated_results=None,
+    live_results=None,
+):
+    if automated_results is None or live_results is None:
+        automated_results, live_results = _canonical_promotion_results(module)
+    (root / "facts").mkdir(parents=True)
+    (root / "captures").mkdir()
+    (root / "summary.json").write_text(
+        json.dumps(
+            {
+                "status": "PASS",
+                "automated_results": len(automated_results),
+                "live_results": len(live_results),
+                "not_applicable_results": sum(
+                    (value if isinstance(value, str) else value["status"])
+                    == "NOT_APPLICABLE"
+                    for value in (*automated_results.values(), *live_results.values())
+                ),
+            }
+        ),
+        encoding="utf-8",
+    )
+    inventory = [
+        *(("automated", name, value) for name, value in automated_results.items()),
+        *(("live", name, value) for name, value in live_results.items()),
+    ]
+    for index, (kind, name, value) in enumerate(sorted(inventory)):
+        status = value if isinstance(value, str) else value["status"]
+        (root / f"facts/result-{index:03}.json").write_text(
+            json.dumps({"kind": kind, "result_name": name, "status": status}),
+            encoding="utf-8",
+        )
+    expected = {
+        **{("automated", name): value for name, value in automated_results.items()},
+        **{("live", name): value for name, value in live_results.items()},
+    }
+    for stem, identity in module.REPRESENTATIVE_CAPTURES.items():
+        status = expected[identity]
+        if not isinstance(status, str):
+            status = status["status"]
+        (root / f"captures/{stem}.txt").write_text(
+            f"result_name: {identity[1]}\nstatus: {status}\nrepresentative frame {summary}\n",
+            encoding="utf-8",
+        )
+    return module.collect_raw_artifacts(root)
+
+
+def _valid_contract_results(module):
+    catalogue = {"X-01": module.Contract(("tests/test_x.py::test_x",), ("live-x",))}
+    automated = {"tests/test_x.py::test_x": "PASS"}
+    live = {"live-x": "PASS"}
+    return catalogue, automated, live
+
+
+def _promote_fixture(module, tmp_path: Path, *, summary: str = "first"):
+    raw = tmp_path / f"raw-{summary}"
+    catalogue = module.CATALOGUE
+    automated, live = _canonical_promotion_results(module)
+    artifacts = _raw_promotion_artifacts(
+        module,
+        raw,
+        summary=summary,
+        automated_results=automated,
+        live_results=live,
+    )
+    shutil.rmtree(raw)
+    sources, source_hashes = _promotion_sources(module)
+    return {
+        "destination": tmp_path / "evidence/task-23019",
+        "raw_root": raw,
+        "subject": _promotion_subject(module),
+        "subject_sources": sources,
+        "subject_hashes": source_hashes,
+        "raw_artifacts": artifacts,
+        "catalogue": catalogue,
+        "automated_results": automated,
+        "live_results": live,
+        "normalization_roots": {
+            "checkout": tmp_path / "checkout",
+            "runtime": tmp_path / "runtime",
+            "scratch": raw,
+        },
+    }
+
+
+def _write_source_bootstrap(destination: Path, sources: dict[str, bytes]) -> None:
+    destination.mkdir(parents=True)
+    for relative, payload in sources.items():
+        (destination / relative).write_bytes(payload)
+
+
+def _snapshot_directory(directory: Path) -> dict[str, tuple[str, object]]:
+    snapshot = {}
+    for entry in directory.iterdir():
+        if entry.is_symlink():
+            snapshot[entry.name] = ("symlink", os.readlink(entry))
+        elif entry.is_dir():
+            snapshot[entry.name] = ("directory", None)
+        else:
+            snapshot[entry.name] = ("file", entry.read_bytes())
+    return snapshot
+
+
+def test_success_requires_every_catalogue_id_to_have_fresh_automated_and_live_pass():
+    module = _load_runner()
+    catalogue, automated, live = _valid_contract_results(module)
+
+    module.validate_complete_results(catalogue, automated, live)
+    for missing_automated, missing_live in ((True, False), (False, True)):
+        with pytest.raises(module.CloseoutError) as error:
+            module.validate_complete_results(
+                catalogue,
+                {} if missing_automated else automated,
+                {} if missing_live else live,
+            )
+        assert error.value.category in {
+            "pytest_selector_not_collected",
+            "live_evidence_missing",
+        }
+
+
+def test_not_applicable_requires_catalogue_level_reason():
+    module = _load_runner()
+    catalogue, _automated, _live = _valid_contract_results(module)
+
+    with pytest.raises(module.CloseoutError) as error:
+        module.validate_complete_results(
+            catalogue,
+            {"tests/test_x.py::test_x": "NOT_APPLICABLE"},
+            {"live-x": "NOT_APPLICABLE"},
+        )
+    assert error.value.category == "not_applicable_undeclared"
+
+    with pytest.raises(module.CloseoutError) as error:
+        module.validate_complete_results(
+            catalogue, {}, {}, not_applicable={"X-01": " "}
+        )
+    assert error.value.category == "not_applicable_reason_missing"
+
+    module.validate_complete_results(
+        catalogue,
+        {"tests/test_x.py::test_x": "NOT_APPLICABLE"},
+        {"live-x": "NOT_APPLICABLE"},
+        not_applicable={"X-01": "Optional provider is outside this contained run."},
+    )
+
+
+def test_normalization_replaces_scratch_checkout_and_runtime_paths(tmp_path):
+    module = _load_runner()
+    roots = {
+        "checkout": tmp_path / "checkout",
+        "runtime": tmp_path / "runtime",
+        "scratch": tmp_path / "scratch",
+    }
+    artifacts = {
+        "summary.json": json.dumps(
+            {"paths": [str(path / "one") for path in roots.values()]}
+        ).encode()
+    }
+
+    normalized = module.normalize_artifacts(artifacts, roots=roots)
+    text = normalized["summary.json"].decode()
+
+    assert "<checkout>/one" in text
+    assert "<runtime>/one" in text
+    assert "<scratch>/one" in text
+    assert all(str(path) not in text for path in roots.values())
+
+
+@pytest.mark.parametrize(
+    "leak",
+    ("OPENAI_API_KEY=sk-live-secret", "/Users/alice/private/database.sqlite"),
+)
+def test_secret_or_user_path_rejects_the_whole_bundle(tmp_path, leak):
+    module = _load_runner()
+    kwargs = _promote_fixture(module, tmp_path)
+    destination = kwargs["destination"]
+    module.promote_evidence(**kwargs)
+    before = {
+        path.relative_to(destination).as_posix(): path.read_bytes()
+        for path in destination.rglob("*")
+        if path.is_file()
+    }
+    kwargs["raw_artifacts"] = {
+        **kwargs["raw_artifacts"],
+        "facts/leak.json": json.dumps({"value": leak}).encode(),
+    }
+
+    with pytest.raises(module.CloseoutError) as error:
+        module.promote_evidence(**kwargs)
+
+    assert error.value.category in {"credential_material", "host_path_present"}
+    assert {
+        path.relative_to(destination).as_posix(): path.read_bytes()
+        for path in destination.rglob("*")
+        if path.is_file()
+    } == before
+    assert sorted(path.name for path in destination.parent.iterdir()) == ["task-23019"]
+
+
+def test_only_allowlisted_relative_artifacts_are_promoted(tmp_path):
+    module = _load_runner()
+    raw = tmp_path / "raw"
+    _raw_promotion_artifacts(module, raw)
+    (raw / "unexpected.log").write_text("not retained", encoding="utf-8")
+
+    with pytest.raises(module.CloseoutError) as error:
+        module.collect_raw_artifacts(raw)
+
+    assert error.value.category == "artifact_path_not_allowed"
+    assert not (tmp_path / "evidence").exists()
+
+
+def test_symlink_or_oversized_capture_is_rejected(tmp_path):
+    module = _load_runner()
+    raw = tmp_path / "raw-link"
+    raw.mkdir()
+    outside = tmp_path / "outside.txt"
+    outside.write_text("outside", encoding="utf-8")
+    (raw / "capture.txt").symlink_to(outside)
+
+    with pytest.raises(module.CloseoutError) as error:
+        module.collect_raw_artifacts(raw)
+    assert error.value.category == "artifact_symlink"
+
+    for index, (relative, size) in enumerate(
+        (
+            ("captures/large.txt", 128 * 1024 + 1),
+            ("captures/large.svg", 512 * 1024 + 1),
+            ("facts/large.json", 256 * 1024 + 1),
+        )
+    ):
+        raw = tmp_path / f"raw-large-{index}"
+        target = raw / relative
+        target.parent.mkdir(parents=True)
+        target.write_bytes(b"x" * size)
+        with pytest.raises(module.CloseoutError) as error:
+            module.collect_raw_artifacts(raw)
+        assert error.value.category == "artifact_too_large"
+
+
+def test_raw_root_is_absent_before_repository_promotion(tmp_path):
+    module = _load_runner()
+    kwargs = _promote_fixture(module, tmp_path)
+    kwargs["raw_root"].mkdir()
+
+    with pytest.raises(module.CloseoutError) as error:
+        module.promote_evidence(**kwargs)
+
+    assert error.value.category == "raw_root_still_exists"
+    assert not kwargs["destination"].parent.exists()
+
+
+def test_existing_unrelated_destination_is_never_replaced(tmp_path):
+    module = _load_runner()
+    kwargs = _promote_fixture(module, tmp_path)
+    destination = kwargs["destination"]
+    destination.mkdir(parents=True)
+    sentinel = destination / "keep.txt"
+    sentinel.write_text("unrelated", encoding="utf-8")
+
+    with pytest.raises(module.CloseoutError) as error:
+        module.promote_evidence(**kwargs)
+
+    assert error.value.category == "promotion_collision"
+    assert sentinel.read_text(encoding="utf-8") == "unrelated"
+
+
+def test_first_promotion_accepts_exact_subject_source_bootstrap(tmp_path):
+    module = _load_runner()
+    kwargs = _promote_fixture(module, tmp_path)
+    destination = kwargs["destination"]
+    _write_source_bootstrap(destination, kwargs["subject_sources"])
+
+    module.promote_evidence(**kwargs)
+
+    assert (destination / "manifest.json").is_file()
+    for relative, payload in kwargs["subject_sources"].items():
+        assert (destination / relative).read_bytes() == payload
+    assert not list(destination.parent.glob(".task-23019.*-*"))
+
+
+@pytest.mark.parametrize(
+    "defect", ("altered", "extra", "extra-directory", "missing", "symlink")
+)
+def test_source_bootstrap_defects_fail_closed_and_remain_untouched(tmp_path, defect):
+    module = _load_runner()
+    kwargs = _promote_fixture(module, tmp_path)
+    destination = kwargs["destination"]
+    _write_source_bootstrap(destination, kwargs["subject_sources"])
+    if defect == "altered":
+        (destination / "task23019_closeout.py").write_bytes(b"altered")
+    elif defect == "extra":
+        (destination / "extra.txt").write_text("extra", encoding="utf-8")
+    elif defect == "extra-directory":
+        (destination / "facts").mkdir()
+    elif defect == "missing":
+        (destination / "task23019_scenarios.py").unlink()
+    else:
+        source = destination / "task23019_scenarios.py"
+        source.unlink()
+        source.symlink_to(tmp_path / "outside.py")
+    before = _snapshot_directory(destination)
+
+    with pytest.raises(module.CloseoutError) as error:
+        module.promote_evidence(**kwargs)
+
+    assert error.value.category == "promotion_collision"
+    assert _snapshot_directory(destination) == before
+    assert not list(destination.parent.glob(".task-23019.*-*"))
+
+
+@pytest.mark.parametrize(
+    "phase",
+    tuple(
+        sorted(
+            (
+                "after_stage_validation",
+                "after_target_to_backup",
+                "after_stage_to_target",
+                "before_backup_removal",
+            )
+        )
+    ),
+)
+def test_source_bootstrap_crash_recovers_on_next_invocation(tmp_path, phase):
+    module = _load_runner()
+    kwargs = _promote_fixture(module, tmp_path)
+    destination = kwargs["destination"]
+    _write_source_bootstrap(destination, kwargs["subject_sources"])
+
+    with pytest.raises(module.CloseoutError) as error:
+        module.promote_evidence(**kwargs, inject_failure=phase)
+    assert error.value.category == "injected_promotion_failure"
+
+    module.promote_evidence(**kwargs)
+    assert (destination / "manifest.json").is_file()
+    assert not list(destination.parent.glob(".task-23019.*-*"))
+
+
+@pytest.mark.parametrize(
+    "phase",
+    (
+        "after_stage_validation",
+        "after_target_to_backup",
+        "after_stage_to_target",
+        "before_backup_removal",
+    ),
+)
+def test_owned_destination_replace_rolls_back_on_injected_failure(tmp_path, phase):
+    module = _load_runner()
+    first = _promote_fixture(module, tmp_path, summary="first")
+    module.promote_evidence(**first)
+    second = _promote_fixture(module, tmp_path, summary="second")
+
+    with pytest.raises(module.CloseoutError) as error:
+        module.promote_evidence(**second, inject_failure=phase)
+    assert error.value.category == "injected_promotion_failure"
+
+    module.promote_evidence(**second)
+    destination = second["destination"]
+    summary = json.loads((destination / "summary.json").read_text())
+    assert summary["status"] == "PASS"
+    capture = next(iter(module.REPRESENTATIVE_CAPTURES))
+    assert b"second" in (destination / f"captures/{capture}.txt").read_bytes()
+    assert not list(destination.parent.glob(".task-23019.txn-*"))
+    for name, payload in second["subject_sources"].items():
+        assert (destination / name).read_bytes() == payload
+
+
+@pytest.mark.parametrize("role", ("stage", "backup"))
+def test_recovery_leaves_unrelated_lookalike_residues_untouched(tmp_path, role):
+    module = _load_runner()
+    kwargs = _promote_fixture(module, tmp_path)
+    parent = kwargs["destination"].parent
+    residue = parent / f".task-23019.{role}-lookalike"
+    residue.mkdir(parents=True)
+    marker = residue / "keep.txt"
+    marker.write_text("unrelated", encoding="utf-8")
+
+    module.promote_evidence(**kwargs)
+
+    assert (kwargs["destination"] / "manifest.json").is_file()
+    assert marker.read_text(encoding="utf-8") == "unrelated"
+
+
+def test_promoted_hashes_cover_every_retained_artifact_except_hashes_itself(tmp_path):
+    module = _load_runner()
+    kwargs = _promote_fixture(module, tmp_path)
+
+    module.promote_evidence(**kwargs)
+
+    destination = kwargs["destination"]
+    retained = {
+        path.relative_to(destination).as_posix()
+        for path in destination.rglob("*")
+        if path.is_file()
+    }
+    hashes = json.loads((destination / "hashes.json").read_text())
+    manifest = json.loads((destination / "manifest.json").read_text())
+    assert set(hashes["files"]) == retained - {"hashes.json"}
+    assert hashes["excluded"] == ["hashes.json"]
+    assert manifest["hashes_excluded"] == ["hashes.json"]
+    for relative, digest in hashes["files"].items():
+        assert (
+            hashlib.sha256((destination / relative).read_bytes()).hexdigest() == digest
+        )
+
+
+def test_subject_source_mapping_and_hashes_are_exact(tmp_path):
+    module = _load_runner()
+    kwargs = _promote_fixture(module, tmp_path)
+    kwargs["subject_sources"] = dict(kwargs["subject_sources"])
+    kwargs["subject_sources"].pop("task23019_scenarios.py")
+
+    with pytest.raises(module.CloseoutError) as error:
+        module.promote_evidence(**kwargs)
+    assert error.value.category == "subject_source_mapping_missing"
+
+    kwargs = _promote_fixture(module, tmp_path / "mismatch")
+    kwargs["subject_hashes"] = dict(kwargs["subject_hashes"])
+    kwargs["subject_hashes"]["task23019_scenarios.py"] = "0" * 64
+    with pytest.raises(module.CloseoutError) as error:
+        module.promote_evidence(**kwargs)
+    assert error.value.category == "subject_source_hash_mismatch"
+
+
+def test_promotion_rejects_a_missing_catalogue_mapping(tmp_path):
+    module = _load_runner()
+    kwargs = _promote_fixture(module, tmp_path)
+    kwargs["catalogue"] = dict(kwargs["catalogue"])
+    kwargs["catalogue"].pop("SK-02")
+
+    with pytest.raises(module.CloseoutError) as error:
+        module.promote_evidence(**kwargs)
+
+    assert error.value.category == "catalogue_ids_mismatch"
+    assert not kwargs["destination"].parent.exists()
+
+
+def test_subject_sources_are_read_from_the_recorded_commit_tree():
+    module = _load_runner()
+    subject = module.Subject(
+        commit=subprocess.run(
+            ["git", "rev-parse", "HEAD"],
+            cwd=REPO_ROOT,
+            check=True,
+            capture_output=True,
+            text=True,
+        ).stdout.strip(),
+        tree=subprocess.run(
+            ["git", "rev-parse", "HEAD^{tree}"],
+            cwd=REPO_ROOT,
+            check=True,
+            capture_output=True,
+            text=True,
+        ).stdout.strip(),
+    )
+
+    sources, hashes = module.load_subject_sources(REPO_ROOT, subject)
+
+    for filename in module.SOURCE_ARTIFACTS:
+        expected = subprocess.run(
+            [
+                "git",
+                "show",
+                f"{subject.commit}:{module.SOURCE_DIRECTORY}/{filename}",
+            ],
+            cwd=REPO_ROOT,
+            check=True,
+            capture_output=True,
+        ).stdout
+        assert sources[filename] == expected
+        assert hashlib.sha256(expected).hexdigest() == hashes[filename]
+
+
+def test_declared_credential_value_rejects_the_whole_bundle(tmp_path):
+    module = _load_runner()
+    kwargs = _promote_fixture(module, tmp_path)
+    opaque_secret = "opaque-value-not-identifiable-by-shape"
+    kwargs["raw_artifacts"] = {
+        **kwargs["raw_artifacts"],
+        "facts/value.json": json.dumps({"value": opaque_secret}).encode(),
+    }
+
+    with pytest.raises(module.CloseoutError) as error:
+        module.promote_evidence(**kwargs, credential_values=(opaque_secret,))
+
+    assert error.value.category == "credential_material"
+    assert not kwargs["destination"].parent.exists()
+
+
+def test_environment_credential_value_is_rejected_without_caller_wiring(
+    tmp_path, monkeypatch
+):
+    module = _load_runner()
+    kwargs = _promote_fixture(module, tmp_path)
+    opaque_secret = "opaque-environment-value"
+    monkeypatch.setenv("SYNTHETIC_API_KEY", opaque_secret)
+    kwargs["raw_artifacts"] = {
+        **kwargs["raw_artifacts"],
+        "facts/value.json": json.dumps({"value": opaque_secret}).encode(),
+    }
+
+    with pytest.raises(module.CloseoutError) as error:
+        module.promote_evidence(**kwargs)
+
+    assert error.value.category == "credential_material"
+
+
+@pytest.mark.parametrize(
+    "payload",
+    (
+        {"api_key": "not-from-env-secret"},
+        {"apiKey": "not-from-env-secret"},
+        {"outer": {"token": "not-from-env-secret"}},
+        {"outer": [{"authorization": "not-from-env-secret"}]},
+        {"AWS_SECRET_ACCESS_KEY": "not-from-env-secret"},
+        {"clientSecret": "not-from-env-secret"},
+        {"client_secret": "not-from-env-secret"},
+        {"client-secret": "not-from-env-secret"},
+        {"outer": {"accessToken": "not-from-env-secret"}},
+        {"outer": {"access_token": "not-from-env-secret"}},
+        {"outer": {"access-token": "not-from-env-secret"}},
+        {"outer": [{"privateKey": "not-from-env-secret"}]},
+        {"outer": [{"private_key": "not-from-env-secret"}]},
+        {"outer": [{"private-key": "not-from-env-secret"}]},
+        {"refreshToken": "not-from-env-secret"},
+        {"auth-token": "not-from-env-secret"},
+        {"bearer_token": "not-from-env-secret"},
+        {"passphrase": "not-from-env-secret"},
+        {"credentials": "not-from-env-secret"},
+    ),
+)
+def test_json_credential_keys_reject_the_whole_bundle(tmp_path, payload):
+    module = _load_runner()
+    kwargs = _promote_fixture(module, tmp_path)
+    kwargs["raw_artifacts"] = {
+        **kwargs["raw_artifacts"],
+        "facts/credential-key.json": json.dumps(payload).encode(),
+    }
+
+    with pytest.raises(module.CloseoutError) as error:
+        module.promote_evidence(**kwargs)
+
+    assert error.value.category == "credential_material"
+    assert not kwargs["destination"].parent.exists()
+
+
+def test_json_credential_key_detection_allows_benign_prose_keys(tmp_path):
+    module = _load_runner()
+    kwargs = _promote_fixture(module, tmp_path)
+    fact_name = next(
+        name for name in kwargs["raw_artifacts"] if name.startswith("facts/")
+    )
+    fact = json.loads(kwargs["raw_artifacts"][fact_name])
+    fact.update(
+        {
+            "description": "Explains API key handling without retaining a value.",
+            "state": {
+                "revision_token": "revision-3",
+                "continuation_token": "continue-4",
+                "worker_token": "worker-5",
+                "page_token": "page-6",
+                "next_token": "next-7",
+            },
+            "analysis": [
+                {
+                    "tokenizer": "standard",
+                    "token_count": 42,
+                    "secret_recipe": "ordinary prose key",
+                    "summary": "The API key and access token were not retained.",
+                }
+            ],
+        }
+    )
+    kwargs["raw_artifacts"] = dict(kwargs["raw_artifacts"])
+    kwargs["raw_artifacts"][fact_name] = json.dumps(fact).encode()
+
+    module.promote_evidence(**kwargs)
+
+    assert (kwargs["destination"] / fact_name).is_file()
+
+
+def test_promotion_rejects_a_substituted_canonical_catalogue_selector(tmp_path):
+    module = _load_runner()
+    kwargs = _promote_fixture(module, tmp_path)
+    injected = "Tests/unowned.py::test_injected"
+    altered = dict(kwargs["catalogue"])
+    original = altered["SH-01"]
+    altered["SH-01"] = module.Contract(
+        (injected, *original.automated_nodes[1:]), original.live_cases
+    )
+    kwargs["catalogue"] = altered
+    kwargs["automated_results"] = {
+        **kwargs["automated_results"],
+        injected: "PASS",
+    }
+
+    with pytest.raises(module.CloseoutError) as error:
+        module.promote_evidence(**kwargs)
+
+    assert error.value.category == "catalogue_mapping_mismatch"
+    assert not kwargs["destination"].parent.exists()
+
+
+@pytest.mark.parametrize("reason_kind", ("secret", "path"))
+def test_not_applicable_reason_is_scanned_before_manifest_generation(
+    tmp_path, reason_kind
+):
+    module = _load_runner()
+    kwargs = _promote_fixture(module, tmp_path)
+    contract = kwargs["catalogue"]["SH-06"]
+    for selector in contract.automated_nodes:
+        kwargs["automated_results"][selector] = "NOT_APPLICABLE"
+    for name, payload in tuple(kwargs["raw_artifacts"].items()):
+        if not name.startswith("facts/"):
+            continue
+        fact = json.loads(payload)
+        if (
+            fact["kind"] == "automated"
+            and fact["result_name"] in contract.automated_nodes
+        ):
+            fact["status"] = "NOT_APPLICABLE"
+            kwargs["raw_artifacts"][name] = json.dumps(fact).encode()
+    kwargs["raw_artifacts"]["summary.json"] = module._json_bytes(
+        module._canonical_summary(kwargs["automated_results"], kwargs["live_results"])
+    )
+    secret = "opaque-not-applicable-secret"
+    reason = secret if reason_kind == "secret" else str(tmp_path / "checkout/private")
+
+    if reason_kind == "secret":
+        with pytest.raises(module.CloseoutError) as error:
+            module.promote_evidence(
+                **kwargs,
+                not_applicable={"SH-06": reason},
+                credential_values=(secret,),
+            )
+        assert error.value.category == "credential_material"
+        assert not kwargs["destination"].parent.exists()
+        return
+
+    module.promote_evidence(
+        **kwargs,
+        not_applicable={"SH-06": reason},
+        credential_values=(),
+    )
+    manifest = json.loads(
+        (kwargs["destination"] / "manifest.json").read_text(encoding="utf-8")
+    )
+    retained_reason = manifest["catalogue"]["SH-06"]["not_applicable"]
+    assert retained_reason == "<checkout>/private"
+    assert str(tmp_path) not in retained_reason
+
+
+def test_partial_stage_write_never_creates_managed_residue_or_blocks_retry(
+    tmp_path, monkeypatch
+):
+    module = _load_runner()
+    kwargs = _promote_fixture(module, tmp_path)
+    original = module._write_stage_at
+
+    def fail_partial(transaction_fd, artifacts):
+        os.mkdir("stage", 0o700, dir_fd=transaction_fd)
+        stage_fd, _ = module._open_child_directory(transaction_fd, "stage")
+        partial_fd = os.open(
+            "partial", os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600, dir_fd=stage_fd
+        )
+        os.write(partial_fd, b"partial")
+        os.close(partial_fd)
+        os.close(stage_fd)
+        raise OSError("disk full")
+
+    monkeypatch.setattr(module, "_write_stage_at", fail_partial)
+    with pytest.raises(module.CloseoutError) as error:
+        module.promote_evidence(**kwargs)
+    assert error.value.category == "promotion_io_failed"
+    assert not list(kwargs["destination"].parent.glob(".task-23019.txn-*"))
+    assert not list(kwargs["destination"].parent.glob(".task23019-init-*"))
+    assert not list(kwargs["destination"].parent.glob(".task23019-init-*"))
+
+    monkeypatch.setattr(module, "_write_stage_at", original)
+    module.promote_evidence(**kwargs)
+    assert (kwargs["destination"] / "manifest.json").is_file()
+
+
+def test_stage_fsync_failure_never_creates_managed_residue_or_blocks_retry(
+    tmp_path, monkeypatch
+):
+    module = _load_runner()
+    kwargs = _promote_fixture(module, tmp_path)
+    original = os.fsync
+    failed = False
+
+    def fail_once(descriptor):
+        nonlocal failed
+        if not failed:
+            failed = True
+            raise OSError("fsync failed")
+        return original(descriptor)
+
+    monkeypatch.setattr(os, "fsync", fail_once)
+    with pytest.raises(module.CloseoutError) as error:
+        module.promote_evidence(**kwargs)
+    assert error.value.category == "promotion_io_failed"
+    assert not list(kwargs["destination"].parent.glob(".task-23019.txn-*"))
+
+    monkeypatch.setattr(os, "fsync", original)
+    module.promote_evidence(**kwargs)
+    assert (kwargs["destination"] / "manifest.json").is_file()
+
+
+def test_partial_retirement_is_resumed_without_permanent_collision(
+    tmp_path, monkeypatch
+):
+    module = _load_runner()
+    first = _promote_fixture(module, tmp_path, summary="first")
+    module.promote_evidence(**first)
+    second = _promote_fixture(module, tmp_path, summary="second")
+    original = module._delete_directory_contents
+    failed = False
+
+    def fail_partial(descriptor, *, marker_last):
+        nonlocal failed
+        if not failed and marker_last == module._TRANSACTION_MARKER:
+            failed = True
+            victim = next(
+                name
+                for name in os.listdir(descriptor)
+                if name != module._TRANSACTION_MARKER
+            )
+            victim_fd, _ = module._open_child_directory(descriptor, victim)
+            original(victim_fd, marker_last=None)
+            os.close(victim_fd)
+            os.rmdir(victim, dir_fd=descriptor)
+            raise OSError("partial retirement")
+        return original(descriptor, marker_last=marker_last)
+
+    monkeypatch.setattr(module, "_delete_directory_contents", fail_partial)
+    with pytest.raises(module.CloseoutError) as error:
+        module.promote_evidence(**second)
+    assert error.value.category == "promotion_cleanup_failed"
+
+    monkeypatch.setattr(module, "_delete_directory_contents", original)
+    module.promote_evidence(**second)
+    capture = next(iter(module.REPRESENTATIVE_CAPTURES))
+    assert b"second" in (second["destination"] / f"captures/{capture}.txt").read_bytes()
+
+
+@pytest.mark.parametrize("failure_kind", ("rename", "marker"))
+def test_retirement_transition_failure_is_resumed_on_next_invocation(
+    tmp_path, monkeypatch, failure_kind
+):
+    module = _load_runner()
+    first = _promote_fixture(module, tmp_path, summary="first")
+    module.promote_evidence(**first)
+    second = _promote_fixture(module, tmp_path, summary="second")
+
+    if failure_kind == "rename":
+        original = module._rename_entry
+        failed = False
+
+        def fail_retirement_rename(parent_fd, source, destination, expected):
+            nonlocal failed
+            if not failed and destination.startswith(".task-23019.txn-retired-"):
+                failed = True
+                raise OSError("retirement rename failed")
+            return original(parent_fd, source, destination, expected)
+
+        monkeypatch.setattr(module, "_rename_entry", fail_retirement_rename)
+    else:
+        original = module._write_transaction_marker
+        failed = False
+
+        def fail_retirement_marker(transaction_fd, subject, role, nonce):
+            nonlocal failed
+            if not failed and role == "retirement":
+                failed = True
+                raise OSError("retirement marker write failed")
+            return original(transaction_fd, subject, role, nonce)
+
+        monkeypatch.setattr(module, "_write_transaction_marker", fail_retirement_marker)
+
+    with pytest.raises(module.CloseoutError) as error:
+        module.promote_evidence(**second)
+    assert error.value.category == "promotion_io_failed"
+
+    if failure_kind == "rename":
+        monkeypatch.setattr(module, "_rename_entry", original)
+    else:
+        monkeypatch.setattr(module, "_write_transaction_marker", original)
+    module.promote_evidence(**second)
+    capture = next(iter(module.REPRESENTATIVE_CAPTURES))
+    assert b"second" in (second["destination"] / f"captures/{capture}.txt").read_bytes()
+    assert not list(second["destination"].parent.glob(".task-23019.*-*"))
+
+
+def test_backup_residue_identity_swap_before_retirement_is_rejected_and_untouched(
+    tmp_path, monkeypatch
+):
+    module = _load_runner()
+    first = _promote_fixture(module, tmp_path, summary="first")
+    module.promote_evidence(**first)
+    second = _promote_fixture(module, tmp_path, summary="second")
+    parent_fd, _ = module._open_directory_nofollow(second["destination"].parent)
+    transaction_name = module._create_transaction(parent_fd, second["subject"])
+    _role, transaction_fd = module._read_transaction_marker(
+        parent_fd, transaction_name, second["subject"]
+    )
+    destination_receipt = module._validate_recovery_candidate_at(
+        parent_fd,
+        second["destination"].name,
+        subject=second["subject"],
+        subject_sources=second["subject_sources"],
+        allow_bootstrap=False,
+    )
+    module._rename_between(
+        parent_fd,
+        second["destination"].name,
+        transaction_fd,
+        "backup",
+        destination_receipt,
+    )
+    os.close(transaction_fd)
+    os.close(parent_fd)
+
+    transaction = second["destination"].parent / transaction_name
+    original = module._validate_recovery_candidate_at
+    replacement = second["destination"].parent / "replacement-backup"
+    swapped = False
+
+    def swap_after_validation(parent_fd, name, **validation):
+        nonlocal swapped
+        result = original(parent_fd, name, **validation)
+        if not swapped and name == "backup":
+            swapped = True
+            backup = transaction / "backup"
+            backup.rename(transaction / "validated-backup")
+            backup.mkdir()
+            (backup / "keep.txt").write_text("replacement", encoding="utf-8")
+            replacement.write_text("unrelated", encoding="utf-8")
+        return result
+
+    monkeypatch.setattr(
+        module, "_validate_recovery_candidate_at", swap_after_validation
+    )
+    with pytest.raises(module.CloseoutError) as error:
+        module.promote_evidence(**second)
+
+    assert error.value.category == "promotion_collision"
+    backup = transaction / "backup"
+    assert (backup / "keep.txt").read_text(encoding="utf-8") == "replacement"
+    assert replacement.read_text(encoding="utf-8") == "unrelated"
+
+
+def test_retirement_residue_identity_swap_before_delete_is_rejected_and_untouched(
+    tmp_path, monkeypatch
+):
+    module = _load_runner()
+    first = _promote_fixture(module, tmp_path, summary="first")
+    module.promote_evidence(**first)
+    second = _promote_fixture(module, tmp_path, summary="second")
+    original_delete = module._delete_transaction
+    monkeypatch.setattr(
+        module,
+        "_delete_transaction",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(OSError("stop retirement")),
+    )
+    with pytest.raises(module.CloseoutError) as error:
+        module.promote_evidence(**second)
+    assert error.value.category == "promotion_cleanup_failed"
+    monkeypatch.setattr(module, "_delete_transaction", original_delete)
+    retired = next(second["destination"].parent.glob(".task-23019.txn-retired-*"))
+
+    original_remove = module._delete_directory_contents
+    swapped = False
+
+    def swap_before_delete(descriptor, *, marker_last):
+        nonlocal swapped
+        if not swapped and marker_last == module._TRANSACTION_MARKER:
+            swapped = True
+            retired.rename(retired.parent / "validated-retirement")
+            retired.mkdir()
+            (retired / "keep.txt").write_text("replacement", encoding="utf-8")
+        return original_remove(descriptor, marker_last=marker_last)
+
+    monkeypatch.setattr(module, "_delete_directory_contents", swap_before_delete)
+    with pytest.raises(module.CloseoutError) as error:
+        module.promote_evidence(**second)
+
+    assert error.value.category == "promotion_collision"
+    assert (retired / "keep.txt").read_text(encoding="utf-8") == "replacement"
+
+
+def test_intermediate_artifact_directory_symlink_swap_fails_closed(
+    tmp_path, monkeypatch
+):
+    module = _load_runner()
+    raw = tmp_path / "raw-swap"
+    _raw_promotion_artifacts(module, raw)
+    outside = tmp_path / "outside"
+    outside.mkdir()
+    (outside / "matrix.json").write_text('{"status":"PASS"}', encoding="utf-8")
+    original = module._open_child_directory
+    swapped = False
+
+    def swap_then_open(parent_fd, name):
+        nonlocal swapped
+        if not swapped and name == "facts":
+            swapped = True
+            facts = raw / "facts"
+            facts.rename(raw / "facts-original")
+            facts.symlink_to(outside, target_is_directory=True)
+        return original(parent_fd, name)
+
+    monkeypatch.setattr(module, "_open_child_directory", swap_then_open)
+    with pytest.raises(module.CloseoutError) as error:
+        module.collect_raw_artifacts(raw)
+    assert error.value.category in {"artifact_symlink", "artifact_changed"}
+    assert (outside / "matrix.json").read_text(encoding="utf-8") == '{"status":"PASS"}'
+
+
+def test_root_component_symlink_swap_is_blocked_by_descriptor_walk(
+    tmp_path, monkeypatch
+):
+    module = _load_runner()
+    trusted = tmp_path / "trusted"
+    raw = trusted / "raw"
+    _raw_promotion_artifacts(module, raw)
+    outside = tmp_path / "outside"
+    outside.mkdir()
+    original = module._open_child_directory
+    swapped = False
+
+    def swap_component(parent_fd, name):
+        nonlocal swapped
+        if not swapped and name == trusted.name:
+            swapped = True
+            trusted.rename(tmp_path / "trusted-original")
+            trusted.symlink_to(outside, target_is_directory=True)
+        return original(parent_fd, name)
+
+    monkeypatch.setattr(module, "_open_child_directory", swap_component)
+    with pytest.raises(module.CloseoutError) as error:
+        module.collect_raw_artifacts(raw)
+
+    assert swapped
+    assert error.value.category in {"artifact_symlink", "artifact_root_missing"}
+
+
+def test_destination_identity_swap_before_rename_is_rejected_and_untouched(
+    tmp_path, monkeypatch
+):
+    module = _load_runner()
+    kwargs = _promote_fixture(module, tmp_path)
+    destination = kwargs["destination"]
+    _write_source_bootstrap(destination, kwargs["subject_sources"])
+    original = module._validate_recovery_candidate_at
+    swapped = False
+
+    def swap_after_validation(parent_fd, name, **validation):
+        nonlocal swapped
+        result = original(parent_fd, name, **validation)
+        if name == destination.name and not swapped:
+            swapped = True
+            destination.rename(destination.parent / "validated-original")
+            destination.mkdir()
+            (destination / "keep.txt").write_text("replacement", encoding="utf-8")
+        return result
+
+    monkeypatch.setattr(
+        module, "_validate_recovery_candidate_at", swap_after_validation
+    )
+    with pytest.raises(module.CloseoutError) as error:
+        module.promote_evidence(**kwargs)
+    assert error.value.category == "promotion_collision"
+    assert (destination / "keep.txt").read_text(encoding="utf-8") == "replacement"
+
+
+def test_summary_only_bundle_and_mismatched_fact_inventory_are_rejected(tmp_path):
+    module = _load_runner()
+    kwargs = _promote_fixture(module, tmp_path)
+    kwargs["raw_artifacts"] = {"summary.json": kwargs["raw_artifacts"]["summary.json"]}
+    with pytest.raises(module.CloseoutError) as error:
+        module.promote_evidence(**kwargs)
+    assert error.value.category == "evidence_inventory_invalid"
+
+
+@pytest.mark.parametrize("defect", ("missing", "extra"))
+def test_missing_or_extra_fact_inventory_is_rejected(tmp_path, defect):
+    module = _load_runner()
+    kwargs = _promote_fixture(module, tmp_path)
+    facts = [name for name in kwargs["raw_artifacts"] if name.startswith("facts/")]
+    kwargs["raw_artifacts"] = dict(kwargs["raw_artifacts"])
+    if defect == "missing":
+        del kwargs["raw_artifacts"][facts[0]]
+    else:
+        fact = json.loads(kwargs["raw_artifacts"][facts[0]])
+        kwargs["raw_artifacts"]["facts/extra.json"] = json.dumps(fact).encode()
+
+    with pytest.raises(module.CloseoutError) as error:
+        module.promote_evidence(**kwargs)
+
+    assert error.value.category == "evidence_inventory_invalid"
+
+    kwargs = _promote_fixture(module, tmp_path / "mismatch")
+    fact = next(name for name in kwargs["raw_artifacts"] if name.startswith("facts/"))
+    kwargs["raw_artifacts"] = dict(kwargs["raw_artifacts"])
+    kwargs["raw_artifacts"][fact] = json.dumps(
+        {"kind": "live", "result_name": "not-declared", "status": "PASS"}
+    ).encode()
+    with pytest.raises(module.CloseoutError) as error:
+        module.promote_evidence(**kwargs)
+    assert error.value.category == "evidence_inventory_invalid"
+
+
+def test_path_normalization_is_component_aware_and_rejects_host_uris(tmp_path):
+    module = _load_runner()
+    checkout = tmp_path / "checkout with spaces"
+    roots = {
+        "checkout": checkout,
+        "runtime": tmp_path / "runtime",
+        "scratch": tmp_path / "scratch",
+    }
+    normalized = module.normalize_artifacts(
+        {"summary.json": json.dumps({"path": str(checkout / "child file")}).encode()},
+        roots=roots,
+    )
+    assert "<checkout>/child file" in normalized["summary.json"].decode()
+
+    for leaked in (
+        str(checkout) + "-sibling/private",
+        f"file://{checkout}/private",
+        "vscode-file://vscode-app/Users/alice/private.txt",
+        "file:///Users/alice/My%20Private/file.txt",
+    ):
+        with pytest.raises(module.CloseoutError) as error:
+            module.normalize_artifacts(
+                {"summary.json": json.dumps({"path": leaked}).encode()}, roots=roots
+            )
+        assert error.value.category == "host_path_present"
+
+
+def test_artifact_count_limits_reject_many_zero_byte_files(tmp_path):
+    module = _load_runner()
+    raw = tmp_path / "many"
+    facts = raw / "facts"
+    facts.mkdir(parents=True)
+    for index in range(module.MAX_FACT_ARTIFACTS + 1):
+        (facts / f"{index:04}.json").write_bytes(b"")
+
+    with pytest.raises(module.CloseoutError) as error:
+        module.collect_raw_artifacts(raw)
+
+    assert error.value.category == "artifact_count_exceeded"
+
+
+def test_oversized_git_object_is_rejected_before_show_materialization(monkeypatch):
+    module = _load_runner()
+    subject = module.Subject(commit="a" * 40, tree="b" * 40)
+    calls = []
+
+    def fake_run(arguments, **kwargs):
+        calls.append(tuple(arguments))
+        if arguments[1] == "rev-parse":
+            return subprocess.CompletedProcess(arguments, 0, subject.tree + "\n", "")
+        if arguments[1:3] == ["cat-file", "-s"]:
+            return subprocess.CompletedProcess(
+                arguments, 0, str(module.SOURCE_ARTIFACT_BYTE_LIMIT + 1) + "\n", ""
+            )
+        pytest.fail("oversized Git object was materialized")
+
+    monkeypatch.setattr(subprocess, "run", fake_run)
+    with pytest.raises(module.CloseoutError) as error:
+        module.load_subject_sources(Path("/unused"), subject)
+
+    assert error.value.category == "subject_source_too_large"
+    assert not any(call[1] == "show" for call in calls)
+
+
+def test_total_promoted_bundle_limit_is_enforced(tmp_path):
+    module = _load_runner()
+    raw = tmp_path / "raw-total"
+    facts = raw / "facts"
+    facts.mkdir(parents=True)
+    payload = json.dumps({"value": "x" * (256 * 1024 - 32)}).encode()
+    for index in range(65):
+        (facts / f"{index:02}.json").write_bytes(payload)
+
+    with pytest.raises(module.CloseoutError) as error:
+        module.collect_raw_artifacts(raw)
+
+    assert error.value.category == "bundle_too_large"
+
+
+def test_promotion_io_failure_is_bounded_and_does_not_expose_host_paths(
+    tmp_path, monkeypatch
+):
+    module = _load_runner()
+    kwargs = _promote_fixture(module, tmp_path)
+    monkeypatch.setattr(
+        module,
+        "_write_stage_at",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(
+            OSError("/Users/alice/private/evidence")
+        ),
+    )
+
+    with pytest.raises(module.CloseoutError) as error:
+        module.promote_evidence(**kwargs)
+
+    assert error.value.category == "promotion_io_failed"
+    assert error.value.details == {}
+
+
+def test_hard_crash_during_stage_build_is_recovered_from_one_marked_transaction(
+    tmp_path,
+):
+    module = _load_runner()
+    kwargs = _promote_fixture(module, tmp_path)
+
+    with pytest.raises(module.CloseoutError) as error:
+        module.promote_evidence(**kwargs, inject_failure="during_stage_build")
+    assert error.value.category == "injected_promotion_failure"
+    transactions = [
+        path
+        for path in kwargs["destination"].parent.glob(".task-23019.txn-*")
+        if path.is_dir()
+    ]
+    assert len(transactions) == 1
+    marker = json.loads((transactions[0] / "transaction.json").read_text())
+    assert marker["task"] == module.TASK_ID
+    assert marker["subject_commit"] == kwargs["subject"].commit
+
+    module.promote_evidence(**kwargs)
+    assert (kwargs["destination"] / "manifest.json").is_file()
+    assert not list(kwargs["destination"].parent.glob(".task-23019.txn-*"))
+
+
+def test_partial_atomic_marker_temp_is_recovered_only_inside_owned_transaction(
+    tmp_path,
+):
+    module = _load_runner()
+    kwargs = _promote_fixture(module, tmp_path)
+    with pytest.raises(module.CloseoutError):
+        module.promote_evidence(**kwargs, inject_failure="during_stage_build")
+    transaction = next(
+        path
+        for path in kwargs["destination"].parent.glob(".task-23019.txn-*")
+        if path.is_dir()
+    )
+    (transaction / "transaction.json.tmp").write_bytes(b'{"partial":')
+
+    module.promote_evidence(**kwargs)
+
+    assert (kwargs["destination"] / "manifest.json").is_file()
+    assert not transaction.exists()
+
+
+def test_transaction_cleanup_failure_is_surfaced_and_resumed(tmp_path, monkeypatch):
+    module = _load_runner()
+    kwargs = _promote_fixture(module, tmp_path)
+    original = module._delete_transaction
+    failed = False
+
+    def fail_once(*args, **validation):
+        nonlocal failed
+        if not failed:
+            failed = True
+            raise OSError("cleanup failed")
+        return original(*args, **validation)
+
+    monkeypatch.setattr(module, "_delete_transaction", fail_once)
+    with pytest.raises(module.CloseoutError) as error:
+        module.promote_evidence(**kwargs)
+    assert error.value.category == "promotion_cleanup_failed"
+    assert list(kwargs["destination"].parent.glob(".task-23019.txn-*"))
+
+    monkeypatch.setattr(module, "_delete_transaction", original)
+    module.promote_evidence(**kwargs)
+    assert not list(kwargs["destination"].parent.glob(".task-23019.txn-*"))
+
+
+def test_unmarked_transaction_lookalike_is_left_untouched(tmp_path):
+    module = _load_runner()
+    kwargs = _promote_fixture(module, tmp_path)
+    lookalike = kwargs["destination"].parent / (".task-23019.txn-" + "0" * 32)
+    lookalike.mkdir(parents=True)
+    sentinel = lookalike / "keep.txt"
+    sentinel.write_text("unrelated", encoding="utf-8")
+
+    with pytest.raises(module.CloseoutError) as error:
+        module.promote_evidence(**kwargs)
+
+    assert error.value.category == "promotion_collision"
+    assert sentinel.read_text(encoding="utf-8") == "unrelated"
+
+
+@pytest.mark.skipif(sys.platform != "darwin", reason="macOS canonical /var alias")
+def test_canonical_root_accepts_macos_var_alias(tmp_path):
+    module = _load_runner()
+    raw = tmp_path / "raw"
+    _raw_promotion_artifacts(module, raw)
+    alias = Path(str(raw).replace("/private/var/", "/var/", 1))
+
+    artifacts = module.collect_raw_artifacts(alias)
+
+    assert "summary.json" in artifacts
+
+
+def test_windows_promotion_fails_stably_before_repository_write(tmp_path, monkeypatch):
+    module = _load_runner()
+    kwargs = _promote_fixture(module, tmp_path)
+    monkeypatch.setattr(module.os, "name", "nt")
+
+    with pytest.raises(module.CloseoutError) as error:
+        module.promote_evidence(**kwargs)
+
+    assert error.value.category == "promotion_unsupported_platform"
+    assert not kwargs["destination"].parent.exists()
+
+
+@pytest.mark.parametrize("mutation", ("added-file", "modified-bytes"))
+def test_content_change_between_validation_and_rename_fails_closed(
+    tmp_path, monkeypatch, mutation
+):
+    module = _load_runner()
+    first = _promote_fixture(module, tmp_path, summary="first")
+    module.promote_evidence(**first)
+    second = _promote_fixture(module, tmp_path, summary="second")
+    destination = second["destination"]
+    original = module._validate_recovery_candidate_at
+    target_validations = 0
+
+    def mutate_after_validation(parent_fd, name, **validation):
+        nonlocal target_validations
+        receipt = original(parent_fd, name, **validation)
+        if name == destination.name:
+            target_validations += 1
+        if name == destination.name and target_validations == 1:
+            if mutation == "added-file":
+                (destination / "added.txt").write_text("added", encoding="utf-8")
+            else:
+                (destination / "summary.json").write_text(
+                    '{"status":"PASS","tampered":true}', encoding="utf-8"
+                )
+        return receipt
+
+    monkeypatch.setattr(
+        module, "_validate_recovery_candidate_at", mutate_after_validation
+    )
+    with pytest.raises(module.CloseoutError) as error:
+        module.promote_evidence(**second)
+
+    assert error.value.category == "promotion_collision"
+    if mutation == "added-file":
+        assert (destination / "added.txt").read_text(encoding="utf-8") == "added"
+    else:
+        assert "tampered" in (destination / "summary.json").read_text()
+
+
+@pytest.mark.parametrize("phase", ("after_target_to_backup", "after_stage_to_target"))
+def test_post_quarantine_failure_restores_original_before_return(tmp_path, phase):
+    module = _load_runner()
+    first = _promote_fixture(module, tmp_path, summary="first")
+    module.promote_evidence(**first)
+    destination = first["destination"]
+    before = {
+        path.relative_to(destination).as_posix(): path.read_bytes()
+        for path in destination.rglob("*")
+        if path.is_file()
+    }
+    second = _promote_fixture(module, tmp_path, summary="second")
+
+    with pytest.raises(module.CloseoutError) as error:
+        module.promote_evidence(**second, inject_failure=phase)
+
+    assert error.value.category == "injected_promotion_failure"
+    assert {
+        path.relative_to(destination).as_posix(): path.read_bytes()
+        for path in destination.rglob("*")
+        if path.is_file()
+    } == before
+
+
+def test_unknown_automated_result_is_rejected_even_with_a_matching_fact(tmp_path):
+    module = _load_runner()
+    kwargs = _promote_fixture(module, tmp_path)
+    injected = "Tests/unowned.py::test_injected"
+    kwargs["automated_results"] = {**kwargs["automated_results"], injected: "PASS"}
+    kwargs["raw_artifacts"] = dict(kwargs["raw_artifacts"])
+    kwargs["raw_artifacts"]["facts/injected.json"] = json.dumps(
+        {"kind": "automated", "result_name": injected, "status": "PASS"}
+    ).encode()
+
+    with pytest.raises(module.CloseoutError) as error:
+        module.promote_evidence(**kwargs)
+
+    assert error.value.category == "automated_result_unknown"
+
+
+def test_supplied_summary_must_match_canonical_validated_counts(tmp_path):
+    module = _load_runner()
+    kwargs = _promote_fixture(module, tmp_path)
+    kwargs["raw_artifacts"] = dict(kwargs["raw_artifacts"])
+    kwargs["raw_artifacts"]["summary.json"] = json.dumps(
+        {"status": "PASS", "automated_results": 1, "live_results": 1}
+    ).encode()
+
+    with pytest.raises(module.CloseoutError) as error:
+        module.promote_evidence(**kwargs)
+
+    assert error.value.category == "summary_mismatch"
+
+
+def test_http_url_with_home_path_is_allowed_but_file_uri_is_rejected(tmp_path):
+    module = _load_runner()
+    roots = {
+        "checkout": tmp_path / "checkout",
+        "runtime": tmp_path / "runtime",
+        "scratch": tmp_path / "scratch",
+    }
+    normalized = module.normalize_artifacts(
+        {
+            "summary.json": json.dumps(
+                {"url": "https://example.test/home/library"}
+            ).encode()
+        },
+        roots=roots,
+    )
+    assert b"https://example.test/home/library" in normalized["summary.json"]
+
+    for uri in ("file:///opt/private.txt", "file://host/share/private.txt"):
+        with pytest.raises(module.CloseoutError) as error:
+            module.normalize_artifacts(
+                {"summary.json": json.dumps({"url": uri}).encode()}, roots=roots
+            )
+        assert error.value.category == "host_path_present"
+
+
+@pytest.mark.skipif(sys.platform != "darwin", reason="macOS canonical /var alias")
+def test_canonical_var_alias_rejects_a_nested_symlink(tmp_path):
+    module = _load_runner()
+    actual = tmp_path / "actual"
+    raw = actual / "raw"
+    _raw_promotion_artifacts(module, raw)
+    nested = tmp_path / "nested-link"
+    nested.symlink_to(actual, target_is_directory=True)
+    alias = Path(str(nested / "raw").replace("/private/var/", "/var/", 1))
+
+    with pytest.raises(module.CloseoutError) as error:
+        module.collect_raw_artifacts(alias)
+
+    assert error.value.category == "artifact_symlink"
+
+
+def test_uri_inspection_preserves_safe_encoded_bytes_and_rejects_double_encoding(
+    tmp_path,
+):
+    module = _load_runner()
+    roots = {
+        "checkout": tmp_path / "checkout",
+        "runtime": tmp_path / "runtime",
+        "scratch": tmp_path / "scratch",
+    }
+    safe = b'{"label":"representative%20capture"}'
+
+    assert (
+        module.normalize_artifacts({"summary.json": safe}, roots=roots)["summary.json"]
+        == safe
+    )
+
+    for encoded_local_uri in (
+        "file%253A%252F%252F%252FUsers%252Falice%252Fsecret.txt",
+        "%252Fhome%252Falice%252Fsecret.txt",
+    ):
+        with pytest.raises(module.CloseoutError) as error:
+            module.normalize_artifacts(
+                {"summary.json": json.dumps({"path": encoded_local_uri}).encode()},
+                roots=roots,
+            )
+        assert error.value.category == "host_path_present"
+
+
+@pytest.mark.parametrize(
+    "credential_key",
+    ("primary_api_key", "myAccessToken", "vendor-client-secret", "backupPrivateKey"),
+)
+def test_compound_json_credential_suffixes_are_rejected(tmp_path, credential_key):
+    module = _load_runner()
+    roots = {
+        "checkout": tmp_path / "checkout",
+        "runtime": tmp_path / "runtime",
+        "scratch": tmp_path / "scratch",
+    }
+
+    with pytest.raises(module.CloseoutError) as error:
+        module.normalize_artifacts(
+            {"summary.json": json.dumps({credential_key: "opaque"}).encode()},
+            roots=roots,
+        )
+
+    assert error.value.category == "credential_material"
+
+
+def test_deep_json_is_rejected_with_a_stable_closeout_error(tmp_path):
+    module = _load_runner()
+    roots = {
+        "checkout": tmp_path / "checkout",
+        "runtime": tmp_path / "runtime",
+        "scratch": tmp_path / "scratch",
+    }
+    deeply_nested = b"[" * 1500 + b"{}" + b"]" * 1500
+
+    with pytest.raises(module.CloseoutError) as error:
+        module.normalize_artifacts({"summary.json": deeply_nested}, roots=roots)
+
+    assert error.value.category == "artifact_json_invalid"
+
+
+def test_destination_appearing_at_stage_install_is_never_replaced(
+    tmp_path, monkeypatch
+):
+    module = _load_runner()
+    kwargs = _promote_fixture(module, tmp_path)
+    destination = kwargs["destination"]
+    original = module._rename_between
+    raced = False
+
+    def race_destination(source_fd, source, destination_fd, destination_name, expected):
+        nonlocal raced
+        if source == "stage" and destination_name == destination.name and not raced:
+            raced = True
+            os.mkdir(destination_name, 0o700, dir_fd=destination_fd)
+        return original(source_fd, source, destination_fd, destination_name, expected)
+
+    monkeypatch.setattr(module, "_rename_between", race_destination)
+    with pytest.raises(module.CloseoutError) as error:
+        module.promote_evidence(**kwargs)
+
+    assert raced
+    assert error.value.category == "promotion_collision"
+    assert destination.is_dir()
+    assert not any(destination.iterdir())
+
+
+def test_self_contained_transaction_marker_cannot_authorize_deletion(tmp_path):
+    module = _load_runner()
+    kwargs = _promote_fixture(module, tmp_path)
+    parent = kwargs["destination"].parent
+    parent.mkdir(parents=True)
+    nonce = "7" * 32
+    spoof = parent / f".task-23019.txn-retired-{nonce}"
+    spoof.mkdir()
+    marker = module._transaction_payload(kwargs["subject"], "retirement")
+    (spoof / module._TRANSACTION_MARKER).write_bytes(marker)
+
+    with pytest.raises(module.CloseoutError) as error:
+        module.promote_evidence(**kwargs)
+
+    assert error.value.category == "promotion_collision"
+    assert spoof.is_dir()
+    assert (spoof / module._TRANSACTION_MARKER).read_bytes() == marker
+
+
+def test_existing_bundle_requires_full_canonical_manifest_semantics(tmp_path):
+    module = _load_runner()
+    first = _promote_fixture(module, tmp_path, summary="first")
+    module.promote_evidence(**first)
+    destination = first["destination"]
+    manifest_path = destination / "manifest.json"
+    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    manifest["catalogue"] = {"SPOOF-01": {"automated_nodes": [], "live_cases": []}}
+    manifest_path.write_bytes(module._json_bytes(manifest))
+    hashes_path = destination / "hashes.json"
+    hashes = json.loads(hashes_path.read_text(encoding="utf-8"))
+    hashes["files"]["manifest.json"] = hashlib.sha256(
+        manifest_path.read_bytes()
+    ).hexdigest()
+    hashes_path.write_bytes(module._json_bytes(hashes))
+    before = _snapshot_directory(destination)
+
+    second = _promote_fixture(module, tmp_path, summary="second")
+    with pytest.raises(module.CloseoutError) as error:
+        module.promote_evidence(**second)
+
+    assert error.value.category == "promotion_collision"
+    assert _snapshot_directory(destination) == before
+
+
+def test_hard_crash_with_installed_target_and_backup_keeps_valid_target(tmp_path):
+    module = _load_runner()
+    first = _promote_fixture(module, tmp_path, summary="first")
+    module.promote_evidence(**first)
+    backup_source = tmp_path / "backup-source"
+    shutil.copytree(first["destination"], backup_source)
+
+    second = _promote_fixture(module, tmp_path, summary="second")
+    module.promote_evidence(**second)
+    target_before = {
+        path.relative_to(second["destination"]).as_posix(): path.read_bytes()
+        for path in second["destination"].rglob("*")
+        if path.is_file()
+    }
+    parent_fd, _ = module._open_directory_nofollow(second["destination"].parent)
+    try:
+        transaction_name = module._create_transaction(parent_fd, second["subject"])
+    finally:
+        os.close(parent_fd)
+    transaction = second["destination"].parent / transaction_name
+    backup_source.rename(transaction / "backup")
+    assert transaction.is_dir() and (transaction / "backup").is_dir()
+
+    module._recover_interrupted_promotion(
+        second["destination"],
+        subject=second["subject"],
+        subject_sources=second["subject_sources"],
+    )
+
+    assert {
+        path.relative_to(second["destination"]).as_posix(): path.read_bytes()
+        for path in second["destination"].rglob("*")
+        if path.is_file()
+    } == target_before
+    assert not transaction.exists()
+
+
+@pytest.mark.parametrize("marker_bytes", (b'{"partial":', None))
+def test_hard_crash_pending_marker_state_is_recovered_without_collision(
+    tmp_path, marker_bytes
+):
+    module = _load_runner()
+    kwargs = _promote_fixture(module, tmp_path)
+    parent = kwargs["destination"].parent
+    parent.mkdir(parents=True)
+    nonce = "8" * 32
+    pending = parent / f".task-23019.txn-pending-{nonce}"
+    pending.mkdir()
+    authority = parent / module._authority_name(nonce)
+    authority.write_bytes(
+        module._authority_payload(
+            kwargs["subject"], nonce, module._receipt(pending.lstat())
+        )
+    )
+    marker = pending / module._TRANSACTION_MARKER_TEMP
+    marker.write_bytes(
+        module._transaction_payload(kwargs["subject"], "active", nonce)
+        if marker_bytes is None
+        else marker_bytes
+    )
+    assert authority.is_file() and pending.is_dir() and marker.is_file()
+
+    module.promote_evidence(**kwargs)
+
+    assert (kwargs["destination"] / "manifest.json").is_file()
+    assert not authority.exists()
+    assert not pending.exists()
+
+
+def test_hard_crash_stage_only_state_is_discarded_before_fresh_promotion(tmp_path):
+    module = _load_runner()
+    seed = _promote_fixture(module, tmp_path / "seed")
+    module.promote_evidence(**seed)
+    kwargs = _promote_fixture(module, tmp_path / "main")
+    parent = kwargs["destination"].parent
+    parent.mkdir(parents=True)
+    parent_fd, _ = module._open_directory_nofollow(parent)
+    try:
+        transaction_name = module._create_transaction(parent_fd, kwargs["subject"])
+    finally:
+        os.close(parent_fd)
+    transaction = parent / transaction_name
+    seed["destination"].rename(transaction / "stage")
+    assert (transaction / "stage" / "manifest.json").is_file()
+    assert not kwargs["destination"].exists()
+
+    module.promote_evidence(**kwargs)
+
+    assert (kwargs["destination"] / "manifest.json").is_file()
+    assert not transaction.exists()
+
+
+def test_hard_crash_backup_and_stage_without_target_restores_backup(tmp_path):
+    module = _load_runner()
+    kwargs = _promote_fixture(module, tmp_path)
+    module.promote_evidence(**kwargs)
+    before = {
+        path.relative_to(kwargs["destination"]).as_posix(): path.read_bytes()
+        for path in kwargs["destination"].rglob("*")
+        if path.is_file()
+    }
+    parent_fd, _ = module._open_directory_nofollow(kwargs["destination"].parent)
+    try:
+        transaction_name = module._create_transaction(parent_fd, kwargs["subject"])
+    finally:
+        os.close(parent_fd)
+    transaction = kwargs["destination"].parent / transaction_name
+    kwargs["destination"].rename(transaction / "backup")
+    shutil.copytree(transaction / "backup", transaction / "stage")
+    assert not kwargs["destination"].exists()
+    assert (transaction / "backup").is_dir() and (transaction / "stage").is_dir()
+
+    module._recover_interrupted_promotion(
+        kwargs["destination"],
+        subject=kwargs["subject"],
+        subject_sources=kwargs["subject_sources"],
+    )
+
+    assert {
+        path.relative_to(kwargs["destination"]).as_posix(): path.read_bytes()
+        for path in kwargs["destination"].rglob("*")
+        if path.is_file()
+    } == before
+    assert not transaction.exists()
+
+
+def test_post_quarantine_rename_fsync_failure_restores_original(tmp_path, monkeypatch):
+    module = _load_runner()
+    first = _promote_fixture(module, tmp_path, summary="first")
+    module.promote_evidence(**first)
+    before = (first["destination"] / "summary.json").read_bytes()
+    second = _promote_fixture(module, tmp_path, summary="second")
+    original = module._rename_between
+    failed = False
+
+    def fail_after_rename(source_fd, source, destination_fd, destination, expected):
+        nonlocal failed
+        if (
+            source == second["destination"].name
+            and destination == "backup"
+            and not failed
+        ):
+            failed = True
+            module._rename_noreplace(source_fd, source, destination_fd, destination)
+            raise OSError("fsync after rename")
+        return original(source_fd, source, destination_fd, destination, expected)
+
+    monkeypatch.setattr(module, "_rename_between", fail_after_rename)
+    with pytest.raises(module.CloseoutError):
+        module.promote_evidence(**second)
+
+    assert failed
+    assert (second["destination"] / "summary.json").read_bytes() == before
+
+
+def test_spoofed_retired_transaction_with_unknown_stage_is_never_deleted(tmp_path):
+    module = _load_runner()
+    kwargs = _promote_fixture(module, tmp_path)
+    parent = kwargs["destination"].parent
+    parent.mkdir(parents=True)
+    nonce = "9" * 32
+    retired = parent / f".task-23019.txn-retired-{nonce}"
+    retired.mkdir()
+    (retired / module._TRANSACTION_MARKER).write_bytes(
+        module._transaction_payload(kwargs["subject"], "retirement", nonce)
+    )
+    stage = retired / "stage"
+    stage.mkdir()
+    keep = stage / "keep.txt"
+    keep.write_text("unrelated", encoding="utf-8")
+    (parent / module._authority_name(nonce)).write_bytes(
+        module._authority_payload(
+            kwargs["subject"], nonce, module._receipt(retired.lstat())
+        )
+    )
+
+    with pytest.raises(module.CloseoutError) as error:
+        module.promote_evidence(**kwargs)
+
+    assert error.value.category == "promotion_collision"
+    assert keep.read_text(encoding="utf-8") == "unrelated"
+
+
+def test_partial_authority_temp_is_nonblocking_and_left_untouched(tmp_path):
+    module = _load_runner()
+    kwargs = _promote_fixture(module, tmp_path)
+    parent = kwargs["destination"].parent
+    parent.mkdir(parents=True)
+    partial = parent / (".task-23019.txn-authority-" + "a" * 32 + ".json.tmp")
+    partial.write_bytes(b'{"partial":')
+
+    module.promote_evidence(**kwargs)
+
+    assert (kwargs["destination"] / "manifest.json").is_file()
+    assert partial.read_bytes() == b'{"partial":'
+
+
+def test_empty_retired_directory_after_marker_removal_is_resumed(tmp_path):
+    module = _load_runner()
+    kwargs = _promote_fixture(module, tmp_path)
+    parent = kwargs["destination"].parent
+    parent.mkdir(parents=True)
+    parent_fd, _ = module._open_directory_nofollow(parent)
+    try:
+        active = module._create_transaction(parent_fd, kwargs["subject"])
+        retired_name = module._retire_transaction(parent_fd, active, kwargs["subject"])
+    finally:
+        os.close(parent_fd)
+    retired = parent / retired_name
+    (retired / module._TRANSACTION_MARKER).unlink()
+    assert retired.is_dir() and not any(retired.iterdir())
+
+    module.promote_evidence(**kwargs)
+
+    assert (kwargs["destination"] / "manifest.json").is_file()
+    assert not retired.exists()
+
+
+def test_authority_identity_swap_before_unlink_is_rejected(tmp_path, monkeypatch):
+    module = _load_runner()
+    kwargs = _promote_fixture(module, tmp_path)
+    parent = kwargs["destination"].parent
+    parent.mkdir(parents=True)
+    parent_fd, _ = module._open_directory_nofollow(parent)
+    try:
+        active = module._create_transaction(parent_fd, kwargs["subject"])
+        retired = module._retire_transaction(parent_fd, active, kwargs["subject"])
+    finally:
+        os.close(parent_fd)
+    nonce = module._transaction_nonce(retired)
+    authority = parent / module._authority_name(nonce)
+    original = module._validate_authority
+    swapped = False
+
+    def swap_after_validation(parent_fd, nonce, subject, transaction_name):
+        nonlocal swapped
+        result = original(parent_fd, nonce, subject, transaction_name)
+        if not swapped:
+            swapped = True
+            authority.rename(parent / "validated-authority")
+            authority.write_text("replacement", encoding="utf-8")
+        return result
+
+    monkeypatch.setattr(module, "_validate_authority", swap_after_validation)
+    parent_fd, _ = module._open_directory_nofollow(parent)
+    try:
+        with pytest.raises(module.CloseoutError):
+            module._delete_transaction(
+                parent_fd,
+                retired,
+                kwargs["subject"],
+                kwargs["subject_sources"],
+            )
+    finally:
+        os.close(parent_fd)
+    assert authority.read_text(encoding="utf-8") == "replacement"
+
+
+@pytest.mark.parametrize(
+    "key", ("primary_secret", "buildSecret", "session_token", "myToken")
+)
+def test_generic_compound_secret_and_token_keys_are_rejected(tmp_path, key):
+    module = _load_runner()
+    roots = {name: tmp_path / name for name in ("checkout", "runtime", "scratch")}
+    with pytest.raises(module.CloseoutError) as error:
+        module.normalize_artifacts(
+            {"summary.json": json.dumps({key: "opaque"}).encode()}, roots=roots
+        )
+    assert error.value.category == "credential_material"
+
+
+def test_encoded_declared_root_is_rejected_without_decoding_safe_evidence(tmp_path):
+    module = _load_runner()
+    roots = {name: tmp_path / name for name in ("checkout", "runtime", "scratch")}
+    encoded_root = urllib.parse.quote(str(roots["checkout"]), safe="")
+    with pytest.raises(module.CloseoutError) as error:
+        module.normalize_artifacts(
+            {"summary.json": json.dumps({"path": encoded_root}).encode()}, roots=roots
+        )
+    assert error.value.category == "host_path_present"
+    safe = b'{"url":"https://example.test/a%20b"}'
+    assert (
+        module.normalize_artifacts({"summary.json": safe}, roots=roots)["summary.json"]
+        == safe
+    )
+
+
+@pytest.mark.parametrize(
+    "encoded", ("%7B%22primary_api_key%22%3A%22opaque%22%7D", "API_KEY%3Dopaque")
+)
+def test_encoded_credential_material_is_rejected(tmp_path, encoded):
+    module = _load_runner()
+    roots = {name: tmp_path / name for name in ("checkout", "runtime", "scratch")}
+    with pytest.raises(module.CloseoutError) as error:
+        module.normalize_artifacts(
+            {"captures/frame.txt": encoded.encode()}, roots=roots
+        )
+    assert error.value.category == "credential_material"
+
+
+@pytest.mark.parametrize("metadata", ("manifest", "hashes"))
+def test_bundle_metadata_rejects_top_level_extensions(tmp_path, metadata):
+    module = _load_runner()
+    first = _promote_fixture(module, tmp_path, summary="first")
+    module.promote_evidence(**first)
+    destination = first["destination"]
+    target = destination / f"{metadata}.json"
+    payload = json.loads(target.read_text(encoding="utf-8"))
+    payload["extension"] = "not canonical"
+    target.write_bytes(module._json_bytes(payload))
+    if metadata == "manifest":
+        hashes = json.loads((destination / "hashes.json").read_text(encoding="utf-8"))
+        hashes["files"]["manifest.json"] = hashlib.sha256(
+            target.read_bytes()
+        ).hexdigest()
+        (destination / "hashes.json").write_bytes(module._json_bytes(hashes))
+    second = _promote_fixture(module, tmp_path, summary="second")
+    with pytest.raises(module.CloseoutError) as error:
+        module.promote_evidence(**second)
+    assert error.value.category == "promotion_collision"
+
+
+def test_pending_name_collision_never_publishes_authority(tmp_path, monkeypatch):
+    module = _load_runner()
+    kwargs = _promote_fixture(module, tmp_path)
+    parent = kwargs["destination"].parent
+    parent.mkdir(parents=True)
+    nonce = "b" * 32
+    pending = parent / f".task-23019.txn-pending-{nonce}"
+    pending.mkdir()
+    keep = pending / "keep.txt"
+    keep.write_text("unrelated", encoding="utf-8")
+    monkeypatch.setattr(module.secrets, "token_hex", lambda _length: nonce)
+    parent_fd, _ = module._open_directory_nofollow(parent)
+    try:
+        with pytest.raises((OSError, module.CloseoutError)):
+            module._create_transaction(parent_fd, kwargs["subject"])
+    finally:
+        os.close(parent_fd)
+    assert not (parent / module._authority_name(nonce)).exists()
+    assert keep.read_text(encoding="utf-8") == "unrelated"
+
+
+def test_hard_crash_after_bound_authority_before_preactivation_activation_recovers(
+    tmp_path,
+):
+    module = _load_runner()
+    kwargs = _promote_fixture(module, tmp_path)
+    parent = kwargs["destination"].parent
+    parent.mkdir(parents=True)
+    nonce = "c" * 32
+    preactivation = parent / f".task-23019.preactivation-{nonce}"
+    preactivation.mkdir()
+    authority = parent / module._authority_name(nonce)
+    authority.write_bytes(
+        module._authority_payload(
+            kwargs["subject"], nonce, module._receipt(preactivation.lstat())
+        )
+    )
+    assert preactivation.is_dir() and authority.is_file()
+
+    module.promote_evidence(**kwargs)
+
+    assert (kwargs["destination"] / "manifest.json").is_file()
+    assert not preactivation.exists()
+    assert not authority.exists()
+
+
+def test_hard_crash_during_authority_publication_empty_preactivation_is_nonblocking(
+    tmp_path,
+):
+    module = _load_runner()
+    kwargs = _promote_fixture(module, tmp_path)
+    parent = kwargs["destination"].parent
+    parent.mkdir(parents=True)
+    nonce = "d" * 32
+    preactivation = parent / f".task-23019.preactivation-{nonce}"
+    preactivation.mkdir()
+    authority_temp = parent / (module._authority_name(nonce) + ".tmp")
+    authority_temp.write_bytes(b'{"partial":')
+    before = module._receipt(preactivation.lstat()), authority_temp.read_bytes()
+    assert preactivation.is_dir() and authority_temp.is_file()
+
+    module.promote_evidence(**kwargs)
+
+    assert (kwargs["destination"] / "manifest.json").is_file()
+    assert not preactivation.exists()
+    assert authority_temp.read_bytes() == before[1]
+
+
+def test_incomplete_preactivation_with_unknown_content_fails_closed_untouched(tmp_path):
+    module = _load_runner()
+    kwargs = _promote_fixture(module, tmp_path)
+    parent = kwargs["destination"].parent
+    parent.mkdir(parents=True)
+    nonce = "e" * 32
+    preactivation = parent / f".task-23019.preactivation-{nonce}"
+    preactivation.mkdir()
+    keep = preactivation / "keep.txt"
+    keep.write_text("unrelated", encoding="utf-8")
+    authority_temp = parent / (module._authority_name(nonce) + ".tmp")
+    authority_temp.write_bytes(b'{"partial":')
+
+    with pytest.raises(module.CloseoutError) as error:
+        module.promote_evidence(**kwargs)
+
+    assert error.value.category == "promotion_collision"
+    assert keep.read_text(encoding="utf-8") == "unrelated"
+    assert authority_temp.read_bytes() == b'{"partial":'
+    assert not kwargs["destination"].exists()
+
+
+def test_cross_directory_quarantine_fsyncs_destination_before_source_and_rolls_back(
+    tmp_path, monkeypatch
+):
+    module = _load_runner()
+    first = _promote_fixture(module, tmp_path, summary="first")
+    module.promote_evidence(**first)
+    before = (first["destination"] / "summary.json").read_bytes()
+    second = _promote_fixture(module, tmp_path, summary="second")
+    original_rename = module._rename_noreplace
+    original_fsync = module.os.fsync
+    tracking = False
+    observed: list[int] = []
+    expected: list[int] = []
+
+    def track_quarantine(source_fd, source, destination_fd, destination):
+        nonlocal tracking
+        result = original_rename(source_fd, source, destination_fd, destination)
+        if source == second["destination"].name and destination == "backup":
+            tracking = True
+            expected[:] = [destination_fd, source_fd]
+        return result
+
+    def fail_source_fsync(descriptor):
+        nonlocal tracking
+        if tracking:
+            observed.append(descriptor)
+            if len(observed) == 2:
+                tracking = False
+                raise OSError("source parent fsync failed")
+        return original_fsync(descriptor)
+
+    monkeypatch.setattr(module, "_rename_noreplace", track_quarantine)
+    monkeypatch.setattr(module.os, "fsync", fail_source_fsync)
+    with pytest.raises(module.CloseoutError):
+        module.promote_evidence(**second)
+
+    assert observed == expected
+    assert (second["destination"] / "summary.json").read_bytes() == before
+
+
+def test_non_object_authority_json_is_a_stable_collision(tmp_path):
+    module = _load_runner()
+    kwargs = _promote_fixture(module, tmp_path)
+    parent = kwargs["destination"].parent
+    parent.mkdir(parents=True)
+    nonce = "f" * 32
+    (parent / module._authority_name(nonce)).write_bytes(b"[]")
+    parent_fd, _ = module._open_directory_nofollow(parent)
+    try:
+        with pytest.raises(module.CloseoutError) as error:
+            module._read_authority(parent_fd, nonce, kwargs["subject"])
+    finally:
+        os.close(parent_fd)
+    assert error.value.category == "promotion_collision"
+
+
+def test_non_object_manifest_json_is_a_stable_promotion_collision(tmp_path):
+    module = _load_runner()
+    first = _promote_fixture(module, tmp_path, summary="first")
+    module.promote_evidence(**first)
+    destination = first["destination"]
+    manifest_path = destination / "manifest.json"
+    manifest_path.write_bytes(b'[["not", "a", "mapping"]]')
+    hashes_path = destination / "hashes.json"
+    hashes = json.loads(hashes_path.read_text(encoding="utf-8"))
+    hashes["files"]["manifest.json"] = hashlib.sha256(
+        manifest_path.read_bytes()
+    ).hexdigest()
+    hashes_path.write_bytes(module._json_bytes(hashes))
+
+    second = _promote_fixture(module, tmp_path, summary="second")
+    with pytest.raises(module.CloseoutError) as error:
+        module.promote_evidence(**second)
+
+    assert error.value.category == "promotion_collision"
