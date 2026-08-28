@@ -2940,6 +2940,67 @@ async def test_work_focus_target_uses_visible_notes_preview_when_editor_hidden(
     assert target is preview
 
 
+@pytest.mark.asyncio
+async def test_matching_row_wait_tolerates_temporary_recompose_absence(monkeypatch):
+    module = _load_scenarios()
+
+    class Row:
+        def __init__(self, prompt_id, *, mounted=True, area=1, display=True):
+            self.prompt_id = prompt_id
+            self.is_mounted = mounted
+            self.region = type("Region", (), {"area": area})()
+            self.display = display
+
+    target = Row(42)
+    query_results = [
+        (),
+        (Row(7),),
+        (Row(42, mounted=False),),
+        (Row(42, display=False),),
+        (target,),
+    ]
+
+    class Screen:
+        def query(self, selector):
+            assert selector == ".library-prompt-row"
+            return query_results.pop(0)
+
+    async def fake_wait(pilot, condition, *, message):
+        assert pilot == "pilot"
+        assert message == "Structured Prompt row did not remount after discard"
+        assert not condition()
+        assert not condition()
+        assert not condition()
+        assert not condition()
+        assert condition()
+
+    monkeypatch.setattr(module, "_wait_for_condition", fake_wait)
+
+    row = await module._wait_for_matching_row(
+        Screen(),
+        "pilot",
+        ".library-prompt-row",
+        lambda candidate: int(candidate.prompt_id) == 42,
+        message="Structured Prompt row did not remount after discard",
+    )
+
+    assert row is target
+    assert query_results == []
+
+
+def test_live_case_failure_identity_is_bounded_and_sanitized():
+    module = _load_runner()
+    secret = "should-not-appear"
+    live_case = f"prompts API_TOKEN={secret} " + "x" * (module.MAX_DIAGNOSTIC_TEXT * 2)
+
+    details = module._with_live_case_details(live_case, {"target": "scenario.py"})
+
+    assert details["target"] == "scenario.py"
+    assert len(details["live_case"].encode("utf-8")) <= module.MAX_DIAGNOSTIC_TEXT
+    assert secret not in details["live_case"]
+    assert "<redacted>" in details["live_case"]
+
+
 def test_scenario_cleanup_failure_is_not_suppressed(tmp_path):
     module = _load_scenarios()
     context = module.ScenarioContext(tmp_path)
@@ -2979,13 +3040,14 @@ def test_parent_rejects_a_named_failed_live_result(monkeypatch, tmp_path):
 
     assert error.value.category == "live_case_failed"
     assert error.value.details == {
+        "live_case": "common_matrix",
         "failures": [
             {
                 "cell": "media-160x50",
                 "error_type": "AssertionError",
                 "error": "media contract",
             }
-        ]
+        ],
     }
 
 
@@ -3308,7 +3370,10 @@ def test_parent_malformed_result_emits_stable_json_not_traceback(monkeypatch, ca
     assert module.main(["--development-run", "--live-case", "common_matrix"]) == 2
     assert json.loads(capsys.readouterr().err) == {
         "error": "child_failed",
-        "details": {"result_parse": "malformed_json"},
+        "details": {
+            "live_case": "common_matrix",
+            "result_parse": "malformed_json",
+        },
     }
 
 
@@ -3587,7 +3652,50 @@ def test_parent_preserves_child_failure_diagnostics(monkeypatch, tmp_path):
         )
 
     assert error.value.category == "child_failed"
-    assert error.value.details == diagnostics
+    assert error.value.details == {
+        "live_case": "common_matrix",
+        **diagnostics,
+    }
+
+
+def test_parent_annotates_raised_child_closeout_error_without_mutation(
+    monkeypatch, tmp_path
+):
+    module = _load_runner()
+    original_details = {"marker": "preserved"}
+
+    def fail_child(**_kwargs):
+        raise module.CloseoutError("child_timeout", original_details)
+
+    monkeypatch.setattr(module, "run_closeout_child", fail_child)
+
+    with pytest.raises(module.CloseoutError) as error:
+        module.run_development_live_cases(
+            checkout=REPO_ROOT,
+            scratch=tmp_path,
+            live_cases=("prompts_capability",),
+        )
+
+    assert error.value.category == "child_timeout"
+    assert error.value.details == {
+        "marker": "preserved",
+        "live_case": "prompts_capability",
+    }
+    assert original_details == {"marker": "preserved"}
+
+
+def test_parent_unknown_live_case_failure_includes_named_root(tmp_path):
+    module = _load_runner()
+
+    with pytest.raises(module.CloseoutError) as error:
+        module.run_development_live_cases(
+            checkout=REPO_ROOT,
+            scratch=tmp_path,
+            live_cases=("unknown_capability",),
+        )
+
+    assert error.value.category == "scenario_not_defined"
+    assert error.value.details == {"live_case": "unknown_capability"}
 
 
 def test_capability_scenarios_are_distinct_journeys_not_a_shared_stub():

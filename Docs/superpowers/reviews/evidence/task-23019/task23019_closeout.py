@@ -3376,6 +3376,15 @@ def _live_failure_details(
     return {"failures": failures}
 
 
+def _with_live_case_details(
+    live_case: str, details: Mapping[str, object] | None = None
+) -> dict[str, object]:
+    """Add one bounded, sanitized live-root identity to failure details."""
+    combined = dict(details or {})
+    combined["live_case"] = _bounded_diagnostic(live_case) or "unknown"
+    return combined
+
+
 def _read_json_object(path: Path) -> tuple[dict[str, object] | None, str | None]:
     try:
         status = path.stat()
@@ -3668,34 +3677,54 @@ def run_development_live_cases(
     for live_case in live_cases:
         expected_keys = EXPECTED_LIVE_RESULT_KEYS.get(live_case)
         if expected_keys is None:
-            raise CloseoutError("scenario_not_defined")
+            raise CloseoutError(
+                "scenario_not_defined", _with_live_case_details(live_case)
+            )
         case_scratch = scratch / "raw-results" / live_case
-        result = run_closeout_child(
-            checkout=checkout,
-            scratch=case_scratch,
-            mode="live",
-            target=SCENARIO_PATH,
-            scenario=live_case,
-        )
+        try:
+            result = run_closeout_child(
+                checkout=checkout,
+                scratch=case_scratch,
+                mode="live",
+                target=SCENARIO_PATH,
+                scenario=live_case,
+            )
+        except CloseoutError as error:
+            raise CloseoutError(
+                error.category,
+                _with_live_case_details(live_case, error.details),
+            ) from error
         if result.error is not None:
-            raise CloseoutError(result.error, result.details)
+            raise CloseoutError(
+                result.error, _with_live_case_details(live_case, result.details)
+            )
         if result.result_path is None:
-            raise CloseoutError("child_failed")
+            raise CloseoutError("child_failed", _with_live_case_details(live_case))
         payload, result_problem = _read_json_object(result.result_path)
         if result_problem is not None or payload is None:
             raise CloseoutError(
-                "child_failed", {"result_parse": result_problem or "missing"}
+                "child_failed",
+                _with_live_case_details(
+                    live_case, {"result_parse": result_problem or "missing"}
+                ),
             )
         if set(payload) != expected_keys:
-            raise CloseoutError("live_result_keys_mismatch")
+            raise CloseoutError(
+                "live_result_keys_mismatch", _with_live_case_details(live_case)
+            )
         failure_details = _live_failure_details(
             payload, roots=(str(checkout.resolve()), str(scratch.resolve()))
         )
         if failure_details["failures"]:
-            raise CloseoutError("live_case_failed", failure_details)
+            raise CloseoutError(
+                "live_case_failed",
+                _with_live_case_details(live_case, failure_details),
+            )
         overlap = combined.keys() & payload.keys()
         if overlap:
-            raise CloseoutError("live_result_duplicate")
+            raise CloseoutError(
+                "live_result_duplicate", _with_live_case_details(live_case)
+            )
         combined.update(payload)
     return combined
 

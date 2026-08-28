@@ -248,6 +248,37 @@ async def _work_focus_target(screen, pilot, destination: str):
     return target
 
 
+async def _wait_for_matching_row(
+    screen,
+    pilot,
+    selector: str,
+    matches,
+    *,
+    message: str,
+):
+    """Return a matching row after any in-flight recompose has remounted it."""
+    matched = None
+
+    def row_is_mounted() -> bool:
+        nonlocal matched
+        matched = next(
+            (
+                row
+                for row in screen.query(selector)
+                if row.is_mounted
+                and row.display
+                and row.region.area > 0
+                and matches(row)
+            ),
+            None,
+        )
+        return matched is not None
+
+    await _wait_for_condition(pilot, row_is_mounted, message=message)
+    assert matched is not None
+    return matched
+
+
 async def _exercise_modes(screen, pilot, destination: str) -> tuple[str, ...]:
     async def visible_button(selector: str) -> Button:
         await _wait_for_condition(
@@ -793,10 +824,12 @@ async def run_media_capability() -> dict[str, Any]:
             item_count = len(service.media_items)
             screen.query_one("#library-media-select-toggle", Button).press()
             await _wait_for_selector(screen, pilot, "#library-media-selected-count")
-            selected_row = next(
-                row
-                for row in screen.query(".library-media-row")
-                if str(getattr(row, "media_id", "")) == str(selected)
+            selected_row = await _wait_for_matching_row(
+                screen,
+                pilot,
+                ".library-media-row",
+                lambda row: str(getattr(row, "media_id", "")) == str(selected),
+                message="Selected Media row did not remount for bulk selection",
             )
             selected_row.press()
             await _wait_for_condition(
@@ -911,11 +944,14 @@ async def run_conversations_capability() -> dict[str, Any]:
             shell = await _open_destination(screen, pilot, "conversations")
             selected = screen._library_conversation_reader_state.selected_id
             if selected == "chat-a":
-                next(
-                    row
-                    for row in screen.query(".library-conversation-row")
-                    if getattr(row, "conversation_id", None) == "chat-b"
-                ).press()
+                setup_row = await _wait_for_matching_row(
+                    screen,
+                    pilot,
+                    ".library-conversation-row",
+                    lambda row: getattr(row, "conversation_id", None) == "chat-b",
+                    message="Conversation setup row chat-b did not mount",
+                )
+                setup_row.press()
                 await _wait_for_condition(
                     pilot,
                     lambda: (
@@ -926,10 +962,12 @@ async def run_conversations_capability() -> dict[str, Any]:
                 )
             progressive = _ProgressiveConversationService()
             app.local_chat_conversation_service = progressive
-            selected_row = next(
-                row
-                for row in screen.query(".library-conversation-row")
-                if getattr(row, "conversation_id", None) == "chat-a"
+            selected_row = await _wait_for_matching_row(
+                screen,
+                pilot,
+                ".library-conversation-row",
+                lambda row: getattr(row, "conversation_id", None) == "chat-a",
+                message="Progressive Conversation row chat-a did not mount",
             )
             selected_row.press()
             await asyncio.to_thread(progressive.second_started.wait, 10)
@@ -966,12 +1004,12 @@ async def run_conversations_capability() -> dict[str, Any]:
             stale = _OutOfOrderConversationService()
             app.local_chat_conversation_service = stale
             current_id = screen._library_conversation_reader_state.selected_id
-            rows_by_id = {
-                str(row.conversation_id): row
-                for row in screen.query(".library-conversation-row")
-            }
-            first_row = next(
-                row for row_id, row in rows_by_id.items() if row_id != current_id
+            first_row = await _wait_for_matching_row(
+                screen,
+                pilot,
+                ".library-conversation-row",
+                lambda row: str(getattr(row, "conversation_id", "")) != current_id,
+                message="Conversation stale-candidate row did not mount",
             )
             first_row.press()
             await asyncio.to_thread(stale.first_started.wait, 10)
@@ -1024,11 +1062,14 @@ async def run_conversations_capability() -> dict[str, Any]:
 
             retry_failure = _GatedFailureConversationService("unavailable")
             app.local_chat_conversation_service = retry_failure
-            next(
-                row
-                for row in screen.query(".library-conversation-row")
-                if getattr(row, "conversation_id", None) == target_id
-            ).press()
+            retry_row = await _wait_for_matching_row(
+                screen,
+                pilot,
+                ".library-conversation-row",
+                lambda row: getattr(row, "conversation_id", None) == target_id,
+                message=f"Conversation retry row {target_id} did not mount",
+            )
+            retry_row.press()
             await asyncio.to_thread(retry_failure.started.wait, 10)
             retry_failure.release.set()
             await screen.workers.wait_for_complete()
@@ -1216,10 +1257,12 @@ async def run_notes_capability() -> dict[str, Any]:
                 ),
                 message="Notes invalid draft did not reach the session coordinator",
             )
-            attempted_row = next(
-                row
-                for row in screen.query(".library-notes-row")
-                if str(getattr(row, "note_id", "")) != str(note_id)
+            attempted_row = await _wait_for_matching_row(
+                screen,
+                pilot,
+                ".library-notes-row",
+                lambda row: str(getattr(row, "note_id", "")) != str(note_id),
+                message="Alternate Notes row did not mount for navigation veto",
             )
             attempted_note_id = str(attempted_row.note_id)
             attempted_row.press()
@@ -1405,13 +1448,15 @@ async def run_prompts_capability() -> dict[str, Any]:
                 message="Prompt Select mode did not exit",
             )
 
-            rows = list(screen.query(".library-prompt-row"))
             loaded_before_retry = int(screen._library_prompt_loaded_id)
-            retry_target = next(
-                row
-                for row in rows
-                if int(getattr(row, "prompt_id"))
-                not in {int(prompt_id), loaded_before_retry}
+            retry_target = await _wait_for_matching_row(
+                screen,
+                pilot,
+                ".library-prompt-row",
+                lambda row: (
+                    int(row.prompt_id) not in {int(prompt_id), loaded_before_retry}
+                ),
+                message="Prompt retry target row did not remount after Select mode",
             )
             retry_id = int(retry_target.prompt_id)
             service = app.prompt_scope_service
@@ -1521,10 +1566,12 @@ async def run_prompts_capability() -> dict[str, Any]:
                 message="Prompt continuity draft did not discard",
             )
 
-            target = next(
-                row
-                for row in screen.query(".library-prompt-row")
-                if int(getattr(row, "prompt_id")) == int(prompt_id)
+            target = await _wait_for_matching_row(
+                screen,
+                pilot,
+                ".library-prompt-row",
+                lambda row: int(row.prompt_id) == int(prompt_id),
+                message="Structured Prompt row did not remount after discard",
             )
             target.press()
             await _wait_for_condition(
