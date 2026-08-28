@@ -932,11 +932,19 @@ def _model_ids_from_discovery_result(result: object) -> tuple[str, ...]:
         raise ValueError("Model discovery result is invalid.")
     if result.status != "success":
         return ()
-    if type(result.models) is not tuple or len(result.models) > MODEL_IDS_MAX_COUNT:
+    if type(result.models) is not tuple:
         raise ValueError("Model discovery result is invalid.")
+    # A catalog larger than the picker's bound is normal, not malformed:
+    # api.openai.com returns 128 models for an ordinary account. Rejecting
+    # the whole result turned a *successful* discovery into "Couldn't reach
+    # the server" on the Model step, because the caller folds any raise into
+    # a failed discovery. Bound the list instead; the adjacent "Or enter a
+    # model name" input remains the escape hatch for anything not shown.
     model_ids: list[str] = []
     seen: set[str] = set()
     for discovered in result.models:
+        if len(model_ids) >= MODEL_IDS_MAX_COUNT:
+            break
         if type(discovered) is not DiscoveredModel:
             raise ValueError("Model discovery result is invalid.")
         try:

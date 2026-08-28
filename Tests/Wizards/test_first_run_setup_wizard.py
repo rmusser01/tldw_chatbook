@@ -13001,3 +13001,36 @@ async def test_summary_consent_reaches_the_app_seam_through_the_real_chain():
         assert ok, error
 
     assert reached == ["app"], "consent never reached the app's refresh seam"
+
+
+def test_real_sized_provider_catalog_is_bounded_not_rejected():
+    """A catalog larger than the picker bound must degrade, not fail.
+
+    Live incident: api.openai.com returns 128 models for an ordinary
+    account. This extractor raised ValueError on any result over
+    MODEL_IDS_MAX_COUNT (100), and its caller folds a raise into a failed
+    discovery -- so a *successful* 128-model discovery surfaced on the
+    Model step as "Couldn't reach the server (request failed)", with a
+    valid API key. Every fixture in this file is far under the bound, so
+    nothing caught it. Malformed-shape rejection is unchanged and still
+    covered by test_model_discovery_result_rejects_malformed_payloads.
+    """
+    from tldw_chatbook.Chat.local_server_discovery import MODEL_IDS_MAX_COUNT
+    from tldw_chatbook.UI.Wizards.FirstRunSetupWizard import (
+        _model_ids_from_discovery_result,
+    )
+
+    observed_openai_catalog_size = 128
+    assert observed_openai_catalog_size > MODEL_IDS_MAX_COUNT, (
+        "this regression only bites when the real catalog exceeds the bound"
+    )
+    result = _typed_model_discovery_result(
+        "openai",
+        *[f"model-{index}" for index in range(observed_openai_catalog_size)],
+    )
+
+    model_ids = _model_ids_from_discovery_result(result)
+
+    assert len(model_ids) == MODEL_IDS_MAX_COUNT
+    assert model_ids[0] == "model-0"
+    assert len(set(model_ids)) == len(model_ids)

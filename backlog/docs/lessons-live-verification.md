@@ -1499,3 +1499,39 @@ after a genuinely mixed partial Apply and resolve the remainder through the
 same public boundary. Per-choice restart tests prove each operation is durable;
 they do not prove the next review accepts terminal no-op rows alongside work
 that still mutates.
+
+---
+
+**A green seam is not a green flow; a bound can exist at two layers.**
+TASK-23089 / PR #2158, 2026-08-27. First-run setup was verified against a real
+OpenAI key for the first time and failed three ways in a row. Each fix was
+verified *at the seam it changed* and each time the flow was still broken:
+
+1. `settings_endpoint_probe` never sent `Accept-Encoding: identity`, so a valid
+   key read as "connection error". Fixed; probe returned `reachable`, 100 models.
+2. Discovery's `DISCOVERED_MODEL_MAX_COUNT` was 100 while api.openai.com returns
+   128, so discovery failed closed. Raised to 512; discovery returned 128 models.
+3. That success then hit the wizard's *own* still-100 bound in
+   `_model_ids_from_discovery_result`, which raised, and the caller folds any
+   raise into a failed discovery -- so a successful 128-model discovery rendered
+   as "Couldn't reach the server (request failed)". Fix #2 had moved the failure
+   up a layer, and only the live walk revealed it.
+
+Two traps generalize. **Mocked peers never compress, throttle, or return
+production-sized payloads** -- every test here used `MockTransport` with a
+handful of uncompressed models, and a 401 returns before the body read, so no
+existing test could see any of this. **When you relax a bound, grep for every
+layer that re-checks the same quantity**; here `MODEL_IDS_MAX_COUNT` was
+imported by four call sites with two different meanings (a probe's truncation
+sample vs. a fail-closed catalog limit), and aliasing them is what put the
+fail-closed bound below reality.
+
+**What to do.** For provider-facing work, verify against a real credential and
+walk the actual UI to the end state a user reaches -- not just the function you
+changed. Two intermediate diagnoses in this task ("the key never reaches the
+request", "the stale keyless failure is reused") were both wrong and both came
+from repros built by hand; the malformed one passed staged settings as a flat
+dict where the caller wraps them under `api_settings`. When a headless repro
+disagrees with the running app, suspect the repro, and instrument the app --
+a file-append probe reads out where `logger` does not, because the persistent
+sink only records structured `diagnostics.*` events.
