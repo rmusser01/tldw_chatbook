@@ -42,6 +42,23 @@ CAPTURE_REQUEST_ALLOWLIST: frozenset[str] = frozenset({
 # Deliberately OFF the allowlist: "api_key" (credential) and
 # "api_key_resolved" (credential-adjacent marker) — they surface in
 # omitted_keys instead.
+#
+# Privacy stance for what IS on the list (task-23026): capture exists to
+# answer "what did we actually hand the provider adapter on this call", so
+# the conversation content is the subject, not an accident — it is retained
+# by design, under the user-controllable Safe/Full detail policy rather
+# than the allowlist. Under Safe (the default) retention is BOUNDED: the
+# newest ``CAPTURE_SAFE_HISTORY_TAIL_ROWS`` payload rows (this turn's delta
+# plus immediate context) persist verbatim, and every older history row is
+# replaced in place by a content-free fingerprint (role, origin tag, char
+# count, sha256 prefix) — the bodies of those rows are already durably
+# stored once in the ``messages`` table and once in the earlier capture
+# whose tail they were new in, so a per-turn re-copy stored nothing new
+# and grew O(n²) (measured 21.33 MB for one 200-turn conversation).
+# Full — explicit, consent-gated, purgeable (ADR-092) — retains the whole
+# payload verbatim. Credentials never persist at any detail level, and
+# every withholding (dropped key, redacted instruction body, elided
+# history range) is named in ``omitted_keys`` so the Inspector shows it.
 
 #: Strings at/above this length are candidates for base64 stubbing.
 _STUB_MIN_CHARS = 4096
@@ -55,6 +72,19 @@ _SEMANTIC_JSON_STRING_KEYS = frozenset({"arguments", "input", "result", "output"
 
 EXCHANGE_BLOB_MAX_BYTES = 16 * 1024 * 1024
 CAPTURE_JSON_MAX_BYTES = 64 * 1024 * 1024
+
+#: How many trailing ``messages_payload`` rows a Safe capture keeps verbatim.
+#: The tail always covers the turn's NEW rows (one user row on the direct
+#: path; assistant tool_calls + tool results on an agent-loop call) plus a
+#: few rows of immediate context; everything older is fingerprinted in
+#: place (task-23026).
+CAPTURE_SAFE_HISTORY_TAIL_ROWS = 8
+
+#: Structural marker on a fingerprint row produced by
+#: :func:`elide_safe_history_rows`. Keyed structurally (never by content
+#: prefix) so re-running the builder over a stored request — the export
+#: projection path — passes already-elided rows through untouched.
+CAPTURE_ELIDED_ROW_KEY = "capture_elided"
 
 
 class CaptureDetail(str, Enum):
@@ -308,6 +338,12 @@ def _redact_project_instruction_rows(
         if capture_detail is CaptureDetail.FULL or not (
             isinstance(row, Mapping)
             and row.get(EPHEMERAL_ORIGIN_KEY) == _PROJECT_INSTRUCTION_ORIGIN
+            # task-23026: a fingerprint row from `elide_safe_history_rows`
+            # is already content-free — re-marking it would replace the
+            # fingerprint with a marker measuring the MARKER's length, so
+            # the export path's re-run of this builder over a stored
+            # request must pass it through untouched.
+            and not row.get(CAPTURE_ELIDED_ROW_KEY)
         ):
             rows.append(row)
             continue
@@ -374,6 +410,99 @@ def _retain_with_budget(
     return {"truncated": True}
 
 
+def _canonical_row_json(row: Any) -> str:
+    return json.dumps(
+        row, ensure_ascii=False, sort_keys=True, separators=(",", ":"), default=str
+    )
+
+
+def _fingerprint_row(row: Any) -> dict[str, Any]:
+    """Replace one history row with a content-free, verifiable fingerprint.
+
+    The sha256 prefix is computed over the row's canonical sanitized JSON,
+    which is exactly the form an earlier capture retained when this row was
+    in its verbatim tail — so a viewer can confirm identity across turns
+    (and against the transcript) without the body, the same contract the
+    binary stubs already make.
+    """
+    digest = hashlib.sha256(
+        _canonical_row_json(row).encode("utf-8", errors="replace")
+    ).hexdigest()[:16]
+    role = row.get("role") if isinstance(row, Mapping) else None
+    content = row.get("content") if isinstance(row, Mapping) else row
+    if isinstance(content, str):
+        chars = len(content)
+    elif content is None:
+        chars = 0
+    else:
+        chars = len(_canonical_row_json(content))
+    out: dict[str, Any] = {
+        "role": str(role) if role is not None else "?",
+        CAPTURE_ELIDED_ROW_KEY: True,
+        "content": (
+            f"[conversation history elided by capture policy -- "
+            f"{chars} chars, sha256:{digest}]"
+        ),
+    }
+    if isinstance(row, Mapping) and EPHEMERAL_ORIGIN_KEY in row:
+        out[EPHEMERAL_ORIGIN_KEY] = row[EPHEMERAL_ORIGIN_KEY]
+    return out
+
+
+def elide_safe_history_rows(
+    rows: Any,
+    capture_detail: CaptureDetail,
+    *,
+    path: str = "messages_payload",
+) -> tuple[Any, tuple[str, ...]]:
+    """Bound a Safe capture's per-turn conversation-history copy (task-23026).
+
+    Every send's payload carries the whole conversation so far, so
+    persisting it verbatim per turn re-stored the entire history O(n²)
+    (21.33 MB measured for one 200-turn conversation). Under Safe — the
+    default — only the newest ``CAPTURE_SAFE_HISTORY_TAIL_ROWS`` rows (the
+    turn's new rows plus immediate context) stay verbatim; each older row
+    is replaced IN PLACE by a fingerprint row (role + origin tag + char
+    count + sha256 prefix), so the payload's exact shape, order, and
+    per-row identity remain inspectable and the count the Inspector shows
+    stays truthful. Idempotent: rows already carrying
+    ``CAPTURE_ELIDED_ROW_KEY`` pass through unchanged, so the export
+    projection's re-run over a stored request is a fixed point.
+
+    Args:
+        rows: The sanitized ``messages_payload`` (or wire ``messages``)
+            list; any non-list shape passes through untouched.
+        capture_detail: Full skips elision entirely — Full is the explicit,
+            consent-gated, purgeable verbatim mode (ADR-092).
+        path: Inventory path prefix for the returned omission entry.
+
+    Returns:
+        The (possibly new) row list and a 0- or 1-entry inventory tuple
+        naming the elided range, rendered by the Inspector's existing
+        "Omitted by capture policy" line.
+    """
+    if capture_detail is CaptureDetail.FULL or not isinstance(rows, list):
+        return rows, ()
+    if len(rows) <= CAPTURE_SAFE_HISTORY_TAIL_ROWS:
+        return rows, ()
+    cut = len(rows) - CAPTURE_SAFE_HISTORY_TAIL_ROWS
+    out: list[Any] = []
+    elided_any = False
+    for index, row in enumerate(rows):
+        if index >= cut or (
+            isinstance(row, Mapping) and row.get(CAPTURE_ELIDED_ROW_KEY)
+        ):
+            out.append(row)
+            continue
+        out.append(_fingerprint_row(row))
+        elided_any = True
+    if not elided_any:
+        return rows, ()
+    return out, (
+        f"{path}[0..{cut - 1}].content (conversation history elided)",
+    )
+
+
 def build_request_capture(
     kwargs: Mapping[str, Any],
     *,
@@ -413,6 +542,14 @@ def build_request_capture(
                 except ValueError:
                     value = "[invalid endpoint]"
             value = sanitize_capture_value(value)
+            if key == "messages_payload":
+                # task-23026: after sanitization (so fingerprints hash the
+                # exact form an earlier capture's tail retained), bound the
+                # per-turn history copy under Safe.
+                value, elided_paths = elide_safe_history_rows(
+                    value, capture_detail
+                )
+                omitted.extend(elided_paths)
             request[key] = _retain_with_budget(
                 value, active_budget, key, truncation_inventory
             )
@@ -555,3 +692,59 @@ def capture_from_storage(blob: bytes, declared_detail: object) -> ExchangeCaptur
     if detail is None or capture.capture_detail is not detail:
         raise CaptureCorruptError("capture provenance mismatch")
     return capture
+
+
+def trim_safe_capture_blob(blob: bytes) -> bytes | None:
+    """Apply Safe history elision to one STORED capture blob (task-23026).
+
+    Pure helper for the ChaChaNotes v52→v53 migration: captures persisted
+    before elision existed carry the whole conversation per turn. This
+    decodes the blob, bounds ``request.messages_payload`` (and the
+    llama.cpp branch's ``request.wire_payload.messages``) exactly the way
+    :func:`build_request_capture` now does at capture time, folds the
+    elided range into ``omitted_keys``, and re-encodes. Everything else —
+    response, usage, status, provenance, the retained tail — is preserved
+    value-identical.
+
+    Args:
+        blob: One ``message_exchanges.capture_blob`` value.
+
+    Returns:
+        The trimmed replacement blob, or ``None`` when nothing changed
+        (already trimmed, short payload, or a Full capture — Full is the
+        deliberate verbatim mode and is never rewritten here).
+
+    Raises:
+        CaptureUnavailableError: If the blob cannot be decoded (corrupt or
+            over the safety limits) — the caller leaves such a row as-is.
+    """
+    capture = capture_from_blob(blob)
+    if capture.capture_detail is not CaptureDetail.SAFE:
+        return None
+    if not isinstance(capture.request, dict):
+        return None
+    new_request = dict(capture.request)
+    new_paths: list[str] = []
+    rows = new_request.get("messages_payload")
+    trimmed_rows, elided = elide_safe_history_rows(rows, CaptureDetail.SAFE)
+    if elided:
+        new_request["messages_payload"] = trimmed_rows
+        new_paths.extend(elided)
+    wire = new_request.get("wire_payload")
+    if isinstance(wire, Mapping):
+        trimmed_wire_rows, wire_elided = elide_safe_history_rows(
+            wire.get("messages"),
+            CaptureDetail.SAFE,
+            path="wire_payload.messages",
+        )
+        if wire_elided:
+            new_wire = dict(wire)
+            new_wire["messages"] = trimmed_wire_rows
+            new_request["wire_payload"] = new_wire
+            new_paths.extend(wire_elided)
+    if not new_paths:
+        return None
+    merged_omitted = tuple(sorted(set(capture.omitted_keys).union(new_paths)))
+    return capture_to_blob(
+        replace(capture, request=new_request, omitted_keys=merged_omitted)
+    )

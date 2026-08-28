@@ -572,7 +572,7 @@ class CharactersRAGDB:
         db_path_str (str): String representation of the database path for SQLite connection.
     """
 
-    _CURRENT_SCHEMA_VERSION = 52  # Console thinking evidence and replay policy.
+    _CURRENT_SCHEMA_VERSION = 53  # Safe exchange-capture history trim (task-23026).
     _SCHEMA_NAME = "rag_char_chat_schema"  # Used for the db_schema_version table
     _ALLOWED_CONVERSATION_STATES = ("in-progress", "resolved", "backlog", "non-viable")
     _DEFAULT_CONVERSATION_STATE = "in-progress"
@@ -6906,6 +6906,109 @@ UPDATE db_schema_version
                 f"Migration from V51 to V52 failed for '{self._SCHEMA_NAME}': {exc}"
             ) from exc
 
+    def _migrate_from_v52_to_v53(self, conn: sqlite3.Connection) -> None:
+        """Trim stored Safe exchange captures' per-turn history copy.
+
+        Before task-23026, every Safe (default-on) exchange capture
+        persisted the ENTIRE conversation-so-far verbatim — 21.33 MB for
+        one 200-turn conversation, with no retention path (the only purge
+        is user-invoked and Full-filtered). ``build_request_capture`` now
+        bounds Safe retention at capture time; this step applies the
+        identical trim (``trim_safe_capture_blob``, a pure helper) to every
+        already-stored Safe blob so existing databases reclaim the space
+        without the user knowing a manual purge exists. Full captures are
+        the deliberate, consent-gated, purgeable verbatim mode (ADR-092)
+        and are never rewritten.
+
+        DML-only (no DDL, so no ``.sql`` file, ``VALID_TABLES`` entry, or
+        index-census row). Runs inside ``_initialize_schema``'s outer
+        immediate transaction: a crash or SIGKILL anywhere in the walk
+        rolls the blob rewrites AND the version stamp back to v52
+        together, and the deterministic trim simply re-runs on the next
+        open. Trimming is idempotent (already-elided rows pass through),
+        so re-entry converges. A blob that cannot be decoded is left
+        exactly as it was — one corrupt row must never brick the database.
+
+        Args:
+            conn: The active connection, inside ``_initialize_schema``'s
+                outer immediate transaction.
+
+        Raises:
+            SchemaError: If the entry version is wrong, the rewrite hits a
+                database error, or the guarded version update fails.
+        """
+        self._require_migration_entry_version(conn, 52, "V52→V53")
+        logger.info(
+            f"Migrating schema from V52 to V53 for '{self._SCHEMA_NAME}' in DB: {self.db_path_str}..."
+        )
+        from tldw_chatbook.Chat.console_exchange_capture import (
+            trim_safe_capture_blob,
+        )
+
+        trimmed = skipped = 0
+        try:
+            with self.transaction() as cursor:
+                cursor.execute(
+                    """
+                    SELECT id FROM message_exchanges
+                     WHERE capture_detail = 'safe'
+                     ORDER BY id
+                    """
+                )
+                row_ids = [row[0] for row in cursor.fetchall()]
+                for row_id in row_ids:
+                    cursor.execute(
+                        "SELECT capture_blob FROM message_exchanges WHERE id = ?",
+                        (row_id,),
+                    )
+                    fetched = cursor.fetchone()
+                    if fetched is None or fetched[0] is None:
+                        continue
+                    try:
+                        new_blob = trim_safe_capture_blob(bytes(fetched[0]))
+                    except Exception:
+                        # Undecodable/hostile blob (CaptureUnavailableError,
+                        # CaptureCorruptError, or anything a hostile stored
+                        # shape throws in the pure trim): leave the row
+                        # untouched — one bad row must never brick the DB.
+                        # No exception detail is logged: capture blobs hold
+                        # conversation text and must never reach a sink.
+                        skipped += 1
+                        continue
+                    if new_blob is None:
+                        continue
+                    cursor.execute(
+                        "UPDATE message_exchanges SET capture_blob = ? WHERE id = ?",
+                        (new_blob, row_id),
+                    )
+                    trimmed += 1
+                version_cursor = cursor.execute(
+                    """
+                    UPDATE db_schema_version
+                       SET version = 53
+                     WHERE schema_name = ?
+                       AND version = 52
+                    """,
+                    (self._SCHEMA_NAME,),
+                )
+                if version_cursor.rowcount != 1:
+                    raise SchemaError(
+                        f"[{self._SCHEMA_NAME} V52→V53] Migration version update was not applied"
+                    )
+            if self._get_db_version(conn) != 53:
+                raise SchemaError(
+                    f"[{self._SCHEMA_NAME} V52→V53] Migration version check failed"
+                )
+            logger.info(
+                f"[{self._SCHEMA_NAME} V52→V53] Migration completed for DB: "
+                f"{self.db_path_str} (trimmed {trimmed} Safe capture(s), "
+                f"skipped {skipped} undecodable)."
+            )
+        except (OSError, sqlite3.Error, CharactersRAGDBError, SchemaError) as exc:
+            raise SchemaError(
+                f"Migration from V52 to V53 failed for '{self._SCHEMA_NAME}': {exc}"
+            ) from exc
+
     def _migrate_from_v18_to_v19(self, conn: sqlite3.Connection):
         """
         Migrates the database schema from version 18 to version 19.
@@ -7106,6 +7209,7 @@ UPDATE db_schema_version
                     49: self._migrate_from_v49_to_v50,
                     50: self._migrate_from_v50_to_v51,
                     51: self._migrate_from_v51_to_v52,
+                    52: self._migrate_from_v52_to_v53,
                 }
 
                 if current_db_version == 0:

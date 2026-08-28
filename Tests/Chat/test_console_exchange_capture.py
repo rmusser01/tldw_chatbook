@@ -2,6 +2,7 @@
 import json
 import zlib
 
+import pytest
 from hypothesis import given, strategies as st
 
 from tldw_chatbook.Chat.console_exchange_capture import (
@@ -532,3 +533,304 @@ def test_stub_gate_still_fires_at_canonical_length_over_threshold():
 
     assert stubbed["content"] != canonical
     assert stubbed["content"].startswith("[")
+
+
+# ---------------------------------------------------------------------------
+# task-23026: a Safe capture must not persist the whole conversation per
+# turn. Every send's payload carries the entire history so far; storing it
+# verbatim per turn re-stored the conversation O(n²) (21.33 MB measured for
+# one 200-turn conversation through the real gateway path), default-on,
+# with no retention path. Under Safe only the newest
+# CAPTURE_SAFE_HISTORY_TAIL_ROWS rows stay verbatim; older rows become
+# content-free fingerprint rows in place.
+# ---------------------------------------------------------------------------
+import hashlib as _hashlib
+
+from tldw_chatbook.Chat.console_exchange_capture import (
+    CAPTURE_ELIDED_ROW_KEY,
+    CAPTURE_SAFE_HISTORY_TAIL_ROWS,
+    elide_safe_history_rows,
+    trim_safe_capture_blob,
+)
+
+_TAIL = CAPTURE_SAFE_HISTORY_TAIL_ROWS
+
+
+def _incompressible_filler(seed: str, chars: int) -> str:
+    """Semi-incompressible prose-like filler (hex words). A repeated-word
+    filler compresses ~100x inside the blob's zlib, which lets a
+    disabled-elision mutant slip under byte-size assertions — proven by
+    mutation M1 during task-23026."""
+    words = []
+    counter = 0
+    while sum(len(w) + 1 for w in words) < chars:
+        words.append(
+            _hashlib.sha256(f"{seed}:{counter}".encode()).hexdigest()[:10]
+        )
+        counter += 1
+    return " ".join(words)[:chars]
+
+
+def _history_rows(count: int) -> list[dict]:
+    return [
+        {
+            "role": "user" if i % 2 == 0 else "assistant",
+            "content": f"HISTORY-BODY-{i:03d} " + _incompressible_filler(f"r{i}", 180),
+        }
+        for i in range(count)
+    ]
+
+
+def _canonical(row) -> str:
+    return json.dumps(
+        row, ensure_ascii=False, sort_keys=True, separators=(",", ":"), default=str
+    )
+
+
+def test_safe_capture_keeps_tail_verbatim_and_fingerprints_prefix():
+    rows = _history_rows(_TAIL + 12)
+    request, omitted = build_request_capture(
+        {**_kwargs(), "messages_payload": rows},
+        capture_detail=CaptureDetail.SAFE,
+    )
+
+    payload = request["messages_payload"]
+    # Shape and count survive: the Inspector's "Messages (N)" stays truthful.
+    assert len(payload) == _TAIL + 12
+    # The newest rows — the turn's delta plus immediate context — are verbatim.
+    assert payload[-_TAIL:] == rows[-_TAIL:]
+    # Every older row is a content-free fingerprint IN PLACE.
+    rendered = json.dumps(payload[: len(rows) - _TAIL])
+    assert "HISTORY-BODY-" not in rendered
+    for index, marker in enumerate(payload[: len(rows) - _TAIL]):
+        assert marker[CAPTURE_ELIDED_ROW_KEY] is True
+        assert marker["role"] == rows[index]["role"]
+        assert str(len(rows[index]["content"])) in marker["content"]
+        # The fingerprint is verifiable: sha256 of the row's canonical
+        # (sanitized) JSON — the exact form the earlier capture whose tail
+        # this row was new in retained verbatim.
+        digest = _hashlib.sha256(_canonical(rows[index]).encode()).hexdigest()[:16]
+        assert f"sha256:{digest}" in marker["content"]
+    # The withholding is named through the Inspector's existing
+    # "Omitted by capture policy" mechanism.
+    assert (
+        f"messages_payload[0..{len(rows) - _TAIL - 1}].content "
+        "(conversation history elided)" in omitted
+    )
+
+
+def test_full_capture_retains_the_whole_history_verbatim():
+    """Full is the explicit, consent-gated, purgeable verbatim mode
+    (ADR-092) — elision must never touch it."""
+    rows = _history_rows(_TAIL + 12)
+    request, omitted = build_request_capture(
+        {**_kwargs(), "messages_payload": rows},
+        capture_detail=CaptureDetail.FULL,
+    )
+    assert request["messages_payload"] == rows
+    assert not any("history elided" in entry for entry in omitted)
+
+
+def test_short_safe_payload_is_untouched():
+    rows = _history_rows(_TAIL)
+    request, omitted = build_request_capture(
+        {**_kwargs(), "messages_payload": rows},
+        capture_detail=CaptureDetail.SAFE,
+    )
+    assert request["messages_payload"] == rows
+    assert not any("history elided" in entry for entry in omitted)
+
+
+def test_elision_is_idempotent_for_export_reprojection():
+    """The export path re-runs build_request_capture over a STORED request
+    (project_exchange_export). A fingerprint row must pass through
+    untouched — re-marking it would replace the fingerprint with a marker
+    measuring the MARKER's own length."""
+    rows = _history_rows(_TAIL + 5)
+    first, _ = build_request_capture(
+        {"messages_payload": rows}, capture_detail=CaptureDetail.SAFE
+    )
+    second, omitted = build_request_capture(
+        {"messages_payload": first["messages_payload"]},
+        capture_detail=CaptureDetail.SAFE,
+    )
+    assert second["messages_payload"] == first["messages_payload"]
+    # The original row's char count survives the second pass — the marker
+    # was not re-measured.
+    assert str(len(rows[0]["content"])) in second["messages_payload"][0]["content"]
+
+
+def test_elided_project_instruction_row_keeps_tag_and_never_its_body():
+    """A project-instruction row that has aged into the elided prefix must
+    stay body-free (the C1 promise) while its origin tag survives, so the
+    Inspector can still show such a row was sent."""
+    rows = _history_rows(_TAIL + 3)
+    rows[0] = _project_instruction_row()
+    request, _ = build_request_capture(
+        {"messages_payload": rows}, capture_detail=CaptureDetail.SAFE
+    )
+    marker = request["messages_payload"][0]
+    assert _PROJECT_INSTRUCTION_SENTINEL not in json.dumps(request)
+    assert marker[EPHEMERAL_ORIGIN_KEY] == "project_instructions"
+    assert marker[CAPTURE_ELIDED_ROW_KEY] is True
+
+
+def test_redaction_never_remeasures_a_fingerprint_row():
+    """_redact_project_instruction_rows must skip rows already elided —
+    otherwise the export re-run would replace a tagged fingerprint with a
+    redaction marker measuring the fingerprint's own length."""
+    rows = _history_rows(_TAIL + 3)
+    rows[0] = _project_instruction_row()
+    first, _ = build_request_capture(
+        {"messages_payload": rows}, capture_detail=CaptureDetail.SAFE
+    )
+    second, _ = build_request_capture(
+        {"messages_payload": first["messages_payload"]},
+        capture_detail=CaptureDetail.SAFE,
+    )
+    assert second["messages_payload"][0] == first["messages_payload"][0]
+
+
+def test_non_list_rows_pass_through_elision():
+    assert elide_safe_history_rows(None, CaptureDetail.SAFE) == (None, ())
+    assert elide_safe_history_rows("x", CaptureDetail.SAFE) == ("x", ())
+
+
+def test_per_turn_blob_size_growth_is_fingerprint_sized_not_content_sized():
+    """The blob for a deep-history turn may grow only by the small
+    per-row fingerprint index, never by re-copied content: 100 extra
+    history rows of ~190 chars each (~19 KB of content) must add far less
+    than their content size to the stored blob."""
+
+    def blob_for(row_count: int) -> int:
+        request, omitted = build_request_capture(
+            {**_kwargs(), "messages_payload": _history_rows(row_count)},
+            capture_detail=CaptureDetail.SAFE,
+        )
+        cap = ExchangeCapture(
+            run_tag="r1", seq=0, created_at="t", provider="p", model="m",
+            endpoint=None, request=request, response={"content": "pong"},
+            status="complete", usage_json=None, omitted_keys=omitted,
+        )
+        return len(capture_to_blob(cap))
+
+    shallow = blob_for(20)
+    deep = blob_for(120)
+    per_row_cost = (deep - shallow) / 100
+    assert per_row_cost < 60, (
+        f"deep-history turns re-store content: {per_row_cost:.0f} bytes per "
+        "elided row (fingerprints should compress to well under 60)"
+    )
+
+
+def test_trim_safe_capture_blob_trims_stored_safe_blobs():
+    """The v52→v53 migration's pure helper: a pre-elision stored Safe blob
+    is trimmed to exactly the shape build_request_capture now produces,
+    with everything not deliberately trimmed preserved value-identical."""
+    rows = _history_rows(_TAIL + 12)
+    # A pre-task-23026 capture: history verbatim (built at FULL to bypass
+    # elision, then stamped safe — the historical builder retained
+    # ordinary rows verbatim under Safe).
+    request, omitted = build_request_capture(
+        {**_kwargs(), "messages_payload": rows},
+        capture_detail=CaptureDetail.FULL,
+    )
+    legacy = ExchangeCapture(
+        run_tag="r1", seq=3, created_at="t", provider="p", model="m",
+        endpoint="https://example.test/v1", request=request,
+        response={"content": "pong", "tool_calls": [], "synthetic_fallback": False},
+        status="stopped", usage_json='{"input": 5}', omitted_keys=omitted,
+        capture_detail=CaptureDetail.SAFE,
+    )
+    trimmed_blob = trim_safe_capture_blob(capture_to_blob(legacy))
+
+    assert trimmed_blob is not None
+    restored = capture_from_blob(trimmed_blob)
+    payload = restored.request["messages_payload"]
+    assert payload[-_TAIL:] == rows[-_TAIL:]
+    assert "HISTORY-BODY-000" not in json.dumps(payload)
+    assert payload[0][CAPTURE_ELIDED_ROW_KEY] is True
+    # Everything not deliberately trimmed is value-identical.
+    assert restored.response == legacy.response
+    assert restored.status == legacy.status
+    assert restored.usage_json == legacy.usage_json
+    assert restored.run_tag == legacy.run_tag
+    assert restored.seq == legacy.seq
+    assert restored.provider == legacy.provider
+    assert restored.endpoint == legacy.endpoint
+    assert restored.capture_detail is CaptureDetail.SAFE
+    untouched = {
+        k: v for k, v in restored.request.items() if k != "messages_payload"
+    }
+    # JSON-normalized comparison: the blob round-trip renders tuples (e.g.
+    # truncation_inventory) as lists; the VALUES must be identical.
+    assert json.loads(json.dumps(untouched, default=str)) == json.loads(
+        json.dumps(
+            {k: v for k, v in legacy.request.items() if k != "messages_payload"},
+            default=str,
+        )
+    )
+    # The elided range is folded into the stored omission inventory.
+    assert any("history elided" in entry for entry in restored.omitted_keys)
+    assert set(legacy.omitted_keys).issubset(set(restored.omitted_keys))
+
+
+def test_trim_safe_capture_blob_returns_none_when_nothing_to_trim():
+    request, omitted = build_request_capture(
+        _kwargs(), capture_detail=CaptureDetail.SAFE
+    )
+    cap = ExchangeCapture(
+        run_tag="r1", seq=0, created_at="t", provider="p", model="m",
+        endpoint=None, request=request, response={}, status="complete",
+        usage_json=None, omitted_keys=omitted,
+    )
+    assert trim_safe_capture_blob(capture_to_blob(cap)) is None
+
+
+def test_trim_safe_capture_blob_never_touches_full_blobs():
+    rows = _history_rows(_TAIL + 12)
+    request, omitted = build_request_capture(
+        {**_kwargs(), "messages_payload": rows},
+        capture_detail=CaptureDetail.FULL,
+    )
+    cap = ExchangeCapture(
+        run_tag="r1", seq=0, created_at="t", provider="p", model="m",
+        endpoint=None, request=request, response={}, status="complete",
+        usage_json=None, omitted_keys=omitted,
+        capture_detail=CaptureDetail.FULL,
+    )
+    assert trim_safe_capture_blob(capture_to_blob(cap)) is None
+
+
+def test_trim_safe_capture_blob_trims_llamacpp_wire_messages():
+    wire_rows = _history_rows(_TAIL + 6)
+    cap = ExchangeCapture(
+        run_tag="r1", seq=0, created_at="t", provider="llama_cpp", model="m",
+        endpoint=None,
+        request={
+            "model": "m",
+            "wire_payload": {"model": "m", "messages": wire_rows, "stream": True},
+            "truncation_inventory": (),
+        },
+        response={}, status="complete", usage_json=None, omitted_keys=(),
+    )
+    trimmed_blob = trim_safe_capture_blob(capture_to_blob(cap))
+
+    assert trimmed_blob is not None
+    restored = capture_from_blob(trimmed_blob)
+    wire = restored.request["wire_payload"]
+    assert wire["messages"][-_TAIL:] == wire_rows[-_TAIL:]
+    assert wire["messages"][0][CAPTURE_ELIDED_ROW_KEY] is True
+    assert "HISTORY-BODY-000" not in json.dumps(wire)
+    assert wire["stream"] is True
+    assert any(
+        entry.startswith("wire_payload.messages[0..")
+        for entry in restored.omitted_keys
+    )
+
+
+def test_trim_safe_capture_blob_raises_capture_unavailable_on_corrupt_blob():
+    from tldw_chatbook.Chat.console_exchange_capture import CaptureUnavailableError
+
+    with pytest.raises(CaptureUnavailableError):
+        trim_safe_capture_blob(b"not-a-zlib-blob")

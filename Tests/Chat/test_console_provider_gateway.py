@@ -52,6 +52,8 @@ from tldw_chatbook.Chat.provider_continuation import (
 )
 from tldw_chatbook.Chat.console_history_budget import ProviderContinuationSidecar
 from tldw_chatbook.Chat.console_exchange_capture import (
+    CAPTURE_ELIDED_ROW_KEY,
+    CAPTURE_SAFE_HISTORY_TAIL_ROWS,
     CaptureBudget,
     CaptureDetail,
     build_request_capture,
@@ -8266,3 +8268,177 @@ class TestLlamaCppExchangeCapture:
         assert out == streamed
         assert call_count["n"] == 0
         assert aggregate.exchange_captures() == []
+
+
+class TestSafeHistoryElisionThroughGateway:
+    """task-23026: the gateway's OWN captures bound the per-turn history
+    copy under Safe. Measured before the bound, through this exact path:
+    turn-200 blob 217.1 KB, 21.33 MB total for one 200-turn conversation,
+    default-on, with no retention path."""
+
+    @staticmethod
+    def _generic_resolution() -> ConsoleProviderResolution:
+        return ConsoleProviderResolution(
+            provider="openai",
+            base_url="https://proxy.example.test/v1",
+            model="gpt-4.1",
+            ready=True,
+            execution_key="openai",
+            api_key="k",
+            streaming=False,
+        )
+
+    @staticmethod
+    def _history(rows: int) -> list[dict]:
+        return [{"role": "system", "content": "sys"}] + [
+            {
+                "role": "user" if i % 2 == 0 else "assistant",
+                "content": f"GATEWAY-HISTORY-{i:03d} " + ("lorem " * 20),
+            }
+            for i in range(rows)
+        ]
+
+    @staticmethod
+    async def _drain(gen):
+        return [chunk async for chunk in gen]
+
+    @pytest.mark.asyncio
+    async def test_generic_safe_capture_elides_history_and_names_the_range(self):
+        def fake_chat_api_call(**kwargs):
+            return {"choices": [{"message": {"content": "pong"}}]}
+
+        signals = ConsoleProviderStreamSignals(exchange_capture_enabled=True)
+        history_rows = CAPTURE_SAFE_HISTORY_TAIL_ROWS + 10
+        await self._drain(
+            ConsoleProviderGateway(chat_api_call_fn=fake_chat_api_call).stream_chat(
+                self._generic_resolution(), self._history(history_rows), signals=signals
+            )
+        )
+
+        (capture,) = signals.exchange_captures()
+        payload = capture.request["messages_payload"]
+        # The leading system row is extracted into system_message by the
+        # kwargs builder, so the payload is exactly the history rows.
+        assert len(payload) == history_rows
+        assert payload[-1]["content"].startswith(f"GATEWAY-HISTORY-{history_rows - 1:03d}")
+        assert payload[0][CAPTURE_ELIDED_ROW_KEY] is True
+        assert "GATEWAY-HISTORY-000" not in json.dumps(payload)
+        assert any(
+            "conversation history elided" in entry for entry in capture.omitted_keys
+        )
+        # The provider call itself is untouched: elision is capture-only.
+        assert capture.response["content"] == "pong"
+
+    @pytest.mark.asyncio
+    async def test_generic_full_capture_keeps_history_verbatim(self):
+        def fake_chat_api_call(**kwargs):
+            return {"choices": [{"message": {"content": "pong"}}]}
+
+        signals = ConsoleProviderStreamSignals(
+            exchange_capture_enabled=True, capture_detail=CaptureDetail.FULL
+        )
+        history_rows = CAPTURE_SAFE_HISTORY_TAIL_ROWS + 10
+        await self._drain(
+            ConsoleProviderGateway(chat_api_call_fn=fake_chat_api_call).stream_chat(
+                self._generic_resolution(), self._history(history_rows), signals=signals
+            )
+        )
+
+        (capture,) = signals.exchange_captures()
+        assert "GATEWAY-HISTORY-000" in json.dumps(
+            capture.request["messages_payload"]
+        )
+        assert not any(
+            "conversation history elided" in entry for entry in capture.omitted_keys
+        )
+
+    @pytest.mark.asyncio
+    async def test_generic_elision_leaves_transcript_output_byte_identical(self):
+        def fake_chat_api_call(**kwargs):
+            return {"choices": [{"message": {"content": "exact bytes"}}]}
+
+        resolution = self._generic_resolution()
+        messages = self._history(CAPTURE_SAFE_HISTORY_TAIL_ROWS + 10)
+        with_capture = await self._drain(
+            ConsoleProviderGateway(chat_api_call_fn=fake_chat_api_call).stream_chat(
+                resolution,
+                [dict(m) for m in messages],
+                signals=ConsoleProviderStreamSignals(exchange_capture_enabled=True),
+            )
+        )
+        without = await self._drain(
+            ConsoleProviderGateway(chat_api_call_fn=fake_chat_api_call).stream_chat(
+                resolution, [dict(m) for m in messages], signals=None
+            )
+        )
+        assert with_capture == without
+
+    @staticmethod
+    def _llamacpp_resolution() -> ConsoleProviderResolution:
+        return ConsoleProviderResolution(
+            provider="llama_cpp",
+            base_url="http://127.0.0.1:9099",
+            model="m",
+            ready=True,
+            execution_key="llama_cpp",
+            api_key="local-secret",
+            streaming=True,
+        )
+
+    @pytest.mark.asyncio
+    async def test_llamacpp_safe_wire_capture_elides_history(self, monkeypatch):
+        async def fake_stream(self, **kwargs):
+            yield "ok"
+
+        monkeypatch.setattr(
+            ConsoleProviderGateway, "stream_llamacpp_chat", fake_stream
+        )
+        signals = ConsoleProviderStreamSignals(exchange_capture_enabled=True)
+        history_rows = CAPTURE_SAFE_HISTORY_TAIL_ROWS + 6
+        await self._drain(
+            ConsoleProviderGateway().stream_chat(
+                self._llamacpp_resolution(), self._history(history_rows), signals=signals
+            )
+        )
+
+        (capture,) = signals.exchange_captures()
+        wire_messages = capture.request["wire_payload"]["messages"]
+        assert wire_messages[-1]["content"].startswith(
+            f"GATEWAY-HISTORY-{history_rows - 1:03d}"
+        )
+        assert wire_messages[0][CAPTURE_ELIDED_ROW_KEY] is True
+        assert "GATEWAY-HISTORY-000" not in json.dumps(wire_messages)
+        assert any(
+            entry.startswith("wire_payload.messages[0..")
+            for entry in capture.omitted_keys
+        )
+
+    @pytest.mark.asyncio
+    async def test_llamacpp_full_wire_capture_keeps_history_verbatim(
+        self, monkeypatch
+    ):
+        async def fake_stream(self, **kwargs):
+            yield "ok"
+
+        monkeypatch.setattr(
+            ConsoleProviderGateway, "stream_llamacpp_chat", fake_stream
+        )
+        signals = ConsoleProviderStreamSignals(
+            exchange_capture_enabled=True, capture_detail=CaptureDetail.FULL
+        )
+        await self._drain(
+            ConsoleProviderGateway().stream_chat(
+                self._llamacpp_resolution(),
+                self._history(CAPTURE_SAFE_HISTORY_TAIL_ROWS + 6),
+                signals=signals,
+            )
+        )
+
+        (capture,) = signals.exchange_captures()
+        assert "GATEWAY-HISTORY-000" in json.dumps(
+            capture.request["wire_payload"]["messages"]
+        )
+        assert not any(
+            entry.startswith("wire_payload.messages[0..")
+            for entry in capture.omitted_keys
+        )
