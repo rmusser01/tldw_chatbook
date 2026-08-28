@@ -3,9 +3,11 @@ id: TASK-23090
 title: >-
   Cover the first-run ProviderStep-to-ModelStep catalog handoff against a real
   HTTP peer
-status: To Do
-assignee: []
+status: Done
+assignee:
+  - '@claude'
 created_date: '2026-08-28 15:22'
+updated_date: '2026-08-28 21:29'
 labels: []
 dependencies: []
 ---
@@ -23,21 +25,14 @@ PR #2158's regression tests are unit-level: they mock the transport or call _mod
 - [ ] #3 The test fails if a bound between discovery and the picker trims or rejects the catalog
 <!-- AC:END -->
 
-## Known blocker (measured, 2026-08-28)
+## Implementation Plan
 
-A first attempt got the real HTTP peer and the wizard talking -- the probe
-request was observed carrying `Accept-Encoding: identity` -- but discovery
-itself short-circuited before any request:
+<!-- SECTION:PLAN:BEGIN -->
+1. Find why resolve_provider_list_key reports 'missing' in the fresh harness.\n2. Make the provider resolvable the way a real config does.\n3. Drive ProviderStep to ModelStep against the real HTTP peer and assert the full catalog reaches the picker.
+<!-- SECTION:PLAN:END -->
 
-    DBG staged: {'api_settings': {'llama_cpp': {'api_url':
-      'http://127.0.0.1:61462/v1/chat/completions', 'credential_source':
-      'draft', 'api_key': '...'}}}
-    DBG prov outcomes: {...: ('error', 'missing_endpoint')}
-    DBG hits: []
+## Implementation Notes
 
-`missing_endpoint` here is the `resolve_provider_list_key(...) == "missing"`
-branch ("No matching provider model list exists in [providers]"), not a bad
-URL -- `_resolve_endpoint` accepts all three endpoint forms in isolation.
-Seeding `[providers]` in the fresh test config did not clear it, so the
-harness needs the provider-catalog wiring understood before this test can
-assert on the picker. That investigation is the work, not an afterthought.
+<!-- SECTION:NOTES:BEGIN -->
+Blocker in the task body was misdiagnosed: the 'missing_endpoint' was the [providers] branch, but the cause was not the config file. The app's LocalLLMProviderCatalogService loader reads self.providers_models, snapshotted at app init, and a fresh test app has an empty snapshot -- so discovery reported 'no matching provider model list' before issuing any request no matter what was written to [providers]. Setting app.providers_models = get_cli_providers_and_models() after the config write clears it. Test drives ProviderStep (llama_cpp, typed endpoint) to ModelStep against a real threaded HTTP peer serving 128 models. Pins two defects, each confirmed by reverting it: the wizard's typed-result bound (revert to 100 -> discovery result rejected) and the discovery module's identity encoding (remove header -> invalid_response). Explicitly does NOT pin settings_endpoint_probe's encoding fix, since this path never presses Test; the sibling test covers that. Also recorded: the picker renders models[:20] by design, so the catalog-bound fix took the step from zero models to a real list, not from 100 to 128 visible.
+<!-- SECTION:NOTES:END -->
