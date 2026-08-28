@@ -3,14 +3,18 @@ id: TASK-571
 title: >-
   Console branching: a failed regenerate drops the prior good answer from
   provider context until swipe-back
-status: To Do
-assignee: []
+status: In Progress
+assignee:
+  - '@codex'
 created_date: '2026-07-25'
+updated_date: '2026-08-28 05:19'
 labels:
   - console
   - chat
   - ux
 dependencies: []
+references:
+  - Docs/superpowers/specs/2026-08-27-console-failed-regenerate-auto-restore-design.md
 ---
 
 ## Description
