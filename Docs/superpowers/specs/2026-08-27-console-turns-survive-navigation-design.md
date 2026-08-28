@@ -2,7 +2,7 @@
 
 **Date:** 2026-08-27
 
-**Status:** Independent spec review approved; awaiting final written-spec approval
+**Status:** Approved for implementation planning
 
 **Task:** [TASK-22514](../../../backlog/tasks/task-22514%20-%20Console-turns-survive-screen-navigation.md)
 
