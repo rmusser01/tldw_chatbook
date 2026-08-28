@@ -82,24 +82,10 @@ def test_naive_next_run_treated_as_utc():
 # --- consistency between the queue column and the detail pane --------------
 
 
-class _Service:
-    owner_id = "local"
-    sync_engine = None
+from Tests.UI.schedules_test_helpers import MockSchedulingServiceMixin
 
-    class _DB:
-        def get_sync_state(self, owner_id):
-            return {}
 
-        def get_conflicts(self, owner_id, primitive=None):
-            return []
-
-    db = _DB()
-
-    class _ServerClient:
-        notifications_service = None
-
-    server_client = _ServerClient()
-
+class _Service(MockSchedulingServiceMixin):
     async def list_tasks(self):
         return [
             ReminderTask(

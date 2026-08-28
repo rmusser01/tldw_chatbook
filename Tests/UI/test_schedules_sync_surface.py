@@ -23,33 +23,21 @@ from tldw_chatbook.UI.Screens.scheduling.sync_status_widget import (
 )
 
 
-class _SyncService:
+from Tests.UI.schedules_test_helpers import (
+    MockSchedulingDB,
+    MockSchedulingServiceMixin,
+    MockServerClient,
+)
+
+
+class _SyncService(MockSchedulingServiceMixin):
     """Service whose sync_now can either record a pull or do nothing."""
 
-    owner_id = "local"
-    sync_engine = None
-
-    class _ServerClient:
-        notifications_service = object()  # a server connection exists
-
-    server_client = _ServerClient()
+    server_client = MockServerClient(notifications_service=object())
 
     def __init__(self, records_pull: bool) -> None:
         self._records_pull = records_pull
-        self._state: dict = {}
-        service = self
-
-        class _DB:
-            def get_sync_state(self, owner_id):
-                return dict(service._state)
-
-            def get_conflicts(self, owner_id, primitive=None):
-                return []
-
-            def update_sync_state(self, owner_id, **kwargs):
-                service._state.update(kwargs)
-
-        self.db = _DB()
+        self.db = MockSchedulingDB()
 
     async def list_tasks(self):
         return [
@@ -63,7 +51,9 @@ class _SyncService:
 
     async def sync_now(self, owner_id=None):
         if self._records_pull:
-            self._state["last_pull_at"] = "2026-08-28T12:00:00+00:00"
+            self.db.update_sync_state(
+                "local", last_pull_at="2026-08-28T12:00:00+00:00"
+            )
 
 
 class _App(ConsolidatedCSSApp):

@@ -443,19 +443,10 @@ async def test_reminder_form_cancel_dismisses_without_submitting():
 # The oracle for "is this widget actually visible" is the compositor
 # (get_widget_at), not the widget's own cached region: a clipped widget
 # still reports a plausible region (see lessons-live-verification.md).
-
-
-def _painted_at_own_center(app: App, widget) -> bool:
-    """Return True when the compositor paints ``widget`` at its own center."""
-    region = widget.region
-    if region.height <= 0 or region.width <= 0:
-        return False
-    cx, cy = region.center
-    try:
-        target, _ = app.get_widget_at(int(cx), int(cy))
-    except Exception:
-        return False
-    return target is widget or widget in list(target.ancestors)
+# Shared with the other Schedules UI test files (task-23106 review F15).
+from Tests.UI.schedules_test_helpers import (
+    painted_at_own_center as _painted_at_own_center,
+)
 
 
 @pytest.mark.asyncio

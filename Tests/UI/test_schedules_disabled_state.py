@@ -81,24 +81,10 @@ def test_enabled_reminder_next_run_shows_time():
 # --- mounted behavior ------------------------------------------------------
 
 
-class _DisabledTaskService:
-    owner_id = "local"
-    sync_engine = None
+from Tests.UI.schedules_test_helpers import MockSchedulingServiceMixin
 
-    class _DB:
-        def get_sync_state(self, owner_id):
-            return {}
 
-        def get_conflicts(self, owner_id, primitive=None):
-            return []
-
-    db = _DB()
-
-    class _ServerClient:
-        notifications_service = None
-
-    server_client = _ServerClient()
-
+class _DisabledTaskService(MockSchedulingServiceMixin):
     def __init__(self) -> None:
         self.enabled = False
 

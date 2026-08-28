@@ -38,43 +38,12 @@ from tldw_chatbook.Widgets.confirmation_dialog import ConfirmationDialog
 from tldw_chatbook.Widgets.delete_confirmation_dialog import DeleteConfirmationDialog
 
 
-class _MockServerClient:
-    """Stub server client for test scheduling services."""
-
-    def __init__(self, notifications_service=None):
-        self.notifications_service = notifications_service
-
-
-class _MockSchedulingDB:
-    """Stub scheduled-tasks DB for test scheduling services."""
-
-    def __init__(self, sync_state=None, conflicts=None):
-        self._sync_state = sync_state or {}
-        self._conflicts = conflicts or []
-
-    def get_sync_state(self, owner_id: str):
-        return self._sync_state
-
-    def update_sync_state(self, owner_id: str, **kwargs):
-        self._sync_state.update(kwargs)
-
-    def get_conflicts(self, owner_id: str, primitive=None):
-        return self._conflicts
-
-
-class _MockSchedulingServiceMixin:
-    """Common attributes expected by the SchedulesWorkbench UI."""
-
-    owner_id = "local"
-    server_client = _MockServerClient()
-    db = _MockSchedulingDB()
-    sync_engine = None
-
-    def set_owner(self, owner_id: str) -> None:
-        self.owner_id = owner_id
-
-    async def sync_now(self, owner_id: str | None = None) -> None:
-        pass
+# Shared across the Schedules UI test files (task-23106 review round F15).
+from Tests.UI.schedules_test_helpers import (
+    MockSchedulingDB as _MockSchedulingDB,
+    MockSchedulingServiceMixin as _MockSchedulingServiceMixin,
+    MockServerClient as _MockServerClient,
+)
 
 
 class WorkbenchTestApp(ConsolidatedCSSApp):
