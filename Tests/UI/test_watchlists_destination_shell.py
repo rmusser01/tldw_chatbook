@@ -15,12 +15,18 @@ from tldw_chatbook.UI.Screens.watchlists_collections_screen import (
     WatchlistsCollectionsScreen,
 )
 from tldw_chatbook.UI.Navigation.main_navigation import NavigateToScreen
-from tldw_chatbook.UI.Watchlists_Modules.inspector_pane import InspectorPane
+from tldw_chatbook.UI.Watchlists_Modules.inspector_pane import (
+    CheckNowRequested,
+    InspectorPane,
+)
 from tldw_chatbook.UI.Watchlists_Modules.notifications_pane import NotificationsPane
 from tldw_chatbook.UI.Watchlists_Modules.pane_grip import RegionToggled
 from tldw_chatbook.UI.Watchlists_Modules.region_layout import Region, RegionLayout
 from tldw_chatbook.UI.Watchlists_Modules.rules_pane import RulesPane
-from tldw_chatbook.UI.Watchlists_Modules.runs_pane import RunsPane
+from tldw_chatbook.UI.Watchlists_Modules.runs_pane import (
+    RerunRunRequested,
+    RunsPane,
+)
 from tldw_chatbook.UI.Watchlists_Modules.sources_pane import SourcesPane
 from tldw_chatbook.UI.Watchlists_Modules.watchlists_backend_controller import (
     WatchlistsBackendController,
@@ -1840,6 +1846,419 @@ async def test_moving_the_tree_disarms_run_actions_selected_before_the_move():
             "Cancel must not stay armed on a run the tree navigated away from"
         )
         assert rerun.disabled
+
+
+@pytest.mark.asyncio
+async def test_rerun_busy_state_survives_a_mounted_runs_pane_rebuild():
+    app = _build_test_app()
+    screen = WatchlistsCollectionsScreen(app)
+    host = WatchlistsContextHarness(screen)
+    started = asyncio.Event()
+    release = asyncio.Event()
+    app.notify = Mock()
+
+    async def launch(**kwargs):
+        started.set()
+        await release.wait()
+        return {"status": "completed", "found_count": 7, "processed_count": 3}
+
+    async with host.run_test(size=(180, 50)) as pilot:
+        screen.active_section = "runs"
+        for _ in range(40):
+            await pilot.pause()
+            if screen.query("#watchlists-runs-pane"):
+                break
+
+        run = {
+            "id": "local:watchlist_run:5",
+            "run_id": 5,
+            "backend": "local",
+            "source_id": 5,
+            "source_title": "Feed [five]",
+            "status": "completed",
+        }
+        pane = screen.query_one("#watchlists-runs-pane", RunsPane)
+        pane.runs = [run]
+        await pilot.pause()
+        pane.select_run_by_id(run["id"])
+        for _ in range(40):
+            await pilot.pause()
+            if screen.selected_run is not None:
+                break
+
+        screen._controller.launch_run = AsyncMock(side_effect=launch)
+        screen._request_runs_refresh = Mock()
+        app.notify.reset_mock()
+        pane.query_one("#runs-rerun-button", Button).press()
+        for _ in range(40):
+            await pilot.pause()
+            if started.is_set():
+                break
+
+        assert started.is_set(), "the gated Re-run must have reached launch_run"
+        button = pane.query_one("#runs-rerun-button", Button)
+        assert str(button.label) == "Re-running..."
+        assert button.disabled
+        app.notify.assert_any_call(
+            "Re-running Feed [five]...",
+            severity="information",
+            markup=False,
+        )
+
+        old_pane = pane
+        screen.active_section = "sources"
+        for _ in range(40):
+            await pilot.pause()
+            if not screen.query("#watchlists-runs-pane"):
+                break
+        screen.active_section = "runs"
+        for _ in range(40):
+            await pilot.pause()
+            if screen.query("#watchlists-runs-pane"):
+                pane = screen.query_one("#watchlists-runs-pane", RunsPane)
+                if pane is not old_pane:
+                    break
+
+        assert pane is not old_pane, "the section swap must replace RunsPane"
+        rebuilt_button = pane.query_one("#runs-rerun-button", Button)
+        assert str(rebuilt_button.label) == "Re-running..."
+        assert rebuilt_button.disabled
+
+        release.set()
+        for _ in range(40):
+            await pilot.pause()
+            if screen._request_runs_refresh.call_count:
+                break
+
+        assert screen._checks_in_flight == set()
+        assert screen._reruns_in_flight == set()
+        assert str(rebuilt_button.label) == "Re-run source"
+        assert not rebuilt_button.disabled
+        screen._controller.launch_run.assert_awaited_once_with(
+            runtime_backend="local",
+            source_id=5,
+            job_id=None,
+        )
+        screen._request_runs_refresh.assert_called_once_with()
+        app.notify.assert_any_call(
+            "Re-run complete: Feed [five] — 7 found, 3 new.",
+            severity="information",
+            markup=False,
+        )
+
+
+@pytest.mark.asyncio
+async def test_external_local_check_now_paints_the_selected_run_as_checking():
+    app = _build_test_app()
+    screen = WatchlistsCollectionsScreen(app)
+    host = WatchlistsContextHarness(screen)
+    started = asyncio.Event()
+    release = asyncio.Event()
+
+    async def check_now(**kwargs):
+        started.set()
+        await release.wait()
+        return {"status": "completed"}
+
+    async with host.run_test(size=(180, 50)) as pilot:
+        screen.active_section = "runs"
+        for _ in range(40):
+            await pilot.pause()
+            if screen.query("#watchlists-runs-pane"):
+                break
+
+        run = {
+            "id": "local:watchlist_run:5",
+            "run_id": 5,
+            "backend": "local",
+            "source_id": 5,
+            "source_title": "Feed five",
+            "status": "completed",
+        }
+        pane = screen.query_one("#watchlists-runs-pane", RunsPane)
+        pane.runs = [run]
+        await pilot.pause()
+        pane.select_run_by_id(run["id"])
+        for _ in range(40):
+            await pilot.pause()
+            if screen.selected_run is not None:
+                break
+
+        screen._controller.check_now = AsyncMock(side_effect=check_now)
+        screen.post_message(
+            CheckNowRequested(
+                {
+                    "id": "local:subscription:5",
+                    "source_id": 5,
+                    "name": "Feed five",
+                }
+            )
+        )
+        for _ in range(40):
+            await pilot.pause()
+            if started.is_set():
+                break
+
+        assert started.is_set(), "the gated Check now must reach the controller"
+        button = pane.query_one("#runs-rerun-button", Button)
+        assert str(button.label) == "Checking..."
+        assert button.disabled
+
+        release.set()
+        for _ in range(40):
+            await pilot.pause()
+            if not screen._checks_in_flight:
+                break
+        assert str(button.label) == "Re-run source"
+        assert not button.disabled
+
+
+@pytest.mark.asyncio
+async def test_server_rerun_deduplicates_one_job_without_blocking_another():
+    app = _build_test_app()
+    screen = WatchlistsCollectionsScreen(app)
+    screen.runtime_backend = "server"
+    host = WatchlistsContextHarness(screen)
+    started = {"job-5": asyncio.Event(), "job-6": asyncio.Event()}
+    release = asyncio.Event()
+    app.notify = Mock()
+
+    async def launch(*, runtime_backend, source_id, job_id):
+        started[job_id].set()
+        await release.wait()
+        return {"status": "queued"}
+
+    async with host.run_test(size=(180, 50)) as pilot:
+        screen._controller.launch_run = AsyncMock(side_effect=launch)
+        screen._request_runs_refresh = Mock()
+        app.notify.reset_mock()
+
+        screen.post_message(
+            RerunRunRequested(
+                runtime_backend="server", target_id="job-5", name="Job [five]"
+            )
+        )
+        for _ in range(40):
+            await pilot.pause()
+            if started["job-5"].is_set():
+                break
+
+        screen.post_message(
+            RerunRunRequested(
+                runtime_backend="server", target_id="job-5", name="Job [five]"
+            )
+        )
+        screen.post_message(
+            RerunRunRequested(
+                runtime_backend="server", target_id="job-6", name="Job six"
+            )
+        )
+        for _ in range(40):
+            await pilot.pause()
+            if started["job-6"].is_set():
+                break
+
+        assert started["job-6"].is_set(), "a different job must launch independently"
+        assert screen._controller.launch_run.await_count == 2
+        app.notify.assert_any_call(
+            "Already checking Job [five].", severity="warning", markup=False
+        )
+        assert screen._checks_in_flight == {
+            screen._rerun_operation_key("server", "job-5"),
+            screen._rerun_operation_key("server", "job-6"),
+        }
+
+        release.set()
+        for _ in range(40):
+            await pilot.pause()
+            if screen._request_runs_refresh.call_count == 2:
+                break
+        assert screen._checks_in_flight == set()
+        assert screen._reruns_in_flight == set()
+        assert screen._request_runs_refresh.call_count == 2
+
+
+def test_rerun_rejects_an_old_backend_request_before_launch_or_busy_state():
+    app = _build_test_app()
+    screen = WatchlistsCollectionsScreen(app)
+    screen.runtime_backend = "local"
+    screen._controller.launch_run = AsyncMock()
+    screen._set_check_now_busy = Mock()
+    screen.run_worker = Mock()
+
+    screen.handle_rerun_run_requested(
+        RerunRunRequested(
+            runtime_backend="server", target_id="job-5", name="Old server job"
+        )
+    )
+
+    screen._controller.launch_run.assert_not_awaited()
+    screen._set_check_now_busy.assert_not_called()
+    screen.run_worker.assert_not_called()
+    assert screen._checks_in_flight == set()
+    assert screen._reruns_in_flight == set()
+
+
+@pytest.mark.asyncio
+async def test_rerun_completion_after_backend_switch_does_not_repaint_old_state():
+    app = _build_test_app()
+    screen = WatchlistsCollectionsScreen(app)
+    screen.runtime_backend = "server"
+    screen._controller.launch_run = AsyncMock(return_value={"status": "completed"})
+    screen._set_check_now_busy = Mock()
+    screen._request_runs_refresh = Mock()
+    operation_key = screen._rerun_operation_key("local", 5)
+    screen._checks_in_flight.add(operation_key)
+    screen._reruns_in_flight.add(operation_key)
+
+    await screen._rerun_run(
+        runtime_backend="local",
+        target_id=5,
+        operation_key=operation_key,
+        name="Old local source",
+    )
+
+    screen._set_check_now_busy.assert_not_called()
+    screen._request_runs_refresh.assert_called_once_with()
+    assert screen._checks_in_flight == set()
+    assert screen._reruns_in_flight == set()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("status", ["queued", "running"])
+async def test_server_rerun_reports_started_and_launches_by_job_id(status):
+    app = _build_test_app()
+    screen = WatchlistsCollectionsScreen(app)
+    screen.runtime_backend = "server"
+    app.notify = Mock()
+    screen._controller.launch_run = AsyncMock(return_value={"status": status})
+    screen._request_runs_refresh = Mock()
+    operation_key = screen._rerun_operation_key("server", "job-7")
+    screen._checks_in_flight.add(operation_key)
+    screen._reruns_in_flight.add(operation_key)
+
+    await screen._rerun_run(
+        runtime_backend="server",
+        target_id="job-7",
+        operation_key=operation_key,
+        name="Feed [seven]",
+    )
+
+    screen._controller.launch_run.assert_awaited_once_with(
+        runtime_backend="server",
+        source_id=None,
+        job_id="job-7",
+    )
+    app.notify.assert_called_once_with(
+        "Re-run started: Feed [seven].",
+        severity="information",
+        markup=False,
+    )
+    assert screen._checks_in_flight == set()
+    assert screen._reruns_in_flight == set()
+    screen._request_runs_refresh.assert_called_once_with()
+
+
+@pytest.mark.asyncio
+async def test_local_rerun_reports_an_entirely_skipped_run():
+    app = _build_test_app()
+    screen = WatchlistsCollectionsScreen(app)
+    app.notify = Mock()
+    screen._controller.launch_run = AsyncMock(
+        return_value={
+            "status": "completed",
+            "stats": {"dispositions": {"skipped": 1}},
+        }
+    )
+    screen._request_runs_refresh = Mock()
+    operation_key = screen._rerun_operation_key("local", 5)
+    screen._checks_in_flight.add(operation_key)
+    screen._reruns_in_flight.add(operation_key)
+
+    await screen._rerun_run(
+        runtime_backend="local",
+        target_id=5,
+        operation_key=operation_key,
+        name="Feed [five]",
+    )
+
+    app.notify.assert_called_once_with(
+        "Re-run skipped: Feed [five] — a check of this source is already running.",
+        severity="warning",
+        markup=False,
+    )
+    assert screen._checks_in_flight == set()
+    assert screen._reruns_in_flight == set()
+    screen._request_runs_refresh.assert_called_once_with()
+
+
+@pytest.mark.asyncio
+async def test_rerun_reports_a_returned_failed_status():
+    app = _build_test_app()
+    screen = WatchlistsCollectionsScreen(app)
+    app.notify = Mock()
+    screen._controller.launch_run = AsyncMock(
+        return_value={"status": "failed", "error_msg": "source denied"}
+    )
+    screen._request_runs_refresh = Mock()
+    operation_key = screen._rerun_operation_key("local", 5)
+    screen._checks_in_flight.add(operation_key)
+    screen._reruns_in_flight.add(operation_key)
+
+    await screen._rerun_run(
+        runtime_backend="local",
+        target_id=5,
+        operation_key=operation_key,
+        name="Feed [five]",
+    )
+
+    app.notify.assert_called_once_with(
+        "Re-run failed: Feed [five] — source denied",
+        severity="error",
+        markup=False,
+    )
+    assert screen._checks_in_flight == set()
+    assert screen._reruns_in_flight == set()
+    screen._request_runs_refresh.assert_called_once_with()
+
+
+@pytest.mark.asyncio
+async def test_rerun_raises_with_a_safe_stated_error_and_warning_log():
+    app = _build_test_app()
+    screen = WatchlistsCollectionsScreen(app)
+    app.notify = Mock()
+    screen._controller.launch_run = AsyncMock(
+        side_effect=RuntimeError(
+            "unexpected /Users/private/feed.xml?token=secret"
+        )
+    )
+    screen._request_runs_refresh = Mock()
+    operation_key = screen._rerun_operation_key("local", 5)
+    screen._checks_in_flight.add(operation_key)
+    screen._reruns_in_flight.add(operation_key)
+
+    with patch(
+        "tldw_chatbook.UI.Screens.watchlists_collections_screen.logger"
+    ) as logger:
+        await screen._rerun_run(
+            runtime_backend="local",
+            target_id=5,
+            operation_key=operation_key,
+            name="Feed [five]",
+        )
+
+    logger.opt.assert_called_once_with(exception=True)
+    logger.opt.return_value.warning.assert_called_once()
+    app.notify.assert_called_once_with(
+        "Re-run failed: Feed [five].",
+        severity="error",
+        markup=False,
+    )
+    assert "/Users/private" not in app.notify.call_args.args[0]
+    assert "token=secret" not in app.notify.call_args.args[0]
+    assert screen._checks_in_flight == set()
+    assert screen._reruns_in_flight == set()
+    screen._request_runs_refresh.assert_called_once_with()
 
 
 @pytest.mark.asyncio

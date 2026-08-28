@@ -82,7 +82,10 @@ from ...Subscriptions.html_text import strip_control_characters
 from ...Subscriptions.item_dates import effective_date
 from ...Subscriptions.watchlist_item_page import WatchlistItemPage
 from ...Subscriptions.watchlist_bundle_service import WatchlistBundleService
-from ...Subscriptions.watchlist_normalizers import normalize_watchlist_item
+from ...Subscriptions.watchlist_normalizers import (
+    build_watchlist_item_id,
+    normalize_watchlist_item,
+)
 from ...Third_Party.textual_fspicker import FileSave, SelectDirectory
 from ...TTS.audio_player import play_audio_file
 from ...Utils.input_validation import sanitize_string, validate_text_input, validate_url
@@ -849,6 +852,9 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
         # re-seed it, the same rebuild-survival reason every other mirror in
         # this method exists).
         self._checks_in_flight: set[str] = set()
+        # Presentation-only subset: `_checks_in_flight` remains the single
+        # concurrency authority for both Check now and Re-run.
+        self._reruns_in_flight: set[str] = set()
         # Task 6: the SELECTED briefing's citations -- the rebuild-survival
         # mirror of `pane.citations`, resolved alongside `_selected_briefing`
         # inside `_load_briefings` (see that method). `_citation_item_lookup`
@@ -2619,6 +2625,7 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
             runs_pane.run_items = self._run_detail_items
             runs_pane.run_logs = self._run_detail_logs
             runs_pane.run_items_note = self._run_detail_items_note
+            self._seed_runs_operation_state(runs_pane)
             children.append(runs_pane)
         elif section == "items":
             # Seed the last-loaded rows (Finding 2, fix round 2) — see the
@@ -5902,6 +5909,7 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
         self._run_selection_generation += 1
         self.selected_run = event.run
         self._select_entity(event.run)
+        self._set_check_now_busy()
         # TASK-2306. Nothing in the product had ever written
         # `RunsPane.run_items` / `run_logs` -- only the pane's own unit test
         # did -- so the Items and Logs sub-regions of the Runs tab were
@@ -6522,30 +6530,103 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
     @on(RerunRunRequested)
     def handle_rerun_run_requested(self, event: RerunRunRequested) -> None:
         event.stop()
-        # A coroutine worker, never thread=True — this launches a check, so
-        # the in-flight guard's single-loop invariant applies (see
-        # `handle_check_now_requested`'s launch site).
+        backend = str(event.runtime_backend).lower()
+        target_id = event.target_id
+        if (
+            backend != self.runtime_backend
+            or target_id is None
+            or not str(target_id).strip()
+        ):
+            return
+        operation_key = self._rerun_operation_key(backend, target_id)
+        if operation_key in self._checks_in_flight:
+            self._notify_watchlists(
+                f"Already checking {event.name}.",
+                severity="warning",
+                markup=False,
+            )
+            return
+        self._checks_in_flight.add(operation_key)
+        self._reruns_in_flight.add(operation_key)
+        self._set_check_now_busy()
+        self._notify_watchlists(
+            f"Re-running {event.name}...",
+            severity="information",
+            markup=False,
+        )
         self.run_worker(
-            self._rerun_run(event.source_id),
-            exclusive=True,
+            self._rerun_run(
+                runtime_backend=backend,
+                target_id=target_id,
+                operation_key=operation_key,
+                name=event.name,
+            ),
             group="wc_rerun_run",
         )
 
-    async def _rerun_run(self, source_id: Any) -> None:
+    async def _rerun_run(
+        self,
+        *,
+        runtime_backend: str,
+        target_id: Any,
+        operation_key: str,
+        name: str,
+    ) -> None:
         try:
-            await self._controller.launch_run(
-                runtime_backend=self.runtime_backend,
-                source_id=source_id,
+            result = await self._controller.launch_run(
+                runtime_backend=runtime_backend,
+                source_id=target_id if runtime_backend == "local" else None,
+                job_id=target_id if runtime_backend == "server" else None,
             )
-            notify = getattr(self.app_instance, "notify", None)
-            if callable(notify):
-                notify("Run launched.", severity="information")
+            status = str((result or {}).get("status") or "").lower()
+            failure = self._check_failure_message(result)
+            if failure is not None:
+                self._notify_watchlists(
+                    f"Re-run failed: {name} — {failure}",
+                    severity="error",
+                    markup=False,
+                )
+            elif self._check_was_entirely_skipped(result):
+                self._notify_watchlists(
+                    f"Re-run skipped: {name} — "
+                    "a check of this source is already running.",
+                    severity="warning",
+                    markup=False,
+                )
+            elif status in self._TERMINAL_RUN_STATUSES:
+                found = (result or {}).get("found_count")
+                processed = (result or {}).get("processed_count")
+                if found is not None or processed is not None:
+                    message = (
+                        f"Re-run complete: {name} — "
+                        f"{found or 0} found, {processed or 0} new."
+                    )
+                else:
+                    message = f"Re-run complete: {name}."
+                self._notify_watchlists(
+                    message,
+                    severity="information",
+                    markup=False,
+                )
+            else:
+                self._notify_watchlists(
+                    f"Re-run started: {name}.",
+                    severity="information",
+                    markup=False,
+                )
         except Exception:
-            logger.opt(exception=True).warning("Failed to launch run.")
-            notify = getattr(self.app_instance, "notify", None)
-            if callable(notify):
-                notify("Failed to launch run.", severity="error")
-        self._refresh_overview_data()
+            logger.opt(exception=True).warning("Failed to re-run watchlist target.")
+            self._notify_watchlists(
+                f"Re-run failed: {name}.",
+                severity="error",
+                markup=False,
+            )
+        finally:
+            self._checks_in_flight.discard(operation_key)
+            self._reruns_in_flight.discard(operation_key)
+            if runtime_backend == self.runtime_backend:
+                self._set_check_now_busy()
+            self._request_runs_refresh()
 
     @on(PreviewRequested)
     def handle_preview_requested(self, event: PreviewRequested) -> None:
@@ -6595,19 +6676,62 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
             or "that source"
         )
 
+    @staticmethod
+    def _check_operation_key(runtime_backend: str, source_id: Any) -> str:
+        """Return the canonical concurrency key for a source check."""
+        kind = "subscription" if runtime_backend == "local" else "watchlist_source"
+        return build_watchlist_item_id(runtime_backend, kind, source_id)
+
+    @classmethod
+    def _rerun_operation_key(cls, runtime_backend: str, target_id: Any) -> str:
+        """Return the source/job concurrency key for a Runs-pane launch."""
+        if runtime_backend == "local":
+            return cls._check_operation_key("local", target_id)
+        return build_watchlist_item_id("server", "watchlist_job", target_id)
+
+    def _selected_run_operation_key(self) -> str | None:
+        """Return the active run selection's backend-specific launch key."""
+        run = self.selected_run
+        if run is None:
+            return None
+        target_id = (
+            run.get("source_id")
+            if self.runtime_backend == "local"
+            else run.get("job_id")
+        )
+        if target_id is None or not str(target_id).strip():
+            return None
+        return self._rerun_operation_key(self.runtime_backend, target_id)
+
+    def _seed_runs_operation_state(self, pane: RunsPane) -> None:
+        """Push screen-owned backend and launch state into one RunsPane."""
+        pane.runtime_backend = self.runtime_backend
+        pane.selected_operation_key = self._selected_run_operation_key()
+        pane.busy_operation_keys = frozenset(self._checks_in_flight)
+        pane.rerun_operation_keys = frozenset(self._reruns_in_flight)
+
+    @staticmethod
+    def _check_source_id(entity: Mapping[str, Any]) -> Any:
+        """Return a source row's raw backend id."""
+        source_id = entity.get("source_id")
+        if source_id is not None and str(source_id).strip():
+            return source_id
+        item_id = entity.get("id")
+        if isinstance(item_id, str) and ":" in item_id:
+            return item_id.rsplit(":", 1)[-1]
+        return item_id
+
     def _set_check_now_busy(self) -> None:
         """Paint `_checks_in_flight` onto whichever Check-now buttons exist.
 
         TASK-2309. `_checks_in_flight` is the source of truth; this only
-        pushes it onto panes that happen to be mounted right now -- Sources
-        and the Inspector each host their own copy of this button, and
-        either, both, or neither may be on screen for a given source at a
-        given moment (the active section may not be Sources, or the
-        Inspector's deepest selection may be a different source or none at
-        all). A pane that is not currently mounted needs nothing done to it
-        here: `_build_detail_pane`/`_build_inspector_pane` re-seed
-        `busy_source_ids` from this same set on every rebuild, so a freshly
-        constructed pane never has to be told separately.
+        pushes it onto panes that happen to be mounted right now. Sources and
+        the Inspector each host their own Check-now button; Runs mirrors the
+        same authority onto Re-run so work started elsewhere cannot be
+        duplicated there. A pane that is not currently mounted needs nothing
+        done here: `_build_detail_pane`/`_build_inspector_pane` re-seed from
+        these same sets on every rebuild, so a freshly constructed pane never
+        has to be told separately.
 
         `_dom_is_live`, not `is_mounted` (TASK-2200's mount-window lesson,
         applied throughout this screen): a check can complete inside the
@@ -6628,6 +6752,12 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
             pass
         else:
             inspector.busy_source_ids = busy_ids
+        try:
+            runs_pane = self.query_one("#watchlists-runs-pane", RunsPane)
+        except Exception:
+            pass
+        else:
+            self._seed_runs_operation_state(runs_pane)
 
     @on(CheckNowRequested)
     def handle_check_now_requested(self, event: CheckNowRequested) -> None:
@@ -6656,7 +6786,13 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
         entity = event.entity
         if entity is None:
             return
-        source_key = str(entity.get("id") or "")
+        runtime_backend = self.runtime_backend
+        source_id = self._check_source_id(entity)
+        source_key = (
+            self._check_operation_key(runtime_backend, source_id)
+            if source_id is not None and str(source_id).strip()
+            else ""
+        )
         name = self._check_now_entity_name(entity)
         if source_key and source_key in self._checks_in_flight:
             # Stated, not silent (AC#2): a second press while this exact
@@ -6678,7 +6814,14 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
         # lock-free set whose safety rests on every check entrant running on
         # the app's one event loop. Moving this off-loop needs a lock there.
         self.run_worker(
-            self._check_now_source(entity, source_key, name), group="wc_check_now"
+            self._check_now_source(
+                entity,
+                source_key,
+                name,
+                runtime_backend=runtime_backend,
+                source_id=source_id,
+            ),
+            group="wc_check_now",
         )
 
     #: Run statuses that mean the check did not succeed. `execute_run` catches
@@ -6760,6 +6903,9 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
         source: dict[str, Any],
         source_key: str | None = None,
         name: str | None = None,
+        *,
+        runtime_backend: str | None = None,
+        source_id: Any = None,
     ) -> None:
         """Run a check for one source and report what actually happened.
 
@@ -6804,12 +6950,18 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
         that cleanup would strand both Check-now buttons permanently
         disabled for a source no worker is actually still checking.
         """
+        runtime_backend = runtime_backend or self.runtime_backend
+        if source_id is None:
+            source_id = self._check_source_id(source)
         if source_key is None:
-            source_key = str(source.get("id") or "")
+            source_key = (
+                self._check_operation_key(runtime_backend, source_id)
+                if source_id is not None and str(source_id).strip()
+                else ""
+            )
         if name is None:
             name = self._check_now_entity_name(source)
         notify = getattr(self.app_instance, "notify", None)
-        source_id = source.get("id")
         #: Whether this check actually finished and therefore actually produced
         #: (or failed to produce) items. Review wave, Minor 4 -- see the rail
         #: refresh at the end of this method.
@@ -6817,7 +6969,7 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
         try:
             try:
                 result = await self._controller.check_now(
-                    runtime_backend=self.runtime_backend,
+                    runtime_backend=runtime_backend,
                     source_id=source_id,
                 )
             except Exception as exc:
