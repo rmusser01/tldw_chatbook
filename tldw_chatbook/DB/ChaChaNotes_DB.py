@@ -14980,6 +14980,48 @@ UPDATE db_schema_version
         row = cursor.fetchone()
         return dict(row) if row else None
 
+    def get_note_version_states(
+        self, note_ids: Sequence[str]
+    ) -> Dict[str, Dict[str, Any]]:
+        """Read only (version, deleted) for the given note ids, in one snapshot.
+
+        TASK-23027: the lasting-sync observer needs a change signal for every
+        bound note without hydrating each full row. Every notes write path
+        (``add_note``, ``update_note``, ``soft_delete_note``) bumps ``version``
+        under optimistic locking, so ``(version, deleted)`` changing -- or the
+        id disappearing -- is exactly "this note changed". Chunked at 500 ids
+        per statement (mirrors ``get_message_image_blobs``), all chunks inside
+        one read transaction so the result is a single consistent snapshot.
+
+        Args:
+            note_ids: Note UUIDs to probe; unknown ids are absent from the
+                result.
+
+        Returns:
+            Mapping of note id to ``{"version": int, "deleted": bool}``,
+            including soft-deleted rows so callers can distinguish a tombstone
+            from an id that never existed.
+        """
+        ids = [str(note_id) for note_id in note_ids if note_id]
+        if not ids:
+            return {}
+        result: Dict[str, Dict[str, Any]] = {}
+        with self.transaction() as cursor:
+            for start in range(0, len(ids), 500):
+                chunk = ids[start : start + 500]
+                placeholders = ",".join("?" for _ in chunk)
+                cursor.execute(
+                    "SELECT id, version, deleted FROM notes"
+                    f" WHERE id IN ({placeholders})",
+                    chunk,
+                )
+                for row in cursor.fetchall():
+                    result[row["id"]] = {
+                        "version": row["version"],
+                        "deleted": bool(row["deleted"]),
+                    }
+        return result
+
     def get_note_by_title(self, title: str) -> Optional[Dict[str, Any]]:
         """
         Retrieves a specific note by its title.

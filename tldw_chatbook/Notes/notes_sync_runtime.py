@@ -72,6 +72,7 @@ from tldw_chatbook.Notes.notes_sync_executor import (
     NotesSyncExecutor,
     NotesSyncKeepBothAuthority,
     NotesSyncUndoProjection,
+    run_worker_coroutine,
 )
 from tldw_chatbook.Notes.notes_sync_filesystem import (
     NotesSyncFileSnapshot,
@@ -410,6 +411,59 @@ class _ObservedBinding:
     file: NotesSyncFileSnapshot | None
 
 
+# TASK-23027: total content bytes one root's observation-reuse cache may
+# retain. Items past the budget are simply not cached (they are re-read next
+# pass), so the bound never affects correctness.
+_OBSERVATION_REUSE_BUDGET_BYTES = 32 * 1024 * 1024
+
+
+@dataclass(frozen=True, slots=True, repr=False)
+class _ObservationReuse:
+    """One root's previously observed snapshots, revalidated per pass.
+
+    TASK-23027: ``observe_root`` used to re-read every file and re-select
+    every note on every pass -- 350-370 ms, 1,000 SELECTs and 1,017 file opens
+    at N=1000 with nothing changed, at boot among other times. Each entry here
+    is reused only after a per-item freshness check against authoritative
+    state read fresh THIS pass:
+
+    - a file snapshot is reused only when the current discovery stat (device,
+      inode, size, mtime_ns, ctime_ns) equals the stat captured at the moment
+      the cached bytes were read (``reviewed_state``) -- the same metadata the
+      shipped watcher signature already trusts to declare a root unchanged;
+    - a note snapshot is reused only when one bulk ``observe_versions`` read
+      confirms the exact version the snapshot carries (every notes write path
+      bumps ``version`` under optimistic locking, and deletion is a version
+      bump too).
+
+    Bindings and root state are NOT cached: ``list_bindings`` runs fresh every
+    pass, so binding transitions need no signature coverage at all.
+    """
+
+    files: Mapping[str, NotesSyncFileSnapshot]
+    notes: Mapping[str, NotesSyncNoteSnapshot]
+
+    def __repr__(self) -> str:
+        return "_ObservationReuse(<private>)"
+
+
+def _file_snapshot_current(
+    snapshot: NotesSyncFileSnapshot, identity: object
+) -> bool:
+    """Whether ``snapshot``'s open-time stat equals the current discovery stat."""
+
+    if type(snapshot) is not NotesSyncFileSnapshot:
+        return False
+    state = snapshot.reviewed_state
+    return (
+        state.identity.device == identity.device
+        and state.identity.inode == identity.inode
+        and state.size == identity.size
+        and state.mtime_ns == identity.modified_ns
+        and state.ctime_ns == identity.changed_ns
+    )
+
+
 class _ProductionRuntimeAdapter:
     """Small concrete bridge over the completed TASK-19005/19007 boundaries."""
 
@@ -428,6 +482,7 @@ class _ProductionRuntimeAdapter:
         self._filesystems: dict[str, PosixNotesSyncFilesystem] = {}
         self._bundles: dict[str, Mapping[str, _ObservedBinding]] = {}
         self._root_signatures: dict[str, tuple[object, ...]] = {}
+        self._observation_reuse: dict[str, _ObservationReuse] = {}
         file_limit = min(recovery_capacity_bytes, 10 * 1024 * 1024)
         self._discovery_bounds = ImportBounds(
             max_files=1_000,
@@ -491,12 +546,29 @@ class _ProductionRuntimeAdapter:
         )
         if discovery.failures:
             raise RuntimeError("root_discovery_incomplete")
+        # TASK-23027: reuse is validated per item against state read fresh
+        # this pass; see _ObservationReuse. A miss (edit, add, rename, touch,
+        # or a cold cache) takes exactly the pre-existing read path.
+        reuse = self._observation_reuse.get(root.root_id)
         discovered: dict[str, NotesSyncFileSnapshot] = {}
+        reused_files = 0
         for candidate in discovery.candidates:
             relative_path = candidate.source.source_path.relative_to(
                 Path(root.canonical_path)
             ).as_posix()
             if Path(relative_path).suffix.casefold() not in _SYNC_FILE_EXTENSIONS:
+                continue
+            cached_file = reuse.files.get(relative_path) if reuse else None
+            if cached_file is not None and _file_snapshot_current(
+                cached_file, candidate.identity
+            ):
+                discovered[relative_path] = cached_file
+                # A cache hit removes this loop's only await; yield
+                # periodically so a fully warm pass cannot turn the whole
+                # walk into one contiguous event-loop stall.
+                reused_files += 1
+                if reused_files % 64 == 0:
+                    await asyncio.sleep(0)
                 continue
             try:
                 discovered[relative_path] = await asyncio.to_thread(
@@ -526,7 +598,28 @@ class _ProductionRuntimeAdapter:
         def observe_notes() -> dict[str, NotesSyncNoteSnapshot | None]:
             async def observe_all() -> dict[str, NotesSyncNoteSnapshot | None]:
                 observed_notes: dict[str, NotesSyncNoteSnapshot | None] = {}
-                for binding in bindings:
+                pending = list(bindings)
+                # TASK-23027: one bulk version read decides which cached note
+                # snapshots are still exact; only changed, deleted, missing,
+                # or never-cached notes pay the per-note observe. A failed
+                # bulk read propagates like any other observation failure.
+                if reuse is not None and reuse.notes and pending:
+                    current_versions = await notes.observe_versions(
+                        tuple(binding.note_id for binding in pending)
+                    )
+                    still_pending: list[NotesSyncBindingRecord] = []
+                    for binding in pending:
+                        cached_note = reuse.notes.get(binding.note_id)
+                        if (
+                            cached_note is not None
+                            and current_versions.get(binding.note_id)
+                            == cached_note.version
+                        ):
+                            observed_notes[binding.binding_id] = cached_note
+                        else:
+                            still_pending.append(binding)
+                    pending = still_pending
+                for binding in pending:
                     try:
                         observed_notes[binding.binding_id] = await notes.observe(
                             binding.note_id
@@ -537,7 +630,7 @@ class _ProductionRuntimeAdapter:
                         observed_notes[binding.binding_id] = None
                 return observed_notes
 
-            return asyncio.run(observe_all())
+            return run_worker_coroutine(observe_all())
 
         note_observations = await asyncio.to_thread(observe_notes)
         claimed_paths: set[str] = set()
@@ -649,6 +742,39 @@ class _ProductionRuntimeAdapter:
             raise RuntimeError("observation_capacity_exceeded")
         self._bundles[token] = MappingProxyType(bundle)
         self._root_signatures[root.root_id] = self._discovery_signature(discovery)
+        # TASK-23027: rebuild the reuse cache from this pass's observations,
+        # only on success -- a failed pass leaves the previous entries, which
+        # stay safe because every entry is revalidated before reuse. The
+        # rebuild is pure work over already-frozen locals, so it runs
+        # off-loop rather than widening this method's loop-side tail.
+
+        def build_reuse() -> _ObservationReuse:
+            reuse_budget = _OBSERVATION_REUSE_BUDGET_BYTES
+            reusable_files: dict[str, NotesSyncFileSnapshot] = {}
+            for relative_path, file in discovered.items():
+                if type(file) is not NotesSyncFileSnapshot:
+                    continue
+                cost = len(file.raw_bytes) + len(file.text)
+                if cost > reuse_budget:
+                    continue
+                reuse_budget -= cost
+                reusable_files[relative_path] = file
+            reusable_notes: dict[str, NotesSyncNoteSnapshot] = {}
+            for binding in bindings:
+                note = note_observations[binding.binding_id]
+                if note is None:
+                    continue
+                cost = len(note.content) + len(note.title)
+                if cost > reuse_budget:
+                    continue
+                reuse_budget -= cost
+                reusable_notes[note.note_id] = note
+            return _ObservationReuse(
+                files=MappingProxyType(reusable_files),
+                notes=MappingProxyType(reusable_notes),
+            )
+
+        self._observation_reuse[root.root_id] = await asyncio.to_thread(build_reuse)
         return request
 
     @staticmethod
@@ -899,6 +1025,7 @@ class _ProductionRuntimeAdapter:
         for filesystem in self._filesystems.values():
             filesystem.__exit__(None, None, None)
         self._filesystems.clear()
+        self._observation_reuse.clear()
 
 
 class NotesSyncRuntimeOwner:

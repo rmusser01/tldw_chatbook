@@ -261,6 +261,37 @@ class NotesScopeSyncAuthority:
             ) from None
         return self._snapshot(record, expected_note_id=note_id)
 
+    async def observe_versions(
+        self, note_ids: tuple[str, ...]
+    ) -> Mapping[str, int]:
+        """Read only the live version of each given note, in one snapshot.
+
+        TASK-23027: the change signal behind observation reuse. Every notes
+        write path bumps ``version`` under optimistic locking, so a note whose
+        version still matches a held :class:`NotesSyncNoteSnapshot` has not
+        changed since that snapshot was read. Deleted or missing ids are
+        absent from the result -- callers must treat absence as "changed" and
+        fall back to a full :meth:`observe`.
+        """
+
+        try:
+            states = await self._service.get_note_version_states_for_sync(
+                scope=self._scope,
+                note_ids=note_ids,
+                user_id=self._user_id,
+            )
+        except Exception as exc:
+            raise NotesSyncAuthorityError(
+                _bounded_reason(exc, "note_observation_failed")
+            ) from None
+        versions: dict[str, int] = {}
+        for note_id, state in states.items():
+            version = state.get("version")
+            if type(version) is not int or bool(state.get("deleted", False)):
+                continue
+            versions[str(note_id)] = version
+        return versions
+
     async def replace(
         self,
         expected: NotesSyncNoteSnapshot,

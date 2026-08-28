@@ -283,6 +283,18 @@ class NotesInteropService:
 
         return result
 
+    def get_note_version_states(
+        self, user_id: str, note_ids: Sequence[str]
+    ) -> Dict[str, Dict[str, Any]]:
+        """Read only (version, deleted) for the given note ids (TASK-23027).
+
+        One consistent snapshot for the lasting-sync observer's change check;
+        see ``CharactersRAGDB.get_note_version_states`` for the contract.
+        """
+
+        db = self._get_db(user_id)
+        return db.get_note_version_states(note_ids)
+
     def list_notes(
         self, user_id: str, limit: int = 100, offset: int = 0
     ) -> List[Dict[str, Any]]:
