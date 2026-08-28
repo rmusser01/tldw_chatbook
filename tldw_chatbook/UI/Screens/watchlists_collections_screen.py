@@ -9723,6 +9723,19 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
         }.get(str(cadence), f"Every {seconds}s")
         limitation = "Schedules run while the app is open."
         history = WatchlistsCollectionsScreen._schedule_history_copy(payload)
+        eligibility = ""
+        if cadence != "off":
+            next_value = payload.get("next_eligible_at")
+            if next_value is None:
+                try:
+                    next_value = next_briefing_eligibility(dict(payload))
+                except (TypeError, ValueError, OverflowError):
+                    next_value = None
+            eligibility = (
+                f"Next eligibility locally: {self._local_schedule_time(next_value)}."
+                if next_value is not None
+                else "Next eligibility: unavailable."
+            )
 
         gate_enabled = (
             bool(payload.get("global_gate_enabled"))
@@ -9744,7 +9757,7 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
             return (
                 f"Automation: {'saved ' if saved else ''}{cadence_label}, but scheduled briefings are turned off "
                 f"in Settings; the stored cadence is inactive. {limitation}"
-                f" {history}"
+                f" {eligibility} {history}"
             )
         if cadence == "off":
             return (
@@ -9755,50 +9768,29 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
             if not scheduler_running:
                 attention = "stored; scheduler stopped"
             else:
-                try:
-                    next_at = next_briefing_eligibility(dict(payload))
-                    attention = (
-                        "eligible now"
-                        if next_at <= datetime.now(timezone.utc)
-                        else f"next eligible {self._local_schedule_time(next_at)}"
-                    )
-                except (TypeError, ValueError, OverflowError):
-                    attention = "stored; next eligibility unavailable"
+                attention = "stored"
             return (
-                f"Automation: {cadence_label} · {attention}. {limitation} {history}"
+                f"Automation: {cadence_label} · {attention}. {limitation} "
+                f"{eligibility} {history}"
             )
         if payload.get("reload_acknowledged"):
-            next_copy = ""
-            next_raw = payload.get("next_eligible_at")
-            if isinstance(next_raw, str):
-                try:
-                    next_value = datetime.fromisoformat(next_raw)
-                    if next_value.tzinfo is None:
-                        next_value = next_value.replace(tzinfo=timezone.utc)
-                    next_local = next_value.astimezone()
-                    next_copy = (
-                        " Next eligible locally: "
-                        f"{next_local.strftime('%Y-%m-%d %H:%M %Z')}."
-                    )
-                except ValueError:
-                    pass
             return (
-                f"Automation: saved {cadence_label}; scheduler reloaded.{next_copy} "
-                f"{limitation} {history}"
+                f"Automation: saved {cadence_label}; scheduler reloaded. "
+                f"{limitation} {eligibility} {history}"
             )
         if not scheduler_running:
             return (
                 f"Automation: saved {cadence_label}; the scheduler is stopped and will load "
-                f"it when Chatbook next runs. {limitation} {history}"
+                f"it when Chatbook next runs. {limitation} {eligibility} {history}"
             )
         if payload.get("reload_requested"):
             return (
                 f"Automation: saved {cadence_label}; scheduler reload requested but not yet "
-                f"acknowledged. {limitation} {history}"
+                f"acknowledged. {limitation} {eligibility} {history}"
             )
         return (
             f"Automation: saved {cadence_label}; scheduler reload was not requested. "
-            f"Review Settings. {limitation} {history}"
+            f"Review Settings. {limitation} {eligibility} {history}"
         )
 
     @staticmethod

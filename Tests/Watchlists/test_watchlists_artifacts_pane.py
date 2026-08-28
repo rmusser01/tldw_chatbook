@@ -376,6 +376,17 @@ def _painted(screen, region) -> str:
     return "\n".join(lines)
 
 
+def _painted_widget(screen, widget) -> str:
+    """Only the cells the compositor painted for ``widget``."""
+    region = widget.region
+    strips = screen._compositor.render_strips()
+    lines: list[str] = []
+    for row in range(region.y, min(region.y + region.height, len(strips))):
+        line = "".join(segment.text for segment in strips[row])
+        lines.append(line[region.x : region.x + region.width])
+    return " ".join("\n".join(lines).split())
+
+
 def _assert_on_screen(widget, *, size, context: str) -> None:
     """Placement, not merely a non-zero height (the vacuous-guard lesson)."""
     width, height = size
@@ -2320,25 +2331,71 @@ async def test_the_cadence_pickers_tooltip_states_immediate_reload_and_app_open_
         assert "while the app is open" in tooltip
 
 
+@pytest.mark.parametrize(
+    ("receipt_state", "attention_copy"),
+    (
+        ("stored_stopped", "scheduler stopped"),
+        ("stored_disabled", "stored cadence is inactive"),
+        ("saved_unacknowledged", "not yet acknowledged"),
+    ),
+)
 @pytest.mark.parametrize("size", [(180, 50), (100, 30)])
 @pytest.mark.asyncio
-async def test_every_24_hours_copy_survives_normal_and_pressure_layouts(size):
-    """The canonical interval remains legible in both mounted layouts."""
+async def test_every_24_hours_receipt_is_painted_in_each_attention_state(
+    monkeypatch, size, receipt_state, attention_copy
+):
+    """The complete operational receipt is painted at normal and compact sizes."""
     app = _build_test_app()
     watchlist_id = _seed_watchlist(app)
+    if receipt_state == "stored_disabled":
+        monkeypatch.setattr(
+            screen_module,
+            "get_cli_setting",
+            lambda section, key, default=None: (
+                False
+                if section == "scheduling"
+                and key == "briefing_schedules_enabled"
+                else default
+            ),
+        )
 
-    async with _open_artifacts(app, watchlist_id, size=size) as (screen, pilot, host):
+    async with _open_artifacts(app, watchlist_id, size=size, visual=True) as (
+        screen,
+        pilot,
+        host,
+    ):
         await host.workers.wait_for_complete()
         await pilot.pause()
 
-        select = screen.query_one("#artifacts-cadence-select", Select)
-        option_labels = {value: str(label) for label, value in select._options}
-        assert option_labels[86_400] == "Every 24 hours"
-        assert "while the app is open" in str(select.tooltip)
+        payload = {
+            "cadence": "every_24_hours",
+            "briefing_cadence_seconds": 86_400,
+            "cadence_seconds": 86_400,
+            "last_attempt_at": "2026-08-26T12:00:00+00:00",
+            "last_success_at": "2026-08-25T12:00:00+00:00",
+            "global_gate_enabled": True,
+            "scheduler_running": True,
+            "reload_requested": True,
+            "reload_acknowledged": False,
+            "next_eligible_at": "2026-08-27T12:00:00+00:00",
+        }
+        pane = screen.query_one("#watchlists-artifacts-pane", ArtifactsPane)
+        pane.automation_receipt = screen._briefing_schedule_receipt_copy(
+            payload,
+            saved=receipt_state == "saved_unacknowledged",
+        )
+        await pilot.pause()
+
         receipt = screen.query_one("#artifacts-automation-receipt", Static)
-        receipt_copy = _static_text(receipt)
-        assert "Automation:" in receipt_copy
-        assert "while the app is open" in receipt_copy
+        painted = _painted_widget(screen, receipt)
+        assert receipt in screen._compositor.visible_widgets
+        assert "Automation:" in painted
+        assert "Every 24 hours" in painted
+        assert attention_copy in painted
+        assert "Schedules run while the app is open" in painted
+        assert "Next eligibility" in painted
+        assert "Last attempt:" in painted
+        assert "Last success:" in painted
 
 
 def test_cadence_scope_phrase_states_scheduling_is_off_when_the_kill_switch_is_off():

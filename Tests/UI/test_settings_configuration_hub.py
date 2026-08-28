@@ -1149,11 +1149,12 @@ def test_settings_domain_category_contracts_are_explicit_about_mutation_scope():
         SettingsCategoryId.IMAGE_GENERATION,
         SettingsCategoryId.VIDEO_GENERATION,
     }
-    # LIBRARY_RAG and IMAGE_GENERATION are the two "Domain Defaults" members
+    # LIBRARY_RAG, SCHEDULES, and IMAGE_GENERATION are the "Domain Defaults" members
     # with a full self-owned editor (Settings genuinely persists their
     # config) rather than a pure view-only pointer to another destination.
     mutable_categories = {
         SettingsCategoryId.LIBRARY_RAG,
+        SettingsCategoryId.SCHEDULES,
         SettingsCategoryId.IMAGE_GENERATION,
         SettingsCategoryId.VIDEO_GENERATION,
     }
@@ -1179,6 +1180,85 @@ def test_settings_domain_category_contracts_are_explicit_about_mutation_scope():
     assert "citations" in library_copy
     assert "snippets" in library_copy
     assert "active RAG profile" in library_copy
+
+    schedules_contract = contracts[SettingsCategoryId.SCHEDULES]
+    assert schedules_contract.owner_destination == "Settings"
+    assert "briefing_schedules_enabled" in " ".join(
+        schedules_contract.source_of_truth
+    )
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("size", [(180, 50), (100, 30)])
+async def test_settings_schedules_gate_is_painted_and_persists_recovery_action(
+    monkeypatch, tmp_path, size
+):
+    """F9 Settings owns the global gate at normal and compact sizes."""
+    config_path = tmp_path / "config.toml"
+    config_path.write_text(
+        "[scheduling]\nbriefing_schedules_enabled = false\n",
+        encoding="utf-8",
+    )
+    monkeypatch.setenv("TLDW_CONFIG_PATH", str(config_path))
+
+    app = _build_test_app()
+    app.apply_briefing_schedules_enabled(False)
+    assert app.scheduler_loop.queue.briefing_projection is None
+    host = StyledSettingsDestinationHarness(app, "settings")
+    async with host.run_test(size=size) as pilot:
+        screen = _active_destination_screen(host)
+        await _select_settings_category(
+            screen,
+            pilot,
+            SettingsCategoryId.SCHEDULES,
+            selector="#settings-briefing-schedules-toggle",
+        )
+
+        status = screen.query_one("#settings-briefing-schedules-status", Static)
+        button = screen.query_one("#settings-briefing-schedules-toggle", Button)
+        strips = screen._compositor.render_strips()
+        status_painted = " ".join(
+            "\n".join(
+                "".join(segment.text for segment in strips[row])[
+                    status.region.x : status.region.x + status.region.width
+                ]
+                for row in range(
+                    status.region.y,
+                    min(status.region.y + status.region.height, len(strips)),
+                )
+            ).split()
+        )
+        assert "Global briefing schedules: Disabled" in status_painted
+        assert "Stored collection cadences stay saved but inactive" in status_painted
+        assert "Chatbook is open" in status_painted
+        assert button in screen._compositor.visible_widgets
+        assert "Enable scheduled briefings" in str(button.label)
+        assert await pilot.click(button)
+        await host.workers.wait_for_complete()
+        await pilot.pause()
+
+        strips = screen._compositor.render_strips()
+        status_painted = " ".join(
+            "\n".join(
+                "".join(segment.text for segment in strips[row])[
+                    status.region.x : status.region.x + status.region.width
+                ]
+                for row in range(
+                    status.region.y,
+                    min(status.region.y + status.region.height, len(strips)),
+                )
+            ).split()
+        )
+        assert "Global briefing schedules: Enabled" in status_painted
+        assert "Disable scheduled briefings" in str(button.label)
+        assert app.scheduler_loop.queue.briefing_projection is not None
+
+    assert (
+        config_module.get_cli_setting(
+            "scheduling", "briefing_schedules_enabled", False
+        )
+        is True
+    )
 
 
 def test_settings_domain_category_ids_are_derived_from_contract_mapping():

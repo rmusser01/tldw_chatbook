@@ -229,7 +229,7 @@ def test_set_briefing_schedule_preserves_omitted_choices_and_commits_supplied_ch
 @pytest.mark.parametrize(
     ("gate", "running", "wait_result", "requested", "acknowledged"),
     [
-        (False, True, True, False, False),
+        (False, True, True, True, False),
         (True, False, False, True, False),
         (True, True, False, True, False),
     ],
@@ -261,6 +261,44 @@ def test_set_briefing_schedule_reports_disabled_stopped_and_timeout_honestly(
     assert result["global_gate_enabled"] is gate
     assert result["scheduler_running"] is running
     assert len(request_count) == int(requested)
+
+
+@pytest.mark.parametrize(
+    "selection_mode",
+    [
+        pytest.param([], id="array"),
+        pytest.param({}, id="object"),
+        pytest.param(True, id="boolean"),
+        pytest.param(1, id="integer"),
+        pytest.param(None, id="null"),
+    ],
+)
+def test_set_briefing_schedule_rejects_non_string_selection_mode_without_side_effects(
+    selection_mode,
+):
+    """A malformed JSON value cannot escape the fixed command boundary."""
+    writes = []
+    reloads = []
+
+    raw = _service(
+        set_briefing_schedule=lambda *args, **kwargs: writes.append((args, kwargs)),
+        request_reload=lambda: reloads.append(True),
+    ).set_briefing_schedule(
+        {
+            "collection_id": "local:watchlist:7",
+            "cadence": "every_24_hours",
+            "selection_mode": selection_mode,
+        }
+    )
+
+    assert json.loads(raw) == {
+        "status": "invalid_argument",
+        "retryable": False,
+        "message": "Briefing selection mode is invalid.",
+    }
+    assert "unhashable" not in raw
+    assert writes == []
+    assert reloads == []
 
 
 def test_set_briefing_schedule_refuses_server_mode_before_persistence():

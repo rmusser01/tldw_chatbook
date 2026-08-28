@@ -12634,6 +12634,15 @@ class TldwCli(
             default_briefing_provider=default_briefing_provider,
         )
 
+    def apply_briefing_schedules_enabled(self, enabled: bool) -> Any:
+        """Apply the persisted global briefing gate to existing runtime owners."""
+        if type(enabled) is not bool:
+            raise TypeError("enabled must be a bool")
+        projection = BriefingProjection(self.subscriptions_db) if enabled else None
+        self.scheduling_service.briefing_projection = projection
+        self.scheduler_loop.queue.briefing_projection = projection
+        return self.scheduler_loop.request_reload()
+
     def on_mount(self) -> None:
         """Configure logging and schedule post-mount setup."""
         self.watchlists_operation_coordinator = WatchlistsOperationCoordinator(

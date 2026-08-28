@@ -1160,7 +1160,6 @@ class ArtifactsPane(RecomposeCaptureGuard, Vertical):
                 f"{scope_text} Generate will use "
                 f"{self.default_provider_display}."
             )
-        yield Static(Text(scope_text), id="artifacts-scope-note")
         yield Static(
             Text(
                 self.automation_receipt
@@ -1168,6 +1167,7 @@ class ArtifactsPane(RecomposeCaptureGuard, Vertical):
             ),
             id="artifacts-automation-receipt",
         )
+        yield Static(Text(scope_text), id="artifacts-scope-note")
         with Horizontal(id="artifacts-toolbar", classes="destination-filter-strip"):
             # `compact=True` for the reason TASK-995 records for the Sources
             # toolbar: `.destination-filter-strip` is `height: 1`, and a

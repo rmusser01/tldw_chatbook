@@ -1225,6 +1225,16 @@ WatchlistPickerDialog {
     color: $ds-text-muted;
 }
 
+/* The operational receipt precedes lower-priority scope/table content and
+ * owns its wrapped height so compact terminals paint the complete cadence,
+ * attention, eligibility, and history state before the pane scrolls. */
+#artifacts-automation-receipt {
+    width: 100%;
+    height: auto;
+    min-height: 1;
+    text-wrap: wrap;
+}
+
 /* Selection-mode, default-preset, and cadence pickers (spec #2 phase 2a,
  * Task 4; cadence added by phase 4, Task 4).
  * `#artifacts-picker-toolbar` is a second `.destination-filter-strip` row,

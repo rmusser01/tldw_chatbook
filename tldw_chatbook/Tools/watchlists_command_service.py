@@ -710,7 +710,7 @@ class WatchlistsCommandService:
             write_arguments["default_preset_id"] = preset_id
         if "selection_mode" in values:
             selection_mode = values["selection_mode"]
-            if selection_mode not in _SELECTION_MODES:
+            if type(selection_mode) is not str or selection_mode not in _SELECTION_MODES:
                 return self._invalid("Briefing selection mode is invalid.")
             write_arguments["selection_mode"] = selection_mode
 
@@ -766,14 +766,18 @@ class WatchlistsCommandService:
         reload_requested = False
         reload_token: int | None = None
         reload_acknowledged = False
-        if gate_enabled and self._request_scheduler_reload is not None:
+        if self._request_scheduler_reload is not None:
             try:
                 token = self._request_scheduler_reload()
                 token_value = getattr(token, "value", None)
                 if type(token_value) is int and token_value > 0:
                     reload_requested = True
                     reload_token = token_value
-                    if scheduler_running and self._wait_scheduler_reload is not None:
+                    if (
+                        gate_enabled
+                        and scheduler_running
+                        and self._wait_scheduler_reload is not None
+                    ):
                         reload_acknowledged = bool(
                             self._wait_scheduler_reload(token, 1.0)
                         )
