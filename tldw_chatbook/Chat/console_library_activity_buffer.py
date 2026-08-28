@@ -105,6 +105,26 @@ class ConsoleLibraryActivityBuffer:
                 if key[0] == session_id
             )
 
+    def state(self, session_id: str) -> LibraryActivityFlushResult:
+        """Return the current bounded save state without attempting a write."""
+
+        with self._lock:
+            prior = self._final_results.get(session_id)
+            if prior is not None:
+                return prior
+            pending_count = self._pending_count(session_id)
+            if pending_count == 0:
+                return LibraryActivityFlushResult("saved", 0, 0)
+            attempts = self._attempts.get(session_id, 0)
+            exhausted = attempts >= self._max_attempts
+            return LibraryActivityFlushResult(
+                "failed" if exhausted else "pending",
+                0,
+                pending_count,
+                "retry_exhausted" if exhausted else None,
+                LIBRARY_ACTIVITY_NOT_SAVED_COPY if exhausted else None,
+            )
+
     def promotion_contribution(
         self, session_id: str
     ) -> LibraryActivityContribution | None:

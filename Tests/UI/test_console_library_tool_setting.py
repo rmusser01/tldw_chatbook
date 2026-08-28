@@ -108,6 +108,101 @@ def test_factory_reads_captured_context_without_rebuilding_controller(monkeypatc
     assert screen._console_chat_controller is controller
 
 
+def test_factory_wires_activity_capture_from_real_turn_context(monkeypatch):
+    from tldw_chatbook.Chat.console_chat_models import (
+        ConsoleMessageRole,
+        ConsoleProviderSelection,
+    )
+    from tldw_chatbook.Chat.console_dispatch_checkpoint import (
+        ConsoleEgressClass,
+        ConsoleLibraryItemScopeSnapshot,
+        ConsoleProviderIntent,
+        ConsoleResolvedDestination,
+        ConsoleTurnLibraryAuthority,
+    )
+    from tldw_chatbook.Chat.console_library_policy import (
+        AUTOMATIC_LIBRARY_SOURCE_TYPES,
+        ConsoleAssistantLibraryAccess,
+        ConsoleAutoRetrieve,
+        ConsoleLibraryPolicySnapshot,
+    )
+    from tldw_chatbook.Chat.console_turn_context import (
+        ConsoleTurnConfigurationSnapshot,
+        ConsoleTurnExecutionContext,
+    )
+    from tldw_chatbook.Chat.library_activity import LibraryActivityEvent
+
+    _patch_cli_config(monkeypatch, {"console": {"direct_library_tools": True}})
+    _app, screen = _build_screen()
+    store = screen._ensure_console_chat_store()
+    session = store.create_session(ephemeral=True)
+    user = store.append_message(
+        session.id,
+        role=ConsoleMessageRole.USER,
+        content="question",
+    )
+    authority = ConsoleTurnLibraryAuthority(
+        policy=ConsoleLibraryPolicySnapshot(
+            auto_retrieve=ConsoleAutoRetrieve.NEVER,
+            assistant_access=ConsoleAssistantLibraryAccess.ALLOWED,
+            policy_revision=1,
+            source="durable",
+            error_code=None,
+        ),
+        direct_library_tools=True,
+        source_types=AUTOMATIC_LIBRARY_SOURCE_TYPES,
+        scope_snapshot=ConsoleLibraryItemScopeSnapshot(
+            note_ids=(), media_ids=(), conversations_allowed=True
+        ),
+        provider_intent=ConsoleProviderIntent(
+            provider="openai", model="model-a", endpoint=None
+        ),
+        attempt_id="attempt-live",
+    )
+    context = ConsoleTurnExecutionContext(
+        configuration=ConsoleTurnConfigurationSnapshot.capture(
+            session_id=session.id,
+            provider_selection=ConsoleProviderSelection(
+                provider="openai", explicit_model="model-a"
+            ),
+        ),
+        library_authority=authority,
+        resolved_destination=ConsoleResolvedDestination(
+            provider="openai",
+            model="model-a",
+            endpoint_identity="https://api.openai.com",
+            egress_class=ConsoleEgressClass.PUBLIC_NETWORK,
+        ),
+    )
+
+    provider = screen._console_library_provider_factory(context)
+    event = LibraryActivityEvent(
+        version=1,
+        event_id="event-live",
+        attempt_id="attempt-live",
+        run_id="run-live",
+        actor_kind="primary",
+        parent_run_id=None,
+        library_provider="direct",
+        operation="library_search_notes",
+        status="succeeded",
+        result_count=1,
+        query_preview="query",
+        source_refs=(),
+        error_code=None,
+        error_summary=None,
+    )
+
+    assert provider is not None
+    assert provider._activity_attempt_id == "attempt-live"
+    assert provider._activity_sink is not None
+    provider._activity_sink(event)
+    pending = store.pending_library_activity(session.id)
+    assert [(item.owner_message_key, item.event) for item in pending] == [
+        (user.id, event)
+    ]
+
+
 def test_factory_assembles_service_only_from_local_app_attributes(monkeypatch):
     """The direct service is wired from the app's local service attributes --
     and only those (identity, not reconstruction)."""

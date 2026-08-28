@@ -2745,6 +2745,7 @@ class ConsoleTranscript(VerticalScroll):
             "console-transcript-rule",
             "console-transcript-summary-banner",
             "console-transcript-citation-sources",
+            "console-transcript-library-activity",
             "console-transcript-annotations",
             # Textual scrollbars carry the generic system-widget class; ignore them
             # defensively if a scrollbar click ever bubbles up to the transcript.
@@ -2819,6 +2820,7 @@ class ConsoleTranscript(VerticalScroll):
         self._fork_eligibility_by_message_id: dict[str, ConsoleForkEligibility] = {}
         self._original_attempt_previews: dict[str, str] = {}
         self._citation_counts: dict[str, int] = {}
+        self._library_activity_counts: dict[str, int] = {}
         # task-17169: screen-owned review-note previews keyed by native
         # message id -- a message with entries gains an inline marker row.
         self._annotation_previews: dict[str, tuple[str, ...]] = {}
@@ -4344,7 +4346,21 @@ class ConsoleTranscript(VerticalScroll):
             and count > 0
         }
 
-    def set_annotation_previews(self, previews: Mapping[str, tuple[str, ...]]) -> None:
+    def set_library_activity_counts(self, counts: Mapping[str, int]) -> None:
+        """Replace screen-owned Library activity counts by assistant message ID."""
+
+        self._library_activity_counts = {
+            message_id: count
+            for message_id, count in counts.items()
+            if isinstance(message_id, str)
+            and message_id
+            and type(count) is int
+            and count > 0
+        }
+
+    def set_annotation_previews(
+        self, previews: Mapping[str, tuple[str, ...]]
+    ) -> None:
         """Replace screen-owned review-note previews keyed by native message ID.
 
         task-17169 slice 2: the screen's sync loop pushes this every tick
@@ -6224,6 +6240,26 @@ class ConsoleTranscript(VerticalScroll):
                         renderable=f"Cited sources ({citation_count})",
                     )
                 )
+            library_activity_count = self._library_activity_counts.get(message.id, 0)
+            if (
+                message.role is ConsoleMessageRole.ASSISTANT
+                and library_activity_count > 0
+            ):
+                rows.append(
+                    _TranscriptRow(
+                        key=f"library-activity:{message.id}",
+                        kind="library-activity",
+                        signature=(
+                            "library-activity",
+                            message.id,
+                            library_activity_count,
+                        ),
+                        message=message,
+                        renderable=(
+                            f"Library activity ({library_activity_count} actions)"
+                        ),
+                    )
+                )
             annotation_notes = self._annotation_previews.get(message.id)
             if annotation_notes:
                 # task-17169: inline review-note marker under the annotated
@@ -6754,6 +6790,14 @@ class ConsoleTranscript(VerticalScroll):
                 row.renderable,
                 id=f"console-citation-sources-{row.message.id}",
                 classes="console-transcript-citation-sources",
+            )
+            button.native_message_id = row.message.id
+            return button
+        if row.kind == "library-activity" and row.message is not None:
+            button = Button(
+                row.renderable,
+                id=f"console-library-activity-{row.message.id}",
+                classes="console-transcript-library-activity",
             )
             button.native_message_id = row.message.id
             return button

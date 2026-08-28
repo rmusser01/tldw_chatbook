@@ -75,6 +75,7 @@ from .dictation import ConsoleDictationController
 from .fleet import ConsoleFleetLifecycleController
 from .hands_free import ConsoleHandsFreeController
 from .image import ConsoleImageController
+from .library_activity import ConsoleLibraryActivityController
 from .library_policy import ConsoleLibraryPolicyController
 from .message import ConsoleMessageController
 from .prompt_queue import (
@@ -260,6 +261,14 @@ def _review_selection_capture_policy_bindings(
     )
 
 
+def _console_widget_or_none(screen: Any, selector: str) -> Any | None:
+    """Return one mounted Console widget without exposing query failures."""
+    try:
+        return screen.query_one(selector)
+    except QueryError:
+        return None
+
+
 async def _show_console_feedback_comment(
     screen: Any, action: str, quote: str
 ) -> str | None:
@@ -409,8 +418,8 @@ def build_console_controllers(
     """Construct the Console screen's controllers and coordinators.
 
     Assigns, in this order, `screen._image`, `screen._video`,
-    `screen._retrieval`, `screen._library_policy`, `screen._skill`,
-    `screen._workspace`, `screen._character`, `screen._fleet`,
+    `screen._retrieval`, `screen._library_policy`, `screen._library_activity`,
+    `screen._skill`, `screen._workspace`, `screen._character`, `screen._fleet`,
     `screen._session`, `screen._dictation`, `screen._hands_free`,
     `screen._realtime`, `screen._message`, `screen._console_auto_speak`,
     `screen._prompts`, `screen._agent`, `screen._raw_cli`,
@@ -738,6 +747,20 @@ def build_console_controllers(
                 conversation_id
             )
         ),
+    )
+    screen._library_activity = ConsoleLibraryActivityController(
+        app_instance=screen.app_instance,
+        ensure_store=lambda: screen._ensure_console_chat_store(),
+        transcript=lambda: _console_widget_or_none(
+            screen, "#console-native-transcript"
+        ),
+        inspector_rail=lambda: _console_widget_or_none(
+            screen, "#console-right-rail"
+        ),
+        citation_counts=lambda: screen._console_citation_counts,
+        reveal_inspector=lambda: screen._reveal_console_inspector_rail(),
+        sync_native_ui=lambda: screen._sync_native_console_chat_ui(),
+        notify=lambda *args, **kwargs: screen.app_instance.notify(*args, **kwargs),
     )
     screen._character = ConsoleCharacterController(
         app_config_accessor=(

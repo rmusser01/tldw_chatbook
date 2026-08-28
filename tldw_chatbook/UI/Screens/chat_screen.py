@@ -5009,83 +5009,8 @@ class ChatScreen(BaseAppScreen):
     def _console_library_provider_factory(
         self, turn_context: ConsoleTurnExecutionContext | None = None
     ):
-        """Resolve the Library retrieval provider for one Console agent run.
-
-        ADR-079: the final turn authority pins the Library mode for one run;
-        a missing context fails closed. Direct mode assembles
-        ``LocalLibraryToolService`` purely from the app's local service
-        attributes (any missing backend degrades its own tools to
-        ``feature_unavailable``); off mode binds the bounded RAG provider to
-        the app-owned ``library_rag_search_service``.
-        """
-        if turn_context is None:
-            return None
-        app = self.app_instance
-        direct_library_tools = turn_context.library_authority.direct_library_tools
-        if not direct_library_tools:
-            from tldw_chatbook.Agents.library_rag_tool_provider import (
-                LibraryRagToolProvider,
-            )
-
-            return LibraryRagToolProvider(
-                getattr(app, "library_rag_search_service", None)
-            )
-        from tldw_chatbook.Agents.library_tool_provider import LibraryToolProvider
-        from tldw_chatbook.Library.local_library_tool_service import (
-            LocalLibraryToolService,
-        )
-
-        media_chunk_service = None
-        media_reading_service = getattr(app, "local_media_reading_service", None)
-        media_db = getattr(app, "media_db", None) or getattr(
-            media_reading_service, "media_db", None
-        )
-        if media_db is not None or media_reading_service is not None:
-            # The chunk tools need the media DB (row/chunk reads, template
-            # interop) on top of the reading service; built here so a missing
-            # handle degrades only its own tools, like every other backend.
-            from tldw_chatbook.Chunking.chunking_interop_library import (
-                get_chunking_service,
-            )
-            from tldw_chatbook.Library.local_media_chunk_tool_service import (
-                LocalMediaChunkToolService,
-            )
-
-            media_chunk_service = LocalMediaChunkToolService(
-                media_db,
-                media_reading_service,
-                template_interop=(
-                    get_chunking_service(media_db) if media_db is not None else None
-                ),
-                # chunking-agent-tools (Task 5, spec §6): the app's policy
-                # enforcer closes the Console-direct gate on the WRITING
-                # chunk tools (`library_save_chunk_spec`,
-                # `library_rechunk_media`) -- denials surface as named
-                # payloads before any backend touch. The same handle every
-                # other tool-bearing service receives
-                # (`service_policy_enforcer`, built off the app's runtime
-                # policy context).
-                policy_enforcer=getattr(app, "service_policy_enforcer", None),
-            )
-        service = LocalLibraryToolService(
-            media_service=media_reading_service,
-            notes_service=getattr(app, "notes_service", None),
-            prompt_service=getattr(app, "local_prompt_service", None),
-            skills_service=getattr(app, "local_skills_service", None),
-            conversation_service=getattr(app, "local_chat_conversation_service", None),
-            collections_service=getattr(app, "local_library_collections_service", None),
-            media_chunk_service=media_chunk_service,
-            # student-workflow (spec §4.3): the note-save folder seam -- the
-            # app's scope service (folders live only there); a missing handle
-            # degrades folder requests to feature_unavailable like every
-            # other optional backend.
-            notes_scope_service=getattr(app, "notes_scope_service", None),
-            # student-workflow (spec §6): the writing note tool's
-            # Console-direct gate (the chunk-tools pattern) -- the same app
-            # enforcer handle the writing chunk tools receive above.
-            policy_enforcer=getattr(app, "service_policy_enforcer", None),
-        )
-        return LibraryToolProvider(service)
+        """Delegate run-pinned Library provider construction."""
+        return self._library_activity.build_provider(turn_context)
 
     def _ensure_console_chat_controller(self) -> ConsoleChatController:
         """Return the native Console chat controller with fresh selection state.
@@ -10664,6 +10589,12 @@ class ChatScreen(BaseAppScreen):
                             else self._build_console_live_work_source_readiness_card()
                         )
                     ),
+                    library_activity_view=self._library_activity.view,
+                    library_activity_citation_count=(
+                        self._library_activity.selected_citation_count()
+                    ),
+                    library_activity_flush_result=self._library_activity.flush_result,
+                    library_activity_retry=self._library_activity.retry,
                     inspector_more_open=rail_state.inspector_more_open,
                 )
                 right_rail.can_focus = True
@@ -12121,6 +12052,9 @@ class ChatScreen(BaseAppScreen):
                 if type(count) is int and count > 0
             }
             transcript.set_citation_counts(visible_citation_counts)
+            visible_library_activity_counts = self._library_activity.sync_transcript(
+                transcript
+            )
             transcript.set_original_attempt_previews(
                 self._console_original_attempt_previews.copy()
             )
@@ -12215,6 +12149,7 @@ class ChatScreen(BaseAppScreen):
                 turn_activity,
                 tuple(sorted(self._console_original_attempt_previews.items())),
                 tuple(sorted(visible_citation_counts.items())),
+                tuple(sorted(visible_library_activity_counts.items())),
                 # task-18515: an annotation added, edited, or deleted must
                 # force a refresh on its own. Without this the marker row
                 # only changed when something ELSE in the key did -- phase 4
@@ -14584,6 +14519,7 @@ class ChatScreen(BaseAppScreen):
                 computed on demand when not given.
         """
         self._sync_console_pending_delete_confirmation()
+        self._library_activity.sync_projection()
         control_state = self._build_console_control_state(
             self._pending_console_launch_context
         )
@@ -16615,6 +16551,11 @@ class ChatScreen(BaseAppScreen):
         This ensures buttons work properly with screen-based navigation.
         """
         button_id = event.button.id
+
+        if event.button.has_class("console-transcript-library-activity"):
+            event.stop()
+            self._library_activity.open_selected(event.button)
+            return
 
         # Log for debugging
         logger.info(f"ChatScreen on_button_pressed called with button: {button_id}")

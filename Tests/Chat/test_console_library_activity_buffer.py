@@ -120,6 +120,7 @@ def test_final_flush_is_one_bounded_attempt() -> None:
 
     assert first.status == second.status == "failed"
     assert first.pending_count == second.pending_count == 1
+    assert buffer.state("session-1") == first
     assert calls == 1
 
 
@@ -140,6 +141,7 @@ def test_promotion_failure_rolls_back_rows_and_retains_activity_for_retry(tmp_pa
     )
     store.admit_library_activity(session.id, user.id, _event(1))
     before = store.pending_library_activity(session.id)
+    revision_before_promotion = store.library_activity_revision(session.id)
 
     with pytest.raises(RuntimeError, match="injected promotion failure"):
         store.promote_ephemeral_session(
@@ -159,6 +161,7 @@ def test_promotion_failure_rolls_back_rows_and_retains_activity_for_retry(tmp_pa
     assert activity[0].message_id == durable_user_id
     assert activity[0].turn_id == durable_user_id
     assert store.pending_library_activity(session.id) == ()
+    assert store.library_activity_revision(session.id) > revision_before_promotion
 
 
 def test_close_performs_one_final_flush_for_a_durable_session(tmp_path) -> None:
@@ -182,3 +185,71 @@ def test_close_performs_one_final_flush_for_a_durable_session(tmp_path) -> None:
         if row.event_kind == "library_activity"
     ]
     assert len(activity) == 1
+
+
+def test_store_projects_pending_and_durable_activity_to_native_assistant(tmp_path) -> None:
+    db = CharactersRAGDB(tmp_path / "activity-projection.db", "activity-test")
+    store = ConsoleChatStore(persistence=ChatPersistenceService(db))
+    session = store.create_session(ephemeral=True)
+    user = store.append_message(
+        session.id, role=ConsoleMessageRole.USER, content="question"
+    )
+    assistant = store.append_message(
+        session.id, role=ConsoleMessageRole.ASSISTANT, content="answer"
+    )
+    store.promote_ephemeral_session(session.id)
+    store.admit_library_activity(session.id, user.id, _event(1))
+
+    pending_view, pending_counts, pending_state = store.library_activity_snapshot(
+        session.id, assistant.id
+    )
+
+    assert [item.event.event_id for item in pending_view.actions] == ["event-1"]
+    assert pending_counts == ((assistant.id, 1),)
+    assert pending_state.status == "pending"
+    assert store.current_library_activity_turn_id(session.id) == user.id
+
+    assert store.flush_library_activity(session.id).status == "saved"
+    durable_view, durable_counts, durable_state = store.library_activity_snapshot(
+        session.id, assistant.id
+    )
+
+    assert [item.event.event_id for item in durable_view.actions] == ["event-1"]
+    assert durable_counts == ((assistant.id, 1),)
+    assert durable_state.status == "saved"
+
+
+def test_store_projection_follows_active_branch_without_losing_other_activity() -> None:
+    store = ConsoleChatStore()
+    session = store.create_session(ephemeral=True)
+    first_user = store.append_message(
+        session.id, role=ConsoleMessageRole.USER, content="first question"
+    )
+    first_assistant = store.append_message(
+        session.id, role=ConsoleMessageRole.ASSISTANT, content="first answer"
+    )
+    store.admit_library_activity(session.id, first_user.id, _event(1))
+
+    second_user = store.create_sibling(
+        first_user.id,
+        role=ConsoleMessageRole.USER,
+        content="second question",
+    )
+    second_assistant = store.append_message(
+        session.id, role=ConsoleMessageRole.ASSISTANT, content="second answer"
+    )
+    store.admit_library_activity(session.id, second_user.id, _event(2))
+
+    second_view, second_counts, _state = store.library_activity_snapshot(
+        session.id, second_assistant.id
+    )
+    assert [item.event.event_id for item in second_view.actions] == ["event-2"]
+    assert second_counts == ((second_assistant.id, 1),)
+
+    store.set_active_leaf(session.id, first_assistant.id)
+    first_view, first_counts, _state = store.library_activity_snapshot(
+        session.id, first_assistant.id
+    )
+    assert [item.event.event_id for item in first_view.actions] == ["event-1"]
+    assert first_counts == ((first_assistant.id, 1),)
+    assert len(store.pending_library_activity(session.id)) == 2
