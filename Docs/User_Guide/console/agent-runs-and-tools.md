@@ -1004,7 +1004,7 @@ No folder setup is required. Relative paths used by Chatbook's built-in file
 tools and local `fs_*`/Git tools resolve in that Chat's scratch space unless a
 named Workspace explicitly adds authority:
 
-| Console context | Built-in file tools | Local `fs_*` / Git |
+| Console context | Built-in file tools | Local `fs_*` / Git and virtual CLI |
 |---|---|---|
 | Chat in Default | Private scratch only | Private scratch only |
 | Named Workspace, no selected project folder | Private scratch plus live explicit folder bindings | Private scratch only |
@@ -1026,6 +1026,28 @@ temporary residue, but a later process never discovers or attaches it.
 This boundary describes Chatbook-managed local tools only. Attachments,
 Library/RAG content, generated media, provider-hosted tools, and external MCP
 servers keep their own storage and authority contracts.
+
+### Read-only virtual CLI
+
+Console agents can see one model tool named `virtual_cli`. It accepts a
+structured `command` plus an `argv` array; it does not accept a command-line
+string, parse pipes or redirection, expand environment variables, or invoke a
+host shell. Its fixed read-only commands are `ls`, `cat`, `grep`, `find`,
+`stat`, `git_status`, `git_diff`, `git_log`, `git_blame`, and `git_branches`.
+
+The tool is discoverable whenever local tools are enabled, but discoverability
+is not authorization. Before each invocation, Chatbook resolves the selected
+command under the separate **Virtual CLI (read-only)** group in MCP ▸ Tools.
+Every command has its own Allow, Ask, or Off setting, defaults to Ask when no
+decision exists, and remains independent from the equivalent `fs_*` or Git
+tool permission. Allowing `cat` does not allow `grep`, and allowing `fs_read`
+does not allow virtual `cat`.
+
+Approved commands dispatch directly to the same confined read-only filesystem
+and Git implementations used by Chatbook's local tools. The active Chat scratch
+or selected Workspace binding, protected-path checks, Git exclusions, result
+limits, global tool kill switch, and approval audit therefore remain in force.
+There is no escape hatch to arbitrary programs or shell syntax.
 
 ### Raw CLI is not a local tool sandbox
 

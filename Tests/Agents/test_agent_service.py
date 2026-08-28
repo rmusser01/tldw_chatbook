@@ -2831,6 +2831,36 @@ def test_make_invoke_tool_binds_exact_subagent_actor_on_timeout_thread(
     assert current_run_actor() is None
 
 
+def test_make_invoke_tool_binds_native_call_id_on_tool_thread(db, monkeypatch):
+    """Providers can scope one approval verdict to one native tool call."""
+    from tldw_chatbook.Agents.agent_models import ToolCall
+    from tldw_chatbook.Agents.run_context import current_tool_call_id
+
+    service = _service_with_chat(db, lambda **_kwargs: provider_reply("unused"))
+    seen = []
+
+    def invoke_by_name(_name, _args):
+        seen.append(current_tool_call_id())
+        return ToolResult(ok=True, content="ok")
+
+    monkeypatch.setattr(service.registry, "invoke_by_name", invoke_by_name)
+    cfg = AgentConfig(
+        model="test-model",
+        system_prompt="s",
+        allowed_tools=("calculator",),
+        budget=RunBudget(max_tool_call_seconds=1.0),
+    )
+    invoke_tool = service._make_invoke_tool(
+        cfg,
+        disclosed_names={"calculator"},
+        run_id="run-1",
+    )
+
+    assert invoke_tool(ToolCall("calculator", {}, "native-call-7")).ok is True
+    assert seen == ["native-call-7"]
+    assert current_tool_call_id() == ""
+
+
 def test_make_invoke_tool_wraps_slow_custom_tool_in_timeout(db, monkeypatch):
     """A blocking custom tool provider must not wedge the run past
     max_tool_call_seconds -- the boundary this task exists to add."""

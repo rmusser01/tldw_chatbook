@@ -3014,6 +3014,7 @@ def _compose_run_registry_and_allowed(
     scratch_root: Path | None = None,
     scratch_lease: Callable[[], ContextManager[Path]] | None = None,
     local_provider: Any | None = None,
+    virtual_cli_provider: Any | None = None,
     library_provider: Any | None = None,
     library_authority: Any | None = None,
 ) -> tuple[ToolCatalogRegistry, tuple[str, ...], tuple[str, ...], tuple[str, ...]]:
@@ -3022,16 +3023,15 @@ def _compose_run_registry_and_allowed(
     Called once per ``run_reply`` invocation (never cached across runs --
     the per-run freshness doctrine: a skill approved/edited/revoked since
     the last run must take effect on the very next one). Registers
-    ``BuiltinToolProvider`` first, then the already-composed local
-    provider, then (only when there is at least one non-colliding eligible
+    ``BuiltinToolProvider`` first, then the already-composed local and virtual
+    CLI providers, then (only when there is at least one non-colliding eligible
     entry) a ``SkillToolProvider`` snapshot, then (P5-T6, only when there
     is at least one non-colliding eligible entry) an already-composed MCP
-    provider -- shadowing order: builtins beat local beat skills beat MCP,
-    matching the allow-list's own ``builtins ∪ local ∪ skills ∪ mcp``
-    ordering. Local registers BEFORE skills/MCP (first-registrant-wins),
-    AND local names join the skill/MCP collision sets -- so a malicious
-    MCP server or skill can never shadow the fs_* names at ANY layer (the
-    registry's own resolution, or ``AgentService.invoke_tool``'s
+    provider -- shadowing order: builtins beat local/virtual CLI, which beat
+    skills, which beat MCP. Local model-tool names join the skill/MCP collision
+    sets, so a malicious MCP server or skill can never shadow the fs_* or
+    virtual_cli names at ANY layer (the registry's own resolution, or
+    ``AgentService.invoke_tool``'s
     skill-runner-first dispatch, which registration order alone cannot
     protect). For a temporary session (``ephemeral=True``) neither the
     skill nor the MCP provider is registered at all.
@@ -3082,6 +3082,8 @@ def _compose_run_registry_and_allowed(
         local_provider: This run's already-composed local tool provider
             (``LocalToolProvider``), or ``None`` when local tools are
             disabled this run.
+        virtual_cli_provider: This run's independently gated read-only virtual
+            CLI provider, or ``None`` when local tools are disabled this run.
         library_provider: task-1337 -- this run's already-composed Library
             retrieval provider: the descriptor-backed ``LibraryToolProvider``
             when direct Library tools are enabled, or the bounded
@@ -3099,10 +3101,10 @@ def _compose_run_registry_and_allowed(
 
     Returns:
         ``(registry, allowed_tools, builtin_names, local_names)`` -- the
-        per-run registry, its full allow-list (builtins + local + eligible
+        per-run registry, its full allow-list (builtins + local/virtual CLI + eligible
         skills + eligible MCP tools + spawn), just the builtin names, and
-        just the local names. ``_BridgeSkillRunner`` intersects a skill's
-        own declared ``allowed_tools`` against builtins + local (never
+        just the local model-tool names. ``_BridgeSkillRunner`` intersects a
+        skill's own declared ``allowed_tools`` against builtins + local
         against skill names, so a skill's sub-agent can never call another
         skill, and never against runtime/MCP names -- a skill narrows, it
         never grants), and ``run_reply`` uses the local names to keep its
@@ -3126,6 +3128,9 @@ def _compose_run_registry_and_allowed(
     if local_provider is not None:
         registry.register_provider(local_provider)
         local_names = tuple(e.name for e in local_provider.list_catalog())
+    if virtual_cli_provider is not None:
+        registry.register_provider(virtual_cli_provider)
+        local_names += tuple(e.name for e in virtual_cli_provider.list_catalog())
     # task-1337: Library retrieval (direct tools OR the bounded RAG fallback)
     # registers after builtins/local and before skills/MCP; its names join
     # every collision filter below so a skill or MCP tool can never shadow
@@ -3215,6 +3220,7 @@ def build_console_first_request_plan(
     mcp_provider: Any | None,
     builtin_gate: Any | None,
     local_provider: Any | None,
+    virtual_cli_provider: Any | None = None,
     library_provider: Any | None,
     library_authority: Any | None,
     workspace_id: str | None,
@@ -3238,6 +3244,7 @@ def build_console_first_request_plan(
         or mcp_provider is not None
         or builtin_gate is not None
         or local_provider is not None
+        or virtual_cli_provider is not None
         or library_provider is not None
         or scratch_root is not None
         or scratch_lease is not None
@@ -3254,6 +3261,7 @@ def build_console_first_request_plan(
                 scratch_root=scratch_root,
                 scratch_lease=scratch_lease,
                 local_provider=local_provider,
+                virtual_cli_provider=virtual_cli_provider,
                 library_provider=library_provider,
                 library_authority=library_authority,
             )
@@ -3694,6 +3702,7 @@ class ConsoleAgentBridge:
         mcp_provider: Any | None = None,
         builtin_gate: Any | None = None,
         local_provider: Any | None = None,
+        virtual_cli_provider: Any | None = None,
         scratch_root: Path | None = None,
         scratch_lease: Callable[[], ContextManager[Path]] | None = None,
         turn_skill_bindings: tuple[str, ...] = (),
@@ -3736,6 +3745,7 @@ class ConsoleAgentBridge:
             mcp_provider=mcp_provider,
             builtin_gate=builtin_gate,
             local_provider=local_provider,
+            virtual_cli_provider=virtual_cli_provider,
             library_provider=None,
             library_authority=None,
             workspace_id=workspace_id,
@@ -3819,6 +3829,7 @@ class ConsoleAgentBridge:
         request_skill_install_confirm: Callable[[str], bool] | None = None,
         request_skill_script_confirm: Callable[[dict], dict] | None = None,
         local_provider: Any | None = None,
+        virtual_cli_provider: Any | None = None,
         library_provider: Any | None = None,
         library_authority: Any | None = None,
         # PR2a Task 7: called with the run id of every sub-agent this turn
@@ -3972,6 +3983,7 @@ class ConsoleAgentBridge:
             mcp_provider=mcp_provider,
             builtin_gate=builtin_gate,
             local_provider=local_provider,
+            virtual_cli_provider=virtual_cli_provider,
             library_provider=library_provider,
             library_authority=library_authority,
             workspace_id=run_workspace_id,
@@ -4633,6 +4645,9 @@ class ConsoleAgentBridge:
                 else None,
                 getattr(local_provider, "stamp_scope", None)
                 if local_provider is not None
+                else None,
+                getattr(virtual_cli_provider, "stamp_scope", None)
+                if virtual_cli_provider is not None
                 else None,
             )
             if scope is not None

@@ -266,6 +266,30 @@ def test_user_guide_explains_weak_match_similarity_provenance() -> None:
         assert contract in normalized
 
 
+def test_console_guide_documents_the_virtual_cli_security_boundary() -> None:
+    normalized = " ".join(
+        CONSOLE_AGENT_TOOLS_DOCUMENT.read_text(encoding="utf-8").split()
+    )
+    assert "one model tool named `virtual_cli`" in normalized
+    assert "does not accept a command-line string" in normalized
+    assert "discoverability is not authorization" in normalized
+    assert "Every command has its own Allow, Ask, or Off setting" in normalized
+    assert "allowing `fs_read` does not allow virtual `cat`" in normalized
+    for command in (
+        "ls",
+        "cat",
+        "grep",
+        "find",
+        "stat",
+        "git_status",
+        "git_diff",
+        "git_log",
+        "git_blame",
+        "git_branches",
+    ):
+        assert f"`{command}`" in normalized
+
+
 def test_local_library_tools_documentation_uses_current_standalone_inventory() -> None:
     text = LOCAL_LIBRARY_TOOLS_DOCUMENT.read_text(encoding="utf-8")
     normalized = " ".join(text.split())

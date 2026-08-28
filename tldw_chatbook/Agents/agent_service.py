@@ -120,7 +120,7 @@ from .native_tools import (
     provider_supports_native_tools,
     schemas_to_openai_tools,
 )
-from .run_context import CurrentRunActor, use_run_actor
+from .run_context import CurrentRunActor, use_run_actor, use_tool_call_id
 from .run_log import _setting
 from .run_log_eviction import (
     DEFAULT_MIN_RECENT_ROUNDS,
@@ -2279,7 +2279,7 @@ class AgentService:
             )
 
             def _invoke() -> ToolResult:
-                with use_run_actor(actor):
+                with use_run_actor(actor), use_tool_call_id(call.call_id):
                     return self.registry.invoke_by_name(call.name, call.args)
 
             if timeout and timeout > 0:

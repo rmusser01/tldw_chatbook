@@ -90,6 +90,15 @@ kill switch remains authoritative. The controls read back persisted config
 truth after saving, and a failed save restores the persisted value instead of
 leaving an optimistic toggle on screen.
 
+Tools mode also lists a distinct **Virtual CLI (read-only)** local group. The
+model sees one structured `virtual_cli` tool, while this group exposes separate
+Allow/Ask/Off rows for `ls`, `cat`, `grep`, `find`, `stat`, `git_status`,
+`git_diff`, `git_log`, `git_blame`, and `git_branches`. These permissions are
+independent from equivalent `fs_*` and Git tool rows. The virtual tool accepts
+only a fixed command enum and an `argv` array, never a shell string; being
+listed in the catalog does not authorize a command, and an unset command stays
+Ask until it is approved.
+
 ## Other registration gates (Servers mode ▸ Tool gates)
 
 Select the built-in server's row in Servers mode; its detail pane has a

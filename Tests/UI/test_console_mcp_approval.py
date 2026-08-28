@@ -25,7 +25,7 @@ from textual import on
 # Harness apps load the consolidated widget CSS the real app loads
 # (TASK-15450); without it the widgets under test mount unstyled.
 from Tests.UI.consolidated_css import ConsolidatedCSSApp
-from textual.app import App, ComposeResult
+from textual.app import ComposeResult
 from textual.widgets import Button, Select, Static
 
 import tldw_chatbook
@@ -1082,6 +1082,7 @@ def _pending(
     server_label: str = "Srv",
     reason: str = "ask",
     arguments: dict | None = None,
+    call_id: str = "",
 ) -> MCPPendingCall:
     return MCPPendingCall(
         llm_name=llm_name,
@@ -1090,6 +1091,7 @@ def _pending(
         server_label=server_label,
         arguments=arguments or {"a": 1},
         reason=reason,
+        call_id=call_id,
     )
 
 
@@ -1167,6 +1169,37 @@ def test_request_mcp_approvals_routes_one_decision_to_duplicate_names():
     decisions = controller.request_mcp_approvals(pending)
 
     assert decisions == {"mcp__srv__tool": "always_allow"}
+
+
+def test_request_mcp_approvals_preserves_native_call_ids_as_verdict_keys():
+    """Two same-tool native calls remain independently addressable."""
+    controller, _ = _build_controller()
+    received: list[dict | None] = []
+    controller.app = _FakeApp()
+    controller.set_pending_approval = received.append
+    controller.mcp_approval_timeout_seconds = lambda: 30.0
+    pending = [
+        _pending(call_id="call-a", arguments={"path": "a.txt"}),
+        _pending(call_id="call-b", arguments={"path": "b.txt"}),
+    ]
+
+    def _resolve_soon() -> None:
+        time.sleep(0.05)
+        payload = received[-1]
+        assert payload is not None
+        assert [call["call_id"] for call in payload["calls"]] == [
+            "call-a",
+            "call-b",
+        ]
+        controller.resolve_pending_approval(
+            {"call-a": "approve_once", "call-b": "deny"},
+            round_id=payload["round_id"],
+        )
+
+    threading.Thread(target=_resolve_soon).start()
+    decisions = controller.request_mcp_approvals(pending)
+
+    assert decisions == {"call-a": "approve_once", "call-b": "deny"}
 
 
 def test_request_mcp_approvals_timeout_denies_with_timeout_for_all_undecided():
