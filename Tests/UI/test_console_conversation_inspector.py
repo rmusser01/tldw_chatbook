@@ -18,6 +18,7 @@ from dataclasses import replace
 from types import SimpleNamespace
 
 import pytest
+from loguru import logger
 from textual.app import ComposeResult
 from textual.containers import VerticalScroll
 from textual.widgets import (
@@ -32,6 +33,7 @@ from textual.worker import WorkerState
 
 from Tests.UI.consolidated_css import ConsolidatedCSSApp
 
+import tldw_chatbook.Widgets.Console.console_conversation_inspector as inspector_module
 from tldw_chatbook.Chat.console_chat_models import ConsoleContextSnapshot
 from tldw_chatbook.Chat.console_chat_controller import (
     CapturePolicySnapshot,
@@ -54,6 +56,7 @@ from tldw_chatbook.Chat.console_exchange_capture import (
 )
 from tldw_chatbook.Chat.console_project_instructions import EPHEMERAL_ORIGIN_KEY
 from tldw_chatbook.Chat.provider_usage import ProviderUsage
+from tldw_chatbook.Utils.log_sanitizer import content_fingerprint
 from tldw_chatbook.Widgets.Console.console_conversation_inspector import (
     CLOSE_BUTTON_ID,
     TAB_COSTS,
@@ -200,6 +203,46 @@ class InspectorHarness(ConsolidatedCSSApp):
 
     def on_mount(self) -> None:
         self.push_screen(ConsoleConversationInspector(**self._modal_kwargs))
+
+
+@pytest.mark.asyncio
+async def test_rejected_export_logs_safe_path_and_preserves_notification(
+    monkeypatch: pytest.MonkeyPatch, tmp_path
+) -> None:
+    path = tmp_path / "task-19864-private-inspector-export.json"
+    raw_exception = f"TASK-19864 export rejected for {path}"
+
+    def reject_path(*_args: object, **_kwargs: object) -> None:
+        raise ValueError(raw_exception)
+
+    monkeypatch.setattr(inspector_module, "validate_path", reject_path)
+    app = InspectorHarness(**_default_kwargs())
+    notifications: list[tuple[str, str | None]] = []
+    records: list[str] = []
+    async with app.run_test(size=(120, 44)) as pilot:
+        await pilot.pause()
+        modal = app.screen
+        monkeypatch.setattr(
+            modal,
+            "notify",
+            lambda message, *args, severity=None, **kwargs: notifications.append(
+                (message, severity)
+            ),
+        )
+        sink_id = logger.add(lambda message: records.append(str(message)))
+        try:
+            assert modal._validated_export_destination(path) is None
+        finally:
+            logger.remove(sink_id)
+
+    assert notifications == [(f"Save failed (ValueError): {path}", "error")]
+    rendered = "".join(records)
+    assert "Rejected export destination" in rendered
+    assert f"path_sha256={content_fingerprint(str(path))}" in rendered
+    assert "exception_type=ValueError" in rendered
+    assert str(path) not in rendered
+    assert path.name not in rendered
+    assert raw_exception not in rendered
 
 
 def _rendered_title(collapsible: Collapsible) -> str:

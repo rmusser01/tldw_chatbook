@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import re
+from pathlib import Path
 from textwrap import dedent
 
 import pytest
@@ -12,6 +13,16 @@ from scripts.check_persistent_diagnostic_inventory import (
     render_diff,
     scan_path_diagnostic_candidates,
 )
+
+
+TASK_19864_OWNER_PATHS = (
+    "tldw_chatbook/Utils/file_handlers.py",
+    "tldw_chatbook/DB/ChaChaNotes_DB.py",
+    "tldw_chatbook/UI/Screens/change_review_screen.py",
+    "tldw_chatbook/Widgets/Console/console_conversation_inspector.py",
+    "tldw_chatbook/Workspaces/git_workspace.py",
+)
+_REPOSITORY_ROOT = Path(__file__).resolve().parents[2]
 
 
 def _has_path_expression_label(labels: list[str], expected: str) -> bool:
@@ -831,3 +842,26 @@ def test_path_privacy_rules_are_inventory_metadata() -> None:
 
     assert "path_privacy_rules" in report
     assert "legacy_unreviewed" in report
+
+
+def test_task_19864_owner_files_have_no_raw_path_diagnostics() -> None:
+    """Every owned file must reach zero candidates without first-match hiding."""
+    candidates_by_owner = {
+        relative_path: scan_path_diagnostic_candidates(
+            (_REPOSITORY_ROOT / relative_path).read_text(encoding="utf-8"),
+            filename=relative_path,
+        )
+        for relative_path in TASK_19864_OWNER_PATHS
+    }
+    violations = {
+        path: candidates
+        for path, candidates in candidates_by_owner.items()
+        if candidates
+    }
+
+    if violations:
+        pytest.fail(
+            "TASK-19864 owner path diagnostics remain; complete candidate sets:\n"
+            + json.dumps(violations, indent=2, sort_keys=True),
+            pytrace=False,
+        )

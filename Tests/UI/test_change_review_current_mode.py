@@ -26,12 +26,14 @@ import time
 from pathlib import Path
 
 import pytest
+from loguru import logger
 from rich.text import Text
 from textual.app import App
 from textual.widgets import Select, Static, Tree
 from textual.worker import WorkerFailed
 
 import tldw_chatbook.config as config_module
+import tldw_chatbook.Utils.path_validation as path_validation_module
 from tldw_chatbook.DB.AgentRuns_DB import AgentRunsDB
 from tldw_chatbook.UI.Screens.change_review_screen import (
     _land_on_ui,
@@ -42,6 +44,7 @@ from tldw_chatbook.UI.Screens.change_review_screen import (
 )
 from tldw_chatbook.Workspaces.change_tracking import ShadowRepoService
 from tldw_chatbook.Workspaces.change_turn_tracker import ChangeTurnTracker
+from tldw_chatbook.Utils.log_sanitizer import content_fingerprint
 
 BUNDLE = (
     Path(__file__).resolve().parents[2]
@@ -242,6 +245,104 @@ def plain_review_fixture(tmp_path):
         db=db, service=service, conversation_id=conv
     )
     return provider, root, db, run1
+
+
+@pytest.mark.asyncio
+async def test_untracked_writable_validation_failure_logs_safe_metadata(
+    monkeypatch, plain_review_fixture, tmp_path
+) -> None:
+    provider, root, _db, _run1 = plain_review_fixture
+    workspace = tmp_path / "task-19864-private-untracked-workspace"
+    raw_exception = f"TASK-19864 validation failed for {workspace}"
+    traceback_local = f"TASK-19864 validation-local={workspace}"
+
+    def fake_setting(section, key=None, default=None):
+        if section == "change_review" and key == "git_actions":
+            return True
+        if section == "console" and key == "workspace_root":
+            return str(workspace)
+        return default
+
+    monkeypatch.setattr(config_module, "get_cli_setting", fake_setting)
+    app = _Harness(provider, workspace_roots=[str(root)])
+    async with app.run_test(size=(160, 48)) as pilot:
+        screen = await _open_screen(pilot, app)
+        await _wait_for_detection(pilot, screen)
+
+        def fail_validation(_raw: object) -> Path:
+            local_path_value = traceback_local
+            assert local_path_value
+            raise RuntimeError(raw_exception)
+
+        monkeypatch.setattr(
+            path_validation_module, "validate_path_simple", fail_validation
+        )
+        records: list[str] = []
+        sink_id = logger.add(lambda message: records.append(str(message)))
+        try:
+            screen._refresh_untracked_writable_banner()
+        finally:
+            logger.remove(sink_id)
+
+        assert screen._untracked_writable_banners == []
+
+    rendered = "".join(records)
+    assert "change_review: skipping untracked-writable disclosure" in rendered
+    assert f"root_sha256={content_fingerprint(str(workspace))}" in rendered
+    assert "exception_type=RuntimeError" in rendered
+    assert str(workspace) not in rendered
+    assert workspace.name not in rendered
+    assert raw_exception not in rendered
+    assert traceback_local not in rendered
+
+
+@pytest.mark.asyncio
+async def test_current_status_worker_failure_logs_safe_metadata(
+    monkeypatch, tmp_path
+) -> None:
+    _patch_git_actions(monkeypatch, True)
+    root = _init_repo(tmp_path / "task-19864-private-status-workspace")
+    database = AgentRunsDB(tmp_path / "runs.db", client_id="task-19864")
+    service = ShadowRepoService(data_dir=tmp_path / "appdata")
+    provider = AgentRunsChangeReviewProvider(
+        db=database, service=service, conversation_id="task-19864"
+    )
+    raw_exception = f"TASK-19864 status failed for {root}"
+    traceback_local = f"TASK-19864 status-local={root}"
+
+    def fail_status(_root: object) -> None:
+        local_workspace_value = traceback_local
+        assert local_workspace_value
+        raise RuntimeError(raw_exception)
+
+    provider.current_status = fail_status
+    app = _Harness(provider, workspace_roots=[str(root)])
+    records: list[str] = []
+    banner = ""
+    async with app.run_test(size=(160, 48)) as pilot:
+        screen = await _open_screen(pilot, app)
+        await _wait_for_detection(pilot, screen)
+        sink_id = logger.add(lambda message: records.append(str(message)))
+        try:
+            screen.query_one(
+                "#change-review-turn-select", Select
+            ).value = CURRENT_MODE_SENTINEL
+            await _wait_idle(pilot, app, "change-review-current")
+            await pilot.pause()
+            banner = _static_text(screen, "#change-review-banner")
+        finally:
+            logger.remove(sink_id)
+
+    assert root.name in banner
+    assert raw_exception in banner
+    rendered = "".join(records)
+    assert "change_review: working-tree status failed" in rendered
+    assert f"root_sha256={content_fingerprint(str(root))}" in rendered
+    assert "exception_type=RuntimeError" in rendered
+    assert str(root) not in rendered
+    assert root.name not in rendered
+    assert raw_exception not in rendered
+    assert traceback_local not in rendered
 
 
 # ---------------------------------------------------------------------------
