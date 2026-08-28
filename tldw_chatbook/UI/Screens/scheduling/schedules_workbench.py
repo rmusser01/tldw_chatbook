@@ -38,6 +38,7 @@ from .task_detail import (
     TaskDetail,
     TaskInspector,
     _format_next_run,
+    _managed_elsewhere_notice,
     _task_status,
     _task_type_label,
     _was_missed_while_away,
@@ -573,7 +574,7 @@ class SchedulesWorkbench(BaseAppScreen):
         service = self._scheduling_service
         if service is None:
             self.app_instance.notify(
-                "Scheduling service is unavailable; cannot save reminder.",
+                "Scheduling service is unavailable; cannot save the scheduled task.",
                 severity="warning",
             )
             return
@@ -583,17 +584,17 @@ class SchedulesWorkbench(BaseAppScreen):
                 if task_id is None:
                     await service.create_reminder(form_data)
                     self.app_instance.notify(
-                        "Reminder created.", severity="information"
+                        "Scheduled task created.", severity="information"
                     )
                 else:
                     await service.update_reminder(task_id, form_data)
                     self.app_instance.notify(
-                        "Reminder updated.", severity="information"
+                        "Scheduled task updated.", severity="information"
                     )
             except Exception:  # noqa: BLE001
                 logger.exception("Failed to save reminder")
                 self.app_instance.notify(
-                    "Failed to save reminder. Check the form values and try again.",
+                    "Failed to save the scheduled task. Check the form values and try again.",
                     severity="error",
                 )
             await self.load_tasks()
@@ -651,14 +652,14 @@ class SchedulesWorkbench(BaseAppScreen):
         service = self._scheduling_service
         if service is None:
             self.app_instance.notify(
-                "Scheduling service is unavailable; cannot run the reminder.",
+                "Scheduling service is unavailable; cannot run the scheduled task.",
                 severity="warning",
             )
             return
         loop = getattr(self.app_instance, "scheduler_loop", None)
         if loop is None:
             self.app_instance.notify(
-                "The scheduler is not running; cannot run reminders manually.",
+                "The scheduler is not running; cannot run scheduled tasks manually.",
                 severity="warning",
             )
             return
@@ -671,7 +672,7 @@ class SchedulesWorkbench(BaseAppScreen):
                 if result is None:
                     self.app_instance.notify(
                         f"'{task.title}' did not run -- it is missing, the "
-                        "reminder handler is unavailable, or its handler "
+                        "handler for it is unavailable, or its handler "
                         "failed (the task's status shows which).",
                         severity="warning",
                     )
@@ -700,7 +701,7 @@ class SchedulesWorkbench(BaseAppScreen):
         service = self._scheduling_service
         if service is None:
             self.app_instance.notify(
-                "Scheduling service is unavailable; cannot update reminder.",
+                "Scheduling service is unavailable; cannot update the scheduled task.",
                 severity="warning",
             )
             return
@@ -970,8 +971,10 @@ class SchedulesWorkbench(BaseAppScreen):
             )
             return
         if not isinstance(task, ReminderTask):
+            # task-23106: say who owns the row instead of exposing the
+            # internal reminder/projection split.
             self.app_instance.notify(
-                "Only reminder tasks can be edited here.",
+                _managed_elsewhere_notice(task, verb="edit"),
                 severity="warning",
             )
             return
@@ -1013,7 +1016,7 @@ class SchedulesWorkbench(BaseAppScreen):
             service = self._service()
             if service is None:
                 self.app_instance.notify(
-                    "Scheduling service is unavailable; cannot update reminders.",
+                    "Scheduling service is unavailable; cannot update the scheduled tasks.",
                     severity="warning",
                 )
                 return
@@ -1052,8 +1055,10 @@ class SchedulesWorkbench(BaseAppScreen):
             )
             return
         if not isinstance(task, ReminderTask):
+            # task-23106: say who owns the row instead of exposing the
+            # internal reminder/projection split.
             self.app_instance.notify(
-                "Only reminder tasks can be enabled or disabled here.",
+                _managed_elsewhere_notice(task, verb="enable or disable"),
                 severity="warning",
             )
             return

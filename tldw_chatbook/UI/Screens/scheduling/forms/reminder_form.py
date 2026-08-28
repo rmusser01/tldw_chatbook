@@ -346,7 +346,7 @@ class ReminderForm(ModalScreen):
 
             with VerticalScroll(id="reminder-form-fields"):
                 yield Label("Title:", classes="form-label")
-                yield Input(placeholder="Enter reminder title...", id="reminder-title")
+                yield Input(placeholder="Name this scheduled task…", id="reminder-title")
 
                 yield Label("Body:", classes="form-label")
                 yield TextArea(id="reminder-body")

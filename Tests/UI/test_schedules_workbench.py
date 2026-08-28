@@ -845,7 +845,7 @@ async def test_create_reminder_action_saves_new_reminder():
         assert service.created[0]["title"] == "New reminder"
         assert service.created[0]["schedule_kind"] == "one_time"
         notifications = list(pilot.app._notifications)
-        assert any(n.message == "Reminder created." for n in notifications)
+        assert any(n.message == "Scheduled task created." for n in notifications)
 
 
 @pytest.mark.asyncio
@@ -876,7 +876,7 @@ async def test_edit_reminder_action_updates_existing_reminder():
         assert service.updated[0][0] == "task-1"
         assert service.updated[0][1]["title"] == "Updated title"
         notifications = list(pilot.app._notifications)
-        assert any(n.message == "Reminder updated." for n in notifications)
+        assert any(n.message == "Scheduled task updated." for n in notifications)
 
 
 def test_sync_completed_event():

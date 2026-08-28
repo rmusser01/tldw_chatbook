@@ -233,6 +233,31 @@ def _task_type_label(task: ReminderTask | ScheduledTask) -> str:
     return task.type.replace("_", " ").title()
 
 
+#: Which screen owns each read-only projection row (task-23106). Briefings
+#: are configured from the Watchlists screen, so both point there.
+_PROJECTION_MANAGERS: dict[str, str] = {
+    "watchlist_job": "Watchlists",
+    "briefing_job": "Watchlists",
+}
+
+
+def _managed_elsewhere_notice(
+    task: ScheduledTask, verb: str = "edit"
+) -> str:
+    """Copy for rows managed by another system (task-23106).
+
+    Schedules shows these rows read-only; the copy names the owning
+    screen instead of exposing the internal reminder/projection split.
+    """
+    manager = _PROJECTION_MANAGERS.get(task.type)
+    if manager:
+        return f"Managed by {manager} — {verb} it there."
+    return (
+        f"Managed by another screen — this row is read-only here; "
+        f"{verb} it where it was created."
+    )
+
+
 def _task_schedule_label(task: ReminderTask | ScheduledTask) -> str:
     """Return a human-readable schedule summary for the task."""
     if isinstance(task, ReminderTask):
@@ -302,6 +327,12 @@ class TaskDetail(Vertical):
         margin: 0 0 0 11;
         height: auto;
     }
+
+    .scheduling-detail-managed {
+        color: $text-muted;
+        height: auto;
+        margin-top: 1;
+    }
     """
 
     def __init__(self, *args, **kwargs) -> None:
@@ -363,21 +394,28 @@ class TaskDetail(Vertical):
                 id="scheduling-task-detail-missed",
                 classes="scheduling-detail-missed",
             )
+            # task-23106: rows managed by other systems say so, and where
+            # to edit them, instead of silently hiding the action row.
+            yield Static(
+                "",
+                id="scheduling-task-detail-managed",
+                classes="scheduling-detail-managed",
+            )
         yield Horizontal(
             Button(
                 "Edit",
                 id="scheduling-edit-task",
                 variant="primary",
-                tooltip="Edit this reminder.",
+                tooltip="Edit this scheduled task.",
             ),
             Button(
                 "Run now",
                 id="scheduling-run-now",
                 variant="primary",
-                tooltip="Dispatch this reminder immediately, without waiting "
-                "for its schedule. A real dispatch: a recurring reminder's "
-                "next occurrence is computed from now, a one-time reminder "
-                "is consumed. Works on disabled reminders without enabling "
+                tooltip="Dispatch this scheduled task immediately, without "
+                "waiting for its schedule. A real dispatch: a recurring "
+                "task's next occurrence is computed from now, a one-time "
+                "task is consumed. Works on disabled tasks without enabling "
                 "them.",
             ),
             Button(
@@ -493,6 +531,11 @@ class TaskDetail(Vertical):
             missed_notice = self.query_one("#scheduling-task-detail-missed", Static)
             missed_notice.update("")
             missed_notice.display = False
+            managed_notice = self.query_one(
+                "#scheduling-task-detail-managed", Static
+            )
+            managed_notice.update("")
+            managed_notice.display = False
             self.query_one("#schedules-follow-in-console", Button).label = (
                 "Follow in Console"
             )
@@ -501,6 +544,16 @@ class TaskDetail(Vertical):
         empty_state.display = False
         metadata.display = True
         lifecycle.display = isinstance(task, ReminderTask)
+
+        # task-23106: a row Schedules does not own says who owns it and
+        # where to edit it, instead of only hiding the action row.
+        managed_notice = self.query_one("#scheduling-task-detail-managed", Static)
+        if isinstance(task, ReminderTask):
+            managed_notice.update("")
+            managed_notice.display = False
+        else:
+            managed_notice.update(_managed_elsewhere_notice(task))
+            managed_notice.display = True
 
         follow_button = self.query_one("#schedules-follow-in-console", Button)
         short_title = task.title if len(task.title) <= 24 else f"{task.title[:23]}…"
@@ -520,9 +573,9 @@ class TaskDetail(Vertical):
             if _task_status(task) in {TaskStatus.MISSED, TaskStatus.TIMED_OUT}:
                 run_now_button.label = "Run now (retry)"
                 run_now_button.tooltip = (
-                    "Retry this reminder now: its last dispatch ran and "
-                    "failed. Dispatches immediately through the same path "
-                    "the scheduler uses."
+                    "Retry this scheduled task now: its last dispatch ran "
+                    "and failed. Dispatches immediately through the same "
+                    "path the scheduler uses."
                 )
             else:
                 run_now_button.label = "Run now"
