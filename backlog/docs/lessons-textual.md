@@ -263,6 +263,30 @@ every interleaved run.
 
 ---
 
+## A cached widget reference cannot be validated by `is_mounted` — it lags detachment, and `_pruning` marks the corpse first
+
+**TASK-23025, 2026-08-28.** To get Library resize frames and focus changes off
+the per-frame DOM walks (71.6 queries/frame), invariant chrome references were
+cached and validated with `cached.is_mounted` before use. The existing test
+`test_compact_notes_list_keeps_its_scroll_offset_across_a_sync` caught the
+hole: a targeted canvas sync REPLACES `#library-notes-list`, and the scroll
+restore, resolving its owner through the cache, scrolled the doomed old list
+("notes list scroll fell 12 -> 0"). Mechanism, from Textual 8.2.8 source:
+`App._prune` marks the whole pruned subtree `_pruning = True` and posts
+`Prune()` *synchronously*, but the actual detach (`_unregister` →
+`_detach`, which nulls `_parent`) and the `_is_mounted = False` flip happen
+later when the message is processed — so there is a window where the corpse
+still answers `is_mounted` as True while `query_one` (which walks the live
+tree) already resolves the replacement. Validation that matches what a query
+would return is: `not widget._pruning and widget.is_mounted` **and** the
+`_parent` chain walks back to the caching screen (a handful of attribute
+hops — still ~zero cost next to a DOM walk). With that check the cache is
+bit-for-bit equivalent to querying; the mutation arm (validation weakened
+back to `is_mounted`-only) re-fails the same pre-existing scroll test.
+Related earlier incident: task-2200 ("`is_mounted` ≠ in-the-DOM").
+
+---
+
 ## Related
 
 - `lessons-testing-evidence.md` — includes the Pilot-harness traps (detached widget
