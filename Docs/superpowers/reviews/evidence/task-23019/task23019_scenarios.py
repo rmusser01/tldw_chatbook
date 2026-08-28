@@ -10,13 +10,15 @@ from pathlib import Path
 from typing import Any
 
 import pytest
+from textual.containers import VerticalScroll
 from textual.widgets import Button, Input, Static, TextArea
-
-from tldw_chatbook.Widgets.workbench_focus import _available_targets
 
 from Tests.Skills.test_skills_library_flow import (
     _real_skills_scope_service,
     _real_trust_service,
+)
+from Tests.UI.test_destination_shells import (
+    _link_library_items_to_active_workspace,
 )
 from Tests.UI.test_library_adaptive_reader_closeout import (
     DESTINATION_CONTRACT,
@@ -32,9 +34,6 @@ from Tests.UI.test_library_conversation_reader import (
     _OutOfOrderConversationService,
     _ProgressiveConversationService,
 )
-from Tests.UI.test_destination_shells import (
-    _link_library_items_to_active_workspace,
-)
 from Tests.UI.test_library_prompts_reader import _structured_prompt_definition
 from Tests.UI.test_library_shell import (
     LibraryGlobalKeyProductionCSSHarness,
@@ -44,7 +43,7 @@ from Tests.UI.test_library_shell import (
     _wait_for_library_shell,
     _wait_for_selector,
 )
-
+from tldw_chatbook.Widgets.workbench_focus import _available_targets
 
 DESTINATIONS = ("media", "conversations", "notes", "prompts", "skills")
 SIZES = ((160, 50), (120, 35), (100, 30), (80, 24))
@@ -221,22 +220,32 @@ def _identity_truth(screen, destination: str) -> dict[str, Any]:
 
 
 async def _work_focus_target(screen, pilot, destination: str):
-    selector, widget_type = {
-        "media": ("#library-media-content-search", Input),
-        "conversations": ("#library-conversation-reader-find", Input),
-        "notes": ("#library-note-title", Input),
-        "prompts": ("#library-prompt-name", Input),
-        "skills": ("#library-skill-mode-overview", Button),
+    candidates = {
+        "media": (("#library-media-content-search", Input),),
+        "conversations": (("#library-conversation-reader-find", Input),),
+        "notes": (
+            ("#library-note-title", Input),
+            ("#library-note-preview-region", VerticalScroll),
+        ),
+        "prompts": (("#library-prompt-name", Input),),
+        "skills": (("#library-skill-mode-overview", Button),),
     }[destination]
+
+    def visible_target():
+        for selector, widget_type in candidates:
+            target = screen.query_one(selector, widget_type)
+            if target.region.area > 0 and target.can_focus:
+                return target
+        return None
+
     await _wait_for_condition(
         pilot,
-        lambda: (
-            (target := screen.query_one(selector, widget_type)).region.area > 0
-            and target.can_focus
-        ),
-        message=f"Work focus target did not settle: {selector}",
+        lambda: visible_target() is not None,
+        message=f"Work focus target did not settle: {destination}",
     )
-    return screen.query_one(selector, widget_type)
+    target = visible_target()
+    assert target is not None
+    return target
 
 
 async def _exercise_modes(screen, pilot, destination: str) -> tuple[str, ...]:
@@ -712,6 +721,24 @@ def _capability_facts(
     return facts
 
 
+async def _settled_capability_facts(
+    screen,
+    shell,
+    pilot,
+    destination: str,
+    size: tuple[int, int],
+    observations: dict[str, Any],
+) -> dict[str, Any]:
+    focus_target = await _work_focus_target(screen, pilot, destination)
+    focus_target.focus()
+    await _wait_for_condition(
+        pilot,
+        lambda: screen.focused is focus_target,
+        message=f"Work focus did not settle: {focus_target.id}",
+    )
+    return _capability_facts(screen, shell, destination, size, observations)
+
+
 async def run_media_capability() -> dict[str, Any]:
     """ME-01/ME-02: Find, progress/mode continuity, and bulk delete preview."""
     size = (160, 50)
@@ -833,7 +860,9 @@ async def run_media_capability() -> dict[str, Any]:
                 "item_count_after_cancel": len(service.media_items),
                 "destructive_boundary": "truthful_preview_cancelled",
             }
-            facts = _capability_facts(screen, shell, "media", size, observations)
+            facts = await _settled_capability_facts(
+                screen, shell, pilot, "media", size, observations
+            )
             compositor = facts["compositor_text"]
             svg = host.export_screenshot(simplify=True)
     finally:
@@ -1087,8 +1116,8 @@ async def run_conversations_capability() -> dict[str, Any]:
                 "handoff_source_id": str(payload.source_id),
                 "handoff_action_label": handoff_kwargs["action_label"],
             }
-            facts = _capability_facts(
-                screen, shell, "conversations", size, observations
+            facts = await _settled_capability_facts(
+                screen, shell, pilot, "conversations", size, observations
             )
             compositor = facts["compositor_text"]
             svg = host.export_screenshot(simplify=True)
@@ -1288,7 +1317,9 @@ async def run_notes_capability() -> dict[str, Any]:
                 "recovered_body": screen._library_note_session.snapshot.body,
                 "bulk_preview_copy": bulk_copy,
             }
-            facts = _capability_facts(screen, shell, "notes", size, observations)
+            facts = await _settled_capability_facts(
+                screen, shell, pilot, "notes", size, observations
+            )
             compositor = facts["compositor_text"]
             svg = host.export_screenshot(simplify=True)
     finally:
@@ -1573,7 +1604,9 @@ async def run_prompts_capability() -> dict[str, Any]:
                 "history_title": str(history.title),
             }
             assert id(shell.items) == items_id and id(shell.work) == work_id
-            facts = _capability_facts(screen, shell, "prompts", size, observations)
+            facts = await _settled_capability_facts(
+                screen, shell, pilot, "prompts", size, observations
+            )
             compositor = facts["compositor_text"]
             svg = host.export_screenshot(simplify=True)
     finally:
@@ -1787,7 +1820,9 @@ async def run_skills_capability() -> dict[str, Any]:
                 "delete_preview_copy": preview_copy,
                 "destructive_boundary": "truthful_preview_cancelled",
             }
-            facts = _capability_facts(screen, shell, "skills", size, observations)
+            facts = await _settled_capability_facts(
+                screen, shell, pilot, "skills", size, observations
+            )
             compositor = facts["compositor_text"]
             svg = host.export_screenshot(simplify=True)
     finally:

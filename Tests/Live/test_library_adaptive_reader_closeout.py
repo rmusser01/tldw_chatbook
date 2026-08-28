@@ -16,7 +16,6 @@ from pathlib import Path
 
 import pytest
 
-
 REPO_ROOT = Path(__file__).resolve().parents[2]
 RUNNER_PATH = (
     REPO_ROOT / "Docs/superpowers/reviews/evidence/task-23019/task23019_closeout.py"
@@ -2857,6 +2856,90 @@ async def test_media_capability_captures_settled_visible_selected_row(
     assert facts["selected_row"]["region"]["height"] > 0
 
 
+@pytest.mark.asyncio
+async def test_capability_facts_restore_settled_work_focus(monkeypatch):
+    module = _load_scenarios()
+
+    class Screen:
+        focused = None
+
+    screen = Screen()
+
+    class Target:
+        id = "library-note-title"
+
+        def focus(self):
+            screen.focused = self
+
+    target = Target()
+    waits = []
+
+    async def fake_work_focus_target(actual_screen, pilot, destination):
+        assert actual_screen is screen
+        assert pilot == "pilot"
+        assert destination == "notes"
+        return target
+
+    async def fake_wait(pilot, condition, *, message):
+        waits.append((pilot, message))
+        assert condition()
+
+    monkeypatch.setattr(module, "_work_focus_target", fake_work_focus_target)
+    monkeypatch.setattr(module, "_wait_for_condition", fake_wait)
+    monkeypatch.setattr(
+        module,
+        "_capability_facts",
+        lambda actual_screen, *_args: {
+            "status": "PASS",
+            "focus_owner": getattr(actual_screen.focused, "id", None),
+        },
+    )
+
+    facts = await module._settled_capability_facts(
+        screen, "shell", "pilot", "notes", (160, 50), {}
+    )
+
+    assert facts == {"status": "PASS", "focus_owner": "library-note-title"}
+    assert waits == [("pilot", "Work focus did not settle: library-note-title")]
+
+
+@pytest.mark.asyncio
+async def test_work_focus_target_uses_visible_notes_preview_when_editor_hidden(
+    monkeypatch,
+):
+    module = _load_scenarios()
+
+    class Region:
+        def __init__(self, area):
+            self.area = area
+
+    class Target:
+        def __init__(self, widget_id, area):
+            self.id = widget_id
+            self.region = Region(area)
+            self.can_focus = True
+
+    title = Target("library-note-title", 0)
+    preview = Target("library-note-preview-region", 100)
+
+    class Screen:
+        def query_one(self, selector, _widget_type):
+            return {
+                "#library-note-title": title,
+                "#library-note-preview-region": preview,
+            }[selector]
+
+    async def fake_wait(_pilot, condition, *, message):
+        assert message == "Work focus target did not settle: notes"
+        assert condition()
+
+    monkeypatch.setattr(module, "_wait_for_condition", fake_wait)
+
+    target = await module._work_focus_target(Screen(), "pilot", "notes")
+
+    assert target is preview
+
+
 def test_scenario_cleanup_failure_is_not_suppressed(tmp_path):
     module = _load_scenarios()
     context = module.ScenarioContext(tmp_path)
@@ -3542,6 +3625,7 @@ def test_capability_scenarios_are_distinct_journeys_not_a_shared_stub():
             "\n\nasync def ", 1
         )[0]
         assert all(marker in function_source for marker in markers)
+        assert function_source.count("await _settled_capability_facts(") == 1
 
 
 def test_common_matrix_comfort_oracle_requires_strict_expansion():
