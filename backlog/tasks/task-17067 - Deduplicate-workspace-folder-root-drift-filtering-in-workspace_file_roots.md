@@ -5,7 +5,7 @@ status: In Progress
 assignee:
   - '@codex'
 created_date: '2026-08-17 19:59'
-updated_date: '2026-08-28 05:04'
+updated_date: '2026-08-28 05:31'
 labels: []
 dependencies: []
 ---
@@ -24,3 +24,19 @@ The is_dir + symlink/self-resolve drift filter for workspace folder bindings is 
 - [ ] #4 The workspace-context note still matches the roots allowed_file_roots honors (no note/enforcement divergence)
 - [ ] #5 Each consumer reports an existing symlinked directory or self-resolve mismatch with the exact path-free warning `Workspace folder binding excluded because its path no longer resolves to itself (symlink or mount drift)`; the raw locator is absent, while missing directories and broken symlinks remain silent
 <!-- AC:END -->
+
+## Implementation Plan
+
+<!-- SECTION:PLAN:BEGIN -->
+ADR required: no
+ADR path: backlog/decisions/028-settings-workspaces-category-and-folder-roots.md
+Reason: ADR-028 already owns call-time validation and run-bound folder authority; this task consolidates an existing rule without changing storage, permissions, ownership, or an external contract.
+
+Approved design: Docs/superpowers/specs/2026-08-27-task-17067-workspace-root-drift-filter-design.md
+Detailed implementation plan: Docs/superpowers/plans/2026-08-27-task-17067-workspace-root-drift-filter-implementation.md
+
+1. Add red-first routing, ordering, and exact path-free warning regressions.
+2. Add one caller-prefiltered validity iterator and route all three consumers through it.
+3. Run focused behavior tests and regenerate the reviewed persistent-diagnostic inventory.
+4. Run scoped static/diff checks, final code review, and complete Backlog task hygiene.
+<!-- SECTION:PLAN:END -->
