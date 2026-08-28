@@ -649,7 +649,12 @@ async def test_generation_refresh_selects_the_generated_briefing(monkeypatch):
 
     await screen._generate_briefing(Mock(), 7, None)
 
-    screen._request_briefings_refresh.assert_called_once_with(select_briefing_id=41)
+    screen._request_briefings_refresh.assert_called_once_with(
+        select_briefing_id=41,
+        expect_durable_receipt=True,
+        generation_failed=False,
+        watchlist_id=7,
+    )
 
 
 @pytest.mark.asyncio

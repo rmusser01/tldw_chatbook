@@ -6,11 +6,13 @@ from typing import Any
 
 from loguru import logger
 from rich.text import Text
+from textual import events
 from textual.containers import Horizontal, Vertical
 from textual.message import Message
 from textual.reactive import reactive
 from textual.css.query import NoMatches
 from textual.widgets import Button, DataTable, Input, Select, Static, Switch, TextArea
+from textual.widgets._data_table import CellDoesNotExist
 
 from ...Subscriptions.html_text import strip_control_characters
 from ...Subscriptions.noise_defaults import (
@@ -21,8 +23,10 @@ from ...Subscriptions.noise_defaults import (
 from ...Utils.input_validation import sanitize_string, validate_text_input, validate_url
 from ...Widgets.prune_safe_select import PruneSafeSelect
 from ...Widgets.recompose_capture_guard import RecomposeCaptureGuard
+from .bulk_sources_modal import OpenBulkSourcesRequested
 from .humane_time import humane_timestamp
 from .inspector_pane import CheckNowRequested, PreviewRequested
+from .table_selection import IdSelectionModel
 
 
 DEFAULT_SOURCE_FREQUENCY_SECONDS = 3600
@@ -33,6 +37,22 @@ class SourceSelected(Message):
 
     def __init__(self, source: dict[str, Any] | None) -> None:
         self.source = source
+        super().__init__()
+
+
+class SourceSelectionChanged(Message):
+    """Posted when the canonical multi-source selection changes."""
+
+    def __init__(self, source_ids: tuple[str, ...]) -> None:
+        self.source_ids = source_ids
+        super().__init__()
+
+
+class CreateWatchlistFromSelectedRequested(Message):
+    """Create one collection atomically from canonical selected source IDs."""
+
+    def __init__(self, source_ids: tuple[str, ...]) -> None:
+        self.source_ids = source_ids
         super().__init__()
 
 
@@ -338,6 +358,26 @@ class SourcesPane(RecomposeCaptureGuard, Vertical):
         ("Inactive", "inactive"),
     ]
 
+    def __init__(self, *args: Any, **kwargs: Any) -> None:
+        super().__init__(*args, **kwargs)
+        self._multi_selection = IdSelectionModel()
+
+    @property
+    def selected_source_ids(self) -> frozenset[str]:
+        """Return the canonical source IDs selected for a bulk action."""
+        return self._multi_selection.selected_ids
+
+    def set_selected_source_ids(self, source_ids: tuple[str, ...]) -> None:
+        """Seed selection restored by the owning screen or a bulk result."""
+        existing = tuple(
+            str(source.get("id"))
+            for source in self.sources
+            if source.get("id") is not None
+        )
+        self._multi_selection.replace(source_ids)
+        self._multi_selection.prune(existing)
+        self._update_multi_selection_ui()
+
     def configure_create_backend(
         self, backend: str, source_types: tuple[str, ...]
     ) -> None:
@@ -399,46 +439,6 @@ class SourcesPane(RecomposeCaptureGuard, Vertical):
                     select_on_focus=False,
                     compact=True,
                 )
-                # TASK-2310: UAT read this row as "All / All statuses /
-                # All" -- two of the three unlabeled. A persistent sibling
-                # `Static` (this screen's established idiom, TASK-2302) was
-                # tried first and measured against the production
-                # stylesheet: at this toolbar's *tested floor*, 160x42, the
-                # row already spends every column it has -- the search
-                # box's placeholder ("Search sources...") only reaches full
-                # width today because the three Selects claim exactly zero
-                # spare columns, and adding even one label pushes `Filters`
-                # off the pane's right edge (measured: `#sources-filter-
-                # toggle` at x=118..134 against a 93-column pane -- see
-                # `test_watchlists_sources_toolbar_controls_are_actually_
-                # visible`). A `tooltip` costs no column at all, so it is
-                # what fits: every Select below states what it filters on
-                # hover. A compact Select has no border for a border-title
-                # to sit on either way (TASK-2300).
-                yield PruneSafeSelect(
-                    self._FILTER_TYPE_OPTIONS,
-                    value=self.source_type_filter,
-                    id="sources-type-select",
-                    allow_blank=False,
-                    compact=True,
-                    tooltip="Filter by source type.",
-                )
-                yield PruneSafeSelect(
-                    self._STATUS_OPTIONS,
-                    value=self.status_filter,
-                    id="sources-status-filter",
-                    allow_blank=False,
-                    compact=True,
-                    tooltip="Filter by source status.",
-                )
-                yield PruneSafeSelect(
-                    self._ACTIVE_OPTIONS,
-                    value=self.active_filter,
-                    id="sources-active-filter",
-                    allow_blank=False,
-                    compact=True,
-                    tooltip="Filter by whether a source is active.",
-                )
                 # TASK-2303 AC#1: `New source`, not `New Source`, and never
                 # `Add`. NEW is the create verb across this screen; ADD is
                 # membership (the rail's `Add existing…`, the Inspector's
@@ -453,9 +453,39 @@ class SourcesPane(RecomposeCaptureGuard, Vertical):
                         "Add existing in the rail."
                     ),
                 )
+                yield Button(
+                    "Add several…",
+                    id="sources-add-several-button",
+                    variant="default",
+                )
                 yield Button("Filters", id="sources-filter-toggle", variant="default")
             if self.show_filter_editor:
                 with Horizontal(id="sources-filter-editor", classes="destination-filter-strip"):
+                    yield Static("Type", classes="sources-filter-label")
+                    yield PruneSafeSelect(
+                        self._FILTER_TYPE_OPTIONS,
+                        value=self.source_type_filter,
+                        id="sources-type-select",
+                        allow_blank=False,
+                        compact=True,
+                    )
+                    yield Static("Status", classes="sources-filter-label")
+                    yield PruneSafeSelect(
+                        self._STATUS_OPTIONS,
+                        value=self.status_filter,
+                        id="sources-status-filter",
+                        allow_blank=False,
+                        compact=True,
+                    )
+                    yield Static("Active", classes="sources-filter-label")
+                    yield PruneSafeSelect(
+                        self._ACTIVE_OPTIONS,
+                        value=self.active_filter,
+                        id="sources-active-filter",
+                        allow_blank=False,
+                        compact=True,
+                    )
+                    yield Static("Tags", classes="sources-filter-label")
                     yield Input(
                         placeholder="Tags (comma separated)...",
                         id="sources-tags-filter",
@@ -484,6 +514,18 @@ class SourcesPane(RecomposeCaptureGuard, Vertical):
                 )
                 yield Button("Import OPML", id="sources-import-opml-button")
                 yield Button("Export OPML", id="sources-export-opml-button")
+
+            if not self.show_create_form:
+                with Horizontal(id="sources-selection-actions"):
+                    yield Static(
+                        self._selection_status_text(),
+                        id="sources-selection-status",
+                    )
+                    yield Button(
+                        "Create Watchlist from selected…",
+                        id="sources-create-watchlist-selected",
+                        disabled=not 1 <= len(self._multi_selection.selected_ids) <= 100,
+                    )
 
         if self.show_create_form:
             # TASK-1035: a `Vertical`, not a `Grid`. Nothing styled
@@ -644,10 +686,18 @@ class SourcesPane(RecomposeCaptureGuard, Vertical):
         selected_key = (
             str(self.selected_source.get("id")) if self.selected_source else None
         )
-        for source in self._filtered_sources():
+        filtered = self._filtered_sources()
+        self._multi_selection.set_visible_ids(
+            tuple(str(source.get("id") or id(source)) for source in filtered)
+        )
+        for source in filtered:
             row_key = str(source.get("id") or id(source))
             table.add_row(
-                *self._source_row_cells(source, row_key == selected_key),
+                *self._source_row_cells(
+                    source,
+                    row_key == selected_key,
+                    row_key in self._multi_selection.selected_ids,
+                ),
                 key=row_key,
             )
         # The rows were just painted fresh from `selected_source` itself, so
@@ -673,6 +723,12 @@ class SourcesPane(RecomposeCaptureGuard, Vertical):
             return
         table.clear()
         self._populate_table(table)
+        try:
+            self.query_one("#sources-selection-status", Static).update(
+                self._selection_status_text()
+            )
+        except NoMatches:
+            pass
 
     @classmethod
     def _type_takes_ignore_selectors(cls, source_type: Any) -> bool:
@@ -794,7 +850,9 @@ class SourcesPane(RecomposeCaptureGuard, Vertical):
         )
 
     @staticmethod
-    def _source_row_cells(source: dict[str, Any], highlighted: bool) -> tuple[Text, ...]:
+    def _source_row_cells(
+        source: dict[str, Any], highlighted: bool, checked: bool = False
+    ) -> tuple[Text, ...]:
         """One row's cell values, styled if `highlighted` (task-876).
 
         Shared between `compose()` (the initial/any-other-reason render) and
@@ -814,7 +872,8 @@ class SourcesPane(RecomposeCaptureGuard, Vertical):
         # this exact hole for the reader; it did not extend to this pane.
         return (
             Text(
-                strip_control_characters(
+                ("[x] " if checked else "[ ] ")
+                + strip_control_characters(
                     source.get("name") or source.get("title") or "Untitled"
                 ),
                 style=style,
@@ -907,6 +966,21 @@ class SourcesPane(RecomposeCaptureGuard, Vertical):
 
     def watch_tags_filter(self, tags_filter: str) -> None:
         self._refresh_table_rows()
+
+    def watch_sources(self, sources: list[dict[str, Any]]) -> None:
+        """Prune only canonical IDs no longer present after a source reload."""
+        before = self._multi_selection.selected_ids
+        self._multi_selection.prune(
+            tuple(
+                str(source.get("id"))
+                for source in sources
+                if source.get("id") is not None
+            )
+        )
+        if self.is_mounted and self._multi_selection.selected_ids != before:
+            self.post_message(
+                SourceSelectionChanged(self._ordered_selected_source_ids())
+            )
 
     def on_input_changed(self, event: Input.Changed) -> None:
         if event.input.id == "sources-search-input":
@@ -1328,6 +1402,12 @@ class SourcesPane(RecomposeCaptureGuard, Vertical):
         button_id = str(event.button.id)
         if button_id == "sources-new-button":
             self.show_create_form = True
+        elif button_id == "sources-add-several-button":
+            self.post_message(OpenBulkSourcesRequested())
+        elif button_id == "sources-create-watchlist-selected":
+            source_ids = self._ordered_selected_source_ids()
+            if source_ids:
+                self.post_message(CreateWatchlistFromSelectedRequested(source_ids))
         elif button_id == "sources-filter-toggle":
             self.show_filter_editor = not self.show_filter_editor
         elif button_id == "sources-create-cancel":
@@ -1575,13 +1655,93 @@ class SourcesPane(RecomposeCaptureGuard, Vertical):
             )
             if candidate is None:
                 continue
-            cells = self._source_row_cells(candidate, highlighted)
+            cells = self._source_row_cells(
+                candidate,
+                highlighted,
+                row_key in self._multi_selection.selected_ids,
+            )
             for column_key, value in zip(column_keys, cells):
                 try:
                     table.update_cell(row_key, column_key, value, update_width=False)
                 except Exception:
                     pass
         self._highlighted_source_key = new_key
+
+    def on_key(self, event: events.Key) -> None:
+        """Handle multi-selection keys only while the source table owns focus."""
+        if not self.apply_selection_command(event.key):
+            return
+        event.stop()
+
+    def apply_selection_command(self, command: str) -> bool:
+        """Apply one focus-valid key/palette selection command."""
+        try:
+            table = self.query_one("#sources-table", DataTable)
+        except NoMatches:
+            return False
+        if not table.has_focus or table.row_count == 0 or table.cursor_row < 0:
+            return False
+        row_key, _column_key = table.coordinate_to_cell_key((table.cursor_row, 0))
+        source_id = str(row_key.value)
+        if command == "space":
+            self._multi_selection.toggle(source_id)
+        elif command in {"shift+up", "shift+down"}:
+            target_id = self._multi_selection.shift(
+                source_id, -1 if command == "shift+up" else 1
+            )
+            table.move_cursor(
+                row=self._multi_selection.visible_ids.index(target_id),
+                animate=False,
+            )
+        elif command == "v":
+            self._multi_selection.toggle_visible()
+        elif command == "x":
+            self._multi_selection.clear()
+        else:
+            return False
+        self._update_multi_selection_ui()
+        return True
+
+    def _ordered_selected_source_ids(self) -> tuple[str, ...]:
+        selected = self._multi_selection.selected_ids
+        return tuple(
+            str(source.get("id"))
+            for source in self.sources
+            if str(source.get("id")) in selected
+        )
+
+    def _update_multi_selection_ui(self) -> None:
+        """Refresh selection markers, count, action state, and owner mirror."""
+        try:
+            table = self.query_one("#sources-table", DataTable)
+            name_column = list(table.columns.keys())[0]
+            for source in self._filtered_sources():
+                source_id = str(source.get("id") or id(source))
+                highlighted = source_id == self._highlighted_source_key
+                name = self._source_row_cells(
+                    source,
+                    highlighted,
+                    source_id in self._multi_selection.selected_ids,
+                )[0]
+                table.update_cell(source_id, name_column, name, update_width=False)
+            self.query_one("#sources-selection-status", Static).update(
+                self._selection_status_text()
+            )
+            self.query_one(
+                "#sources-create-watchlist-selected", Button
+            ).disabled = not 1 <= len(self._multi_selection.selected_ids) <= 100
+        except (CellDoesNotExist, NoMatches, IndexError):
+            pass
+        if self.is_mounted:
+            self.post_message(
+                SourceSelectionChanged(self._ordered_selected_source_ids())
+            )
+
+    def _selection_status_text(self) -> str:
+        count = len(self._multi_selection.selected_ids)
+        if count > 100:
+            return f"{self._multi_selection.status_text} · choose at most 100"
+        return self._multi_selection.status_text
 
     def _update_action_buttons(self) -> None:
         """Keep Preview/Check-now in step with this pane's own selection.

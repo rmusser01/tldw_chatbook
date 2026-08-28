@@ -24,11 +24,12 @@ from rich.markup import escape as escape_markup
 from rich.text import Text
 from textual import events, on, work
 from textual.app import ComposeResult
+from textual.command import Hit, Hits, Provider
 from textual.containers import Horizontal, Vertical
 from textual.css.query import NoMatches
 from textual.reactive import reactive
 from textual.widget import Widget
-from textual.widgets import Button, Input, Select, Static, TextArea
+from textual.widgets import Button, DataTable, Input, Select, Static, TextArea
 
 from ...Constants import (
     WATCHLISTS_NAV_CONTEXT_BACKEND,
@@ -132,6 +133,7 @@ from ..Watchlists_Modules.artifacts_pane import (
     ExportBriefingRequested,
     ExportFeedRequested,
     GenerateBriefingRequested,
+    InspectArtifactRecoveryRequested,
     KeepBriefingRequested,
     KeptBriefingsRequested,
     ManagePresetsRequested,
@@ -212,7 +214,14 @@ from ..Watchlists_Modules.runs_pane import (
     RunsPane,
 )
 from ..Watchlists_Modules.snapshot_view_modal import SnapshotViewModal
+from ..Watchlists_Modules.bulk_sources_modal import (
+    BulkSourcesContinueRequested,
+    BulkSourcesCreateRequested,
+    BulkSourcesModal,
+    OpenBulkSourcesRequested,
+)
 from ..Watchlists_Modules.sources_pane import (
+    CreateWatchlistFromSelectedRequested,
     CreateFormDraftChanged,
     CreateFormVisibilityChanged,
     CreateSourceRequested,
@@ -220,6 +229,7 @@ from ..Watchlists_Modules.sources_pane import (
     ExportOpmlRequested,
     ImportOpmlRequested,
     SourceSelected,
+    SourceSelectionChanged,
     SourcesPane,
 )
 from ..Watchlists_Modules.watchlist_tree import (
@@ -564,8 +574,68 @@ WC_SERVER_WRITE_RECOVERY = DestinationRecoveryState(
 )
 
 
+class WatchlistsSourceSelectionCommandProvider(Provider):
+    """Expose source-selection commands only while their table owns focus."""
+
+    def commands(self) -> tuple[tuple[str, Callable[[], None], str], ...]:
+        screen = self.screen
+        focused = screen.focused
+        if (
+            type(screen).__name__ != "WatchlistsCollectionsScreen"
+            or getattr(screen, "active_section", None) != "sources"
+            or not isinstance(focused, DataTable)
+            or focused.id != "sources-table"
+        ):
+            return ()
+        return (
+            (
+                "Sources: Toggle highlighted source",
+                screen.action_toggle_focused_source_selection,
+                "Toggle the highlighted source (Space)",
+            ),
+            (
+                "Sources: Extend selection up",
+                screen.action_extend_source_selection_up,
+                "Extend or contract the anchored range (Shift+Up)",
+            ),
+            (
+                "Sources: Extend selection down",
+                screen.action_extend_source_selection_down,
+                "Extend or contract the anchored range (Shift+Down)",
+            ),
+            (
+                "Sources: Toggle visible sources",
+                screen.action_toggle_visible_source_selection,
+                "Select or clear filtered rows while preserving hidden selections (v)",
+            ),
+            (
+                "Sources: Clear selected sources",
+                screen.action_clear_source_selection,
+                "Clear visible and hidden selected sources (x)",
+            ),
+        )
+
+    async def discover(self) -> Hits:
+        for label, callback, help_text in self.commands():
+            yield Hit(1.0, label, callback, help=help_text)
+
+    async def search(self, query: str) -> Hits:
+        matcher = self.matcher(query)
+        for label, callback, help_text in self.commands():
+            score = matcher.match(label)
+            if score > 0:
+                yield Hit(
+                    score,
+                    matcher.highlight(label),
+                    callback,
+                    help=help_text,
+                )
+
+
 class WatchlistsCollectionsScreen(BaseAppScreen):
     """Monitored sources, runs, alerts, and recovery."""
+
+    COMMANDS = BaseAppScreen.COMMANDS | {WatchlistsSourceSelectionCommandProvider}
 
     BINDINGS = [
         ("1", "switch_section('items')", "Read"),
@@ -762,6 +832,7 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
         # unrelated navigation happened to trigger a reload.
         self._loaded_sources: list[dict[str, Any]] = []
         self._scoped_source_failure_notified = False
+        self._selected_source_ids: tuple[str, ...] = ()
         self._loaded_items: list[dict[str, Any]] = []
         self._items_snapshot: ReaderItemSnapshot | None = None
         self._items_page_index = 0
@@ -797,6 +868,8 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
         # detail area renders.
         self._loaded_briefings: list[dict[str, Any]] = []
         self._selected_briefing: dict[str, Any] | None = None
+        self._artifacts_view_state = "idle"
+        self._artifacts_view_message = ""
         # Task 4: the current watchlist's stored briefing selection mode and
         # default preset id, mirrored here for the same rebuild-survival
         # reason as `_loaded_briefings` above -- `_build_detail_pane` seeds
@@ -2616,7 +2689,10 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
             # Scoped (TASK-2304 AC#2): a rebuild must not quietly re-widen
             # the table back to every source while the header still names one
             # watchlist.
-            sources_pane.set_reactive(SourcesPane.sources, self.scoped_loaded_sources())
+            sources_pane.set_reactive(
+                SourcesPane.sources, self.scoped_loaded_sources()
+            )
+            sources_pane.set_selected_source_ids(self._selected_source_ids)
             sources_pane.selected_source = self.selected_source
             # TASK-2309: re-seed from screen state for the identical
             # rebuild-survival reason as `selected_source` on the line
@@ -2791,6 +2867,8 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
             seed = artifacts_pane.set_reactive
             seed(ArtifactsPane.briefings, self._loaded_briefings)
             seed(ArtifactsPane.selected_briefing, self._selected_briefing)
+            seed(ArtifactsPane.view_state, self._artifacts_view_state)
+            seed(ArtifactsPane.view_message, self._artifacts_view_message)
             seed(ArtifactsPane.scope_label, self._briefing_scope_label())
             seed(
                 ArtifactsPane.automation_receipt,
@@ -5689,6 +5767,79 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
         self.selected_source = event.source
         self._select_entity(event.source)
 
+    @on(SourceSelectionChanged)
+    def handle_source_selection_changed(self, event: SourceSelectionChanged) -> None:
+        event.stop()
+        self._selected_source_ids = event.source_ids
+
+    @on(CreateWatchlistFromSelectedRequested)
+    def handle_create_watchlist_from_selected_requested(
+        self, event: CreateWatchlistFromSelectedRequested
+    ) -> None:
+        event.stop()
+        if self.runtime_backend != "local":
+            self._notify_watchlists(
+                "Create Watchlist from selected is available for local Watchlists.",
+                severity="warning",
+            )
+            return
+        if not event.source_ids or len(event.source_ids) > 100:
+            self._notify_watchlists(
+                "Select between 1 and 100 sources.", severity="warning"
+            )
+            return
+        self._start_tree_write(
+            lambda: self._create_watchlist_from_selected_flow(event.source_ids)
+        )
+
+    async def _create_watchlist_from_selected_flow(
+        self, source_ids: tuple[str, ...]
+    ) -> None:
+        if self.runtime_backend != "local":
+            return
+        service = self._watchlist_bundle_service()
+        if service is None:
+            self._notify_watchlists(WC_SERVICE_UNAVAILABLE_COPY, severity="error")
+            return
+        local_ids = [
+            self._local_source_row_id({"id": source_id}) for source_id in source_ids
+        ]
+        if any(source_id is None for source_id in local_ids):
+            self._notify_watchlists(
+                "One or more selected sources are no longer available.",
+                severity="warning",
+            )
+            return
+        name = await self._prompt_watchlist_name(
+            dialog_title="Create Watchlist from selected",
+            submit_label="Create",
+        )
+        if name is None:
+            return
+        if self.runtime_backend != "local":
+            self._notify_watchlists(
+                "Backend changed; no local Watchlist was created.",
+                severity="warning",
+            )
+            return
+        created = service.create_with_sources(
+            name,
+            description=None,
+            tags=None,
+            source_ids=[int(source_id) for source_id in local_ids if source_id],
+            if_exists="conflict",
+        )
+        watchlist = created["watchlist"]
+        self._selected_source_ids = ()
+        self._request_tree_scope(
+            TreeScope(kind="watchlist", watchlist_id=int(watchlist["id"]))
+        )
+        self._notify_watchlists(
+            f'Watchlist "{escape_markup(str(watchlist["name"]))}" created '
+            f"with {len(local_ids)} sources."
+        )
+        self._load_tree_data()
+
     @on(CreateFormDraftChanged)
     def handle_source_create_draft_changed(self, event: CreateFormDraftChanged) -> None:
         event.stop()
@@ -6489,6 +6640,111 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
             exclusive=True,
             group="wc_create_source",
         )
+
+    @on(OpenBulkSourcesRequested)
+    def handle_open_bulk_sources_requested(
+        self, event: OpenBulkSourcesRequested
+    ) -> None:
+        """Open local bulk authoring without changing collection membership."""
+        event.stop()
+        if self.runtime_backend != "local":
+            self._notify_watchlists(
+                "Bulk source authoring is available for local Watchlists.",
+                severity="warning",
+            )
+            return
+        self.app.push_screen(
+            BulkSourcesModal(
+                source_types=self._controller.create_form_source_types(
+                    runtime_backend="local"
+                ),
+                message_target=self,
+            )
+        )
+
+    @on(BulkSourcesCreateRequested)
+    def handle_bulk_sources_create_requested(
+        self, event: BulkSourcesCreateRequested
+    ) -> None:
+        event.stop()
+        self.run_worker(
+            self._create_bulk_sources(event),
+            exclusive=True,
+            group="wc_create_bulk_sources",
+        )
+
+    async def _create_bulk_sources(self, event: BulkSourcesCreateRequested) -> None:
+        if not event.modal.is_mounted or self.app.screen is not event.modal:
+            return
+        if self.runtime_backend != "local":
+            event.modal.show_write_failure(
+                "Backend changed; no local sources were created."
+            )
+            return
+        service = self._local_watchlists_service()
+        if service is None:
+            event.modal.show_write_failure(WC_SERVICE_UNAVAILABLE_COPY)
+            return
+        try:
+            results = await service.create_sources_exact_batch(
+                [row.payload for row in event.rows]
+            )
+        except Exception:
+            logger.warning("Bulk source creation failed.")
+            if event.modal.is_mounted and self.app.screen is event.modal:
+                event.modal.show_write_failure(
+                    "Sources could not be saved. Return to the draft and retry."
+                )
+            return
+        if event.modal.is_mounted and self.app.screen is event.modal:
+            event.modal.apply_results(results)
+        await self._load_sources()
+
+    @on(BulkSourcesContinueRequested)
+    def handle_bulk_sources_continue_requested(
+        self, event: BulkSourcesContinueRequested
+    ) -> None:
+        """Acknowledge created IDs without implicitly filing them anywhere."""
+        event.stop()
+        if not event.modal.is_mounted or self.app.screen is not event.modal:
+            return
+        self._request_tree_scope(TreeScope(kind="all"))
+        self._selected_source_ids = event.source_ids
+        try:
+            pane = self.query_one("#watchlists-sources-pane", SourcesPane)
+            pane.sources = list(self._loaded_sources)
+            pane.set_selected_source_ids(event.source_ids)
+        except NoMatches:
+            pass
+        event.modal.dismiss(None)
+        self.call_later(
+            self._focus_bulk_continue_target,
+            event.destination,
+        )
+        if event.destination == "create_watchlist":
+            message = (
+                f"{len(event.source_ids)} source(s) are ready. "
+                "Focus moved to Create Watchlist from selected."
+            )
+        else:
+            message = (
+                f"{len(event.source_ids)} source(s) selected in All Sources. "
+                "Choose any available source action to continue."
+            )
+        self._notify_watchlists(message)
+
+    def _focus_bulk_continue_target(self, destination: str) -> None:
+        """Focus the chosen non-mutating follow-on after modal dismissal."""
+        try:
+            pane = self.query_one("#watchlists-sources-pane", SourcesPane)
+            target = pane.query_one(
+                "#sources-create-watchlist-selected"
+                if destination == "create_watchlist"
+                else "#sources-table"
+            )
+        except NoMatches:
+            return
+        target.focus()
 
     async def _create_source(
         self, payload: dict[str, Any], *, runtime_backend: str
@@ -7969,7 +8225,12 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
         # a bare `str` in a `Static` IS parsed as markup.
         return f"Briefings for {name} · {provenance}"
 
-    async def _load_briefings(self, *, select_briefing_id: int | None = None) -> None:
+    async def _load_briefings(
+        self,
+        *,
+        select_briefing_id: int | None = None,
+        expect_durable_receipt: bool = False,
+    ) -> None:
         """Re-read this watchlist's briefings and repaint the pane.
 
         Repaints the PANE, never the screen: `self.refresh(recompose=True)`
@@ -7984,7 +8245,28 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
                 generation worker so a finished briefing is the one on
                 screen. Otherwise the current selection is re-resolved
                 against the reloaded rows and dropped if it is gone.
+            expect_durable_receipt: Report a storage mismatch when the
+                accepted receipt cannot be found in the refreshed rows.
         """
+        last_good_projection = (
+            self._loaded_briefings,
+            self._selected_briefing,
+            self._loaded_scripts,
+            self._selected_script,
+            self._loaded_script_audio,
+            self._scripts_with_audio,
+            self._loaded_citations,
+            self._citation_item_lookup,
+            self._watchlist_has_audio_episodes,
+        )
+        self._set_artifacts_view_state(
+            "refreshing" if self._loaded_briefings else "loading",
+            (
+                "Refreshing briefings… Last good content remains visible."
+                if self._loaded_briefings
+                else "Loading briefings…"
+            ),
+        )
         db = self._briefings_db()
         watchlist_id = self._briefing_watchlist_id()
         navigation_target: dict[str, Any] | None = None
@@ -8026,6 +8308,7 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
             self._loaded_citations = []
             self._citation_item_lookup = {}
             self._watchlist_has_audio_episodes = False
+            self._set_artifacts_view_state("idle")
         else:
             try:
                 # Zombie recovery, before the list query, so a row this
@@ -8049,7 +8332,7 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
                 # the UI thread for the length of the SELECT, same shape as
                 # the write `_toggle_briefing_queue` documents.
                 rows = await asyncio.to_thread(db.list_briefings, watchlist_id)
-                self._loaded_briefings = [dict(row) for row in rows]
+                loaded_rows = [dict(row) for row in rows]
             except Exception as exc:  # noqa: BLE001 - reported, not raised
                 # Type only, never `logger.opt(exception=True)`: this app's
                 # file sink runs with `diagnose=True`, so a traceback here
@@ -8065,7 +8348,29 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
                     severity="error",
                     markup=False,
                 )
-                self._loaded_briefings = []
+                self._set_artifacts_view_state(
+                    "failed",
+                    "Briefings could not be refreshed. Last good content "
+                    "is still shown.",
+                )
+                self._apply_briefing_state_to_pane()
+                return
+            if (
+                expect_durable_receipt
+                and select_briefing_id is not None
+                and not any(
+                    row.get("id") == select_briefing_id for row in loaded_rows
+                )
+            ):
+                if pending_navigation_id is not None:
+                    self._pending_navigation_briefing_id = None
+                self._set_artifacts_view_state(
+                    "storage_mismatch",
+                    "Briefing saved, but this view could not reload it.",
+                )
+                self._apply_briefing_state_to_pane()
+                return
+            self._loaded_briefings = loaded_rows
             wanted = (
                 select_briefing_id
                 if select_briefing_id is not None
@@ -8252,7 +8557,24 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
                         "Failed to resolve citations for briefing "
                         f"{selected_briefing_id}: {type(exc).__name__}"
                     )
-                    rows_by_id = {}
+                    (
+                        self._loaded_briefings,
+                        self._selected_briefing,
+                        self._loaded_scripts,
+                        self._selected_script,
+                        self._loaded_script_audio,
+                        self._scripts_with_audio,
+                        self._loaded_citations,
+                        self._citation_item_lookup,
+                        self._watchlist_has_audio_episodes,
+                    ) = last_good_projection
+                    self._set_artifacts_view_state(
+                        "failed",
+                        "Briefing citations could not be refreshed. Last good "
+                        "content is still shown.",
+                    )
+                    self._apply_briefing_state_to_pane()
+                    return
                 citations: list[dict[str, Any]] = []
                 lookup: dict[int, dict[str, Any]] = {}
                 for item_id in citation_ids:
@@ -8343,14 +8665,36 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
             )
             self._loaded_briefing_presets = preset_rows
             self._watchlist_has_audio_episodes = has_audio_episodes
+            self._set_artifacts_view_state("idle")
         self._apply_briefing_state_to_pane()
 
     def _request_briefings_refresh(
-        self, *, select_briefing_id: int | None = None
+        self,
+        *,
+        select_briefing_id: int | None = None,
+        expect_durable_receipt: bool = False,
+        generation_failed: bool = False,
+        watchlist_id: int | None = None,
     ) -> None:
         """Schedule the Artifacts loader through its latest-request-wins group."""
+
+        async def refresh() -> None:
+            await self._load_briefings(
+                select_briefing_id=select_briefing_id,
+                expect_durable_receipt=expect_durable_receipt,
+            )
+            if (
+                generation_failed
+                and (watchlist_id is None or self._briefing_watchlist_id() == watchlist_id)
+                and self._artifacts_view_state != "storage_mismatch"
+            ):
+                self._set_artifacts_view_state(
+                    "failed",
+                    "Briefing generation failed. Last good content is still shown.",
+                )
+
         self.run_worker(
-            self._load_briefings(select_briefing_id=select_briefing_id),
+            refresh(),
             exclusive=True,
             group="wl-briefings-load",
         )
@@ -8373,6 +8717,10 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
             return
         pane.briefings = self._loaded_briefings
         pane.selected_briefing = self._selected_briefing
+        pane.set_view_state(
+            self._artifacts_view_state,
+            self._artifacts_view_message,
+        )
         pane.scope_label = self._briefing_scope_label()
         pane.automation_receipt = self._briefing_schedule_receipt or ""
         pane.can_generate = self._can_generate_briefing()
@@ -8389,6 +8737,18 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
         pane.citations = self._loaded_citations
         pane.has_audio_episodes = self._watchlist_has_audio_episodes
         pane.chachanotes_available = self._chachanotes_db() is not None
+
+    def _set_artifacts_view_state(self, state: str, message: str = "") -> None:
+        """Mirror and patch the Artifacts operational overlay state."""
+        self._artifacts_view_state = state
+        self._artifacts_view_message = message
+        if not self._dom_is_live:
+            return
+        try:
+            pane = self.query_one("#watchlists-artifacts-pane", ArtifactsPane)
+        except NoMatches:
+            return
+        pane.set_view_state(state, message)
 
     @staticmethod
     def _read_watchlist_briefing_settings(db: Any, watchlist_id: int) -> dict[str, Any]:
@@ -8665,6 +9025,15 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
     ) -> None:
         event.stop()
         self._request_briefings_refresh()
+
+    @on(InspectArtifactRecoveryRequested)
+    def handle_inspect_artifact_recovery_requested(
+        self, event: InspectArtifactRecoveryRequested
+    ) -> None:
+        """Open the in-product owner named by an Artifacts recovery action."""
+        event.stop()
+        if event.destination == "runs":
+            self.active_section = "runs"
 
     # --- Exporting a briefing as markdown (spec #2 phase 3, Task 1) --------
 
@@ -10009,6 +10378,14 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
             return
         self._briefing_in_flight = True
         self._briefing_in_flight_watchlist_id = watchlist_id
+        self._set_artifacts_view_state(
+            "refreshing" if self._loaded_briefings else "loading",
+            (
+                "Generating briefing… Last good content remains visible."
+                if self._loaded_briefings
+                else "Generating briefing…"
+            ),
+        )
         # Task 4: cast the die now, on the UI thread, alongside the rest of
         # this synchronous snapshot -- not read again later inside the
         # worker, where a concurrent picker write (a different worker
@@ -10204,6 +10581,8 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
             return
 
         generated_id: int | None = None
+        durable_receipt = False
+        generation_failed = False
         try:
             try:
                 recovered, blocking = await asyncio.to_thread(
@@ -10252,6 +10631,11 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
             try:
                 row = await generate_briefing(db, watchlist_id, preset_id=preset_id)
                 generated_id = (row or {}).get("id")
+                durable_receipt = (
+                    generated_id is not None
+                    and str((row or {}).get("status") or "").strip().casefold()
+                    == STATUS_COMPLETE
+                )
                 # TASK-2311: `generate_briefing` never raises for a PROVIDER
                 # failure -- it turns it into a `failed` row instead (see
                 # this method's own docstring) -- so this is the one place
@@ -10265,6 +10649,7 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
                     str((row or {}).get("status") or "").strip().lower()
                     == STATUS_FAILED
                 ):
+                    generation_failed = True
                     self._notify_briefing_failure(row or {})
             except GenerationInFlightError as exc:
                 # The race `_sweep_and_guard` cannot close: another
@@ -10278,6 +10663,7 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
                 # must not swallow it as a generic database failure.
                 self._notify_watchlists(str(exc), severity="warning", markup=False)
             except Exception as exc:  # noqa: BLE001 - a worker crash exits the app
+                generation_failed = True
                 logger.warning(
                     f"Briefing generation failed for watchlist {watchlist_id}: "
                     f"{type(exc).__name__}"
@@ -10291,10 +10677,17 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
         finally:
             self._briefing_in_flight = False
             self._briefing_in_flight_watchlist_id = None
-            # Repaint on every path: a refusal has just changed a row's
-            # status, and the failure path may leave a `generating` row this
-            # attempt inserted before it broke.
-            self._request_briefings_refresh(select_briefing_id=generated_id)
+            if self._briefing_watchlist_id() == watchlist_id:
+                # Repaint on every same-scope path: a refusal has just changed
+                # a row's status, and a failure may leave a generating row.
+                self._request_briefings_refresh(
+                    select_briefing_id=(
+                        None if generation_failed else generated_id
+                    ),
+                    expect_durable_receipt=durable_receipt,
+                    generation_failed=generation_failed,
+                    watchlist_id=watchlist_id,
+                )
 
     async def _follow_coordinated_briefing(
         self,
@@ -10307,9 +10700,12 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
         generated_id: int | None = None
         row: Mapping[str, Any] = {}
         following_cancelled = False
+        accepted = False
+        generation_failed = False
         try:
             receipt = await coordinator.accept_briefing(watchlist_id, preset_id)
             generated_id = int(receipt["id"])
+            accepted = True
             while True:
                 row = await asyncio.to_thread(db.get_briefing, generated_id)
                 status = str(row.get("status") or "").strip().casefold()
@@ -10317,11 +10713,13 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
                     break
                 await asyncio.sleep(0.1)
             if status == STATUS_FAILED:
+                generation_failed = True
                 self._notify_briefing_failure(row)
         except asyncio.CancelledError:
             following_cancelled = True
             raise
         except Exception as exc:  # noqa: BLE001 - UI reports fixed, safe copy
+            generation_failed = True
             logger.warning(
                 f"Briefing acceptance failed for watchlist {watchlist_id}: "
                 f"{type(exc).__name__}"
@@ -10334,8 +10732,23 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
         finally:
             self._briefing_in_flight = False
             self._briefing_in_flight_watchlist_id = None
-            if not following_cancelled and self.is_mounted:
-                await self._load_briefings(select_briefing_id=generated_id)
+            if (
+                not following_cancelled
+                and self.is_mounted
+                and self._briefing_watchlist_id() == watchlist_id
+            ):
+                await self._load_briefings(
+                    select_briefing_id=(None if generation_failed else generated_id),
+                    expect_durable_receipt=accepted,
+                )
+                if (
+                    generation_failed
+                    and self._artifacts_view_state != "storage_mismatch"
+                ):
+                    self._set_artifacts_view_state(
+                        "failed",
+                        "Briefing generation failed. Last good content is still shown.",
+                    )
 
     # --- Cast a script from the selected briefing (spec #2 phase 2a, ------
     # Task 5). Sibling of the Generate chain immediately above: own
@@ -13107,16 +13520,50 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
         # Decision 031: advertise only implemented actions -- every verb
         # named here is bound above and covered by tests. TASK-3791 adds
         # the search and refresh-all verbs.
+        focused = self.focused
+        source_selection_help = (
+            " | Space=toggle source Shift+Up/Down=range "
+            "v=visible x=clear selected"
+            if (
+                self.active_section == "sources"
+                and isinstance(focused, DataTable)
+                and focused.id == "sources-table"
+            )
+            else ""
+        )
         self.app_instance.notify(
             "1=Read 2=Sources 3=Runs 4=Rules 5=Notifications 6=Artifacts "
             "7=Overview | n=new d=delete/ignore c=check p=preview ?=help | "
             "j/k=move space=next-unread m=read/unread s=star o=open "
             "a=mark-all-read u=undo /=search r=refresh-all | "
             "z=toggle focused side pane Z=Article Focus (Read only) "
-            "[=Navigation ]=Inspector | Reader is permanent",
+            "[=Navigation ]=Inspector | Reader is permanent"
+            f"{source_selection_help}",
             severity="information",
             timeout=8,
         )
+
+    def _apply_source_selection_command(self, command: str) -> None:
+        try:
+            pane = self.query_one("#watchlists-sources-pane", SourcesPane)
+        except NoMatches:
+            return
+        pane.apply_selection_command(command)
+
+    def action_toggle_focused_source_selection(self) -> None:
+        self._apply_source_selection_command("space")
+
+    def action_extend_source_selection_up(self) -> None:
+        self._apply_source_selection_command("shift+up")
+
+    def action_extend_source_selection_down(self) -> None:
+        self._apply_source_selection_command("shift+down")
+
+    def action_toggle_visible_source_selection(self) -> None:
+        self._apply_source_selection_command("v")
+
+    def action_clear_source_selection(self) -> None:
+        self._apply_source_selection_command("x")
 
     def action_new_source(self) -> None:
         """Open the create-source form when in the Sources section."""

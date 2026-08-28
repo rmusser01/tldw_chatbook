@@ -14,6 +14,39 @@ Mixed | Local/Server". This screen was previously called "Subscriptions."
 - Press **Ctrl+6**, click **⌃6 Watchlists** in the nav bar, or press
   **Ctrl+P** → "Tab Navigation: Switch to Watchlists".
 
+## Adding sources and making a Watchlist
+
+In **Sources**, use **New source** for one feed or **Add several…** for a
+repeatable bulk pass. Bulk entry accepts one HTTP(S) URL per line, up to 50
+nonblank lines, with one shared Type and optional Tags. **Validate and create**
+keeps the draft visible and reports each URL in its original order as Created,
+Existing, or Invalid. A validation or save failure never clears the draft.
+
+When only part of a batch succeeds, the app pauses with exactly two choices:
+**Continue with successful sources** or **Return to draft**. Continuing opens
+**All Sources** with the successful source IDs selected; it does not silently
+add them to a Watchlist. The **Next** choice either focuses the All Sources
+table or focuses the enabled **Create Watchlist from selected…** action; it
+never presses that action for you. Pressing the action creates the Watchlist
+and its memberships atomically, after one name prompt. While an admitted batch
+is being saved, Create, Cancel, and Escape wait for its result so a successful
+write cannot be hidden behind a dismissed dialog.
+
+The source table also supports focus-scoped keyboard selection:
+
+- **Space** toggles the highlighted source and starts a range.
+- **Shift+Up/Down** extends or contracts that range in the current visible
+  order.
+- **v** selects all currently visible filtered rows; press it again to clear
+  only those visible rows.
+- **x** clears every selection, including rows hidden by filters.
+
+Selections follow source identities, not row positions, so sorting and
+filtering do not move the selection to a different source. The status line
+reports both the total selected count and how many are hidden by filters.
+These shortcuts appear in Help and the command palette only while the Sources
+table owns focus.
+
 ## Checking a source while a check is already running
 
 One check of a given page runs at a time. If you press **Check now** for a
@@ -54,8 +87,20 @@ content change first and then use **Check now**.
 
 The **Artifacts** section of a watchlist holds its briefings — text digests
 of what its sources did — along with any scripts cast from them and any
-audio synthesized from those scripts. Two export actions live on that
-section's top toolbar, and both write to a location you pick:
+audio synthesized from those scripts. **Generate briefing**, **Refresh**, and
+the generation/schedule controls stay in the primary workflow. Export, Keep,
+and feed-serving actions live under **More briefing actions** so an empty
+watchlist foregrounds creation instead of unavailable downstream actions.
+
+Refreshing or generating does not blank a briefing you are already reading.
+The last good table, selection, Markdown body, and citations remain visible
+with an inline loading state. A failure keeps that content and offers
+**Retry**. If generation was durably accepted or completed but the refreshed
+view cannot find its row, Artifacts reports “Briefing saved, but this view
+could not reload it” and offers both **Retry** and **Inspect Runs**; this is a
+storage/reload diagnostic, not an empty state.
+
+Under **More briefing actions**:
 
 - **Export** saves the selected briefing as a Markdown file. It is enabled
   once you have selected a briefing that has finished generating — a
@@ -144,7 +189,7 @@ starts on its own, and no setting can make it start on its own.
 
 ## Scheduled briefings
 
-By default, a briefing is written only when you press **Generate** in the
+By default, a briefing is written only when you press **Generate briefing** in the
 Artifacts section — nothing runs unless you ask for it. The **cadence**
 picker next to the selection-mode and default-preset pickers in that same
 toolbar turns this into a recurring job for one watchlist: choose **Every
@@ -188,3 +233,18 @@ scheduling is enabled for the app, or, when a cadence is stored but
 and stating plainly that it will not fire — "stored to run every 24 hours, but
 scheduled briefings are turned off for this app — this schedule will not
 fire", for example.
+
+## Console agents and external MCP
+
+The Console can drive the same local Watchlists workflow through approved
+tool calls: create sources and collections, start source checks or briefing
+generation, follow durable operation receipts, and read a completed briefing
+with its ordered source/item provenance on the user's behalf. These tools use
+domain services rather than driving the Textual controls, so the Watchlists
+screen does not need to be mounted.
+
+External MCP is deliberately narrower. With an operator-recorded permission it
+may read bounded source, collection, operation, and briefing-receipt metadata;
+it cannot receive item evidence or full briefing Markdown and cannot invoke
+Watchlists mutations or network/model work. Settings remains the owner of
+global permission and scheduling gates.
