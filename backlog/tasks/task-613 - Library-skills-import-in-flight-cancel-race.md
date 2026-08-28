@@ -40,14 +40,14 @@ ADR path: N/A
 Reason: This closes an existing Library worker-ownership race while preserving ADR-009's local skill trust boundary and the incumbent import, storage, and remote-fetch contracts.
 
 1. Reproduce the second-submit race with mounted, barrier-controlled tests for loose-file, folder, zip, and URL imports.
-2. Give the Library screen one authoritative single-flight import state; disable every import control while accepted work runs, repeat the guard in handlers, and preserve truthful state across navigation.
+2. Give the app one authoritative single-flight import coordinator and snapshot; disable every import control while accepted work runs, repeat the guard in handlers, and preserve truthful state across routed screen replacement and rail navigation.
 3. Verify focused skill-import, remote-fetch, and directory-import behavior; update the Library skill guide and implementation notes without changing trust or execution policy.
 
 ## Implementation Notes
 
-- Added synchronous screen-owned admission before worker scheduling, a non-exclusive accepted worker, and one `finally` release path so loose Markdown, folder, zip, and URL imports share the same single-flight lifecycle.
-- Projected `Inspecting/importing…` and disabled import controls through the retained Skills canvas while leaving rail navigation available; accepted in-flight and terminal state survives leave/return, and forced repeat/cancel/browse actions fail closed.
-- Added generation fencing for picker callbacks started before admission, generic unexpected-worker recovery, and barrier-controlled mounted coverage that keeps every successful import trust-pending under ADR-009.
-- Updated the Library Skills guide and recorded the stale-widget harness incident in the testing-evidence lessons. No ADR was required because storage, trust, fetch policy, and runtime ownership boundaries are unchanged.
-- Target verification: 87 passed across `test_skills_import.py`, `test_skills_library_flow.py`, `test_import_skill_directory.py`, and `test_skill_remote_fetch.py`; the known Requests dependency warning remains baseline. Task remains In Progress with acceptance criteria unchecked pending independent review.
-- Scoped broader UI evidence: the import/per-click selection passed 12 tests; three unrelated pre-existing assertions remain outside TASK-613 (trust-posture fixture expectation, a bare-fake focus-generation attribute, and create-editor focus timing).
+- Review round 1 moved admission, the four-route mutation pipeline, live progress, and terminal receipt into one app-owned coordinator. Fresh routed Library screens hydrate the same immutable snapshot; the worker retains no stale screen/widget reference and publishes only by transiently looking up the current screen.
+- `Inspecting/importing…` and disabled controls continue through the retained Skills canvas. Rail departure preserves terminal status/review, while explicit Cancel, Review, or a new draft dismisses it. Forced repeat/cancel/browse/path/review actions fail closed during accepted work.
+- Cancel/reset/reopen/route changes advance the row generation; picker callbacks require the current open Skills row and live screen. `Input.Changed` also requires the currently mounted Input so a detached mount echo cannot erase a fast terminal receipt.
+- Removed the parallel screen-owned import implementation; loose Markdown, folder, zip, and URL now share exactly one coordinator path. All success routes still pass `trust_approved=False`, preserving ADR-009, remote-fetch, storage, and runtime boundaries.
+- Added routed replacement, completion-before-departure, completion-while-away, picker reset/reopen, cancellation settlement, and sole-owner tests. Updated the guide and testing-evidence lesson. No ADR was required because this directly implements the existing worker-ownership plan without changing a durable or security contract.
+- Review-fix verification: complete `test_skills_import.py` passed 24 tests; focused Skills import/reset UI passed 9; four-route mounted matrix passed 4; replacement route passed 1; Ruff, diff check, and the Impeccable detector passed. The incumbent Requests warning and the task file's aggregate FD-growth warning remain. Task stays In Progress with acceptance criteria unchecked pending fresh independent review.

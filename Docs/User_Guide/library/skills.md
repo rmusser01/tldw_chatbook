@@ -81,7 +81,8 @@ Only one skill import runs at a time. While Chatbook shows
 controls are disabled. Library navigation remains available: leaving the
 Skills list does not cancel filesystem or network work, and returning shows
 the accepted import's current state or actual result. A forced repeat submit
-is refused with `An import is already in progress.`
+is refused with `An import is already in progress.` The result stays available
+until you choose **Cancel**, open **Review…**, or begin a new import draft.
 
 - Success: `Imported "name" · re-review it in the trust panel`, with a
   follow-up button `Review "name"…` that jumps straight to its trust

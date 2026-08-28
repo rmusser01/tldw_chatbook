@@ -1400,8 +1400,8 @@ class LibrarySkillsListCanvas(PostRecomposeCallback, VerticalScroll):
         ``superpowers`` skillset) is a directory named after the skill
         containing a literally-named ``SKILL.md`` file, so pointing the
         path Input at either the ``SKILL.md`` file itself or its parent
-        directory both resolve to the same skill name (see
-        ``_run_library_skills_import``).
+        directory both resolve to the same skill name in the app-owned
+        Library skill-import coordinator.
         """
         yield Input(
             placeholder="SKILL.md file or skill folder path… or GitHub/zip URL",

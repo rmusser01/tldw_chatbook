@@ -29,11 +29,13 @@ from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
+from textual.screen import Screen
 from textual.widgets import Button, Input
 
 from tldw_chatbook.Skills_Interop.local_skills_service import LocalSkillsService
 from tldw_chatbook.Skills_Interop.skills_scope_service import SkillsScopeService
 from tldw_chatbook.tldw_api.skills_schemas import SKILL_NAME_PATTERN
+from tldw_chatbook.UI.Library_Modules import library_skill_import_controller
 from tldw_chatbook.UI.Screens.library_screen import LibraryScreen
 
 from Tests.Skills.test_skills_library_flow import (
@@ -153,6 +155,103 @@ async def _run_skills_import_via_ui(
     return status_text
 
 
+async def _wait_for_active_library_screen(app, pilot) -> LibraryScreen:
+    """Return the freshly mounted production Library route."""
+    deadline = time.monotonic() + 15
+    while time.monotonic() < deadline:
+        if isinstance(app.screen, LibraryScreen):
+            await _wait_for_library_shell(app.screen, pilot)
+            return app.screen
+        await pilot.pause(0.02)
+    raise AssertionError("Library screen did not mount")
+
+
+async def _wait_for_skill_import_terminal(
+    screen: LibraryScreen,
+    pilot,
+    *,
+    expected_status: str,
+) -> None:
+    """Wait for the shared import receipt to reach one literal outcome."""
+    deadline = time.monotonic() + 15
+    while time.monotonic() < deadline:
+        if (
+            screen._library_skills_import_in_flight is False
+            and screen._library_skills_import_status == expected_status
+        ):
+            return
+        await pilot.pause(0.02)
+    raise AssertionError(
+        "Skill import did not settle: "
+        f"in_flight={screen._library_skills_import_in_flight!r}, "
+        f"status={screen._library_skills_import_status!r}"
+    )
+
+
+def test_library_screen_has_no_parallel_skill_import_pipeline():
+    """Every supported route mutates through the app-owned coordinator."""
+    retired_screen_owners = (
+        "_run_library_skills_import_single_flight",
+        "_run_library_skills_import",
+        "_import_library_skill_from_loose_file",
+        "_install_library_skill_from_url",
+        "_apply_library_skills_import_success",
+        "_apply_library_skills_import_outcome_from_exception",
+    )
+
+    assert all(
+        not hasattr(LibraryScreen, name) for name in retired_screen_owners
+    )
+
+
+@pytest.mark.asyncio
+async def test_coordinator_settles_accepted_import_before_consuming_cancellation(
+    monkeypatch,
+):
+    """Cancellation cannot release admission while the mutation still runs."""
+    coordinator = library_skill_import_controller.LibrarySkillImportCoordinator(
+        SimpleNamespace()
+    )
+    started = asyncio.Event()
+    release = asyncio.Event()
+    presentations: list[bool] = []
+
+    async def blocked_import(_raw_path):
+        started.set()
+        await release.wait()
+        return library_skill_import_controller._LibrarySkillImportOutcome(
+            'Imported "cancel-safe" · re-review it in the trust panel',
+            review_name="cancel-safe",
+            clear_path=True,
+        )
+
+    screen = SimpleNamespace(
+        _present_library_skills_import_snapshot=lambda *, refresh_sources: (
+            presentations.append(refresh_sources)
+        )
+    )
+    runtime_app = SimpleNamespace(screen=screen)
+    monkeypatch.setattr(coordinator, "_import", blocked_import)
+    coordinator.open_draft()
+    assert coordinator.claim("/accepted") is True
+    worker = asyncio.create_task(
+        coordinator.run("/accepted", runtime_app=runtime_app)
+    )
+    await started.wait()
+
+    worker.cancel()
+    await asyncio.sleep(0)
+    assert coordinator.snapshot.in_flight is True
+    assert worker.done() is False
+
+    release.set()
+    await worker
+    assert coordinator.snapshot.in_flight is False
+    assert coordinator.snapshot.review_name == "cancel-safe"
+    assert coordinator.snapshot.status.startswith('Imported "cancel-safe"')
+    assert presentations == [False]
+
+
 @pytest.mark.asyncio
 @pytest.mark.parametrize(
     ("route", "second_trigger", "expected_name"),
@@ -174,16 +273,13 @@ async def test_skill_import_is_single_flight_across_every_route_and_navigation(
     accepted operation's actual terminal outcome rather than a cancelled or
     replacement worker's status.
     """
-    from tldw_chatbook.UI.Screens import library_screen
-
     store_dir = tmp_path / "store"
     source_dir = tmp_path / "source"
     source_dir.mkdir()
     _local_service, service = _real_skills_scope_service_with_trust(store_dir)
-    app = _build_test_app()
+    app = _build_test_app(configured_default="library")
     _wire_empty_non_skill_services(app)
     app.skills_scope_service = service
-    host = LibraryHarness(app)
 
     if route == "loose":
         import_value = source_dir / "loose-skill.md"
@@ -206,7 +302,7 @@ async def test_skill_import_is_single_flight_across_every_route_and_navigation(
         owner, attribute = service, "import_skill_file"
     else:
         import_value = "https://github.com/example/remote-skill"
-        owner, attribute = library_screen, "install_skill_from_url"
+        owner, attribute = library_skill_import_controller, "install_skill_from_url"
 
     original = getattr(owner, attribute)
     first_started = threading.Event()
@@ -233,9 +329,8 @@ async def test_skill_import_is_single_flight_across_every_route_and_navigation(
     monkeypatch.setattr(owner, attribute, blocked_call)
 
     try:
-        async with host.run_test(size=LIBRARY_TEST_SIZE) as pilot:
-            screen = _active_library_screen(host)
-            await _wait_for_library_shell(screen, pilot)
+        async with app.run_test(size=LIBRARY_TEST_SIZE) as pilot:
+            screen = await _wait_for_active_library_screen(app, pilot)
             screen.query_one("#library-row-browse-skills", Button).press()
             await _wait_for_selector(screen, pilot, "#library-skills-import")
             screen.handle_library_skills_import(SimpleNamespace(stop=lambda: None))
@@ -300,6 +395,243 @@ async def test_skill_import_is_single_flight_across_every_route_and_navigation(
 
 
 @pytest.mark.asyncio
+async def test_routed_library_replacement_observes_and_refuses_app_owned_import(
+    tmp_path, monkeypatch
+):
+    """A fresh routed screen cannot admit work hidden by its predecessor."""
+    store_dir = tmp_path / "store"
+    source = tmp_path / "routed-skill.md"
+    source.write_text(
+        "---\ndescription: Routed owner fixture.\n---\n\nBody.\n",
+        encoding="utf-8",
+    )
+    _local_service, service = _real_skills_scope_service_with_trust(store_dir)
+    original = service.import_skill_file
+    started = threading.Event()
+    release = threading.Event()
+    landed = threading.Event()
+    calls: list[int] = []
+
+    def blocking_import(*args, **kwargs):
+        calls.append(len(calls) + 1)
+        started.set()
+        release.wait(15)
+        try:
+            return asyncio.run(original(*args, **kwargs))
+        finally:
+            landed.set()
+
+    monkeypatch.setattr(service, "import_skill_file", blocking_import)
+    app = _build_test_app(configured_default="library")
+    _wire_empty_non_skill_services(app)
+    app.skills_scope_service = service
+
+    try:
+        async with app.run_test(size=LIBRARY_TEST_SIZE) as pilot:
+            original_screen = await _wait_for_active_library_screen(app, pilot)
+            await _open_skills_import_row(original_screen, pilot)
+            original_screen.query_one(
+                "#library-skills-import-path", Input
+            ).value = str(source)
+            await pilot.pause()
+            original_screen.query_one("#library-skills-import-run", Button).press()
+            assert await asyncio.to_thread(started.wait, 5)
+
+            await app.switch_screen(Screen())
+            replacement = LibraryScreen(app)
+            await app.switch_screen(replacement)
+            await _wait_for_library_shell(replacement, pilot)
+
+            assert app.screen is replacement
+            assert original_screen not in app.screen_stack
+            assert replacement._library_skills_import_in_flight is True
+            assert replacement._library_skills_import_open is True
+            skills_row = await _wait_for_selector(
+                replacement, pilot, "#library-row-browse-skills"
+            )
+            assert isinstance(skills_row, Button)
+            skills_row.press()
+            await _wait_for_selector(
+                replacement, pilot, "#library-skills-import-path"
+            )
+            for selector in (
+                "#library-skills-import-path",
+                "#library-skills-import-browse",
+                "#library-skills-import-browse-folder",
+                "#library-skills-import-run",
+                "#library-skills-import-cancel",
+            ):
+                assert replacement.query_one(selector).disabled is True
+
+            replacement._start_library_skills_import()
+            await pilot.pause()
+            assert calls == [1]
+            assert (
+                replacement._library_skills_import_status
+                == "An import is already in progress."
+            )
+
+            release.set()
+            assert await asyncio.to_thread(landed.wait, 10)
+            await _wait_for_skill_import_terminal(
+                replacement,
+                pilot,
+                expected_status=(
+                    'Imported "routed-skill" · re-review it in the trust panel'
+                ),
+            )
+            assert replacement._library_skills_import_review_name == "routed-skill"
+            assert calls == [1]
+    finally:
+        release.set()
+
+
+@pytest.mark.asyncio
+async def test_completed_import_receipt_survives_rail_departure_and_return(tmp_path):
+    """A completed receipt remains visible after ordinary Library navigation."""
+    source = tmp_path / "completed-skill.md"
+    source.write_text(
+        "---\ndescription: Completed receipt fixture.\n---\n\nBody.\n",
+        encoding="utf-8",
+    )
+    _local_service, service = _real_skills_scope_service_with_trust(tmp_path / "store")
+    app = _build_test_app(configured_default="library")
+    _wire_empty_non_skill_services(app)
+    app.skills_scope_service = service
+    expected = 'Imported "completed-skill" · re-review it in the trust panel'
+
+    async with app.run_test(size=LIBRARY_TEST_SIZE) as pilot:
+        screen = await _wait_for_active_library_screen(app, pilot)
+        await _open_skills_import_row(screen, pilot)
+        screen.query_one("#library-skills-import-path", Input).value = str(source)
+        await pilot.pause()
+        screen.query_one("#library-skills-import-run", Button).press()
+        await _wait_for_skill_import_terminal(
+            screen, pilot, expected_status=expected
+        )
+
+        screen.query_one("#library-row-browse-media", Button).press()
+        await _wait_for_selector(screen, pilot, "#library-media-canvas")
+        assert screen._library_skills_import_open is True
+        assert screen._library_skills_import_status == expected
+
+        screen.query_one("#library-row-browse-skills", Button).press()
+        await _wait_for_selector(screen, pilot, "#library-skills-import-path")
+        assert (
+            str(screen.query_one("#library-skills-import-status").renderable)
+            == expected
+        )
+        assert screen._library_skills_import_review_name == "completed-skill"
+
+
+@pytest.mark.asyncio
+async def test_import_completed_while_away_survives_another_rail_move(
+    tmp_path, monkeypatch
+):
+    """Off-canvas settlement remains after later navigation before return."""
+    source = tmp_path / "away-skill.md"
+    source.write_text(
+        "---\ndescription: Away receipt fixture.\n---\n\nBody.\n",
+        encoding="utf-8",
+    )
+    _local_service, service = _real_skills_scope_service_with_trust(tmp_path / "store")
+    original = service.import_skill_file
+    started = threading.Event()
+    release = threading.Event()
+
+    async def blocked_import(*args, **kwargs):
+        started.set()
+        await asyncio.to_thread(release.wait)
+        return await original(*args, **kwargs)
+
+    monkeypatch.setattr(service, "import_skill_file", blocked_import)
+    app = _build_test_app(configured_default="library")
+    _wire_empty_non_skill_services(app)
+    app.skills_scope_service = service
+    expected = 'Imported "away-skill" · re-review it in the trust panel'
+
+    try:
+        async with app.run_test(size=LIBRARY_TEST_SIZE) as pilot:
+            screen = await _wait_for_active_library_screen(app, pilot)
+            await _open_skills_import_row(screen, pilot)
+            screen.query_one("#library-skills-import-path", Input).value = str(source)
+            await pilot.pause()
+            screen.query_one("#library-skills-import-run", Button).press()
+            assert await asyncio.to_thread(started.wait, 5)
+
+            screen.query_one("#library-row-browse-media", Button).press()
+            await _wait_for_selector(screen, pilot, "#library-media-canvas")
+            release.set()
+            await _wait_for_skill_import_terminal(
+                screen, pilot, expected_status=expected
+            )
+
+            screen.query_one("#library-row-browse-notes", Button).press()
+            await _wait_for_selector(screen, pilot, "#library-notes-canvas")
+            assert screen._library_skills_import_open is True
+            assert screen._library_skills_import_status == expected
+
+            screen.query_one("#library-row-browse-skills", Button).press()
+            await _wait_for_selector(screen, pilot, "#library-skills-import-path")
+            assert (
+                str(screen.query_one("#library-skills-import-status").renderable)
+                == expected
+            )
+    finally:
+        release.set()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "browse_handler",
+    (
+        LibraryScreen.handle_library_skills_import_browse,
+        LibraryScreen.handle_library_skills_import_browse_folder,
+    ),
+)
+async def test_abandoned_picker_cannot_write_into_reopened_import_row(
+    tmp_path, monkeypatch, browse_handler
+):
+    """Cancel/reopen advances the row lifecycle beyond an old picker."""
+    app = _build_test_app(configured_default="library")
+    _wire_empty_non_skill_services(app)
+    app.skills_scope_service = _real_skills_scope_service_with_trust(
+        tmp_path / "store"
+    )[1]
+    pushed: dict[str, object] = {}
+
+    async with app.run_test(size=LIBRARY_TEST_SIZE) as pilot:
+        screen = await _wait_for_active_library_screen(app, pilot)
+        await _open_skills_import_row(screen, pilot)
+        monkeypatch.setattr(
+            app,
+            "push_screen",
+            lambda dialog, callback=None: pushed.update(
+                dialog=dialog, callback=callback
+            ),
+        )
+        browse_handler(screen, SimpleNamespace(stop=lambda: None))
+        callback = pushed["callback"]
+
+        screen.query_one("#library-skills-import-cancel", Button).press()
+        await _wait_for_selector(screen, pilot, "#library-skills-import")
+        screen.query_one("#library-skills-import", Button).press()
+        path_input = await _wait_for_selector(
+            screen, pilot, "#library-skills-import-path"
+        )
+        assert isinstance(path_input, Input)
+        path_input.value = "/new-draft"
+        await pilot.pause()
+
+        await callback(Path("/stale/SKILL.md"))
+
+        assert screen._library_skills_import_path == "/new-draft"
+        assert screen.query_one(
+            "#library-skills-import-path", Input
+        ).value == "/new-draft"
+
+
+@pytest.mark.asyncio
 async def test_import_real_superpowers_skills_lands_trust_pending(tmp_path):
     """Import every real superpowers fixture skill through the actual
     Library Import row (rail row -> Import… -> path -> Import), then
@@ -358,8 +690,8 @@ async def test_import_skill_via_skill_md_file_path_derives_name_from_parent_dire
     ``SKILL.md`` for every skill, so naively deriving the name from that
     file's own basename (as a generic ``import_skill_file(filename=...)``
     call would) produces the same wrong name ("skill") for every import
-    regardless of which skill it actually is. ``_run_library_skills_import``
-    must use the PARENT DIRECTORY's name instead for this exact shape.
+    regardless of which skill it actually is. The coordinator must use the
+    PARENT DIRECTORY's name instead for this exact shape.
 
     Merge-gate regression (PR #784, IMPORTANT finding): this shape used to
     fall through to a flat, text-only read (dropping nested subfolders,
@@ -767,8 +1099,6 @@ async def test_import_row_url_routes_to_remote_install_and_primes_review(
     ``test_skills_import_success_offers_review_button`` in
     ``Tests/UI/test_library_skills_canvas.py``).
     """
-    from tldw_chatbook.UI.Screens import library_screen
-
     _local_service, service = _real_skills_scope_service_with_trust(tmp_path)
     app = _build_test_app()
     _wire_empty_non_skill_services(app)
@@ -784,7 +1114,9 @@ async def test_import_row_url_routes_to_remote_install_and_primes_review(
         return {"name": "remote-skill"}
 
     monkeypatch.setattr(
-        library_screen, "install_skill_from_url", _fake_install_skill_from_url
+        library_skill_import_controller,
+        "install_skill_from_url",
+        _fake_install_skill_from_url,
     )
 
     async with host.run_test(size=LIBRARY_TEST_SIZE) as pilot:
@@ -793,9 +1125,29 @@ async def test_import_row_url_routes_to_remote_install_and_primes_review(
         await _open_skills_import_row(screen, pilot)
 
         status = await _run_skills_import_via_ui(
-            screen, pilot, "https://github.com/o/remote-skill"
+            screen,
+            pilot,
+            "https://github.com/o/remote-skill",
+            deadline_seconds=2,
         )
-        assert status == 'Imported "remote-skill" · re-review it in the trust panel'
+        assert captured, (
+            app.library_skill_import_coordinator.snapshot,
+            host.screen is screen,
+            screen.is_mounted,
+        )
+        expected = 'Imported "remote-skill" · re-review it in the trust panel'
+        assert status == expected, (
+            app.library_skill_import_coordinator.snapshot,
+            getattr(
+                screen.query_one("#library-skills-canvas"),
+                "import_status",
+                None,
+            ),
+            [
+                str(widget.renderable)
+                for widget in screen.query("#library-skills-import-status")
+            ],
+        )
         review = screen.query_one("#library-skills-import-review", Button)
         assert "remote-skill" in str(review.label)
 
@@ -811,8 +1163,6 @@ async def test_import_row_url_remote_skill_error_becomes_status_line(
     the Import row must surface the message verbatim, not a generic
     failure line."""
     from tldw_chatbook.Skills_Interop.skill_remote_fetch import RemoteSkillError
-    from tldw_chatbook.UI.Screens import library_screen
-
     _local_service, service = _real_skills_scope_service_with_trust(tmp_path)
     app = _build_test_app()
     _wire_empty_non_skill_services(app)
@@ -823,7 +1173,9 @@ async def test_import_row_url_remote_skill_error_becomes_status_line(
         raise RemoteSkillError("Only .zip release assets are supported.")
 
     monkeypatch.setattr(
-        library_screen, "install_skill_from_url", _fake_install_skill_from_url
+        library_skill_import_controller,
+        "install_skill_from_url",
+        _fake_install_skill_from_url,
     )
 
     async with host.run_test(size=LIBRARY_TEST_SIZE) as pilot:
@@ -847,15 +1199,12 @@ async def test_import_row_url_generic_failure_uses_classified_name_guess(
 ):
     """A non-``RemoteSkillError`` failure (e.g. the underlying
     ``import_skill_file`` call rejecting a duplicate name) routes through
-    the SAME exception translator every other import path uses
-    (``_apply_library_skills_import_outcome_from_exception``), with a name
-    guess derived from classifying the URL -- the same "derive a plausible
+    the SAME coordinator exception translator every other import path uses,
+    with a name guess derived from classifying the URL -- the same "derive a plausible
     skill name from what the user typed" convention the loose-file branch
     uses (``file_path.stem``), here via the seam's own classification so
     the guess matches what the seam would actually have named the skill.
     """
-    from tldw_chatbook.UI.Screens import library_screen
-
     _local_service, service = _real_skills_scope_service_with_trust(tmp_path)
     app = _build_test_app()
     _wire_empty_non_skill_services(app)
@@ -866,7 +1215,9 @@ async def test_import_row_url_generic_failure_uses_classified_name_guess(
         raise ValueError("local_skill_exists: brainstorm")
 
     monkeypatch.setattr(
-        library_screen, "install_skill_from_url", _fake_install_skill_from_url
+        library_skill_import_controller,
+        "install_skill_from_url",
+        _fake_install_skill_from_url,
     )
 
     async with host.run_test(size=LIBRARY_TEST_SIZE) as pilot:

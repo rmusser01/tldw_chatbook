@@ -47,6 +47,9 @@ from tldw_chatbook.Library.library_skills_state import (
 )
 from tldw_chatbook.Skills_Interop.local_skills_service import LocalSkillsService
 from tldw_chatbook.Skills_Interop.skills_scope_service import SkillsScopeService
+from tldw_chatbook.UI.Library_Modules.library_skill_import_controller import (
+    LibrarySkillImportCoordinator,
+)
 from tldw_chatbook.UI.Screens.library_screen import LibraryScreen
 from tldw_chatbook.UI.Screens import library_screen as library_screen_module
 from tldw_chatbook.app import TldwCli
@@ -3182,9 +3185,8 @@ async def test_skills_import_row_renders_folder_browse_button():
         assert pilot.app.query_one("#library-skills-import-browse-folder", Button)
 
 
-def test_reset_skill_editor_state_clears_import_row():
-    """task-422: the import row and its last error persisted across editor
-    round-trips and resurfaced stale minutes later (verified live)."""
+def test_reset_skill_editor_state_preserves_import_receipt():
+    """Ordinary editor cleanup cannot dismiss an import receipt."""
     fake = SimpleNamespace(
         _library_skills_view="editor",
         _library_skill_detail={},
@@ -3202,15 +3204,14 @@ def test_reset_skill_editor_state_clears_import_row():
         _library_skills_import_status="Please enter a file or folder path.",
         _library_skills_import_review_name="stale-skill",
     )
-    fake._reset_library_skills_import_state = lambda: (
-        LibraryScreen._reset_library_skills_import_state(fake)
-    )
-    fake._invalidate_library_skill_detail_generation = lambda: None
     LibraryScreen._reset_library_skill_editor_state(fake)
-    assert fake._library_skills_import_open is False
-    assert fake._library_skills_import_path == ""
-    assert fake._library_skills_import_status == ""
-    assert fake._library_skills_import_review_name == ""
+    assert fake._library_skills_import_open is True
+    assert fake._library_skills_import_path == "/stale"
+    assert (
+        fake._library_skills_import_status
+        == "Please enter a file or folder path."
+    )
+    assert fake._library_skills_import_review_name == "stale-skill"
 
 
 def test_reset_skill_editor_state_clears_trust_reset_confirm_flag():
@@ -3218,7 +3219,7 @@ def test_reset_skill_editor_state_clears_trust_reset_confirm_flag():
     editor's manifest_error panel or the list header) and then leaving the
     editor left ``_library_skill_trust_confirming_reset`` armed -- the
     confirm-gated Reset row could then reappear unprompted in another view.
-    Mirrors ``test_reset_skill_editor_state_clears_import_row`` above."""
+    Mirrors ``test_reset_skill_editor_state_preserves_import_receipt`` above."""
     fake = SimpleNamespace(
         _library_skills_view="editor",
         _library_skill_detail={},
@@ -3237,10 +3238,6 @@ def test_reset_skill_editor_state_clears_trust_reset_confirm_flag():
         _library_skills_import_status="",
         _library_skills_import_review_name="",
     )
-    fake._reset_library_skills_import_state = lambda: (
-        LibraryScreen._reset_library_skills_import_state(fake)
-    )
-    fake._invalidate_library_skill_detail_generation = lambda: None
     LibraryScreen._reset_library_skill_editor_state(fake)
     assert fake._library_skill_trust_confirming_reset is False
 
@@ -3262,6 +3259,9 @@ async def test_skills_import_success_offers_review_button():
 async def test_handle_library_skills_import_review_opens_editor():
     worker_calls: list[dict] = []
     fake = SimpleNamespace(
+        _library_skill_import_coordinator=LibrarySkillImportCoordinator(
+            SimpleNamespace()
+        ),
         _library_skills_view="list",
         _library_skills_import_review_name="demo",
         _selected_skill_name="",
@@ -3689,18 +3689,17 @@ def test_skill_import_cancel_handler_fails_closed_while_operation_runs():
 @pytest.mark.asyncio
 async def test_skill_import_unexpected_failure_releases_admission_with_outcome():
     """An unclassified worker failure cannot strand the running state."""
-    statuses: list[str] = []
-    fake = SimpleNamespace(
-        _library_skills_import_in_flight=True,
-        _run_library_skills_import=AsyncMock(side_effect=RuntimeError("boom")),
-        _apply_library_skills_import_status=statuses.append,
-        is_mounted=False,
+    coordinator = LibrarySkillImportCoordinator(SimpleNamespace())
+    coordinator.open_draft()
+    assert coordinator.claim("/skill") is True
+    coordinator._import = AsyncMock(side_effect=RuntimeError("boom"))
+
+    await coordinator.run(
+        "/skill", runtime_app=SimpleNamespace(screen=SimpleNamespace())
     )
 
-    await LibraryScreen._run_library_skills_import_single_flight(fake, "/skill")
-
-    assert fake._library_skills_import_in_flight is False
-    assert statuses == ["Could not import that skill."]
+    assert coordinator.snapshot.in_flight is False
+    assert coordinator.snapshot.status == "Could not import that skill."
 
 
 # ---------------------------------------------------------------------------

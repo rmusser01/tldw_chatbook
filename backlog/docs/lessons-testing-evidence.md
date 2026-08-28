@@ -216,6 +216,25 @@ nothing about the production event path.
 
 ---
 
+## A detached mount echo can erase a newer terminal snapshot
+
+**TASK-613 review round 1, 2026-08-28.** Moving skill-import state to an
+app-owned coordinator fixed routed screen cancellation, and the barrier-controlled
+routes passed. The complete task file then failed only for the fastest mocked URL
+success: the accepted operation published its terminal receipt before the disabled
+Input's recompose finished, and that detached Input's delayed `Input.Changed` event
+rewrote the shared path and cleared the newer status/review target. The service call
+had landed correctly, so assertions limited to mutation count or admission would
+have missed the user-visible loss.
+
+**What to do.** When a Textual change handler can clear terminal state, require its
+event control to be the currently mounted control, in addition to operation and
+route generations. Include one production-shaped completion fast enough to race
+the accepted-state recompose, and assert both the authoritative snapshot and the
+mounted outcome copy.
+
+---
+
 ## A privacy assertion must inspect every default durable owner, not only the primary database
 
 **TASK-19908, 2026-08-22.** Trace capture tests proved that AgentRunsDB and the

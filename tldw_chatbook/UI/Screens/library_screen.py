@@ -428,10 +428,9 @@ from ...Notes.note_folder_models import (
 )
 from ...runtime_policy.server_event_scope import event_principal_id_from_active_context
 from ...runtime_policy.types import PolicyDeniedError, RuntimeSourceState
-from ...Skills_Interop.skill_remote_fetch import (
-    RemoteSkillError,
-    classify_skill_source_url,
-    install_skill_from_url,
+from ..Library_Modules.library_skill_import_controller import (
+    LIBRARY_SKILLS_IMPORT_WORKER_GROUP,
+    ensure_library_skill_import_coordinator,
 )
 from ...STT.transcribe_cpp_config import (
     configure_model_path as configure_transcribe_cpp_model_path,
@@ -643,10 +642,18 @@ _LIBRARY_PROMPTS_SEARCH_DEBOUNCE_SECONDS = 0.25
 # concern, not pure list-state-building logic" posture as the prompts modes
 # above, kept local rather than in library_skills_state.py.
 _LIBRARY_SKILLS_SORT_MODES = ("name", "status")
-# Skills toolbar Import… (Task 5): the fixed filename every real skill
-# package uses for its own content, matched case-insensitively by
-# ``LibraryScreen._find_skill_md_in_dir``. See ``_run_library_skills_import``.
-_SKILL_MD_FILENAME = "SKILL.md"
+
+
+def _library_screen_is_current(screen: Any) -> bool:
+    """Reject delayed callbacks owned by a replaced Library screen."""
+    try:
+        runtime_app = screen.app
+        current_screen = getattr(runtime_app, "screen", screen)
+    except Exception:
+        return True
+    return current_screen is screen
+
+
 # Toolbar Import… (Task 5): which parser handles which file extension.
 # Mirrors ``Prompts_Interop._get_file_type``'s extension map, but writes
 # through ``prompt_scope_service``/``LocalPromptService`` per-prompt
@@ -3193,6 +3200,9 @@ class LibraryScreen(BaseAppScreen):
         **kwargs: Any,
     ) -> None:
         super().__init__(app_instance, "library", **kwargs)
+        self._library_skill_import_coordinator = (
+            ensure_library_skill_import_coordinator(app_instance)
+        )
         self._library_new_profile_admission = bool(
             getattr(app_instance, "library_new_profile_admission", False)
         )
@@ -3937,17 +3947,9 @@ class LibraryScreen(BaseAppScreen):
         self._library_skills_filter: str = ""
         self._library_skills_filter_cursor_context: tuple[int, int] | None = None
         self._selected_skill_name: str = ""
-        # Toolbar Import… state (Task 5): a path Input (a SKILL.md file OR
-        # a skill's own directory) inlined below the sort/Import… toolbar,
-        # worker-executed on Run/Enter. See ``_run_library_skills_import``.
-        self._library_skills_import_open: bool = False
-        self._library_skills_import_path: str = ""
-        self._library_skills_import_status: str = ""
-        self._library_skills_import_in_flight: bool = False
-        self._library_skills_import_generation: int = 0
-        # task-422: the last successful import's skill name -- backs the
-        # "Review …" button that jumps straight to its trust panel.
-        self._library_skills_import_review_name: str = ""
+        # Toolbar Import… state is projected from the app-owned coordinator.
+        # A Library screen may be replaced while the accepted mutation keeps
+        # running, so screen construction must never reset that shared receipt.
         # Skill detail/trust editor (Task 4 of the Skills sub-project).
         # Mirrors the prompts editor's own state shape
         # (``_library_prompts_view``/``_library_prompt_detail``/etc.) --
@@ -4434,6 +4436,54 @@ class LibraryScreen(BaseAppScreen):
         #: repaint so the outermost projection replays the latest state.
         self._library_canvas_resync_pending = False
         self._seed_local_source_snapshot_from_cache()
+
+    @property
+    def _library_skills_import_open(self) -> bool:
+        return self._library_skill_import_coordinator.snapshot.row_open
+
+    @_library_skills_import_open.setter
+    def _library_skills_import_open(self, value: bool) -> None:
+        self._library_skill_import_coordinator.update(row_open=value)
+
+    @property
+    def _library_skills_import_path(self) -> str:
+        return self._library_skill_import_coordinator.snapshot.path
+
+    @_library_skills_import_path.setter
+    def _library_skills_import_path(self, value: str) -> None:
+        self._library_skill_import_coordinator.update(path=value)
+
+    @property
+    def _library_skills_import_status(self) -> str:
+        return self._library_skill_import_coordinator.snapshot.status
+
+    @_library_skills_import_status.setter
+    def _library_skills_import_status(self, value: str) -> None:
+        self._library_skill_import_coordinator.update(status=value)
+
+    @property
+    def _library_skills_import_review_name(self) -> str:
+        return self._library_skill_import_coordinator.snapshot.review_name
+
+    @_library_skills_import_review_name.setter
+    def _library_skills_import_review_name(self, value: str) -> None:
+        self._library_skill_import_coordinator.update(review_name=value)
+
+    @property
+    def _library_skills_import_in_flight(self) -> bool:
+        return self._library_skill_import_coordinator.snapshot.in_flight
+
+    @_library_skills_import_in_flight.setter
+    def _library_skills_import_in_flight(self, value: bool) -> None:
+        self._library_skill_import_coordinator.update(in_flight=value)
+
+    @property
+    def _library_skills_import_generation(self) -> int:
+        return self._library_skill_import_coordinator.snapshot.generation
+
+    @_library_skills_import_generation.setter
+    def _library_skills_import_generation(self, value: int) -> None:
+        self._library_skill_import_coordinator.update(generation=value)
 
     def _library_route_shortcuts_for_current_state(
         self,
@@ -22830,7 +22880,7 @@ class LibraryScreen(BaseAppScreen):
         if not retain_prompt_draft:
             self._reset_library_prompt_editor_state()
         if row_id != LIBRARY_ROW_BROWSE_SKILLS:
-            self._reset_library_skills_import_state()
+            self._library_skill_import_coordinator.invalidate_row()
         # Review finding (Spec 1 T5): this rail-switch reset block does NOT
         # route through _reset_library_skill_editor_state() (skill-editor
         # exits handle their own reset there), so the trust-reset confirm
@@ -25057,11 +25107,15 @@ class LibraryScreen(BaseAppScreen):
             event: Button press event emitted by the "Import…" action.
         """
         event.stop()
+        if not _library_screen_is_current(self):
+            return
         if self._library_skills_import_open:
             return
-        self._library_skills_import_open = True
-        self._library_skills_import_path = ""
-        self._library_skills_import_status = ""
+        if not self._library_skill_import_coordinator.open_draft():
+            self._apply_library_skills_import_status(
+                "An import is already in progress."
+            )
+            return
         # task-21116: only the skills canvas gains its Import row -- a
         # canvas-scoped sync, with the caret parked in the just-opened
         # path field (the pressed opener is recomposed away; without a
@@ -25082,15 +25136,14 @@ class LibraryScreen(BaseAppScreen):
                 "Cancel" action.
         """
         event.stop()
+        if not _library_screen_is_current(self):
+            return
         if getattr(self, "_library_skills_import_in_flight", False):
             self._apply_library_skills_import_status(
                 "An import is already in progress."
             )
             return
-        self._library_skills_import_open = False
-        self._library_skills_import_path = ""
-        self._library_skills_import_status = ""
-        self._library_skills_import_review_name = ""
+        self._library_skill_import_coordinator.dismiss()
         # task-21116: canvas-scoped close; focus returns to the Import…
         # opener the row folds back into.
         _sync_library_canvas(
@@ -25109,13 +25162,15 @@ class LibraryScreen(BaseAppScreen):
         Mirrors ``handle_library_prompts_import_browse``'s dialog flow
         exactly. The shared ``FileOpen`` dialog has no directory-selection
         mode, so importing a skill BY ITS FOLDER path still requires
-        typing that path into the Import row's path ``Input`` by hand
-        (see ``_run_library_skills_import``, which accepts either shape).
+        typing that path into the Import row's path ``Input`` by hand; the
+        app-owned import coordinator accepts either shape.
 
         Args:
             event: Button press event emitted by the "Browse…" action.
         """
         event.stop()
+        if not _library_screen_is_current(self):
+            return
         if getattr(self, "_library_skills_import_in_flight", False):
             self._apply_library_skills_import_status(
                 "An import is already in progress."
@@ -25127,10 +25182,19 @@ class LibraryScreen(BaseAppScreen):
             if (
                 selected_path is None
                 or getattr(self, "_library_skills_import_in_flight", False)
+                or not getattr(self, "_library_skills_import_open", True)
+                or getattr(
+                    self,
+                    "_library_selected_row_id",
+                    LIBRARY_ROW_BROWSE_SKILLS,
+                )
+                != LIBRARY_ROW_BROWSE_SKILLS
+                or not _library_screen_is_current(self)
                 or browse_generation
                 != getattr(self, "_library_skills_import_generation", 0)
             ):
                 return
+            self._library_skills_import_generation += 1
             self._library_skills_import_path = str(selected_path)
             # Clear a prior import's success status + "Review …" button so
             # they don't hang against the newly-picked, not-yet-imported
@@ -25157,6 +25221,8 @@ class LibraryScreen(BaseAppScreen):
                 action.
         """
         event.stop()
+        if not _library_screen_is_current(self):
+            return
         if getattr(self, "_library_skills_import_in_flight", False):
             self._apply_library_skills_import_status(
                 "An import is already in progress."
@@ -25168,10 +25234,19 @@ class LibraryScreen(BaseAppScreen):
             if (
                 selected_path is None
                 or getattr(self, "_library_skills_import_in_flight", False)
+                or not getattr(self, "_library_skills_import_open", True)
+                or getattr(
+                    self,
+                    "_library_selected_row_id",
+                    LIBRARY_ROW_BROWSE_SKILLS,
+                )
+                != LIBRARY_ROW_BROWSE_SKILLS
+                or not _library_screen_is_current(self)
                 or browse_generation
                 != getattr(self, "_library_skills_import_generation", 0)
             ):
                 return
+            self._library_skills_import_generation += 1
             self._library_skills_import_path = str(selected_path)
             # Clear a prior import's success status + "Review …" button so
             # they don't hang against the newly-picked, not-yet-imported
@@ -25198,6 +25273,8 @@ class LibraryScreen(BaseAppScreen):
                 "Review …" action.
         """
         event.stop()
+        if not _library_screen_is_current(self):
+            return
         if getattr(self, "_library_skills_import_in_flight", False):
             self._apply_library_skills_import_status(
                 "An import is already in progress."
@@ -25213,6 +25290,7 @@ class LibraryScreen(BaseAppScreen):
                 "An import is already in progress."
             )
             return
+        self._library_skill_import_coordinator.dismiss()
         self._reset_library_skill_editor_state()
         self._selected_skill_name = name
         self._library_selected_row_id = LIBRARY_ROW_BROWSE_SKILLS
@@ -25233,9 +25311,33 @@ class LibraryScreen(BaseAppScreen):
             event: Input change event emitted by the Import row's path field.
         """
         event.stop()
-        if getattr(self, "_library_skills_import_in_flight", False):
+        if (
+            not _library_screen_is_current(self)
+            or getattr(self, "_library_skills_import_in_flight", False)
+            or not getattr(self, "_library_skills_import_open", True)
+            or getattr(
+                self,
+                "_library_selected_row_id",
+                LIBRARY_ROW_BROWSE_SKILLS,
+            )
+            != LIBRARY_ROW_BROWSE_SKILLS
+        ):
             return
-        self._library_skills_import_path = event.value
+        changed_input = getattr(event, "input", None)
+        if changed_input is not None:
+            try:
+                current_input = self.query_one(
+                    "#library-skills-import-path", Input
+                )
+            except (NoMatches, QueryError):
+                return
+            if changed_input is not current_input:
+                return
+        if self._library_skills_import_path != event.value:
+            self._library_skills_import_generation += 1
+            self._library_skills_import_path = event.value
+            self._library_skills_import_status = ""
+            self._library_skills_import_review_name = ""
 
     @on(Input.Submitted, "#library-skills-import-path")
     def handle_library_skills_import_path_submitted(
@@ -25265,11 +25367,13 @@ class LibraryScreen(BaseAppScreen):
         """Validate the Import row has a non-blank path, then run the import worker.
 
         Worker-executed since it performs file IO plus a service call --
-        never inline on the UI thread. Screen-owned admission makes the
-        operation single-flight before the worker is scheduled. A blank
-        path is a quiet inline status line, matching
+        never inline on the UI thread. App-owned admission makes the
+        operation single-flight before the worker is scheduled. A blank path
+        is a quiet inline status line, matching
         ``_start_library_prompts_import``'s equivalent gate.
         """
+        if not _library_screen_is_current(self):
+            return
         if getattr(self, "_library_skills_import_in_flight", False):
             self._apply_library_skills_import_status(
                 "An import is already in progress."
@@ -25277,41 +25381,23 @@ class LibraryScreen(BaseAppScreen):
             return
         if self._library_skills_view != "list":
             return
-        self._library_skills_import_review_name = ""
         raw_path = self._library_skills_import_path.strip()
         if not raw_path:
             self._apply_library_skills_import_status(
                 "Please enter a file or folder path."
             )
             return
-        self._library_skills_import_generation += 1
-        self._library_skills_import_in_flight = True
-        self._apply_library_skills_import_status("Inspecting/importing…")
-        _sync_library_canvas(self, "skills")
-        self.run_worker(
-            self._run_library_skills_import_single_flight(raw_path),
-            group="library_skills_import",
-        )
-
-    async def _run_library_skills_import_single_flight(self, raw_path: str) -> None:
-        """Run the accepted import and release its screen-owned admission."""
-        try:
-            await self._run_library_skills_import(raw_path)
-        except Exception:
-            logger.opt(exception=True).warning(
-                "Library skill import worker failed unexpectedly."
-            )
+        coordinator = self._library_skill_import_coordinator
+        if not coordinator.claim(raw_path):
             self._apply_library_skills_import_status(
-                "Could not import that skill."
+                "An import is already in progress."
             )
-        finally:
-            self._library_skills_import_in_flight = False
-            if (
-                self.is_mounted
-                and self.app.screen is self
-                and self._library_selected_row_id == LIBRARY_ROW_BROWSE_SKILLS
-            ):
-                _sync_library_canvas(self, "skills")
+            return
+        _sync_library_canvas(self, "skills")
+        self.app.run_worker(
+            coordinator.run(raw_path, runtime_app=self.app),
+            group=LIBRARY_SKILLS_IMPORT_WORKER_GROUP,
+        )
 
     def _apply_library_skills_import_status(self, text: str) -> None:
         """Set and patch the Import row's one-line outcome in place."""
@@ -25327,318 +25413,25 @@ class LibraryScreen(BaseAppScreen):
         except (NoMatches, QueryError):
             _sync_library_canvas(self, "skills")
 
-    async def _run_library_skills_import(self, raw_path: str) -> None:
-        """Import ONE skill from a SKILL.md file path or a skill's own directory.
-
-        Unlike ``_run_library_prompts_import`` (which batch-imports every
-        supported file in a folder), a skill is conceptually ONE directory
-        containing exactly one ``SKILL.md`` -- so this always imports
-        exactly one skill per Import press, landing it TRUST-PENDING
-        (``trust_approved=False``; the review panel is primed the next
-        time this skill's row is opened, since every quarantined/
-        uninitialized trust status already gates the trust panel's
-        "Review changes" action -- see ``skill_trust_review_enabled``).
-
-        Two path shapes are accepted, both resolving to the SAME skill
-        name (the directory's own name) AND the SAME faithful import --
-        this matters because every real skill package (e.g. the
-        ``superpowers`` skillset) is a directory named after the skill
-        containing a file LITERALLY named ``SKILL.md``, so deriving the
-        name from the file's own basename
-        (``local_skills_service._derive_name_from_filename``, which is
-        what a plain ``import_skill_file(..., filename="SKILL.md")`` call
-        would do) would incorrectly produce ``"skill"`` for every import
-        regardless of the real skill's name:
-
-        - A file path whose basename is ``SKILL.md`` (case-insensitive):
-          treated as that file's PARENT directory's skill (the common
-          case for a real skillset laid out one-directory-per-skill) --
-          the parent directory IS the skill directory.
-        - A directory path containing a top-level ``SKILL.md``: the
-          directory itself is the skill directory.
-
-        Both shapes call ``import_skill_directory(skill_dir,
-        name=<directory name>, ...)``, which copies the WHOLE tree
-        faithfully -- nested subdirectories, binary files, and the
-        executable bit are all preserved (junk pruned, symlinks skipped,
-        size/count caps enforced). A flat, text-only read here would
-        silently drop all of that for the SKILL.md-file shape even though
-        the directory-path shape (pointed at the very same directory)
-        would have preserved it -- the two shapes must behave identically
-        since they resolve to the same skill directory.
-
-        Any OTHER file path (e.g. a standalone ``some-skill.md`` not named
-        ``SKILL.md``, or a ``.zip`` export) is imported via
-        ``import_skill_file`` instead, letting the service derive the
-        name from that file's own (already meaningful) basename.
-
-        A folder that does not directly contain a ``SKILL.md`` is
-        reported as an outcome (never silently imports zero skills or
-        guesses at a subdirectory to use) -- batch "import every skill
-        under this folder" is out of this task's scope.
-
-        Args:
-            raw_path: The Import row's typed path (SKILL.md file, skill
-                directory, standalone ``.md`` file, or ``.zip`` export),
-                already known non-blank by the caller. A pasted
-                ``http(s)://`` URL routes to
-                ``_install_library_skill_from_url`` instead -- see that
-                method's docstring for the remote-install flow.
-        """
-        if raw_path.startswith(("http://", "https://")):
-            await self._install_library_skill_from_url(raw_path)
-            return
-        try:
-            validated_path = validate_path_simple(
-                Path(raw_path).expanduser(), require_exists=True
-            )
-        except ValueError:
-            logger.opt(exception=True).warning(
-                f"Rejected Library skills import path {raw_path!r}."
-            )
-            self._apply_library_skills_import_status(
-                "Could not find that file or folder."
-            )
-            return
-
-        service = getattr(self.app_instance, "skills_scope_service", None)
-        import_skill_file = getattr(service, "import_skill_file", None)
-        import_skill_directory = getattr(service, "import_skill_directory", None)
-        if not callable(import_skill_directory) or not callable(import_skill_file):
-            self._apply_library_skills_import_status("Skill import is unavailable.")
-            return
-
-        if validated_path.is_dir():
-            skill_dir = validated_path
-        elif validated_path.name.lower() == _SKILL_MD_FILENAME.lower():
-            # The SKILL.md file's PARENT directory IS the skill directory --
-            # same faithful import as the folder-path shape below.
-            skill_dir = validated_path.parent
-        else:
-            await self._import_library_skill_from_loose_file(
-                validated_path, import_skill_file
-            )
-            return
-
-        if self._find_skill_md_in_dir(skill_dir) is None:
-            self._apply_library_skills_import_status(
-                "No SKILL.md found in that folder."
-            )
-            return
-
-        skill_name = skill_dir.name
-        try:
-            await self._run_library_service_call(
-                import_skill_directory,
-                skill_dir,
-                mode="local",
-                name=skill_name,
-                trust_approved=False,
-                isolate_in_worker=True,
-            )
-        except Exception as exc:
-            self._apply_library_skills_import_outcome_from_exception(skill_name, exc)
-            return
-        self._apply_library_skills_import_success(skill_name)
-
-    async def _import_library_skill_from_loose_file(
-        self,
-        file_path: Path,
-        import_skill_file: Any,
+    def _present_library_skills_import_snapshot(
+        self, *, refresh_sources: bool
     ) -> None:
-        """Import a standalone ``.md``/``.zip`` file (not named ``SKILL.md``).
-
-        Split out of ``_run_library_skills_import`` for that method's own
-        readability -- this branch has no directory/supporting-files
-        concerns at all, unlike the SKILL.md-directory branch.
-
-        Args:
-            file_path: The standalone file to import (already known to
-                exist and NOT be named ``SKILL.md``).
-            import_skill_file: The bound ``skills_scope_service.import_skill_file``
-                callable.
-        """
-        suffix = file_path.suffix.lower()
-        if suffix == ".zip":
-            content_type = "application/zip"
-            try:
-                data = await asyncio.to_thread(file_path.read_bytes)
-            except Exception:
-                logger.opt(exception=True).warning(
-                    f"Could not read Library skill import file '{file_path}'."
-                )
-                self._apply_library_skills_import_status("Could not read that file.")
-                return
-        elif suffix == ".md":
-            content_type = "text/markdown"
-            try:
-                text = await asyncio.to_thread(
-                    file_path.read_text, encoding="utf-8", errors="strict"
-                )
-            except Exception:
-                logger.opt(exception=True).warning(
-                    f"Could not read Library skill import file '{file_path}'."
-                )
-                self._apply_library_skills_import_status("Could not read that file.")
-                return
-            data = text.encode("utf-8")
-        else:
-            self._apply_library_skills_import_status("Unsupported file type.")
-            return
-
-        try:
-            record = await self._run_library_service_call(
-                import_skill_file,
-                data,
-                mode="local",
-                filename=file_path.name,
-                content_type=content_type,
-                trust_approved=False,
-                isolate_in_worker=True,
+        """Project the app-owned receipt onto only the current Library row."""
+        if refresh_sources:
+            self._refresh_local_source_snapshot()
+        if (
+            self.is_mounted
+            and self.app.screen is self
+            and self._library_selected_row_id == LIBRARY_ROW_BROWSE_SKILLS
+        ):
+            terminal_status = self._library_skills_import_status
+            _sync_library_canvas(
+                self,
+                "skills",
+                then=lambda: self._apply_library_skills_import_status(
+                    terminal_status
+                ),
             )
-        except Exception as exc:
-            self._apply_library_skills_import_outcome_from_exception(
-                self._safe_text(file_path.stem, max_length=64),
-                exc,
-            )
-            return
-
-        # Report the SERVICE-derived name, not the raw file stem: the
-        # service kebab-normalizes ("My Notes.md" -> "my-notes"), and the
-        # outcome line must match what the trust panel/list actually show
-        # (task-291 review).
-        stored_name = ""
-        if isinstance(record, dict):
-            stored_name = str(record.get("name") or "")
-        self._apply_library_skills_import_success(
-            self._safe_text(stored_name, max_length=64)
-            if stored_name
-            else self._safe_text(file_path.stem, max_length=64)
-        )
-
-    async def _install_library_skill_from_url(self, url: str) -> None:
-        """Install a skill fetched from a pasted GitHub repo/tree or zip URL.
-
-        Mirrors ``_import_library_skill_from_loose_file``'s worker/
-        threading pattern and outcome routing: the "file" here is a
-        remote download instead of local bytes, but
-        ``install_skill_from_url`` (``Skills_Interop.skill_remote_fetch``)
-        owns classification, policy enforcement, the SSRF-hardened fetch,
-        and re-rooting before handing the resulting bytes to the SAME
-        ``import_skill_file`` seam every other import path uses -- so the
-        imported skill lands TRUST-PENDING exactly like a local import.
-
-        Three outcome routes, same shape as every other import path:
-        - Success: primes the Review button with the service-reported name.
-        - ``RemoteSkillError``: its message IS the outcome line -- these
-          are user-presentable by construction (bad URL, SSRF rejection,
-          download failure, corrupt/ambiguous archive).
-        - Any other exception (a policy denial, or a plain
-          ``import_skill_file`` failure such as a duplicate name): routed
-          through the shared exception-to-outcome translator, using a
-          name guess derived from the URL -- the same "derive a plausible
-          skill name from what the user typed" convention the loose-file
-          branch uses (``file_path.stem``), here via the same
-          classification the seam itself uses (``suggested_name``, e.g.
-          the repo or release-asset basename) so the guess matches what
-          the seam would actually have named the skill.
-
-        Args:
-            url: The Import row's typed ``http(s)://`` URL, already known
-                non-blank by the caller.
-        """
-        service = getattr(self.app_instance, "skills_scope_service", None)
-        if service is None:
-            self._apply_library_skills_import_status("Skill import is unavailable.")
-            return
-
-        try:
-            name_guess = self._safe_text(
-                classify_skill_source_url(url).suggested_name, max_length=64
-            )
-        except RemoteSkillError:
-            name_guess = self._safe_text(
-                url.rstrip("/").rsplit("/", 1)[-1], max_length=64
-            )
-        try:
-            result = await self._run_library_service_call(
-                install_skill_from_url,
-                url,
-                scope_service=service,
-                isolate_in_worker=True,
-            )
-        except RemoteSkillError as exc:
-            self._apply_library_skills_import_status(str(exc))
-            return
-        except Exception as exc:
-            self._apply_library_skills_import_outcome_from_exception(name_guess, exc)
-            return
-        self._apply_library_skills_import_success(result.get("name", ""))
-
-    def _apply_library_skills_import_success(self, skill_name: str) -> None:
-        """Report a successful single-skill import and refresh the rail/list.
-
-        The imported skill's NAME is part of the outcome line (task-291):
-        the copy used to be byte-identical for every import, so a test (or
-        a user doing repeat imports) could not attribute the line to a
-        specific import -- a stale success from the previous skill read
-        exactly like a fresh one.
-        """
-        self._library_skills_import_path = ""
-        self._library_skills_import_review_name = skill_name
-        self._apply_library_skills_import_status(
-            f'Imported "{skill_name}" · re-review it in the trust panel'
-        )
-        self._refresh_library_skills_after_committed_mutation()
-        self._refresh_local_source_snapshot()
-
-    def _apply_library_skills_import_outcome_from_exception(
-        self,
-        skill_name: str,
-        exc: Exception,
-    ) -> None:
-        """Translate a failed import call into an honest, specific outcome line.
-
-        Never silently swallowed -- ``local_skill_exists:`` (the only
-        expected "the user tried to re-import a name that's already
-        there" case) is reported as a duplicate-name skip; every OTHER
-        exception (a bad skill name, an invalid supporting-file name, an
-        oversized field, a policy denial, or a plain read/parse failure)
-        is reported as a distinct failure, always clearing the in-flight
-        path so the Import row does not look stuck (mirrors
-        ``_run_library_prompts_import``'s unconditional path-clear at the
-        end of its per-file loop).
-        """
-        logger.opt(exception=True).warning(
-            f"Library skill import failed for {skill_name!r}."
-        )
-        self._library_skills_import_path = ""
-        if "local_skill_exists:" in str(exc):
-            self._apply_library_skills_import_status(
-                f'Skipped — a skill named "{skill_name}" already exists.'
-            )
-            return
-        self._apply_library_skills_import_status("Could not import that skill.")
-
-    @staticmethod
-    def _find_skill_md_in_dir(directory: Path) -> Path | None:
-        """Return the directory's ``SKILL.md`` file, matched case-insensitively.
-
-        Returns:
-            The matched path, or ``None`` when the directory has no
-            top-level file named ``SKILL.md`` (any case).
-        """
-        exact = directory / _SKILL_MD_FILENAME
-        if exact.is_file():
-            return exact
-        try:
-            children = list(directory.iterdir())
-        except Exception:
-            return None
-        for child in children:
-            if child.is_file() and child.name.lower() == _SKILL_MD_FILENAME.lower():
-                return child
-        return None
 
     @on(Button.Pressed, ".library-skill-row")
     async def handle_library_skill_row(self, event: Button.Pressed) -> None:
@@ -25878,21 +25671,6 @@ class LibraryScreen(BaseAppScreen):
         self._library_skill_scroll_pending = False
         self._library_skill_editor_armed = False
 
-    def _reset_library_skills_import_state(self) -> None:
-        """Close the inline Import row and drop its path/outcome (task-422).
-
-        Editor exits and later departures clear stale outcomes. An accepted
-        import is retained across navigation because its threaded work cannot
-        be cancelled truthfully; re-entering Skills then shows its live or
-        terminal screen-owned state.
-        """
-        if getattr(self, "_library_skills_import_in_flight", False):
-            return
-        self._library_skills_import_open = False
-        self._library_skills_import_path = ""
-        self._library_skills_import_status = ""
-        self._library_skills_import_review_name = ""
-
     def _reset_library_skill_editor_state(self) -> None:
         """Clear all in-canvas Library skill editor/save/trust state.
 
@@ -25900,7 +25678,6 @@ class LibraryScreen(BaseAppScreen):
         so every exit from the editor leaves save/conflict/trust-review
         tracking clean for the next skill.
         """
-        self._reset_library_skills_import_state()
         self._library_skills_view = "list"
         self._library_skill_reader_mode = "overview"
         self._invalidate_library_skill_detail_generation()
