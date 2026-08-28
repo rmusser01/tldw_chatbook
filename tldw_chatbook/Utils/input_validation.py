@@ -10,8 +10,6 @@ from urllib.parse import urlparse
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
-from tldw_chatbook.Chat.console_chat_models import derive_console_session_title
-
 from ..Metrics.metrics_logger import log_counter, log_histogram
 
 
@@ -36,6 +34,10 @@ def validate_console_fork_title(value: object) -> str:
 
     if type(value) is not str:
         raise ValueError("Fork title must be text.")
+    # Import lazily so generic validation remains safe while Chat and Library
+    # package initializers are still loading each other.
+    from tldw_chatbook.Chat.console_chat_models import derive_console_session_title
+
     normalized = derive_console_session_title(
         value,
         max_length=CONSOLE_FORK_TITLE_MAX_LENGTH,

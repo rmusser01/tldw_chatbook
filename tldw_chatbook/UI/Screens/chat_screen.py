@@ -5099,13 +5099,13 @@ class ChatScreen(BaseAppScreen):
             # constructor-supplied callables
             "_chat_dictionary_applier": self._console_chat_dictionary_applier,
             "_world_info_applier": self._console_world_info_applier,
-            "_rag_capture_provider": getattr(
-                retrieval, "_capture_console_staged_rag", None
-            ),
+            "_rag_capture_provider": getattr(retrieval, "_capture_console_staged_rag", None),
             "_default_session_settings": getattr(
                 session, "_default_console_session_settings", None
             ),
-            "_library_provider_factory": self._library_activity.build_provider,
+            "_library_provider_factory": getattr(
+                getattr(self, "_library_activity", None), "build_provider", None
+            ),
             "_global_user_display_name": self._global_chat_display_name,
             "_turn_context_provider": getattr(
                 session, "_build_console_turn_execution_context", None

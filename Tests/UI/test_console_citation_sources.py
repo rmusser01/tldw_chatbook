@@ -512,6 +512,14 @@ def _bare_screen(
     screen._console_citation_repository_token = None
     screen._console_citation_request_generation = 0
     screen._last_native_transcript_refresh_key = None
+    # This detached fixture exercises citation rendering without a mounted
+    # Change Review runtime. Production wiring supplies the projection.
+    screen._change_review_projection = SimpleNamespace(
+        project=lambda projected_messages: projected_messages
+    )
+    screen._library_activity = SimpleNamespace(
+        sync_transcript=lambda _transcript: {}
+    )
     screen.app_instance = SimpleNamespace(
         citation_trace_repository=repository,
         chachanotes_db=app_db,
@@ -1035,6 +1043,9 @@ async def test_zero_only_count_cache_does_not_refresh_unchanged_transcript() -> 
 
     transcript = SimpleNamespace(
         pending_selection_id=None,
+        selected_message_id=None,
+        set_fork_eligibilities=Mock(),
+        set_model_thinking_visible=Mock(),
         set_presentation_context=Mock(),
         set_change_review_provider_factory=Mock(),
         set_messages=Mock(),
