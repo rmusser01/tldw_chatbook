@@ -2,7 +2,7 @@
 id: TASK-23026
 title: >-
   Exchange capture stores the whole conversation on every send, forever
-status: Done
+status: In Progress
 assignee:
   - '@claude'
 created_date: '2026-08-27'
@@ -41,6 +41,17 @@ independently at 15.35 MB. An earlier probe reported this feature **clean** at 0
 had been built from a hand-made input rather than the real caller's kwargs, and was refuted.
 
 Source: `Docs/Design/2026-08-27-holistic-perf-review.md`.
+
+## Approved Design
+
+- [Console Safe Capture Retention design](../../Docs/superpowers/specs/2026-08-27-console-safe-capture-retention-design.md)
+- [ADR-096: Bound Safe exchange-capture history](../decisions/096-console-safe-capture-retention.md)
+
+ADR required: yes
+
+ADR path: `backlog/decisions/096-console-safe-capture-retention.md`
+
+Reason: the task changes durable capture retention, privacy semantics, and the ChaChaNotes data migration contract.
 
 ## Implementation Plan
 
@@ -152,3 +163,4 @@ already-stored blobs in the schema migration chain.
   interpolating only `db_path_str` and two integer counters — no capture content, user
   text, or secrets (capture blobs are deliberately never logged, even on the
   corrupt-row skip path).
+

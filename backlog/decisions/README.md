@@ -85,7 +85,7 @@ ADRs explain why significant architectural decisions were made. Backlog tasks, S
 | [ADR-091](091-bounded-epub-archive-admission.md) | Accepted | Isolate ebook parsing in one-worker pool generations and reject EPUB ZIP structures whose expanded resource cost exceeds fixed safety bounds. |
 | [ADR-092](092-console-full-semantic-capture-policy.md) | Accepted | Keep Safe as the default while allowing scoped Full semantic exchange capture with frozen run policy, invariant credential/binary protections, distinct export profiles, and conversation-scoped erasure. |
 | [ADR-093](093-offline-tiktoken-runtime-assets.md) | Accepted | Ship a closed immutable tiktoken table inventory for offline estimates and chunking while preserving explicit cache authority. |
-| [ADR-094](094-raw-and-virtual-cli-execution-boundaries.md) | Accepted | Define separate user raw-CLI and model virtual-CLI execution boundaries with explicit fail-closed authority. |
+| [ADR-096](096-console-safe-capture-retention.md) | Accepted | Bound default Safe exchange capture to the first system row, latest user row, and newest eight rows; compact readable legacy Safe blobs transactionally while leaving Full semantics unchanged. |
 
 ## Historical Decision Material
 
