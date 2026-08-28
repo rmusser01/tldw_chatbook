@@ -19,6 +19,7 @@ from Tests.UI.consolidated_css import ConsolidatedCSSApp
 import tldw_chatbook.UI.Screens.chat_screen as chat_screen_module
 from tldw_chatbook.UI.Screens.chat_screen_state import TaskResumeState
 from tldw_chatbook.UI.Screens.chat_screen import ChatScreen
+from tldw_chatbook.UI.Navigation.main_navigation import NavigateToScreen
 from tldw_chatbook.Widgets.Chat_Widgets.chat_approval_card import ChatApprovalCard
 from tldw_chatbook.Widgets.Chat_Widgets.chat_task_cards import ChatTaskCards
 from tldw_chatbook.Widgets.Chat_Widgets.watchlists_operation_card import (
@@ -195,3 +196,80 @@ async def test_poll_keeps_following_an_active_receipt_through_a_missing_refresh(
     await ChatScreen._poll_console_watchlists_operations(screen)
 
     assert sleeps == [2.0]
+
+
+def test_stop_following_removes_controller_and_screen_state_without_cancelling():
+    operation_id = "local:watchlist_run:7"
+
+    class Controller:
+        def __init__(self):
+            self.followed = [operation_id]
+            self.cancel_calls = 0
+
+        def unfollow_watchlists_operation(self, receipt_id):
+            self.followed.remove(receipt_id)
+            return True
+
+        def cancel(self):
+            self.cancel_calls += 1
+
+    controller = Controller()
+    task_state = TaskResumeState(
+        followed_watchlists_operations=(operation_id,)
+    )
+    screen = SimpleNamespace(
+        _console_chat_controller=controller,
+        _task_resume_state=task_state,
+        _watchlists_operation_rows={operation_id: {"id": operation_id}},
+    )
+
+    def set_task_resume_state(state):
+        screen._task_resume_state = state
+
+    screen.set_task_resume_state = set_task_resume_state
+
+    ChatScreen.on_watchlists_operation_stop_following(
+        screen,
+        WatchlistsOperationCard.StopFollowingRequested(operation_id),
+    )
+
+    assert controller.followed == []
+    assert controller.cancel_calls == 0
+    assert screen._task_resume_state.followed_watchlists_operations == ()
+    assert screen._watchlists_operation_rows == {}
+
+
+def test_briefing_receipt_inspect_posts_exact_artifact_context():
+    operation_id = "local:briefing:9"
+    posted = []
+    screen = SimpleNamespace(post_message=posted.append)
+
+    ChatScreen.on_watchlists_operation_inspect(
+        screen,
+        WatchlistsOperationCard.InspectRequested(operation_id, "artifacts"),
+    )
+
+    assert len(posted) == 1
+    assert isinstance(posted[0], NavigateToScreen)
+    assert posted[0].screen_context == {
+        "section": "artifacts",
+        "backend": "local",
+        "briefing_id": operation_id,
+    }
+
+
+def test_run_receipt_inspect_preserves_exact_runs_context():
+    operation_id = "local:watchlist_run:7"
+    posted = []
+    screen = SimpleNamespace(post_message=posted.append)
+
+    ChatScreen.on_watchlists_operation_inspect(
+        screen,
+        WatchlistsOperationCard.InspectRequested(operation_id, "runs"),
+    )
+
+    assert posted[0].screen_context == {
+        "section": "runs",
+        "backend": "local",
+        "run_id": operation_id,
+    }

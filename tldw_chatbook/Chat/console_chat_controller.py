@@ -10532,6 +10532,21 @@ class ConsoleChatController:
             operation_ids = self._followed_watchlists_operation_ids
         callback(operation_ids)
 
+    def unfollow_watchlists_operation(self, operation_id: str) -> bool:
+        """Forget one canonical receipt without touching its domain work."""
+        if not _WATCHLISTS_RECEIPT_ID_RE.fullmatch(operation_id):
+            return False
+        with self._watchlists_receipt_lock:
+            followed = self._followed_watchlists_operation_ids
+            if operation_id not in followed:
+                return False
+            self._followed_watchlists_operation_ids = tuple(
+                receipt_id
+                for receipt_id in followed
+                if receipt_id != operation_id
+            )
+        return True
+
     def complete_definitive_run(self, run_id: str) -> None:
         """WORKER THREAD: remove finishing rows a run never dispatched."""
         if not run_id:

@@ -417,6 +417,7 @@ from ...Constants import (
     LIBRARY_NAV_CONTEXT_OPEN_SOURCE_TYPE,
     TAB_SETTINGS,
     TAB_WATCHLISTS_COLLECTIONS,
+    WATCHLISTS_NAV_CONTEXT_BRIEFING_ID,
 )
 from ...Utils.console_background_effects import (
     ConsoleBackgroundEffectSettings,
@@ -17658,6 +17659,9 @@ class ChatScreen(BaseAppScreen):
         self, event: WatchlistsOperationCard.StopFollowingRequested
     ) -> None:
         """Remove one receipt card without cancelling its durable operation."""
+        controller = self._console_chat_controller
+        if controller is not None:
+            controller.unfollow_watchlists_operation(event.operation_id)
         followed = tuple(
             operation_id
             for operation_id in self._task_resume_state.followed_watchlists_operations
@@ -17682,6 +17686,8 @@ class ChatScreen(BaseAppScreen):
         }
         if event.destination == "runs":
             context["run_id"] = event.operation_id
+        elif event.destination == "artifacts":
+            context[WATCHLISTS_NAV_CONTEXT_BRIEFING_ID] = event.operation_id
         self.post_message(
             NavigateToScreen(
                 TAB_WATCHLISTS_COLLECTIONS,

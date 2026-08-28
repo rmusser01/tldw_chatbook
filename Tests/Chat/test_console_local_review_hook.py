@@ -137,6 +137,39 @@ def test_controller_retains_and_publishes_only_canonical_receipt_identity():
     assert "never retain me" not in repr(controller._followed_watchlists_operation_ids)
 
 
+def test_controller_unfollow_survives_view_detach_and_remount():
+    controller = ConsoleChatController(
+        store=ConsoleChatStore(),
+        provider_gateway=object(),
+    )
+    controller.app = SimpleNamespace(call_from_thread=lambda callback: callback())
+    controller.observe_watchlists_operation_result(
+        "run-1",
+        "call-1",
+        "watchlists_generate_briefing",
+        ToolResult(
+            ok=True,
+            content=json.dumps(
+                {
+                    "status": "accepted",
+                    "operation_id": "local:briefing:9",
+                }
+            ),
+        ),
+    )
+
+    assert controller.unfollow_watchlists_operation("local:briefing:9") is True
+    assert controller.unfollow_watchlists_operation("server:briefing:9") is False
+
+    published: list[tuple[str, ...]] = []
+    controller.follow_watchlists_operations = None
+    controller.follow_watchlists_operations = published.append
+    controller.remount_watchlists_operation_receipts()
+
+    assert published == [()]
+    assert controller._followed_watchlists_operation_ids == ()
+
+
 @pytest.fixture(autouse=True)
 def _dispatching_run():
     """Bind ``RUN`` as the dispatching run for every test in this module.

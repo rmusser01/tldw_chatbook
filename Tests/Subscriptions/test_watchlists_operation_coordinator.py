@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import time
 
 import pytest
 
@@ -19,6 +20,7 @@ from tldw_chatbook.Subscriptions.watchlist_bundle_service import WatchlistBundle
 from tldw_chatbook.Subscriptions.watchlists_operation_coordinator import (
     WatchlistsOperationCoordinator,
 )
+import tldw_chatbook.Subscriptions.watchlists_operation_coordinator as coordinator_module
 
 
 def _source(db: SubscriptionsDB, number: int) -> int:
@@ -223,3 +225,179 @@ async def test_coordinator_reconciles_receipts_stranded_before_startup(tmp_path)
 
     assert reconciled["runs"] == 1
     assert (await service.get_run(receipt["run_id"]))["status"] == "failed"
+
+
+@pytest.mark.asyncio
+async def test_shutdown_timeout_stops_waiting_for_cancellation_ignoring_task(
+    tmp_path,
+):
+    db = SubscriptionsDB(tmp_path / "subscriptions.db", "test")
+    started = asyncio.Event()
+    release = asyncio.Event()
+
+    async def executor(_subscription):
+        started.set()
+        while not release.is_set():
+            try:
+                await release.wait()
+            except asyncio.CancelledError:
+                continue
+        return {"items": []}
+
+    service = LocalWatchlistsService(db_factory=lambda: db, run_executor=executor)
+    source_id = _source(db, 1)
+    coordinator = WatchlistsOperationCoordinator(
+        local_service=service,
+        briefing_db=db,
+    )
+    receipt = (await coordinator.accept_checks([source_id]))[0]
+    operation_id = f"local:watchlist_run:{receipt['run_id']}"
+    await asyncio.wait_for(started.wait(), timeout=2)
+
+    before = time.monotonic()
+    shutdown_task = asyncio.create_task(coordinator.shutdown(timeout=0.02))
+    done, _pending = await asyncio.wait({shutdown_task}, timeout=0.2)
+    elapsed = time.monotonic() - before
+
+    if not done:
+        release.set()
+        await asyncio.wait_for(shutdown_task, timeout=1)
+        pytest.fail("shutdown waited beyond its wall-clock timeout")
+    await shutdown_task
+    assert elapsed < 0.2
+    assert operation_id in coordinator.active_receipt_ids
+    assert (await service.get_run(receipt["run_id"]))["status"] == "cancelled"
+
+    release.set()
+    await coordinator.wait_idle(timeout=2)
+    assert operation_id not in coordinator.active_receipt_ids
+
+
+@pytest.mark.asyncio
+async def test_check_ownership_survives_failed_terminal_write_and_duplicate_retries(
+    tmp_path, monkeypatch
+):
+    db = SubscriptionsDB(tmp_path / "subscriptions.db", "test")
+    execute_calls = 0
+
+    async def executor(_subscription):
+        nonlocal execute_calls
+        execute_calls += 1
+        raise RuntimeError("secret execution failure")
+
+    service = LocalWatchlistsService(db_factory=lambda: db, run_executor=executor)
+    source_id = _source(db, 1)
+    real_record_failure = service.record_run_failure
+    failure_calls = 0
+
+    async def broken_record_failure(*_args, **_kwargs):
+        nonlocal failure_calls
+        failure_calls += 1
+        raise RuntimeError("terminal storage unavailable")
+
+    monkeypatch.setattr(service, "record_run_failure", broken_record_failure)
+    coordinator = WatchlistsOperationCoordinator(
+        local_service=service,
+        briefing_db=db,
+    )
+
+    first = (await coordinator.accept_checks([source_id]))[0]
+    operation_id = f"local:watchlist_run:{first['run_id']}"
+    await coordinator.wait_idle(timeout=2)
+
+    assert operation_id in coordinator.active_receipt_ids
+    assert (await service.get_run(first["run_id"]))["status"] == "running"
+    assert failure_calls >= 2
+
+    monkeypatch.setattr(service, "record_run_failure", real_record_failure)
+    duplicate = (await coordinator.accept_checks([source_id]))[0]
+    await coordinator.wait_idle(timeout=2)
+
+    assert duplicate["run_id"] == first["run_id"]
+    assert execute_calls == 1
+    assert (await service.get_run(first["run_id"]))["status"] == "failed"
+    assert operation_id not in coordinator.active_receipt_ids
+
+
+@pytest.mark.asyncio
+async def test_briefing_ownership_survives_failed_terminal_write_and_duplicate_retries(
+    tmp_path, monkeypatch
+):
+    db = SubscriptionsDB(tmp_path / "subscriptions.db", "test")
+    watchlist_id = WatchlistBundleService(db).create("Threat intel")["id"]
+    execute_calls = 0
+
+    async def broken_execute(*_args, **_kwargs):
+        nonlocal execute_calls
+        execute_calls += 1
+        raise RuntimeError("secret model failure")
+
+    monkeypatch.setattr(
+        coordinator_module,
+        "execute_accepted_briefing",
+        broken_execute,
+    )
+    real_transition = db.transition_briefing
+    failure_calls = 0
+
+    def broken_transition(briefing_id, *, status, **kwargs):
+        nonlocal failure_calls
+        if status == "failed":
+            failure_calls += 1
+            raise RuntimeError("terminal storage unavailable")
+        return real_transition(briefing_id, status=status, **kwargs)
+
+    monkeypatch.setattr(db, "transition_briefing", broken_transition)
+    coordinator = WatchlistsOperationCoordinator(
+        local_service=LocalWatchlistsService(db_factory=lambda: db),
+        briefing_db=db,
+    )
+
+    first = await coordinator.accept_briefing(watchlist_id)
+    operation_id = f"local:briefing:{first['id']}"
+    await coordinator.wait_idle(timeout=2)
+
+    assert operation_id in coordinator.active_receipt_ids
+    assert db.get_briefing(first["id"])["status"] == "generating"
+    assert failure_calls >= 2
+
+    monkeypatch.setattr(db, "transition_briefing", real_transition)
+    duplicate = await coordinator.accept_briefing(watchlist_id)
+    await coordinator.wait_idle(timeout=2)
+
+    assert duplicate["id"] == first["id"]
+    assert execute_calls == 2
+    assert db.get_briefing(first["id"])["status"] == "failed"
+    assert operation_id not in coordinator.active_receipt_ids
+
+
+@pytest.mark.asyncio
+async def test_duplicate_active_receipts_without_live_tasks_are_adopted(tmp_path):
+    db = SubscriptionsDB(tmp_path / "subscriptions.db", "test")
+    source_id = _source(db, 1)
+    watchlist_id = WatchlistBundleService(db).create_with_sources(
+        "Threat intel",
+        description=None,
+        tags=None,
+        source_ids=[source_id],
+        if_exists="conflict",
+    )["watchlist"]["id"]
+    service = LocalWatchlistsService(
+        db_factory=lambda: db,
+        run_executor=lambda _source: asyncio.sleep(0, result={"items": []}),
+    )
+    check = (await service.accept_source_checks([source_id]))[0]
+    briefing = await accept_briefing(db, watchlist_id, preset_id=None)
+    coordinator = WatchlistsOperationCoordinator(
+        local_service=service,
+        briefing_db=db,
+    )
+
+    adopted_check = (await coordinator.accept_checks([source_id]))[0]
+    adopted_briefing = await coordinator.accept_briefing(watchlist_id)
+    await coordinator.wait_idle(timeout=2)
+
+    assert adopted_check["run_id"] == check["run_id"]
+    assert adopted_briefing["id"] == briefing["id"]
+    assert (await service.get_run(check["run_id"]))["status"] == "completed"
+    assert db.get_briefing(briefing["id"])["status"] == "empty"

@@ -31,6 +31,7 @@ from textual.widgets import Button, Input, Select, Static, TextArea
 
 from ...Constants import (
     WATCHLISTS_NAV_CONTEXT_BACKEND,
+    WATCHLISTS_NAV_CONTEXT_BRIEFING_ID,
     WATCHLISTS_NAV_CONTEXT_RUN_ID,
     WATCHLISTS_NAV_CONTEXT_SECTION,
     WATCHLISTS_SECTION_RUNS,
@@ -248,6 +249,7 @@ from .destination_recovery import DestinationRecoveryState, policy_denied_recove
 
 
 LayoutRecomputeCause = Literal["initial", "resize", "explicit", "article_focus"]
+_LOCAL_BRIEFING_RECEIPT_RE = re.compile(r"^local:briefing:([1-9][0-9]*)$")
 
 logger = logger.bind(module="WatchlistsCollectionsScreen")
 WC_LOCAL_PAGE_SIZE = 5
@@ -726,6 +728,7 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
         self._pending_delete_entity: dict[str, Any] | None = None
         self._pending_navigation_run_id: str | None = None
         self._pending_navigation_run_backend: str | None = None
+        self._pending_navigation_briefing_id: str | None = None
         self._loaded_runs: list[dict[str, Any]] = []
         self._runs_refresh_generation = 0
         self._pending_runs_refresh_generation: int | None = None
@@ -1268,7 +1271,7 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
         self._recompute_effective_layout(cause="resize")
 
     def apply_navigation_context(self, context: Mapping[str, Any]) -> None:
-        """Apply a validated section/run deep link from shell navigation."""
+        """Apply a validated section/receipt deep link from shell navigation."""
         section = str(context.get(WATCHLISTS_NAV_CONTEXT_SECTION) or "").strip()
         if section not in self._SECTION_DETAIL_TITLE:
             return
@@ -1278,6 +1281,19 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
         ).strip()
         if requested_backend not in {"local", "server"}:
             requested_backend = self.runtime_backend
+
+        briefing_id = context.get(WATCHLISTS_NAV_CONTEXT_BRIEFING_ID)
+        canonical_briefing_id: str | None = None
+        if briefing_id not in (None, ""):
+            canonical_briefing_id = str(briefing_id).strip()
+            if (
+                section != "artifacts"
+                or str(context.get(WATCHLISTS_NAV_CONTEXT_BACKEND) or "").strip()
+                != "local"
+                or _LOCAL_BRIEFING_RECEIPT_RE.fullmatch(canonical_briefing_id)
+                is None
+            ):
+                return
 
         self._applying_navigation_context = True
         try:
@@ -1300,6 +1316,7 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
         self._pending_navigation_run_backend = (
             requested_backend if self._pending_navigation_run_id else None
         )
+        self._pending_navigation_briefing_id = canonical_briefing_id
         if self.is_mounted:
             self._load_active_section_data()
 
@@ -4723,7 +4740,8 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
             # (and offer Generate against the new one) -- the split-brain
             # shape, on a surface that spends the user's provider quota.
             self._selected_briefing = None
-            self._request_briefings_refresh()
+            if not self._applying_navigation_context:
+                self._request_briefings_refresh()
 
     def _sync_tree_navigation_authority(self) -> None:
         """Push contextual selection availability into the mounted rail."""
@@ -5274,6 +5292,8 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
         if self.active_section != WATCHLISTS_SECTION_RUNS:
             self._pending_navigation_run_id = None
             self._pending_navigation_run_backend = None
+        if self.active_section != "artifacts":
+            self._pending_navigation_briefing_id = None
         if self.is_mounted:
             self._sync_tree_navigation_authority()
             if self.active_section == "items" and self.runtime_backend != "local":
@@ -7949,7 +7969,32 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
         """
         db = self._briefings_db()
         watchlist_id = self._briefing_watchlist_id()
+        navigation_target: dict[str, Any] | None = None
+        pending_navigation_id = self._pending_navigation_briefing_id
+        if db is not None and pending_navigation_id is not None:
+            numeric_id = int(pending_navigation_id.rsplit(":", 1)[-1])
+            try:
+                row = await asyncio.to_thread(db.get_briefing, numeric_id)
+            except Exception:  # noqa: BLE001 - consume an unreadable one-shot target
+                row = None
+            if row is None:
+                self._pending_navigation_briefing_id = None
+            else:
+                navigation_target = dict(row)
+                watchlist_id = int(navigation_target["watchlist_id"])
+                target_scope = TreeScope(
+                    kind="watchlist",
+                    watchlist_id=watchlist_id,
+                )
+                if self.tree_scope != target_scope:
+                    self._applying_navigation_context = True
+                    try:
+                        self._commit_management_tree_scope(target_scope)
+                    finally:
+                        self._applying_navigation_context = False
         if db is None or watchlist_id is None:
+            if pending_navigation_id is not None:
+                self._pending_navigation_briefing_id = None
             self._loaded_briefings = []
             self._selected_briefing = None
             self._briefing_selection_mode = MODE_AUTO_FEATURED
@@ -8005,7 +8050,11 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
             wanted = (
                 select_briefing_id
                 if select_briefing_id is not None
-                else (self._selected_briefing or {}).get("id")
+                else (
+                    navigation_target.get("id")
+                    if navigation_target is not None
+                    else (self._selected_briefing or {}).get("id")
+                )
             )
             self._selected_briefing = next(
                 (
@@ -8015,6 +8064,8 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
                 ),
                 None,
             )
+            if pending_navigation_id is not None:
+                self._pending_navigation_briefing_id = None
             # Task 5: the selected briefing's cast scripts. Scoped to ONE
             # briefing (the resolved selection above) rather than every
             # briefing in `self._loaded_briefings` -- a script belongs to
