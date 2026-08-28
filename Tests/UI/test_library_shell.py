@@ -11757,12 +11757,9 @@ async def test_library_shell_media_viewer_raw_toggle_restores_literal_markdown()
         await _open_media_viewer(screen, pilot)
 
         markdown = screen.query_one("#library-media-viewer-content-markdown", Markdown)
-        # task-22500: Rendered is now wrapped in a VerticalScroll -- the
-        # Markdown widget's own `.display` is never toggled, only its
-        # wrapper's, so visibility is checked on the wrapper.
-        markdown_scroll = screen.query_one(
-            "#library-media-viewer-content-markdown-scroll"
-        )
+        # task-22500: Rendered has no wrapper -- the Markdown is a direct
+        # child of the content body, so visibility is its own `.display`.
+        markdown_scroll = markdown
 
         screen.query_one("#library-media-content-mode-raw", Button).press()
         await pilot.pause()

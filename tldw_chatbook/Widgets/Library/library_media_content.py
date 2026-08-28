@@ -10,7 +10,6 @@ from textual.containers import (
     Horizontal,
     ScrollableContainer,
     Vertical,
-    VerticalScroll,
 )
 from textual.widgets import Button, Input, Markdown, Static
 
@@ -69,7 +68,6 @@ class LibraryMediaContentBody(Container):
         self.is_markdown = is_markdown
         self._raw_widget: VirtualizedRawContent | None = None
         self._markdown_widget: Markdown | None = None
-        self._markdown_scroll: VerticalScroll | None = None
         self._desired_mode = self._normalize_mode(mode)
         self._mount_lock = asyncio.Lock()
         self._query = query
@@ -139,22 +137,38 @@ class LibraryMediaContentBody(Container):
         """
         if self._desired_mode == "raw" and self._raw_widget is not None:
             return self._raw_widget
-        if self._markdown_scroll is not None:
-            return self._markdown_scroll
+        # Rendered mode scrolls in THIS container (see _apply_mode_overflow):
+        # the Markdown is a direct child, exactly as it was when this body
+        # still was a VerticalScroll.
         return self
 
     def compose(self) -> ComposeResult:
         """Construct only the selected initial content view."""
+        self._apply_mode_overflow(self._desired_mode)
         if self._desired_mode == "rendered":
             self._markdown_widget = self._build_markdown_widget()
-            self._markdown_scroll = VerticalScroll(
-                self._markdown_widget,
-                id="library-media-viewer-content-markdown-scroll",
-            )
-            yield self._markdown_scroll
+            # Yielded DIRECTLY, with no scroller of its own. A child passed
+            # to (or composed inside) a nested container attaches one message
+            # cycle after that container, and on a 1 MB document that cycle
+            # is the entire markdown parse -- the screen reported the
+            # document loaded with no Markdown in the DOM yet, which made
+            # TASK-22207's gate fail about half the time. Raw mode brings its
+            # own ScrollView; rendered mode scrolls in this container.
+            yield self._markdown_widget
             return
         self._raw_widget = self._build_raw_widget()
         yield self._raw_widget
+
+    def _apply_mode_overflow(self, mode: str) -> None:
+        """Scroll in this container for Rendered; let Raw scroll itself.
+
+        Args:
+            mode: The mode about to be displayed.
+
+        Returns:
+            None.
+        """
+        self.styles.overflow_y = "hidden" if mode == "raw" else "auto"
 
     async def sync_mode(self, mode: str) -> None:
         """Show the requested view while mounting each view at most once.
@@ -172,10 +186,11 @@ class LibraryMediaContentBody(Container):
         async with self._mount_lock:
             desired = self._desired_mode
             await self._ensure_mode_mounted(desired)
+            self._apply_mode_overflow(desired)
             if self._raw_widget is not None:
                 self._raw_widget.display = desired == "raw"
-            if self._markdown_scroll is not None:
-                self._markdown_scroll.display = desired == "rendered"
+            if self._markdown_widget is not None:
+                self._markdown_widget.display = desired == "rendered"
 
     def sync_search(self, query: str, match_index: int) -> None:
         """Forward a search update to the mounted virtualized Raw view.
@@ -246,13 +261,11 @@ class LibraryMediaContentBody(Container):
                 self._raw_widget = self._build_raw_widget()
                 await self.mount(self._raw_widget)
             return
-        if self._markdown_scroll is None:
+        if self._markdown_widget is None:
             self._markdown_widget = self._build_markdown_widget()
-            self._markdown_scroll = VerticalScroll(
-                self._markdown_widget,
-                id="library-media-viewer-content-markdown-scroll",
-            )
-            await self.mount(self._markdown_scroll)
+            # Awaited directly, so the Markdown is guaranteed to be in the
+            # DOM the moment this returns.
+            await self.mount(self._markdown_widget)
 
     def _normalize_mode(self, mode: str) -> str:
         """Validate a mode and force non-Markdown bodies to their Raw view."""

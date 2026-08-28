@@ -208,10 +208,10 @@ async def test_body_rapid_mode_changes_leave_latest_mode_visible_once() -> None:
         # sync_mode("raw") (the later, intended-final request) is still
         # queued behind the lock at this exact point.
         assert not raw.display
-        # task-22500: Rendered is now wrapped in a VerticalScroll -- the
-        # Markdown widget's OWN `.display` is never touched, only its
-        # wrapper's, so visibility is checked on the wrapper.
-        assert body._markdown_scroll.display
+        # task-22500: Rendered has no wrapper of its own -- the Markdown is
+        # a direct child of this body (which scrolls for Rendered), so
+        # visibility is the Markdown widget's own `.display`.
+        assert body._markdown_widget.display
 
         release_raw.set()
         await asyncio.gather(rendered_task, raw_task)
@@ -220,7 +220,7 @@ async def test_body_rapid_mode_changes_leave_latest_mode_visible_once() -> None:
         # sync_mode call ran after Rendered's and re-applied the correct
         # display flags, so the transient staleness above self-corrects.
         assert raw.display
-        assert not body._markdown_scroll.display
+        assert not body._markdown_widget.display
         assert len(body.query("#library-media-viewer-content-text")) == 1
         assert len(body.query("#library-media-viewer-content-markdown")) == 1
 
