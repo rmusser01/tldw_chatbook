@@ -27,11 +27,20 @@ from Tests.UI.background_signals import (
 from Tests.UI.consolidated_css import ConsolidatedCSSApp
 
 from tldw_chatbook.Chat.console_chat_models import ConsoleContextSnapshot
+from tldw_chatbook.Chat.console_context_policy import ConsoleContextPolicyOverrides
 from tldw_chatbook.Chat.console_cost_tracker import ConsoleCostRowTotals
 from tldw_chatbook.Chat.console_prompt_queue import ConsolePromptQueueRegistry
 from tldw_chatbook.Chat.console_session_settings import (
     ConsoleSessionSettings,
     ConsoleSettingsContextEstimate,
+)
+from tldw_chatbook.Chat.console_settings_apply import (
+    ConsoleSettingsDraftState,
+    ConsoleSettingsFieldDraft,
+    ConsoleSettingsFieldProvenance,
+    ConsoleSettingsLiveCommit,
+    ConsoleSettingsOrigin,
+    ConsoleSettingsSubmission,
 )
 from tldw_chatbook.Prompt_Management.prompt_variables import PromptVariableApplication
 from tldw_chatbook.UI.Screens.change_review_screen import (
@@ -282,6 +291,64 @@ def _image_factory() -> ConsoleImageViewerModal:
     return modal
 
 
+def _model_popover_factory(
+    *,
+    live_committer: Callable[
+        [ConsoleSettingsSubmission], ConsoleSettingsLiveCommit
+    ]
+    | None = None,
+) -> ConsoleModelPopover:
+    settings = ConsoleSessionSettings(provider="llama_cpp", model="model-a")
+    origin = ConsoleSettingsOrigin("session-a", None, 0)
+    draft = ConsoleSettingsDraftState(
+        settings=settings,
+        context_policy_overrides=ConsoleContextPolicyOverrides(),
+        field_drafts=(
+            ConsoleSettingsFieldDraft(
+                "temperature",
+                settings.temperature,
+                settings.temperature,
+                ConsoleSettingsFieldProvenance.INHERITED,
+                False,
+            ),
+            ConsoleSettingsFieldDraft(
+                "streaming",
+                settings.streaming,
+                settings.streaming,
+                ConsoleSettingsFieldProvenance.INHERITED,
+                False,
+            ),
+        ),
+        model_drafts=(),
+        endpoint_draft=None,
+    )
+
+    def commit(submission: ConsoleSettingsSubmission) -> ConsoleSettingsLiveCommit:
+        if live_committer is not None:
+            return live_committer(submission)
+        return ConsoleSettingsLiveCommit(
+            submission_id=submission.submission_id,
+            session_id=origin.session_id,
+            persisted_conversation_id=None,
+            conversation_binding_revision=0,
+            generation_revision=1,
+            context_policy_revision=1,
+            settings=submission.draft.settings,
+            context_policy_overrides=submission.draft.context_policy_overrides,
+        )
+
+    return ConsoleModelPopover(
+        origin=origin,
+        app_config={"api_settings": {"llama_cpp": {}}},
+        initial_draft=draft,
+        providers_models={"llama_cpp": ["model-a"]},
+        scope_copy="Applies to this conversation",
+        durability_copy="Temporary until this chat is promoted",
+        draft_rebaser=lambda state, **_kwargs: state,
+        live_committer=commit,
+    )
+
+
 def _queue_factory() -> ConsolePromptQueueModal:
     registry = ConsolePromptQueueRegistry()
     snapshot = registry.snapshot("contract-session")
@@ -430,10 +497,7 @@ TASK2_MODAL_CONTRACTS = (
     ),
     _Task2ModalContract(
         ConsoleModelPopover,
-        lambda: ConsoleModelPopover(
-            settings=ConsoleSessionSettings(provider="openai", model="gpt-test"),
-            providers_models={"openai": ["gpt-test"]},
-        ),
+        _model_popover_factory,
         "#console-model-popover",
         None,
         "Console model chip",
@@ -2051,6 +2115,94 @@ async def test_task2_contract_selector_exists_and_escape_returns_cancel_result(
         await pilot.pause()
 
     assert app.results == [contract.cancel_result]
+
+
+@pytest.mark.asyncio
+async def test_popover_escape_leaves_defaults_before_canceling() -> None:
+    app = _Task2Harness()
+    modal = _model_popover_factory()
+
+    async with app.run_test(size=(90, 34)) as pilot:
+        await app.push_screen(modal, callback=app.results.append)
+        await pilot.click("#console-popover-defaults")
+        await pilot.pause()
+        assert modal.query_one("#console-popover-default-actions").display
+
+        await pilot.press("escape")
+        await pilot.pause()
+        assert app.screen is modal
+        assert modal.query_one("#console-popover-main-actions").display
+        assert not modal.query_one("#console-popover-default-actions").display
+        assert app.results == []
+
+        await pilot.press("escape")
+        await pilot.pause()
+
+    assert app.results == [None]
+
+
+@pytest.mark.parametrize("source", ("button", "escape"))
+@pytest.mark.asyncio
+async def test_popover_cancel_sources_return_none(source: str) -> None:
+    app = _Task2Harness()
+    modal = _model_popover_factory()
+
+    async with app.run_test(size=(90, 34)) as pilot:
+        await app.push_screen(modal, callback=app.results.append)
+        if source == "button":
+            await pilot.click("#console-popover-cancel")
+        else:
+            await pilot.press("escape")
+        await pilot.pause()
+
+    assert app.results == [None]
+
+
+@pytest.mark.asyncio
+async def test_popover_releases_input_mouse_capture_before_live_commit() -> None:
+    app = _Task2Harness()
+    capture_at_commit: list[object | None] = []
+
+    def commit(submission: ConsoleSettingsSubmission) -> ConsoleSettingsLiveCommit:
+        capture_at_commit.append(app.mouse_captured)
+        return ConsoleSettingsLiveCommit(
+            submission_id=submission.submission_id,
+            session_id=submission.origin.session_id,
+            persisted_conversation_id=None,
+            conversation_binding_revision=0,
+            generation_revision=1,
+            context_policy_revision=1,
+            settings=submission.draft.settings,
+            context_policy_overrides=submission.draft.context_policy_overrides,
+        )
+
+    modal = _model_popover_factory(live_committer=commit)
+    async with app.run_test(size=(90, 34)) as pilot:
+        await app.push_screen(modal, callback=app.results.append)
+        temperature = modal.query_one("#console-popover-temperature", Input)
+        temperature.focus()
+        temperature.capture_mouse()
+        assert app.mouse_captured is temperature
+
+        await pilot.click("#console-popover-apply")
+        await pilot.pause()
+
+    assert capture_at_commit == [None]
+    assert len(app.results) == 1
+
+
+@pytest.mark.asyncio
+async def test_popover_deferred_fold_callback_is_safe_after_teardown() -> None:
+    app = _Task2Harness()
+    modal = _model_popover_factory()
+
+    async with app.run_test(size=(72, 24)) as pilot:
+        await app.push_screen(modal, callback=app.results.append)
+        await pilot.press("escape")
+        await pilot.pause()
+        modal._sync_fold_hint()
+
+    assert app.results == [None]
 
 
 @pytest.mark.parametrize("source", ["visible", "escape", "backdrop"])

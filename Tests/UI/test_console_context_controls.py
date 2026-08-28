@@ -6,8 +6,9 @@ from pathlib import Path
 
 import pytest
 from textual.app import App
-from textual.widgets import Button, OptionList, Select, Static
+from textual.widgets import Button, Input, OptionList, Select, Static
 
+from tldw_chatbook.Chat.console_chat_controller import ConsoleChatController
 from tldw_chatbook.Chat.console_context_policy import (
     ConsoleContextPolicyOverrides,
     ContextBudgetMode,
@@ -19,12 +20,22 @@ from tldw_chatbook.Chat.console_session_settings import (
     ConsoleSessionSettings,
     ConsoleSettingsContextEstimate,
 )
+from tldw_chatbook.Chat.console_settings_apply import (
+    ConsoleSettingsAction,
+    ConsoleSettingsCommittedSubmission,
+    ConsoleSettingsDraftState,
+    ConsoleSettingsFieldDraft,
+    ConsoleSettingsFieldProvenance,
+    ConsoleSettingsLiveCommit,
+    ConsoleSettingsOrigin,
+    ConsoleSettingsSubmission,
+    ConsoleSettingsTransfer,
+)
 from tldw_chatbook.Widgets.Console.console_context_controls import (
     build_console_context_control_state,
 )
 from tldw_chatbook.Widgets.Console.console_model_popover import (
     ConsoleModelPopover,
-    ConsoleModelPopoverResult,
 )
 from tldw_chatbook.Widgets.Console.console_settings_modal import (
     ConsoleSettingsModal,
@@ -79,6 +90,114 @@ def _state(*, memory: ConsoleMemoryRecord | None = None):
     )
 
 
+def _draft(
+    settings: ConsoleSessionSettings,
+    *,
+    context_state=None,
+    temperature_provenance: ConsoleSettingsFieldProvenance = (
+        ConsoleSettingsFieldProvenance.INHERITED
+    ),
+) -> ConsoleSettingsDraftState:
+    state = context_state or _state()
+    return ConsoleSettingsDraftState(
+        settings=settings,
+        context_policy_overrides=state.overrides,
+        field_drafts=(
+            ConsoleSettingsFieldDraft(
+                name="temperature",
+                effective_value=settings.temperature,
+                profile_override=settings.temperature,
+                provenance=temperature_provenance,
+                dirty=False,
+            ),
+            ConsoleSettingsFieldDraft(
+                name="streaming",
+                effective_value=settings.streaming,
+                profile_override=settings.streaming,
+                provenance=ConsoleSettingsFieldProvenance.INHERITED,
+                dirty=False,
+            ),
+        ),
+        model_drafts=(),
+        endpoint_draft=None,
+    )
+
+
+def _rebase_quick_draft(
+    state: ConsoleSettingsDraftState,
+    *,
+    provider: str,
+    model: str | None,
+    app_config,
+    exposed_fields: frozenset[str],
+) -> ConsoleSettingsDraftState:
+    return ConsoleChatController.rebase_console_settings_draft(
+        object(),
+        state,
+        provider=provider,
+        model=model,
+        app_config=app_config,
+        exposed_fields=exposed_fields,
+    )
+
+
+def _accept_live_submission(
+    submission: ConsoleSettingsSubmission,
+) -> ConsoleSettingsLiveCommit:
+    return ConsoleSettingsLiveCommit(
+        submission_id=submission.submission_id,
+        session_id=submission.origin.session_id,
+        persisted_conversation_id=submission.origin.persisted_conversation_id,
+        conversation_binding_revision=(
+            submission.origin.conversation_binding_revision
+        ),
+        generation_revision=1,
+        context_policy_revision=1,
+        settings=submission.draft.settings,
+        context_policy_overrides=submission.draft.context_policy_overrides,
+    )
+
+
+def _popover(
+    *,
+    settings: ConsoleSessionSettings | None = None,
+    providers_models=None,
+    context_state=None,
+    app_config=None,
+    scope_copy: str = "Applies to this conversation",
+    durability_copy: str = "Saved with the conversation after its first message",
+    live_committer=_accept_live_submission,
+) -> ConsoleModelPopover:
+    session_settings = settings or _settings()
+    controls = context_state or _state()
+    config = (
+        app_config
+        if app_config is not None
+        else {
+            "chat_defaults": {
+                "provider": session_settings.provider,
+                "model": session_settings.model,
+            },
+            "api_settings": {session_settings.provider: {}},
+        }
+    )
+    return ConsoleModelPopover(
+        origin=ConsoleSettingsOrigin("session-a", None, 0),
+        app_config=config,
+        initial_draft=_draft(session_settings, context_state=controls),
+        providers_models=(
+            providers_models
+            if providers_models is not None
+            else {session_settings.provider: [session_settings.model]}
+        ),
+        context_state=controls,
+        scope_copy=scope_copy,
+        durability_copy=durability_copy,
+        draft_rebaser=_rebase_quick_draft,
+        live_committer=live_committer,
+    )
+
+
 class _ContextHarness(App[None]):
     CSS_PATH = str(
         Path(__file__).resolve().parents[2]
@@ -90,12 +209,14 @@ class _ContextHarness(App[None]):
     def __init__(self) -> None:
         super().__init__()
         self.result = None
+        self.capture_count = 0
         self.reset_calls = 0
         self.undo_calls: list[tuple[str, int]] = []
         self.reset_all_calls = 0
 
     def capture(self, result) -> None:
         self.result = result
+        self.capture_count += 1
 
     def reset_current(self) -> tuple[str, int]:
         self.reset_calls += 1
@@ -115,11 +236,7 @@ async def test_quick_popover_separates_request_conversation_and_policy() -> None
     app = _ContextHarness()
     async with app.run_test(size=(90, 34)) as pilot:
         await app.push_screen(
-            ConsoleModelPopover(
-                settings=_settings(),
-                providers_models={"llama_cpp": ["model-a"]},
-                context_state=_state(),
-            ),
+            _popover(),
             callback=app.capture,
         )
         assert "~42,000 / 94,000 safe input" in str(
@@ -146,8 +263,390 @@ async def test_quick_popover_separates_request_conversation_and_policy() -> None
         await pilot.click("#console-popover-apply")
         await pilot.pause()
 
-    assert isinstance(app.result, ConsoleModelPopoverResult)
-    assert app.result.compaction_mode is ContextCompactionMode.AUTOMATIC
+    assert isinstance(app.result, ConsoleSettingsCommittedSubmission)
+    assert app.result.submission.action is ConsoleSettingsAction.APPLY_TO_CHAT
+    assert (
+        app.result.submission.draft.context_policy_overrides.compaction_mode
+        is ContextCompactionMode.AUTOMATIC
+    )
+
+
+@pytest.mark.parametrize(
+    "durability_copy",
+    (
+        "Saved with the conversation after its first message",
+        "Temporary until this chat is promoted",
+    ),
+)
+@pytest.mark.asyncio
+async def test_popover_main_and_defaults_actions_expose_exact_scope(
+    durability_copy: str,
+) -> None:
+    app = _ContextHarness()
+    async with app.run_test(size=(90, 34)) as pilot:
+        await app.push_screen(
+            _popover(
+                scope_copy="Applies to this conversation",
+                durability_copy=durability_copy,
+            ),
+            callback=app.capture,
+        )
+        await pilot.pause()
+
+        main_actions = list(app.screen.query("#console-popover-main-actions Button"))
+        assert [str(button.label) for button in main_actions] == [
+            "Cancel",
+            "Full settings…",
+            "Defaults…",
+            "Apply to this chat",
+        ]
+        assert str(
+            app.screen.query_one("#console-popover-scope", Static).renderable
+        ) == "Applies to this conversation"
+        assert str(
+            app.screen.query_one("#console-popover-durability", Static).renderable
+        ) == durability_copy
+        assert str(
+            app.screen.query_one(
+                "#console-popover-temperature-provenance", Static
+            ).renderable
+        ) == "Inherited"
+
+        await pilot.click("#console-popover-defaults")
+        await pilot.pause()
+
+        assert not app.screen.query_one("#console-popover-main-actions").display
+        assert app.screen.query_one("#console-popover-default-actions").display
+        assert [
+            str(button.label)
+            for button in app.screen.query("#console-popover-default-actions Button")
+        ] == [
+            "Save as model default",
+            "Make default for new chats",
+            "Back",
+        ]
+        assert "Compaction stays with this chat." in str(
+            app.screen.query_one(
+                "#console-popover-defaults-compaction-scope", Static
+            ).renderable
+        )
+        assert "Temperature + Streaming" in str(
+            app.screen.query_one(
+                "#console-popover-save-model-default-copy", Static
+            ).renderable
+        )
+        assert "eligible new chats" in str(
+            app.screen.query_one(
+                "#console-popover-make-new-chat-default-copy", Static
+            ).renderable
+        )
+
+
+@pytest.mark.asyncio
+async def test_popover_defaults_disable_blocked_new_chat_provider() -> None:
+    app = _ContextHarness()
+    settings = ConsoleSessionSettings(provider="openai", model="m")
+    async with app.run_test(size=(90, 34)) as pilot:
+        await app.push_screen(
+            _popover(
+                settings=settings,
+                providers_models={"openai": ["m"]},
+                app_config={
+                    "api_settings": {
+                        "openai": {"credential_source": "none"}
+                    }
+                },
+            )
+        )
+        await pilot.click("#console-popover-defaults")
+        await pilot.pause()
+
+        make_default = app.screen.query_one(
+            "#console-popover-make-new-chat-default", Button
+        )
+        reason = str(
+            app.screen.query_one(
+                "#console-popover-new-chat-default-block", Static
+            ).renderable
+        )
+        assert make_default.disabled
+        assert "Unavailable" in reason
+        assert "missing api key" in reason.lower()
+
+
+@pytest.mark.parametrize("activation", ("mouse", "keyboard"))
+@pytest.mark.asyncio
+async def test_popover_apply_mouse_and_keyboard_share_one_submission(
+    activation: str,
+) -> None:
+    app = _ContextHarness()
+    submissions: list[ConsoleSettingsSubmission] = []
+
+    def commit(submission: ConsoleSettingsSubmission) -> ConsoleSettingsLiveCommit:
+        submissions.append(submission)
+        return _accept_live_submission(submission)
+
+    async with app.run_test(size=(90, 34)) as pilot:
+        await app.push_screen(
+            _popover(live_committer=commit),
+            callback=app.capture,
+        )
+        apply_button = app.screen.query_one("#console-popover-apply", Button)
+        if activation == "mouse":
+            await pilot.click(apply_button)
+        else:
+            apply_button.focus()
+            await pilot.press("enter")
+        await pilot.pause()
+
+    assert len(submissions) == 1
+    assert app.capture_count == 1
+    assert isinstance(app.result, ConsoleSettingsCommittedSubmission)
+    assert app.result.submission is submissions[0]
+    assert submissions[0].action is ConsoleSettingsAction.APPLY_TO_CHAT
+    assert submissions[0].default_field_mask == frozenset()
+
+
+@pytest.mark.parametrize(
+    ("button_id", "expected_action"),
+    (
+        (
+            "#console-popover-save-model-default",
+            ConsoleSettingsAction.SAVE_MODEL_DEFAULT,
+        ),
+        (
+            "#console-popover-make-new-chat-default",
+            ConsoleSettingsAction.MAKE_NEW_CHAT_DEFAULT,
+        ),
+    ),
+)
+@pytest.mark.asyncio
+async def test_popover_default_actions_submit_the_quick_model_field_mask(
+    button_id: str,
+    expected_action: ConsoleSettingsAction,
+) -> None:
+    app = _ContextHarness()
+    submissions: list[ConsoleSettingsSubmission] = []
+
+    def commit(submission: ConsoleSettingsSubmission) -> ConsoleSettingsLiveCommit:
+        submissions.append(submission)
+        return _accept_live_submission(submission)
+
+    async with app.run_test(size=(90, 34)) as pilot:
+        await app.push_screen(
+            _popover(live_committer=commit),
+            callback=app.capture,
+        )
+        await pilot.click("#console-popover-defaults")
+        await pilot.click(button_id)
+        await pilot.pause()
+
+    assert len(submissions) == 1
+    assert app.capture_count == 1
+    assert isinstance(app.result, ConsoleSettingsCommittedSubmission)
+    assert submissions[0].action is expected_action
+    assert submissions[0].default_field_mask == frozenset(
+        {"temperature", "streaming"}
+    )
+
+
+@pytest.mark.asyncio
+async def test_popover_origin_rejection_returns_none_and_reports_exact_message(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    app = _ContextHarness()
+    attempted: list[ConsoleSettingsSubmission] = []
+    notifications: list[tuple[str, str]] = []
+
+    def reject(submission: ConsoleSettingsSubmission) -> ConsoleSettingsLiveCommit:
+        attempted.append(submission)
+        raise ValueError("Chat closed; nothing applied.")
+
+    popover = _popover(live_committer=reject)
+    monkeypatch.setattr(
+        popover,
+        "notify",
+        lambda message, *, severity="information", **_kwargs: notifications.append(
+            (str(message), severity)
+        ),
+    )
+    async with app.run_test(size=(90, 34)) as pilot:
+        await app.push_screen(popover, callback=app.capture)
+        await pilot.click("#console-popover-defaults")
+        await pilot.click("#console-popover-make-new-chat-default")
+        await pilot.pause()
+
+    assert len(attempted) == 1
+    assert attempted[0].action is ConsoleSettingsAction.MAKE_NEW_CHAT_DEFAULT
+    assert app.capture_count == 1
+    assert app.result is None
+    assert notifications == [("Chat closed; nothing applied", "warning")]
+
+
+@pytest.mark.parametrize(
+    "temperature",
+    ("not-a-number", "nan", "inf", "-inf", "2.01", "-0.01"),
+)
+@pytest.mark.asyncio
+async def test_popover_invalid_temperature_stays_open_with_error(
+    temperature: str,
+) -> None:
+    app = _ContextHarness()
+    submissions: list[ConsoleSettingsSubmission] = []
+
+    def commit(submission: ConsoleSettingsSubmission) -> ConsoleSettingsLiveCommit:
+        submissions.append(submission)
+        return _accept_live_submission(submission)
+
+    async with app.run_test(size=(90, 34)) as pilot:
+        popover = _popover(live_committer=commit)
+        await app.push_screen(popover, callback=app.capture)
+        temperature_input = app.screen.query_one(
+            "#console-popover-temperature", Input
+        )
+        temperature_input.value = temperature
+        await pilot.click("#console-popover-apply")
+        await pilot.pause()
+
+        assert app.screen is popover
+        error = app.screen.query_one("#console-popover-error", Static)
+        assert error.display
+        assert "Temperature" in str(error.renderable)
+        assert app.focused is temperature_input
+
+    assert submissions == []
+    assert app.capture_count == 0
+
+
+@pytest.mark.asyncio
+async def test_popover_full_settings_transfers_draft_without_committing() -> None:
+    app = _ContextHarness()
+    submissions: list[ConsoleSettingsSubmission] = []
+
+    def commit(submission: ConsoleSettingsSubmission) -> ConsoleSettingsLiveCommit:
+        submissions.append(submission)
+        return _accept_live_submission(submission)
+
+    async with app.run_test(size=(90, 34)) as pilot:
+        await app.push_screen(
+            _popover(live_committer=commit),
+            callback=app.capture,
+        )
+        app.screen.query_one("#console-popover-temperature", Input).value = "0.31"
+        await pilot.click("#console-popover-full-settings")
+        await pilot.pause()
+
+    assert submissions == []
+    assert isinstance(app.result, ConsoleSettingsTransfer)
+    assert app.result.origin.session_id == "session-a"
+    assert app.result.draft.settings.temperature == pytest.approx(0.31)
+    temperature = next(
+        field
+        for field in app.result.draft.field_drafts
+        if field.name == "temperature"
+    )
+    assert temperature.dirty
+
+
+@pytest.mark.asyncio
+async def test_popover_provider_model_rebase_restores_keyed_drafts_and_provenance() -> (
+    None
+):
+    app = _ContextHarness()
+    settings = ConsoleSessionSettings(
+        provider="llama_cpp",
+        model="model-a",
+        base_url="http://127.0.0.1:9100",
+        temperature=0.2,
+        streaming=True,
+    )
+    config = {
+        "chat_defaults": {
+            "provider": "llama_cpp",
+            "model": "model-a",
+            "temperature": 0.7,
+            "streaming": True,
+        },
+        "api_settings": {
+            "llama_cpp": {
+                "api_url": "http://127.0.0.1:9100",
+                "model_defaults": {
+                    "model-a": {"temperature": 0.2, "streaming": True}
+                },
+            },
+            "vllm": {
+                "api_url": "http://127.0.0.1:9200",
+                "model_defaults": {
+                    "model-b": {"temperature": 0.8, "streaming": False}
+                },
+            },
+        },
+    }
+    async with app.run_test(size=(100, 38)) as pilot:
+        popover = _popover(
+            settings=settings,
+            providers_models={
+                "llama_cpp": ["model-a"],
+                "vllm": ["model-b"],
+            },
+            app_config=config,
+        )
+        await app.push_screen(popover)
+        temperature = app.screen.query_one("#console-popover-temperature", Input)
+        assert "Inherited" == str(
+            app.screen.query_one(
+                "#console-popover-streaming-provenance", Static
+            ).renderable
+        )
+        temperature.value = "0.33"
+        await pilot.pause()
+
+        app.screen.query_one(
+            "#console-popover-provider", Select
+        ).value = "vllm"
+        await pilot.pause()
+        assert "Inherited" == str(
+            app.screen.query_one(
+                "#console-popover-streaming-provenance", Static
+            ).renderable
+        )
+        picker = app.screen.query_one("#console-popover-model-search")
+        picker.set_model_value("model-b")
+        picker.post_message(picker.ModelSelected("model-b"))
+        await pilot.pause()
+
+        assert popover._draft.settings.base_url == "http://127.0.0.1:9200"
+        assert temperature.value == "0.33"
+        assert "Edited — carried from llama_cpp/model-a" == str(
+            app.screen.query_one(
+                "#console-popover-temperature-provenance", Static
+            ).renderable
+        )
+        assert "Inherited" == str(
+            app.screen.query_one(
+                "#console-popover-streaming-provenance", Static
+            ).renderable
+        )
+
+        temperature.value = "0.44"
+        await pilot.pause()
+        app.screen.query_one(
+            "#console-popover-provider", Select
+        ).value = "llama_cpp"
+        await pilot.pause()
+        picker.set_model_value("model-a")
+        picker.post_message(picker.ModelSelected("model-a"))
+        await pilot.pause()
+        assert temperature.value == "0.33"
+
+        app.screen.query_one(
+            "#console-popover-provider", Select
+        ).value = "vllm"
+        await pilot.pause()
+        picker.set_model_value("model-b")
+        picker.post_message(picker.ModelSelected("model-b"))
+        await pilot.pause()
+        assert temperature.value == "0.44"
 
 
 @pytest.mark.asyncio
@@ -442,17 +941,13 @@ async def test_quick_popover_keeps_actions_visible_and_marks_the_narrow_fold() -
     app = _ContextHarness()
     async with app.run_test(size=(72, 24)) as pilot:
         await app.push_screen(
-            ConsoleModelPopover(
-                settings=_settings(),
-                providers_models={"llama_cpp": ["model-a"]},
-                context_state=_state(),
-            )
+            _popover()
         )
         await pilot.pause()
         await pilot.pause()
 
         hint = app.screen.query_one("#console-popover-fold-hint", Static)
-        actions = app.screen.query_one("#console-popover-actions")
+        actions = app.screen.query_one("#console-popover-main-actions")
         context_button = app.screen.query_one(
             "#console-popover-full-settings",
             Button,
@@ -464,7 +959,7 @@ async def test_quick_popover_keeps_actions_visible_and_marks_the_narrow_fold() -
         for _ in range(14):
             focused = app.focused
             focus_order.append(getattr(focused, "id", "") or "")
-            if focus_order[-1] == "console-popover-full-settings":
+            if focus_order[-1] == "console-popover-apply":
                 break
             await pilot.press("tab")
             await pilot.pause()
@@ -474,7 +969,7 @@ async def test_quick_popover_keeps_actions_visible_and_marks_the_narrow_fold() -
         assert focus_order.index("console-popover-streaming") < focus_order.index(
             "console-popover-compaction-mode"
         )
-        assert focus_order[-1] == "console-popover-full-settings"
+        assert focus_order[-1] == "console-popover-apply"
 
 
 @pytest.mark.asyncio
@@ -529,14 +1024,13 @@ async def test_quick_popover_mounts_with_no_model_selected() -> None:
     app = _ContextHarness()
     async with app.run_test(size=(90, 34)) as pilot:
         await app.push_screen(
-            ConsoleModelPopover(
+            _popover(
                 settings=ConsoleSessionSettings(
                     provider="llama_cpp",
                     model=None,
                     max_tokens=4_000,
                 ),
                 providers_models={"llama_cpp": ["model-a"]},
-                context_state=_state(),
             ),
             callback=app.capture,
         )

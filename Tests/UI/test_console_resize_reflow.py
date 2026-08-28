@@ -11,13 +11,27 @@ import pytest
 from textual.css.query import NoMatches
 from textual.widgets import Button, Static, Tooltip
 
-from tldw_chatbook.Chat.console_session_settings import ConsoleSettingsSummaryState
+from Tests.UI.consolidated_css import ConsolidatedCSSApp
+from tldw_chatbook.Chat.console_context_policy import ConsoleContextPolicyOverrides
+from tldw_chatbook.Chat.console_session_settings import (
+    ConsoleSessionSettings,
+    ConsoleSettingsSummaryState,
+)
+from tldw_chatbook.Chat.console_settings_apply import (
+    ConsoleSettingsDraftState,
+    ConsoleSettingsFieldDraft,
+    ConsoleSettingsFieldProvenance,
+    ConsoleSettingsLiveCommit,
+    ConsoleSettingsOrigin,
+    ConsoleSettingsSubmission,
+)
 from tldw_chatbook.UI.Console_Modules.left_rail import (
     CONTEXT_SECTION_DESCRIPTORS,
     ConsoleLeftRail,
 )
 from tldw_chatbook.UI.Console_Modules.right_rail import ConsoleInspectorRail
 from tldw_chatbook.Widgets.Console.console_bounded_section import ConsoleBoundedSection
+from tldw_chatbook.Widgets.Console.console_model_popover import ConsoleModelPopover
 from tldw_chatbook.app import TldwCli
 
 from Tests.UI.test_console_native_chat_flow import _configure_native_ready_console
@@ -51,6 +65,59 @@ def _ready_production_console_host() -> _ProductionResizeConsoleHarness:
     app = _build_test_app()
     _configure_native_ready_console(app)
     return _ProductionResizeConsoleHarness(app)
+
+
+def _resize_popover() -> ConsoleModelPopover:
+    settings = ConsoleSessionSettings(provider="llama_cpp", model="model-a")
+    origin = ConsoleSettingsOrigin("session-a", None, 0)
+    draft = ConsoleSettingsDraftState(
+        settings=settings,
+        context_policy_overrides=ConsoleContextPolicyOverrides(),
+        field_drafts=tuple(
+            ConsoleSettingsFieldDraft(
+                name=name,
+                effective_value=getattr(settings, name),
+                profile_override=getattr(settings, name),
+                provenance=ConsoleSettingsFieldProvenance.INHERITED,
+                dirty=False,
+            )
+            for name in ("temperature", "streaming")
+        ),
+        model_drafts=(),
+        endpoint_draft=None,
+    )
+
+    def commit(submission: ConsoleSettingsSubmission) -> ConsoleSettingsLiveCommit:
+        return ConsoleSettingsLiveCommit(
+            submission_id=submission.submission_id,
+            session_id=origin.session_id,
+            persisted_conversation_id=None,
+            conversation_binding_revision=0,
+            generation_revision=1,
+            context_policy_revision=1,
+            settings=submission.draft.settings,
+            context_policy_overrides=submission.draft.context_policy_overrides,
+        )
+
+    return ConsoleModelPopover(
+        origin=origin,
+        app_config={"api_settings": {"llama_cpp": {}}},
+        initial_draft=draft,
+        providers_models={"llama_cpp": ["model-a"]},
+        scope_copy="Applies to this conversation",
+        durability_copy="Temporary until this chat is promoted",
+        draft_rebaser=lambda state, **_kwargs: state,
+        live_committer=commit,
+    )
+
+
+def _assert_non_overlapping_regions(buttons: list[Button]) -> None:
+    assert all(button.region.width > 0 and button.region.height > 0 for button in buttons)
+    for index, button in enumerate(buttons):
+        assert all(
+            not button.region.overlaps(other.region)
+            for other in buttons[index + 1 :]
+        )
 
 
 def _pane_layout(console) -> dict:
@@ -93,6 +160,45 @@ def _context_allocation_idle(rail: ConsoleLeftRail) -> bool:
         not section._reconcile_scheduled
         for section in rail.query(ConsoleBoundedSection)
     )
+
+
+@pytest.mark.parametrize("width", (60, 72))
+@pytest.mark.asyncio
+async def test_popover_actions_remain_reachable_and_ordered_at_narrow_width(
+    width: int,
+) -> None:
+    app = ConsolidatedCSSApp()
+    modal = _resize_popover()
+
+    async with app.run_test(size=(width, 24)) as pilot:
+        await app.push_screen(modal)
+        await pilot.pause()
+        await pilot.pause()
+
+        panel = modal.query_one("#console-model-popover")
+        main = list(modal.query("#console-popover-main-actions Button"))
+        assert [str(button.label) for button in main] == [
+            "Cancel",
+            "Full settings…",
+            "Defaults…",
+            "Apply to this chat",
+        ]
+        assert panel.region.x >= 0
+        assert panel.region.right <= width
+        assert panel.region.bottom <= 24
+        assert all(panel.region.contains_region(button.region) for button in main)
+        _assert_non_overlapping_regions(main)
+
+        await pilot.click("#console-popover-defaults")
+        await pilot.pause()
+        defaults = list(modal.query("#console-popover-default-actions Button"))
+        assert [str(button.label) for button in defaults] == [
+            "Save as model default",
+            "Make default for new chats",
+            "Back",
+        ]
+        assert all(panel.region.contains_region(button.region) for button in defaults)
+        _assert_non_overlapping_regions(defaults)
 
 
 @pytest.mark.asyncio
