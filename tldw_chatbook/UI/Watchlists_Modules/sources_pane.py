@@ -166,8 +166,7 @@ class SourcesPane(RecomposeCaptureGuard, Vertical):
     #: just destroyed. A `DataTable`'s rows are data, not widgets, so
     #: re-populating it (`_refresh_table_rows`) mounts nothing and leaves
     #: the focused `Input`, its caret and any open form exactly where they
-    #: were. The create-form reactives below stay `recompose=True`: those
-    #: genuinely change WHICH CONTROLS EXIST.
+    #: were. Only form visibility below still changes which controls exist.
     search_query = reactive("")
     source_type_filter = reactive("all")
     status_filter = reactive("all")
@@ -175,10 +174,11 @@ class SourcesPane(RecomposeCaptureGuard, Vertical):
     tags_filter = reactive("")
     show_create_form = reactive(False, recompose=True)
     show_filter_editor = reactive(False, recompose=True)
-    create_runtime_backend = reactive("local", recompose=True)
-    create_form_source_types = reactive[tuple[str, ...]](
-        ("rss", "atom", "url"), recompose=True
-    )
+    # Backend changes repaint their dependent controls in place. Rebuilding
+    # the pane would replace the Sources table, lose its focus/cursor, and
+    # let the replacement table's initial highlight look like user input.
+    create_runtime_backend = reactive("local")
+    create_form_source_types = reactive[tuple[str, ...]](("rss", "atom", "url"))
     # Seed values for the create form's free-text inputs. No `recompose=True`:
     # these only need to be read once per `compose()` call (to seed the
     # Input's `value=`), which already happens whenever `show_create_form` (or
@@ -207,14 +207,10 @@ class SourcesPane(RecomposeCaptureGuard, Vertical):
     watchlist_choices = reactive[list[dict[str, Any]]](list)
     default_destination = reactive[Any]("unassigned")
     create_draft_destination = reactive[Any]("unassigned")
-    # TASK-2302. The chosen source type, which decides whether the
-    # ignore-selectors field is rendered at all -- hence `recompose=True`,
-    # unlike its sibling drafts. Owning the conditional in `compose()` (the
-    # single place that already decides what this form contains) rather than
-    # mounting and unmounting the field from a watcher is deliberate: a
-    # conditionally-composed control with a second, in-place owner is a bug
-    # class this codebase has paid for more than once.
-    create_draft_source_type = reactive("rss", recompose=True)
+    # TASK-2302. The chosen source type decides whether the already-mounted
+    # ignore-selectors field is displayed. This is an in-place repaint for
+    # the same table-preservation reason as the backend reactives above.
+    create_draft_source_type = reactive("rss")
 
     #: The value the destination Select carries for "no watchlist". A string
     #: rather than `None`: `Select` reserves a `NoSelection` sentinel of its
@@ -411,6 +407,91 @@ class SourcesPane(RecomposeCaptureGuard, Vertical):
         self.set_reactive(SourcesPane.create_form_source_types, source_types)
         if self.create_draft_source_type not in source_types:
             self.set_reactive(SourcesPane.create_draft_source_type, "rss")
+
+    def watch_create_runtime_backend(self, _backend: str) -> None:
+        """Repaint backend-dependent controls without replacing the table."""
+        self._sync_create_backend_controls()
+
+    def watch_create_form_source_types(self, _source_types: tuple[str, ...]) -> None:
+        """Update the mounted type choices without rebuilding the pane."""
+        self._sync_create_backend_controls()
+
+    def watch_create_draft_source_type(self, _source_type: str) -> None:
+        """Show noise controls only when the selected type can use them."""
+        self._sync_create_backend_controls()
+
+    def _sync_create_backend_controls(self) -> None:
+        """Patch the small backend-dependent surface in place when mounted."""
+        if not self.is_mounted:
+            return
+        local_backend = self.create_runtime_backend == "local"
+        try:
+            add_several = self.query_one("#sources-add-several-button", Button)
+            add_several.label = (
+                "Add several…" if local_backend else "Add several (Local only)"
+            )
+            add_several.disabled = not local_backend
+        except NoMatches:
+            pass
+        try:
+            create_selected = self.query_one(
+                "#sources-create-watchlist-selected", Button
+            )
+            create_selected.label = (
+                "Create Watchlist from selected…"
+                if local_backend
+                else "Create Watchlist from selected (Local only)"
+            )
+            create_selected.disabled = (
+                not local_backend
+                or not 1 <= len(self._multi_selection.selected_ids) <= 100
+            )
+        except NoMatches:
+            pass
+        try:
+            type_select = self.query_one("#sources-create-type", Select)
+            selected_type = (
+                self.create_draft_source_type
+                if self.create_draft_source_type in self.create_form_source_types
+                else "rss"
+            )
+            with type_select.prevent(Select.Changed):
+                type_select.set_options(
+                    [
+                        (self._SOURCE_TYPE_LABELS[value], value)
+                        for value in self.create_form_source_types
+                    ]
+                )
+                type_select.value = selected_type
+        except NoMatches:
+            pass
+        try:
+            self.query_one("#sources-create-frequency").display = local_backend
+        except NoMatches:
+            pass
+        try:
+            self.query_one("#sources-create-ignore-selectors").display = (
+                local_backend
+                and self._type_takes_ignore_selectors(
+                    self.create_draft_source_type
+                )
+            )
+        except NoMatches:
+            pass
+        try:
+            destination_label = self.query_one(
+                "#sources-create-watchlist-label", Static
+            )
+            destination_label.update(
+                "Watchlist" if local_backend else "Watchlist (Local only)"
+            )
+            destination = self.query_one("#sources-create-watchlist", Select)
+            with destination.prevent(Select.Changed):
+                destination.set_options(self._destination_options())
+                destination.value = self._resolved_destination()
+            destination.disabled = not local_backend
+        except NoMatches:
+            pass
 
     def compose(self):
         with Vertical(id="sources-toolbar"):
@@ -615,13 +696,22 @@ class SourcesPane(RecomposeCaptureGuard, Vertical):
                 # has no full-height row to spare (see the pairing notes
                 # above).
                 yield Horizontal(
-                    Static("Watchlist", classes="sources-create-field-label"),
+                    Static(
+                        (
+                            "Watchlist"
+                            if self.create_runtime_backend == "local"
+                            else "Watchlist (Local only)"
+                        ),
+                        id="sources-create-watchlist-label",
+                        classes="sources-create-field-label",
+                    ),
                     PruneSafeSelect(
                         self._destination_options(),
                         value=self._resolved_destination(),
                         id="sources-create-watchlist",
                         allow_blank=False,
                         compact=True,
+                        disabled=self.create_runtime_backend != "local",
                     ),
                     classes="sources-create-destination-row",
                 )
@@ -638,14 +728,15 @@ class SourcesPane(RecomposeCaptureGuard, Vertical):
                         value=self.create_draft_tags,
                         compact=True,
                     )
-                    if self.create_runtime_backend == "local":
-                        yield PruneSafeSelect(
-                            self._FREQUENCY_OPTIONS,
-                            value=self.create_draft_frequency,
-                            id="sources-create-frequency",
-                            allow_blank=False,
-                            compact=True,
-                        )
+                    frequency = PruneSafeSelect(
+                        self._FREQUENCY_OPTIONS,
+                        value=self.create_draft_frequency,
+                        id="sources-create-frequency",
+                        allow_blank=False,
+                        compact=True,
+                    )
+                    frequency.display = self.create_runtime_backend == "local"
+                    yield frequency
                 # The noise control, spec §2: prefilled, visible, and editable
                 # before the source is ever checked. A source's *volume* is
                 # not the problem -- a page whose ad slot or view counter
@@ -660,13 +751,14 @@ class SourcesPane(RecomposeCaptureGuard, Vertical):
                 # destination above. The Inspector's own copy of this editor
                 # has always been gated the same way
                 # (`_is_url_family_source`).
-                if (
+                ignore_selectors = self._ignore_selectors_field()
+                ignore_selectors.display = (
                     self.create_runtime_backend == "local"
                     and self._type_takes_ignore_selectors(
                         self.create_draft_source_type
                     )
-                ):
-                    yield self._ignore_selectors_field()
+                )
+                yield ignore_selectors
                 # `.dialog-buttons` is the same one-row, side-by-side pairing
                 # `WatchlistNameDialog` uses for its own Create/Cancel, so the
                 # two creation flows read the same (TASK-1035 AC#6). Only the
@@ -760,6 +852,8 @@ class SourcesPane(RecomposeCaptureGuard, Vertical):
         options: list[tuple[Text, Any]] = [
             (Text("Unassigned (no watchlist)"), self.UNASSIGNED_DESTINATION)
         ]
+        if self.create_runtime_backend != "local":
+            return options
         for watchlist in self.watchlist_choices:
             try:
                 watchlist_id = int(watchlist["id"])
@@ -1368,11 +1462,8 @@ class SourcesPane(RecomposeCaptureGuard, Vertical):
         elif event.select.id == "sources-active-filter":
             self.active_filter = str(event.value or "all")
         elif event.select.id == "sources-create-type":
-            # TASK-2302. `recompose=True`, so this rebuilds the form to add
-            # or drop the ignore-selectors field. Every other draft survives
-            # that (they are seeded from these same reactives) and
-            # `recompose` re-homes focus, which for this control lands back
-            # on the Select the user just used.
+            # TASK-2302. The watcher updates the noise field's display in
+            # place, preserving the form and the unrelated Sources table.
             source_type = str(event.value or "rss")
             if source_type in self.create_form_source_types:
                 self.create_draft_source_type = source_type
@@ -1481,10 +1572,15 @@ class SourcesPane(RecomposeCaptureGuard, Vertical):
         # what travels with the request. Read off the mounted control rather
         # than off `create_draft_destination` so the payload cannot disagree
         # with the row the user is looking at.
-        try:
-            destination = self.query_one("#sources-create-watchlist", Select).value
-        except Exception:
+        if self.create_runtime_backend != "local":
             destination = self.UNASSIGNED_DESTINATION
+        else:
+            try:
+                destination = self.query_one(
+                    "#sources-create-watchlist", Select
+                ).value
+            except Exception:
+                destination = self.UNASSIGNED_DESTINATION
         watchlist_id = (
             None if destination == self.UNASSIGNED_DESTINATION else int(destination)
         )
@@ -1504,15 +1600,15 @@ class SourcesPane(RecomposeCaptureGuard, Vertical):
                     self.query_one("#sources-create-frequency", Select).value
                 )
             except NoMatches:
-                # Backend changes recompose asynchronously. If the user
-                # submits before the Local-only control remounts, preserve
-                # the frequency already held by the durable form draft.
+                # A teardown can race submission. Preserve the frequency
+                # already held by the durable form draft in that case.
                 check_frequency = self.create_draft_frequency
             except (TypeError, ValueError):
                 check_frequency = DEFAULT_SOURCE_FREQUENCY_SECONDS
-            # Read selectors only when the Local control is mounted. Empty is
-            # a deliberate request to watch every part of the page.
-            if self.query("#sources-create-ignore-selectors"):
+            # The control stays mounted so backend switches can update it
+            # without replacing the table, but only URL-family sources can
+            # use its value. Empty means watch every part of the page.
+            if self._type_takes_ignore_selectors(source_type):
                 ignore_selectors = sanitize_string(
                     self.query_one(
                         "#sources-create-ignore-selectors", TextArea

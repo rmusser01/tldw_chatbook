@@ -806,6 +806,8 @@ async def test_backend_specific_create_type_options_and_filter_options():
         ]
         pane.query_one("#sources-filter-toggle", Button).press()
         await pilot.pause()
+        table = pane.query_one("#sources-table", DataTable)
+        type_select = pane.query_one("#sources-create-type", Select)
         assert _option_pairs(pane.query_one("#sources-type-select", Select)) == [
             ("All", "all"),
             ("RSS", "rss"),
@@ -819,7 +821,9 @@ async def test_backend_specific_create_type_options_and_filter_options():
         pane.configure_create_backend("server", ("rss", "site", "forum"))
         await pilot.pause()
 
-        assert _option_pairs(pane.query_one("#sources-create-type", Select)) == [
+        assert pane.query_one("#sources-table", DataTable) is table
+        assert pane.query_one("#sources-create-type", Select) is type_select
+        assert _option_pairs(type_select) == [
             ("RSS", "rss"),
             ("Site", "site"),
             ("Forum", "forum"),
@@ -858,6 +862,7 @@ async def test_backend_switch_preserves_complete_draft_and_open_form():
         pane.query_one("#sources-create-ignore-selectors", TextArea).text = (
             ".advert\n.promo"
         )
+        destination = pane.query_one("#sources-create-watchlist", Select)
         await pilot.pause()
 
         pane.configure_create_backend("server", ("rss", "site", "forum"))
@@ -867,11 +872,14 @@ async def test_backend_switch_preserves_complete_draft_and_open_form():
         assert pane.query_one("#sources-create-name", Input).value == "Draft source"
         assert pane.query_one("#sources-create-url", Input).value == "https://example.com"
         assert pane.query_one("#sources-create-active", Switch).value is False
-        assert pane.query_one("#sources-create-watchlist", Select).value == 7
+        assert pane.query_one("#sources-create-watchlist", Select) is destination
+        assert destination.disabled is True
+        assert destination.value == SourcesPane.UNASSIGNED_DESTINATION
+        assert pane.create_draft_destination == 7
         assert pane.query_one("#sources-create-tags", Input).value == "alpha, beta"
         assert pane.query_one("#sources-create-type", Select).value == "rss"
-        assert not pane.query("#sources-create-frequency")
-        assert not pane.query("#sources-create-ignore-selectors")
+        assert pane.query_one("#sources-create-frequency").display is False
+        assert pane.query_one("#sources-create-ignore-selectors").display is False
 
         pane.configure_create_backend("local", ("rss", "atom", "url"))
         await pilot.pause()
@@ -880,24 +888,26 @@ async def test_backend_switch_preserves_complete_draft_and_open_form():
         assert pane.query_one("#sources-create-name", Input).value == "Draft source"
         assert pane.query_one("#sources-create-url", Input).value == "https://example.com"
         assert pane.query_one("#sources-create-active", Switch).value is False
-        assert pane.query_one("#sources-create-watchlist", Select).value == 7
+        assert pane.query_one("#sources-create-watchlist", Select) is destination
+        assert destination.disabled is False
+        assert destination.value == 7
         assert pane.query_one("#sources-create-tags", Input).value == "alpha, beta"
-        assert pane.query_one("#sources-create-frequency", Select).value == 86_400
+        frequency = pane.query_one("#sources-create-frequency", Select)
+        assert frequency.display is True
+        assert frequency.value == 86_400
         assert pane.create_draft_ignore_selectors == ".advert\n.promo"
-        assert not pane.query("#sources-create-ignore-selectors")
+        assert pane.query_one("#sources-create-ignore-selectors").display is False
         pane.query_one("#sources-create-type", Select).value = "url"
-        for _ in range(20):
-            await pilot.pause()
-            if pane.query("#sources-create-ignore-selectors"):
-                break
-        assert (
-            pane.query_one("#sources-create-ignore-selectors", TextArea).text
-            == ".advert\n.promo"
+        await pilot.pause()
+        ignore_selectors = pane.query_one(
+            "#sources-create-ignore-selectors", TextArea
         )
+        assert ignore_selectors.display is True
+        assert ignore_selectors.text == ".advert\n.promo"
 
 
 @pytest.mark.asyncio
-async def test_server_to_local_submit_before_recompose_uses_saved_frequency():
+async def test_server_to_local_submit_without_recompose_uses_saved_frequency():
     app = SourcesPaneHarness()
     async with app.run_test(size=(120, 40)) as pilot:
         pane = app.query_one(SourcesPane)
@@ -911,7 +921,7 @@ async def test_server_to_local_submit_before_recompose_uses_saved_frequency():
 
         pane.configure_create_backend("server", ("rss", "site", "forum"))
         await pilot.pause()
-        assert not pane.query("#sources-create-frequency")
+        assert pane.query_one("#sources-create-frequency").display is False
 
         pane.configure_create_backend("local", ("rss", "atom", "url"))
         pane._submit_create_form()

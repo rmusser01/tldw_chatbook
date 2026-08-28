@@ -7,7 +7,7 @@ import asyncio
 import pytest
 from unittest.mock import AsyncMock, Mock
 from textual.app import ComposeResult
-from textual.widgets import Button, DataTable, Static, TextArea
+from textual.widgets import Button, DataTable, Input, Select, Static, TextArea
 
 from Tests.UI.consolidated_css import BUNDLED_STYLESHEET, ConsolidatedCSSApp
 from Tests.UI.app_factory import _build_test_app
@@ -505,7 +505,7 @@ async def test_server_mode_rejects_local_bulk_and_selected_bundle_mutations():
 @pytest.mark.asyncio
 @pytest.mark.parametrize("size", [(160, 42), (220, 52)])
 async def test_server_mode_never_enables_local_only_source_actions(size):
-    """Local-only actions are visibly unavailable at mount and after switch."""
+    """Backend switches preserve the live table while clearing its entity."""
     app_instance = _build_test_app()
     screen = WatchlistsCollectionsScreen(app_instance)
     screen.set_reactive(WatchlistsCollectionsScreen.active_section, "sources")
@@ -532,8 +532,33 @@ async def test_server_mode_never_enables_local_only_source_actions(size):
 
         screen.runtime_backend = "local"
         await pilot.pause()
-        pane.set_selected_source_ids(("local:subscription:11",))
+        first = await screen._local_watchlists_service().create_source(
+            {
+                "name": "Alpha feed",
+                "url": "https://alpha.example/feed",
+                "source_type": "rss",
+                "active": True,
+            }
+        )
+        second = await screen._local_watchlists_service().create_source(
+            {
+                "name": "Beta feed",
+                "url": "https://beta.example/feed",
+                "source_type": "rss",
+                "active": True,
+            }
+        )
+        await screen._load_sources()
         await pilot.pause()
+        table = pane.query_one("#sources-table", DataTable)
+        table.focus()
+        table.move_cursor(row=1, animate=False)
+        pane.set_selected_source_ids((first["id"],))
+        await pilot.pause()
+        assert screen.focused is table
+        assert table.cursor_row == 1
+        assert screen.selected_source is not None
+        assert screen.selected_source["id"] == second["id"]
         assert pane.query_one("#sources-add-several-button", Button).disabled is False
         assert pane.query_one(
             "#sources-create-watchlist-selected", Button
@@ -541,7 +566,14 @@ async def test_server_mode_never_enables_local_only_source_actions(size):
 
         screen.runtime_backend = "server"
         await pilot.pause()
-        assert pane.selected_source_ids == frozenset({"local:subscription:11"})
+        assert screen.query_one("#watchlists-sources-pane", SourcesPane) is pane
+        assert pane.query_one("#sources-table", DataTable) is table
+        assert screen.focused is table
+        assert table.cursor_row == 1
+        assert screen.selected_source is None
+        assert screen.selected_entity is None
+        assert pane.selected_source is None
+        assert pane.selected_source_ids == frozenset({first["id"]})
         assert_server_actions_disabled()
         screen._start_tree_write = Mock()
         pane.query_one("#sources-add-several-button", Button).press()
@@ -549,6 +581,105 @@ async def test_server_mode_never_enables_local_only_source_actions(size):
         await pilot.pause()
         assert host.screen is screen
         screen._start_tree_write.assert_not_called()
+
+        screen.runtime_backend = "local"
+        await pilot.pause()
+        assert screen.query_one("#watchlists-sources-pane", SourcesPane) is pane
+        assert pane.query_one("#sources-table", DataTable) is table
+        assert screen.focused is table
+        assert table.cursor_row == 1
+        assert screen.selected_source is None
+        assert screen.selected_entity is None
+        assert pane.selected_source is None
+        assert pane.selected_source_ids == frozenset({first["id"]})
+        assert pane.query_one("#sources-add-several-button", Button).disabled is False
+        assert pane.query_one(
+            "#sources-create-watchlist-selected", Button
+        ).disabled is False
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("size", [(160, 42), (220, 52)])
+async def test_backend_switch_preserves_open_source_draft_widget_and_focus(size):
+    """Backend-only repaints must not replace a focused create-form field."""
+    app_instance = _build_test_app()
+    watchlist = app_instance.watchlist_bundle_service.create("Research")
+    host = BulkSourcesScreenHarness(app_instance, "watchlists_collections")
+
+    async with host.run_test(size=size) as pilot:
+        screen = host.screen_stack[-1]
+        screen.active_section = "sources"
+        await pilot.pause()
+        pane = screen.query_one("#watchlists-sources-pane", SourcesPane)
+        pane.query_one("#sources-new-button", Button).press()
+        await pilot.pause()
+        table = pane.query_one("#sources-table", DataTable)
+        name = pane.query_one("#sources-create-name", Input)
+        url = pane.query_one("#sources-create-url", Input)
+        tags = pane.query_one("#sources-create-tags", Input)
+        destination = pane.query_one("#sources-create-watchlist", Select)
+        name.value = "Daily intelligence"
+        url.value = "https://intel.example/feed"
+        tags.value = "threat-intel, daily"
+        destination.value = watchlist["id"]
+        url.focus()
+        await pilot.pause()
+        assert pane.create_draft_destination == watchlist["id"]
+
+        screen.runtime_backend = "server"
+        await pilot.pause()
+
+        assert screen.query_one("#watchlists-sources-pane", SourcesPane) is pane
+        assert pane.query_one("#sources-table", DataTable) is table
+        assert pane.query_one("#sources-create-name", Input) is name
+        assert pane.query_one("#sources-create-url", Input) is url
+        assert pane.query_one("#sources-create-tags", Input) is tags
+        assert pane.query_one("#sources-create-watchlist", Select) is destination
+        assert screen.focused is url
+        assert (name.value, url.value, tags.value) == (
+            "Daily intelligence",
+            "https://intel.example/feed",
+            "threat-intel, daily",
+        )
+        assert pane.query_one("#sources-add-several-button", Button).disabled is True
+        assert destination.disabled is True
+        assert destination.value == SourcesPane.UNASSIGNED_DESTINATION
+        assert pane.create_draft_destination == watchlist["id"]
+        destination_label = destination.parent.query_one(Static)
+        assert "Local only" in str(destination_label.render())
+        assert destination_label.region.width >= len("Watchlist (Local only)")
+
+        screen.runtime_backend = "local"
+        await pilot.pause()
+
+        assert pane.query_one("#sources-table", DataTable) is table
+        assert pane.query_one("#sources-create-name", Input) is name
+        assert pane.query_one("#sources-create-url", Input) is url
+        assert pane.query_one("#sources-create-tags", Input) is tags
+        assert pane.query_one("#sources-create-watchlist", Select) is destination
+        assert screen.focused is url
+        assert (name.value, url.value, tags.value) == (
+            "Daily intelligence",
+            "https://intel.example/feed",
+            "threat-intel, daily",
+        )
+        assert pane.query_one("#sources-add-several-button", Button).disabled is False
+        assert destination.disabled is False
+        assert destination.value == watchlist["id"]
+        assert str(destination.parent.query_one(Static).render()) == "Watchlist"
+
+        screen.runtime_backend = "server"
+        await pilot.pause()
+        screen._create_source = AsyncMock()
+        pane.query_one("#sources-create-submit", Button).press()
+        for _ in range(10):
+            await pilot.pause()
+            if screen._create_source.await_count:
+                break
+
+        screen._create_source.assert_awaited_once()
+        payload = screen._create_source.await_args.args[0]
+        assert payload["watchlist_id"] is None
 
 
 @pytest.mark.asyncio

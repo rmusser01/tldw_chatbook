@@ -2396,6 +2396,9 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
             pane = self.query_one("#watchlists-sources-pane", SourcesPane)
         except NoMatches:
             return
+        if self.runtime_backend == "local":
+            pane.watchlist_choices = self._create_form_watchlist_choices()
+            pane.default_destination = self._scope_default_destination()
         pane.configure_create_backend(
             self.runtime_backend,
             self._create_form_source_types(self.runtime_backend),
