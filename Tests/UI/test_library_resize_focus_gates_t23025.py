@@ -17,6 +17,14 @@ Query-count assertions attribute each ``query``/``query_one`` call to the
 nearest non-framework repo frame, exactly like the measurement probe that
 produced the before/after numbers, so a reverted gate fails them by an
 order of magnitude rather than by noise.
+
+TASK-23151 extended the same contract to the stage-visibility leg, which the
+narrow-emergency work had re-added ABOVE the crossing return: it is now gated
+on its own cheap signature rather than moved, because the 64-cell emergency
+band is a different band from the 120-cell compact one and only the leg above
+the return can cross it. The crossing tests here pin the COST -- exactly one
+application per crossing -- so neither wrong shape (unconditional, or
+relocated below the return) can pass.
 """
 
 from __future__ import annotations
@@ -24,6 +32,7 @@ from __future__ import annotations
 import sys
 from contextlib import contextmanager
 from types import SimpleNamespace
+from unittest.mock import Mock
 
 import pytest
 from textual.dom import DOMNode
@@ -131,32 +140,50 @@ async def test_resize_gate_skips_library_query_work_on_non_crossing_frames():
 
 @pytest.mark.asyncio
 async def test_resize_compact_crossing_still_transitions_both_ways_twice():
-    """The 120-column compact crossing keeps working through the gate."""
+    """The 120-column compact crossing keeps working through the gate.
+
+    TASK-23151 additionally pins the COST of each crossing: exactly one
+    stage-visibility application per crossing.
+    """
     app = _build_test_app()
     _seed_conversations(app, _two_conversations())
     host = LibraryHarness(app)
     async with host.run_test(size=LIBRARY_TEST_SIZE) as pilot:
         screen = await _settled_library(host, pilot)
         assert screen._library_notes_compact is False
+        applied = Mock(wraps=screen._apply_library_notes_stage_visibility)
+        screen._apply_library_notes_stage_visibility = applied
 
         for _ in range(2):  # twice: a stale applied-signature would eat round 2
+            applied.reset_mock()
             await pilot.resize_terminal(110, 48)
             await _wait_for_condition(
                 pilot,
                 lambda: screen._library_notes_compact,
                 message="narrow resize never crossed into compact",
             )
+            await pilot.pause()
             grid = screen.query_one("#library-shell-grid")
             assert grid.has_class("library-notes-compact")
+            assert applied.call_count == 1, (
+                f"{applied.call_count} stage-visibility applications for one "
+                "crossing into compact"
+            )
 
+            applied.reset_mock()
             await pilot.resize_terminal(170, 48)
             await _wait_for_condition(
                 pilot,
                 lambda: not screen._library_notes_compact,
                 message="wide resize never crossed back out of compact",
             )
+            await pilot.pause()
             grid = screen.query_one("#library-shell-grid")
             assert not grid.has_class("library-notes-compact")
+            assert applied.call_count == 1, (
+                f"{applied.call_count} stage-visibility applications for one "
+                "crossing out of compact"
+            )
 
 
 @pytest.mark.asyncio
@@ -189,6 +216,93 @@ async def test_resize_emergency_crossing_still_engages_and_restores():
         )
         assert screen.query_one("#library-rail").display
         assert screen.query_one("#library-canvas").display
+
+
+@pytest.mark.asyncio
+async def test_stage_visibility_runs_once_per_emergency_band_crossing():
+    """TASK-23151: the stage leg is gated, not moved, above the crossing return.
+
+    The narrow emergency band (64 cells) is a DIFFERENT band from the compact
+    breakpoint (120), so an 80 <-> 63 resize crosses only the former. The
+    stage-visibility leg therefore has to sit above ``on_resize``'s
+    compact-crossing early return -- which is why TASK-23151's regression put
+    unconditional per-frame Notes work back on every same-side frame.
+
+    This pins both halves at once, and fails under either wrong shape: a
+    same-side frame that does stage work (the regression) fails the ``== 0``
+    legs, and a fix that simply deletes or relocates the call below the
+    crossing return fails the ``== 1`` legs with a stranded emergency stage.
+    """
+    app = _build_test_app()
+    _seed_conversations(app, _two_conversations())
+    host = LibraryHarness(app)
+    async with host.run_test(size=(110, 30)) as pilot:
+        screen = await _settled_library(host, pilot)
+        assert screen._library_emergency_stage is None
+        assert screen._library_notes_compact is True
+
+        applied = Mock(wraps=screen._apply_library_notes_stage_visibility)
+        screen._apply_library_notes_stage_visibility = applied
+
+        # These frames DO change the wider resize signature -- they cross the
+        # 100-cell Ingest auto-collapse bucket, so ``on_resize``'s outer gate
+        # cannot skip them and the legs really run -- but they cross neither
+        # band the stage leg reads. This is the shape the regression turned
+        # into per-frame Notes work.
+        for width in (105, 98, 96, 102):
+            await pilot.resize_terminal(width, 30)
+            await pilot.pause()
+            await pilot.pause()
+        assert applied.call_count == 0, (
+            f"{applied.call_count} stage-visibility applications across 4 "
+            "resize frames that cross no band the stage leg reads"
+        )
+        assert screen._library_emergency_stage is None
+
+        # Crossing INTO the emergency band. No compact crossing happens here
+        # (102 and 63 are both below 120), so this gate is the only thing
+        # that can engage the takeover.
+        applied.reset_mock()
+        await pilot.resize_terminal(63, 30)
+        await _wait_for_condition(
+            pilot,
+            lambda: screen._library_emergency_stage is not None,
+            message="63-column resize never engaged the emergency stage",
+        )
+        assert applied.call_count == 1, (
+            f"{applied.call_count} stage-visibility applications for one "
+            "emergency-band crossing"
+        )
+        rail = screen.query_one("#library-rail")
+        canvas = screen.query_one("#library-canvas")
+        assert rail.display != canvas.display
+
+        # Crossing back OUT restores the ordinary two-pane stage, again with
+        # no compact crossing to fall back on.
+        applied.reset_mock()
+        await pilot.resize_terminal(64, 30)
+        await _wait_for_condition(
+            pilot,
+            lambda: screen._library_emergency_stage is None,
+            message="64-column resize never released the emergency stage",
+        )
+        assert applied.call_count == 1, (
+            f"{applied.call_count} stage-visibility applications for one "
+            "emergency-band release"
+        )
+        assert screen.query_one("#library-rail").display
+        assert screen.query_one("#library-canvas").display
+
+        # And the gate re-arms: further same-side frames are free again.
+        applied.reset_mock()
+        for width in (105, 98, 96, 102):
+            await pilot.resize_terminal(width, 30)
+            await pilot.pause()
+            await pilot.pause()
+        assert applied.call_count == 0, (
+            f"{applied.call_count} stage-visibility applications after the "
+            "crossing settled; the gate did not re-arm"
+        )
 
 
 @pytest.mark.asyncio

@@ -9444,3 +9444,58 @@ visibility are independent in Textual. The same review found the mirror image in
 Settings search landing: `.focus()` is a silent no-op on a disabled widget and happily
 focuses a field inside a collapsed disclosure, so a "landing" can succeed in code while
 the user sees nothing move.
+
+## A per-frame gate's signature must carry the DECISION, not the raw input
+
+**TASK-23151, 2026-08-28.** `library_screen.py` now has three cheap-state gates
+that skip per-frame work when a signature tuple is unchanged. Building the third
+one, two of its slots were wrong in ways that reasoning could not see and only
+`assert n == 0` could — the ratchet went 201/100 applications before the fix,
+then 1/100, then 1/1, then 0/0, one wrong slot at a time.
+
+- **Raw bucket instead of the effective decision.** The slot held
+  `ordinary_emergency_required(width)` — true below 64 cells. But
+  `_apply_library_emergency_geometry` acts only when that AND
+  `_library_ordinary_route_active()` hold, and on the Notes route it never
+  holds. So the bucket flipped on every 60-cell frame of a route where the
+  geometry is inert, and the gate applied for nothing. Carrying the conjunction
+  the code actually branches on fixed it.
+- **A value another subsystem owns.** `rail.display` was carried "to catch an
+  outside mutation". Under an adaptive reader shell, the reader's own
+  `sync_layout` owns the rail and hides it purely as a function of width — so
+  the slot changed on every same-side resize, holding the wide case at 100
+  applications. The leg returns before its own rail toggles in that branch, i.e.
+  it never reads the value there. Carrying it only while the legacy path owns it
+  fixed it.
+
+Neither was found by reading the code. Both were found by printing the index of
+the differing tuple slot on each skipped-then-unskipped frame — a ten-line probe
+that names the slot, versus a plausible story about why the gate "should" work.
+
+A third shape mattered too: recording the applied signature inside the GATE left
+exactly one application per burst, because any other seam's call left the record
+cleared. Recording it inside the applied function itself — cleared first, then
+re-taken after the legs, since they mutate flags the signature reads — arms the
+gate from all ~20 seams and gets the true zero.
+
+**What to do.** When a gate skips work, do not accept "the signature looks
+right". Instrument which slot differs on the frames that still run, and require
+the ratchet's own number to reach the asserted value; and for each slot ask two
+questions — does the guarded code branch on this raw value or on a conjunction,
+and does anything outside the guarded code write it?
+
+## `ruff format` on a whole file here reformats code you did not touch
+
+**TASK-23151, 2026-08-28.** After adding ~110 lines to `library_screen.py`,
+`ruff format --check` flagged the file, so the fix was formatted. It rewrote
+**20+ unrelated regions** across the 38k-line file (diffstat went from 125/2 to
+209/67), burying a five-hunk change in churn and forcing a full restore from
+`HEAD` plus a manual re-apply of every edit. The pre-check that made it look
+safe — piping the `HEAD` blob through `ruff format --check --stdin-filename` —
+printed nothing and was read as "clean"; it is not a reliable clean signal.
+
+**What to do.** This repo is not `ruff format`-clean under the installed ruff,
+and no CI job enforces it. Never run the formatter over a whole file to tidy
+your own addition — hand-wrap the lines you added instead, and check your diff
+hunk list (`git diff -U0 | grep '^@@'`) before committing: every hunk should be
+one you can name.
