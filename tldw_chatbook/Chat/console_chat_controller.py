@@ -11438,6 +11438,15 @@ class ConsoleChatController:
         node and remains stored/retryable via ``retry_message``, while the
         original anchor becomes the active leaf again. The anchor is a
         completely separate node and was never touched.
+
+        Args:
+            message_id: Identifier of the assistant message to regenerate.
+            queue_authorization: Optional authorization for a queued generation
+                to operate on the message's session when it is not active.
+
+        Returns:
+            The submission result describing whether regeneration started and
+            any user-facing rejection reason.
         """
         active_session_id = self.store.active_session_id
         if active_session_id is None and queue_authorization is None:
