@@ -220,6 +220,27 @@ def test_assignment_taint_does_not_bleed_between_lexical_scopes() -> None:
     assert scan_path_diagnostic_candidates(source, filename="scopes.py") == []
 
 
+def test_moving_candidate_within_the_same_scope_preserves_identity() -> None:
+    original = dedent(
+        """
+        def emit(output_path):
+            logger.info("Output {}", output_path)
+        """
+    )
+    moved = dedent(
+        """
+        def emit(output_path):
+            unrelated = 1
+            logger.info("Output {}", output_path)
+            return unrelated
+        """
+    )
+
+    assert scan_path_diagnostic_candidates(
+        original, filename="movement.py"
+    ) == scan_path_diagnostic_candidates(moved, filename="movement.py")
+
+
 @pytest.mark.parametrize(
     "source",
     [
@@ -243,10 +264,85 @@ def test_assignment_taint_does_not_bleed_between_lexical_scopes() -> None:
             'logger.error("Failure type {}", type(exc).__name__)',
             id="exception-type",
         ),
+        pytest.param(
+            'logger.info("Workspace {root}", root=content_fingerprint(user_path))',
+            id="hinted-content-fingerprint",
+        ),
+        pytest.param(
+            dedent(
+                """
+                from tldw_chatbook.Utils import log_sanitizer
+
+                logger.info("Path ref {}", log_sanitizer.content_fingerprint(path))
+                """
+            ),
+            id="approved-module-qualified-fingerprint",
+        ),
+        pytest.param(
+            dedent(
+                """
+                import tldw_chatbook.Utils.log_sanitizer as sanitizer
+
+                logger.info("Path {}", sanitizer.redact_user_paths(path))
+                """
+            ),
+            id="approved-module-alias-redaction",
+        ),
     ],
 )
 def test_safe_path_transforms_are_not_candidates(source: str) -> None:
     assert scan_path_diagnostic_candidates(source, filename="safe.py") == []
+
+
+@pytest.mark.parametrize(
+    "method",
+    ["content_fingerprint", "redact_user_paths"],
+)
+def test_object_methods_named_like_safe_transforms_remain_candidates(
+    method: str,
+) -> None:
+    source = f'logger.info("Path {{}}", passthrough.{method}(user_path))'
+
+    candidates = scan_path_diagnostic_candidates(source, filename="lookalike.py")
+
+    assert len(candidates) == 1
+    assert candidates[0]["path_expressions"] == [f"passthrough.{method}(user_path)"]
+
+
+def test_loguru_path_shaped_keyword_taints_a_generic_value() -> None:
+    candidates = scan_path_diagnostic_candidates(
+        'logger.info("Workspace {root}", root=value)',
+        filename="loguru_keyword_hint.py",
+    )
+
+    assert len(candidates) == 1
+    assert candidates[0]["path_expressions"] == ["root=value"]
+
+
+@pytest.mark.parametrize(
+    "source",
+    [
+        'logger.info("Workspace {root}".format(root=value))',
+        'logger.info("Workspace {}", "Workspace {root}".format(root=value))',
+    ],
+)
+def test_str_format_path_shaped_keyword_taints_a_generic_value(source: str) -> None:
+    candidates = scan_path_diagnostic_candidates(
+        source, filename="str_format_keyword_hint.py"
+    )
+
+    assert len(candidates) == 1
+    assert candidates[0]["path_expressions"] == ["root=value"]
+
+
+def test_percent_mapping_path_shaped_key_taints_a_generic_value() -> None:
+    candidates = scan_path_diagnostic_candidates(
+        'logger.info("Workspace %(root)s" % {"root": value})',
+        filename="percent_mapping_hint.py",
+    )
+
+    assert len(candidates) == 1
+    assert candidates[0]["path_expressions"] == ["root=value"]
 
 
 def test_path_like_substrings_without_bounded_path_identifiers_are_ignored() -> None:
@@ -274,6 +370,15 @@ def _inventory_with_path_candidates(
         "persistent_sink_topology": [],
         "path_privacy_candidates": rows,
     }
+
+
+def _candidate_detail(candidate: dict[str, object]) -> str:
+    labels = ", ".join(candidate["path_expressions"])
+    return (
+        f"{candidate['scope']}: {candidate['method']} "
+        f"({candidate['call_digest']}) paths=[{labels}] "
+        f"status={candidate['status']}"
+    )
 
 
 def test_path_candidate_report_preserves_all_files_and_duplicate_findings() -> None:
@@ -313,37 +418,52 @@ def test_path_candidate_report_preserves_all_files_and_duplicate_findings() -> N
 
 
 def test_path_candidate_report_counts_additions_removals_and_changes() -> None:
-    old = scan_path_diagnostic_candidates(
-        'logger.warning("Old root {}", workspace_root)', filename="old.py"
+    removed = scan_path_diagnostic_candidates(
+        'logger.warning("Removed root {}", removed_root)', filename="removed.py"
     )[0]
-    new = scan_path_diagnostic_candidates(
-        'logger.error("New path {}", output_path)', filename="new.py"
+    added = scan_path_diagnostic_candidates(
+        'logger.error("Added path {}", added_path)', filename="added.py"
+    )[0]
+    changed_old = scan_path_diagnostic_candidates(
+        'logger.info("Source directory {}", source_directory)',
+        filename="changed.py",
+    )[0]
+    changed_new = scan_path_diagnostic_candidates(
+        'logger.info("Destination folder {}", destination_folder)',
+        filename="changed.py",
+    )[0]
+    multiplicity = scan_path_diagnostic_candidates(
+        'logger.debug("Workspace roots {}", workspace_roots)',
+        filename="multiplicity.py",
     )[0]
     committed = _inventory_with_path_candidates(
         [
-            {"path": "removed.py", "candidates": [old, old]},
-            {"path": "changed.py", "candidates": [old]},
-            {"path": "multiplicity.py", "candidates": [old, old]},
+            {"path": "removed.py", "candidates": [removed, removed]},
+            {"path": "changed.py", "candidates": [changed_old]},
+            {"path": "multiplicity.py", "candidates": [multiplicity, multiplicity]},
         ],
         candidate_count=5,
     )
     rebuilt = _inventory_with_path_candidates(
         [
-            {"path": "added.py", "candidates": [new, new]},
-            {"path": "changed.py", "candidates": [new]},
-            {"path": "multiplicity.py", "candidates": [old]},
+            {"path": "added.py", "candidates": [added, added]},
+            {"path": "changed.py", "candidates": [changed_new]},
+            {"path": "multiplicity.py", "candidates": [multiplicity]},
         ],
         candidate_count=4,
     )
 
     report = render_diff(json.dumps(committed), rebuilt)
 
-    for path in ("removed.py", "added.py", "changed.py", "multiplicity.py"):
-        assert path in report
-    assert old["call_digest"] in report
-    assert new["call_digest"] in report
-    assert "x2" in report
-    assert "x2 -> x1" in report
+    assert "only in committed (candidate file removed): removed.py" in report
+    assert f"      - {_candidate_detail(removed)} x2" in report
+    assert "only in rebuild (NEW candidate file): added.py" in report
+    assert f"      + {_candidate_detail(added)} x2" in report
+    assert "changed candidates: changed.py (1 -> 1 calls)" in report
+    assert f"      - {_candidate_detail(changed_old)} x1" in report
+    assert f"      + {_candidate_detail(changed_new)} x1" in report
+    assert "changed candidates: multiplicity.py (2 -> 1 calls)" in report
+    assert f"      ~ {_candidate_detail(multiplicity)}: x2 -> x1 (-1)" in report
     assert "unresolved" in report
     assert "not approved" in report
 

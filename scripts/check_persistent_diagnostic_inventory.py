@@ -82,6 +82,8 @@ SINK_CALL_NAMES = {
 PATH_TERMINAL_TOKENS = frozenset(
     {"path", "paths", "root", "roots", "dir", "directory", "folder"}
 )
+SAFE_PATH_TRANSFORMS = frozenset({"content_fingerprint", "redact_user_paths"})
+LOG_SANITIZER_MODULE = ("tldw_chatbook", "Utils", "log_sanitizer")
 PATH_PRIVACY_RULES = {
     "candidate_status": "legacy_unreviewed",
     "status_meaning": (
@@ -138,6 +140,24 @@ def _logger_symbols(tree: ast.AST) -> set[str]:
                 if isinstance(target, ast.Name):
                     symbols.add(target.id)
     return symbols
+
+
+def _log_sanitizer_qualifiers(tree: ast.AST) -> set[tuple[str, ...]]:
+    qualifiers = {LOG_SANITIZER_MODULE}
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Import):
+            for alias in node.names:
+                if tuple(alias.name.split(".")) == LOG_SANITIZER_MODULE:
+                    qualifiers.add(
+                        (alias.asname,) if alias.asname else LOG_SANITIZER_MODULE
+                    )
+        elif isinstance(node, ast.ImportFrom) and node.module == ".".join(
+            LOG_SANITIZER_MODULE[:-1]
+        ):
+            for alias in node.names:
+                if alias.name == LOG_SANITIZER_MODULE[-1]:
+                    qualifiers.add((alias.asname or alias.name,))
+    return qualifiers
 
 
 def _is_diagnostic_call(node: ast.Call, logger_symbols: set[str]) -> bool:
@@ -286,7 +306,9 @@ def _assignment_target_label(target: ast.AST) -> str | None:
     return None
 
 
-def _is_safe_path_transform(node: ast.AST) -> bool:
+def _is_safe_path_transform(
+    node: ast.AST, log_sanitizer_qualifiers: set[tuple[str, ...]]
+) -> bool:
     if isinstance(node, ast.Attribute):
         if node.attr == "suffix":
             return True
@@ -301,7 +323,14 @@ def _is_safe_path_transform(node: ast.AST) -> bool:
     parts = _attribute_parts(node.func)
     if not parts:
         return False
-    return parts[-1] in {"content_fingerprint", "redact_user_paths"} or parts == ["len"]
+    if parts == ["len"]:
+        return True
+    if len(parts) == 1:
+        return parts[0] in SAFE_PATH_TRANSFORMS
+    return (
+        parts[-1] in SAFE_PATH_TRANSFORMS
+        and tuple(parts[:-1]) in log_sanitizer_qualifiers
+    )
 
 
 def _is_known_path_producer(node: ast.AST) -> bool:
@@ -334,8 +363,12 @@ def _get_literal_path_key(node: ast.AST) -> str | None:
     return key if _identifier_is_path_shaped(key) else None
 
 
-def _expression_is_path_tainted(node: ast.AST, aliases: set[str]) -> bool:
-    if _is_safe_path_transform(node):
+def _expression_is_path_tainted(
+    node: ast.AST,
+    aliases: set[str],
+    log_sanitizer_qualifiers: set[tuple[str, ...]],
+) -> bool:
+    if _is_safe_path_transform(node, log_sanitizer_qualifiers):
         return False
     if _is_known_path_producer(node) or _get_literal_path_key(node) is not None:
         return True
@@ -346,7 +379,7 @@ def _expression_is_path_tainted(node: ast.AST, aliases: set[str]) -> bool:
         if label in aliases or _identifier_is_path_shaped(node.attr):
             return True
     return any(
-        _expression_is_path_tainted(child, aliases)
+        _expression_is_path_tainted(child, aliases, log_sanitizer_qualifiers)
         for child in ast.iter_child_nodes(node)
     )
 
@@ -354,6 +387,7 @@ def _expression_is_path_tainted(node: ast.AST, aliases: set[str]) -> bool:
 def _scope_path_aliases(
     assignments: dict[int, list[tuple[ast.AST, ast.AST]]],
     active_scope_ids: set[int],
+    log_sanitizer_qualifiers: set[tuple[str, ...]],
 ) -> dict[int, set[str]]:
     aliases: dict[int, set[str]] = {
         scope_id: set() for scope_id in active_scope_ids if scope_id in assignments
@@ -368,40 +402,60 @@ def _scope_path_aliases(
                     continue
                 if label in aliases[scope_id]:
                     continue
-                if _expression_is_path_tainted(value, aliases[scope_id]):
+                if _expression_is_path_tainted(
+                    value, aliases[scope_id], log_sanitizer_qualifiers
+                ):
                     aliases[scope_id].add(label)
                     changed = True
     return aliases
 
 
-def _formatted_expressions(node: ast.AST) -> list[ast.AST]:
+def _formatted_expressions(node: ast.AST) -> list[tuple[ast.AST, str | None]]:
     if isinstance(node, ast.JoinedStr):
         return [
-            child.value
+            (child.value, None)
             for child in ast.walk(node)
             if isinstance(child, ast.FormattedValue)
         ]
     if isinstance(node, ast.BinOp) and isinstance(node.op, ast.Mod):
         if isinstance(node.right, (ast.Tuple, ast.List)):
-            return list(node.right.elts)
-        return [node.right]
+            return [(element, None) for element in node.right.elts]
+        if isinstance(node.right, ast.Dict):
+            return [
+                (
+                    value,
+                    key.value
+                    if isinstance(key, ast.Constant) and isinstance(key.value, str)
+                    else None,
+                )
+                for key, value in zip(node.right.keys, node.right.values)
+            ]
+        return [(node.right, None)]
     if (
         isinstance(node, ast.Call)
         and isinstance(node.func, ast.Attribute)
         and node.func.attr == "format"
     ):
-        return [*node.args, *(keyword.value for keyword in node.keywords)]
+        return [
+            *((argument, None) for argument in node.args),
+            *((keyword.value, keyword.arg) for keyword in node.keywords),
+        ]
     if isinstance(node, ast.Constant) and isinstance(node.value, str):
         return []
-    return [node]
+    return [(node, None)]
 
 
-def _diagnostic_dynamic_expressions(node: ast.Call) -> list[ast.AST]:
-    expressions: list[ast.AST] = []
+def _diagnostic_dynamic_expressions(
+    node: ast.Call,
+) -> list[tuple[ast.AST, str | None]]:
+    expressions: list[tuple[ast.AST, str | None]] = []
     for argument in node.args:
         expressions.extend(_formatted_expressions(argument))
     for keyword in node.keywords:
-        expressions.extend(_formatted_expressions(keyword.value))
+        expressions.extend(
+            (expression, hint or keyword.arg)
+            for expression, hint in _formatted_expressions(keyword.value)
+        )
     return expressions
 
 
@@ -411,22 +465,26 @@ def _path_candidate_entry(
     *,
     scope: str,
     aliases: set[str],
+    log_sanitizer_qualifiers: set[tuple[str, ...]],
 ) -> dict[str, Any] | None:
-    labels = sorted(
-        {
-            ast.unparse(expression)
-            for expression in _diagnostic_dynamic_expressions(node)
-            if _expression_is_path_tainted(expression, aliases)
-        }
-    )
-    if not labels:
+    labels: set[str] = set()
+    for expression, hint in _diagnostic_dynamic_expressions(node):
+        if _is_safe_path_transform(expression, log_sanitizer_qualifiers):
+            continue
+        expression_label = ast.unparse(expression)
+        if _expression_is_path_tainted(expression, aliases, log_sanitizer_qualifiers):
+            labels.add(expression_label)
+        elif hint is not None and _identifier_is_path_shaped(hint):
+            labels.add(f"{hint}={expression_label}")
+    sorted_labels = sorted(labels)
+    if not sorted_labels:
         return None
     call = _call_entry(source, node)
     return {
         "method": call["method"],
         "call_digest": call["digest"],
         "scope": scope or "<module>",
-        "path_expressions": labels,
+        "path_expressions": sorted_labels,
         "status": "legacy_unreviewed",
     }
 
@@ -435,6 +493,7 @@ def _scan_parsed_source(
     source: str, tree: ast.Module
 ) -> tuple[list[dict[str, Any]], list[dict[str, Any]], list[dict[str, Any]]]:
     symbols = _logger_symbols(tree)
+    log_sanitizer_qualifiers = _log_sanitizer_qualifiers(tree)
     scope_names, lexical_scopes, assignments = _scope_contexts(tree)
     diagnostics: list[dict[str, Any]] = []
     sinks: list[dict[str, Any]] = []
@@ -470,6 +529,7 @@ def _scan_parsed_source(
     aliases = _scope_path_aliases(
         assignments,
         {id(lexical_scopes[id(node)]) for node in diagnostic_calls},
+        log_sanitizer_qualifiers,
     )
     candidates: list[dict[str, Any]] = []
     for node in diagnostic_calls:
@@ -479,6 +539,7 @@ def _scan_parsed_source(
             node,
             scope=scope_names.get(id(node), ""),
             aliases=aliases.get(scope_id, set()),
+            log_sanitizer_qualifiers=log_sanitizer_qualifiers,
         )
         if candidate is not None:
             candidates.append(candidate)
