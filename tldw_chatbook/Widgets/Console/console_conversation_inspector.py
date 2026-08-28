@@ -1561,10 +1561,10 @@ class ConsoleConversationInspector(SafeModalDismissMixin, ModalScreen[None]):
         this same restraint inside ``path_validation`` itself: without it,
         a rejection logs the full attempted/resolved paths at WARNING/
         ERROR (``path_validation.py``'s own log lines), which would put
-        the user's home directory into the log for every rejected save --
-        this modal's own log line right below already names the path
-        deliberately, so the redaction only removes an UNINTENTIONAL
-        second copy from a module this file does not otherwise control.
+        the user's home directory into the log for every rejected save. This
+        modal's own log line below fingerprints the path, while its user-visible
+        toast intentionally names the selected destination and excludes the raw
+        exception body.
         """
         downloads_dir = Path.home() / "Downloads"
         try:
@@ -1955,13 +1955,11 @@ class ConsoleConversationInspector(SafeModalDismissMixin, ModalScreen[None]):
             # No exception text, no traceback -- same rationale as this
             # retired Exchange save path: ``text`` in this frame is
             # the export-scrubbed next-send payload, and an OSError's own
-            # str() can also embed the offending path. type(exc).__name__
-            # plus the path we attempted is enough to diagnose (permissions,
-            # disk full, path too long) without echoing content into the
-            # log OR the user-facing toast -- the retired standalone context
-            # modal's own ``_save_json`` put the raw exception text in a
-            # USER-VISIBLE notify() (hard constraint 3); this names the
-            # failure class and path instead.
+            # str() can also embed the offending path. The log keeps only the
+            # failure class and a path fingerprint. The user-facing toast
+            # intentionally names the selected destination, but excludes the
+            # raw exception body that the retired standalone context modal's
+            # own ``_save_json`` put in ``notify()`` (hard constraint 3).
             logger.error(
                 "Failed to save context snapshot path_sha256={} exception_type={}",
                 content_fingerprint(str(path)),

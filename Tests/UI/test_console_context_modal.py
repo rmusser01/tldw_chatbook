@@ -49,6 +49,7 @@ from tldw_chatbook.Chat.console_project_instructions import (
     ProjectInstructionControlState,
 )
 from tldw_chatbook.Chat.console_cost_tracker import ConsoleCostRowTotals
+from tldw_chatbook.Utils.log_sanitizer import content_fingerprint
 from tldw_chatbook.Widgets.Console import console_conversation_inspector
 from tldw_chatbook.Widgets.Console.console_conversation_inspector import (
     CLOSE_BUTTON_ID,
@@ -849,16 +850,16 @@ async def test_copy_json_failure_log_and_toast_omit_the_raw_exception_body(
 
 
 @pytest.mark.asyncio
-async def test_save_json_failure_log_and_toast_include_class_and_path_not_message(
+async def test_save_json_failure_log_fingerprints_path_and_toast_names_destination(
     monkeypatch,
 ):
     """task-10 review finding 5, save side: same security pin as the copy
     test above, but for ``_save_json`` -- hard constraint 3 specifically
     named the retired standalone modal's ``self.notify(f"Save failed:
-    {exc}")`` as the exact toast-leak this replaced. Asserts both the
-    log line and the toast carry the failure CLASS NAME and the
-    destination path (per the fix's own f-string), and neither carries
-    the sentinel exception message."""
+    {exc}")`` as the exact toast-leak this replaced. The log carries the
+    failure class and a stable destination fingerprint without the raw path;
+    the user-facing toast intentionally names the selected destination. Neither
+    surface carries the sentinel exception message."""
     sentinel = "SENTINEL-SAVE-boom-must-not-leak-92f1"
     fake_path_str = "/fake/Downloads/chatbook_context_sentinel.json"
 
@@ -940,7 +941,11 @@ async def test_save_json_failure_log_and_toast_include_class_and_path_not_messag
     combined_log = "\n".join(log_lines)
     assert sentinel not in combined_log, combined_log
     assert "OSError" in combined_log, combined_log
-    assert fake_path_str in combined_log, combined_log
+    assert (
+        f"path_sha256={content_fingerprint(fake_path_str)}" in combined_log
+    ), combined_log
+    assert fake_path_str not in combined_log, combined_log
+    assert Path(fake_path_str).name not in combined_log, combined_log
 
     assert toasts, "expected a toast on save failure"
     assert all(sentinel not in toast for toast in toasts), toasts
