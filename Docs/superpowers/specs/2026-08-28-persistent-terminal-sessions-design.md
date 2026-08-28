@@ -1,7 +1,8 @@
 # Persistent Terminal Sessions Design
 
 **Date:** 2026-08-28
-**Status:** In Review
+**Status:** Approved by the owner on 2026-08-28 after independent review and
+final audit corrections
 **Task:** TASK-22512
 **Related tasks:** TASK-18926, TASK-22509, TASK-22510, TASK-23113,
 TASK-23114

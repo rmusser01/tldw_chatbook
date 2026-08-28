@@ -87,7 +87,7 @@ ADRs explain why significant architectural decisions were made. Backlog tasks, S
 | [ADR-093](093-offline-tiktoken-runtime-assets.md) | Accepted | Ship a closed immutable tiktoken table inventory for offline estimates and chunking while preserving explicit cache authority. |
 | [ADR-094](094-raw-and-virtual-cli-execution-boundaries.md) | Accepted | Keep virtual CLI read-only and independently gated while raw user and model shell execution remains explicitly dangerous, one-shot, scrubbed, bounded, and re-armed per launch. |
 | [ADR-096](096-console-safe-capture-retention.md) | Accepted | Bound default Safe exchange capture to the first system row, latest user row, and newest eight rows; compact readable legacy Safe blobs transactionally while leaving Full semantics unchanged. |
-| [ADR-099](099-persistent-terminal-session-runtime-boundary.md) | Proposed | Add app-global, process-lifetime user Terminal sessions through admitted PTY/ConPTY backends, bounded terminal emulation, independent launch arming, and honest cleanup certainty. |
+| [ADR-099](099-persistent-terminal-session-runtime-boundary.md) | Accepted | Add app-global, process-lifetime user Terminal sessions through admitted PTY/ConPTY backends, bounded terminal emulation, independent launch arming, and honest cleanup certainty. |
 
 ## Historical Decision Material
 
