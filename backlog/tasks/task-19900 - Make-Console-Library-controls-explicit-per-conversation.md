@@ -143,11 +143,12 @@ logs.
 The final qualification reconciled all governed documentation and joined the
 migration, policy, runtime, send, recovery, queue, continuation, activity,
 sync/export, Settings, and Textual paths. Exact post-rebase Delivery 6
-verification passed 1,760 tests in 345.66 seconds, the focused new contract
-passed 41 tests, and 23 exact counterfactual node IDs expanded to 29 passing
+verification passed 1,760 tests in 410.38 seconds, the focused new contract
+passed 41 tests in 2.55 seconds, and 23 exact counterfactual node IDs expanded to 29 passing
 cases across nine security/correctness guard families; TASK-19900.6 records the
 full list. Ruff, compileall, CSS bundle sync, screen-size ratchet, production
-diagnostic inventory, backlog-ID, and diff checks passed. An explicitly
+diagnostic inventory (540 owners, 1,261 TASK-492 calls, 7,394 TASK-494 calls,
+and 8 sink files), backlog-ID, and diff checks passed. An explicitly
 isolated real-app walkthrough proved Direct/RAG disclosure, all four policy
 states, exact manual-search draft preservation, atomic first persistence,
 restart hydration, and soft-delete/restore; repository coverage proves hard
