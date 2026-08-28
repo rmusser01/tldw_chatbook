@@ -219,8 +219,8 @@ Tests will be written before implementation and cover:
 5. Store validation of persisted root-user targets, including a legacy tree whose
    pre-repair parent is authoritative even when native legacy repair changes it,
    and canonical clearing on later leaf writes.
-6. Full-tree resume for all three states, including durable-text composer
-   hydration through `set_session_draft()` and `has_user_work=True`.
+6. Full-tree resume for all three states, including non-empty durable-text
+   composer hydration through `set_session_draft()` with `has_user_work=True`.
 7. Invalid, dangling, contradictory, non-root, and non-user state fallback/repair,
    including clearing a non-null marker for an empty tree.
 8. Screen routing: first prompt uses before-message; mid-path rewind remains unchanged.

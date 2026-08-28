@@ -76,9 +76,10 @@ supplies that text.
    root user node, keep the active path empty and load that node's current durable
    text into the restored session's in-memory composer draft through
    `set_session_draft()`. The ID references the row's current durable text rather
-   than a captured snapshot. This marks the hydrated composer as user work so
-   normal hydration safeguards do not overwrite it. Unsent edits after hydration remain
-   session-only; another restart restores the referenced durable text again.
+   than a captured snapshot. Non-empty hydrated text marks the composer as user
+   work so normal hydration safeguards do not overwrite it; empty text follows
+   the attachment-only exception recorded below. Unsent edits after hydration
+   remain session-only; another restart restores the referenced durable text again.
 7. A dangling, non-user, or non-root before-message pointer is invalid local
    state. Resume falls back to the newest leaf and atomically repairs the cursor.
 8. The migration and cursor writes do not bump conversation version or
