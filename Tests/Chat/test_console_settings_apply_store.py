@@ -387,6 +387,53 @@ async def test_rapid_applies_serialize_and_finish_with_newest_durable_values() -
 
 
 @pytest.mark.asyncio
+async def test_queued_applies_before_first_yield_drain_only_latest_values() -> None:
+    persistence = _SettingsPersistence()
+    store = ConsoleChatStore(persistence=persistence)
+    session = store.create_session(settings=_settings("old"))
+    store.publish_first_persisted_conversation(session.id, "conversation-a")
+
+    first = store.commit_console_settings_live(
+        _submission(store, session.id, submission_id="first", model="model-a")
+    )
+    first_waiter = asyncio.create_task(
+        store.persist_console_settings_commit_serialized(first)
+    )
+    second = store.commit_console_settings_live(
+        _submission(
+            store,
+            session.id,
+            submission_id="second",
+            model="model-b",
+            compaction=ContextCompactionMode.OFF,
+        )
+    )
+    second_waiter = asyncio.create_task(
+        store.persist_console_settings_commit_serialized(second)
+    )
+
+    first_outcome, second_outcome = await asyncio.gather(
+        first_waiter,
+        second_waiter,
+    )
+
+    assert [call["snapshot"].model for call in persistence.generation_calls] == [
+        "model-b"
+    ]
+    assert [
+        call["overrides"].compaction_mode for call in persistence.context_calls
+    ] == [ContextCompactionMode.OFF]
+    assert persistence.generation_snapshot.model == "model-b"
+    assert persistence.context_policy.compaction_mode is ContextCompactionMode.OFF
+    assert session.generation_durable_snapshot.model == "model-b"
+    assert session.context_policy_durable_revision == persistence.context_revision
+    assert first_outcome == second_outcome
+    assert first_outcome.written_components == frozenset(ConsoleSettingsComponent)
+    assert first_outcome.failed_components == frozenset()
+    assert first_outcome.stale_components == frozenset()
+
+
+@pytest.mark.asyncio
 async def test_inflight_apply_drains_to_latest_without_scheduling_newer_commits() -> None:
     persistence = _SettingsPersistence()
     first_started = threading.Event()

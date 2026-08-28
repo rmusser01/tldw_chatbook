@@ -4443,6 +4443,19 @@ class ConsoleChatStore:
         ):
             drain.requested_components.update(components)
             drain.retry_components.update(retry_components)
+            drain.initial_components = drain.initial_components | components
+            if (
+                ConsoleSettingsComponent.GENERATION_SETTINGS in components
+                and generation_revision >= drain.generation_revision
+            ):
+                drain.generation_revision = generation_revision
+                drain.generation_snapshot = generation_snapshot
+            if (
+                ConsoleSettingsComponent.CONTEXT_POLICY in components
+                and context_policy_revision >= drain.context_policy_revision
+            ):
+                drain.context_policy_revision = context_policy_revision
+                drain.context_policy_overrides = context_policy_overrides
             assert drain.task is not None
             return await asyncio.shield(drain.task)
 
