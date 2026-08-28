@@ -9,6 +9,7 @@ from typing import get_args
 
 import pytest
 from PIL import Image as PILImage
+from pydantic import ValidationError as PydanticValidationError
 
 from tldw_chatbook.Chat import console_chat_fork
 from tldw_chatbook.Chat.chat_persistence_service import ChatPersistenceService
@@ -59,6 +60,7 @@ from tldw_chatbook.Chat.rag_scope import RagScope, ScopeItem
 from tldw_chatbook.DB.ChaChaNotes_DB import CharactersRAGDB
 from tldw_chatbook.Video_Generation.video_metadata import VideoGenerationMetadata
 from tldw_chatbook.Video_Generation.video_store import video_content_marker
+from tldw_chatbook.Utils import input_validation
 
 
 class _ForkVersionPersistence:
@@ -629,6 +631,19 @@ def test_fork_title_rejects_blank_normalized_text() -> None:
         normalize_fork_title(" \n\t ")
 
 
+def test_fork_title_uses_the_shared_strict_validation_boundary() -> None:
+    assert hasattr(input_validation, "ConsoleForkTitleInput")
+    model_cls = getattr(input_validation, "ConsoleForkTitleInput")
+
+    assert model_cls.model_validate({"title": "  proposed\n title  "}).title == (
+        "proposed title"
+    )
+    with pytest.raises(PydanticValidationError):
+        model_cls.model_validate({"title": " \n\t "})
+    with pytest.raises(PydanticValidationError):
+        model_cls.model_validate({"title": 123})
+
+
 def test_fork_title_reuses_the_console_title_deriver(monkeypatch) -> None:
     calls: list[tuple[str, int]] = []
 
@@ -637,7 +652,7 @@ def test_fork_title_reuses_the_console_title_deriver(monkeypatch) -> None:
         return "canonical title"
 
     monkeypatch.setattr(
-        console_chat_fork,
+        input_validation,
         "derive_console_session_title",
         fake_derive,
     )

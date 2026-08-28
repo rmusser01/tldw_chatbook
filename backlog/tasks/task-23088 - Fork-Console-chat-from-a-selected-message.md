@@ -5,12 +5,13 @@ status: Done
 assignee:
   - '@codex'
 created_date: '2026-08-26 21:00'
-updated_date: '2026-08-27 15:12'
+updated_date: '2026-08-28 01:02'
 labels:
   - console
   - chat
   - ui
   - persistence
+dependencies: []
 references:
   - Docs/superpowers/specs/2026-08-26-console-chat-fork-design.md
   - Docs/superpowers/plans/2026-08-26-console-chat-fork.md
@@ -37,6 +38,7 @@ Let a user create and immediately open an independently owned Console chat copie
 
 ## Implementation Plan
 
+<!-- SECTION:PLAN:BEGIN -->
 ADR required: yes
 
 ADR path: `backlog/decisions/092-console-chat-fork-copy-and-authority-boundary.md`
@@ -50,9 +52,11 @@ Reason: ADR-092 already governs the durable copy, identity, authority, and publi
 5. Verify atomic failure, cancellation races, reload, layout/focus, temporary promotion, source immutability, and the provider-free live journey; update user docs and task evidence.
 
 Detailed TDD steps and commands: `Docs/superpowers/plans/2026-08-26-console-chat-fork.md`.
+<!-- SECTION:PLAN:END -->
 
 ## Implementation Notes
 
+<!-- SECTION:NOTES:BEGIN -->
 Implemented the ADR-092 fork projection and durable bundle, Console orchestration,
 stable direct action row and captured-target `More…` menu, six-state naming modal,
 temporary-fork promotion, citation/media handling, and fresh authority ownership. The
@@ -245,3 +249,22 @@ task-scoped baseline at `/private/tmp/tldw-chat-fork-task3-baseline`, all at the
 canonical task path. There were zero competing ID claimants and zero same-title tasks at
 another path. The five-digit task was marked Done by direct file edit because the
 Backlog CLI cannot reliably address it.
+
+### PR review follow-up
+
+Addressed the two actionable Qodo findings without changing ADR-092: durable settings
+replacement now merge-writes the current versioned `console_session_settings` snapshot
+with one optimistic-lock retry, preserving unrelated metadata while the conversation row
+system prompt and pinned-prefill key remain canonical on resume. The naming modal now
+parses raw Textual input through the shared strict `ConsoleForkTitleInput` Pydantic
+boundary in `Utils/input_validation.py` before constructing its presentation result.
+
+Focused verification passed: 357 tests across fork projection, hydration, persistence,
+the naming modal, and settings replacement; changed-file Ruff checks; `git diff --check`;
+and the regenerated production diagnostic inventory. The inventory review confirmed the
+new settings-write failure diagnostic contains only stable session/conversation IDs and
+static copy, with no user content, secrets, paths, or URLs. ADR required: yes; ADR path:
+`backlog/decisions/092-console-chat-fork-copy-and-authority-boundary.md`; reason: this is a
+correctness hardening of the existing persistence and validation boundaries, not a new
+architectural decision. No new lessons entry was warranted.
+<!-- SECTION:NOTES:END -->

@@ -734,6 +734,14 @@ class ConsoleChatPersistence(Protocol):
     ) -> bool:
         """Set or clear the pinned response prefill on a conversation."""
 
+    def update_conversation_console_session_settings(
+        self,
+        *,
+        conversation_id: str,
+        settings: ConsoleSessionSettings,
+    ) -> bool:
+        """Persist the latest complete Console settings snapshot."""
+
     def update_conversation_title(
         self,
         *,
@@ -6169,9 +6177,10 @@ class ConsoleChatStore:
         mark_user_work: bool = True,
         canonical_settings_baseline: ConsoleSessionSettings | None = None,
     ) -> ConsoleChatSession:
-        """Replace in-memory settings for a native Console session."""
+        """Replace settings and refresh an existing durable resume snapshot."""
         session = self._session_or_raise(session_id)
-        if mark_user_work and session.settings != settings:
+        changed = session.settings != settings
+        if mark_user_work and changed:
             session.has_user_work = True
         elif not mark_user_work:
             if canonical_settings_baseline != settings:
@@ -6181,6 +6190,30 @@ class ConsoleChatStore:
             session.canonical_settings_baseline = canonical_settings_baseline
         session.settings = settings
         self._bump_payload_revision(session_id)
+        if (
+            changed
+            and session.persisted_conversation_id is not None
+            and self.persistence is not None
+        ):
+            update_settings = getattr(
+                self.persistence,
+                "update_conversation_console_session_settings",
+                None,
+            )
+            if callable(update_settings):
+                try:
+                    update_settings(
+                        conversation_id=session.persisted_conversation_id,
+                        settings=settings,
+                    )
+                except Exception:
+                    logger.bind(
+                        session_id=session_id,
+                        conversation_id=session.persisted_conversation_id,
+                    ).exception(
+                        "Failed to persist Console settings snapshot; "
+                        "in-memory session keeps the applied settings."
+                    )
         return session
 
     def session_draft(self, session_id: str) -> str:

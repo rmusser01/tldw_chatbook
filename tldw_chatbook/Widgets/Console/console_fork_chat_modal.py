@@ -7,15 +7,16 @@ from dataclasses import dataclass
 import inspect
 from typing import Literal
 
+from pydantic import ValidationError as PydanticValidationError
 from textual import events, on
 from textual.app import ComposeResult
 from textual.containers import Horizontal, Vertical, VerticalScroll
 from textual.screen import ModalScreen
 from textual.widgets import Button, Input, Static
 
-from tldw_chatbook.Chat.console_chat_fork import (
+from tldw_chatbook.Utils.input_validation import (
     CONSOLE_FORK_TITLE_MAX_LENGTH,
-    normalize_fork_title,
+    ConsoleForkTitleInput,
 )
 from tldw_chatbook.Widgets.modal_dismissal import SafeModalDismissMixin
 
@@ -345,9 +346,11 @@ class ConsoleForkChatModal(SafeModalDismissMixin, ModalScreen[None]):
             return
         title_input = self.query_one("#console-fork-chat-title", Input)
         try:
-            title = normalize_fork_title(title_input.value)
-        except ValueError as exc:
-            self._set_status(str(exc))
+            title = ConsoleForkTitleInput.model_validate(
+                {"title": title_input.value}
+            ).title
+        except PydanticValidationError:
+            self._set_status("Fork title cannot be blank.")
             title_input.focus()
             return
         title_input.value = title

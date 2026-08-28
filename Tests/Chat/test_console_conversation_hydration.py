@@ -796,6 +796,79 @@ async def test_canonical_hydration_makes_persisted_generic_console_forkable(tmp_
 
 
 @pytest.mark.asyncio
+async def test_settings_replacement_refreshes_the_durable_resume_snapshot(tmp_path):
+    app = _fixture_app(tmp_path)
+    service = ChatPersistenceService(app.chachanotes_db)
+    source_store = ConsoleChatStore(persistence=service)
+    initial = default_console_session_settings(app.app_config)
+    source = source_store.create_session(title="Settings snapshot", settings=initial)
+    source_store.append_message(
+        source.id,
+        role=ConsoleMessageRole.USER,
+        content="Make this session durable",
+        persist=True,
+    )
+    conversation_id = source.persisted_conversation_id
+    assert conversation_id is not None
+
+    assert service.update_conversation_system_prompt(
+        conversation_id=conversation_id,
+        system_prompt="Canonical system prompt",
+    )
+    assert service.update_conversation_pinned_prefill(
+        conversation_id=conversation_id,
+        pinned_prefill="Canonical pinned prefill",
+    )
+    record = app.chachanotes_db.get_conversation_by_id(conversation_id)
+    metadata = json.loads(record["metadata"])
+    metadata["unrelated_owner"] = {"keep": True}
+    assert app.chachanotes_db.update_conversation(
+        conversation_id,
+        {"metadata": json.dumps(metadata)},
+        expected_version=record["version"],
+    )
+
+    latest = replace(
+        initial,
+        provider="openai",
+        model="gpt-test",
+        temperature=0.22,
+        system_prompt="Stale snapshot prompt",
+        pinned_prefill="Stale snapshot prefill",
+        source="user",
+    )
+    source_store.replace_session_settings(source.id, latest)
+
+    persisted = app.chachanotes_db.get_conversation_by_id(conversation_id)
+    persisted_metadata = json.loads(persisted["metadata"])
+    assert persisted_metadata["unrelated_owner"] == {"keep": True}
+    assert persisted_metadata["console_session_settings"]["provider"] == "openai"
+    assert persisted_metadata["console_session_settings"]["temperature"] == 0.22
+
+    tree = ChatConversationService(app.chachanotes_db).get_conversation_tree(
+        conversation_id
+    )
+    resumed_store = ConsoleChatStore(persistence=service)
+    resumed = await hydrate_console_session(
+        app=SimpleNamespace(chachanotes_db=app.chachanotes_db),
+        store=resumed_store,
+        conversation_id=conversation_id,
+        tree=tree,
+        settings=apply_resume_settings_overrides(
+            default_console_session_settings(app.app_config),
+            tree["conversation"],
+        ),
+    )
+
+    assert resumed.settings is not None
+    assert resumed.settings.provider == "openai"
+    assert resumed.settings.model == "gpt-test"
+    assert resumed.settings.temperature == 0.22
+    assert resumed.settings.system_prompt == "Canonical system prompt"
+    assert resumed.settings.pinned_prefill == "Canonical pinned prefill"
+
+
+@pytest.mark.asyncio
 async def test_first_persist_and_canonical_hydration_round_trip_persona_memory_mode(
     tmp_path,
 ):

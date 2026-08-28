@@ -53,6 +53,7 @@ from tldw_chatbook.Chat.console_speech_preferences import (
     merge_console_speech_preferences,
     parse_console_speech_preferences,
 )
+from tldw_chatbook.Chat.console_session_settings import ConsoleSessionSettings
 from tldw_chatbook.Chat.console_project_instructions import (
     encode_project_context_json,
 )
@@ -1494,6 +1495,47 @@ class ChatPersistenceService:
             expected_version=record["version"],
         )
         return True
+
+    def update_conversation_console_session_settings(
+        self,
+        *,
+        conversation_id: str,
+        settings: ConsoleSessionSettings,
+    ) -> bool:
+        """Merge the current Console settings snapshot into conversation metadata.
+
+        The top-level conversation system prompt and pinned-prefill metadata remain
+        canonical on resume. This snapshot preserves the rest of the settings that
+        changed after the conversation's first durable write.
+
+        Args:
+            conversation_id: Durable conversation identifier.
+            settings: Complete current Console session settings.
+
+        Returns:
+            True when persisted; False when the conversation no longer exists.
+        """
+
+        for attempt in range(2):
+            record = self.db.get_conversation_by_id(str(conversation_id))
+            if record is None:
+                return False
+            metadata = _initial_metadata_object(record.get("metadata") or {})
+            metadata["console_session_settings"] = {
+                "version": 1,
+                **asdict(settings),
+            }
+            try:
+                self.db.update_conversation(
+                    str(conversation_id),
+                    {"metadata": json.dumps(metadata)},
+                    expected_version=record["version"],
+                )
+                return True
+            except ConflictError:
+                if attempt == 1:
+                    raise
+        return False
 
     def update_conversation_title(
         self,

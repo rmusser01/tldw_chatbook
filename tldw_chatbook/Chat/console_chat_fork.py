@@ -16,7 +16,6 @@ from tldw_chatbook.Chat.console_chat_models import (
     ConsoleMessageStatus,
     GenerationVariantMeta,
     MessageAttachment,
-    derive_console_session_title,
 )
 from tldw_chatbook.Chat.attachment_core import MAX_IMAGE_BYTES
 from tldw_chatbook.Chat.console_context_policy import (
@@ -42,9 +41,12 @@ from tldw_chatbook.Chat.rag_scope import RagScope, ScopeItem
 from tldw_chatbook.Event_Handlers.Chat_Events.chat_image_events import (
     PAYLOAD_FORMAT_MIME,
 )
+from tldw_chatbook.Utils.input_validation import (
+    CONSOLE_FORK_TITLE_MAX_LENGTH as CONSOLE_FORK_TITLE_MAX_LENGTH,
+    validate_console_fork_title,
+)
 
 
-CONSOLE_FORK_TITLE_MAX_LENGTH = 60
 CONSOLE_FORK_FINGERPRINT_JSON_MAX_BYTES = 64 * 1024
 CONSOLE_FORK_VIDEO_TOMBSTONE_CONTENT = (
     "[video unavailable] The generated video expired; regenerate to recreate it."
@@ -302,13 +304,7 @@ def normalize_fork_title(title: str) -> str:
         ValueError: If the normalized title is blank.
     """
 
-    normalized = derive_console_session_title(
-        title,
-        max_length=CONSOLE_FORK_TITLE_MAX_LENGTH,
-    )
-    if not normalized:
-        raise ValueError("Fork title cannot be blank.")
-    return normalized
+    return validate_console_fork_title(title)
 
 
 def default_fork_title(source_title: str) -> str:
