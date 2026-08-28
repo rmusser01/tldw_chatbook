@@ -2,7 +2,8 @@
 
 **Date:** 2026-08-28
 
-**Status:** Approved during brainstorming; pending written-spec review
+**Status:** Approved during brainstorming; three-pass spec review completed with the
+final orphan-accounting correction approved by the user; pending final user file review
 
 **Decision:** [ADR-098](../../../backlog/decisions/098-low-latency-speculative-duplex-voice-pipeline.md)
 
@@ -280,18 +281,23 @@ a replacement with cleanup in this state.
 
 Every attempt owns a force-closable provider transport. Five seconds after the original
 cancellation request, the coordinator force-closes that transport. If the task has not
-exited after a further 500 ms, it is detached into a session-scoped orphan reaper behind
-its irreversible epoch fence. The coordinator then terminates the provisional logical
-turn as a recoverable failure, preserves the latest transcript as an editable voice
-draft, and reports that provider cleanup is stuck. While that orphan exists, the
-session admits no further speculative or ordinary provider dispatch from hands-free
-voice; the user may leave hands-free, change/rebuild the provider session, or retry the
-draft after the orphan exits. The reaper retains no transcript or response body and an
-orphan cannot publish callbacks, receipts, capture rows, or audio. Because dispatch is
-blocked before another attempt starts, at most one detached orphan exists per session.
+exited after a further 500 ms, it is detached into an app-lifetime voice orphan set
+behind its irreversible epoch fence. The coordinator then terminates the provisional
+logical turn as a recoverable failure, preserves the latest transcript as an editable
+voice draft, and reports that provider cleanup is stuck. The shared voice dispatch
+supervisor quarantines all later hands-free provider dispatch while the set is nonempty;
+leaving and re-entering hands-free, changing provider, or rebuilding a provider session
+cannot bypass it. Ordinary typed chat remains available, and the draft may be sent as
+text. Voice dispatch resumes automatically only after every orphan exits; restarting
+the app is the explicit recovery if one never does.
+
+The orphan set retains no transcript or response body, and its members cannot publish
+callbacks, receipts, capture rows, or audio. The two-obsolete-attempt cleanup cap also
+bounds the set at two: once that cap is reached no replacement can start, and once any
+member detaches the supervisor-level quarantine precedes every later voice dispatch.
 Successful turn promotion, explicit turn cancellation, this terminal cleanup failure,
-hands-free exit, or session teardown ends the current logical turn; the session-level
-orphan quarantine remains until the orphan exits or the provider session is rebuilt.
+hands-free exit, or session teardown ends the current logical turn, but none of those
+events clears a nonempty app-lifetime orphan quarantine.
 
 The successful boundary is the estimated time the winning attempt's final audible
 sample reaches the output device. Speech whose capture timestamp begins no later than
@@ -525,9 +531,10 @@ underruns, and device resets.
   stale jobs, coverage timestamps, and backend failure.
 - Coordinator tests use an injected clock for silence deadlines, freshness gating,
   every cancellation race, correction coalescing, attempt epochs, restart governor,
-  cleanup cap, force-close/detach/quarantine/recovery, serialized-conservative
-  entry/dispatch/reset, tool barrier, manual barge-in versus explicit exit, terminal
-  outcomes, and timestamp turn boundaries.
+  cleanup cap, two simultaneous force-close/detach outcomes, orphan-set quarantine that
+  survives hands-free toggles/provider rebuilds, recovery only after the full set
+  empties, serialized-conservative entry/dispatch/reset, tool barrier, manual barge-in
+  versus explicit exit, terminal outcomes, and timestamp turn boundaries.
 - Phrase tests cover punctuation, bounded fallback, ordering, cancellation, incomplete
   Markdown, links, fenced code, abbreviations, and synthesis failure.
 - Persistence tests prove cancelled attempts create no content-bearing durable owner,
@@ -591,7 +598,7 @@ independent acceptance criteria and targeted verification.
 | Temporary chat has no durable capture lineage | Explicit capture-unavailable status; no retroactive trace invention on Save |
 | Promotion races queued speech or a late STT correction | Serialized mailbox plus shared-clock capture/AEC/VAD/STT watermarks through the render boundary |
 | Winning promotion bypasses ADR-094 attention | Existing terminalization transaction mints the exact receipt and unseen mark |
-| Uncooperative cancellation never exits | Force-close deadline, terminal draft failure, one fenced orphan, and session dispatch quarantine |
+| Uncooperative cancellations never exit | Force-close deadline, terminal draft failure, app-lifetime fenced orphan set capped at two, and global voice-dispatch quarantine |
 | Pre-boundary speech remains queued behind playback completion | Shared-clock capture sequence watermark plus AEC/VAD/STT drain before promotion |
 | Audio device switches invalidate AEC timing | Fence playback, rebuild one clock domain, keep transcript, regenerate |
 | Aggressive mode increases usage | Usage split, duplicated-STT duration, restart governor, Settings disclosure |
