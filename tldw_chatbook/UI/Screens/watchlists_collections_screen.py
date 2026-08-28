@@ -15,7 +15,6 @@ from collections.abc import Callable, Collection, Coroutine, Mapping, Sequence
 from contextlib import nullcontext
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
-from functools import partial
 from pathlib import Path
 from typing import Any, Literal
 
@@ -5736,13 +5735,46 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
     ) -> bool:
         """Return whether a staged refresh may still affect this screen."""
         return (
-            backend == self.runtime_backend
-            and generation == self._runs_refresh_generation
+            generation == self._runs_refresh_generation
             and selection_generation == self._run_selection_generation
-            and (self.selected_run is not None) == selected_was_present
-            and self._canonical_run_identity(
+            and self._run_selection_is_current(
+                backend=backend,
+                selected_identity=selected_identity,
+                selected_was_present=selected_was_present,
+            )
+        )
+
+    def _run_selection_is_current(
+        self,
+        *,
+        backend: str,
+        selected_identity: tuple[str, str] | None,
+        selected_was_present: bool,
+    ) -> bool:
+        """Check both selection mirrors, including a pane event still queued."""
+        if (
+            backend != self.runtime_backend
+            or (self.selected_run is not None) != selected_was_present
+            or self._canonical_run_identity(
                 self.selected_run,
-                default_backend=self.runtime_backend,
+                default_backend=backend,
+            )
+            != selected_identity
+        ):
+            return False
+        if not self._dom_is_live:
+            return True
+        try:
+            pane_selected = self.query_one(
+                "#watchlists-runs-pane", RunsPane
+            ).selected_run
+        except NoMatches:
+            return True
+        return (
+            (pane_selected is not None) == selected_was_present
+            and self._canonical_run_identity(
+                pane_selected,
+                default_backend=backend,
             )
             == selected_identity
         )
@@ -5927,14 +5959,24 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
         Args:
             run_id: The namespaced id the poll is watching.
         """
+        backend = self.runtime_backend
+        publication_generation = self._runs_refresh_generation
         selected = self.selected_run
-        if selected is None or str(selected.get("id") or "") != str(run_id):
+        selected_identity = self._canonical_run_identity(
+            selected,
+            default_backend=backend,
+        )
+        requested_identity = self._canonical_run_identity(
+            {"id": run_id},
+            default_backend=backend,
+        )
+        if selected is None or selected_identity != requested_identity:
             # The user moved on between the tick being posted and this worker
             # starting. Nothing to refresh, and nothing to resurrect.
             return
         try:
             record = await self._controller.get_run(
-                runtime_backend=self.runtime_backend,
+                runtime_backend=backend,
                 run_id=run_id,
             )
         except Exception as exc:
@@ -5946,6 +5988,15 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
                 f"{type(exc).__name__}"
             )
             return
+        if (
+            publication_generation != self._runs_refresh_generation
+            or not self._run_selection_is_current(
+                backend=backend,
+                selected_identity=selected_identity,
+                selected_was_present=True,
+            )
+        ):
+            return
         if not isinstance(record, Mapping) or not record:
             return
         if self._run_progress_fingerprint(record) == self._run_progress_fingerprint(
@@ -5955,7 +6006,13 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
 
         record = dict(record)
         for index, candidate in enumerate(self._loaded_runs):
-            if str(candidate.get("id") or "") == str(run_id):
+            if (
+                self._canonical_run_identity(
+                    candidate,
+                    default_backend=backend,
+                )
+                == selected_identity
+            ):
                 self._loaded_runs[index] = record
                 break
         self.selected_run = record
@@ -5978,13 +6035,16 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
             run,
             default_backend=self.runtime_backend,
         )
-        self.run_worker(
-            partial(
-                self._load_run_detail,
+
+        async def load_detail() -> None:
+            await self._load_run_detail(
                 run,
                 generation=generation,
                 requested_identity=requested_identity,
-            ),
+            )
+
+        self.run_worker(
+            load_detail,
             exclusive=True,
             group="wc_run_detail",
         )

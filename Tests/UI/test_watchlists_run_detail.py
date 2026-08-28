@@ -38,6 +38,8 @@ from Tests.UI.full_app_destination_context import (
 from Tests.UI.app_factory import _build_test_app
 from tldw_chatbook.UI.Watchlists_Modules.runs_pane import (
     RefreshRunsRequested,
+    RunProgressTick,
+    RunSelected,
     RunsPane,
 )
 from tldw_chatbook.tldw_api.exceptions import APIResponseError
@@ -1848,3 +1850,237 @@ async def test_refresh_preserves_a_mounted_legacy_selection_with_only_run_id():
         assert screen.selected_run == pane.selected_run == fresh
         assert screen._loaded_runs == pane.runs == [fresh]
         assert pane.run_items[0]["title"] == "Fresh legacy detail"
+
+
+@pytest.mark.parametrize("target_run", [RUNS[0], None], ids=["select", "clear"])
+@pytest.mark.asyncio
+async def test_immediate_pane_selection_blocks_an_older_refresh_before_mirroring(
+    target_run,
+):
+    app = _build_test_app()
+    app.watchlist_scope_service = StaticWatchlistsScopeService([])
+    host = _visual_destination_harness(app, "watchlists_collections")
+    async with host.run_test(size=(235, 52)) as pilot:
+        screen, pane = await _refresh_test_pane(pilot, host)
+        await _seed_refresh_snapshot(screen, pane, pilot)
+        before_rows = deepcopy(screen._loaded_runs)
+        refresh_started = asyncio.Event()
+        release_refresh = asyncio.Event()
+        queued_selection: list[RunSelected] = []
+
+        async def list_runs(**_kwargs):
+            refresh_started.set()
+            await release_refresh.wait()
+            return [
+                dict(RUNS[0], source_title="staged first row"),
+                dict(RUNS[1], source_title="staged captured selection"),
+            ]
+
+        screen._controller.list_runs = list_runs
+        screen.post_message(RefreshRunsRequested())
+        await asyncio.wait_for(refresh_started.wait(), timeout=2)
+
+        real_post_message = pane.post_message
+
+        def hold_selection_message(message):
+            if isinstance(message, RunSelected):
+                queued_selection.append(message)
+                return True
+            return real_post_message(message)
+
+        pane.post_message = hold_selection_message
+        if target_run is None:
+            pane.selected_run = None
+        else:
+            pane.select_run_by_id(str(target_run["id"]))
+        pane.post_message = real_post_message
+
+        assert len(queued_selection) == 1
+        assert screen.selected_run is not None
+        assert screen.selected_run["id"] == RUNS[1]["id"], (
+            "the screen mirror is intentionally still one queued message behind"
+        )
+        release_refresh.set()
+        assert await _wait_worker_group_idle(pilot, screen, "wc_runs")
+
+        screen.post_message(queued_selection[0])
+        expected_id = None if target_run is None else target_run["id"]
+        assert await _pump_until(
+            pilot,
+            lambda: (
+                None if screen.selected_run is None else screen.selected_run.get("id")
+            )
+            == expected_id,
+        )
+        assert await _wait_worker_group_idle(pilot, screen, "wc_run_detail")
+
+        assert screen._loaded_runs == pane.runs == before_rows
+        assert (
+            None if pane.selected_run is None else pane.selected_run.get("id")
+        ) == expected_id
+
+
+@pytest.mark.asyncio
+async def test_backend_switch_supersedes_a_gated_run_progress_tick():
+    app = _build_test_app()
+    app.watchlist_scope_service = StaticWatchlistsScopeService([])
+    host = _visual_destination_harness(app, "watchlists_collections")
+    async with host.run_test(size=(235, 52)) as pilot:
+        screen, pane = await _refresh_test_pane(pilot, host)
+        await _seed_refresh_snapshot(screen, pane, pilot)
+        tick_started = asyncio.Event()
+        release_tick = asyncio.Event()
+        stale_tick = dict(
+            RUNS[1],
+            status="failed",
+            found_count=99,
+            log_text="stale pre-switch tick",
+        )
+
+        async def get_run(**_kwargs):
+            tick_started.set()
+            while not release_tick.is_set():
+                try:
+                    await release_tick.wait()
+                except asyncio.CancelledError:
+                    continue
+            return stale_tick
+
+        screen._controller.get_run = get_run
+        screen.post_message(RunProgressTick(RUNS[1]["id"]))
+        await asyncio.wait_for(tick_started.wait(), timeout=2)
+
+        screen.active_section = "sources"
+        await pilot.pause()
+        screen.runtime_backend = "server"
+        await pilot.pause()
+        release_tick.set()
+        assert await _wait_worker_group_idle(pilot, screen, "wc_run_tick")
+        assert await _wait_worker_group_idle(pilot, screen, "wc_run_detail")
+
+        assert screen.runtime_backend == "server"
+        assert screen._loaded_runs == []
+        assert screen.selected_run is None
+        assert "stale pre-switch tick" not in screen._run_detail_logs
+
+
+@pytest.mark.asyncio
+async def test_authoritative_refresh_supersedes_a_gated_run_progress_tick():
+    app = _build_test_app()
+    app.watchlist_scope_service = StaticWatchlistsScopeService([])
+    host = _visual_destination_harness(app, "watchlists_collections")
+    async with host.run_test(size=(235, 52)) as pilot:
+        screen, pane = await _refresh_test_pane(pilot, host)
+        await _seed_refresh_snapshot(screen, pane, pilot)
+        tick_started = asyncio.Event()
+        release_tick = asyncio.Event()
+        refresh_started = asyncio.Event()
+        stale_tick = dict(
+            RUNS[1],
+            found_count=99,
+            processed_count=99,
+            log_text="stale tick that completed last",
+        )
+        authoritative = dict(
+            RUNS[1],
+            found_count=12,
+            processed_count=12,
+            log_text="authoritative refresh",
+        )
+
+        async def get_run(**_kwargs):
+            tick_started.set()
+            while not release_tick.is_set():
+                try:
+                    await release_tick.wait()
+                except asyncio.CancelledError:
+                    continue
+            return stale_tick
+
+        async def list_runs(**_kwargs):
+            refresh_started.set()
+            return [dict(RUNS[0]), authoritative]
+
+        async def list_items(**_kwargs):
+            return [{"title": "Authoritative item", "status": "new"}]
+
+        screen._controller.get_run = get_run
+        screen.post_message(RunProgressTick(RUNS[1]["id"]))
+        await asyncio.wait_for(tick_started.wait(), timeout=2)
+
+        screen._controller.list_runs = list_runs
+        screen._controller.list_items = list_items
+        screen.post_message(RefreshRunsRequested())
+        await asyncio.wait_for(refresh_started.wait(), timeout=2)
+        assert await _wait_worker_group_idle(pilot, screen, "wc_runs")
+        assert await _wait_worker_group_idle(pilot, screen, "wc_run_detail")
+        authoritative_landed = screen.selected_run == pane.selected_run == authoritative
+
+        release_tick.set()
+        assert await _wait_worker_group_idle(pilot, screen, "wc_run_tick")
+        assert await _wait_worker_group_idle(pilot, screen, "wc_run_detail")
+
+        assert authoritative_landed
+        assert screen._loaded_runs == pane.runs == [dict(RUNS[0]), authoritative]
+        assert screen.selected_run == pane.selected_run == authoritative
+        assert pane.run_items[0]["title"] == "Authoritative item"
+        assert "authoritative refresh" in _logs_text(pane)
+        assert "stale tick that completed last" not in _logs_text(pane)
+
+
+@pytest.mark.asyncio
+async def test_older_same_run_detail_error_is_silent_after_newer_success():
+    app = _build_test_app()
+    app.watchlist_scope_service = StaticWatchlistsScopeService([])
+    host = _visual_destination_harness(app, "watchlists_collections")
+    toasts: list[str] = []
+    app.notify = lambda message, **_kwargs: toasts.append(str(message))
+    async with host.run_test(size=(235, 52)) as pilot:
+        screen, pane = await _refresh_test_pane(pilot, host)
+        await _seed_refresh_snapshot(screen, pane, pilot)
+        pane.select_run_by_id(str(RUNS[0]["id"]))
+        assert await _wait_worker_group_idle(pilot, screen, "wc_run_detail")
+
+        older_started = asyncio.Event()
+        release_older = asyncio.Event()
+        detail_calls = 0
+
+        async def ordered_items(**_kwargs):
+            nonlocal detail_calls
+            detail_calls += 1
+            if detail_calls == 1:
+                older_started.set()
+                while not release_older.is_set():
+                    try:
+                        await release_older.wait()
+                    except asyncio.CancelledError:
+                        continue
+                raise RuntimeError("obsolete private failure")
+            return [{"title": "Newest successful item", "status": "new"}]
+
+        fresh_run = dict(RUNS[1], log_text="newest successful log")
+
+        async def list_runs(**_kwargs):
+            return [dict(RUNS[0]), fresh_run]
+
+        screen._controller.list_items = ordered_items
+        pane.select_run_by_id(str(RUNS[1]["id"]))
+        await asyncio.wait_for(older_started.wait(), timeout=2)
+
+        toasts.clear()
+        screen._controller.list_runs = list_runs
+        screen.post_message(RefreshRunsRequested())
+        assert await _pump_until(
+            pilot,
+            lambda: bool(pane.run_items)
+            and pane.run_items[0].get("title") == "Newest successful item",
+        )
+
+        release_older.set()
+        assert await _wait_worker_group_idle(pilot, screen, "wc_runs")
+        assert await _wait_worker_group_idle(pilot, screen, "wc_run_detail")
+
+        assert toasts == []
+        assert pane.run_items[0]["title"] == "Newest successful item"
+        assert screen._run_detail_items == pane.run_items
+        assert "newest successful log" in _logs_text(pane)
