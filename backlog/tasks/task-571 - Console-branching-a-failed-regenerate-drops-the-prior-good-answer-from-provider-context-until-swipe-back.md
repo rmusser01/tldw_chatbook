@@ -3,18 +3,19 @@ id: TASK-571
 title: >-
   Console branching: a failed regenerate drops the prior good answer from
   provider context until swipe-back
-status: In Progress
+status: Done
 assignee:
   - '@codex'
 created_date: '2026-07-25'
-updated_date: '2026-08-28 05:19'
+updated_date: '2026-08-28 06:25'
 labels:
   - console
   - chat
   - ux
 dependencies: []
 references:
-  - Docs/superpowers/specs/2026-08-27-console-failed-regenerate-auto-restore-design.md
+  - >-
+    Docs/superpowers/specs/2026-08-27-console-failed-regenerate-auto-restore-design.md
 ---
 
 ## Description
@@ -27,15 +28,14 @@ With Console branching (Phase A, PR #799), regenerate forks a new empty sibling 
 
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
-- [ ] #1 A failed/empty regenerate does not silently strip the anchor's prior good answer from the next send's context without a clear, discoverable recovery affordance
-- [ ] #2 Chosen approach (e.g. auto-restore the anchor as active on failed regenerate, or surface a one-key swipe-back/retry hint on the failed sibling) is documented and unit-covered
-- [ ] #3 Verified in the live TUI: regenerate → force a failure → confirm the good answer is recoverable in one obvious step
+- [x] #1 A failed/empty regenerate does not silently strip the anchor's prior good answer from the next send's context without a clear, discoverable recovery affordance
+- [x] #2 Chosen approach (e.g. auto-restore the anchor as active on failed regenerate, or surface a one-key swipe-back/retry hint on the failed sibling) is documented and unit-covered
+- [x] #3 Verified in the live TUI: regenerate → force a failure → confirm the good answer is recoverable in one obvious step
 <!-- AC:END -->
 
 ## Implementation Plan
 
 <!-- SECTION:PLAN:BEGIN -->
-
 ADR required: no
 
 ADR path: N/A
@@ -48,5 +48,17 @@ Reason: this is a routine recovery correction within the existing active-leaf an
 4. Update the branching guide, run focused tests and static checks, self-review the diff, then record implementation evidence and close the task.
 
 Detailed TDD steps: `Docs/superpowers/plans/2026-08-27-console-failed-regenerate-auto-restore.md`
-
 <!-- SECTION:PLAN:END -->
+
+## Implementation Notes
+
+<!-- SECTION:NOTES:BEGIN -->
+
+- After stream settlement, `regenerate_message` now restores the selected original assistant anchor only when the replacement sibling settled as `failed`, using the existing `set_active_leaf` contract. The failed sibling remains stored and retryable; successful and intentionally stopped branches remain active.
+- Restoring an older mid-conversation anchor makes that anchor the active leaf. Its former descendant tail remains stored off-path, while provider context ends at and includes the restored good answer.
+- Focused coverage exercises transport failure, empty output, the mid-conversation boundary, success and stop controls, provider-context projection, and the mounted real regenerate-button action. The mounted test gates the failure, observes the pending replacement, waits for the exact session worker, and relies on the production final repaint before asserting the restored row.
+- Updated the Console branching user guide to explain automatic failed/empty recovery, retained failed siblings, the older-anchor boundary, and stopped-branch behavior.
+- ADR required: no. ADR path: N/A. This is a bounded recovery correction within existing controller, active-leaf, and sibling-branch contracts; it changes no schema, persistence boundary, service contract, security policy, dependency, or long-lived application structure.
+- Fresh verification: focused pytest completed with `29 passed, 2 warnings in 10.37s`; warnings were the existing `RequestsDependencyWarning` for the installed urllib3/chardet/charset-normalizer versions and Python 3.12's `audioop` deprecation from pydub. Unisolated runs also emitted existing macOS pytest stale-temp cleanup warnings (`PermissionError` / `Directory not empty`) after the passing summary. Ruff reported `All checks passed!`, and `git diff --check origin/dev...HEAD` exited 0.
+
+<!-- SECTION:NOTES:END -->
