@@ -52,6 +52,7 @@ from tldw_chatbook.Chat.console_display_state import (
 )
 from tldw_chatbook.DB.AgentRuns_DB import AgentRunsDB
 from tldw_chatbook.Utils.input_validation import validate_text_input
+from tldw_chatbook.Utils.log_sanitizer import content_fingerprint
 from tldw_chatbook.Widgets.glyph_fallback import resolve_glyph
 from tldw_chatbook.Workspaces.change_tracking import (
     ChangedFile,
@@ -1708,9 +1709,11 @@ class ChangeReviewScreen(Screen):
             if not callable(enabled) or not callable(detect) or not enabled():
                 self._git_detection_settled = True
                 return
-        except Exception:  # noqa: BLE001 -- a bad config never breaks review
-            logger.opt(exception=True).warning(
-                "change_review: git kill-switch read failed; mode not offered"
+        except Exception as exc:  # noqa: BLE001 -- a bad config never breaks review
+            logger.warning(
+                "change_review: git kill-switch read failed; mode not offered "
+                "operation=detection exception_type={}",
+                type(exc).__name__,
             )
             self._git_detection_settled = True
             return
@@ -1723,9 +1726,12 @@ class ChangeReviewScreen(Screen):
         def _detect() -> None:
             try:
                 detected = detect(candidates)
-            except Exception:  # noqa: BLE001 -- never kill the worker
-                logger.opt(exception=True).warning(
-                    "change_review: git detection failed; mode not offered"
+            except Exception as exc:  # noqa: BLE001 -- never kill the worker
+                logger.warning(
+                    "change_review: git detection failed; mode not offered "
+                    "operation=detection roots_sha256={} exception_type={}",
+                    content_fingerprint(repr(tuple(candidates))),
+                    type(exc).__name__,
                 )
                 detected = {}
             # TASK-19703 AC #1: the same teardown-only guard every other
@@ -1969,10 +1975,12 @@ class ChangeReviewScreen(Screen):
                     touched_by_row[rid] = self._provider.tool_touched_relpaths(
                         row
                     )
-                except Exception:  # noqa: BLE001 -- a badge must never break review
-                    logger.opt(exception=True).warning(
-                        "change_review: badge derivation failed for "
-                        f"{row.get('root')!r}; rendering without badges"
+                except Exception as exc:  # noqa: BLE001 -- badge must never break review
+                    logger.warning(
+                        "change_review: badge derivation failed; rendering without "
+                        "badges operation=badge root_sha256={} exception_type={}",
+                        content_fingerprint(str(row.get("root") or "")),
+                        type(exc).__name__,
                     )
                     touched_by_row[rid] = None
             touched = touched_by_row[rid]
@@ -2408,8 +2416,11 @@ class ChangeReviewScreen(Screen):
                     _land(self._land_current_root_failure, token, root, str(exc))
                     continue
                 except Exception as exc:  # noqa: BLE001 -- worker must live
-                    logger.opt(exception=True).warning(
-                        f"change_review: working-tree status failed for {root!r}"
+                    logger.warning(
+                        "change_review: working-tree status failed operation=status "
+                        "root_sha256={} exception_type={}",
+                        content_fingerprint(str(root)),
+                        type(exc).__name__,
                     )
                     _land(self._land_current_root_failure, token, root, str(exc))
                     continue
@@ -2421,9 +2432,12 @@ class ChangeReviewScreen(Screen):
                     pr_results[str(statuses[-1].root)] = provider.pr_url(
                         str(statuses[-1].root), statuses[-1].info
                     )
-                except Exception:  # noqa: BLE001 -- the read must survive
-                    logger.opt(exception=True).warning(
-                        f"change_review: PR link probe failed for {root!r}"
+                except Exception as exc:  # noqa: BLE001 -- the read must survive
+                    logger.warning(
+                        "change_review: PR link probe failed operation=pr "
+                        "root_sha256={} exception_type={}",
+                        content_fingerprint(str(root)),
+                        type(exc).__name__,
                     )
             # Its OWN landing, deliberately, rather than a third argument to
             # `_land_current_mode`: that landing's two-argument shape is
@@ -2600,10 +2614,13 @@ class ChangeReviewScreen(Screen):
             return
         try:
             refused = bool(self._provider.run_active_for_root(root))
-        except Exception:  # noqa: BLE001 -- a broken probe must not block work
-            logger.opt(exception=True).warning(
+        except Exception as exc:  # noqa: BLE001 -- broken probe must not block work
+            logger.warning(
                 "change_review: run_active probe failed; deferring to the "
-                "engine's own refusal"
+                "engine's own refusal operation=commit root_sha256={} "
+                "exception_type={}",
+                content_fingerprint(str(root)),
+                type(exc).__name__,
             )
             refused = False
         if refused:
@@ -2642,8 +2659,11 @@ class ChangeReviewScreen(Screen):
                 )
                 return
             except Exception as exc:  # noqa: BLE001 -- the worker must live
-                logger.opt(exception=True).warning(
-                    f"change_review: commit preflight failed for {root!r}"
+                logger.warning(
+                    "change_review: commit preflight failed operation=commit "
+                    "root_sha256={} exception_type={}",
+                    content_fingerprint(str(root)),
+                    type(exc).__name__,
                 )
                 _land_on_ui(
                     app, self._land_commit_preflight_failure, token, root, str(exc)
@@ -2772,8 +2792,11 @@ class ChangeReviewScreen(Screen):
                 _land_on_ui(app, self._land_commit_refused, token, str(exc))
                 return
             except Exception as exc:  # noqa: BLE001 -- the worker must live
-                logger.opt(exception=True).warning(
-                    f"change_review: commit failed for {root!r}"
+                logger.warning(
+                    "change_review: commit failed operation=commit root_sha256={} "
+                    "exception_type={}",
+                    content_fingerprint(str(root)),
+                    type(exc).__name__,
                 )
                 # A DIFFERENT landing from the typed refusals above (the
                 # whole-branch review, finding D -- Task 8 fixed exactly
@@ -2938,8 +2961,13 @@ class ChangeReviewScreen(Screen):
             try:
                 detected = provider.detect_git(roots)
             except Exception as exc:  # noqa: BLE001 -- the worker must live
-                logger.opt(exception=True).warning(
-                    f"change_review: {action} preflight failed for {roots!r}"
+                logger.warning(
+                    "change_review: {} preflight failed operation={} "
+                    "roots_sha256={} exception_type={}",
+                    action,
+                    action,
+                    content_fingerprint(repr(tuple(roots))),
+                    type(exc).__name__,
                 )
                 _land_on_ui(app, self._land_git_target_failure, token, str(exc))
                 return
@@ -3065,8 +3093,10 @@ class ChangeReviewScreen(Screen):
         known_remotes = {name for name, _url in info.remotes}
         if remote is not None and remote not in known_remotes:
             logger.warning(
-                f"change_review: refusing to push to an undetected remote "
-                f"{remote!r} at {root!r}"
+                "change_review: refusing to push to an undetected remote "
+                "operation=push root_sha256={} remote_sha256={}",
+                content_fingerprint(str(root)),
+                content_fingerprint(str(remote)),
             )
             self.notify(
                 f"Push refused: {remote!r} is not one of this repository's "
@@ -3095,8 +3125,11 @@ class ChangeReviewScreen(Screen):
                 _land_on_ui(app, self._land_push_refused, token, str(exc))
                 return
             except Exception as exc:  # noqa: BLE001 -- the worker must live
-                logger.opt(exception=True).warning(
-                    f"change_review: push failed for {root!r}"
+                logger.warning(
+                    "change_review: push failed operation=push root_sha256={} "
+                    "exception_type={}",
+                    content_fingerprint(str(root)),
+                    type(exc).__name__,
                 )
                 # A DIFFERENT landing from the typed refusal above (T8
                 # review): anything reaching here is a bug, not one of the
@@ -3205,8 +3238,11 @@ class ChangeReviewScreen(Screen):
             try:
                 outcome = provider.pr_url(root, info)
             except Exception as exc:  # noqa: BLE001 -- the worker must live
-                logger.opt(exception=True).warning(
-                    f"change_review: PR link failed for {root!r}"
+                logger.warning(
+                    "change_review: PR link failed operation=pr root_sha256={} "
+                    "exception_type={}",
+                    content_fingerprint(str(root)),
+                    type(exc).__name__,
                 )
                 _land_on_ui(app, self._land_git_target_failure, token, str(exc))
                 return
@@ -3323,13 +3359,15 @@ class ChangeReviewScreen(Screen):
             configured = str(
                 get_cli_setting("console", "workspace_root", "") or ""
             ).strip()
-        except Exception:  # noqa: BLE001 -- a bad config never breaks review
+        except Exception as exc:  # noqa: BLE001 -- a bad config never breaks review
             # Qodo #4 (PR #1941): a swallowed failure here silently drops a
             # disclosure, which is the same masking class this screen is
             # meant to prevent. Log it rather than vanish.
-            logger.opt(exception=True).debug(
+            logger.debug(
                 "change_review: could not read [console] workspace_root for "
-                "the untracked-writable disclosure"
+                "the untracked-writable disclosure operation=untracked-writable "
+                "exception_type={}",
+                type(exc).__name__,
             )
             return
 
@@ -3350,8 +3388,10 @@ class ChangeReviewScreen(Screen):
             }
         except (ValueError, OSError, RuntimeError) as exc:
             logger.debug(
-                f"change_review: skipping untracked-writable disclosure "
-                f"for {raw!r}: {exc}"
+                "change_review: skipping untracked-writable disclosure "
+                "operation=untracked-writable root_sha256={} exception_type={}",
+                content_fingerprint(raw),
+                type(exc).__name__,
             )
             return
         if any(target == root or root in target.parents for root in tracked):
@@ -3748,9 +3788,10 @@ class ChangeReviewScreen(Screen):
 
             try:
                 await asyncio.to_thread(_write)
-            except Exception:
-                logger.opt(exception=True).warning(
-                    "change_review: comment save failed"
+            except Exception as exc:
+                logger.warning(
+                    "change_review: comment save failed exception_type={}",
+                    type(exc).__name__,
                 )
                 self.notify("Could not save comment", severity="warning")
                 return
@@ -3763,9 +3804,10 @@ class ChangeReviewScreen(Screen):
             except Exception:  # noqa: BLE001 -- focus-return is cosmetic
                 pass
             self._refresh_notes_ui_for_focused_leaf()
-        except Exception:
-            logger.opt(exception=True).warning(
-                "change_review: comment save failed"
+        except Exception as exc:
+            logger.warning(
+                "change_review: comment save failed exception_type={}",
+                type(exc).__name__,
             )
 
     async def _delete_review_note(self, button: Button) -> None:
@@ -4522,8 +4564,11 @@ class ChangeGitCommitModal(SafeModalDismissMixin, ModalScreen["dict | None"]):
             # error, no dismissal, indistinguishable from a dead button.
             # The broad catch stays (a handler must not raise into
             # Textual); what changes is that the failure is now visible.
-            logger.opt(exception=True).warning(
-                "change_review: commit modal submit failed"
+            logger.warning(
+                "change_review: commit modal submit failed operation=commit "
+                "root_sha256={} exception_type={}",
+                content_fingerprint(self._root),
+                type(exc).__name__,
             )
             self._show_error(f"could not submit: {exc}")
 
@@ -4812,9 +4857,12 @@ class ChangeGitPushModal(SafeModalDismissMixin, ModalScreen["dict | None"]):
             remote_select.set_options([(name, name) for name in names])
             remote_select.value = names[0] if names else Select.BLANK
             remote_select.display = self._needs_remote_choice(root)
-        except Exception:  # noqa: BLE001 -- never raise out of a handler
-            logger.opt(exception=True).warning(
-                "change_review: push modal root switch failed"
+        except Exception as exc:  # noqa: BLE001 -- never raise out of a handler
+            logger.warning(
+                "change_review: push modal root switch failed operation=push "
+                "root_sha256={} exception_type={}",
+                content_fingerprint(root),
+                type(exc).__name__,
             )
 
     def _resolve_remote(self) -> "str | None":
@@ -4858,16 +4906,24 @@ class ChangeGitPushModal(SafeModalDismissMixin, ModalScreen["dict | None"]):
             # rather than inventing a widget (and its CSS) for a path that
             # only a bug reaches; the modal stays open so the user can
             # cancel deliberately instead of guessing.
-            logger.opt(exception=True).warning(
-                "change_review: push modal submit failed"
+            logger.warning(
+                "change_review: push modal submit failed operation={} "
+                "root_sha256={} exception_type={}",
+                self._action,
+                content_fingerprint(self._selected_root),
+                type(exc).__name__,
             )
             try:
                 self.app.notify(
                     f"Could not submit: {exc}", severity="error"
                 )
-            except Exception:  # noqa: BLE001 -- notify is best-effort
-                logger.opt(exception=True).debug(
-                    "change_review: push modal could not report its failure"
+            except Exception as notify_exc:  # noqa: BLE001 -- notify is best-effort
+                logger.debug(
+                    "change_review: push modal could not report its failure "
+                    "operation={} root_sha256={} exception_type={}",
+                    self._action,
+                    content_fingerprint(self._selected_root),
+                    type(notify_exc).__name__,
                 )
 
     @on(Button.Pressed, "#change-git-push-yes")

@@ -34,6 +34,7 @@ from urllib.parse import quote, urlparse
 
 from loguru import logger
 
+from tldw_chatbook.Utils.log_sanitizer import content_fingerprint
 from tldw_chatbook.Workspaces.change_tracking import ChangedFile
 
 #: Read-only probes (status, branch, remote listings).
@@ -325,7 +326,11 @@ def detect_git_workspace(root: Path) -> GitWorkspaceInfo | GitWorkspaceRefusal |
     try:
         return _detect_git_workspace(root)
     except GitWorkspaceError as exc:
-        logger.debug(f"git_workspace: detection failed for {root}: {exc}")
+        logger.debug(
+            "git_workspace: detection failed root_sha256={} exception_type={}",
+            content_fingerprint(str(root)),
+            type(exc).__name__,
+        )
         return None
 
 

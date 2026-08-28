@@ -351,6 +351,64 @@ async def test_current_status_worker_failure_logs_safe_metadata(
     assert traceback_local not in rendered
 
 
+@pytest.mark.asyncio
+async def test_git_target_preflight_fingerprints_stable_root_tuple(
+    monkeypatch, tmp_path
+) -> None:
+    _patch_git_actions(monkeypatch, True)
+    first = _init_repo(tmp_path / "task-19864-private-first-root")
+    second = _init_repo(tmp_path / "task-19864-private-second-root")
+    database = AgentRunsDB(tmp_path / "runs.db", client_id="task-19864")
+    service = ShadowRepoService(data_dir=tmp_path / "appdata")
+    provider = AgentRunsChangeReviewProvider(
+        db=database, service=service, conversation_id="task-19864"
+    )
+    app = _Harness(provider, workspace_roots=[str(first), str(second)])
+    records: list[str] = []
+    notifications: list[tuple[str, str | None]] = []
+    raw_exception = f"TASK-19864 preflight failed for {first} and {second}"
+    try:
+        async with app.run_test(size=(160, 48)) as pilot:
+            screen = await _open_screen(pilot, app)
+            await _wait_for_detection(pilot, screen)
+            roots = tuple(screen._git_target_roots())
+
+            def fail_detection(_roots: object) -> None:
+                raise RuntimeError(raw_exception)
+
+            provider.detect_git = fail_detection
+            monkeypatch.setattr(
+                screen,
+                "notify",
+                lambda message, *args, severity=None, **kwargs: notifications.append(
+                    (message, severity)
+                ),
+            )
+            sink_id = logger.add(lambda message: records.append(str(message)))
+            try:
+                screen._dispatch_git_target_preflight("push")
+                await _wait_idle(pilot, app, "change-review-git-action")
+                await pilot.pause()
+            finally:
+                logger.remove(sink_id)
+    finally:
+        database.close()
+
+    assert notifications == [
+        (f"Could not read the repository: {raw_exception}", "error")
+    ]
+    rendered = "".join(records)
+    assert "change_review: push preflight failed" in rendered
+    assert "operation=push" in rendered
+    assert f"roots_sha256={content_fingerprint(repr(roots))}" in rendered
+    assert "exception_type=RuntimeError" in rendered
+    assert str(first) not in rendered
+    assert str(second) not in rendered
+    assert first.name not in rendered
+    assert second.name not in rendered
+    assert raw_exception not in rendered
+
+
 # ---------------------------------------------------------------------------
 # Pseudo-entry presence / absence
 # ---------------------------------------------------------------------------

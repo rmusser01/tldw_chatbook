@@ -104,6 +104,7 @@ from tldw_chatbook.Chat.console_exchange_capture import (
 from tldw_chatbook.Chat.console_project_instructions import EPHEMERAL_ORIGIN_KEY
 from tldw_chatbook.Chat.provider_usage import ProviderUsage
 from tldw_chatbook.LLM_Calls.pricing_catalog import get_pricing_catalog
+from tldw_chatbook.Utils.log_sanitizer import content_fingerprint
 from tldw_chatbook.Utils.path_validation import validate_path
 from tldw_chatbook.Widgets.pausable_progress import PausableLoadingIndicator
 from tldw_chatbook.Utils.token_counter import estimate_tokens
@@ -1571,7 +1572,9 @@ class ConsoleConversationInspector(SafeModalDismissMixin, ModalScreen[None]):
             return path
         except ValueError as exc:
             logger.error(
-                f"Rejected export destination {path}: {type(exc).__name__}"
+                "Rejected export destination path_sha256={} exception_type={}",
+                content_fingerprint(str(path)),
+                type(exc).__name__,
             )
             self.notify(
                 f"Save failed ({type(exc).__name__}): {path}", severity="error"
@@ -1960,15 +1963,19 @@ class ConsoleConversationInspector(SafeModalDismissMixin, ModalScreen[None]):
             # USER-VISIBLE notify() (hard constraint 3); this names the
             # failure class and path instead.
             logger.error(
-                f"Failed to save context snapshot to {path}: {type(exc).__name__}"
+                "Failed to save context snapshot path_sha256={} exception_type={}",
+                content_fingerprint(str(path)),
+                type(exc).__name__,
             )
             self.notify(
                 f"Save failed ({type(exc).__name__}): {path}", severity="error"
             )
         except Exception as exc:
             logger.error(
-                f"Unexpected error saving context snapshot to {path}: "
-                f"{type(exc).__name__}"
+                "Unexpected error saving context snapshot path_sha256={} "
+                "exception_type={}",
+                content_fingerprint(str(path)),
+                type(exc).__name__,
             )
             self.notify(
                 f"Save failed ({type(exc).__name__}): {path}", severity="error"
