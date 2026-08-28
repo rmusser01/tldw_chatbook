@@ -2,7 +2,7 @@
 
 **Task:** TASK-2340 — Silent loader failures contradict TASK-1090's toast premise
 
-**Status:** Approved for implementation planning
+**Status:** User-approved design; written specification under review
 
 ## Context
 
@@ -66,29 +66,47 @@ the established screen-local boundary for markup policy.
 ### Structural enforcement
 
 `Tests/UI/test_watchlists_check_now_failure.py` gains an AST audit over
-synchronous class methods on `WatchlistsCollectionsScreen`. For every
-`except` handler that calls a debug logger, the test requires one of:
+synchronous class methods on `WatchlistsCollectionsScreen`, including local
+functions nested inside those methods. Each handler is identified by a stable
+handler key: its qualified owner path plus the literal debug message it emits.
+The scanner rejects duplicate keys so a second same-message handler cannot hide
+behind an existing exemption.
 
-1. a call to `_notify_watchlists` with an explicit severity and
-   `markup=False` in that same handler; or
-2. the owning method appears in a test-local exemption mapping with a non-empty
-   reason.
+For every `except` handler that calls `logger.debug(...)` or
+`logger.opt(...).debug(...)`, the test requires one of:
 
-The current exemption mapping records:
+1. a call to `self._notify_watchlists` with literal `severity="error"` and
+   `markup=False` in that exact handler; or
+2. that exact handler key appears in a test-local exemption mapping with a
+   non-empty reason.
 
-| Method | Reason |
+The scanner does not descend from one handler into nested exception handlers,
+functions, lambdas, or classes when attributing its logger and notifier calls.
+That boundary prevents a notifier in a child scope or sibling handler from
+satisfying the handler under audit. A logger call qualifies only when its call
+chain is rooted at the module's `logger` name and ends in `.debug`.
+
+After notified handlers are removed, the discovered handler keys must equal the
+exemption mapping's keys exactly. Missing entries fail as unhandled policy
+violations; stale entries fail as obsolete exemptions. The current exemptions
+are:
+
+| Handler key | Reason |
 | --- | --- |
-| `_read_tree_data_snapshot` | Failed branches are published in `TreeDataSnapshot.failures`; `_load_tree_data` emits one error toast per failure episode. |
-| `_recompute_effective_layout` | An absent workbench is a normal pre-compose lifecycle state, not a failed data read. |
-| `_schedule_layout_persist` | This is preference-write scheduling, outside the synchronous loader policy. |
-| `_persist_layout_worker` | This is a background preference writer/acknowledger, outside the synchronous loader policy. |
-| `_restore_focus_after_swap` | A missing rebuilt tab is a lifecycle fallback with no data-read failure to report. |
+| `_read_tree_data_snapshot.read_branch` + `Failed to load watchlists tree branch: {}.` | Failed branches are published in `TreeDataSnapshot.failures`; `_load_tree_data` emits one error toast per failure episode. |
+| `_read_tree_data_snapshot` + `Failed to load Watchlists tree membership.` | The membership failure is published in the same snapshot failure set and paid for by `_load_tree_data`'s episode-level toast. |
+| `_recompute_effective_layout` + `Workbench not mounted yet; layout applies on compose.` | This preserved broad layout-request fallback covers lookup, token creation, and workbench layout application; it is lifecycle/layout handling rather than a data loader and remains outside this policy. |
+| `_schedule_layout_persist` + `Could not schedule preferred Watchlists layout persistence.` | This is preference-write scheduling, outside the synchronous loader policy. |
+| `_persist_layout_worker` + `Failed to persist preferred Watchlists pane layout.` | This is a background preference writer, outside the synchronous loader policy. |
+| `_persist_layout_worker` + `Could not acknowledge preferred Watchlists layout write.` | This is the preference writer's UI-thread acknowledgement path, outside the synchronous loader policy. |
+| `_restore_focus_after_swap` + `No section tab to restore focus to after the swap.` | A missing rebuilt tab is a lifecycle fallback with no data-read failure to report. |
 
 The two source loaders are intentionally absent from the exemptions. A future
 synchronous debug-swallow handler fails the contract until its author either
-adds a markup-safe toast or documents why it is not a user-visible loader
-failure. This keeps exemptions reviewable while avoiding an over-broad rule
-that treats every lifecycle miss as an error.
+adds a markup-safe error toast in the same handler or documents that precise
+handler's reason for exclusion. Exact inventory equality keeps exemptions
+reviewable and prevents an exempt method from silently accumulating unrelated
+handlers.
 
 ### Regression coverage
 
@@ -115,9 +133,9 @@ The original TASK-1090 synchronous list resolves as follows on current `dev`:
 - `_resolve_breadcrumb_labels`: no longer catches failures; no change.
 - `_refresh_feeds_region_for_scope`: removed; no change.
 
-The broader AST inventory finds the five exempt method owners listed above.
-None is a synchronous source loader that renders failure as an honestly empty
-data region.
+The broader AST inventory finds the seven exempt handlers listed above across
+five method owners. None is a synchronous source loader that renders failure as
+an honestly empty data region.
 
 ## Verification Scope
 

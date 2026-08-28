@@ -35,8 +35,10 @@ loaders sit outside its enforcement by construction.
       code: `_resolve_breadcrumb_labels` has no failure handler and
       `_refresh_feeds_region_for_scope` no longer exists.
 - [ ] A structural test rejects new synchronous debug-swallow handlers unless
-      they notify with `markup=False` in the same handler or are listed with a
-      non-empty, current exemption reason.
+      they notify with literal `severity="error"` and `markup=False` in that
+      exact handler or the handler-level key is listed with a non-empty,
+      current exemption reason; discovered and exempt inventories must match
+      exactly so stale and missing exemptions both fail.
 - [ ] Mounted regressions prove both affected loaders retain their empty
       fallback and emit exactly one markup-disabled error toast without
       leaking sentinel exception content.
