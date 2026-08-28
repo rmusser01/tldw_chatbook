@@ -56,11 +56,11 @@ Reason: verifies ADR-086 without changing its storage, service-authority, securi
 
 <!-- SECTION:NOTES:BEGIN -->
 Closed the cross-reader verification matrix against subject
-`02bb98c201a252966fd566f4b8395761c1ee780a`, tree
-`d1f9c8c9501ac35d20b05bd6f91404f0c6d9b2f9`. The retained TASK-23019 bundle records 60
+`30de39ffd3f92d486b7acf7bdeb9824301591110`, tree
+`08ecf9874a8924c7d605712aa15ac52abd9ac286`. The retained TASK-23019 bundle records 60
 automated and 32 live PASS results, 92 fact files, and 16 captures across all five readers and
 the 160x50 / 120x35 / 100x30 / 80x24 live matrix. `hashes.json` covers 114 files with SHA-256;
-`manifest.json` hashes to `2c783081b667885b28e656501570ef298e1d8c57f19795576bfd8cb705de8a42`
+`manifest.json` hashes to `e9dd69fc19c09f60193b267926da1bd0fa3ba61c5bee1994b9f79f13a2506ba9`
 and `summary.json` to `b9fdf4e2f9ed1a4a8b79aaf4e3412f16811a225231f16ba00eaeb34c402c7866`.
 
 The task-local runner, child containment boundary, live scenarios, and closeout tests provide the
@@ -71,11 +71,12 @@ Qodo review repairs retain dirty create-prompt drafts when navigation is vetoed,
 boundary and parser contract, and explicitly prove that F6 skips a collapsed Library rail. The
 post-rebase production sweep also exposed a pristine-dev Chat/Library/Skills import cycle; the
 localized lazy title-helper proxy preserves the public monkeypatch seam while removing the eager
-package cycle. The 490-test closeout module passed at code parent `7a25394873`; the frozen evidence
-subject differs only by removal of the superseded retained bundle. The exact 60-result automated
-matrix and all 32 live results passed on the frozen subject, and the exact verifier passed twice
-without creating bytecode or changing the evidence inventory. No product schema, reader capability,
-service authority, or shell design changed.
+package cycle. The 490-test closeout module passed on the latest-dev rebased tree at `7a25394873`;
+after the duplicate-proxy reconciliation, the five focused validation tests and Ruff passed. The
+frozen evidence subject differs only by removal of the superseded retained bundle. The exact
+60-result automated matrix and all 32 live results passed on the frozen subject, and the exact
+verifier passed twice without creating bytecode or changing the evidence inventory. No product
+schema, reader capability, service authority, or shell design changed.
 
 Generated compositor text/SVG captures retain terminal-column padding by design and are therefore
 excluded from whitespace-only diff checking; their exact bytes remain covered by `hashes.json`.
