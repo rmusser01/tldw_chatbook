@@ -255,30 +255,52 @@ Expected: FAIL because Refresh never reaches the screen, `_load_runs()` publishe
 
 - [ ] **Step 3: Add refresh state and the message dispatcher**
 
-In `__init__`, add only:
+In `__init__`, add separate ownership for authoritative list work and periodic
+ticks:
 
 ```python
 self._runs_refresh_generation = 0
+self._pending_runs_refresh_generation: int | None = None
+self._run_tick_generation = 0
 ```
 
-Import and handle `RefreshRunsRequested`. Centralize toolbar and Re-run completion on one dispatcher:
+Import and handle `RefreshRunsRequested`. Route initial/deep-link list loads and
+explicit toolbar refreshes through the same authoritative ownership helpers;
+Re-run completion may request a refresh through the toolbar dispatcher:
 
 ```python
 def _request_runs_refresh(self) -> None:
-    self._runs_refresh_generation += 1
-    generation = self._runs_refresh_generation
+    generation = self._begin_runs_refresh()
     backend = self.runtime_backend
     selected = self.selected_run
-    selected_id = selected.get("id") if selected else None
     self.run_worker(
-        self._refresh_runs_snapshot(
-            runtime_backend=backend,
-            selected_id=selected_id,
+        self._track_runs_refresh(
+            self._refresh_runs(
+                backend=backend,
+                selected_run_id=self._raw_run_id(selected),
+                generation=generation,
+                # Capture the remaining selection/identity inputs here too.
+            ),
             generation=generation,
         ),
         exclusive=True,
         group="wc_runs",
     )
+
+def _begin_runs_refresh(self) -> int:
+    self._runs_refresh_generation += 1
+    generation = self._runs_refresh_generation
+    self._pending_runs_refresh_generation = generation
+    self._run_tick_generation += 1  # invalidate every older tick
+    return generation
+
+async def _track_runs_refresh(self, request, *, generation: int) -> None:
+    try:
+        await request
+    finally:
+        # A superseded worker must not clear the newer owner's pending marker.
+        if self._pending_runs_refresh_generation == generation:
+            self._pending_runs_refresh_generation = None
 ```
 
 `handle_refresh_runs_requested()` stops the message and calls this dispatcher.
@@ -318,13 +340,19 @@ Extract the raw id from a normalized `backend:watchlist_run:<id>` using the exis
 
 - [ ] **Step 5: Keep initial/deep-link loading intact**
 
-Do not replace the mount/deep-link semantics of `_load_runs()`. Share a small row-publication or raw-id helper if useful, but preserve:
+Do not replace the mount/deep-link semantics of `_load_runs()`. Share a small
+row-publication or raw-id helper if useful, and make `_load_runs()` claim and
+release the same authoritative list ownership as explicit Refresh, while
+preserving:
 
 - pending deep-link reconciliation;
 - the pre-mount awaited detail load documented at lines 6865-6873;
 - the existing failure notification for an initial load.
 
-The explicit toolbar path alone gets snapshot retention and generation supersession.
+Explicit Refresh gets snapshot retention. Both initial/deep-link loads and
+explicit Refresh get authoritative generation supersession, owner-checked
+pending cleanup, and tick invalidation; periodic ticks keep their separate
+newest-wins epoch and do not start while authoritative list work is pending.
 
 - [ ] **Step 6: Add the missing grouped detail boundary**
 
