@@ -1,6 +1,6 @@
 # Console Provider Apply, Conversation Persistence, and Defaults Design
 
-**Status:** Draft — design approved; written-spec review pending
+**Status:** Design approved; independent spec review passed; awaiting final written-spec approval
 **Date:** 2026-08-27
 **Task:** TASK-22515
 **ADR:** ADR-095
@@ -79,7 +79,12 @@ One conversation-settings Apply orchestrator accepts a typed intent containing:
   the user left the scoped checkbox enabled.
 
 The orchestrator validates that the origin still exists and still has the captured
-conversation identity. It delegates provider rebasing to one controller seam and
+conversation identity. A chat that was unsaved when the surface opened may complete
+its normal first-persistence transition from no conversation ID to its newly created
+ID without being treated as rebound; every other identity change is rejected. The
+session-lifecycle seam must distinguish that first-persistence bind from an explicit
+rebind rather than accepting every `None` → ID transition. It delegates provider
+rebasing to one controller seam and
 compaction to the existing context-policy store seam, then applies both live values
 to the exact session before yielding. It increments the relevant process-local
 revisions, synchronizes the Console summary/control bar immediately, and starts the
@@ -453,59 +458,62 @@ Focused tests cover:
 3. Dismissal before deferred fold-hint synchronization does not raise `NoMatches`.
 4. Invalid temperature remains open and shows an inline error.
 5. Applying while another session becomes active updates only the captured origin.
-6. A consumer resolving settings after Apply receives the new values; an already
+6. An unsaved origin that receives its first conversation ID while the settings
+   surface is open remains the valid origin, while an explicitly rebound session is
+   rejected.
+7. A consumer resolving settings after Apply receives the new values; an already
    captured execution context remains unchanged.
-7. Quick and full Settings round-trip safe generation fields through the shared
+8. Quick and full Settings round-trip safe generation fields through the shared
    orchestration and restart hydration, while compaction round-trips through its
    existing context-policy owner.
-8. Provider switching begins with a non-null old endpoint and proves that endpoint
+9. Provider switching begins with a non-null old endpoint and proves that endpoint
    is not retained.
-9. Metadata writes preserve speech, roleplay, prefill, and unrelated sibling keys;
+10. Metadata writes preserve speech, roleplay, prefill, and unrelated sibling keys;
    bounded conflict retry cannot let an older Apply overwrite a newer one.
-10. Corrupt and future-version overlays fail closed without destructive overwrite.
-11. Generation-settings-only, context-policy-only, and dual persistence failures
+11. Corrupt and future-version overlays fail closed without destructive overwrite.
+12. Generation-settings-only, context-policy-only, and dual persistence failures
     close the modal, retain both live values, identify the failed components
     persistently, and clear only the successfully retried current components.
-12. Unsaved-first-persistence and temporary-promotion flows stage both components
+13. Unsaved-first-persistence and temporary-promotion flows stage both components
     and surface any later component-specific failure.
-13. The quick popover retains and returns compaction mode; changing it preserves all
+14. The quick popover retains and returns compaction mode; changing it preserves all
     other context-policy overrides and full Settings Context behavior.
-14. A newer non-compaction context-policy edit supersedes a failed policy snapshot;
+15. A newer non-compaction context-policy edit supersedes a failed policy snapshot;
     Retry cannot restore any value from the obsolete snapshot.
-15. Selecting a different model under the same provider rebases untouched fields
+16. Selecting a different model under the same provider rebases untouched fields
     from that exact model profile while preserving and marking deliberate edits.
-16. Provider/model A → B → A restores A's unfinished keyed draft and never revives
+17. Provider/model A → B → A restores A's unfinished keyed draft and never revives
     fields unsupported by B.
-17. `Full settings…` transfers the complete quick draft, compaction draft, field
+18. `Full settings…` transfers the complete quick draft, compaction draft, field
     provenance, and exact origin without applying or losing edits.
-18. Quick `Save as model default` changes only temperature and streaming for the
+19. Quick `Save as model default` changes only temperature and streaming for the
     exact provider/model and preserves every sibling profile and advanced field.
-19. Full `Save as model default` changes all supported exposed profile fields;
+20. Full `Save as model default` changes all supported exposed profile fields;
     blank deletes the exact override and conversation Apply freezes the resolved
     effective value. Streaming covers Inherit, On, and Off.
-20. `Make default for new chats` atomically patches the exact model profile plus
+21. `Make default for new chats` atomically patches the exact model profile plus
     global provider/model, without changing compaction, credentials, or unrelated
     provider settings.
-21. Ctrl+T, temporary, workspace-created, and initial pristine blank chats observe
+22. Ctrl+T, temporary, workspace-created, and initial pristine blank chats observe
     the saved global provider/model and exact model profile immediately after runtime
     publication and after restart.
-22. Existing/open conversations remain unchanged, while Duplicate, Branch,
+23. Existing/open conversations remain unchanged, while Duplicate, Branch,
     Continue, and explicit handoff intents retain their source-specific behavior.
-23. A blocked provider cannot become the new-chat default and explains why the
+24. A blocked provider cannot become the new-chat default and explains why the
     action is unavailable.
-24. Only a full, explicitly dirty, checked endpoint is included in `Make default for
+25. Only a full, explicitly dirty, checked endpoint is included in `Make default for
     new chats`; quick actions and `Save as model default` never persist endpoints.
-25. Endpoint previews remove credentials and URL details, classify loopback/private/
+26. Endpoint previews remove credentials and URL details, classify loopback/private/
     public literals correctly, conservatively label other hostnames, and perform no
     DNS lookup.
-26. Concurrent exact-model config patches preserve sibling models, unexposed fields,
+27. Concurrent exact-model config patches preserve sibling models, unexposed fields,
     and newer unrelated edits, including literal model IDs with punctuation.
-27. Before-replace failure exposes `Retry default save` / `Discard retry`; successful
+28. Before-replace failure exposes `Retry default save` / `Discard retry`; successful
     file replacement plus publication failure exposes cache-only `Refresh running
     app` / `Dismiss` and never repeats the disk write.
-28. Ordinary conversation Apply preserves an earlier app-global default failure;
+29. Ordinary conversation Apply preserves an earlier app-global default failure;
     a newer explicit default action supersedes it without stale overwrite.
-29. The main footer and Defaults substate fit and retain complete keyboard focus/tab
+30. The main footer and Defaults substate fit and retain complete keyboard focus/tab
     order at 60×24 and 72×24; mouse and Enter activate each committing action once,
     and hierarchical Escape preserves or cancels the draft as specified.
 

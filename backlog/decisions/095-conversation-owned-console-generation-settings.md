@@ -1,6 +1,6 @@
 # ADR-095: Own Console conversation settings and explicit defaults separately
 
-Status: Proposed
+Status: Accepted
 Date: 2026-08-27
 Related Task: TASK-22515
 Extends: ADR-006, ADR-033, and ADR-052
