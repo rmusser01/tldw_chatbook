@@ -9733,3 +9733,23 @@ terminalizing, or replaying it. For durable claim ownership, test with distinct
 database connections and coordinators, capture the loser's startup boundary
 before the winner creates its row, block the winner after one observable side
 effect, and prove the loser cannot mutate the row or repeat the effect.
+
+---
+
+## A boolean config-save result cannot describe a partial commit (TASK-22864, 2026-08-28)
+
+The new briefing-schedule gate initially used the compatibility helper that
+returns only `True` or `False`. Independent review forced cache publication to
+fail after the real atomic file replacement. The helper returned `False`, so
+Settings said nothing changed and left the live scheduler disabled even though
+the TOML already contained the enabled gate. A follow-up interaction then found
+the inverse problem: a live-apply failure left an enabled “Enable” action whose
+next press derived from persisted state and disabled the saved gate.
+
+For user-facing configuration, the atomic replacement is a commit boundary.
+Consume the structured mutation result and distinguish before-replace failure,
+file-replaced-but-not-published, and fully applied outcomes. Test each branch
+against a real temporary config file, the live runtime owner, rendered recovery
+copy, and the next user action. When durable and live state diverge, either base
+the action on one authoritative live state or lock it behind the stated restart
+recovery; never infer “unchanged” from a lossy boolean wrapper.
