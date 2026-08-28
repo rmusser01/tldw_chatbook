@@ -45,6 +45,7 @@ from ...Tools.raw_cli_executor import (
 from ...Widgets.Console.console_composer_bar import (
     ConsoleDraftStash,
     classify_console_raw_draft,
+    unescape_console_raw_chat_stash,
 )
 
 _EMPTY_REFUSAL = "Raw CLI command is empty. The exact draft was restored."
@@ -111,6 +112,68 @@ def restore_refused_raw_cli_stash(
     if active_session_id != session_id or visible_session_id != session_id:
         return False
     composer.restore_stashed_draft(stash)
+    return True
+
+
+def prepare_visible_send(
+    stash: ConsoleDraftStash | None,
+    composer_accessor: Callable[[], Any | None],
+    start_user_command: Callable[[ConsoleDraftStash], Any],
+) -> tuple[ConsoleDraftStash | None, Any | None, str, bool]:
+    """Classify a visible draft and consume direct raw submissions."""
+    if stash is not None:
+        classified = classify_console_raw_draft(stash)
+        if classified.kind == "raw":
+            start_user_command(stash)
+            return stash, None, "", True
+        if classified.kind == "escaped_chat":
+            stash = unescape_console_raw_chat_stash(stash)
+    composer = composer_accessor()
+    if stash is None and composer is not None:
+        stash = composer.stash_raw_cli_draft_for_send()
+        if stash is None and composer.draft_text().startswith(r"\! "):
+            stash = composer.stash_draft_for_send()
+        if stash is not None:
+            classified = classify_console_raw_draft(stash)
+            if classified.kind == "raw":
+                start_user_command(stash)
+                return stash, composer, "", True
+            if classified.kind == "escaped_chat":
+                stash = unescape_console_raw_chat_stash(stash)
+    draft = (
+        stash.text
+        if stash is not None
+        else (composer.draft_text() if composer is not None else "")
+    )
+    if stash is None and draft.startswith(r"\! "):
+        draft = draft[1:]
+    return stash, composer, draft, False
+
+
+def handle_raw_cli_message_action(controller: Any, event: Any, store: Any) -> bool:
+    """Consume a raw-command Stop action; leave other actions untouched."""
+    button_id = event.button.id or ""
+    action_id = getattr(event.button, "console_action_id", None)
+    message_id = getattr(event.button, "console_message_id", None)
+    prefix = "console-message-action-raw-cli-stop-"
+    if action_id != "raw-cli-stop" and not button_id.startswith(prefix):
+        return False
+    if not isinstance(message_id, str):
+        message_id = button_id.removeprefix(prefix)
+    event.stop()
+    session_id = store.active_session_id
+    if session_id is None:
+        return True
+    marker = next(
+        (
+            message
+            for message in store.messages_for_session(session_id)
+            if message.id == message_id and message.raw_cli_presentation is not None
+        ),
+        None,
+    )
+    if marker is not None:
+        controller.stop_user_command(marker)
     return True
 
 
@@ -830,4 +893,9 @@ class ConsoleRawCliController:
         return len(stashes)
 
 
-__all__ = ["ConsoleRawCliController", "restore_refused_raw_cli_stash"]
+__all__ = [
+    "ConsoleRawCliController",
+    "handle_raw_cli_message_action",
+    "prepare_visible_send",
+    "restore_refused_raw_cli_stash",
+]

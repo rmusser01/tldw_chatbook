@@ -432,8 +432,6 @@ def test_legitimate_explicit_args_still_work():
 
 def test_real_resolve_log_root_prefers_workspace_over_sandbox(monkeypatch):
     """Test real resolve_log_root() calls and prefers workspace folder over sandbox root."""
-    from pathlib import Path
-
     tmp_sandbox = Path("/tmp/sandbox")
     tmp_workspace = Path("/tmp/workspace")
 
@@ -458,8 +456,6 @@ def test_real_resolve_log_root_prefers_workspace_over_sandbox(monkeypatch):
 
 def test_real_resolve_log_root_falls_back_to_sandbox_when_no_workspace(monkeypatch):
     """Test real resolve_log_root() falls back to sandbox root when no workspace folder bound."""
-    from pathlib import Path
-
     tmp_sandbox = Path("/tmp/sandbox")
 
     def mock_tool_sandbox_root():
@@ -483,8 +479,6 @@ def test_real_resolve_log_root_falls_back_to_sandbox_when_no_workspace(monkeypat
 
 def test_real_resolve_log_root_returns_none_on_exception(monkeypatch):
     """Test real resolve_log_root() returns None when underlying call raises."""
-    from pathlib import Path
-
     tmp_sandbox = Path("/tmp/sandbox")
 
     def mock_tool_sandbox_root():
@@ -719,7 +713,9 @@ def test_workspace_folder_outside_the_sandbox_also_gets_dotted_and_hidden(
     # the positive control below to genuinely exercise the workspace root
     # (see Tests/Agents/test_run_log_workspace_isolation.py's
     # `_workspace_seams` docstring for the full explanation).
-    fake_roots = lambda write=False, sandbox_root=None: (sandbox_root, workspace_folder)
+    def fake_roots(write=False, sandbox_root=None):
+        return sandbox_root, workspace_folder
+
     monkeypatch.setattr(ws_roots, "allowed_file_roots", fake_roots)
     monkeypatch.setattr(file_tools, "allowed_file_roots", fake_roots)
 

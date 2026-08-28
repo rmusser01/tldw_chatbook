@@ -1,6 +1,6 @@
 """Chat screen implementation with comprehensive state management."""
 
-from collections.abc import Awaitable, Callable, Mapping, Sequence
+from collections.abc import Awaitable, Callable, Mapping
 from collections.abc import Set as AbstractSet
 from contextlib import contextmanager
 from dataclasses import dataclass, replace
@@ -131,6 +131,7 @@ from ..Console_Modules.retrieval import (
 )
 from ..Console_Modules.transcript import _ConsoleTranscriptReadingState
 from ..Console_Modules.wiring import build_console_controllers
+from ..Console_Modules import raw_cli as raw_cli_ui
 from ..Console_Modules.session import (
     _has_selected_text,
     _is_empty_select_value,
@@ -161,6 +162,7 @@ from ...Chat.console_cost_tracker import (
     build_cost_rows_totals,
     build_cost_snapshot,
     build_cost_state,
+    console_cost_snapshot_messages,
     fingerprint_break_reason,
     token_estimate_signature,
 )
@@ -413,10 +415,6 @@ from ...Widgets.Console import (
 from ...Widgets.Console.console_control_bar import (
     ConsoleAutoSpeakRetryRequested,
     ConsoleAutoSpeakResumeRequested,
-)
-from ...Widgets.Console.console_composer_bar import (
-    classify_console_raw_draft,
-    unescape_console_raw_chat_stash,
 )
 from ...Widgets.Console.console_speech_controls import (
     ConsoleAutoSpeakChanged,
@@ -1024,15 +1022,6 @@ CONSOLE_WORKBENCH_SHORTCUTS_SETUP_BLOCKED = tuple(
     for pair in CONSOLE_WORKBENCH_SHORTCUTS
 )
 
-
-def _console_cost_snapshot_messages(messages: Sequence[Any]) -> list[Any]:
-    """Keep only finalized provider transcript rows in cost summaries."""
-    return [
-        message
-        for message in messages
-        if getattr(message, "status", "complete") not in {"pending", "streaming"}
-        and getattr(message, "raw_cli_presentation", None) is None
-    ]
 #: TASK-362: the full Console keyboard vocabulary for the F1 help panel, grouped
 #: by surface. The flat CONSOLE_WORKBENCH_SHORTCUTS above stays the compact
 #: footer set; the transcript j/k/c/e/r keys, F2, Shift+Enter and Alt+M were
@@ -5144,11 +5133,6 @@ class ChatScreen(BaseAppScreen):
                     self._session._build_console_turn_execution_context
                 ),
                 provider_config=self._provider_readiness_app_config,
-                cancel_raw_cli_session=getattr(
-                    getattr(self.app_instance, "raw_cli_runtime", None),
-                    "cancel_session",
-                    None,
-                ),
             )
         # task-15860: every screen-owned slot on the controller, the store
         # and the wake coordinator is (re)bound HERE, through the single
@@ -6608,21 +6592,9 @@ class ChatScreen(BaseAppScreen):
                 self._console_cost_cache_state = ConsoleCacheState.NONE
                 return None
 
-            # Spec: "No mid-stream cost animation -- the chip updates at
-            # message completion." `messages_for_session` materializes
-            # buffered stream chunks straight into `.content` (so the
-            # transcript can render live text), and this method is called
-            # from the same 0.2s tick that drives that materialization --
-            # so an in-flight row (no `usage` yet) would otherwise get a
-            # bigger `_estimate_tokens_locally` estimate on every tick,
-            # visibly growing the chip while the reply streams in. `{
-            # "pending", "streaming"}` is the store's own established
-            # "not yet finalized" status set (see e.g.
-            # ``ConsoleChatStore._validate_can_mark_terminal``); excluding
-            # it here freezes the snapshot at its pre-send total until the
-            # row lands as "complete"/"stopped"/"failed" (all of which bump
-            # the payload revision and stop changing further).
-            snapshot_messages = _console_cost_snapshot_messages(messages)
+            # Keep the chip stable until provider rows finish; direct raw
+            # commands are local actions and never provider-billed rows.
+            snapshot_messages = console_cost_snapshot_messages(messages)
             # task-6: staged (not-yet-sent) evidence used to be invisible to
             # the cost chip entirely -- `ConsoleStagedSource` carries no
             # text, so a session with zero messages but several staged
@@ -12962,39 +12934,11 @@ class ChatScreen(BaseAppScreen):
         # keypress; the mouse path still reads the live draft here.
         stash = self._console_pending_send_stash
         self._console_pending_send_stash = None
-        if stash is not None:
-            raw_draft = classify_console_raw_draft(stash)
-            if raw_draft.kind == "raw":
-                self._raw_cli.start_user_command(stash)
-                return False
-            if raw_draft.kind == "escaped_chat":
-                stash = unescape_console_raw_chat_stash(stash)
-        composer = self._console_composer_or_none()
-        if stash is None and composer is not None:
-            stash = composer.stash_raw_cli_draft_for_send()
-            if stash is None and composer.draft_text().startswith(r"\! "):
-                stash = composer.stash_draft_for_send()
-            if stash is not None:
-                raw_draft = classify_console_raw_draft(stash)
-                if raw_draft.kind == "raw":
-                    self._raw_cli.start_user_command(stash)
-                    return False
-                if raw_draft.kind == "escaped_chat":
-                    stash = unescape_console_raw_chat_stash(stash)
-        if composer is None:
-            try:
-                composer = self.query_one(
-                    "#console-native-composer", ConsoleComposerBar
-                )
-            except QueryError:
-                composer = None
-        draft = (
-            stash.text
-            if stash is not None
-            else (composer.draft_text() if composer is not None else "")
+        stash, composer, draft, raw_cli_handled = raw_cli_ui.prepare_visible_send(
+            stash, self._console_composer_or_none, self._raw_cli.start_user_command
         )
-        if stash is None and draft.startswith(r"\! "):
-            draft = draft[1:]
+        if raw_cli_handled:
+            return False
         if not draft.strip() and self._console_pending_image_attachment() is None:
             if composer is not None:
                 composer.restore_stashed_draft(stash)
@@ -14480,29 +14424,9 @@ class ChatScreen(BaseAppScreen):
         under the original name for `on_button_pressed` and the
         pre-existing test suite's direct-call convention -- see
         `message.py`'s module docstring."""
-        button_id = event.button.id or ""
-        action_id = getattr(event.button, "console_action_id", None)
-        message_id = getattr(event.button, "console_message_id", None)
-        prefix = "console-message-action-raw-cli-stop-"
-        if action_id == "raw-cli-stop" or button_id.startswith(prefix):
-            if not isinstance(message_id, str):
-                message_id = button_id.removeprefix(prefix)
-            event.stop()
-            store = self._ensure_console_chat_store()
-            session_id = store.active_session_id
-            if session_id is None:
-                return True
-            marker = next(
-                (
-                    message
-                    for message in store.messages_for_session(session_id)
-                    if message.id == message_id
-                    and message.raw_cli_presentation is not None
-                ),
-                None,
-            )
-            if marker is not None:
-                self._raw_cli.stop_user_command(marker)
+        if raw_cli_ui.handle_raw_cli_message_action(
+            self._raw_cli, event, self._ensure_console_chat_store()
+        ):
             return True
         return await self._message.handle_console_message_action(event)
 

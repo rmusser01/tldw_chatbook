@@ -73,4 +73,9 @@ The final focused suite passed 341 tests with four expected native-Windows skips
 and mounted execution verified real stdout/stderr, transcript Stop, Disarm
 cancellation, proven cleanup, durable `local_command` rows, and restart unarmed.
 The incident is recorded in `backlog/docs/lessons-live-verification.md`.
+
+The final rebase onto `dev` moved raw draft/Stop policy behind the existing
+Console module boundary, kept provider-cost filtering with the cost tracker,
+and preserved the tightened `ChatScreen` size ratchet. Extended focused
+verification passed 780 tests with four expected native-Windows skips.
 <!-- SECTION:NOTES:END -->

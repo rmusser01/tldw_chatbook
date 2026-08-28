@@ -825,6 +825,11 @@ class ConsoleRuntime:
 
         kwargs.setdefault("buddy_sink", self.persona_buddy_sink)
         kwargs.setdefault("scratch_spaces", self._scratch_spaces)
+        raw_cli_runtime = getattr(self._app, "raw_cli_runtime", None)
+        kwargs.setdefault(
+            "cancel_raw_cli_session",
+            getattr(raw_cli_runtime, "cancel_session", None),
+        )
         self._chat_controller = ConsoleChatController(**kwargs)
         if self.view is None:
             # task-15860 Task 4: a runtime can be VIEWLESS FROM BIRTH, not

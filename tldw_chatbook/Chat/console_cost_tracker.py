@@ -47,6 +47,21 @@ from tldw_chatbook.LLM_Calls.pricing_catalog import get_pricing_catalog
 #
 
 
+def console_cost_snapshot_messages(messages: Sequence[Any]) -> list[Any]:
+    """Keep only finalized provider rows in cost summaries.
+
+    Streaming content is materialized for live transcript display, but the cost
+    chip must remain stable until that row reaches a terminal status. Direct
+    raw-command markers carry no provider usage and are excluded completely.
+    """
+    return [
+        message
+        for message in messages
+        if getattr(message, "status", "complete") not in {"pending", "streaming"}
+        and getattr(message, "raw_cli_presentation", None) is None
+    ]
+
+
 class ConsoleCacheState(str, Enum):
     """Prompt-cache state for the active Console session, as seen by the chip."""
 

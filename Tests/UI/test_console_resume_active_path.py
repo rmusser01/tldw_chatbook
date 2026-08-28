@@ -29,6 +29,7 @@ from tldw_chatbook.Chat.console_chat_models import (
     ConsoleMessageRole,
 )
 from tldw_chatbook.Chat.console_chat_store import ConsoleChatSession, ConsoleChatStore
+from tldw_chatbook.Chat.console_cost_tracker import console_cost_snapshot_messages
 from tldw_chatbook.Chat.console_session_settings import ConsoleSessionSettings
 from tldw_chatbook.Chat.console_turn_grouping import (
     group_console_transcript_messages,
@@ -42,7 +43,6 @@ from tldw_chatbook.UI.Console_Modules.review_selection import (
 from tldw_chatbook.UI.Console_Modules.session import ConsoleSessionController
 from tldw_chatbook.UI.Screens.chat_screen import (
     ChatScreen,
-    _console_cost_snapshot_messages,
 )
 
 from Tests.UI.test_destination_shells import _build_test_app
@@ -837,7 +837,7 @@ def test_resume_restores_an_empty_transcript_row_and_its_explanation():
     writes so the row can be durably created at all (the DB layer refuses a
     message with neither text nor an image, so a metadata-only "empty"
     record could never survive to be resumed)."""
-    from tldw_chatbook.UI.Screens.chat_screen import (
+    from tldw_chatbook.UI.Console_Modules.realtime import (
         CONSOLE_REALTIME_EMPTY_TRANSCRIPT_PLACEHOLDER,
     )
 
@@ -1463,4 +1463,4 @@ def test_local_command_is_ignored_by_trajectory_rails_fleet_and_cost(tmp_path):
         content="ordinary",
     )
     (marker,) = bridge.resume_marker_messages(conversation_id)[0][1]
-    assert _console_cost_snapshot_messages([ordinary, marker]) == [ordinary]
+    assert console_cost_snapshot_messages([ordinary, marker]) == [ordinary]
