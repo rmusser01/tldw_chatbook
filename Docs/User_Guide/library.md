@@ -561,3 +561,17 @@ Media's Items list no longer rebuilds the Reader's document body per
 keystroke; the "Loading preview…" banner paints and clears in place, and
 only the row you settle on renders its document, once. Behavior of the
 settle delay, Read/Analysis/Highlights/Info modes, and Find is unchanged.)*
+
+*Verified against feat/task-22500-reader-virtualization (dev @ 732105c2d) —
+2026-08-26 (TASK-22500, performance — no workflow changes: the Reader's Raw
+text view now paints only the rows in view instead of the whole document.
+On a 2.5 MB document this cuts first paint from roughly 2.3 seconds to
+under a millisecond of render cost, and every search keystroke or
+Prev/Next match click from roughly 1.7 seconds to under a millisecond;
+opening the reader still pays a one-time indexing cost proportional to
+document size (under 150 ms even at 2.5 MB) whenever the pane is resized.
+Scrolling, search highlighting, match navigation, and click-drag text
+selection behave the same as before. The Rendered (Markdown) view was
+measured but not changed by this task — very large documents opened in
+Rendered mode remain slow to first paint; tracked separately in
+TASK-22660.)*
