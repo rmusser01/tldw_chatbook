@@ -1,9 +1,11 @@
 ---
 id: TASK-17067
 title: Deduplicate workspace folder-root drift filtering in workspace_file_roots
-status: To Do
-assignee: []
+status: In Progress
+assignee:
+  - '@codex'
 created_date: '2026-08-17 19:59'
+updated_date: '2026-08-28 05:04'
 labels: []
 dependencies: []
 ---
