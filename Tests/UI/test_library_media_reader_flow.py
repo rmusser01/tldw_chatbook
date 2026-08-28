@@ -774,7 +774,9 @@ async def test_stale_detail_never_writes_progress_under_new_selected_id():
                 update_reading_progress=update_reading_progress
             )
         ),
-        query_one=lambda *_args, **_kwargs: SimpleNamespace(scroll_x=0, scroll_y=17),
+        query_one=lambda *_args, **_kwargs: SimpleNamespace(
+            scroller=SimpleNamespace(scroll_x=0, scroll_y=17)
+        ),
         run_worker=lambda coro, **_kwargs: workers.append(coro),
     )
     fake._run_library_service_call = run_service_call
@@ -814,7 +816,9 @@ def test_progress_restores_after_loaded_content_mounts():
         ),
         _library_media_read_scroll_by_id={"local:media:7": (2, 19)},
         query_one=lambda *_args, **_kwargs: SimpleNamespace(
-            scroll_to=lambda **kwargs: calls.append(kwargs)
+            scroller=SimpleNamespace(
+                scroll_to=lambda **kwargs: calls.append(kwargs)
+            )
         ),
     )
 
@@ -874,11 +878,12 @@ async def test_progress_loads_from_service_when_detail_has_no_embedded_progress(
 def test_mode_change_preserves_per_item_read_scroll_for_session():
     """Leaving and returning to Read uses the loaded item's session snapshot."""
     restored = []
-    body = SimpleNamespace(
+    scroller = SimpleNamespace(
         scroll_x=0,
         scroll_y=23,
         scroll_to=lambda **kwargs: restored.append(kwargs),
     )
+    body = SimpleNamespace(scroller=scroller)
     fake = SimpleNamespace(
         _library_media_reader_session=LibraryMediaReaderSessionState(
             selected_id="local:media:4",
@@ -1117,7 +1122,7 @@ def _progress_capture_fake(
             )
         ),
         query_one=lambda *_args, **_kwargs: SimpleNamespace(
-            scroll_x=0, scroll_y=scroll_y
+            scroller=SimpleNamespace(scroll_x=0, scroll_y=scroll_y)
         ),
         # Production run_worker returns a Worker that stays unfinished until
         # the drainer completes; the queue seam relies on that to spawn only
@@ -1175,7 +1180,8 @@ async def test_offset_burst_settles_only_the_newest_value_per_item():
         return await call(*args, **kwargs)
 
     workers: list = []
-    body = SimpleNamespace(scroll_x=0, scroll_y=5)
+    scroller = SimpleNamespace(scroll_x=0, scroll_y=5)
+    body = SimpleNamespace(scroller=scroller)
     fake = _progress_capture_fake(
         workers=workers,
         update_reading_progress=update_reading_progress,
@@ -1184,7 +1190,7 @@ async def test_offset_burst_settles_only_the_newest_value_per_item():
     fake.query_one = lambda *_args, **_kwargs: body
 
     for scroll_y in (5, 9, 17):
-        body.scroll_y = scroll_y
+        scroller.scroll_y = scroll_y
         LibraryScreen._capture_library_media_loaded_progress(fake)
     # The drainer had no chance to run during the burst (the fake
     # run_worker defers); drain now and require last-write-wins.
