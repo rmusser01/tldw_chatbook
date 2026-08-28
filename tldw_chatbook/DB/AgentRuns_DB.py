@@ -1,4 +1,4 @@
-"""SQLite persistence for agent run records (primary + sub-agent).
+"""SQLite persistence for run records keyed by an unconstrained kind string.
 
 Follows the Workspace_DB pattern (task-3011 form): BaseDB with a
 thread-local held connection — the earlier per-call shape paid full
@@ -26,6 +26,7 @@ from tldw_chatbook.Agents.agent_models import (
     TERMINAL_RUN_STATUSES,
     validate_agent_definition,
 )
+from tldw_chatbook.Agents.run_log import DEFAULT_MAX_RECORD_BYTES
 from .base_db import BaseDB
 
 
@@ -38,6 +39,23 @@ def _now_iso() -> str:
 # is Python 3.11, which can ship either. 900 is under the OLD ceiling, so the
 # chunked read is correct on every build rather than on the newest one.
 _IN_CLAUSE_CHUNK = 900
+
+# JSON text can expand each live UTF-8 byte to a six-byte escape. These caps
+# bound Python allocation while accommodating every valid raw-CLI field.
+_LOCAL_COMMAND_CALL_ARGS_JSON_BYTES = 160 * 1024
+_LOCAL_COMMAND_RESULT_ARGS_JSON_BYTES = 256 * 1024
+_LOCAL_COMMAND_STEPS_JSON_BYTES = 1024
+_LOCAL_COMMAND_CALL_PAYLOAD_BYTES = 512 * 1024
+# JSON can expand one durable output byte to a six-byte ``\u00xx`` escape.
+# The remaining allowance covers the independently bounded result args and
+# fixed step envelope before SQLite parses the payload.
+_LOCAL_COMMAND_RESULT_PAYLOAD_BYTES = (
+    DEFAULT_MAX_RECORD_BYTES * 6
+    + _LOCAL_COMMAND_RESULT_ARGS_JSON_BYTES
+    + _LOCAL_COMMAND_STEPS_JSON_BYTES
+)
+_LOCAL_COMMAND_STATUS_BYTES = 16
+_LOCAL_COMMAND_CREATED_AT_BYTES = 64
 
 
 class AgentStepConflictError(ValueError):
@@ -1247,8 +1265,10 @@ class AgentRunsDB(BaseDB):
 
         Args:
             conversation_id: The owning Console conversation's id.
-            agent_kind: ``"primary"`` or ``"subagent"``.
-            task: The sub-agent's task text; ``None`` for a primary run.
+            agent_kind: Caller-owned kind, such as ``"primary"``,
+                ``"subagent"``, or ``"local_command"``.
+            task: A generic run label or sub-agent task; ``None`` when the
+                caller does not record one.
             parent_run_id: The parent run's id for a sub-agent; ``None``
                 for a primary run.
             budget: The run's ``RunBudget`` serialized to a dict, stored
@@ -1748,7 +1768,15 @@ class AgentRunsDB(BaseDB):
             orphan_ids = [
                 row["id"]
                 for row in conn.execute(
-                    "SELECT id FROM agent_runs WHERE status = 'running'"
+                    "SELECT id FROM agent_runs WHERE status = 'running' "
+                    "AND agent_kind IN ('primary', 'subagent')"
+                ).fetchall()
+            ]
+            local_orphan_ids = [
+                row["id"]
+                for row in conn.execute(
+                    "SELECT id FROM agent_runs WHERE status = 'running' "
+                    "AND agent_kind = 'local_command'"
                 ).fetchall()
             ]
             observed_at = _now_iso()
@@ -1766,6 +1794,13 @@ class AgentRunsDB(BaseDB):
                     "updated_at = ? WHERE id = ? AND status = 'running'",
                     (observed_at, run_id),
                 )
+            for run_id in local_orphan_ids:
+                conn.execute(
+                    "UPDATE agent_runs SET status = 'error', updated_at = ? "
+                    "WHERE id = ? AND status = 'running' "
+                    "AND agent_kind = 'local_command'",
+                    (observed_at, run_id),
+                )
             terminal_kind = {
                 "done": "agent_run_completed",
                 "cancelled": "agent_run_cancelled",
@@ -1774,7 +1809,8 @@ class AgentRunsDB(BaseDB):
                 "stuck": "agent_run_failed",
             }
             terminal_rows = conn.execute(
-                "SELECT id, status FROM agent_runs WHERE status != 'running'"
+                "SELECT id, status FROM agent_runs WHERE status != 'running' "
+                "AND agent_kind IN ('primary', 'subagent')"
             ).fetchall()
             split_rows = 0
             repaired_orphans = set(orphan_ids)
@@ -1797,7 +1833,7 @@ class AgentRunsDB(BaseDB):
                     },
                 )
                 split_rows += 1
-            rowcount = len(orphan_ids) + split_rows
+            rowcount = len(orphan_ids) + len(local_orphan_ids) + split_rows
         self._swept_paths.add(self.db_path_str)
         return rowcount
 
@@ -2015,8 +2051,8 @@ class AgentRunsDB(BaseDB):
                 runs (``ORDER BY created_at DESC, id DESC``). ``None``
                 (the default) returns every matching run, preserving prior
                 behavior.
-            agent_kind: When set (``"primary"`` or ``"subagent"``),
-                restricts to that kind IN THE QUERY -- e.g.
+            agent_kind: When set, restricts to that exact caller-owned kind
+                IN THE QUERY -- e.g.
                 ``search_run_log``'s ``scope="conversation"`` (task-1273
                 review finding A) wants only the conversation's PRIMARY
                 runs, and filtering here (rather than fetching everything
@@ -2066,8 +2102,8 @@ class AgentRunsDB(BaseDB):
             conversation_id: The conversation to count runs for.
             include_superseded: When ``False``, excludes runs whose status
                 is ``"superseded"`` -- mirrors ``list_runs``' own filter.
-            agent_kind: When set (``"primary"`` or ``"subagent"``),
-                restricts the count to that kind -- mirrors ``list_runs``'
+            agent_kind: When set, restricts the count to that exact
+                caller-owned kind -- mirrors ``list_runs``'
                 own filter. ``None`` (the default) counts every kind.
 
         Returns:
@@ -2083,6 +2119,208 @@ class AgentRunsDB(BaseDB):
         with self.connection() as conn:
             row = conn.execute(query, params).fetchone()
         return int(row["n"])
+
+    def local_command_resume_records(self, conversation_id: str) -> list[dict]:
+        """Return bounded structural projections for local-command markers.
+
+        SQL admits only the exact kind, exact two-step card shape, bounded
+        metadata, and bounded JSON ``args`` objects. It never selects the
+        full step payload or tool-result ``result``. The strict display
+        parser remains the canonical validator for every field inside those
+        bounded objects.
+        """
+        with self.connection() as conn:
+            rows = conn.execute(
+                """
+                WITH eligible_local_commands AS MATERIALIZED (
+                    SELECT
+                        ar.rowid AS run_rowid,
+                        ar.id,
+                        ar.status,
+                        ar.assistant_message_id,
+                        ar.created_at,
+                        call_step.rowid AS call_step_rowid,
+                        result_step.rowid AS result_step_rowid
+                    FROM agent_runs AS ar
+                    JOIN agent_run_steps AS call_step
+                      ON call_step.run_id = ar.id AND call_step.seq = 0
+                    JOIN agent_run_steps AS result_step
+                      ON result_step.run_id = ar.id AND result_step.seq = 1
+                    WHERE ar.conversation_id = ?
+                      AND ar.agent_kind = 'local_command'
+                      AND ar.status != 'superseded'
+                      AND typeof(ar.id) = 'text'
+                      AND length(CAST(ar.id AS BLOB)) BETWEEN 1 AND 128
+                      AND (
+                          ar.assistant_message_id IS NULL
+                          OR (
+                              typeof(ar.assistant_message_id) = 'text'
+                              AND length(CAST(
+                                  ar.assistant_message_id AS BLOB
+                              )) BETWEEN 1 AND 128
+                          )
+                      )
+                      AND typeof(ar.status) = 'text'
+                      AND length(CAST(ar.status AS BLOB))
+                          BETWEEN 1 AND ?
+                      AND typeof(ar.created_at) = 'text'
+                      AND length(CAST(ar.created_at AS BLOB))
+                          BETWEEN 1 AND ?
+                      AND typeof(ar.steps) = 'text'
+                      AND length(CAST(ar.steps AS BLOB))
+                          BETWEEN 2 AND ?
+                      AND typeof(call_step.payload) = 'text'
+                      AND length(CAST(call_step.payload AS BLOB))
+                          BETWEEN 2 AND ?
+                      AND typeof(result_step.payload) = 'text'
+                      AND length(CAST(result_step.payload AS BLOB))
+                          BETWEEN 2 AND ?
+                      AND (
+                          SELECT COUNT(*) FROM agent_run_steps AS all_steps
+                          WHERE all_steps.run_id = ar.id
+                      ) = 2
+                ), projected AS (
+                    SELECT
+                        CAST(eligible.id AS BLOB) AS id,
+                        CAST(eligible.status AS BLOB) AS status,
+                        CAST(eligible.assistant_message_id AS BLOB)
+                            AS assistant_message_id,
+                        eligible.created_at,
+                        CAST(json_extract(
+                            call_step.payload, '$.args'
+                        ) AS BLOB) AS call_args_json,
+                        CAST(json_extract(
+                            result_step.payload, '$.args'
+                        ) AS BLOB) AS result_args_json,
+                        CAST(json_extract(
+                            result_step.payload, '$.status'
+                        ) AS BLOB) AS result_status
+                    FROM eligible_local_commands AS eligible
+                    JOIN agent_runs AS ar ON ar.rowid = eligible.run_rowid
+                    JOIN agent_run_steps AS call_step
+                      ON call_step.rowid = eligible.call_step_rowid
+                    JOIN agent_run_steps AS result_step
+                      ON result_step.rowid = eligible.result_step_rowid
+                    WHERE json_valid(call_step.payload) = 1
+                      AND json_valid(result_step.payload) = 1
+                      AND CASE WHEN json_valid(ar.steps) = 1
+                               THEN json_type(ar.steps) END = 'array'
+                      AND CASE WHEN json_valid(ar.steps) = 1
+                               THEN json_array_length(ar.steps) END = 0
+                      AND json_type(call_step.payload, '$') = 'object'
+                      AND json_type(call_step.payload, '$.index') = 'integer'
+                      AND json_extract(call_step.payload, '$.index') = 0
+                      AND json_type(call_step.payload, '$.kind') = 'text'
+                      AND json_extract(call_step.payload, '$.kind') = 'tool_call'
+                      AND json_type(call_step.payload, '$.tool_name') = 'text'
+                      AND json_extract(call_step.payload, '$.tool_name') = 'raw_cli'
+                      AND json_type(call_step.payload, '$.args') = 'object'
+                      AND length(CAST(json_extract(
+                          call_step.payload, '$.args'
+                      ) AS BLOB)) BETWEEN 2 AND ?
+                      AND json_type(result_step.payload, '$') = 'object'
+                      AND json_type(result_step.payload, '$.index') = 'integer'
+                      AND json_extract(result_step.payload, '$.index') = 1
+                      AND json_type(result_step.payload, '$.kind') = 'text'
+                      AND json_extract(result_step.payload, '$.kind') = 'tool_result'
+                      AND json_type(result_step.payload, '$.tool_name') = 'text'
+                      AND json_extract(result_step.payload, '$.tool_name') = 'raw_cli'
+                      AND json_type(result_step.payload, '$.args') = 'object'
+                      AND length(CAST(json_extract(
+                          result_step.payload, '$.args'
+                      ) AS BLOB)) BETWEEN 2 AND ?
+                      AND json_type(result_step.payload, '$.status') = 'text'
+                      AND length(CAST(json_extract(
+                          result_step.payload, '$.status'
+                      ) AS BLOB)) BETWEEN 1 AND 16
+                )
+                SELECT
+                    id,
+                    status,
+                    assistant_message_id,
+                    call_args_json,
+                    result_args_json,
+                    result_status
+                FROM projected
+                ORDER BY created_at ASC, id ASC
+                """,
+                (
+                    conversation_id,
+                    _LOCAL_COMMAND_STATUS_BYTES,
+                    _LOCAL_COMMAND_CREATED_AT_BYTES,
+                    _LOCAL_COMMAND_STEPS_JSON_BYTES,
+                    _LOCAL_COMMAND_CALL_PAYLOAD_BYTES,
+                    _LOCAL_COMMAND_RESULT_PAYLOAD_BYTES,
+                    _LOCAL_COMMAND_CALL_ARGS_JSON_BYTES,
+                    _LOCAL_COMMAND_RESULT_ARGS_JSON_BYTES,
+                ),
+            ).fetchall()
+
+        records: list[dict] = []
+        for row in rows:
+            try:
+                encoded_fields = (
+                    row["id"],
+                    row["status"],
+                    row["call_args_json"],
+                    row["result_args_json"],
+                    row["result_status"],
+                )
+                if any(type(value) is not bytes for value in encoded_fields):
+                    continue
+                (
+                    run_id,
+                    status,
+                    call_args_json,
+                    result_args_json,
+                    result_status,
+                ) = (value.decode("utf-8") for value in encoded_fields)
+                encoded_anchor = row["assistant_message_id"]
+                if encoded_anchor is None:
+                    anchor = None
+                elif type(encoded_anchor) is bytes:
+                    anchor = encoded_anchor.decode("utf-8")
+                else:
+                    continue
+                if (
+                    not run_id.strip()
+                    or len(run_id.encode("utf-8")) > 128
+                    or (
+                        anchor is not None
+                        and (not anchor.strip() or len(anchor.encode("utf-8")) > 128)
+                    )
+                ):
+                    continue
+                call_args = json.loads(call_args_json)
+                result_args = json.loads(result_args_json)
+                if type(call_args) is not dict or type(result_args) is not dict:
+                    continue
+            except (TypeError, ValueError, UnicodeError, json.JSONDecodeError):
+                continue
+            records.append(
+                {
+                    "id": run_id,
+                    "agent_kind": "local_command",
+                    "status": status,
+                    "assistant_message_id": anchor,
+                    "steps": [
+                        {
+                            "index": 0,
+                            "kind": "tool_call",
+                            "tool_name": "raw_cli",
+                            "args": call_args,
+                        },
+                        {
+                            "index": 1,
+                            "kind": "tool_result",
+                            "tool_name": "raw_cli",
+                            "status": result_status,
+                            "args": result_args,
+                        },
+                    ],
+                }
+            )
+        return records
 
     def undelivered_wake_runs(self, conversation_id: str) -> list[dict]:
         """Sub-agent SURVIVOR runs whose result no wake has delivered yet.
@@ -2122,7 +2360,7 @@ class AgentRunsDB(BaseDB):
                 "SELECT child.* FROM agent_runs AS child "
                 "JOIN agent_runs AS parent ON parent.id = child.parent_run_id "
                 "WHERE child.conversation_id = ? "
-                "AND child.agent_kind != 'primary' "
+                "AND child.agent_kind = 'subagent' "
                 "AND child.wake_delivered_at IS NULL "
                 "AND child.status IN ('done', 'error', 'cancelled') "
                 f"AND parent.status IN ({', '.join('?' for _ in TERMINAL_RUN_STATUSES)}) "
@@ -2219,7 +2457,7 @@ class AgentRunsDB(BaseDB):
         return {row["conversation_id"]: int(row["n"]) for row in rows}
 
     def supersede_run_tree(self, run_id: str) -> int:
-        """Mark a run, and its already-terminal direct children, ``superseded``.
+        """Mark an exact primary and terminal direct sub-agents superseded.
 
         PR3a-1 Task 2 lets a sub-agent outlive its turn, so a still-
         ``running`` child is not a dead attempt -- it is a live cross-turn
@@ -2249,8 +2487,8 @@ class AgentRunsDB(BaseDB):
         hole without adding a second code path.
 
         Args:
-            run_id: The run whose tree (itself + rows with
-                ``parent_run_id == run_id``) should be marked superseded.
+            run_id: The exact primary whose tree (itself + exact sub-agent
+                rows with ``parent_run_id == run_id``) should be marked superseded.
                 Used by retry/regenerate to retire a prior attempt while
                 keeping it for drill-in history.
 
@@ -2264,8 +2502,20 @@ class AgentRunsDB(BaseDB):
         with self.transaction() as conn:
             cursor = conn.execute(
                 "UPDATE agent_runs SET status = 'superseded', "
-                "updated_at = ? WHERE (id = ? OR parent_run_id = ?) "
+                "updated_at = ? WHERE ("
+                "(id = ? AND agent_kind = 'primary') OR "
+                "(parent_run_id = ? AND agent_kind = 'subagent' AND EXISTS ("
+                "SELECT 1 FROM agent_runs AS parent "
+                "WHERE parent.id = ? AND parent.agent_kind = 'primary'"
+                "))"
+                ") "
                 f"AND status IN ({placeholders})",
-                (_now_iso(), run_id, run_id, *sorted(TERMINAL_RUN_STATUSES)),
+                (
+                    _now_iso(),
+                    run_id,
+                    run_id,
+                    run_id,
+                    *sorted(TERMINAL_RUN_STATUSES),
+                ),
             )
             return cursor.rowcount

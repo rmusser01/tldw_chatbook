@@ -43,7 +43,7 @@ you touch them; some are read-only and point you elsewhere.
 | **Mode strip** | "Mode: \<category\>" — on Overview only, it adds "\| Runtime controls stay in MCP and ACP". |
 | **Category rail** (left, untitled) | A filter box ("Filter categories (/)"), a status line, then group headings — **Core**, **Interface**, **Data & Privacy**, **Troubleshooting**, **Expert** — with one row per category. The sixth heading is a button, "Domain Defaults ▸ (10)": that group is **collapsed by default** — click it (▸ becomes ▾) to show its ten rows; it opens itself while you are on one of them or while the filter has text. A row is marked **>** when it is the one you are on, **(view)** when the page is read-only, and **\*** when it holds unsaved changes. |
 | **Detail pane** (middle, untitled) | The category's page, with the **State banner** pinned above it; everything below the banner scrolls. |
-| **Scope Inspector** (right) | Who owns this setting and what saving it touches. Pinned at the top: "Selected category: \<title\>", "Unsaved changes" or "No unsaved changes", a one-line guided-action hint, the **Save (s)** and **Revert (r)** buttons (only on the six draft categories — Overview shows **Open Theme editor** instead), and the note "Local-only: saves write your config file." Below: field guides and the "Runtime owner", "Writes allowed", "Owns", and "Recovery" rows. "▼ more — scroll the inspector" appears when there is more below. |
+| **Scope Inspector** (right) | Who owns this setting and what saving it touches. Pinned at the top: "Selected category: \<title\>", "Unsaved changes" or "No unsaved changes", a one-line guided-action hint, the **Save (s)** and **Revert (r)** buttons (only on the seven draft categories — Overview shows **Open Theme editor** instead), and the note "Local-only: saves write your config file." Below: field guides and the "Runtime owner", "Writes allowed", "Owns", and "Recovery" rows. "▼ more — scroll the inspector" appears when there is more below. |
 | **Footer** | This category's live shortcut hints (see [Keyboard & commands](#keyboard--commands)). |
 
 Moving around: **click** a rail row, or **Tab** from the nav bar to drop focus
@@ -71,16 +71,16 @@ Scope Inspector's buttons lose their "— no changes" suffix.
 
 | Badge | What it means | Categories |
 |---|---|---|
-| **Draft — save with s** | Edits are held as a draft; press **s** (or **Save (s)**) to write them. | Providers & Models, Speech & TTS, Appearance, Console Behavior, Storage, [RAG](settings/rag.md) |
+| **Draft — save with s** | Edits are held as a draft; press **s** (or **Save (s)**) to write them. | Providers & Models, Speech & TTS, Appearance, Console Behavior, Storage, Privacy & Security, [RAG](settings/rag.md) |
 | **Draft — save/revert below** | Drafted, but the panel has its own **Save** and **Revert**. | Image Gen |
 | **Auto-saved** | Written as you make each change; nothing to save. | Splash Screen |
 | **Applies immediately** | Each action takes effect at once; no draft to save or revert. | Workspaces |
 | **Managed in editor** | The editor's own **Apply** / **Save** / **Reset** persist things. | Theme |
 | **Per-item Save/Reset** | Each item saves and resets on its own, inside its editor. | Internal Prompts |
 | **Validate, then Save** | Save stays blocked until the current text validates. | Advanced Config |
-| **Read-only here** | Nothing on the page changes anything; it names the destination that owns it. | Overview, Privacy & Security, Diagnostics, and the eight view-only Domain Defaults pages |
+| **Read-only here** | Nothing on the page changes anything; it names the destination that owns it. | Overview, Diagnostics, and the eight view-only Domain Defaults pages |
 
-On the six **Draft — save with s** categories the banner switches to "State:
+On the seven **Draft — save with s** categories the banner switches to "State:
 Unsaved changes | Save (s) or Revert (r) — switching categories keeps this
 draft." **That promise is literal:** no dialog warns you when you leave a
 category or the screen with unsaved edits, because the draft is kept — the
@@ -106,7 +106,7 @@ unless you run Manual sync from Overview yourself.
 | Interface | **Console Behavior** | Rail presentation, composer behavior, and chat-flow defaults. | Draft — save with s |
 | Data & Privacy | **Storage** | Config path, local databases, and file locations. | Draft — save with s |
 | Data & Privacy | **Workspaces** | Create, rename, archive, and bind folders for agent file tools. | Applies immediately |
-| Data & Privacy | **Privacy & Security** (view) | Secrets, encryption, redaction, and local privacy boundaries. | Read-only here |
+| Data & Privacy | **Privacy & Security** | Secrets, encryption, redaction, local privacy boundaries, and the raw CLI host-access gate. | Draft — save with s |
 | Troubleshooting | **Diagnostics** (view) | Config validation, logs, and troubleshooting signals. | Read-only here |
 | Troubleshooting | **About** (view) | Version, license, and project links. | Read-only here |
 | Troubleshooting | **Agents** | Named sub-agent definitions the Console supervisor can spawn. | Applies immediately |
@@ -440,10 +440,20 @@ A read-out of your privacy posture: whether config encryption is on, whether
 redaction is active, how many sensitive fields and provider secrets exist
 (counted, never shown), how many referenced environment variables are actually
 set, and your skill-trust status. **Check Privacy** recomputes it; **Open
-Providers & Models** and **Open Advanced Config** are jump buttons. **Nothing on
-this page changes anything** — encryption cannot be switched here, and the page
-says so: "Credential mutation" → "not available yet - password-gated flow
-required". Change secrets in Providers & Models or Advanced Config.
+Providers & Models** and **Open Advanced Config** are jump buttons. Encryption
+and credentials remain read-only here; change secrets in Providers & Models or
+Advanced Config.
+
+The exception is the unmistakable **DANGER!!! RAW CLI HOST ACCESS** section.
+**Allow raw CLI host access** drafts the persistent
+`[console] raw_cli_permitted` unlock. Enabling it opens a warning that says the
+command has the OS user's full filesystem, process, and network authority, may
+read credential files despite the scrubbed environment, may leave detached
+descendants after cleanup, and persists bounded command/output locally. Confirm
+and **Save** before **Arm host access** becomes available. Arm asks again and
+applies only to this launch; it is never written to config, and restart always
+returns to Unlocked/not armed. **Disarm host access** is immediate. Saving the
+unlock Off also disarms and starts bounded cleanup of any active raw command.
 
 ### Troubleshooting — Diagnostics
 
@@ -610,8 +620,8 @@ hints as "Esc, s" while a field has focus. Only then do the letters work.
 
 | Key | Action |
 |---|---|
-| s | Save this category — only on the six **Draft — save with s** categories |
-| r | Revert this category — same six. On Theme, Splash Screen, Internal Prompts, and Workspaces it answers "Use the editor's own buttons for this category" |
+| s | Save this category — only on the seven **Draft — save with s** categories |
+| r | Revert this category — same seven. On Theme, Splash Screen, Internal Prompts, and Workspaces it answers "Use the editor's own buttons for this category" |
 | t | Run this category's check. The footer names the real verb: **test provider**, **validate config**, **check storage**, **check privacy**, **preview appearance**, **check index**. Only Providers & Models, Diagnostics, Storage, Privacy & Security, Appearance, and RAG have one |
 | / | Focus the category filter from anywhere on the screen. Pressing it again while the filter has focus re-selects the text rather than typing a slash |
 | Esc | Release a focused field; or, when the filter has text, clear the filter |
@@ -646,7 +656,9 @@ not open an editor.
   default voice profile), `[general]` + `[appearance]` + `[web_server]`
   (Appearance), `[splash_screen]`, `[console]` and `[chat.images]` (Console
   Behavior, including `show_model_thinking` and the new-conversation
-  `thinking_history_policy_default`), `[database]` (Storage), `[image_generation]`,
+  `thinking_history_policy_default`; `[console] raw_cli_permitted` is the
+  Privacy & Security raw CLI unlock), `[database]` (Storage),
+  `[image_generation]`,
   `[internal_prompts]`, `[encryption]`, and `[rag.service]` (which RAG profile
   is active). Workspaces are the exception — they live in their own database,
   not in `config.toml`.
@@ -655,7 +667,7 @@ not open an editor.
 
 - **"s" typed a letter instead of saving.** A text box had focus. Press **Esc**,
   then **s**. The footer tells you this is happening: its hints read "Esc, s".
-- **"s" did nothing at all.** That category is not one of the six draft
+- **"s" did nothing at all.** That category is not one of the seven draft
   categories — read the State banner badge and use the control it names.
 - **Four Appearance fields are less than they appear.** **Animations** and
   **Smooth scrolling** are saved but **nothing in the app reads them yet**.
@@ -672,9 +684,9 @@ not open an editor.
 - **A splash change had no effect.** All splash settings are startup-only.
   Separately, **Animation speed (x)** is saved to a place this page does not
   read back, so it looks unchanged when you return (backlog task-2706).
-- **Privacy & Security has no control that does anything.** It is a read-out;
-  encryption cannot be turned on or off here, and credential changes are
-  explicitly "not available yet - password-gated flow required".
+- **Privacy & Security cannot edit encryption or credentials.** Those rows are
+  still read-only. Its raw CLI unlock is the deliberate exception: it uses the
+  category's Save/Revert draft, while Arm/Disarm changes process memory only.
 - **"Open Config File" didn't open anything.** By design — that palette command
   only prints the file's location.
 - **A Console setting didn't take.** Global fallbacks reach *new or default*

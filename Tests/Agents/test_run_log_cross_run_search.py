@@ -455,6 +455,50 @@ def test_search_across_runs_shares_the_hit_limit_across_runs(tmp_path, monkeypat
     assert result.not_searched_run_ids == []
 
 
+def test_local_command_tree_is_unregistered_from_model_facing_search_slice_stats(
+    tmp_path,
+):
+    from tldw_chatbook.Agents.run_log import RunLogWriter, resolve_existing_log_dir
+    from tldw_chatbook.Agents.run_log_search import (
+        compute_stats,
+        load_records,
+        search_records,
+        slice_records,
+    )
+    from tldw_chatbook.Chat.console_raw_cli import LOCAL_COMMAND_RUN_LOG_DIR
+
+    local_writer = RunLogWriter(root=tmp_path, dir_name=LOCAL_COMMAND_RUN_LOG_DIR)
+    local_writer.bind("local-run")
+    local_writer.append(
+        run_id="local-run",
+        kind="local_command",
+        type="tool_result",
+        content="LOCAL_COMMAND_OUTPUT_SECRET",
+        tool="raw_cli",
+        status="done",
+    )
+    local_writer.close()
+
+    primary_writer = RunLogWriter(root=tmp_path, dir_name="agent-runs")
+    primary_writer.bind("primary-run")
+    primary_writer.append(
+        run_id="primary-run",
+        kind="primary",
+        type="model",
+        content="ordinary agent content",
+    )
+    primary_writer.close()
+
+    assert resolve_existing_log_dir("local-run", root=tmp_path) is None
+    records = load_records(resolve_existing_log_dir("primary-run", root=tmp_path))
+    assert search_records(records, contains="LOCAL_COMMAND_OUTPUT_SECRET") == []
+    selected, *_ = slice_records(records, from_record=1)
+    assert all("LOCAL_COMMAND_OUTPUT_SECRET" not in row.content for row in selected)
+    groups, total, _omitted = compute_stats(records, group_by="kind")
+    assert total == 1
+    assert [group.key for group in groups] == ["primary"]
+
+
 def test_search_across_runs_shares_the_deadline_across_runs(tmp_path, monkeypatch):
     """An exhausted shared wall-clock budget must stop further scanning --
     resetting the deadline per run would let a `scope="conversation"` call

@@ -201,6 +201,37 @@ def test_cached_commit_and_identity_reject_forged_preparation_reuse(tmp_path) ->
     )
 
 
+@pytest.mark.parametrize("next_owner", ["raw", "provider"])
+def test_cancelled_first_identity_reservation_does_not_block_next_owner(
+    tmp_path,
+    next_owner: str,
+) -> None:
+    _db, store, controller, _gateway = _controller(tmp_path)
+    cancelled = replace(
+        _preparation("session-1", "cancelled-reservation"),
+        state=ConsoleTurnPreparationState.PREPARING,
+    )
+    assert store.begin_preparation(cancelled) is cancelled
+    store.stage_durable_turn_identity(
+        cancelled.session_id,
+        cancelled.preparation_id,
+    )
+
+    result = controller.cancel_library_preparation(cancelled.preparation_id)
+
+    assert result.accepted is False
+    assert store.preparation_for_session(cancelled.session_id) is None
+    if next_owner == "raw":
+        assert store.persist_session_if_needed(cancelled.session_id) is not None
+    else:
+        replacement = _preparation(cancelled.session_id, "replacement-reservation")
+        assert store.begin_preparation(replacement) is replacement
+        assert store.stage_durable_turn_identity(
+            replacement.session_id,
+            replacement.preparation_id,
+        ).conversation_id
+
+
 def _queue_coordinator():
     registry = ConsolePromptQueueRegistry(
         id_factory=iter(("accepted-entry", "later-entry")).__next__

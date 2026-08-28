@@ -4,6 +4,7 @@ Status: Accepted
 Date: 2026-08-05
 Related Task: [TASK-2820 - Local agent tools phase 2: file tools (fs_read/fs_write/fs_edit/fs_glob/fs_grep)](../tasks/task-2820%20-%20Local-agent-tools-phase-2-file-tools-fs_read-fs_write-fs_edit-fs_glob-fs_grep.md)
 Supersedes: N/A
+Partially Superseded By: [ADR-094: Raw and Virtual CLI Execution Boundaries](094-raw-and-virtual-cli-execution-boundaries.md)
 
 ## Decision
 
@@ -27,8 +28,11 @@ tools only return repository state. **Tripwire (binding):** if the
 allowlist ever expands past read-only subcommands, the `process` tag MUST
 be applied and this ADR revisited.
 
-**No raw shell — virtual-CLI is the adopted answer.** The project will
-not add a raw bash/shell tool for model use. The adopted design
+**No raw shell tool for models — virtual-CLI is the adopted answer.** The
+project will not add a raw bash/shell tool for model use. ADR-094 partially
+supersedes this decision by authorizing a separately gated, user-invoked raw
+CLI command with explicit full OS-user authority; that command bypasses the
+model and is not a catalog tool. The adopted model-facing design
 (design-only for now, implemented in a future phase) is tldw_server's
 governed virtual-CLI model (`run_command_module.py` +
 `command_runtime/`): an allowlisted command registry (`ls`, `cat`,
@@ -115,3 +119,4 @@ recorded as a binding tripwire rather than silently accepted.
 - [Re-plan specification](../../Docs/superpowers/specs/2026-08-05-local-agent-tools-phases-3-4-replan.md)
 - [Original design specification](../../Docs/superpowers/specs/2026-08-04-local-agent-tools-design.md)
 - [ADR-032: Local Agent Tool Permission Boundary](032-local-agent-tool-permission-boundary.md)
+- [ADR-094: Raw and Virtual CLI Execution Boundaries](094-raw-and-virtual-cli-execution-boundaries.md)

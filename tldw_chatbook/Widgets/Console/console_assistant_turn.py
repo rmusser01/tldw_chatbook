@@ -3,15 +3,64 @@
 from __future__ import annotations
 
 from collections.abc import Iterable
+from time import monotonic
 
 from textual import events
 from textual.containers import Horizontal, Vertical
 from textual.content import Content
 from textual.message import Message
+from textual.timer import Timer
 from textual.widget import Widget
 from textual.widgets import Static
 
-from tldw_chatbook.Chat.console_chat_models import ConsoleActivityStatus
+from tldw_chatbook.Chat.console_chat_models import (
+    ConsoleActivityStatus,
+    RawCliPresentation,
+)
+
+
+_RAW_CLI_ELAPSED_STATES = frozenset({"running", "stopping"})
+_RAW_CLI_ELAPSED_TICK_SECONDS = 0.1
+
+
+def raw_cli_status_copy(
+    presentation: RawCliPresentation,
+    *,
+    now: float | None = None,
+) -> str:
+    """Return explicit, terminal-safe lifecycle copy for a raw command row."""
+    labels = {
+        "starting": "Starting",
+        "running": "Running",
+        "stopping": "Stopping…",
+        "exited": (
+            "Exited"
+            if presentation.exit_code is None
+            else f"Exited {presentation.exit_code}"
+        ),
+        "timed_out": "Timed out",
+        "cancelled": "Stopped",
+        "cleanup_unproven": "Cleanup unproven",
+        "failed": "Failed",
+    }
+    elapsed = presentation.elapsed_seconds
+    if (
+        presentation.lifecycle_state in _RAW_CLI_ELAPSED_STATES
+        and presentation.started_at_monotonic is not None
+    ):
+        elapsed = max(
+            elapsed,
+            (monotonic() if now is None else now)
+            - presentation.started_at_monotonic,
+        )
+    copy = f"{labels[presentation.lifecycle_state]} · {elapsed:.1f}s"
+    if (
+        presentation.cleanup_proven is False
+        and presentation.lifecycle_state not in _RAW_CLI_ELAPSED_STATES
+        and presentation.lifecycle_state != "cleanup_unproven"
+    ):
+        copy += " · Cleanup unproven"
+    return copy
 
 
 class ConsoleActivityActivated(Message):
@@ -42,6 +91,7 @@ class ConsoleActivityHeader(Horizontal):
         expanded: bool = False,
         expandable: bool = False,
         selected: bool = False,
+        raw_cli_presentation: RawCliPresentation | None = None,
     ) -> None:
         self.activity_message_id = activity_message_id
         self.label = label
@@ -49,6 +99,8 @@ class ConsoleActivityHeader(Horizontal):
         self.expanded = expanded
         self.expandable = expandable
         self.selected = selected
+        self.raw_cli_presentation = raw_cli_presentation
+        self._raw_cli_elapsed_timer: Timer | None = None
         self.label_widget = Static(
             self._label_content(),
             id=f"console-activity-label-{activity_message_id}",
@@ -78,12 +130,42 @@ class ConsoleActivityHeader(Horizontal):
 
     def _status_content(self) -> Content:
         """Build the fixed terminal-status copy kept separate from the label."""
+        if self.raw_cli_presentation is not None:
+            return Content(f"· {raw_cli_status_copy(self.raw_cli_presentation)}")
         return Content(f"· {self.status}")
 
     @property
     def renderable(self) -> Content:
         """Retain the former combined-text inspection seam for callers/tests."""
-        return Content(f"{self._label_content().plain} · {self.status}")
+        return Content(
+            f"{self._label_content().plain} {self._status_content().plain}"
+        )
+
+    def on_mount(self) -> None:
+        """Own the elapsed repaint cadence for this command activity row."""
+        self._sync_raw_cli_timer()
+
+    def _tick_raw_cli_elapsed(self) -> None:
+        if self.raw_cli_presentation is not None:
+            self.status_widget.update(self._status_content())
+
+    def _sync_raw_cli_timer(self) -> None:
+        timer = self._raw_cli_elapsed_timer
+        active = (
+            self.raw_cli_presentation is not None
+            and self.raw_cli_presentation.lifecycle_state in _RAW_CLI_ELAPSED_STATES
+            and self.raw_cli_presentation.started_at_monotonic is not None
+        )
+        if active and timer is None:
+            self._raw_cli_elapsed_timer = self.set_interval(
+                _RAW_CLI_ELAPSED_TICK_SECONDS,
+                self._tick_raw_cli_elapsed,
+            )
+        elif active:
+            timer.resume()
+        elif timer is not None:
+            timer.stop()
+            self._raw_cli_elapsed_timer = None
 
     def _sync_classes(self) -> None:
         self.set_class(self.selected, "console-activity-header-selected")
@@ -111,6 +193,7 @@ class ConsoleActivityHeader(Horizontal):
         expanded: bool,
         expandable: bool,
         selected: bool,
+        raw_cli_presentation: RawCliPresentation | None = None,
     ) -> None:
         """Project transcript-owned disclosure state onto this header."""
         self.label = label
@@ -118,9 +201,11 @@ class ConsoleActivityHeader(Horizontal):
         self.expanded = expanded
         self.expandable = expandable
         self.selected = selected
+        self.raw_cli_presentation = raw_cli_presentation
         self._sync_classes()
         self.label_widget.update(self._label_content())
         self.status_widget.update(self._status_content())
+        self._sync_raw_cli_timer()
 
     def _activate(self) -> None:
         self.post_message(
@@ -157,12 +242,14 @@ class ConsoleActivityDisclosure(Vertical):
         action_widgets: Iterable[Widget] = (),
         detail_widgets: Iterable[Widget] = (),
         detail_available: bool | None = None,
+        raw_cli_presentation: RawCliPresentation | None = None,
     ) -> None:
         self.activity_message_id = activity_message_id
         self.label = label
         self.status = status
         self.expanded = expanded
         self.selected = selected
+        self.raw_cli_presentation = raw_cli_presentation
         action_children = tuple(action_widgets)
         detail_children = tuple(detail_widgets)
         self._has_actions = bool(action_children)
@@ -177,6 +264,7 @@ class ConsoleActivityDisclosure(Vertical):
             expanded=expanded,
             expandable=self.detail_available,
             selected=selected,
+            raw_cli_presentation=raw_cli_presentation,
         )
         self.action_stack = Vertical(
             *action_children,
@@ -230,6 +318,7 @@ class ConsoleActivityDisclosure(Vertical):
             expanded=expanded,
             expandable=self.detail_available,
             selected=selected,
+            raw_cli_presentation=self.raw_cli_presentation,
         )
         self._sync_visibility()
 
@@ -240,18 +329,21 @@ class ConsoleActivityDisclosure(Vertical):
         *,
         expanded: bool,
         selected: bool,
+        raw_cli_presentation: RawCliPresentation | None = None,
     ) -> None:
         """Apply new structured copy and transcript-owned state in place."""
         self.label = label
         self.status = status
         self.expanded = expanded
         self.selected = selected
+        self.raw_cli_presentation = raw_cli_presentation
         self.header.sync_header(
             label,
             status,
             expanded=expanded,
             expandable=self.detail_available,
             selected=selected,
+            raw_cli_presentation=raw_cli_presentation,
         )
         self._sync_visibility()
 

@@ -62,6 +62,7 @@ from tldw_chatbook.Chat.console_chat_models import (
     ConsoleWorkspaceContext,
     GenerationVariantMeta,
     MessageAttachment,
+    RawCliPresentation,
     console_dispatch_recovery_from_checkpoint,
 )
 from tldw_chatbook.Chat.console_chat_fork import (
@@ -177,6 +178,7 @@ from tldw_chatbook.Chat.provider_continuation import (
     read_provider_continuation_json,
     transition_provider_call,
 )
+
 from tldw_chatbook.Chat.rag_scope import RagScope, SessionScopeHolder, serialize_scope
 from tldw_chatbook.Sync_Interop.hashing import canonical_payload_hash
 from tldw_chatbook.TTS.profile_errors import ProfileValidationError
@@ -187,6 +189,29 @@ from tldw_chatbook.Video_Generation.video_store import (
     parse_video_marker,
     video_content_marker,
 )
+
+_MAX_RAW_CLI_MARKER_FIELD_BYTES = 64 * 1024
+_RAW_CLI_TERMINAL_STATES = frozenset(
+    {"exited", "timed_out", "cancelled", "cleanup_unproven", "failed"}
+)
+
+
+class RawCliMarkerTransitionError(ValueError):
+    """A raw marker update would regress lifecycle or change invocation."""
+
+
+def _validate_raw_cli_marker_text(field_name: str, value: object) -> None:
+    """Reject raw marker fields that exceed the in-memory store boundary."""
+    if value is None:
+        return
+    if type(value) is not str:
+        raise TypeError(f"{field_name} must be text or None")
+    try:
+        size = len(value.encode("utf-8"))
+    except UnicodeEncodeError as exc:
+        raise ValueError(f"{field_name} must be valid UTF-8 text") from exc
+    if size > _MAX_RAW_CLI_MARKER_FIELD_BYTES:
+        raise ValueError(f"{field_name} must be at most 64 KiB")
 
 if TYPE_CHECKING:
     # Annotation-only: ``from __future__ import annotations`` (top of file)
@@ -1202,6 +1227,13 @@ class ConsoleChatStore:
         # token (the same-process ABA boundary this fence owns).
         self._generation_attempt_sequence = 0
         self._generation_attempt_tokens: dict[str, int] = {}
+        # ponytail: one per-store lock intentionally serializes first-identity
+        # acquisition/I/O. The reservation map below is session-scoped; split
+        # the lock only if unrelated-session contention becomes measurable.
+        self._first_persistence_lock = threading.RLock()
+        self._first_identity_reservations: dict[
+            str, tuple[str | None, ConsoleStagedConversationIdentity, bool]
+        ] = {}
         self._preparations_by_session: dict[str, ConsoleTurnPreparation] = {}
         self._preparations_by_id: dict[str, ConsoleTurnPreparation] = {}
         self._durable_identity_by_preparation: dict[
@@ -3631,33 +3663,60 @@ class ConsoleChatStore:
     ) -> ConsoleStagedConversationIdentity:
         """Reserve one stable first-send identity without publishing it."""
 
-        session = self._session_or_raise(session_id)
         if type(preparation_id) is not str or not preparation_id:
             raise ValueError("preparation_id must be non-empty text")
-        with self._preparation_lock:
-            preparation = self._preparations_by_id.get(preparation_id)
-            if preparation is None or preparation.session_id != session_id:
-                raise RuntimeError("Durable preparation owner changed.")
-            if preparation_id in self._durable_tombstones:
-                raise RuntimeError("Durable preparation was already retired.")
-            existing = self._durable_identity_by_preparation.get(preparation_id)
-            if existing is not None:
-                expected_title = title if title is not None else session.title
-                expected_conversation_id = (
-                    session.persisted_conversation_id or existing.conversation_id
+        with self._first_persistence_lock:
+            with self._preparation_lock:
+                return self._stage_durable_turn_identity_locked(
+                    session_id,
+                    preparation_id,
+                    title=title,
                 )
-                if (
-                    existing.title != expected_title
-                    or existing.conversation_id != expected_conversation_id
-                ):
-                    raise RuntimeError("Durable identity owner changed.")
-                return existing
-            identity = ConsoleStagedConversationIdentity(
-                conversation_id=session.persisted_conversation_id or str(uuid4()),
-                title=title if title is not None else session.title,
+
+    def _stage_durable_turn_identity_locked(
+        self,
+        session_id: str,
+        preparation_id: str,
+        *,
+        title: str | None,
+    ) -> ConsoleStagedConversationIdentity:
+        """Stage identity while ``_preparation_lock`` is already held."""
+
+        session = self._session_or_raise(session_id)
+        preparation = self._preparations_by_id.get(preparation_id)
+        if preparation is None or preparation.session_id != session_id:
+            raise RuntimeError("Durable preparation owner changed.")
+        if preparation_id in self._durable_tombstones:
+            raise RuntimeError("Durable preparation was already retired.")
+        existing = self._durable_identity_by_preparation.get(preparation_id)
+        if existing is not None:
+            expected_title = title if title is not None else session.title
+            expected_conversation_id = (
+                session.persisted_conversation_id or existing.conversation_id
             )
-            self._durable_identity_by_preparation[preparation_id] = identity
-            return identity
+            if (
+                existing.title != expected_title
+                or existing.conversation_id != expected_conversation_id
+            ):
+                raise RuntimeError("Durable identity owner changed.")
+            return existing
+        reservation = self._first_identity_reservations.get(session_id)
+        if session.persisted_conversation_id is None and reservation is not None:
+            owner_id, _identity, _is_durable = reservation
+            if owner_id != preparation_id:
+                raise RuntimeError("First durable identity is already reserved.")
+        identity = ConsoleStagedConversationIdentity(
+            conversation_id=session.persisted_conversation_id or str(uuid4()),
+            title=title if title is not None else session.title,
+        )
+        self._durable_identity_by_preparation[preparation_id] = identity
+        if session.persisted_conversation_id is None:
+            self._first_identity_reservations[session_id] = (
+                preparation_id,
+                identity,
+                False,
+            )
+        return identity
 
     def staged_durable_turn_identity_for(
         self, preparation_id: str
@@ -4003,7 +4062,7 @@ class ConsoleChatStore:
                 staged = self._durable_identity_by_preparation.get(
                     acceptance.preparation_id
                 )
-                identity = self.stage_durable_turn_identity(
+                identity = self._stage_durable_turn_identity_locked(
                     session.id,
                     acceptance.preparation_id,
                     title=staged.title if staged is not None else session.title,
@@ -4144,6 +4203,20 @@ class ConsoleChatStore:
                 policy_candidate=policy_candidate,
                 conversation_kwargs=conversation_kwargs,
             )
+            with self._preparation_lock:
+                identity_reservation = self._first_identity_reservations.get(
+                    reservation.session_id
+                )
+                if identity_reservation == (
+                    reservation.preparation_id,
+                    identity,
+                    False,
+                ):
+                    self._first_identity_reservations[reservation.session_id] = (
+                        reservation.preparation_id,
+                        identity,
+                        True,
+                    )
             commit = ConsoleDurableTurnCommit(
                 identity=identity,
                 user_message_id=owners.user_message_id,
@@ -4372,6 +4445,14 @@ class ConsoleChatStore:
                     return
                 raise RuntimeError("Durable acceptance fingerprint changed.")
             effects = self._durable_effects_by_preparation.get(preparation_id)
+            preparation = self._preparations_by_id.get(preparation_id)
+            session_id = (
+                effects.session_id
+                if effects is not None
+                else preparation.session_id
+                if preparation is not None
+                else None
+            )
             completed = effects.completed if effects is not None else frozenset()
             self._durable_identity_by_preparation.pop(preparation_id, None)
             self._durable_owner_ids_by_preparation.pop(preparation_id, None)
@@ -4389,6 +4470,11 @@ class ConsoleChatStore:
                 fingerprint=fingerprint,
                 completed=completed,
             )
+            reservation = self._first_identity_reservations.get(session_id or "")
+            if session_id is not None and (
+                reservation is not None and reservation[0] == preparation_id
+            ):
+                self._first_identity_reservations.pop(session_id, None)
             self._evict_durable_tombstones_locked()
 
     def _evict_durable_tombstones_locked(self) -> None:
@@ -4463,6 +4549,13 @@ class ConsoleChatStore:
         with self._preparation_lock:
             if preparation_id in self._durable_commit_by_preparation:
                 raise RuntimeError("Committed durable acceptance cannot be discarded.")
+            # ponytail: bounded by live sessions; keep cleanup independent of
+            # preparation indexes because controller drop removes those first.
+            for session_id, reservation in tuple(
+                self._first_identity_reservations.items()
+            ):
+                if reservation[0] == preparation_id:
+                    self._first_identity_reservations.pop(session_id, None)
             self._durable_identity_by_preparation.pop(preparation_id, None)
             self._durable_owner_ids_by_preparation.pop(preparation_id, None)
             self._durable_fingerprint_by_preparation.pop(preparation_id, None)
@@ -4494,6 +4587,10 @@ class ConsoleChatStore:
         """Publish committed identity and the matching durable policy snapshot."""
 
         self.publish_committed_identity(session_id, commit.identity)
+        with self._preparation_lock:
+            reservation = self._first_identity_reservations.get(session_id)
+            if reservation is not None and reservation[1] == commit.identity:
+                self._first_identity_reservations.pop(session_id, None)
         session = self._session_or_raise(session_id)
         repository = getattr(
             self.persistence, "console_library_policy_repository", None
@@ -7012,6 +7109,8 @@ class ConsoleChatStore:
         metadata: "MessageMetadata | None" = None,
         activity_presentation: ConsoleActivityPresentation | None = None,
         activity_round_ordinal: int | None = None,
+        raw_cli_presentation: RawCliPresentation | None = None,
+        record_trajectory: bool = True,
         message_id: str | None = None,
     ) -> ConsoleChatMessage:
         """Append a message; scalar image kwargs become a one-item tuple.
@@ -7029,8 +7128,26 @@ class ConsoleChatStore:
         it is attached only to the in-memory message and never serialized.
         ``activity_round_ordinal`` carries the same marker's explicit model-
         round owner and is likewise session-only.
+
+        ``raw_cli_presentation`` is the narrower callback-free raw-command
+        display contract. ``record_trajectory=False`` is reserved for direct
+        user commands, which are local actions rather than agent tool calls.
         """
         self._session_or_raise(session_id)
+        if raw_cli_presentation is not None and (
+            type(raw_cli_presentation) is not RawCliPresentation
+            or role is not ConsoleMessageRole.TOOL
+        ):
+            raise ValueError("raw CLI presentation requires a TOOL marker")
+        if type(record_trajectory) is not bool:
+            raise TypeError("record_trajectory must be a boolean")
+        if not record_trajectory and raw_cli_presentation is None:
+            raise ValueError(
+                "record_trajectory=False requires a raw CLI presentation"
+            )
+        if raw_cli_presentation is not None:
+            _validate_raw_cli_marker_text("content", content)
+            _validate_raw_cli_marker_text("tool_output_full", tool_output_full)
         effective = tuple(attachments)
         if not effective and image_data is not None:
             effective = (
@@ -7085,6 +7202,7 @@ class ConsoleChatStore:
             metadata=metadata,
             activity_presentation=activity_presentation,
             activity_round_ordinal=activity_round_ordinal,
+            raw_cli_presentation=raw_cli_presentation,
         )
         self._set_message_attachments(message, effective)
         if attachment_label and effective and not effective[0].display_name:
@@ -7112,10 +7230,11 @@ class ConsoleChatStore:
             # Trajectory sidecar (schema v38): the marker itself is never
             # persisted, but its tool_call/tool_result records ARE -- keyed
             # to the anchor (parent assistant) message. Best-effort.
-            anchor_node = self._nodes_by_session.get(session_id, {}).get(anchor)
-            self._record_trajectory_tool_marker(
-                session_id, anchor_node, content, tool_output_full
-            )
+            if record_trajectory:
+                anchor_node = self._nodes_by_session.get(session_id, {}).get(anchor)
+                self._record_trajectory_tool_marker(
+                    session_id, anchor_node, content, tool_output_full
+                )
             return self._snapshot(message)
         old_leaf = self._active_leaf_by_session[session_id]
         self._register_tree_node(session_id, message, parent_native_id=old_leaf)
@@ -7678,6 +7797,109 @@ class ConsoleChatStore:
         message = self._message_or_raise(message_id)
         self._materialize_stream_buffer(message)
         return self._snapshot(message)
+
+    def persisted_message_id_for_session_node(
+        self,
+        session_id: str,
+        native_message_id: str,
+    ) -> str | None:
+        """Return one node's persisted ID only for its exact owning session."""
+        if self._message_session_index.get(native_message_id) != session_id:
+            return None
+        node = self._nodes_by_session.get(session_id, {}).get(native_message_id)
+        return node.persisted_message_id if node is not None else None
+
+    def update_tool_marker(
+        self,
+        session_id: str,
+        message_id: str,
+        **bounded_fields: object,
+    ) -> ConsoleChatMessage:
+        """Replace bounded display facts on one existing TOOL marker.
+
+        Args:
+            session_id: Session that owns the display-only marker.
+            message_id: Stable marker id to update.
+            **bounded_fields: Any of ``content``, ``tool_output_full``,
+                ``activity_presentation``, or ``raw_cli_presentation``.
+
+        Returns:
+            An immutable snapshot of the replacement marker.
+
+        Raises:
+            KeyError: If the session does not own the marker.
+            TypeError: If a bounded field has the wrong value type.
+            ValueError: If a caller tries to mutate any other field.
+        """
+        self._session_or_raise(session_id)
+        allowed = {
+            "content",
+            "tool_output_full",
+            "activity_presentation",
+            "raw_cli_presentation",
+        }
+        unknown = set(bounded_fields) - allowed
+        if unknown:
+            raise ValueError(
+                "tool marker updates accept only bounded display fields"
+            )
+        content = bounded_fields.get("content")
+        if "content" in bounded_fields and type(content) is not str:
+            raise TypeError("content must be text")
+        full = bounded_fields.get("tool_output_full")
+        if (
+            "tool_output_full" in bounded_fields
+            and full is not None
+            and type(full) is not str
+        ):
+            raise TypeError("tool_output_full must be text or None")
+        if "content" in bounded_fields:
+            _validate_raw_cli_marker_text("content", content)
+        if "tool_output_full" in bounded_fields:
+            _validate_raw_cli_marker_text("tool_output_full", full)
+        activity = bounded_fields.get("activity_presentation")
+        if (
+            "activity_presentation" in bounded_fields
+            and activity is not None
+            and type(activity) is not ConsoleActivityPresentation
+        ):
+            raise TypeError(
+                "activity_presentation must be ConsoleActivityPresentation or None"
+            )
+        raw = bounded_fields.get("raw_cli_presentation")
+        if (
+            "raw_cli_presentation" in bounded_fields
+            and raw is not None
+            and type(raw) is not RawCliPresentation
+        ):
+            raise TypeError(
+                "raw_cli_presentation must be RawCliPresentation or None"
+            )
+
+        markers = self._tool_markers_by_session.get(session_id, [])
+        for index, (anchor, marker) in enumerate(markers):
+            if marker.id != message_id:
+                continue
+            previous_raw = marker.raw_cli_presentation
+            if previous_raw is not None and "raw_cli_presentation" in bounded_fields:
+                if raw is None or raw.invocation_id != previous_raw.invocation_id:
+                    raise RawCliMarkerTransitionError(
+                        "raw CLI invocation identity cannot change"
+                    )
+                allowed = {
+                    "starting": {"running", "stopping"} | _RAW_CLI_TERMINAL_STATES,
+                    "running": {"running", "stopping"} | _RAW_CLI_TERMINAL_STATES,
+                    "stopping": {"stopping"} | _RAW_CLI_TERMINAL_STATES,
+                }.get(previous_raw.lifecycle_state, frozenset())
+                if raw.lifecycle_state not in allowed:
+                    raise RawCliMarkerTransitionError(
+                        "raw CLI lifecycle transition would regress"
+                    )
+            replacement = replace(marker, **bounded_fields)
+            markers[index] = (anchor, replacement)
+            self._recompute_active_path(session_id)
+            return self._snapshot(replacement)
+        raise KeyError(message_id)
 
     def issue_tts_message_speech_snapshot(
         self,
@@ -11492,6 +11714,44 @@ class ConsoleChatStore:
     def persist_session_if_needed(
         self, session_id: str, *, strict_roleplay_context: bool = False
     ) -> str | None:
+        """Serialize first identity acquisition and return its durable ID."""
+        with self._first_persistence_lock:
+            session = self._session_or_raise(session_id)
+            if session.persisted_conversation_id is not None:
+                return self._persist_session_if_needed(
+                    session_id,
+                    strict_roleplay_context=strict_roleplay_context,
+                )
+            with self._preparation_lock:
+                provider_reservation = self._first_identity_reservations.get(
+                    session_id
+                )
+                if provider_reservation is not None:
+                    owner_id, identity, is_durable = provider_reservation
+                    if owner_id is not None and is_durable:
+                        return identity.conversation_id
+                    return None
+                staged_identity = self.stage_first_persistence(session_id)
+                reservation = (None, staged_identity, False)
+                self._first_identity_reservations[session_id] = reservation
+            try:
+                return self._persist_session_if_needed(
+                    session_id,
+                    strict_roleplay_context=strict_roleplay_context,
+                    staged_identity=staged_identity,
+                )
+            finally:
+                with self._preparation_lock:
+                    if self._first_identity_reservations.get(session_id) == reservation:
+                        self._first_identity_reservations.pop(session_id, None)
+
+    def _persist_session_if_needed(
+        self,
+        session_id: str,
+        *,
+        strict_roleplay_context: bool = False,
+        staged_identity: ConsoleStagedConversationIdentity | None = None,
+    ) -> str | None:
         """Persist a session once, returning its persisted conversation ID.
 
         Returns:
@@ -11562,7 +11822,7 @@ class ConsoleChatStore:
                     "Persistence adapter cannot store staged reply-speech preferences."
                 )
             create_kwargs["speech_preferences"] = session.speech_preferences
-        staged_identity = self.stage_first_persistence(session_id)
+        staged_identity = staged_identity or self.stage_first_persistence(session_id)
         policy_snapshot = session.library_policy_holder.snapshot
         policy_candidate = ConsoleLibraryPolicyCandidate(
             auto_retrieve=policy_snapshot.auto_retrieve,
@@ -13670,6 +13930,7 @@ class ConsoleChatStore:
                 message,
                 citation_presentation=None,
                 activity_presentation=None,
+                raw_cli_presentation=None,
             )
             if restored.role is ConsoleMessageRole.TOOL:
                 self._message_session_index[restored.id] = session_id
@@ -13712,6 +13973,7 @@ class ConsoleChatStore:
                 node,
                 citation_presentation=None,
                 activity_presentation=None,
+                raw_cli_presentation=None,
             )
             if restored.role is ConsoleMessageRole.TOOL:
                 self._message_session_index[restored.id] = session_id

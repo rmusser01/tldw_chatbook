@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import math
 import re
 from dataclasses import dataclass, field, replace
 from enum import Enum
@@ -264,6 +265,17 @@ ConsoleActivityStatus = Literal[
 ]
 
 PROPRIETARY_THINKING_NOTICE = "Proprietary thinking obfuscated - not available"
+RawCliLifecycleState = Literal[
+    "starting",
+    "running",
+    "stopping",
+    "exited",
+    "timed_out",
+    "cancelled",
+    "cleanup_unproven",
+    "failed",
+]
+MAX_RAW_CLI_DISPLAY_FIELD_BYTES = 4096
 
 _CONSOLE_ACTIVITY_KINDS = frozenset(
     {
@@ -573,6 +585,99 @@ class ConsoleThinkingActivityRef:
     block_id: str
     label: str
     status: ConsoleActivityStatus
+
+
+@dataclass(frozen=True, slots=True)
+class RawCliPresentation:
+    """Bounded, session-only display facts for one raw command invocation."""
+
+    invocation_id: str
+    caller: Literal["user", "model"]
+    lifecycle_state: RawCliLifecycleState
+    command: str
+    shell: str
+    cwd: str
+    started_at_monotonic: float | None
+    elapsed_seconds: float
+    exit_code: int | None
+    truncated: bool
+    cleanup_proven: bool | None
+
+    def __post_init__(self) -> None:
+        """Reject values that are unbounded or outside the display contract."""
+        if (
+            type(self.invocation_id) is not str
+            or not self.invocation_id.strip()
+            or len(self.invocation_id) > 128
+            or any(character in self.invocation_id for character in "\r\n\x00")
+        ):
+            raise ValueError(
+                "invocation id must be nonblank single-line text <= 128 chars"
+            )
+        if self.lifecycle_state not in {
+            "starting",
+            "running",
+            "stopping",
+            "exited",
+            "timed_out",
+            "cancelled",
+            "cleanup_unproven",
+            "failed",
+        }:
+            raise ValueError("lifecycle state is invalid")
+        if self.caller not in {"user", "model"}:
+            raise ValueError("caller must be user or model")
+        if type(self.command) is not str or not self.command.strip():
+            raise ValueError("command must be nonblank text")
+        try:
+            command_bytes = len(self.command.encode("utf-8"))
+        except UnicodeEncodeError as exc:
+            raise ValueError("command must be valid UTF-8 text") from exc
+        if "\x00" in self.command or command_bytes > 16 * 1024:
+            raise ValueError("command must be NUL-free UTF-8 text <= 16 KiB")
+        for field_name, value in (("shell", self.shell), ("cwd", self.cwd)):
+            try:
+                value_bytes = len(value.encode("utf-8")) if type(value) is str else 0
+            except UnicodeEncodeError as exc:
+                raise ValueError(f"{field_name} must be valid UTF-8 text") from exc
+            if (
+                type(value) is not str
+                or not value.strip()
+                or value_bytes > MAX_RAW_CLI_DISPLAY_FIELD_BYTES
+                or any(character in value for character in "\r\n\x00")
+            ):
+                raise ValueError(
+                    f"{field_name} must be nonblank single-line text <= "
+                    f"{MAX_RAW_CLI_DISPLAY_FIELD_BYTES} bytes"
+                )
+        started_at = self.started_at_monotonic
+        if self.lifecycle_state == "starting" and started_at is not None:
+            raise ValueError("started at monotonic must be None before launch")
+        if self.lifecycle_state == "running" and started_at is None:
+            raise ValueError("started at monotonic is required after launch")
+        if started_at is not None and (
+            isinstance(started_at, bool)
+            or not isinstance(started_at, (int, float))
+            or not math.isfinite(started_at)
+            or started_at < 0
+        ):
+            raise ValueError(
+                "started at monotonic must be a finite nonnegative number or None"
+            )
+        for field_name, value in (("elapsed seconds", self.elapsed_seconds),):
+            if (
+                isinstance(value, bool)
+                or not isinstance(value, (int, float))
+                or not math.isfinite(value)
+                or value < 0
+            ):
+                raise ValueError(f"{field_name} must be a finite nonnegative number")
+        if self.exit_code is not None and type(self.exit_code) is not int:
+            raise TypeError("exit code must be an integer or None")
+        if type(self.truncated) is not bool:
+            raise TypeError("truncated must be a boolean")
+        if self.cleanup_proven is not None and type(self.cleanup_proven) is not bool:
+            raise TypeError("cleanup proven must be a boolean or None")
 
 
 CONSOLE_GLOBAL_WORKSPACE_ID = "global"
@@ -913,6 +1018,9 @@ class ConsoleChatMessage:
     #: None means the marker is not owned by a model round (for example a
     #: trailing change summary), never "infer from its sequence position".
     activity_round_ordinal: int | None = None
+    #: Raw command lifecycle and authority display facts. Session-only and
+    #: callback-free; never persisted, restored, or projected to a provider.
+    raw_cli_presentation: RawCliPresentation | None = None
     #: TASK-1860: the FULL, untruncated tool result behind a TOOL marker.
     #: ``content`` is a preview capped by the Console display setting, so
     #: without this the whole result was unreachable from the transcript --

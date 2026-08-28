@@ -396,6 +396,7 @@ def test_build_trajectory_snapshot_renders_compaction_and_variants(tmp_path):
 
 def test_build_trajectory_snapshot_threads_agent_and_retrieval_owners():
     """The off-thread builder joins public durable owner read seams."""
+    requested_agent_kinds: list[str | None] = []
 
     class _DB:
         def get_messages_for_conversation(self, *_args, **_kwargs):
@@ -444,8 +445,16 @@ def test_build_trajectory_snapshot_threads_agent_and_retrieval_owners():
             return result is active_result
 
     class _RunsDB:
-        def list_runs(self, conversation_id):
+        def list_runs(self, conversation_id, *, agent_kind=None):
             assert conversation_id == "conv-1"
+            requested_agent_kinds.append(agent_kind)
+            if agent_kind is None:
+                raise AssertionError(
+                    "broad query would hydrate poison local-command steps"
+                )
+            if agent_kind == "subagent":
+                return []
+            assert agent_kind == "primary"
             return [
                 {
                     "id": "run-1",
@@ -503,6 +512,7 @@ def test_build_trajectory_snapshot_threads_agent_and_retrieval_owners():
         if record.event_id == "agent-run:run-1"
     )
     assert agent_run.turn_id == "t1"
+    assert requested_agent_kinds == ["primary", "subagent"]
 
 
 def test_snapshot_builder_prefilters_citations_and_pages_context_failures():
@@ -527,7 +537,14 @@ def test_snapshot_builder_prefilters_citations_and_pages_context_failures():
             return [{"operation_id": f"op-{i}"} for i in range(500)]
 
     class _Runs:
-        def list_runs(self, _conversation_id):
+        def list_runs(self, _conversation_id, *, agent_kind=None):
+            if agent_kind is None:
+                raise AssertionError(
+                    "broad query would hydrate poison local-command steps"
+                )
+            if agent_kind == "subagent":
+                return
+            assert agent_kind == "primary"
             yield {"id": "retained-run", "conversation_id": "conv-1"}
             raise RuntimeError("late agent failure")
 

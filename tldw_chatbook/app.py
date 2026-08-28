@@ -201,6 +201,7 @@ from tldw_chatbook.Chat.console_image_edit_operations import (
     ImageEditOperationRegistry,
 )
 from tldw_chatbook.Chat.console_runtime import ConsoleRuntime, dispose_console_runtime
+from tldw_chatbook.Chat.console_raw_cli import RawCliRuntime
 from tldw_chatbook.Chat.server_chat_conversation_service import (
     ServerChatConversationService,
 )
@@ -1013,6 +1014,16 @@ AVAILABLE_PROVIDERS = list(ALL_API_MODELS.keys())  # If needed
 #####################################################################################################################
 #
 # Functions:
+
+
+def _read_app_raw_cli_permitted(app: object) -> bool:
+    """Read the latest app config and accept only the literal boolean true."""
+    config = getattr(app, "app_config", None)
+    if not isinstance(config, Mapping):
+        return False
+    console = config.get("console")
+    return isinstance(console, Mapping) and console.get("raw_cli_permitted") is True
+
 
 # --- Global variable for config ---
 APP_CONFIG = load_settings()
@@ -7088,6 +7099,8 @@ class TldwCli(
         phase_start = time.perf_counter()
         self.MediaDatabase = MediaDatabase
         self.app_config = load_settings()
+        self.raw_cli_runtime = RawCliRuntime(lambda: _read_app_raw_cli_permitted(self))
+        self._raw_cli_runtime_shutdown_task: asyncio.Task[Any] | None = None
         self.library_new_profile_admission = first_profile_created_this_session()
         self.console_image_edit_operations = ImageEditOperationRegistry()
         self._console_image_edit_shutdown_task: asyncio.Task[None] | None = None
@@ -15157,6 +15170,17 @@ class TldwCli(
             self._console_runtime_shutdown_task = task
         await asyncio.shield(task)
 
+    async def _shutdown_raw_cli_runtime(self) -> None:
+        """Disarm and boundedly drain the app-owned raw CLI runtime once."""
+        task = self._raw_cli_runtime_shutdown_task
+        if task is None:
+            task = asyncio.create_task(
+                asyncio.to_thread(self.raw_cli_runtime.shutdown),
+                name="shutdown_raw_cli_runtime",
+            )
+            self._raw_cli_runtime_shutdown_task = task
+        await asyncio.shield(task)
+
     async def _shutdown_app_owned_lifecycles(self) -> None:
         """Drain durable app-owned work before Textual closes screen state."""
         await self._shutdown_notes_sync_runtime()
@@ -15164,6 +15188,7 @@ class TldwCli(
         await self._shutdown_actor_pack_export()
         # Console shutdown terminally fences every trusted Buddy producer
         # before Buddy itself closes admission and drains owned work.
+        await self._shutdown_raw_cli_runtime()
         await self._shutdown_console_runtime()
         await self._shutdown_persona_buddy()
         coordinator = getattr(self, "_audio_cpp_artifact_lease_coordinator", None)

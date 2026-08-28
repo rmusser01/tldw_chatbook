@@ -462,6 +462,27 @@ def validate_path_simple(
         raise ValueError(f"Invalid path: {user_path}")
 
 
+def validate_existing_absolute_directory(user_path: Union[str, Path]) -> Path:
+    """Return one normalized existing directory without imposing a root.
+
+    This is the central mode for explicitly host-authorized process working
+    directories. It validates and normalizes the path, but intentionally does
+    not claim workspace confinement.
+    """
+    try:
+        path = Path(user_path)
+        path_text = str(path)
+        path_text.encode("utf-8")
+        if "\x00" in path_text or not path.is_absolute():
+            raise ValueError
+        normalized = path.resolve(strict=True)
+        if not normalized.is_dir():
+            raise ValueError
+        return normalized
+    except (OSError, TypeError, ValueError, UnicodeError):
+        raise ValueError("Path must be an absolute existing directory") from None
+
+
 def validate_path_multi(
     user_path: Union[str, Path], roots: Sequence[Union[str, Path]]
 ) -> Path:

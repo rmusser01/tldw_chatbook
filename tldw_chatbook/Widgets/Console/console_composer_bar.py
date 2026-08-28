@@ -96,16 +96,16 @@ _DRAFT_WORD_SPLIT_RE = re.compile(r"([\t\n\x0b\x0c\r ]+)")
 #: into the draft and `ChatScreen`'s own ``Binding("alt+m", ...)`` never
 #: ran (TASK-1800).
 #:
-#: ``ctrl+``/``super+``/``meta+`` are listed for completeness, not because
+#: ``ctrl+``/``super+``/``meta+``/``cmd+`` are listed for completeness, not because
 #: they leak today: their characters are C0 control bytes, which are not
 #: printable, so they never reached that branch. ``alt`` is the one that
-#: does. Listing all four keeps the rule "a modified key is not text" true
+#: does. Listing all five keeps the rule "a modified key is not text" true
 #: by construction rather than by accident of the control-byte encoding.
 #:
 #: TASK-3749 moved this here from `chat_screen` along with the
 #: printable-key branch it guards: "is this keystroke text?" is a question
 #: about the composer's input, and it now has no other caller.
-_CHORD_MODIFIER_PREFIXES = ("alt+", "ctrl+", "super+", "meta+")
+_CHORD_MODIFIER_PREFIXES = ("alt+", "ctrl+", "super+", "meta+", "cmd+")
 
 
 def _is_modified_chord(key: str) -> bool:
@@ -236,6 +236,45 @@ class ConsoleDraftStash:
     segments: list[_DraftSegment]
     text: str
     has_paste: bool
+    raw_cli_prefix_typed: bool = False
+
+
+@dataclass(frozen=True, slots=True)
+class ConsoleRawDraft:
+    """Pure classification of one captured Console draft."""
+
+    kind: Literal["chat", "escaped_chat", "raw"]
+    text: str
+
+
+def classify_console_raw_draft(stash: ConsoleDraftStash) -> ConsoleRawDraft:
+    """Classify a captured draft without deriving trust from its text."""
+    if stash.text.startswith(r"\! "):
+        return ConsoleRawDraft("escaped_chat", stash.text[1:])
+    if stash.raw_cli_prefix_typed and stash.text.startswith("! "):
+        return ConsoleRawDraft("raw", stash.text[2:])
+    return ConsoleRawDraft("chat", stash.text)
+
+
+def unescape_console_raw_chat_stash(stash: ConsoleDraftStash) -> ConsoleDraftStash:
+    """Remove one raw-chat escape while preserving segment provenance."""
+    if not stash.text.startswith(r"\! "):
+        return stash
+    escaped_text = stash.text[1:]
+    segments = [replace(segment) for segment in stash.segments]
+    if not segments and escaped_text:
+        segments = [_DraftSegment(escaped_text)]
+    for index, segment in enumerate(segments):
+        if segment.text:
+            if segment.text.startswith("\\"):
+                segments[index] = replace(segment, text=segment.text[1:])
+            break
+    return replace(
+        stash,
+        segments=segments,
+        text=escaped_text,
+        raw_cli_prefix_typed=False,
+    )
 
 
 @dataclass(frozen=True)
@@ -623,9 +662,9 @@ class ConsoleComposerBar(Horizontal):
         #: with an unchanged draft/width/history reuse the built renderable
         #: instead of re-running the full-draft cell wrap and the history
         #: prefix scan ~1.89x/s forever.
-        self._visible_render_cache: (
-            tuple[tuple[Any, ...], dict[bool, Text]] | None
-        ) = None
+        self._visible_render_cache: tuple[tuple[Any, ...], dict[bool, Text]] | None = (
+            None
+        )
         #: TASK-1364: shared JSONL prompt-history store, injected by the
         #: owning screen (`set_prompt_history`). Drives fish-shell-style
         #: ghost text (most-recent prefix match) and Up/Down recall. None
@@ -635,6 +674,11 @@ class ConsoleComposerBar(Horizontal):
         #: in-progress text is stashed in the history store while
         #: navigating), negatives walk backwards through stored entries.
         self._history_index: int = 0
+        # Process-memory-only input provenance. Text alone can never set either
+        # bit; only the physical printable-key branch advances stage one into
+        # the trusted exact ``! `` prefix.
+        self._raw_cli_prefix_stage_one = False
+        self._raw_cli_prefix_typed = False
 
     @property
     def collapse_large_pastes_enabled(self) -> bool:
@@ -697,6 +741,53 @@ class ConsoleComposerBar(Horizontal):
             return self.query_one("#console-command-input", Input).value
         except NoMatches:
             return ""
+
+    def _begin_raw_cli_mutation(self) -> bool:
+        """Clear partial progress and capture whether an existing prefix may survive."""
+        self._raw_cli_prefix_stage_one = False
+        return self._raw_cli_prefix_typed and self.draft_text().startswith("! ")
+
+    def _finish_raw_cli_mutation(
+        self,
+        preserve_trusted_prefix: bool,
+        *,
+        mutation_start: int | None = None,
+        replaces_selection: bool = False,
+    ) -> None:
+        """Preserve trust only when a mutation began after the typed prefix."""
+        if mutation_start is not None:
+            preserve_trusted_prefix = (
+                preserve_trusted_prefix
+                and not replaces_selection
+                and mutation_start >= 2
+            )
+        self._raw_cli_prefix_typed = bool(
+            preserve_trusted_prefix and self.draft_text().startswith("! ")
+        )
+
+    def _clear_raw_cli_provenance(self) -> None:
+        """Fail closed across wholesale or non-physical draft replacement."""
+        self._raw_cli_prefix_stage_one = False
+        self._raw_cli_prefix_typed = False
+
+    def _sync_raw_cli_state(self) -> None:
+        """Project trusted raw mode into one persistent, text-labeled danger state."""
+        active = self._raw_cli_prefix_typed and self.draft_text().startswith("! ")
+        if self._raw_cli_prefix_typed and not active:
+            self._raw_cli_prefix_typed = False
+        self.set_class(active, "console-raw-cli-danger")
+        self._sync_collapsed_presentation()
+        try:
+            status = self.query_one("#console-raw-cli-status", Static)
+        except NoMatches:
+            return
+        status.set_class(active, "console-raw-cli-danger")
+        status.update(Content("RAW CLI · HOST ACCESS" if active else ""))
+        status.styles.display = "block" if active else "none"
+        status.styles.width = "auto" if active else 0
+        status.styles.min_width = 0
+        status.styles.height = 1 if active else 0
+        status.styles.min_height = 1 if active else 0
 
     def _canonical_draft_text(self) -> str:
         """Return the full payload represented by composer segments."""
@@ -1307,6 +1398,7 @@ class ConsoleComposerBar(Horizontal):
 
         # All parsing and validation above used detached immutable/local values.
         # This is the single live segment swap for the complete transaction.
+        self._clear_raw_cli_provenance()
         self._segments = rebuilt
         self._segments_initialized = True
         self._cursor_index = len(self._canonical_draft_text())
@@ -1374,6 +1466,7 @@ class ConsoleComposerBar(Horizontal):
             if text
             else []
         )
+        self._clear_raw_cli_provenance()
         self._segments = rebuilt
         self._segments_initialized = True
         self._cursor_index = len(text)
@@ -1413,6 +1506,7 @@ class ConsoleComposerBar(Horizontal):
         """Atomically restore exact draft state without calling ``load_draft``."""
         self._validate_snapshot_shape(snapshot)
         rebuilt = self._private_segments_from_snapshot(snapshot)
+        self._clear_raw_cli_provenance()
 
         # A restore is a new live scope generation even though user-visible
         # bytes/state and edit serial are restored exactly. This prevents an
@@ -1628,6 +1722,7 @@ class ConsoleComposerBar(Horizontal):
             self._has_any_draft_content(),
             "console-composer-has-draft",
         )
+        self._sync_raw_cli_state()
 
     def _sync_current_action_state(self) -> None:
         """Refresh action buttons from the current draft and cached run/save state."""
@@ -1886,7 +1981,11 @@ class ConsoleComposerBar(Horizontal):
 
         normalized_send_label = send_label.strip() or "Send"
         self._send_label = normalized_send_label
-        send_ready = has_draft and not send_blocked
+        raw_cli_ready = (
+            self._raw_cli_prefix_typed and self.draft_text().startswith("! ")
+        )
+        effective_send_blocked = send_blocked and not raw_cli_ready
+        send_ready = has_draft and not effective_send_blocked
         # TASK-23018: this used to call the TOOLTIP provider, which re-derives
         # the entire next request (whole-session provider projection + token
         # count) -- measured at 5.85 ms per keypress on a 400-message session
@@ -1895,11 +1994,15 @@ class ConsoleComposerBar(Horizontal):
         # cheap availability question is asked here now; the rendered tooltip
         # is derived in `_refresh_send_price_for_pointer` when it reaches
         # Send, which is the only moment a tooltip can be seen.
-        price_available = send_ready and self._send_price_tooltip_provider is not None
+        price_available = (
+            send_ready
+            and not raw_cli_ready
+            and self._send_price_tooltip_provider is not None
+        )
         if price_available:
             price_available = self._send_price_is_available()
         self._send_price_available = price_available
-        displayed_send_label = normalized_send_label
+        displayed_send_label = "Run" if raw_cli_ready else normalized_send_label
         if price_available:
             displayed_send_label = f"{normalized_send_label} | $"
 
@@ -1920,7 +2023,9 @@ class ConsoleComposerBar(Horizontal):
         # feedback (toast + transcript system row) survives the flag.
         send_button.disabled = not send_ready
         send_button.variant = "primary" if send_ready else "default"
-        if send_blocked and wake_turn_active:
+        if raw_cli_ready:
+            send_button.tooltip = "Run this raw command with host-user authority."
+        elif effective_send_blocked and wake_turn_active:
             # task-15862 AC#3: a wake turn's blocked state names itself --
             # the queue tooltip riding `setup_blocked_reason` mid-wake read
             # as a provider-setup problem.
@@ -1928,9 +2033,9 @@ class ConsoleComposerBar(Horizontal):
                 "A background sub-agent result is being delivered. "
                 "Wait for it to finish."
             )
-        elif send_blocked and setup_blocked_reason:
+        elif effective_send_blocked and setup_blocked_reason:
             send_button.tooltip = setup_blocked_reason
-        elif send_blocked:
+        elif effective_send_blocked:
             send_button.tooltip = (
                 "Wait for the active Console run to finish before sending."
             )
@@ -1949,21 +2054,23 @@ class ConsoleComposerBar(Horizontal):
         send_button.set_class(not send_ready, "console-action-disabled")
         send_button.set_class(send_ready, "console-send-ready")
         send_button.set_class(not has_draft, "console-send-inactive")
-        send_button.set_class(send_blocked, "console-send-blocked")
+        send_button.set_class(effective_send_blocked, "console-send-blocked")
         self.set_class(
-            send_blocked and bool(setup_blocked_reason) and not wake_turn_active,
+            effective_send_blocked
+            and bool(setup_blocked_reason)
+            and not wake_turn_active,
             "console-composer-setup-blocked",
         )
         reason = build_console_disabled_reason(
             action_id="send",
             has_draft=has_draft,
-            send_blocked=send_blocked,
+            send_blocked=effective_send_blocked,
             setup_blocked_reason=setup_blocked_reason,
             wake_turn_active=wake_turn_active,
         )
         reason_changed = reason != self._send_disabled_reason
         self._send_disabled_reason = reason
-        self._sync_send_disabled_reason(reason, muted=not send_blocked)
+        self._sync_send_disabled_reason(reason, muted=not effective_send_blocked)
 
         stop_button.disabled = False
         stop_button.variant = "warning" if run_active else "default"
@@ -2784,6 +2891,8 @@ class ConsoleComposerBar(Horizontal):
 
     def _collapsed_status_text(self) -> str:
         """Build presence-only status copy without exposing retained content."""
+        if self._raw_cli_prefix_typed and self.draft_text().startswith("! "):
+            return "RAW CLI · HOST ACCESS"
         parts = ["Composer hidden"]
         if self._run_active:
             parts.append("Generating")
@@ -2817,6 +2926,12 @@ class ConsoleComposerBar(Horizontal):
         expanded.styles.display = "none" if self._collapsed else "block"
         collapsed.styles.display = "block" if self._collapsed else "none"
         status.update(self._collapsed_status_text())
+        raw_cli_active = self._raw_cli_prefix_typed and self.draft_text().startswith(
+            "! "
+        )
+        collapsed.set_class(raw_cli_active, "console-raw-cli-danger")
+        status.set_class(raw_cli_active, "console-raw-cli-danger")
+        status.set_class(raw_cli_active, "console-voice-status-error")
         stop.styles.display = "block" if self._run_active else "none"
         self.set_class(self._collapsed, "console-composer-collapsed")
 
@@ -3333,6 +3448,7 @@ class ConsoleComposerBar(Horizontal):
         self._refresh_visible_draft()
 
     def on_blur(self) -> None:
+        self._raw_cli_prefix_stage_one = False
         self._sync_interaction_classes()
         self._sync_cursor_blink_state()
         self._refresh_visible_draft()
@@ -3346,6 +3462,15 @@ class ConsoleComposerBar(Horizontal):
         self._sync_interaction_classes()
         self._sync_cursor_blink_state()
         self._refresh_visible_draft()
+
+    @on(Button.Pressed, "#console-send-message")
+    def _stash_visible_send_draft(self, event: Button.Pressed) -> None:
+        """Capture a mouse Send at its press event, matching the Enter path."""
+        owner = self.screen
+        if not hasattr(owner, "_console_pending_send_stash"):
+            return
+        if getattr(owner, "_console_pending_send_stash") is None:
+            owner._console_pending_send_stash = self.stash_raw_cli_draft_for_send()
 
     def load_draft(self, text: str) -> None:
         """Replace the native Console draft with literal text.
@@ -3367,6 +3492,7 @@ class ConsoleComposerBar(Horizontal):
         Args:
             text: Draft payload to show and send literally.
         """
+        self._clear_raw_cli_provenance()
         self._advance_draft_generation()
         self._clear_draft_selection()
         self._segments = [_DraftSegment(text)] if text else []
@@ -3395,7 +3521,11 @@ class ConsoleComposerBar(Horizontal):
         # to stash (for example, an attachment-only send).
         self.invalidate_improvement_undo()
         text = self.draft_text()
+        raw_cli_prefix_typed = self._raw_cli_prefix_typed and text.startswith("! ")
+        self._raw_cli_prefix_stage_one = False
         if not text:
+            self._raw_cli_prefix_typed = False
+            self._sync_raw_cli_state()
             return None
         if not self._segments_initialized:
             self._segments = [_DraftSegment(text)]
@@ -3407,9 +3537,18 @@ class ConsoleComposerBar(Horizontal):
             segments=[replace(segment) for segment in self._segments],
             text=text,
             has_paste=self.has_paste_segments(),
+            raw_cli_prefix_typed=raw_cli_prefix_typed,
         )
         self.clear_draft()
         return stash
+
+    def stash_raw_cli_draft_for_send(self) -> ConsoleDraftStash | None:
+        """Consume an existing trusted raw-prefix latch without deriving trust."""
+        if not (
+            self._raw_cli_prefix_typed and self.draft_text().startswith("! ")
+        ):
+            return None
+        return self.stash_draft_for_send()
 
     def restore_stashed_draft(self, stash: ConsoleDraftStash | None) -> None:
         """Put a stashed draft back, ahead of anything typed since the stash.
@@ -3424,6 +3563,7 @@ class ConsoleComposerBar(Horizontal):
         """
         if stash is None or not stash.segments:
             return
+        self._clear_raw_cli_provenance()
         self._advance_draft_generation()
         self._clear_draft_selection()
         if not self._segments_initialized:
@@ -3434,6 +3574,9 @@ class ConsoleComposerBar(Horizontal):
             replace(segment) for segment in stash.segments
         ] + self._segments
         self._cursor_index = len(self._canonical_draft_text())
+        self._raw_cli_prefix_typed = (
+            stash.raw_cli_prefix_typed and self._canonical_draft_text().startswith("! ")
+        )
         # TASK-1281 review F3: this replaces the draft wholesale without
         # recording (a rejected send putting the user's own text back is
         # not itself an edit), but it must still close any run left open
@@ -3466,6 +3609,7 @@ class ConsoleComposerBar(Horizontal):
         """
         if record_history and self._has_any_draft_content():
             self._record_undo_snapshot(coalesce=False)
+        self._clear_raw_cli_provenance()
         self._advance_draft_generation()
         self._clear_draft_selection()
         self._segments = []
@@ -3609,6 +3753,7 @@ class ConsoleComposerBar(Horizontal):
         token edge (0 or the full text length) it was nearer to, rather
         than restored verbatim into what is now the middle of a token.
         """
+        self._clear_raw_cli_provenance()
         self._clear_draft_selection()
         text_length = len(snapshot.text)
         raw_cursor = max(0, min(snapshot.cursor_index, text_length))
@@ -3717,6 +3862,7 @@ class ConsoleComposerBar(Horizontal):
                 empty history (a session that has never had a recorded
                 edit -- freshly created, or never visited before).
         """
+        self._clear_raw_cli_provenance()
         undo_entries, redo_entries = history if history is not None else ([], [])
         current_text = getattr(undo_entries, "current_text", None)
         current_segments = getattr(undo_entries, "current_segments", None)
@@ -3799,6 +3945,18 @@ class ConsoleComposerBar(Horizontal):
             keep looking -- which includes Up/Down on a boundary row where
             neither history recall nor caret movement had anything to do.
         """
+        completes_raw_cli_prefix = (
+            self._raw_cli_prefix_stage_one
+            and event.is_printable
+            and event.character == " "
+            and not _is_modified_chord(event.key)
+            and self.draft_text() == "!"
+            and self._cursor_index == 1
+            and not self._draft_selection_all
+            and self._draft_selection_range is None
+        )
+        if self._raw_cli_prefix_stage_one and not completes_raw_cli_prefix:
+            self._raw_cli_prefix_stage_one = False
         if event.key in {"ctrl+a", "super+a", "cmd+a", "meta+a"}:
             self.select_all_draft()
             event.stop()
@@ -3901,7 +4059,19 @@ class ConsoleComposerBar(Horizontal):
             and event.character is not None
             and not _is_modified_chord(event.key)
         ):
+            starts_raw_cli_prefix = (
+                event.character == "!"
+                and self.draft_text() == ""
+                and self._cursor_index == 0
+                and not self._draft_selection_all
+                and self._draft_selection_range is None
+            )
             self.insert_text(event.character)
+            if starts_raw_cli_prefix and self.draft_text() == "!":
+                self._raw_cli_prefix_stage_one = True
+            elif completes_raw_cli_prefix and self.draft_text().startswith("! "):
+                self._raw_cli_prefix_typed = True
+            self._sync_raw_cli_state()
             self._post_draft_changed(is_insertion=True)
             event.stop()
             event.prevent_default()
@@ -3924,6 +4094,7 @@ class ConsoleComposerBar(Horizontal):
         Returns:
             True when there is draft text to select, otherwise False.
         """
+        self._raw_cli_prefix_stage_one = False
         if not self.draft_text():
             self._clear_draft_selection()
             self._refresh_visible_draft()
@@ -3955,8 +4126,13 @@ class ConsoleComposerBar(Horizontal):
         Args:
             text: Typed text to insert without paste-collapse transformation.
         """
+        preserve_raw_cli_prefix = self._begin_raw_cli_mutation()
+        replaces_selection = (
+            self._draft_selection_all or self._draft_selection_range is not None
+        )
         self._mark_manual_draft_edit()
         if not text:
+            self._finish_raw_cli_mutation(preserve_raw_cli_prefix)
             self._sync_interaction_classes()
             self._sync_current_action_state()
             return
@@ -3976,8 +4152,14 @@ class ConsoleComposerBar(Horizontal):
             self._cursor_index = 0
         self._reset_pending_unfurl_state()
         self._clamp_cursor()
+        insertion_offset = self._cursor_index
         self._insert_literal_at_cursor(text)
         self._prune_orphaned_generated_boundaries()
+        self._finish_raw_cli_mutation(
+            preserve_raw_cli_prefix,
+            mutation_start=insertion_offset,
+            replaces_selection=replaces_selection,
+        )
         self._sync_hidden_input()
         self._refresh_visible_draft()
         self._sync_interaction_classes()
@@ -4015,8 +4197,13 @@ class ConsoleComposerBar(Horizontal):
         Args:
             text: Raw text inserted through a paste event.
         """
+        preserve_raw_cli_prefix = self._begin_raw_cli_mutation()
+        replaces_selection = (
+            self._draft_selection_all or self._draft_selection_range is not None
+        )
         self._mark_manual_draft_edit()
         if not text:
+            self._finish_raw_cli_mutation(preserve_raw_cli_prefix)
             self._sync_interaction_classes()
             self._sync_current_action_state()
             return
@@ -4039,6 +4226,7 @@ class ConsoleComposerBar(Horizontal):
             self.collapse_large_pastes_enabled
             and len(text) > self.paste_collapse_threshold
         )
+        insertion_offset = self._cursor_index
         if should_collapse:
             paste_index = self._insert_segment_at_cursor(
                 _DraftSegment(
@@ -4060,6 +4248,11 @@ class ConsoleComposerBar(Horizontal):
                 )
             )
             self._prune_orphaned_generated_boundaries()
+        self._finish_raw_cli_mutation(
+            preserve_raw_cli_prefix,
+            mutation_start=insertion_offset,
+            replaces_selection=replaces_selection,
+        )
         self._sync_hidden_input()
         self._refresh_visible_draft()
         self._sync_interaction_classes()
@@ -4088,8 +4281,13 @@ class ConsoleComposerBar(Horizontal):
             label: Display-only token shown in place of the text (e.g.
                 ``"📄 notes.md · 4 KB"``).
         """
+        preserve_raw_cli_prefix = self._begin_raw_cli_mutation()
+        replaces_selection = (
+            self._draft_selection_all or self._draft_selection_range is not None
+        )
         self._mark_manual_draft_edit()
         if not text:
+            self._finish_raw_cli_mutation(preserve_raw_cli_prefix)
             self._sync_interaction_classes()
             self._sync_current_action_state()
             return
@@ -4106,6 +4304,7 @@ class ConsoleComposerBar(Horizontal):
             self._cursor_index = 0
         self._reset_pending_unfurl_state()
         self._clamp_cursor()
+        insertion_offset = self._cursor_index
         self._insert_segment_at_cursor(
             _DraftSegment(
                 text,
@@ -4115,6 +4314,11 @@ class ConsoleComposerBar(Horizontal):
             )
         )
         self._prune_orphaned_generated_boundaries()
+        self._finish_raw_cli_mutation(
+            preserve_raw_cli_prefix,
+            mutation_start=insertion_offset,
+            replaces_selection=replaces_selection,
+        )
         self._sync_hidden_input()
         self._refresh_visible_draft()
         self._sync_interaction_classes()
@@ -4130,6 +4334,7 @@ class ConsoleComposerBar(Horizontal):
 
     def delete_left(self) -> None:
         """Delete the character (or paste token) immediately left of the caret."""
+        preserve_raw_cli_prefix = self._begin_raw_cli_mutation()
         self._mark_manual_draft_edit()
         if self._draft_selection_all:
             # TASK-1281: record before dispatching to `clear_draft` -- its
@@ -4152,6 +4357,7 @@ class ConsoleComposerBar(Horizontal):
         self._ensure_editable_segments()
         self._clamp_cursor()
         if not self._segments or self._cursor_index == 0:
+            self._finish_raw_cli_mutation(preserve_raw_cli_prefix)
             self._sync_interaction_classes()
             self._sync_current_action_state()
             return
@@ -4159,6 +4365,11 @@ class ConsoleComposerBar(Horizontal):
         self._record_undo_snapshot(coalesce=False)
         segment_index, offset = self._locate_canonical(self._cursor_index)
         segment = self._segments[segment_index]
+        deletion_start = (
+            self._cursor_index - offset
+            if segment.collapse_state in {"collapsed", "confirm"}
+            else self._cursor_index - 1
+        )
         if segment.collapse_state in {"collapsed", "confirm"}:
             # A paste token deletes as a unit; the caret lands where it started.
             self._cursor_index -= offset
@@ -4173,6 +4384,11 @@ class ConsoleComposerBar(Horizontal):
                 del self._segments[segment_index]
         self._prune_orphaned_generated_boundaries()
         self._clamp_cursor()
+        self._finish_raw_cli_mutation(
+            preserve_raw_cli_prefix,
+            mutation_start=deletion_start,
+            replaces_selection=self._draft_selection_range is not None,
+        )
         self._sync_hidden_input()
         self._refresh_visible_draft()
         self._sync_interaction_classes()
@@ -4180,6 +4396,7 @@ class ConsoleComposerBar(Horizontal):
 
     def delete_right(self) -> None:
         """Delete the character (or paste token) immediately right of the caret."""
+        preserve_raw_cli_prefix = self._begin_raw_cli_mutation()
         self._mark_manual_draft_edit()
         if self._draft_selection_all:
             self._record_undo_snapshot(coalesce=False)
@@ -4190,6 +4407,7 @@ class ConsoleComposerBar(Horizontal):
         if not self._segments or self._cursor_index >= len(
             self._canonical_draft_text()
         ):
+            self._finish_raw_cli_mutation(preserve_raw_cli_prefix)
             self._sync_interaction_classes()
             self._sync_current_action_state()
             return
@@ -4197,6 +4415,12 @@ class ConsoleComposerBar(Horizontal):
         self._record_undo_snapshot(coalesce=False)
         segment_index, offset = self._locate_canonical(self._cursor_index)
         segment = self._segments[segment_index]
+        deletion_start = (
+            self._cursor_index - offset
+            if offset != len(segment.text)
+            and segment.collapse_state in {"collapsed", "confirm"}
+            else self._cursor_index
+        )
         if offset == len(segment.text):
             # Caret on a boundary: the next segment holds the deletion target.
             next_segment = self._segments[segment_index + 1]
@@ -4220,6 +4444,11 @@ class ConsoleComposerBar(Horizontal):
                 del self._segments[segment_index]
         self._prune_orphaned_generated_boundaries()
         self._clamp_cursor()
+        self._finish_raw_cli_mutation(
+            preserve_raw_cli_prefix,
+            mutation_start=deletion_start,
+            replaces_selection=self._draft_selection_range is not None,
+        )
         self._sync_hidden_input()
         self._refresh_visible_draft()
         self._sync_interaction_classes()
@@ -4234,6 +4463,7 @@ class ConsoleComposerBar(Horizontal):
         Returns:
             True when text (or a full-draft selection) was deleted.
         """
+        preserve_raw_cli_prefix = self._begin_raw_cli_mutation()
         self._mark_manual_draft_edit()
         if self._draft_selection_all:
             self._record_undo_snapshot(coalesce=False)
@@ -4244,6 +4474,7 @@ class ConsoleComposerBar(Horizontal):
         canonical = self._canonical_draft_text()
         cursor = self._cursor_index
         if cursor == 0:
+            self._finish_raw_cli_mutation(preserve_raw_cli_prefix)
             return False
         token_ranges: list[tuple[int, int]] = []
         offset = 0
@@ -4278,9 +4509,15 @@ class ConsoleComposerBar(Horizontal):
             ):
                 start -= 1
         if start == cursor:
+            self._finish_raw_cli_mutation(preserve_raw_cli_prefix)
             return False
         self._record_undo_snapshot(coalesce=False)
         self._delete_canonical_range(start, cursor)
+        self._finish_raw_cli_mutation(
+            preserve_raw_cli_prefix,
+            mutation_start=start,
+            replaces_selection=self._draft_selection_range is not None,
+        )
         self._sync_hidden_input()
         self._refresh_visible_draft()
         self._sync_interaction_classes()
@@ -4291,6 +4528,7 @@ class ConsoleComposerBar(Horizontal):
         """Move the caret to a canonical offset, collapsing any selection."""
         # TASK-1281: every caller of this helper (arrow keys, Home/End) is a
         # cursor reposition, which always closes an open typed run.
+        self._raw_cli_prefix_stage_one = False
         self._coalescing_active = False
         self._clear_draft_selection()
         if not self._segments_initialized:
@@ -4749,6 +4987,7 @@ class ConsoleComposerBar(Horizontal):
         Returns:
             True when the caret was positioned.
         """
+        self._raw_cli_prefix_stage_one = False
         self._ensure_editable_segments()
         # TASK-1281: click-to-position is a cursor reposition too.
         self._coalescing_active = False
@@ -5523,6 +5762,17 @@ class ConsoleComposerBar(Horizontal):
             voice_status.styles.height = 0
             voice_status.styles.min_height = 0
             yield voice_status
+            raw_cli_status = Static(
+                Content(""),
+                id="console-raw-cli-status",
+                classes="console-voice-status console-voice-status-error",
+            )
+            raw_cli_status.styles.display = "none"
+            raw_cli_status.styles.width = 0
+            raw_cli_status.styles.min_width = 0
+            raw_cli_status.styles.height = 0
+            raw_cli_status.styles.min_height = 0
+            yield raw_cli_status
             attachment_indicator = Static(
                 "",
                 id="console-attachment-indicator",

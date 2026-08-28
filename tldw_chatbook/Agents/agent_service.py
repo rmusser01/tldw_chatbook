@@ -5727,8 +5727,17 @@ class AgentService:
         if supersede_run_id:
             candidates = [
                 row
-                for row in self.db.list_runs(
-                    conversation_id, include_superseded=True
+                for row in (
+                    *self.db.list_runs(
+                        conversation_id,
+                        include_superseded=True,
+                        agent_kind=AGENT_KIND_PRIMARY,
+                    ),
+                    *self.db.list_runs(
+                        conversation_id,
+                        include_superseded=True,
+                        agent_kind=AGENT_KIND_SUBAGENT,
+                    ),
                 )
                 if row["id"] == supersede_run_id
                 or row.get("parent_run_id") == supersede_run_id

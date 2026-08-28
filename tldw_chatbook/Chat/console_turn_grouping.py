@@ -78,7 +78,7 @@ def project_thinking_activities(
 
 @dataclass(frozen=True, slots=True)
 class ConsoleAssistantTurn:
-    """An Assistant message and its immediately following tool activities."""
+    """An Assistant message and its immediately following agent tool activities."""
 
     assistant: ConsoleChatMessage
     activities: tuple[ConsoleChatMessage, ...] = ()
@@ -178,7 +178,10 @@ def ordered_assistant_activities(
 def group_console_transcript_messages(
     messages: Iterable[ConsoleChatMessage],
 ) -> tuple[ConsoleTranscriptUnit, ...]:
-    """Group each Assistant with only its immediately following tool messages.
+    """Group each Assistant with only its immediately following agent tools.
+
+    User-owned raw CLI markers remain standalone and close a pending Assistant
+    turn even though their display role is TOOL.
 
     Args:
         messages: Active-path messages in causal store order.
@@ -192,7 +195,11 @@ def group_console_transcript_messages(
     activities: list[ConsoleChatMessage] = []
 
     for message in messages:
-        if assistant is not None and message.role == ConsoleMessageRole.TOOL:
+        if (
+            assistant is not None
+            and message.role == ConsoleMessageRole.TOOL
+            and message.raw_cli_presentation is None
+        ):
             activities.append(message)
             continue
 

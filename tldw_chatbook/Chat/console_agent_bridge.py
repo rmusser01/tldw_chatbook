@@ -119,6 +119,7 @@ from tldw_chatbook.Chat.console_chat_controller import (
     KILL_SWITCH_REFUSAL as CONTROLLER_KILL_SWITCH_REFUSAL,
     USER_DENIED_REFUSAL as CONTROLLER_USER_DENIED_REFUSAL,
 )
+from tldw_chatbook.Chat.console_raw_cli import local_command_resume_marker
 from tldw_chatbook.Chat.console_display_state import (
     format_diff_feedback_disclosure,
     render_diff_feedback_block,
@@ -1351,6 +1352,9 @@ def format_todo_marker(tasks: list[dict[str, object]]) -> str:
     return "\n".join([header, *lines])
 
 
+TRANSCRIPT_START_MARKER_ANCHOR = ""
+
+
 def inject_resume_agent_markers(
     messages: list[ConsoleChatMessage],
     anchored_blocks: list[tuple[str | None, list[ConsoleChatMessage]]],
@@ -1372,6 +1376,10 @@ def inject_resume_agent_markers(
       currently active (an edit/regenerate moved the active path off of
       it). The block is **dropped**: showing that run's tool trace next to
       a DIFFERENT reply would misattribute it, so hiding it is correct.
+    - **Anchor id is the named empty-string transcript-start sentinel** -- a
+      local command was the session's first interaction, so its marker is
+      restored before every later persisted message rather than attached to
+      an unrelated assistant reply.
     - **Anchor id is ``None``** -- a legacy (pre-Phase-C) run, a sub-agent
       run, or one whose terminal path never got to record the id (crash /
       never-persisted reply). Falls back to the prior ordinal placement:
@@ -1419,9 +1427,13 @@ def inject_resume_agent_markers(
     }
 
     matched: dict[int, list[list[ConsoleChatMessage]]] = {}
+    transcript_start_blocks: list[list[ConsoleChatMessage]] = []
     null_blocks: list[list[ConsoleChatMessage]] = []
     used_indexes: set[int] = set()
     for anchor_id, block in non_empty:
+        if anchor_id == TRANSCRIPT_START_MARKER_ANCHOR:
+            transcript_start_blocks.append(block)
+            continue
         if anchor_id is None:
             null_blocks.append(block)
             continue
@@ -1441,6 +1453,9 @@ def inject_resume_agent_markers(
     leftover_blocks = null_blocks[len(unclaimed_assistant_indexes) :]
 
     result: list[ConsoleChatMessage] = []
+    for block in transcript_start_blocks:
+        if not _already_present(block):
+            result.extend(block)
     for index, message in enumerate(messages):
         result.append(message)
         for block in matched.get(index, ()):
@@ -6335,11 +6350,10 @@ class ConsoleAgentBridge:
         return snapshot
 
     def subagent_runs(self, conversation_id: str) -> list[dict]:
-        return [
-            r
-            for r in self._db.list_runs(conversation_id)
-            if r["agent_kind"] == AGENT_KIND_SUBAGENT
-        ]
+        return self._db.list_runs(
+            conversation_id,
+            agent_kind=AGENT_KIND_SUBAGENT,
+        )
 
     def subagent_run(self, run_id: str) -> dict | None:
         return self._db.get_run(run_id)
@@ -6632,9 +6646,14 @@ class ConsoleAgentBridge:
         sees them.
 
         Returns one ``(assistant_message_id, marker_block)`` pair per
-        non-superseded PRIMARY run for the conversation, oldest run first
-        (``list_runs`` itself returns newest-first, so the order is
-        reversed here). ``assistant_message_id`` is the run's own
+        non-superseded PRIMARY run for the conversation, oldest run first,
+        followed by one bounded display marker per ``local_command`` run.
+        Local commands are queried by their exact kind and never enter the
+        primary reconstruction below. A missing anchor denotes a command
+        issued before the first transcript message and uses the explicit
+        transcript-start placement rather than primary-run ordinal fallback.
+
+        For primary runs, ``assistant_message_id`` is the run's own
         ``record["assistant_message_id"]`` -- the persisted id of the
         reply it produced (set on every terminal path since Task 2), or
         ``None`` for a legacy/pre-Phase-C run, a sub-agent run, or one
@@ -6667,11 +6686,11 @@ class ConsoleAgentBridge:
         Placement of the returned blocks into a transcript is the caller's
         job -- see ``inject_resume_agent_markers``.
         """
-        records = [
-            record
-            for record in self._db.list_runs(conversation_id, include_superseded=False)
-            if record["agent_kind"] == AGENT_KIND_PRIMARY
-        ]
+        records = self._db.list_runs(
+            conversation_id,
+            include_superseded=False,
+            agent_kind=AGENT_KIND_PRIMARY,
+        )
         records.reverse()  # list_runs is newest-first; markers must read chronologically
         thinking_rounds_by_owner = thinking_round_ordinals_by_assistant_message_id or {}
         # TASK-1972 review round: ONE conversation-level query, grouped in
@@ -6879,6 +6898,27 @@ class ConsoleAgentBridge:
                     )
                 )
             blocks.append((record.get("assistant_message_id"), block))
+
+        try:
+            local_records = self._db.local_command_resume_records(conversation_id)
+        except Exception:  # noqa: BLE001 -- poison local rows must not break resume
+            local_records = []
+        for record in local_records:
+            if not isinstance(record, Mapping):
+                continue
+            anchor = record.get("assistant_message_id")
+            if anchor is not None and (type(anchor) is not str or not anchor.strip()):
+                continue
+            marker = local_command_resume_marker(record)
+            if marker is not None:
+                blocks.append(
+                    (
+                        anchor
+                        if anchor is not None
+                        else TRANSCRIPT_START_MARKER_ANCHOR,
+                        [marker],
+                    )
+                )
         return blocks
 
     def append_todo_marker(
@@ -7063,22 +7103,27 @@ class ConsoleAgentBridge:
         return _truncate_step_text(str(raw), limit=_console_tool_result_display_cap())
 
     def _previous_primary_run_id(self, conversation_id: str) -> str | None:
-        for record in self._db.list_runs(conversation_id, include_superseded=False):
-            if record["agent_kind"] == AGENT_KIND_PRIMARY:
-                return record["id"]
-        return None
+        records = self._db.list_runs(
+            conversation_id,
+            include_superseded=False,
+            agent_kind=AGENT_KIND_PRIMARY,
+        )
+        return records[0]["id"] if records else None
 
     def _derive_historical_snapshot(self, conversation_id: str) -> AgentLiveSnapshot:
-        # One query covers both the primary lookup and its sub-agents --
-        # AgentRunsDB has no separate "get one conversation's tree" call,
-        # and issuing two queries here would double the DB hit this cache
-        # exists to avoid.
-        records = self._db.list_runs(conversation_id, include_superseded=False)
-        primary = next(
-            (r for r in records if r["agent_kind"] == AGENT_KIND_PRIMARY), None
+        primary_records = self._db.list_runs(
+            conversation_id,
+            include_superseded=False,
+            agent_kind=AGENT_KIND_PRIMARY,
         )
-        if primary is None:
+        if not primary_records:
             return AgentLiveSnapshot()
+        primary = primary_records[0]
+        subagent_records = self._db.list_runs(
+            conversation_id,
+            include_superseded=False,
+            agent_kind=AGENT_KIND_SUBAGENT,
+        )
         steps = tuple(
             AgentLiveStep(
                 kind=str(step.get("kind") or ""),
@@ -7101,9 +7146,8 @@ class ConsoleAgentBridge:
                 # drillable as a live run's.
                 run_id=str(record.get("id") or ""),
             )
-            for record in records
-            if record["agent_kind"] == AGENT_KIND_SUBAGENT
-            and record.get("parent_run_id") == primary["id"]
+            for record in subagent_records
+            if record.get("parent_run_id") == primary["id"]
         )
         return AgentLiveSnapshot(
             status=str(primary.get("status") or "idle"),

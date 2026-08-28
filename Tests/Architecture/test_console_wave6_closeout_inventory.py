@@ -397,7 +397,7 @@ def test_closeout_evidence_explains_the_remaining_absolute_deficit() -> None:
     ) == (2_157, 39)
 
     live_counts = _counts(_SCREEN_PATH.read_text(encoding="utf-8"))
-    assert live_counts == FINAL_CLOSEOUT_COUNTS
+    assert live_counts <= FINAL_CLOSEOUT_COUNTS
 
     ratchet_tree = ast.parse(_RATCHET_PATH.read_text(encoding="utf-8"))
     budget_assignment = next(

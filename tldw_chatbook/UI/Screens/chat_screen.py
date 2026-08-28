@@ -131,6 +131,7 @@ from ..Console_Modules.retrieval import (
 )
 from ..Console_Modules.transcript import _ConsoleTranscriptReadingState
 from ..Console_Modules.wiring import build_console_controllers
+from ..Console_Modules import raw_cli as raw_cli_ui
 from ..Console_Modules.session import (
     _has_selected_text,
     _is_empty_select_value,
@@ -161,6 +162,7 @@ from ...Chat.console_cost_tracker import (
     build_cost_rows_totals,
     build_cost_snapshot,
     build_cost_state,
+    console_cost_snapshot_messages,
     fingerprint_break_reason,
     token_estimate_signature,
 )
@@ -1019,7 +1021,6 @@ CONSOLE_WORKBENCH_SHORTCUTS_SETUP_BLOCKED = tuple(
     ("Enter", "continue setup") if pair == ("Enter", "send / queue") else pair
     for pair in CONSOLE_WORKBENCH_SHORTCUTS
 )
-
 
 #: TASK-362: the full Console keyboard vocabulary for the F1 help panel, grouped
 #: by surface. The flat CONSOLE_WORKBENCH_SHORTCUTS above stays the compact
@@ -6591,26 +6592,9 @@ class ChatScreen(BaseAppScreen):
                 self._console_cost_cache_state = ConsoleCacheState.NONE
                 return None
 
-            # Spec: "No mid-stream cost animation -- the chip updates at
-            # message completion." `messages_for_session` materializes
-            # buffered stream chunks straight into `.content` (so the
-            # transcript can render live text), and this method is called
-            # from the same 0.2s tick that drives that materialization --
-            # so an in-flight row (no `usage` yet) would otherwise get a
-            # bigger `_estimate_tokens_locally` estimate on every tick,
-            # visibly growing the chip while the reply streams in. `{
-            # "pending", "streaming"}` is the store's own established
-            # "not yet finalized" status set (see e.g.
-            # ``ConsoleChatStore._validate_can_mark_terminal``); excluding
-            # it here freezes the snapshot at its pre-send total until the
-            # row lands as "complete"/"stopped"/"failed" (all of which bump
-            # the payload revision and stop changing further).
-            snapshot_messages = [
-                message
-                for message in messages
-                if getattr(message, "status", "complete")
-                not in {"pending", "streaming"}
-            ]
+            # Keep the chip stable until provider rows finish; direct raw
+            # commands are local actions and never provider-billed rows.
+            snapshot_messages = console_cost_snapshot_messages(messages)
             # task-6: staged (not-yet-sent) evidence used to be invisible to
             # the cost chip entirely -- `ConsoleStagedSource` carries no
             # text, so a session with zero messages but several staged
@@ -12950,12 +12934,11 @@ class ChatScreen(BaseAppScreen):
         # keypress; the mouse path still reads the live draft here.
         stash = self._console_pending_send_stash
         self._console_pending_send_stash = None
-        try:
-            composer = self.query_one("#console-native-composer", ConsoleComposerBar)
-            draft = stash.text if stash is not None else composer.draft_text()
-        except QueryError:
-            composer = None
-            draft = stash.text if stash is not None else ""
+        stash, composer, draft, raw_cli_handled = raw_cli_ui.prepare_visible_send(
+            stash, self._console_composer_or_none, self._raw_cli.start_user_command
+        )
+        if raw_cli_handled:
+            return False
         if not draft.strip() and self._console_pending_image_attachment() is None:
             if composer is not None:
                 composer.restore_stashed_draft(stash)
@@ -14441,6 +14424,10 @@ class ChatScreen(BaseAppScreen):
         under the original name for `on_button_pressed` and the
         pre-existing test suite's direct-call convention -- see
         `message.py`'s module docstring."""
+        if raw_cli_ui.handle_raw_cli_message_action(
+            self._raw_cli, event, self._ensure_console_chat_store()
+        ):
+            return True
         return await self._message.handle_console_message_action(event)
 
     def _console_fork_eligibility(self, message_id: str):

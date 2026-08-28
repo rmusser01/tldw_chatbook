@@ -122,6 +122,7 @@ class ConsoleActionResult:
     clipboard_text: str | None = None
     target_message_id: str | None = None
     target_content: str | None = None
+    target_invocation_id: str | None = None
 
 
 @dataclass(frozen=True)
@@ -252,7 +253,9 @@ class ConsoleMessageActionService:
             "continue",
         }
     )
-    _SPECIALIZED_ACTION_IDS = frozenset({"tool-output", "review-changes"})
+    _SPECIALIZED_ACTION_IDS = frozenset(
+        {"raw-cli-stop", "tool-output", "review-changes"}
+    )
     _MEDIA_ACTION_IDS = frozenset(
         {
             "variant-previous",
@@ -354,6 +357,23 @@ class ConsoleMessageActionService:
         """
         if not isinstance(fork_eligibility, ConsoleForkEligibility):
             raise TypeError("fork_eligibility must be ConsoleForkEligibility")
+        raw_cli = message.raw_cli_presentation
+        if raw_cli is not None:
+            actions: list[ConsoleMessageAction] = []
+            if raw_cli.lifecycle_state in {"starting", "running"}:
+                actions.append(ConsoleMessageAction("raw-cli-stop", "Stop"))
+            elif raw_cli.lifecycle_state == "stopping":
+                actions.append(
+                    ConsoleMessageAction(
+                        "raw-cli-stop",
+                        "Stopping…",
+                        enabled=False,
+                        disabled_reason="Raw CLI cancellation is already in progress.",
+                    )
+                )
+            if self._has_tool_output(message):
+                actions.append(ConsoleMessageAction("tool-output", "Full output"))
+            return actions
         disabled_reason = self._disabled_reason(message)
         is_generation_message = generation_variant_count > 0
         completed_actions = list(self._COMPLETED_ACTIONS)
@@ -676,6 +696,24 @@ class ConsoleMessageActionService:
         self, action_id: str, message: ConsoleChatMessage
     ) -> ConsoleActionResult:
         """Dispatch a pure action result without touching UI or persistence."""
+        if action_id == "raw-cli-stop":
+            raw_cli = message.raw_cli_presentation
+            if raw_cli is None or raw_cli.lifecycle_state not in {
+                "starting",
+                "running",
+            }:
+                return ConsoleActionResult(
+                    action_id=action_id,
+                    status="blocked",
+                    visible_copy="Raw CLI command is no longer running.",
+                )
+            return ConsoleActionResult(
+                action_id=action_id,
+                status="completed",
+                visible_copy="Stopping raw CLI command…",
+                target_message_id=message.id,
+                target_invocation_id=raw_cli.invocation_id,
+            )
         if message.status in {"pending", "streaming"}:
             return ConsoleActionResult(
                 action_id=action_id,
