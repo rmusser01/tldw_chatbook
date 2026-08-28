@@ -252,6 +252,132 @@ async def test_coordinator_settles_accepted_import_before_consuming_cancellation
     assert presentations == [False]
 
 
+def _claimed_import_coordinator():
+    """Return one coordinator holding an accepted import."""
+    coordinator = library_skill_import_controller.LibrarySkillImportCoordinator(
+        SimpleNamespace()
+    )
+    assert coordinator.open_draft() is True
+    assert coordinator.claim("/accepted") is True
+    return coordinator
+
+
+@pytest.mark.asyncio
+async def test_coordinator_inner_cancellation_settles_fail_closed_once(
+    monkeypatch,
+):
+    """A cancelled underlying operation releases and publishes one failure."""
+    coordinator = _claimed_import_coordinator()
+    presentations: list[bool] = []
+
+    async def cancelled_import(_raw_path):
+        raise asyncio.CancelledError
+
+    monkeypatch.setattr(coordinator, "_import", cancelled_import)
+    runtime_app = SimpleNamespace(
+        screen=SimpleNamespace(
+            _present_library_skills_import_snapshot=(
+                lambda *, refresh_sources: presentations.append(refresh_sources)
+            )
+        )
+    )
+
+    await coordinator.run("/accepted", runtime_app=runtime_app)
+
+    assert coordinator.snapshot.in_flight is False
+    assert coordinator.snapshot.status == "Could not import that skill."
+    assert presentations == [False]
+
+
+@pytest.mark.asyncio
+async def test_coordinator_fatal_base_exception_settles_once_before_reraise(
+    monkeypatch,
+    capsys,
+):
+    """A fatal operation outcome cannot strand or leak its exception text."""
+    coordinator = _claimed_import_coordinator()
+    presentations: list[bool] = []
+
+    class FatalProbe(BaseException):
+        pass
+
+    async def fatal_import(_raw_path):
+        raise FatalProbe("sensitive diagnostic probe")
+
+    monkeypatch.setattr(coordinator, "_import", fatal_import)
+    runtime_app = SimpleNamespace(
+        screen=SimpleNamespace(
+            _present_library_skills_import_snapshot=(
+                lambda *, refresh_sources: presentations.append(refresh_sources)
+            )
+        )
+    )
+
+    with pytest.raises(FatalProbe):
+        await coordinator.run("/accepted", runtime_app=runtime_app)
+
+    assert coordinator.snapshot.in_flight is False
+    assert coordinator.snapshot.status == "Could not import that skill."
+    assert presentations == [False]
+    captured = capsys.readouterr()
+    assert "sensitive diagnostic probe" not in captured.out
+    assert "sensitive diagnostic probe" not in captured.err
+
+
+@pytest.mark.asyncio
+async def test_coordinator_repeated_outer_cancellation_waits_for_one_outcome(
+    monkeypatch,
+):
+    """Repeated owner cancellation cannot detach the accepted operation."""
+    coordinator = _claimed_import_coordinator()
+    started = asyncio.Event()
+    release = asyncio.Event()
+    landed = asyncio.Event()
+    presentations: list[bool] = []
+    lands = 0
+
+    async def blocked_import(_raw_path):
+        nonlocal lands
+        started.set()
+        await release.wait()
+        lands += 1
+        landed.set()
+        return library_skill_import_controller._LibrarySkillImportOutcome(
+            'Imported "one" · re-review it in the trust panel',
+            review_name="one",
+            clear_path=True,
+        )
+
+    monkeypatch.setattr(coordinator, "_import", blocked_import)
+    runtime_app = SimpleNamespace(
+        screen=SimpleNamespace(
+            _present_library_skills_import_snapshot=(
+                lambda *, refresh_sources: presentations.append(refresh_sources)
+            )
+        )
+    )
+    owner = asyncio.create_task(
+        coordinator.run("/accepted", runtime_app=runtime_app)
+    )
+    await started.wait()
+
+    try:
+        owner.cancel()
+        await asyncio.sleep(0)
+        owner.cancel()
+        await asyncio.sleep(0)
+        assert owner.done() is False
+        assert coordinator.snapshot.in_flight is True
+    finally:
+        release.set()
+        await landed.wait()
+    assert lands == 1
+    assert coordinator.snapshot.in_flight is False
+    assert coordinator.snapshot.review_name == "one"
+    assert presentations == [False]
+    await owner
+
+
 @pytest.mark.asyncio
 @pytest.mark.parametrize(
     ("route", "second_trigger", "expected_name"),
@@ -280,6 +406,7 @@ async def test_skill_import_is_single_flight_across_every_route_and_navigation(
     app = _build_test_app(configured_default="library")
     _wire_empty_non_skill_services(app)
     app.skills_scope_service = service
+    host = LibraryHarness(app)
 
     if route == "loose":
         import_value = source_dir / "loose-skill.md"
@@ -329,8 +456,9 @@ async def test_skill_import_is_single_flight_across_every_route_and_navigation(
     monkeypatch.setattr(owner, attribute, blocked_call)
 
     try:
-        async with app.run_test(size=LIBRARY_TEST_SIZE) as pilot:
-            screen = await _wait_for_active_library_screen(app, pilot)
+        async with host.run_test(size=LIBRARY_TEST_SIZE) as pilot:
+            screen = _active_library_screen(host)
+            await _wait_for_library_shell(screen, pilot)
             screen.query_one("#library-row-browse-skills", Button).press()
             await _wait_for_selector(screen, pilot, "#library-skills-import")
             screen.handle_library_skills_import(SimpleNamespace(stop=lambda: None))
@@ -425,10 +553,12 @@ async def test_routed_library_replacement_observes_and_refuses_app_owned_import(
     app = _build_test_app(configured_default="library")
     _wire_empty_non_skill_services(app)
     app.skills_scope_service = service
+    host = LibraryHarness(app)
 
     try:
-        async with app.run_test(size=LIBRARY_TEST_SIZE) as pilot:
-            original_screen = await _wait_for_active_library_screen(app, pilot)
+        async with host.run_test(size=LIBRARY_TEST_SIZE) as pilot:
+            original_screen = _active_library_screen(host)
+            await _wait_for_library_shell(original_screen, pilot)
             await _open_skills_import_row(original_screen, pilot)
             original_screen.query_one(
                 "#library-skills-import-path", Input
@@ -437,13 +567,13 @@ async def test_routed_library_replacement_observes_and_refuses_app_owned_import(
             original_screen.query_one("#library-skills-import-run", Button).press()
             assert await asyncio.to_thread(started.wait, 5)
 
-            await app.switch_screen(Screen())
+            await host.switch_screen(Screen())
             replacement = LibraryScreen(app)
-            await app.switch_screen(replacement)
+            await host.switch_screen(replacement)
             await _wait_for_library_shell(replacement, pilot)
 
-            assert app.screen is replacement
-            assert original_screen not in app.screen_stack
+            assert host.screen is replacement
+            assert original_screen not in host.screen_stack
             assert replacement._library_skills_import_in_flight is True
             assert replacement._library_skills_import_open is True
             skills_row = await _wait_for_selector(
@@ -498,10 +628,12 @@ async def test_completed_import_receipt_survives_rail_departure_and_return(tmp_p
     app = _build_test_app(configured_default="library")
     _wire_empty_non_skill_services(app)
     app.skills_scope_service = service
+    host = LibraryHarness(app)
     expected = 'Imported "completed-skill" · re-review it in the trust panel'
 
-    async with app.run_test(size=LIBRARY_TEST_SIZE) as pilot:
-        screen = await _wait_for_active_library_screen(app, pilot)
+    async with host.run_test(size=LIBRARY_TEST_SIZE) as pilot:
+        screen = _active_library_screen(host)
+        await _wait_for_library_shell(screen, pilot)
         await _open_skills_import_row(screen, pilot)
         screen.query_one("#library-skills-import-path", Input).value = str(source)
         await pilot.pause()
@@ -548,11 +680,13 @@ async def test_import_completed_while_away_survives_another_rail_move(
     app = _build_test_app(configured_default="library")
     _wire_empty_non_skill_services(app)
     app.skills_scope_service = service
+    host = LibraryHarness(app)
     expected = 'Imported "away-skill" · re-review it in the trust panel'
 
     try:
-        async with app.run_test(size=LIBRARY_TEST_SIZE) as pilot:
-            screen = await _wait_for_active_library_screen(app, pilot)
+        async with host.run_test(size=LIBRARY_TEST_SIZE) as pilot:
+            screen = _active_library_screen(host)
+            await _wait_for_library_shell(screen, pilot)
             await _open_skills_import_row(screen, pilot)
             screen.query_one("#library-skills-import-path", Input).value = str(source)
             await pilot.pause()
@@ -598,13 +732,15 @@ async def test_abandoned_picker_cannot_write_into_reopened_import_row(
     app.skills_scope_service = _real_skills_scope_service_with_trust(
         tmp_path / "store"
     )[1]
+    host = LibraryHarness(app)
     pushed: dict[str, object] = {}
 
-    async with app.run_test(size=LIBRARY_TEST_SIZE) as pilot:
-        screen = await _wait_for_active_library_screen(app, pilot)
+    async with host.run_test(size=LIBRARY_TEST_SIZE) as pilot:
+        screen = _active_library_screen(host)
+        await _wait_for_library_shell(screen, pilot)
         await _open_skills_import_row(screen, pilot)
         monkeypatch.setattr(
-            app,
+            host,
             "push_screen",
             lambda dialog, callback=None: pushed.update(
                 dialog=dialog, callback=callback

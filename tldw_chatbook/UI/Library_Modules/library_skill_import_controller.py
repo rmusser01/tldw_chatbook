@@ -103,20 +103,53 @@ class LibrarySkillImportCoordinator:
 
     async def run(self, raw_path: str, *, runtime_app: Any) -> None:
         """Run the accepted mutation and publish one authoritative receipt."""
-        operation = asyncio.create_task(self._import(raw_path))
-        try:
+        operation = asyncio.create_task(
+            self._run_and_settle(raw_path, runtime_app=runtime_app)
+        )
+        while True:
             try:
-                outcome = await asyncio.shield(operation)
+                await asyncio.shield(operation)
+                return
             except asyncio.CancelledError:
+                owner = asyncio.current_task()
+                if owner is not None:
+                    while owner.cancelling():
+                        owner.uncancel()
+                if not operation.done():
+                    continue
                 if operation.cancelled():
-                    raise
-                outcome = await asyncio.shield(operation)
+                    self._settle(
+                        _LibrarySkillImportOutcome(
+                            "Could not import that skill."
+                        ),
+                        runtime_app=runtime_app,
+                    )
+                    return
+                operation.result()
+                return
+
+    async def _run_and_settle(self, raw_path: str, *, runtime_app: Any) -> None:
+        """Settle the accepted mutation in its own cancellation-shielded task."""
+        fatal_error: BaseException | None = None
+        try:
+            outcome = await self._import(raw_path)
+        except asyncio.CancelledError:
+            outcome = _LibrarySkillImportOutcome("Could not import that skill.")
         except Exception:
-            logger.opt(exception=True).warning(
-                "Library skill import worker failed unexpectedly."
-            )
+            logger.warning("Library skill import worker failed unexpectedly.")
+            outcome = _LibrarySkillImportOutcome("Could not import that skill.")
+        except BaseException as exc:
+            fatal_error = exc
             outcome = _LibrarySkillImportOutcome("Could not import that skill.")
 
+        self._settle(outcome, runtime_app=runtime_app)
+        if fatal_error is not None:
+            raise fatal_error
+
+    def _settle(
+        self, outcome: _LibrarySkillImportOutcome, *, runtime_app: Any
+    ) -> None:
+        """Publish the one terminal snapshot before the operation task ends."""
         self.update(
             path="" if outcome.clear_path else self._snapshot.path,
             status=outcome.status,

@@ -3597,6 +3597,10 @@ async def test_import_browse_folder_clears_stale_status_and_review():
     success status and 'Review …' button showing against the new path."""
     pushed: dict = {}
     fake = SimpleNamespace(
+        _library_skills_import_generation=0,
+        _library_skills_import_in_flight=False,
+        _library_skills_import_open=True,
+        _library_selected_row_id=LIBRARY_ROW_BROWSE_SKILLS,
         _library_skills_import_path="",
         _library_skills_import_status='Imported "old" · re-review it in the trust panel',
         _library_skills_import_review_name="old",
@@ -3619,6 +3623,10 @@ async def test_import_browse_file_clears_stale_status_and_review():
     """Same stranding via the file 'Browse…' variant."""
     pushed: dict = {}
     fake = SimpleNamespace(
+        _library_skills_import_generation=0,
+        _library_skills_import_in_flight=False,
+        _library_skills_import_open=True,
+        _library_selected_row_id=LIBRARY_ROW_BROWSE_SKILLS,
         _library_skills_import_path="",
         _library_skills_import_status='Imported "old" · re-review it in the trust panel',
         _library_skills_import_review_name="old",
