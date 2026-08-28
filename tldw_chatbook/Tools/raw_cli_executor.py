@@ -5,7 +5,7 @@ from __future__ import annotations
 import codecs
 from collections.abc import Callable, Mapping
 import contextlib
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 import math
 import multiprocessing
 import ntpath
@@ -22,13 +22,20 @@ import time
 from typing import Any, BinaryIO, Literal, TypeAlias
 
 from tldw_chatbook.Agents.run_log import configured_max_record_bytes
+from tldw_chatbook.Utils.input_validation import (
+    RAW_CLI_COMMAND_MAX_BYTES,
+    validate_raw_cli_command,
+)
+from tldw_chatbook.Utils.path_validation import (
+    validate_existing_absolute_directory,
+)
 from tldw_chatbook.STT.executor_process_tree import (
     ExecutorProcessTree,
     WorkerContainmentIdentity,
     enter_worker_containment,
 )
 
-MAX_RAW_COMMAND_BYTES = 16 * 1024
+MAX_RAW_COMMAND_BYTES = RAW_CLI_COMMAND_MAX_BYTES
 MAX_RAW_TIMEOUT_SECONDS = 300.0
 MAX_RAW_PREVIEW_BYTES = 32 * 1024
 
@@ -133,8 +140,8 @@ class RawCliResult:
     cleanup_proven: bool
 
 
-def validate_raw_cli_request(request: RawCliRequest) -> None:
-    """Reject a request that cannot safely cross the executor boundary."""
+def validate_raw_cli_request(request: RawCliRequest) -> RawCliRequest:
+    """Validate and normalize a request crossing the executor boundary."""
     if request.caller not in ("user", "model"):
         raise ValueError("raw CLI caller must be user or model")
     if request.shell not in ("auto", "bash", "powershell", "cmd"):
@@ -143,16 +150,10 @@ def validate_raw_cli_request(request: RawCliRequest) -> None:
         value = getattr(request, field_name)
         if not isinstance(value, str) or not value.strip():
             raise ValueError(f"raw CLI {field_name} must be a nonblank string")
-    if not isinstance(request.command, str) or not request.command.strip():
-        raise ValueError("raw CLI command must not be empty or whitespace")
-    if "\x00" in request.command:
-        raise ValueError("raw CLI command must not contain NUL")
-    try:
-        command_bytes = len(request.command.encode("utf-8"))
-    except UnicodeEncodeError as exc:
-        raise ValueError("raw CLI command must be valid UTF-8") from exc
-    if command_bytes > MAX_RAW_COMMAND_BYTES:
-        raise ValueError("raw CLI command exceeds the 16 KiB UTF-8 limit")
+    command = validate_raw_cli_command(
+        request.command,
+        max_bytes=MAX_RAW_COMMAND_BYTES,
+    )
 
     timeout = request.timeout_seconds
     if (
@@ -166,16 +167,13 @@ def validate_raw_cli_request(request: RawCliRequest) -> None:
             "raw CLI timeout must be greater than 0 and at most 300 seconds"
         )
 
-    directory = request.initial_directory
-    if (
-        not isinstance(directory, Path)
-        or not directory.is_absolute()
-        or not directory.exists()
-        or not directory.is_dir()
-    ):
+    try:
+        directory = validate_existing_absolute_directory(request.initial_directory)
+    except ValueError as exc:
         raise ValueError(
             "raw CLI initial directory must be an absolute existing directory"
-        )
+        ) from exc
+    return replace(request, command=command, initial_directory=directory)
 
 
 def resolve_shell_argv(
@@ -851,7 +849,7 @@ class RawShellExecutor:
         The callback must call ``tree.admit()`` and then ``commit_launch()`` while
         holding its authority lock. Launch commitment alone signals success.
         """
-        validate_raw_cli_request(request)
+        request = validate_raw_cli_request(request)
         if not callable(on_event) or not callable(admit_worker):
             raise TypeError("on_event and admit_worker must be callable")
 

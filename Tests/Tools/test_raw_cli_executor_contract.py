@@ -164,6 +164,49 @@ def test_raw_request_enforces_16_kib_utf8_boundary(raw_cli, tmp_path):
             validate(_request(raw_cli, tmp_path, command=command))
 
 
+def test_raw_request_uses_shared_command_validator_result(
+    raw_cli, tmp_path, monkeypatch
+):
+    calls = []
+
+    def validate_command(command, *, max_bytes):
+        calls.append((command, max_bytes))
+        return "normalized command"
+
+    monkeypatch.setattr(raw_cli, "validate_raw_cli_command", validate_command)
+
+    request = _required(raw_cli, "validate_raw_cli_request")(
+        _request(raw_cli, tmp_path, command="original command")
+    )
+
+    assert calls == [("original command", 16 * 1024)]
+    assert request.command == "normalized command"
+
+
+def test_raw_request_uses_central_normalized_directory(raw_cli, tmp_path, monkeypatch):
+    selected = tmp_path / "selected"
+    normalized = tmp_path / "normalized"
+    normalized.mkdir()
+    calls = []
+
+    def validate_directory(directory):
+        calls.append(directory)
+        return normalized
+
+    monkeypatch.setattr(
+        raw_cli,
+        "validate_existing_absolute_directory",
+        validate_directory,
+    )
+
+    request = _required(raw_cli, "validate_raw_cli_request")(
+        _request(raw_cli, selected)
+    )
+
+    assert calls == [selected]
+    assert request.initial_directory == normalized
+
+
 def test_raw_request_requires_existing_absolute_initial_directory(
     raw_cli, tmp_path, monkeypatch
 ):

@@ -262,7 +262,7 @@ class ConsoleRawCliController:
                 console_session_id=session_id,
                 transcript_anchor_id=None,
             )
-            validate_raw_cli_request(request)
+            request = validate_raw_cli_request(request)
         except ValueError as exc:
             return self._refuse(
                 session_id, stash, f"Raw CLI refused: {exc}. Draft restored."
@@ -302,7 +302,7 @@ class ConsoleRawCliController:
         root = (
             selected if selected is not None else self._private_scratch_root(session_id)
         )
-        return Path(root).resolve()
+        return Path(root)
 
     def _execute(
         self,
@@ -356,13 +356,12 @@ class ConsoleRawCliController:
             ):
                 refuse_for_persistence_error()
                 return
-            anchor = (
-                self._persisted_leaf_anchor(session_id, native_anchor)
-                if native_anchor is not None
-                else None
-            )
-            if anchor is not None and (type(anchor) is not str or not anchor.strip()):
-                anchor = None
+            anchor = None
+            if native_anchor is not None:
+                anchor = self._persisted_leaf_anchor(session_id, native_anchor)
+                if type(anchor) is not str or not anchor.strip():
+                    refuse_for_persistence_error()
+                    return
             request = replace(request, transcript_anchor_id=anchor)
         except Exception:  # noqa: BLE001 -- durable identity is mandatory
             refuse_for_persistence_error()

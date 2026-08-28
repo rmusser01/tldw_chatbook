@@ -2151,9 +2151,15 @@ class AgentRunsDB(BaseDB):
                       AND ar.status != 'superseded'
                       AND typeof(ar.id) = 'text'
                       AND length(CAST(ar.id AS BLOB)) BETWEEN 1 AND 128
-                      AND typeof(ar.assistant_message_id) = 'text'
-                      AND length(CAST(ar.assistant_message_id AS BLOB))
-                          BETWEEN 1 AND 128
+                      AND (
+                          ar.assistant_message_id IS NULL
+                          OR (
+                              typeof(ar.assistant_message_id) = 'text'
+                              AND length(CAST(
+                                  ar.assistant_message_id AS BLOB
+                              )) BETWEEN 1 AND 128
+                          )
+                      )
                       AND typeof(ar.status) = 'text'
                       AND length(CAST(ar.status AS BLOB))
                           BETWEEN 1 AND ?
@@ -2256,7 +2262,6 @@ class AgentRunsDB(BaseDB):
                 encoded_fields = (
                     row["id"],
                     row["status"],
-                    row["assistant_message_id"],
                     row["call_args_json"],
                     row["result_args_json"],
                     row["result_status"],
@@ -2266,16 +2271,24 @@ class AgentRunsDB(BaseDB):
                 (
                     run_id,
                     status,
-                    anchor,
                     call_args_json,
                     result_args_json,
                     result_status,
                 ) = (value.decode("utf-8") for value in encoded_fields)
+                encoded_anchor = row["assistant_message_id"]
+                if encoded_anchor is None:
+                    anchor = None
+                elif type(encoded_anchor) is bytes:
+                    anchor = encoded_anchor.decode("utf-8")
+                else:
+                    continue
                 if (
                     not run_id.strip()
-                    or not anchor.strip()
                     or len(run_id.encode("utf-8")) > 128
-                    or len(anchor.encode("utf-8")) > 128
+                    or (
+                        anchor is not None
+                        and (not anchor.strip() or len(anchor.encode("utf-8")) > 128)
+                    )
                 ):
                     continue
                 call_args = json.loads(call_args_json)

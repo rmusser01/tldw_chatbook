@@ -7,14 +7,25 @@ import threading
 from typing import Any
 
 import pytest
+from pydantic import BaseModel
 
 from tldw_chatbook.Agents.run_log import DEFAULT_MAX_RECORD_BYTES
 from tldw_chatbook.Agents.run_log_format import iter_records
 from tldw_chatbook.Chat.chat_persistence_service import ChatPersistenceService
 from tldw_chatbook.Chat.console_chat_store import ConsoleChatStore
 from tldw_chatbook.Chat.console_raw_cli import (
+    LocalCommandResumeRecord,
     LOCAL_COMMAND_RUN_LOG_DIR,
     local_command_resume_marker,
+)
+from tldw_chatbook.Chat.console_agent_bridge import (
+    ConsoleAgentBridge,
+    inject_resume_agent_markers,
+)
+from tldw_chatbook.Chat.console_chat_models import (
+    MAX_RAW_CLI_DISPLAY_FIELD_BYTES,
+    ConsoleChatMessage,
+    ConsoleMessageRole,
 )
 from tldw_chatbook.DB.AgentRuns_DB import AgentRunsDB
 from tldw_chatbook.DB.ChaChaNotes_DB import CharactersRAGDB
@@ -145,6 +156,16 @@ def test_local_command_resume_marker_reconstructs_valid_bounded_record() -> None
     assert marker.tool_output_full == "stdout:\nok\n\n\nstderr:\n(no output)"
 
 
+def test_local_command_resume_record_uses_strict_pydantic_boundary() -> None:
+    assert issubclass(LocalCommandResumeRecord, BaseModel)
+    assert LocalCommandResumeRecord.model_config["strict"] is True
+    assert LocalCommandResumeRecord.model_config["frozen"] is True
+
+
+def test_raw_cli_display_field_limit_is_shared() -> None:
+    assert MAX_RAW_CLI_DISPLAY_FIELD_BYTES == 4096
+
+
 def test_local_command_resume_marker_uses_run_identity_for_unique_message_ids() -> None:
     first = _resume_record()
     second = copy.deepcopy(first)
@@ -185,7 +206,10 @@ def test_local_command_resume_marker_does_not_read_full_step_result() -> None:
         (("steps", 1, "args", "invocation_id"), "different"),
         (("steps", 0, "args", "command"), "bad\ud800command"),
         (("steps", 0, "args", "command"), "x" * (MAX_RAW_COMMAND_BYTES + 1)),
-        (("steps", 0, "args", "shell"), "s" * 4097),
+        (
+            ("steps", 0, "args", "shell"),
+            "s" * (MAX_RAW_CLI_DISPLAY_FIELD_BYTES + 1),
+        ),
         (("steps", 1, "args", "cwd"), "bad\ud800cwd"),
         (("steps", 1, "args", "stdout_preview"), "bad\ud800preview"),
         (("steps", 1, "args", "stdout_preview"), "x" * (MAX_RAW_PREVIEW_BYTES + 1)),
@@ -333,6 +357,29 @@ def test_local_command_first_persists_real_session_under_durable_identity(
     )
     assert run["assistant_message_id"] is None
     assert runs_db.list_runs(session.id, agent_kind="local_command") == []
+
+    blocks = ConsoleAgentBridge(
+        agent_runs_db=runs_db,
+        store=None,
+        provider_gateway=None,
+    ).resume_marker_messages(session.persisted_conversation_id)
+    later_transcript = [
+        ConsoleChatMessage(role=ConsoleMessageRole.USER, content="later question"),
+        ConsoleChatMessage(
+            role=ConsoleMessageRole.ASSISTANT,
+            content="later answer",
+            status="complete",
+            persisted_message_id="later-assistant",
+        ),
+    ]
+
+    resumed = inject_resume_agent_markers(later_transcript, blocks)
+
+    assert resumed[0].raw_cli_presentation is not None
+    assert [message.content for message in resumed[1:]] == [
+        "later question",
+        "later answer",
+    ]
 
 
 def test_first_session_persistence_is_serialized_to_one_identity() -> None:

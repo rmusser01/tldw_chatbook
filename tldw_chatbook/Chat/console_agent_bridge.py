@@ -1352,6 +1352,9 @@ def format_todo_marker(tasks: list[dict[str, object]]) -> str:
     return "\n".join([header, *lines])
 
 
+TRANSCRIPT_START_MARKER_ANCHOR = ""
+
+
 def inject_resume_agent_markers(
     messages: list[ConsoleChatMessage],
     anchored_blocks: list[tuple[str | None, list[ConsoleChatMessage]]],
@@ -1373,6 +1376,10 @@ def inject_resume_agent_markers(
       currently active (an edit/regenerate moved the active path off of
       it). The block is **dropped**: showing that run's tool trace next to
       a DIFFERENT reply would misattribute it, so hiding it is correct.
+    - **Anchor id is the named empty-string transcript-start sentinel** -- a
+      local command was the session's first interaction, so its marker is
+      restored before every later persisted message rather than attached to
+      an unrelated assistant reply.
     - **Anchor id is ``None``** -- a legacy (pre-Phase-C) run, a sub-agent
       run, or one whose terminal path never got to record the id (crash /
       never-persisted reply). Falls back to the prior ordinal placement:
@@ -1420,9 +1427,13 @@ def inject_resume_agent_markers(
     }
 
     matched: dict[int, list[list[ConsoleChatMessage]]] = {}
+    transcript_start_blocks: list[list[ConsoleChatMessage]] = []
     null_blocks: list[list[ConsoleChatMessage]] = []
     used_indexes: set[int] = set()
     for anchor_id, block in non_empty:
+        if anchor_id == TRANSCRIPT_START_MARKER_ANCHOR:
+            transcript_start_blocks.append(block)
+            continue
         if anchor_id is None:
             null_blocks.append(block)
             continue
@@ -1442,6 +1453,9 @@ def inject_resume_agent_markers(
     leftover_blocks = null_blocks[len(unclaimed_assistant_indexes) :]
 
     result: list[ConsoleChatMessage] = []
+    for block in transcript_start_blocks:
+        if not _already_present(block):
+            result.extend(block)
     for index, message in enumerate(messages):
         result.append(message)
         for block in matched.get(index, ()):
@@ -6633,10 +6647,11 @@ class ConsoleAgentBridge:
 
         Returns one ``(assistant_message_id, marker_block)`` pair per
         non-superseded PRIMARY run for the conversation, oldest run first,
-        followed by one bounded display marker per ``local_command`` run
-        that has a persisted anchor. Local commands are queried by their
-        exact kind and never enter the primary reconstruction below; a
-        missing anchor is skipped here so it cannot use ordinal fallback.
+        followed by one bounded display marker per ``local_command`` run.
+        Local commands are queried by their exact kind and never enter the
+        primary reconstruction below. A missing anchor denotes a command
+        issued before the first transcript message and uses the explicit
+        transcript-start placement rather than primary-run ordinal fallback.
 
         For primary runs, ``assistant_message_id`` is the run's own
         ``record["assistant_message_id"]`` -- the persisted id of the
@@ -6892,11 +6907,18 @@ class ConsoleAgentBridge:
             if not isinstance(record, Mapping):
                 continue
             anchor = record.get("assistant_message_id")
-            if type(anchor) is not str or not anchor.strip():
+            if anchor is not None and (type(anchor) is not str or not anchor.strip()):
                 continue
             marker = local_command_resume_marker(record)
             if marker is not None:
-                blocks.append((anchor, [marker]))
+                blocks.append(
+                    (
+                        anchor
+                        if anchor is not None
+                        else TRANSCRIPT_START_MARKER_ANCHOR,
+                        [marker],
+                    )
+                )
         return blocks
 
     def append_todo_marker(

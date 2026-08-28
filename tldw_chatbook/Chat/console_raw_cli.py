@@ -2,14 +2,17 @@
 
 from __future__ import annotations
 
-from collections.abc import Callable, Mapping, Sequence
+from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 import math
 import threading
 import time
 from typing import Any, Literal, TypeAlias
 
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
+
 from tldw_chatbook.Chat.console_chat_models import (
+    MAX_RAW_CLI_DISPLAY_FIELD_BYTES,
     ConsoleActivityPresentation,
     ConsoleChatMessage,
     ConsoleMessageRole,
@@ -158,128 +161,190 @@ def _resume_utf8_text(
     return value
 
 
-def local_command_resume_marker(record: Mapping[str, Any]) -> ConsoleChatMessage | None:
-    """Rebuild one terminal display marker from a local-command run record."""
-    try:
-        if not isinstance(record, Mapping):
-            return None
-        run_id = _resume_utf8_text(
-            record.get("id"),
-            max_bytes=128,
-            nonblank=True,
-            single_line=True,
-            nul_free=True,
-        )
-        if record.get("agent_kind") != LOCAL_COMMAND_AGENT_KIND:
-            return None
-        steps = record.get("steps")
-        if (
-            not isinstance(steps, Sequence)
-            or isinstance(steps, (str, bytes, bytearray))
-            or len(steps) != 2
-            or not all(isinstance(step, Mapping) for step in steps)
-        ):
-            return None
-        call, result = steps
-        if (
-            call.get("kind") != "tool_call"
-            or call.get("tool_name") != LOCAL_COMMAND_TOOL_NAME
-            or type(call.get("index")) is not int
-            or call.get("index") != 0
-            or result.get("kind") != "tool_result"
-            or result.get("tool_name") != LOCAL_COMMAND_TOOL_NAME
-            or type(result.get("index")) is not int
-            or result.get("index") != 1
-        ):
-            return None
-        call_args = call.get("args")
-        result_args = result.get("args")
-        if not isinstance(call_args, Mapping) or not isinstance(result_args, Mapping):
-            return None
+class _LocalCommandResumeModel(BaseModel):
+    """Strict immutable base for bounded persisted local-command data."""
 
-        invocation_id = _resume_utf8_text(
-            call_args.get("invocation_id"),
+    model_config = ConfigDict(frozen=True, extra="ignore", strict=True)
+
+
+class LocalCommandCallArgs(_LocalCommandResumeModel):
+    """Validated arguments from the durable raw CLI tool-call step."""
+
+    command: str
+    shell: str
+    cwd: str
+    invocation_id: str
+
+    @field_validator("invocation_id")
+    @classmethod
+    def _validate_invocation_id(cls, value: str) -> str:
+        return _resume_utf8_text(
+            value,
             max_bytes=128,
             nonblank=True,
             single_line=True,
             nul_free=True,
         )
-        result_invocation_id = _resume_utf8_text(
-            result_args.get("invocation_id"),
-            max_bytes=128,
-            nonblank=True,
-            single_line=True,
-            nul_free=True,
-        )
-        if result_invocation_id != invocation_id:
-            return None
-        command = _resume_utf8_text(
-            call_args.get("command"),
+
+    @field_validator("command")
+    @classmethod
+    def _validate_command(cls, value: str) -> str:
+        return _resume_utf8_text(
+            value,
             max_bytes=MAX_RAW_COMMAND_BYTES,
             nonblank=True,
             nul_free=True,
         )
-        _resume_utf8_text(
-            call_args.get("shell"),
-            max_bytes=4096,
-            nonblank=True,
-            single_line=True,
-            nul_free=True,
-        )
-        call_cwd = _resume_utf8_text(
-            call_args.get("cwd"),
-            max_bytes=4096,
-            nonblank=True,
-            single_line=True,
-            nul_free=True,
-        )
-        shell = _resume_utf8_text(
-            result_args.get("shell"),
-            max_bytes=4096,
-            nonblank=True,
-            single_line=True,
-            nul_free=True,
-        )
-        cwd = _resume_utf8_text(
-            result_args.get("cwd"),
-            max_bytes=4096,
-            nonblank=True,
-            single_line=True,
-            nul_free=True,
-        )
-        if cwd != call_cwd:
-            return None
-        stdout = _resume_utf8_text(
-            result_args.get("stdout_preview"),
-            max_bytes=MAX_RAW_PREVIEW_BYTES,
-        )
-        stderr = _resume_utf8_text(
-            result_args.get("stderr_preview"),
-            max_bytes=MAX_RAW_PREVIEW_BYTES,
-        )
-        if len(stdout.encode("utf-8")) + len(stderr.encode("utf-8")) > (
-            MAX_RAW_PREVIEW_BYTES
-        ):
-            return None
 
-        elapsed_seconds = result_args.get("elapsed_seconds")
+    @field_validator("shell", "cwd")
+    @classmethod
+    def _validate_display_field(cls, value: str) -> str:
+        return _resume_utf8_text(
+            value,
+            max_bytes=MAX_RAW_CLI_DISPLAY_FIELD_BYTES,
+            nonblank=True,
+            single_line=True,
+            nul_free=True,
+        )
+
+
+class LocalCommandResultArgs(_LocalCommandResumeModel):
+    """Validated bounded fields from the durable raw CLI result step."""
+
+    invocation_id: str
+    shell: str
+    cwd: str
+    stdout_preview: str
+    stderr_preview: str
+    elapsed_seconds: int | float
+    exit_code: int | None
+    terminal_state: Literal[
+        "refused",
+        "shell_unavailable",
+        "spawn_failed",
+        "containment_unavailable",
+        "exited",
+        "timed_out",
+        "cancelled",
+        "cleanup_unproven",
+    ]
+    truncated: bool
+    cleanup_proven: bool
+
+    @field_validator("invocation_id")
+    @classmethod
+    def _validate_invocation_id(cls, value: str) -> str:
+        return _resume_utf8_text(
+            value,
+            max_bytes=128,
+            nonblank=True,
+            single_line=True,
+            nul_free=True,
+        )
+
+    @field_validator("shell", "cwd")
+    @classmethod
+    def _validate_display_field(cls, value: str) -> str:
+        return _resume_utf8_text(
+            value,
+            max_bytes=MAX_RAW_CLI_DISPLAY_FIELD_BYTES,
+            nonblank=True,
+            single_line=True,
+            nul_free=True,
+        )
+
+    @field_validator("stdout_preview", "stderr_preview")
+    @classmethod
+    def _validate_preview(cls, value: str) -> str:
+        return _resume_utf8_text(value, max_bytes=MAX_RAW_PREVIEW_BYTES)
+
+    @field_validator("elapsed_seconds", mode="before")
+    @classmethod
+    def _validate_elapsed_seconds(cls, value: object) -> object:
+        if type(value) not in {int, float} or not math.isfinite(value) or value < 0:
+            raise ValueError("elapsed seconds must be a finite nonnegative number")
+        return value
+
+    @model_validator(mode="after")
+    def _validate_combined_preview(self) -> LocalCommandResultArgs:
+        preview_bytes = len(self.stdout_preview.encode("utf-8")) + len(
+            self.stderr_preview.encode("utf-8")
+        )
+        if preview_bytes > MAX_RAW_PREVIEW_BYTES:
+            raise ValueError("combined raw CLI preview exceeds its live limit")
+        return self
+
+
+class LocalCommandToolCallStep(_LocalCommandResumeModel):
+    """Exact durable tool-call step shape for one local command."""
+
+    index: Literal[0]
+    kind: Literal["tool_call"]
+    tool_name: Literal["raw_cli"]
+    args: LocalCommandCallArgs
+
+
+class LocalCommandToolResultStep(_LocalCommandResumeModel):
+    """Exact durable terminal result step shape for one local command."""
+
+    index: Literal[1]
+    kind: Literal["tool_result"]
+    tool_name: Literal["raw_cli"]
+    args: LocalCommandResultArgs
+    status: Literal["done", "cancelled", "error"]
+
+
+class LocalCommandResumeRecord(_LocalCommandResumeModel):
+    """Strict bounded projection accepted by raw CLI transcript resume."""
+
+    id: str
+    agent_kind: Literal["local_command"]
+    status: Literal["done", "cancelled", "error"]
+    assistant_message_id: str | None = None
+    steps: list[LocalCommandToolCallStep | LocalCommandToolResultStep] = Field(
+        min_length=2,
+        max_length=2,
+    )
+
+    @field_validator("id")
+    @classmethod
+    def _validate_run_id(cls, value: str) -> str:
+        return _resume_utf8_text(
+            value,
+            max_bytes=128,
+            nonblank=True,
+            single_line=True,
+            nul_free=True,
+        )
+
+    @field_validator("assistant_message_id")
+    @classmethod
+    def _validate_anchor(cls, value: str | None) -> str | None:
+        if value is None:
+            return None
+        return _resume_utf8_text(
+            value,
+            max_bytes=128,
+            nonblank=True,
+            single_line=True,
+            nul_free=True,
+        )
+
+    @model_validator(mode="after")
+    def _validate_step_pair(self) -> LocalCommandResumeRecord:
         if (
-            type(elapsed_seconds) not in {int, float}
-            or not math.isfinite(elapsed_seconds)
-            or elapsed_seconds < 0
+            len(self.steps) != 2
+            or not isinstance(self.steps[0], LocalCommandToolCallStep)
+            or not isinstance(self.steps[1], LocalCommandToolResultStep)
         ):
-            return None
-        exit_code = result_args.get("exit_code")
-        if exit_code is not None and type(exit_code) is not int:
-            return None
-        truncated = result_args.get("truncated")
-        if type(truncated) is not bool:
-            return None
-        cleanup_proven = result_args.get("cleanup_proven")
-        if type(cleanup_proven) is not bool:
-            return None
-
-        terminal_state = result_args.get("terminal_state")
+            raise ValueError("local-command record must contain one call/result pair")
+        call = self.steps[0]
+        result = self.steps[1]
+        if (
+            call.args.invocation_id != result.args.invocation_id
+            or call.args.cwd != result.args.cwd
+        ):
+            raise ValueError("local-command call/result identity mismatch")
         terminal_status = {
             "refused": "error",
             "shell_unavailable": "error",
@@ -289,15 +354,34 @@ def local_command_resume_marker(record: Mapping[str, Any]) -> ConsoleChatMessage
             "timed_out": "error",
             "cancelled": "cancelled",
             "cleanup_unproven": "error",
-        }.get(terminal_state)
-        if (
-            terminal_status is None
-            or type(record.get("status")) is not str
-            or record.get("status") != terminal_status
-            or type(result.get("status")) is not str
-            or result.get("status") != terminal_status
+        }[result.args.terminal_state]
+        if self.status != terminal_status or result.status != terminal_status:
+            raise ValueError("local-command terminal status mismatch")
+        return self
+
+
+def local_command_resume_marker(record: Mapping[str, Any]) -> ConsoleChatMessage | None:
+    """Rebuild one terminal display marker from a local-command run record."""
+    try:
+        parsed = LocalCommandResumeRecord.model_validate(record)
+        call = parsed.steps[0]
+        result = parsed.steps[1]
+        if not isinstance(call, LocalCommandToolCallStep) or not isinstance(
+            result, LocalCommandToolResultStep
         ):
             return None
+        invocation_id = call.args.invocation_id
+        command = call.args.command
+        result_args = result.args
+        shell = result_args.shell
+        cwd = result_args.cwd
+        stdout = result_args.stdout_preview
+        stderr = result_args.stderr_preview
+        elapsed_seconds = result_args.elapsed_seconds
+        exit_code = result_args.exit_code
+        truncated = result_args.truncated
+        cleanup_proven = result_args.cleanup_proven
+        terminal_state = result_args.terminal_state
         lifecycle: RawCliLifecycleState = (
             terminal_state
             if terminal_state
@@ -328,7 +412,7 @@ def local_command_resume_marker(record: Mapping[str, Any]) -> ConsoleChatMessage
     ):
         return None
     return ConsoleChatMessage(
-        id=f"raw-cli-run-{run_id}",
+        id=f"raw-cli-run-{parsed.id}",
         role=ConsoleMessageRole.TOOL,
         content=content,
         status="complete",
@@ -435,7 +519,7 @@ class RawCliRuntime:
         on_started: RawCliStartedSink | None = None,
     ) -> RawCliResult:
         """Synchronously execute one request through the guarded admission seam."""
-        validate_raw_cli_request(request)
+        request = validate_raw_cli_request(request)
         if not callable(on_event):
             raise TypeError("on_event must be callable")
         if on_registered is not None and not callable(on_registered):
@@ -600,6 +684,7 @@ __all__ = [
     "LOCAL_COMMAND_RUN_LOG_DIR",
     "LOCAL_COMMAND_TASK",
     "LOCAL_COMMAND_TOOL_NAME",
+    "LocalCommandResumeRecord",
     "RAW_CLI_SHUTDOWN_TIMEOUT_SECONDS",
     "RawCliArmReason",
     "RawCliArmResult",

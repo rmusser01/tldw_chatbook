@@ -78,4 +78,11 @@ The final rebase onto `dev` moved raw draft/Stop policy behind the existing
 Console module boundary, kept provider-cost filtering with the cost tracker,
 and preserved the tightened `ChatScreen` size ratchet. Extended focused
 verification passed 780 tests with four expected native-Windows skips.
+
+Qodo follow-up review was resolved by routing exact command text and the
+initial directory through the shared input/path validation seams, replacing
+ad-hoc resume parsing with strict bounded Pydantic models, sharing the
+shell/CWD display byte limit, and restoring first-interaction command markers
+at transcript start. Focused review verification passed 242 tests with one
+expected native-Windows skip; Ruff and diff hygiene were clean.
 <!-- SECTION:NOTES:END -->

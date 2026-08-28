@@ -275,6 +275,7 @@ RawCliLifecycleState = Literal[
     "cleanup_unproven",
     "failed",
 ]
+MAX_RAW_CLI_DISPLAY_FIELD_BYTES = 4096
 
 _CONSOLE_ACTIVITY_KINDS = frozenset(
     {
@@ -642,11 +643,12 @@ class RawCliPresentation:
             if (
                 type(value) is not str
                 or not value.strip()
-                or value_bytes > 4096
+                or value_bytes > MAX_RAW_CLI_DISPLAY_FIELD_BYTES
                 or any(character in value for character in "\r\n\x00")
             ):
                 raise ValueError(
-                    f"{field_name} must be nonblank single-line text <= 4096 bytes"
+                    f"{field_name} must be nonblank single-line text <= "
+                    f"{MAX_RAW_CLI_DISPLAY_FIELD_BYTES} bytes"
                 )
         started_at = self.started_at_monotonic
         if self.lifecycle_state == "starting" and started_at is not None:
