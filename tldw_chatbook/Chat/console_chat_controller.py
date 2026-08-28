@@ -335,6 +335,7 @@ from tldw_chatbook.model_capabilities import (
 if TYPE_CHECKING:
     from tldw_chatbook.Agents.agent_models import ToolCall
     from tldw_chatbook.Agents.builtin_tool_gate import BuiltinToolGate
+    from tldw_chatbook.Agents.raw_shell_tool_provider import RawShellToolProvider
     from tldw_chatbook.Chat.console_agent_bridge import ConsoleAgentBridge
     from tldw_chatbook.MCP.hub_tool_catalog import HubTool
 
@@ -1609,6 +1610,37 @@ def build_virtual_cli_review_hook(
     return review_tool_calls
 
 
+def build_raw_shell_review_hook(
+    provider: "RawShellToolProvider",
+    request_approvals: Callable[[list["MCPPendingCall"]], dict[str, str]],
+) -> Callable[[list["ToolCall"], str], dict[str, str]]:
+    """Gate model-authored host-shell calls independently by native call id."""
+
+    def review_tool_calls(calls: list["ToolCall"], run_id: str) -> dict[str, str]:
+        provider.apply_batch_decisions(run_id, {})
+        pending = [
+            row
+            for call in calls
+            if (row := provider.pending_gate_for(call)) is not None
+        ]
+        if not pending:
+            return {}
+        decisions = request_approvals(pending)
+        provider.apply_batch_decisions(run_id, decisions, pending)
+        verdicts: dict[str, str] = {}
+        for row in pending:
+            key = row.call_id or row.llm_name
+            decision = decisions.get(key)
+            verdicts[key] = (
+                "proceed"
+                if decision in {"approve_once", "approve_session"}
+                else USER_DENIED_REFUSAL.format(name=row.llm_name)
+            )
+        return verdicts
+
+    return review_tool_calls
+
+
 def build_combined_review_hook(
     hooks: list[Callable[[list["ToolCall"]], dict[str, str]]],
 ) -> Callable[[list["ToolCall"]], dict[str, str]]:
@@ -2758,7 +2790,9 @@ class ConsoleChatController:
 
     def capture_policy_snapshot(self, session_id: str) -> CapturePolicySnapshot:
         """Resolve the future policy for one immutable session identity."""
-        session = next((item for item in self.store.sessions() if item.id == session_id), None)
+        session = next(
+            (item for item in self.store.sessions() if item.id == session_id), None
+        )
         if session is None:
             raise KeyError(session_id)
         self._hydrate_capture_policy(session)
@@ -2786,7 +2820,8 @@ class ConsoleChatController:
             active_run_detail=self._active_capture_details.get(session_id),
             queued_consumer=bool(getattr(queue, "entries", ())),
             save_pending=state.save_pending,
-            error_code=self._capture_policy_hydration_errors.get(session_id) or (
+            error_code=self._capture_policy_hydration_errors.get(session_id)
+            or (
                 "invalid_" + "_".join(effective.invalid_sources)
                 if effective.invalid_sources
                 else None
@@ -2797,9 +2832,7 @@ class ConsoleChatController:
         """Return the authoritative process-local capture revision."""
         return self.store.capture_revision(session_id)
 
-    def capture_purge_availability(
-        self, session_id: str
-    ) -> CapturePurgeAvailability:
+    def capture_purge_availability(self, session_id: str) -> CapturePurgeAvailability:
         """Report the first bounded writer reason preventing quiescence."""
         try:
             self.store.capture_revision(session_id)
@@ -2854,9 +2887,7 @@ class ConsoleChatController:
                 )
             reason = self._capture_purge_blocker(session_id, include_lease=True)
             if reason is not None:
-                return CapturePurgeResult.blocked(
-                    revision, reason
-                )
+                return CapturePurgeResult.blocked(revision, reason)
             if revision != expected_capture_revision:
                 return CapturePurgeResult(
                     CapturePurgeStatus.STALE,
@@ -2980,10 +3011,7 @@ class ConsoleChatController:
             reconciliation_cancelled = False
             try:
                 session_only = False
-                if (
-                    has_durable_identity
-                    and self._capture_policy_repository is not None
-                ):
+                if has_durable_identity and self._capture_policy_repository is not None:
                     repository = self._capture_policy_repository
                     repository_settled = asyncio.Event()
                     repository_result: list[Any] = []
@@ -3087,9 +3115,7 @@ class ConsoleChatController:
                     else CapturePolicyMutationStatus.APPLIED,
                     self.capture_policy_snapshot(session_id),
                     session_only and has_durable_identity,
-                    "save_failed"
-                    if session_only and has_durable_identity
-                    else None,
+                    "save_failed" if session_only and has_durable_identity else None,
                 )
                 if reconciliation_cancelled:
                     raise asyncio.CancelledError
@@ -3178,7 +3204,9 @@ class ConsoleChatController:
                 "stale_config_generation",
                 config_result,
             )
-        active = not enabled or detail is CaptureDetail.SAFE or config_result.file_replaced
+        active = (
+            not enabled or detail is CaptureDetail.SAFE or config_result.file_replaced
+        )
         if not active:
             self.store.abandon_capture_policy_mutation(reservation)
             return CapturePolicyMutationResult(
@@ -3326,9 +3354,7 @@ class ConsoleChatController:
             try:
                 return os.path.normcase(str(Path(value).expanduser().resolve()))
             except OSError:
-                return os.path.normcase(
-                    os.path.abspath(os.path.expanduser(str(value)))
-                )
+                return os.path.normcase(os.path.abspath(os.path.expanduser(str(value))))
 
         target = _canonical(root)
         with self._active_workspace_roots_lock:
@@ -6517,8 +6543,7 @@ class ConsoleChatController:
             # work itself succeeded; there is simply no ledger left to record
             # it in. Closing a chat is not an error.
             logger.debug(
-                "Durable postcommit effect completed after retirement "
-                "(effect={})",
+                "Durable postcommit effect completed after retirement (effect={})",
                 effect_name,
             )
         return result
@@ -8733,6 +8758,9 @@ class ConsoleChatController:
                     "options": list(call.options),
                     "path_precheck_failed": call.path_precheck_failed,
                     "call_id": call.call_id,
+                    "full_command": call.full_command,
+                    "warning": call.warning,
+                    "scope_notice": call.scope_notice,
                 }
                 for call in pending
             ],
@@ -12312,9 +12340,7 @@ class ConsoleChatController:
             scratch_snapshot,
         )
         try:
-            resolution = await self._resolve_for_send_bounded(
-                owning_provider_selection
-            )
+            resolution = await self._resolve_for_send_bounded(owning_provider_selection)
         except Exception:  # noqa: BLE001 - preview failure stays content-free
             return None
         if not getattr(resolution, "ready", True):
@@ -15638,9 +15664,7 @@ class ConsoleChatController:
             logger.bind(
                 message_id=assistant_message_id,
                 error_type=type(exc).__name__,
-            ).warning(
-                "exchange_attach_failed"
-            )
+            ).warning("exchange_attach_failed")
         payloads = self._usage_payloads(stream_signals)
         provider = str(getattr(resolution, "provider", "") or "")
         model = str(getattr(resolution, "model", "") or "")

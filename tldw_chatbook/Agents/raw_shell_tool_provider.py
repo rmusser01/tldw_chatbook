@@ -2,8 +2,10 @@
 
 from __future__ import annotations
 
-from collections.abc import Callable, Mapping
+from collections.abc import Callable, Iterator, Mapping, Sequence
+from contextlib import contextmanager
 from pathlib import Path
+import threading
 from typing import Any, Literal, Protocol, cast
 
 from tldw_chatbook.MCP.hub_tool_catalog import HubTool
@@ -17,7 +19,9 @@ from tldw_chatbook.Tools.raw_cli_executor import (
     validate_raw_cli_request,
 )
 
-from .agent_models import ToolCatalogEntry, ToolResult, ToolSchema
+from .agent_models import ToolCall, ToolCatalogEntry, ToolResult, ToolSchema
+from .mcp_tool_provider import MCPPendingCall
+from .run_context import current_tool_call_id
 
 RAW_SHELL_TOOL_NAME = "shell_exec"
 RAW_SHELL_SERVER_KEY = "local:__local__"
@@ -28,6 +32,16 @@ RAW_SHELL_DENY_REFUSAL = "blocked by raw shell permissions (set to Off)"
 RAW_SHELL_APPROVAL_REFUSAL = (
     "raw shell execution requires command-visible user approval; do not retry"
 )
+RAW_SHELL_APPROVAL_WARNING = (
+    "This command runs with the full authority of the OS user and is not "
+    "workspace confined. The command and output may persist in a local log."
+)
+RAW_SHELL_SESSION_SCOPE_NOTICE = (
+    "Allow all raw shell commands for this Console session covers future raw "
+    "shell commands, not only this displayed command. It clears on Disarm or "
+    "when Chatbook exits."
+)
+RAW_SHELL_APPROVAL_OPTIONS = ("approve_once", "approve_session", "deny")
 
 _ALLOWED_ARGUMENTS = frozenset(
     {"command", "shell", "initial_directory", "timeout_seconds"}
@@ -82,6 +96,10 @@ class _RawCliRuntime(Protocol):
         **kwargs: Any,
     ) -> RawCliResult: ...
 
+    def grant_model_session(self, console_session_id: str) -> None: ...
+
+    def model_session_granted(self, console_session_id: str) -> bool: ...
+
 
 def resolve_raw_shell_state(
     effective: EffectiveToolState,
@@ -121,6 +139,8 @@ class RawShellToolProvider:
         )
         self._local_tools_enabled = local_tools_enabled
         self._kill_switch = kill_switch
+        self._stamps: dict[tuple[str, str], str] = {}
+        self._stamps_lock = threading.Lock()
 
     def catalog_enabled(self) -> bool:
         """Return whether all live gates currently permit schema discovery."""
@@ -217,6 +237,97 @@ class RawShellToolProvider:
             console_session_id=self.console_session_id,
         )
         return validate_raw_cli_request(request)
+
+    def pending_gate_for(self, call: ToolCall) -> MCPPendingCall | None:
+        """Build one complete, independently addressable raw approval row."""
+        if call.name != RAW_SHELL_TOOL_NAME or not self.catalog_enabled():
+            return None
+        try:
+            request = self._validated_request(
+                call.args,
+                invocation_id=call.call_id or "raw-shell-approval",
+            )
+            state = resolve_raw_shell_state(self._resolve_state(self.hub_tool()))
+            session_granted = self._runtime.model_session_granted(
+                self.console_session_id
+            )
+        except Exception:
+            return None
+        if state != "ask" or session_granted:
+            return None
+        return MCPPendingCall(
+            llm_name=RAW_SHELL_TOOL_NAME,
+            server_key=RAW_SHELL_SERVER_KEY,
+            tool_name=RAW_SHELL_TOOL_NAME,
+            server_label=RAW_SHELL_SERVER_LABEL,
+            arguments={
+                "command": request.command,
+                "shell": request.shell,
+                "initial_directory": str(request.initial_directory),
+                "timeout_seconds": request.timeout_seconds,
+            },
+            reason="ask",
+            options=RAW_SHELL_APPROVAL_OPTIONS,
+            call_id=call.call_id,
+            full_command=request.command,
+            warning=RAW_SHELL_APPROVAL_WARNING,
+            scope_notice=RAW_SHELL_SESSION_SCOPE_NOTICE,
+        )
+
+    def apply_batch_decisions(
+        self,
+        run_id: str,
+        decisions: dict[str, str],
+        pending: Sequence[MCPPendingCall] = (),
+    ) -> None:
+        """Replace this run's per-call approval stamps and apply session grants."""
+        grant_session = False
+        with self._stamps_lock:
+            self._stamps = {
+                key: value for key, value in self._stamps.items() if key[0] != run_id
+            }
+            for row in pending:
+                key = row.call_id or row.llm_name
+                decision = decisions.get(key)
+                if decision not in RAW_SHELL_APPROVAL_OPTIONS:
+                    continue
+                self._stamps[(run_id, key)] = decision
+                if decision == "approve_session":
+                    grant_session = True
+        if not grant_session:
+            return
+        try:
+            state = resolve_raw_shell_state(self._resolve_state(self.hub_tool()))
+            if self.catalog_enabled() and state == "ask":
+                self._runtime.grant_model_session(self.console_session_id)
+        except Exception:
+            return
+
+    def _pop_stamp(self, run_id: str, fallback: str) -> str | None:
+        key = current_tool_call_id() or fallback
+        with self._stamps_lock:
+            return self._stamps.pop((run_id, key), None)
+
+    @contextmanager
+    def stamp_scope(self, run_id: str) -> Iterator[None]:
+        """Hide and restore this run's approvals around a nested child run."""
+        with self._stamps_lock:
+            saved = {
+                key: value for key, value in self._stamps.items() if key[0] == run_id
+            }
+            self._stamps = {
+                key: value for key, value in self._stamps.items() if key[0] != run_id
+            }
+        try:
+            yield
+        finally:
+            with self._stamps_lock:
+                self._stamps = {
+                    key: value
+                    for key, value in self._stamps.items()
+                    if key[0] != run_id
+                }
+                self._stamps.update(saved)
 
     def invoke(self, tool_id: str, args: dict) -> ToolResult:
         name = tool_id.split(":", 1)[-1]

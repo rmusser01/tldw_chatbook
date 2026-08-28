@@ -477,6 +477,7 @@ class RawCliRuntime:
         self._shutdown_started = False
         self._shutdown_result: RawCliShutdownResult | None = None
         self._active_invocations: dict[str, _ActiveInvocation] = {}
+        self._model_session_grants: set[str] = set()
 
     @property
     def permitted(self) -> bool:
@@ -509,6 +510,33 @@ class RawCliRuntime:
         for _invocation_id, invocation in active:
             invocation.cancel_event.set()
         return tuple(invocation_id for invocation_id, _invocation in active)
+
+    def grant_model_session(self, console_session_id: str) -> None:
+        """Grant model raw-shell authority for one Console session in memory."""
+        if not isinstance(console_session_id, str) or not console_session_id.strip():
+            raise ValueError("console_session_id must be a nonblank string")
+        with self._lock:
+            if (
+                self._shutdown_started
+                or not self._armed
+                or not self._latest_permitted_locked()
+            ):
+                return
+            self._model_session_grants.add(console_session_id)
+
+    def model_session_granted(self, console_session_id: str) -> bool:
+        """Return whether this process currently holds the session grant."""
+        if not isinstance(console_session_id, str) or not console_session_id.strip():
+            return False
+        with self._lock:
+            return console_session_id in self._model_session_grants
+
+    def revoke_model_sessions(self) -> tuple[str, ...]:
+        """Clear and return every launch-local model raw-shell grant."""
+        with self._lock:
+            revoked = tuple(sorted(self._model_session_grants))
+            self._clear_model_session_grants_locked()
+            return revoked
 
     def execute(
         self,
@@ -659,7 +687,8 @@ class RawCliRuntime:
             return False
 
     def _clear_model_session_grants_locked(self) -> None:
-        """Task 3 hook; model session grants are introduced by a later task."""
+        """Clear model grants while the runtime lock is held."""
+        self._model_session_grants.clear()
 
     @staticmethod
     def _refused_result(request: RawCliRequest) -> RawCliResult:
