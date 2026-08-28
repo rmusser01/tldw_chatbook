@@ -1057,6 +1057,11 @@ class ConsoleChatStore:
             str, _ConsoleSettingsPersistenceLifecycle
         ] = {}
         self._settings_session_incarnations: dict[str, int] = {}
+        # Public settings origins need their own app-lifetime fence. Async
+        # drain incarnations are an implementation detail and can be cleaned
+        # up independently; this payload-free scalar survives close/recreate
+        # and restore so an old modal can never target a replacement live slot.
+        self._settings_binding_revision_tombstones: dict[str, int] = {}
         # Task 13: one app-lifetime, process-memory preparation owner per
         # session.  This state deliberately belongs to the store rather than
         # a mounted Console screen so navigation cannot lose or duplicate a
@@ -1369,8 +1374,9 @@ class ConsoleChatStore:
                 "library policy defaults provider must return "
                 "ConsoleLibraryPolicyDefaults"
             )
+        resolved_session_id = session_id or str(uuid4())
         session = ConsoleChatSession(
-            id=session_id or str(uuid4()),
+            id=resolved_session_id,
             title=title,
             workspace_id=workspace_id or self.workspace_context.active_workspace_id,
             settings=settings,
@@ -1395,6 +1401,16 @@ class ConsoleChatStore:
                     source="temporary" if ephemeral else "new_session",
                 )
             ),
+            conversation_binding_revision=(
+                self._settings_binding_revision_tombstones.get(
+                    resolved_session_id,
+                    0,
+                )
+            ),
+        )
+        self._record_console_settings_binding_revision(
+            session.id,
+            session.conversation_binding_revision,
         )
         self._sessions[session.id] = session
         self._advance_console_settings_session_incarnation(session.id)
@@ -1433,6 +1449,32 @@ class ConsoleChatStore:
         )
         lifecycle.component_revisions.clear()
         return incarnation
+
+    def _record_console_settings_binding_revision(
+        self,
+        session_id: str,
+        revision: int,
+    ) -> int:
+        """Retain the highest public-origin fence assigned to a session ID."""
+        retained = max(
+            revision,
+            self._settings_binding_revision_tombstones.get(session_id, revision),
+        )
+        self._settings_binding_revision_tombstones[session_id] = retained
+        return retained
+
+    def _advance_console_settings_binding_revision(
+        self,
+        session_id: str,
+        *revisions: int,
+    ) -> int:
+        """Assign the next public-origin fence without reusing a closed value."""
+        floor = self._settings_binding_revision_tombstones.get(session_id, -1)
+        if revisions:
+            floor = max(floor, *revisions)
+        advanced = floor + 1
+        self._settings_binding_revision_tombstones[session_id] = advanced
+        return advanced
 
     def _seed_console_settings_owned_bases(
         self,
@@ -1565,12 +1607,17 @@ class ConsoleChatStore:
         proposed_identity_revision = session.identity_revision + 1
         proposed_payload_revision = self._payload_revisions.get(session_id, 0) + 1
         proposed_generation_revision = session.generation_settings_revision + 1
-        proposed_binding_revision = session.conversation_binding_revision + 1
         if not self.is_pristine_session(
             session_id,
             expected_settings=canonical_settings,
         ):
             raise ValueError("Session is no longer pristine.")
+        proposed_binding_revision = (
+            self._advance_console_settings_binding_revision(
+                session_id,
+                session.conversation_binding_revision,
+            )
+        )
 
         # All validation, derived values, and stale-eligibility checks are
         # complete. ConsoleChatSession is a plain dataclass with no property
@@ -1706,6 +1753,10 @@ class ConsoleChatStore:
         self._pending_workspace_projections.pop(session_id, None)
         if self.library_policy_coordinator is not None:
             self.library_policy_coordinator.unregister_holder(session_id)
+        self._advance_console_settings_binding_revision(
+            session_id,
+            session.conversation_binding_revision,
+        )
         self._advance_console_settings_session_incarnation(session_id)
         self._sessions.pop(session_id, None)
         self._cleanup_console_settings_lifecycle_if_idle(session_id)
@@ -2898,7 +2949,7 @@ class ConsoleChatStore:
         Returns:
             The session activated after closing, or ``None`` when no sessions remain.
         """
-        self._session_or_raise(session_id)
+        session = self._session_or_raise(session_id)
         recovery = self.dispatch_recovery_for_session(session_id)
         if (
             recovery is not None
@@ -2969,6 +3020,10 @@ class ConsoleChatStore:
         self._pending_workspace_projections.pop(session_id, None)
         if self.library_policy_coordinator is not None:
             self.library_policy_coordinator.unregister_holder(session_id)
+        self._advance_console_settings_binding_revision(
+            session_id,
+            session.conversation_binding_revision,
+        )
         self._advance_console_settings_session_incarnation(session_id)
         self._sessions.pop(session_id, None)
         self._cleanup_console_settings_lifecycle_if_idle(session_id)
@@ -4235,6 +4290,10 @@ class ConsoleChatStore:
         if current is not None and current != conversation_id:
             raise RuntimeError("A persisted Console session cannot be rebound.")
         session.persisted_conversation_id = conversation_id
+        self._record_console_settings_binding_revision(
+            session_id,
+            session.conversation_binding_revision,
+        )
         return session
 
     def rebind_persisted_conversation(
@@ -4249,7 +4308,12 @@ class ConsoleChatStore:
             raise ValueError("conversation_id must be non-empty text or None")
         session = self._session_or_raise(session_id)
         if session.persisted_conversation_id != conversation_id:
-            session.conversation_binding_revision += 1
+            session.conversation_binding_revision = (
+                self._advance_console_settings_binding_revision(
+                    session_id,
+                    session.conversation_binding_revision,
+                )
+            )
             session.persisted_conversation_id = conversation_id
             session.settings_persistence_failures.clear()
             session.generation_durable_snapshot = None
@@ -5392,6 +5456,24 @@ class ConsoleChatStore:
                 raise RuntimeError(
                     "Unresolved temporary dispatch recovery cannot be replaced."
                 )
+        restored_binding_revisions: dict[str, int] = {}
+        for session_id, restored_session in sessions_by_id.items():
+            revisions = [restored_session.conversation_binding_revision]
+            prior_revision = replaced_binding_revisions.get(session_id)
+            if prior_revision is not None:
+                revisions.append(prior_revision)
+            restored_binding_revisions[session_id] = (
+                self._advance_console_settings_binding_revision(
+                    session_id,
+                    *revisions,
+                )
+            )
+        for session_id, prior_revision in replaced_binding_revisions.items():
+            if session_id not in sessions_by_id:
+                self._advance_console_settings_binding_revision(
+                    session_id,
+                    prior_revision,
+                )
         for settings_session_id in set(self._sessions) | set(sessions_by_id):
             self._advance_console_settings_session_incarnation(
                 settings_session_id
@@ -5450,16 +5532,9 @@ class ConsoleChatStore:
                 explicitly_staged=session.library_policy_holder.explicitly_staged,
                 save_pending=session.library_policy_holder.save_pending,
             )
-            prior_binding_revision = replaced_binding_revisions.get(session.id)
-            binding_revision = session.conversation_binding_revision
-            if prior_binding_revision is not None:
-                binding_revision = max(
-                    prior_binding_revision,
-                    binding_revision,
-                ) + 1
             restored_session = replace(
                 session,
-                conversation_binding_revision=binding_revision,
+                conversation_binding_revision=restored_binding_revisions[session.id],
                 settings_persistence_failures={},
                 applied_settings_submission_ids=deque(maxlen=32),
                 library_policy_holder=restored_holder,

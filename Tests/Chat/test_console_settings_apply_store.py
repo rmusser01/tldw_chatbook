@@ -757,6 +757,84 @@ def test_restore_state_fences_same_session_id_and_resets_old_apply_state() -> No
         store.commit_console_settings_live(stale)
     assert replacement.settings.model == "restored"
 
+    first_restore_revision = replacement.conversation_binding_revision
+    store.restore_state(sessions=[restored], active_session_id=session.id)
+    assert (
+        store.sessions()[0].conversation_binding_revision
+        > first_restore_revision
+    )
+
+
+def test_preclose_origin_is_rejected_after_same_id_conversation_restore() -> None:
+    store = ConsoleChatStore()
+    session = store.create_session(session_id="stable", settings=_settings("old"))
+    store.publish_first_persisted_conversation(session.id, "conversation-a")
+    stale = _submission(
+        store,
+        session.id,
+        submission_id="before-close",
+        model="model-b",
+        compaction=ContextCompactionMode.OFF,
+    )
+
+    store.close_session(session.id)
+    store.restore_state(
+        sessions=[
+            ConsoleChatSession(
+                id=session.id,
+                persisted_conversation_id="conversation-a",
+                conversation_binding_revision=0,
+                settings=_settings("restored"),
+                context_policy_overrides=ConsoleContextPolicyOverrides(
+                    compaction_mode=ContextCompactionMode.AUTOMATIC
+                ),
+            )
+        ],
+        active_session_id=session.id,
+    )
+    replacement = store.sessions()[0]
+    settings_before = replacement.settings
+    policy_before = replacement.context_policy_overrides
+    generation_revision_before = replacement.generation_settings_revision
+    policy_revision_before = replacement.context_policy_revision
+
+    assert (
+        replacement.conversation_binding_revision
+        > stale.origin.conversation_binding_revision
+    )
+    with pytest.raises(ValueError, match="closed"):
+        store.commit_console_settings_live(stale)
+
+    assert replacement.settings is settings_before
+    assert replacement.context_policy_overrides is policy_before
+    assert replacement.generation_settings_revision == generation_revision_before
+    assert replacement.context_policy_revision == policy_revision_before
+
+
+def test_recreated_session_id_inherits_closed_binding_fence() -> None:
+    store = ConsoleChatStore()
+    session = store.create_session(session_id="stable", settings=_settings("old"))
+    stale = _submission(
+        store,
+        session.id,
+        submission_id="before-recreate",
+        model="model-b",
+    )
+
+    store.close_session(session.id)
+    replacement = store.create_session(
+        session_id=session.id,
+        settings=_settings("replacement"),
+    )
+
+    assert (
+        replacement.conversation_binding_revision
+        > stale.origin.conversation_binding_revision
+    )
+    with pytest.raises(ValueError, match="closed"):
+        store.commit_console_settings_live(stale)
+    assert replacement.settings.model == "replacement"
+
 
 @pytest.mark.asyncio
 async def test_external_generation_change_is_refused_not_overwritten(tmp_path) -> None:
