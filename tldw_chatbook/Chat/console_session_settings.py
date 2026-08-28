@@ -508,6 +508,8 @@ def default_console_session_settings(
         provider: An explicit provider override (the Console control bar's
             selection when there is a view), or ``None``.
         model: An explicit model override, or ``None``.
+        excluded_model_profile_fields: Exact model-profile fields to skip so
+            inherited controls can re-resolve lower-precedence defaults.
 
     Returns:
         The default settings for a new session.
@@ -546,6 +548,8 @@ def build_target_default_console_session_settings(
         app_config: The live application configuration snapshot.
         provider: Provider selected by the settings transaction.
         model: Literal model ID selected by the settings transaction.
+        excluded_model_profile_fields: Exact model-profile fields to skip so
+            inherited controls can re-resolve lower-precedence defaults.
 
     Returns:
         A fresh settings value resolved for the exact target.
