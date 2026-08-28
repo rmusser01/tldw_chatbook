@@ -150,8 +150,14 @@ def _format_next_run(
     """
     if task is None or task.next_run_at is None:
         return "-"
-    if isinstance(task, ReminderTask) and not task.enabled:
+    # Suppression covers projections too (review F6): a watchlist row
+    # whose projection maps is_active False -> DISABLED still carries a
+    # computed next_run_at it will not honor.
+    display_status = _task_status(task)
+    if display_status == TaskStatus.DISABLED:
         return "— (disabled)"
+    if display_status == TaskStatus.PAUSED:
+        return "— (paused)"
     reference = now if now is not None else datetime.now(timezone.utc)
     absolute = task.next_run_at.strftime("%Y-%m-%d %H:%M")
     relative = _format_relative(task.next_run_at, reference)
@@ -240,19 +246,30 @@ def _humanize_schedule(task: ReminderTask) -> str:
     return _humanize_cron(task.cron, task.timezone)
 
 
+def _underlying_status(task: ReminderTask | ScheduledTask) -> TaskStatus:
+    """The recorded dispatch status, without the enabled-state overlay.
+
+    Behavior checks (retry affordance, conflict card, text filter) must
+    consult this where the recorded outcome is the honest answer for a
+    disabled row too (task-23101 review F5).
+    """
+    if isinstance(task, ReminderTask):
+        return task.last_status
+    return task.status
+
+
 def _task_status(task: ReminderTask | ScheduledTask) -> TaskStatus:
-    """Return the current status for either a reminder or a projected task.
+    """Return the DISPLAY status for either a reminder or a projected task.
 
     A disabled reminder reads as Disabled regardless of its last dispatch
     outcome: disabling never touches ``last_status``, so deriving from it
     left disabled rows showing "Waiting" (task-23101). Enabling restores
-    the recorded last outcome.
+    the recorded last outcome. Consumers that need the recorded outcome
+    itself use ``_underlying_status`` (review F5).
     """
-    if isinstance(task, ReminderTask):
-        if not task.enabled:
-            return TaskStatus.DISABLED
-        return task.last_status
-    return task.status
+    if isinstance(task, ReminderTask) and not task.enabled:
+        return TaskStatus.DISABLED
+    return _underlying_status(task)
 
 
 def _was_missed_while_away(task: ReminderTask | ScheduledTask) -> bool:
@@ -610,8 +627,11 @@ class TaskDetail(Vertical):
             # reminder whose last dispatch ran and raised (or was cancelled
             # at its execution deadline, task-18939) offers Run now as its
             # retry -- the never-wired "Retry run" concept, now real.
+            # Underlying status, not display status (review F5): Run now
+            # explicitly works on disabled tasks, so a disabled task whose
+            # last dispatch failed keeps its retry affordance.
             run_now_button = self.query_one("#scheduling-run-now", Button)
-            if _task_status(task) in {TaskStatus.MISSED, TaskStatus.TIMED_OUT}:
+            if _underlying_status(task) in {TaskStatus.MISSED, TaskStatus.TIMED_OUT}:
                 run_now_button.label = "Run now (retry)"
                 run_now_button.tooltip = (
                     "Retry this scheduled task now: its last dispatch ran "
@@ -778,10 +798,15 @@ class TaskInspector(Vertical):
         self._update_conflict_card(task)
 
     def _update_conflict_card(self, task: ReminderTask | ScheduledTask | None) -> None:
-        """Update the conflict card for the current task state."""
+        """Update the conflict card for the current task state.
+
+        Underlying status (review F5): a disabled task's conflict is
+        still a conflict -- the Conflicts tab lists it, so this card must
+        not claim "No conflict".
+        """
         card = self.query_one("#scheduling-conflict-card", Vertical)
         text = self.query_one("#scheduling-conflict-text", Static)
-        if task is not None and _task_status(task) == TaskStatus.CONFLICT:
+        if task is not None and _underlying_status(task) == TaskStatus.CONFLICT:
             text.update(f"Conflict detected\n{task.title}")
             card.add_class("conflict")
         else:

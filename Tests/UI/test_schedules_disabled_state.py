@@ -78,6 +78,48 @@ def test_enabled_reminder_next_run_shows_time():
     assert "2099-07-20" in _format_next_run(_reminder(enabled=True))
 
 
+# --- review F6: suppression covers DISABLED/PAUSED projections too --------
+
+
+def _projection(status: TaskStatus) -> ScheduledTask:
+    return ScheduledTask(
+        id="watchlist:9",
+        title="Watch",
+        type="watchlist_job",
+        status=status,
+        next_run_at=_RUN_AT,
+    )
+
+
+def test_disabled_projection_next_run_is_suppressed():
+    rendered = _format_next_run(_projection(TaskStatus.DISABLED))
+    assert "2099" not in rendered
+    assert rendered == "— (disabled)"
+
+
+def test_paused_projection_next_run_is_suppressed():
+    rendered = _format_next_run(_projection(TaskStatus.PAUSED))
+    assert "2099" not in rendered
+    assert rendered == "— (paused)"
+
+
+def test_waiting_projection_next_run_still_concrete():
+    assert "2099-07-20" in _format_next_run(_projection(TaskStatus.WAITING))
+
+
+# --- review F5: behavior consumers use the underlying status --------------
+
+
+def test_underlying_status_ignores_the_disabled_overlay():
+    from tldw_chatbook.UI.Screens.scheduling.task_detail import (
+        _underlying_status,
+    )
+
+    task = _reminder(enabled=False, last_status=TaskStatus.MISSED)
+    assert _task_status(task) is TaskStatus.DISABLED
+    assert _underlying_status(task) is TaskStatus.MISSED
+
+
 # --- mounted behavior ------------------------------------------------------
 
 
@@ -131,3 +173,95 @@ async def test_disabled_row_and_badge_read_disabled_and_survive_refresh():
         await pilot.pause()
         row = table.get_row_at(0)
         assert "Disabled" in str(row[2])
+
+
+# --- review F5: mounted consumers of the underlying status ----------------
+
+
+class _DisabledMissedService(MockSchedulingServiceMixin):
+    """One disabled task whose last dispatch failed, one with a conflict."""
+
+    async def list_tasks(self):
+        return [
+            _reminder_with(
+                "task-m", "Failed backup", TaskStatus.MISSED, enabled=False
+            ),
+            _reminder_with(
+                "task-c", "Conflicted", TaskStatus.CONFLICT, enabled=False
+            ),
+        ]
+
+
+def _reminder_with(
+    task_id: str, title: str, last_status: TaskStatus, *, enabled: bool
+) -> ReminderTask:
+    return ReminderTask(
+        id=task_id,
+        title=title,
+        schedule_kind=ScheduleKind.ONE_TIME,
+        run_at=_RUN_AT,
+        next_run_at=_RUN_AT,
+        enabled=enabled,
+        last_status=last_status,
+    )
+
+
+class _MissedApp(ConsolidatedCSSApp):
+    def __init__(self, *args, **kwargs) -> None:
+        super().__init__(*args, **kwargs)
+        self.scheduling_service = _DisabledMissedService()
+
+
+async def _mounted_missed_workbench(pilot):
+    workbench = SchedulesWorkbench(app_instance=pilot.app)
+    await pilot.app.push_screen(workbench)
+    await pilot.pause()
+    await pilot.app.workers.wait_for_complete()
+    await pilot.pause()
+    return workbench
+
+
+@pytest.mark.asyncio
+async def test_disabled_missed_task_keeps_the_retry_affordance():
+    """Run now explicitly works on disabled tasks; a disabled task whose
+    last dispatch failed must keep 'Run now (retry)' (review F5)."""
+    from textual.widgets import Button
+
+    app = _MissedApp()
+    async with app.run_test(size=(160, 48)) as pilot:
+        workbench = await _mounted_missed_workbench(pilot)
+        table = workbench.query_one("#scheduling-task-table", DataTable)
+        table.move_cursor(row=0)
+        await pilot.pause()
+
+        run_now = workbench.query_one("#scheduling-run-now", Button)
+        assert str(run_now.label) == "Run now (retry)"
+        # Display status stays Disabled.
+        badge = workbench.query_one("#scheduling-task-status-badge", Static)
+        assert "Disabled" in str(badge.render())
+
+
+@pytest.mark.asyncio
+async def test_missed_filter_matches_a_disabled_missed_task():
+    app = _MissedApp()
+    async with app.run_test(size=(160, 48)) as pilot:
+        workbench = await _mounted_missed_workbench(pilot)
+        workbench._filter_text = "missed"
+        workbench._render_table()
+        await pilot.pause()
+
+        titles = [task.title for task in workbench._visible_tasks]
+        assert "Failed backup" in titles, titles
+
+
+@pytest.mark.asyncio
+async def test_conflict_card_shows_for_a_disabled_conflicted_task():
+    app = _MissedApp()
+    async with app.run_test(size=(160, 48)) as pilot:
+        workbench = await _mounted_missed_workbench(pilot)
+        table = workbench.query_one("#scheduling-task-table", DataTable)
+        table.move_cursor(row=1)
+        await pilot.pause()
+
+        conflict_text = workbench.query_one("#scheduling-conflict-text", Static)
+        assert "Conflict detected" in str(conflict_text.render())

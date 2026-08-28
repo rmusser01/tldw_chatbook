@@ -41,6 +41,7 @@ from .task_detail import (
     _managed_elsewhere_notice,
     _task_status,
     _task_type_label,
+    _underlying_status,
     _was_missed_while_away,
     status_badge_text,
 )
@@ -272,6 +273,10 @@ class SchedulesWorkbench(BaseAppScreen):
             or text in _task_type_label(task).lower()
             or text in _task_status(task).value.lower().replace("_", " ")
             or text in _task_status(task).value.lower()
+            # Underlying status too (review F5): a disabled task whose
+            # last dispatch failed must still answer a "missed" filter.
+            or text in _underlying_status(task).value.lower().replace("_", " ")
+            or text in _underlying_status(task).value.lower()
             # task-18937: filtering for "missed" finds late-dispatch rows too,
             # not just handler-failure ones -- both are honest matches for a
             # user asking "what went wrong while I wasn't looking".
