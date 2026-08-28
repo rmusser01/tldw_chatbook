@@ -38,7 +38,18 @@ class LibraryActivityFlushResult:
 
 
 class ConsoleLibraryActivityBuffer:
-    """Retain minimized events until one caller-confirmed transaction saves them."""
+    """Retain events until one caller-confirmed transaction saves them.
+
+    Args:
+        persist_batch: Callback that atomically writes one contribution.
+        max_attempts: Ordinary write attempts before exposing failed state.
+        max_pending_per_session: Hard per-session event ceiling.
+        batch_size: Maximum events written by one persistence call.
+
+    Raises:
+        TypeError: If ``persist_batch`` is not callable.
+        ValueError: If a numeric bound is not positive.
+    """
 
     def __init__(
         self,
@@ -68,7 +79,17 @@ class ConsoleLibraryActivityBuffer:
     def admit(
         self, session_id: str, turn_id: str, event: LibraryActivityEvent
     ) -> None:
-        """Retain one already-minimized event under the owning session/turn."""
+        """Retain one already-minimized event under the owning session/turn.
+
+        Args:
+            session_id: Native Console session receiving the event.
+            turn_id: Native user-turn opener that owns the event.
+            event: Validated minimized activity event.
+
+        Raises:
+            ValueError: If an identifier or event is invalid or collides.
+            RuntimeError: If the bounded per-session buffer is full.
+        """
         if type(session_id) is not str or not session_id:
             raise ValueError("Library activity session id is required")
         if type(turn_id) is not str or not turn_id:
@@ -97,7 +118,14 @@ class ConsoleLibraryActivityBuffer:
     def pending_events(
         self, session_id: str
     ) -> tuple[LibraryActivityContributionItem, ...]:
-        """Return the immutable ordered pending snapshot for one session."""
+        """Return the immutable ordered pending snapshot for one session.
+
+        Args:
+            session_id: Native Console session to inspect.
+
+        Returns:
+            Pending contribution items in stable admission order.
+        """
         with self._lock:
             return tuple(
                 item
@@ -106,7 +134,14 @@ class ConsoleLibraryActivityBuffer:
             )
 
     def state(self, session_id: str) -> LibraryActivityFlushResult:
-        """Return the current bounded save state without attempting a write."""
+        """Return the current bounded save state without attempting a write.
+
+        Args:
+            session_id: Native Console session to inspect.
+
+        Returns:
+            Current saved, pending, or failed state.
+        """
 
         with self._lock:
             prior = self._final_results.get(session_id)
@@ -128,14 +163,26 @@ class ConsoleLibraryActivityBuffer:
     def promotion_contribution(
         self, session_id: str
     ) -> LibraryActivityContribution | None:
-        """Snapshot all current ephemeral events for an atomic promotion."""
+        """Snapshot all current ephemeral events for an atomic promotion.
+
+        Args:
+            session_id: Native ephemeral Console session being promoted.
+
+        Returns:
+            A contribution containing every pending event, or ``None``.
+        """
         items = self.pending_events(session_id)
         return LibraryActivityContribution(items) if items else None
 
     def confirm_contribution(
         self, session_id: str, contribution: LibraryActivityContribution
     ) -> None:
-        """Remove only the exact items confirmed by a successful transaction."""
+        """Remove only items confirmed by a successful transaction.
+
+        Args:
+            session_id: Native Console session that was promoted.
+            contribution: Exact contribution committed by the transaction.
+        """
         keys = {
             (
                 session_id,
@@ -156,23 +203,71 @@ class ConsoleLibraryActivityBuffer:
             self._final_results.pop(session_id, None)
 
     def flush(self, session_id: str) -> LibraryActivityFlushResult:
-        """Persist one bounded batch and remove only confirmed rows."""
+        """Persist one bounded batch and remove only confirmed rows.
+
+        Args:
+            session_id: Native durable Console session to flush.
+
+        Returns:
+            Result for the attempted batch and remaining pending count.
+        """
         return self._flush(session_id, final=False)
 
     def retry(self, session_id: str) -> LibraryActivityFlushResult:
-        """Retry the exact retained batch without duplicating confirmed rows."""
+        """Retry the exact retained batch without duplicating confirmed rows.
+
+        Args:
+            session_id: Native durable Console session to retry.
+
+        Returns:
+            Result for the retry and remaining pending count.
+        """
         return self._flush(session_id, final=False)
 
     def final_flush(self, session_id: str) -> LibraryActivityFlushResult:
-        """Perform at most one bounded close, promotion, or shutdown flush."""
+        """Drain bounded batches until saved or one final write fails.
+
+        Args:
+            session_id: Native durable Console session being finalized.
+
+        Returns:
+            Cached aggregate result across every attempted batch.
+        """
         with self._lock:
             prior = self._final_results.get(session_id)
             if prior is not None:
                 return prior
-        result = self._flush(session_id, final=True)
+        saved_count = 0
+        while True:
+            result = self._flush(session_id, final=True)
+            saved_count += result.saved_count
+            if result.status != "pending" or result.saved_count == 0:
+                break
+        result = LibraryActivityFlushResult(
+            result.status,
+            saved_count,
+            result.pending_count,
+            result.error_code,
+            result.warning,
+        )
         with self._lock:
             self._final_results.setdefault(session_id, result)
             return self._final_results[session_id]
+
+    def discard_session(self, session_id: str) -> None:
+        """Release every process-local activity reference for one session.
+
+        Args:
+            session_id: Native Console session whose activity is unreachable.
+        """
+        with self._lock:
+            keys = tuple(key for key in self._pending if key[0] == session_id)
+            for key in keys:
+                self._pending.pop(key, None)
+            self._retry_batches.pop(session_id, None)
+            self._attempts.pop(session_id, None)
+            self._flushing.discard(session_id)
+            self._final_results.pop(session_id, None)
 
     def _flush(self, session_id: str, *, final: bool) -> LibraryActivityFlushResult:
         with self._lock:

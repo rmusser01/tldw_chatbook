@@ -231,7 +231,6 @@ from ...Chat.console_chat_models import (
     ConsoleWorkspaceContext,
     derive_console_session_title,
 )
-from ...Chat.console_turn_context import ConsoleTurnExecutionContext
 from ...UI.character_display_text import sanitize_character_display_label
 from ...Chat.console_session_settings import (
     ConsoleSessionSettings,
@@ -5006,12 +5005,6 @@ class ChatScreen(BaseAppScreen):
         """Delegate to `ConsolePromptsController` (wave-3 console decomposition, task 3)."""
         return self._prompts._ensure_console_prompt_history()
 
-    def _console_library_provider_factory(
-        self, turn_context: ConsoleTurnExecutionContext | None = None
-    ):
-        """Delegate run-pinned Library provider construction."""
-        return self._library_activity.build_provider(turn_context)
-
     def _ensure_console_chat_controller(self) -> ConsoleChatController:
         """Return the native Console chat controller with fresh selection state.
 
@@ -5052,7 +5045,7 @@ class ChatScreen(BaseAppScreen):
                 world_info_applier=self._console_world_info_applier,
                 rag_capture_provider=self._retrieval._capture_console_staged_rag,
                 default_session_settings=self._session._default_console_session_settings,
-                library_provider_factory=self._console_library_provider_factory,
+                library_provider_factory=self._library_activity.build_provider,
                 global_user_display_name=self._global_chat_display_name,
                 turn_context_provider=(
                     self._session._build_console_turn_execution_context
@@ -5120,7 +5113,7 @@ class ChatScreen(BaseAppScreen):
             "_default_session_settings": getattr(
                 session, "_default_console_session_settings", None
             ),
-            "_library_provider_factory": self._console_library_provider_factory,
+            "_library_provider_factory": self._library_activity.build_provider,
             "_global_user_display_name": self._global_chat_display_name,
             "_turn_context_provider": getattr(
                 session, "_build_console_turn_execution_context", None

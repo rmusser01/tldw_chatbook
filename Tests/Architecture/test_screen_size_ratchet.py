@@ -58,9 +58,6 @@ _REPO_ROOT = Path(__file__).resolve().parents[2]
 #: 17,749/593. Wave 3 recorded 18,909/598; dev grew the screen by 21 lines
 #: and 2 methods while wave 4 was in flight, which is the whole reason this
 #: file exists. First recorded after wave 2 (PR #1381) at 20,964/612.
-#: Lowered by TASK-19900.5 after Library provider construction and selected-
-#: turn activity projection moved into ``UI/Console_Modules/library_activity``:
-#: 17,026/566 -> 16,978/565.
 #:
 #: Always MEASURE after the final rebase. Wave 3 set its budget twice from a
 #: pre-rebase measurement and both landed red, because dev moved underneath
@@ -70,10 +67,12 @@ _REPO_ROOT = Path(__file__).resolve().parents[2]
 #: The first closeout measurement was 16,968/562; dev then advanced through
 #: PR #2125 and subsequent Console work through PR #2147 before this ratchet
 #: landed. The final live measurement is: 17,727/593 -> 17,037/565.
-#: Lowered again by TASK-19900.5 after moving Library activity ownership into
-#: its Console module. The post-rebase measurement is 16,978/565.
+#: Lowered again by TASK-19900.5 after moving Library provider construction and
+#: selected-turn activity projection into ``UI/Console_Modules/library_activity``.
+#: Concurrent dev work moved the final base to 17,059/566; the post-rebase
+#: feature tree measures 17,000/565.
 _BUDGETS: dict[str, tuple[str, int, int]] = {
-    "tldw_chatbook/UI/Screens/chat_screen.py": ("ChatScreen", 16978, 565),
+    "tldw_chatbook/UI/Screens/chat_screen.py": ("ChatScreen", 17000, 565),
 }
 
 # Task 22507.4 started from this reviewed measurement. The repository-wide

@@ -21,6 +21,16 @@ class ConsoleLibraryActivityController:
     ``app_instance`` is the justified snapshot exception: the app identity is
     stable for the controller's lifetime while its service attributes remain
     live reads during provider construction.
+
+    Args:
+        app_instance: Stable application identity providing live services.
+        ensure_store: Late-bound Console store accessor.
+        transcript: Late-bound transcript accessor.
+        inspector_rail: Late-bound Inspector accessor.
+        citation_counts: Late-bound assistant citation-count mapping.
+        reveal_inspector: Callback that exposes the Inspector region.
+        sync_native_ui: Async native Console synchronization callback.
+        notify: User-notification callback.
     """
 
     def __init__(
@@ -53,7 +63,18 @@ class ConsoleLibraryActivityController:
         ] | None = None
 
     def capture_kwargs(self, turn_context: object) -> dict[str, object]:
-        """Return provider capture bindings for a production turn context."""
+        """Return provider capture bindings for a production turn context.
+
+        Args:
+            turn_context: Candidate immutable Console turn context.
+
+        Returns:
+            Provider keyword arguments, or an empty mapping for test/legacy
+            contexts.
+
+        Raises:
+            RuntimeError: If the production context has no active user opener.
+        """
         if not isinstance(turn_context, ConsoleTurnExecutionContext):
             return {}
         store = self._ensure_store()
@@ -61,8 +82,7 @@ class ConsoleLibraryActivityController:
         turn_id = store.current_library_activity_turn_id(session_id)
 
         def capture(event: LibraryActivityEvent) -> None:
-            store.admit_library_activity(session_id, turn_id, event)
-            store.flush_library_activity(session_id)
+            store.capture_library_activity(session_id, turn_id, event)
 
         return {
             "activity_attempt_id": str(turn_context.library_authority.attempt_id),
@@ -72,7 +92,17 @@ class ConsoleLibraryActivityController:
     def build_provider(
         self, turn_context: ConsoleTurnExecutionContext | None
     ) -> Any | None:
-        """Resolve the run-pinned Direct or RAG Library provider."""
+        """Resolve the run-pinned Direct or RAG Library provider.
+
+        Args:
+            turn_context: Immutable production turn context, if available.
+
+        Returns:
+            Configured provider, or ``None`` without a turn context.
+
+        Raises:
+            RuntimeError: If production capture cannot bind an owning turn.
+        """
         if turn_context is None:
             return None
         app = self.app_instance
@@ -134,7 +164,11 @@ class ConsoleLibraryActivityController:
         self._projection_token = None
 
     def selected_message_id(self) -> str | None:
-        """Return the selected native message after owner normalization."""
+        """Return the selected native message after owner normalization.
+
+        Returns:
+            Native owner message ID, or ``None`` without a selection.
+        """
         transcript = self._transcript()
         if transcript is None:
             return None
@@ -144,7 +178,11 @@ class ConsoleLibraryActivityController:
         return transcript.thinking_owner_message_id(selected) or selected
 
     def selected_citation_count(self) -> int:
-        """Return the selected answer's cached citation count."""
+        """Return the selected answer's cached citation count.
+
+        Returns:
+            Non-negative number of cited sources.
+        """
         selected = self.selected_message_id()
         return max(0, self._citation_counts().get(selected or "", 0))
 
@@ -180,7 +218,14 @@ class ConsoleLibraryActivityController:
             )
 
     def sync_transcript(self, transcript: Any) -> dict[str, int]:
-        """Publish native-assistant footer counts and return the visible map."""
+        """Publish native-assistant footer counts and return the visible map.
+
+        Args:
+            transcript: Mounted Console transcript widget.
+
+        Returns:
+            Positive activity counts keyed by native assistant message ID.
+        """
         self.sync_projection()
         visible = {
             message_id: count
@@ -191,7 +236,11 @@ class ConsoleLibraryActivityController:
         return visible
 
     def open_selected(self, button: Any) -> None:
-        """Select an assistant's owner, reveal Inspector, and focus activity."""
+        """Select an assistant's owner, reveal Inspector, and focus activity.
+
+        Args:
+            button: Transcript activity affordance carrying a native message ID.
+        """
         message_id = getattr(button, "native_message_id", None)
         if type(message_id) is not str or not message_id:
             return
@@ -206,7 +255,11 @@ class ConsoleLibraryActivityController:
             rail.request_library_activity_focus()
 
     async def retry(self) -> None:
-        """Retry the retained store-owned activity batch once."""
+        """Retry the retained store-owned activity batch once.
+
+        Returns:
+            None after synchronizing projection and notification state.
+        """
         store = self._ensure_store()
         session_id = store.active_session_id
         if session_id is None:

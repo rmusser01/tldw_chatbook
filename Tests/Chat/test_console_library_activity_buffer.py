@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from concurrent.futures import ThreadPoolExecutor
+from threading import Event
 
 import pytest
 
@@ -124,6 +125,42 @@ def test_final_flush_is_one_bounded_attempt() -> None:
     assert calls == 1
 
 
+def test_final_flush_drains_every_bounded_batch() -> None:
+    seen: list[tuple[str, ...]] = []
+
+    def persist(_session_id, contribution) -> None:
+        seen.append(tuple(item.event.event_id for item in contribution.items))
+
+    buffer = ConsoleLibraryActivityBuffer(persist, batch_size=2)
+    for index in range(5):
+        buffer.admit("session-1", "turn-1", _event(index))
+
+    result = buffer.final_flush("session-1")
+
+    assert result.status == "saved"
+    assert result.saved_count == 5
+    assert result.pending_count == 0
+    assert seen == [
+        ("event-0", "event-1"),
+        ("event-2", "event-3"),
+        ("event-4",),
+    ]
+
+
+def test_discard_session_releases_pending_and_retry_state() -> None:
+    def fail(_session_id, _contribution) -> None:
+        raise RuntimeError
+
+    buffer = ConsoleLibraryActivityBuffer(fail, max_attempts=1)
+    buffer.admit("session-1", "turn-1", _event(1))
+    assert buffer.flush("session-1").status == "failed"
+
+    buffer.discard_session("session-1")
+
+    assert buffer.pending_events("session-1") == ()
+    assert buffer.state("session-1").status == "saved"
+
+
 class _FailingContribution:
     def write(self, *, writer, conversation_id, message_ids) -> None:
         raise RuntimeError("injected promotion failure")
@@ -185,6 +222,107 @@ def test_close_performs_one_final_flush_for_a_durable_session(tmp_path) -> None:
         if row.event_kind == "library_activity"
     ]
     assert len(activity) == 1
+
+
+def test_ephemeral_capture_stays_pending_without_consuming_retries() -> None:
+    store = ConsoleChatStore()
+    session = store.create_session(ephemeral=True)
+    user = store.append_message(
+        session.id, role=ConsoleMessageRole.USER, content="question"
+    )
+
+    first = store.capture_library_activity(session.id, user.id, _event(1))
+    second = store.capture_library_activity(session.id, user.id, _event(2))
+
+    assert first.status == second.status == "pending"
+    assert second.pending_count == 2
+    assert second.error_code is None
+    assert second.warning is None
+
+
+def test_close_drains_more_than_one_activity_batch(tmp_path) -> None:
+    db = CharactersRAGDB(tmp_path / "activity-close-many.db", "activity-test")
+    store = ConsoleChatStore(persistence=ChatPersistenceService(db))
+    session = store.create_session(ephemeral=True)
+    user = store.append_message(
+        session.id, role=ConsoleMessageRole.USER, content="question"
+    )
+    store.append_message(
+        session.id, role=ConsoleMessageRole.ASSISTANT, content="answer"
+    )
+    conversation_id = store.promote_ephemeral_session(session.id)
+    for index in range(65):
+        store.admit_library_activity(session.id, user.id, _event(index))
+
+    store.close_session(session.id)
+
+    activity = [
+        row
+        for row in db.get_trajectory_rows(conversation_id)
+        if row.event_kind == "library_activity"
+    ]
+    assert len(activity) == 65
+
+
+def test_failed_close_discards_unreachable_activity(tmp_path) -> None:
+    db = CharactersRAGDB(tmp_path / "activity-close-failed.db", "activity-test")
+    store = ConsoleChatStore(persistence=ChatPersistenceService(db))
+    session = store.create_session(ephemeral=True)
+    user = store.append_message(
+        session.id, role=ConsoleMessageRole.USER, content="question"
+    )
+    store.append_message(
+        session.id, role=ConsoleMessageRole.ASSISTANT, content="answer"
+    )
+    store.promote_ephemeral_session(session.id)
+    store.admit_library_activity(session.id, user.id, _event(1))
+
+    def fail(_session_id, _contribution) -> None:
+        raise RuntimeError
+
+    store._library_activity_buffer._persist_batch = fail  # noqa: SLF001
+
+    store.close_session(session.id)
+
+    assert store._library_activity_buffer.pending_events(session.id) == ()  # noqa: SLF001
+    assert session.id not in {item.id for item in store.sessions()}
+
+
+def test_close_serializes_against_late_provider_capture(tmp_path) -> None:
+    db = CharactersRAGDB(tmp_path / "activity-close-race.db", "activity-test")
+    store = ConsoleChatStore(persistence=ChatPersistenceService(db))
+    session = store.create_session(ephemeral=True)
+    user = store.append_message(
+        session.id, role=ConsoleMessageRole.USER, content="question"
+    )
+    store.append_message(
+        session.id, role=ConsoleMessageRole.ASSISTANT, content="answer"
+    )
+    store.promote_ephemeral_session(session.id)
+    store.admit_library_activity(session.id, user.id, _event(1))
+    entered = Event()
+    release = Event()
+    persist = store._library_activity_buffer._persist_batch  # noqa: SLF001
+
+    def blocked_persist(session_id, contribution) -> None:
+        entered.set()
+        assert release.wait(2)
+        persist(session_id, contribution)
+
+    store._library_activity_buffer._persist_batch = blocked_persist  # noqa: SLF001
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        closing = pool.submit(store.close_session, session.id)
+        assert entered.wait(2)
+        late_capture = pool.submit(
+            store.admit_library_activity, session.id, user.id, _event(2)
+        )
+        assert not late_capture.done()
+        release.set()
+        closing.result(timeout=2)
+        with pytest.raises(KeyError):
+            late_capture.result(timeout=2)
+
+    assert store._library_activity_buffer.pending_events(session.id) == ()  # noqa: SLF001
 
 
 def test_store_projects_pending_and_durable_activity_to_native_assistant(tmp_path) -> None:

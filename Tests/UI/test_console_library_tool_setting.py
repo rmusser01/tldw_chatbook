@@ -48,7 +48,7 @@ def _turn_context(*, direct: bool):
     )
 
 
-# --- ChatScreen provider factory --------------------------------------------
+# --- Library activity controller provider factory ---------------------------
 
 
 def test_factory_direct_mode_builds_library_tool_provider(monkeypatch):
@@ -60,7 +60,7 @@ def test_factory_direct_mode_builds_library_tool_provider(monkeypatch):
     _patch_cli_config(monkeypatch, {"console": {"direct_library_tools": True}})
     _app, screen = _build_screen()
 
-    provider = screen._console_library_provider_factory(_turn_context(direct=True))
+    provider = screen._library_activity.build_provider(_turn_context(direct=True))
 
     assert isinstance(provider, LibraryToolProvider)
     assert isinstance(provider._service, LocalLibraryToolService)
@@ -74,7 +74,7 @@ def test_factory_off_mode_builds_bounded_rag_provider(monkeypatch):
     _patch_cli_config(monkeypatch, {"console": {"direct_library_tools": False}})
     app, screen = _build_screen()
 
-    provider = screen._console_library_provider_factory(_turn_context(direct=False))
+    provider = screen._library_activity.build_provider(_turn_context(direct=False))
 
     assert isinstance(provider, LibraryRagToolProvider)
     assert provider._rag_service is getattr(app, "library_rag_search_service", None)
@@ -84,7 +84,7 @@ def test_factory_fails_closed_when_turn_context_is_missing(monkeypatch):
     _patch_cli_config(monkeypatch, {})
     _app, screen = _build_screen()
 
-    assert screen._console_library_provider_factory() is None
+    assert screen._library_activity.build_provider(None) is None
 
 
 def test_factory_reads_captured_context_without_rebuilding_controller(monkeypatch):
@@ -175,7 +175,7 @@ def test_factory_wires_activity_capture_from_real_turn_context(monkeypatch):
         ),
     )
 
-    provider = screen._console_library_provider_factory(context)
+    provider = screen._library_activity.build_provider(context)
     event = LibraryActivityEvent(
         version=1,
         event_id="event-live",
@@ -217,7 +217,7 @@ def test_factory_assembles_service_only_from_local_app_attributes(monkeypatch):
     app.local_chat_conversation_service = SimpleNamespace(marker="conversations")
     app.local_library_collections_service = SimpleNamespace(marker="collections")
 
-    provider = screen._console_library_provider_factory(_turn_context(direct=True))
+    provider = screen._library_activity.build_provider(_turn_context(direct=True))
 
     assert isinstance(provider, LibraryToolProvider)
     service = provider._service
@@ -241,7 +241,7 @@ def test_factory_wires_the_policy_enforcer_into_the_chunk_tool_service(monkeypat
     app, screen = _build_screen()
     app.local_media_reading_service = SimpleNamespace(marker="media")
 
-    provider = screen._console_library_provider_factory(_turn_context(direct=True))
+    provider = screen._library_activity.build_provider(_turn_context(direct=True))
 
     assert isinstance(provider, LibraryToolProvider)
     chunk_service = provider._service._media_chunk
@@ -271,7 +271,7 @@ def test_factory_chunk_read_tools_degrade_when_one_media_handle_is_missing(
     )
     app.local_media_reading_service = None
 
-    provider = screen._console_library_provider_factory(_turn_context(direct=True))
+    provider = screen._library_activity.build_provider(_turn_context(direct=True))
 
     assert isinstance(provider, LibraryToolProvider)
     assert provider._service._media_chunk is not None
@@ -303,7 +303,7 @@ def test_factory_missing_backend_yields_per_tool_feature_unavailable(monkeypatch
     app.local_chat_conversation_service = None
     app.local_library_collections_service = None
 
-    provider = screen._console_library_provider_factory(_turn_context(direct=True))
+    provider = screen._library_activity.build_provider(_turn_context(direct=True))
 
     assert isinstance(provider, LibraryToolProvider)
     # Catalog still exposes the full descriptor set (no total failure).
@@ -333,7 +333,7 @@ def test_factory_present_backend_serves_its_tool(monkeypatch):
     app.local_chat_conversation_service = None
     app.local_library_collections_service = None
 
-    provider = screen._console_library_provider_factory(_turn_context(direct=True))
+    provider = screen._library_activity.build_provider(_turn_context(direct=True))
     result = provider.invoke("library:library_list_notes", {"limit": 5})
 
     assert result.ok is True

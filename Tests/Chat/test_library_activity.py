@@ -5,6 +5,8 @@ from __future__ import annotations
 import json
 from dataclasses import replace
 
+import pytest
+
 from tldw_chatbook.Chat.library_activity import (
     LIBRARY_ACTIVITY_ERROR_SUMMARY_MAX_CHARS,
     LIBRARY_ACTIVITY_PAYLOAD_MAX_BYTES,
@@ -13,6 +15,8 @@ from tldw_chatbook.Chat.library_activity import (
     LIBRARY_ACTIVITY_SOURCE_REF_MAX_COUNT,
     LIBRARY_ACTIVITY_TITLE_MAX_CHARS,
     LibraryActivityCandidate,
+    decode_library_activity_event,
+    encode_library_activity_event,
     minimize_library_activity,
 )
 
@@ -114,3 +118,12 @@ def test_minimize_activity_marks_zero_results_empty():
     assert event.status == "empty"
     assert event.result_count == 0
     assert event.source_refs == ()
+
+
+def test_decode_activity_uses_strict_schema_types() -> None:
+    event = minimize_library_activity(_candidate(result={"items": [], "total": 0}))
+    payload = json.loads(encode_library_activity_event(event))
+    payload["result_count"] = True
+
+    with pytest.raises(ValueError, match="Invalid Library activity payload"):
+        decode_library_activity_event(json.dumps(payload))

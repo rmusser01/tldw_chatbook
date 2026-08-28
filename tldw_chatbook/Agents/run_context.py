@@ -87,7 +87,11 @@ _CURRENT_RUN_ACTOR: ContextVar[CurrentRunActor | None] = ContextVar(
 
 
 def current_run_actor() -> CurrentRunActor | None:
-    """Return the actor bound to this tool thread, if any."""
+    """Return the actor bound to this tool thread, if any.
+
+    Returns:
+        Exact bound actor, or ``None`` outside an agent run.
+    """
     return _CURRENT_RUN_ACTOR.get()
 
 
@@ -104,7 +108,17 @@ def current_run_id() -> str:
 
 @contextmanager
 def use_run_actor(actor: CurrentRunActor) -> Iterator[None]:
-    """Bind exact provider-call attribution for the duration of a block."""
+    """Bind exact provider-call attribution for the duration of a block.
+
+    Args:
+        actor: Non-empty primary or subagent attribution to bind.
+
+    Yields:
+        None while the actor is bound on the current context.
+
+    Raises:
+        ValueError: If ``actor`` is not a valid non-empty attribution.
+    """
     if not isinstance(actor, CurrentRunActor) or not actor.run_id:
         raise ValueError("a non-empty CurrentRunActor is required")
     token = _CURRENT_RUN_ACTOR.set(actor)

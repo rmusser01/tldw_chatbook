@@ -10,6 +10,8 @@ from dataclasses import dataclass
 from typing import Any, Literal
 from uuid import uuid4
 
+from pydantic import BaseModel, ConfigDict, Field, ValidationError
+
 from tldw_chatbook.Chat.console_transaction_contribution import (
     ConsoleTransactionWriter,
 )
@@ -28,25 +30,6 @@ _OPAQUE_ID_MAX_CHARS = 200
 _RESULT_COUNT_MAX = (1 << 31) - 1
 _VIEW_MAX_ACTIONS = 256
 _STABLE_CODE_RE = re.compile(r"^[a-z][a-z0-9_]{0,63}$")
-_EVENT_KEYS = frozenset(
-    {
-        "version",
-        "event_id",
-        "attempt_id",
-        "run_id",
-        "actor",
-        "library_provider",
-        "operation",
-        "status",
-        "result_count",
-        "query_preview",
-        "source_refs",
-        "error_code",
-        "error_summary",
-    }
-)
-_ACTOR_KEYS = frozenset({"kind", "run_id", "parent_run_id"})
-_SOURCE_REF_KEYS = frozenset({"type", "id", "title"})
 _ROW_KEYS = ("results", "items", "messages", "members")
 _ID_KEYS = (
     "id",
@@ -61,6 +44,54 @@ _ID_KEYS = (
 )
 
 
+class _LibraryActivityActorPayload(BaseModel):
+    """Strict deserialization schema for v1 actor attribution."""
+
+    model_config = ConfigDict(extra="forbid", strict=True)
+
+    kind: Literal["primary", "subagent"]
+    run_id: str = Field(min_length=1, max_length=_OPAQUE_ID_MAX_CHARS)
+    parent_run_id: str | None = Field(
+        default=None, max_length=_OPAQUE_ID_MAX_CHARS
+    )
+
+
+class _LibraryActivitySourceRefPayload(BaseModel):
+    """Strict deserialization schema for one bounded source reference."""
+
+    model_config = ConfigDict(extra="forbid", strict=True)
+
+    type: str = Field(min_length=1, max_length=40)
+    id: str = Field(min_length=1, max_length=LIBRARY_ACTIVITY_SOURCE_ID_MAX_CHARS)
+    title: str = Field(min_length=1, max_length=LIBRARY_ACTIVITY_TITLE_MAX_CHARS)
+
+
+class _LibraryActivityEventPayload(BaseModel):
+    """Strict deserialization schema for an exact v1 activity payload."""
+
+    model_config = ConfigDict(extra="forbid", strict=True)
+
+    version: Literal[1]
+    event_id: str = Field(min_length=1, max_length=_OPAQUE_ID_MAX_CHARS)
+    attempt_id: str = Field(min_length=1, max_length=_OPAQUE_ID_MAX_CHARS)
+    run_id: str = Field(min_length=1, max_length=_OPAQUE_ID_MAX_CHARS)
+    actor: _LibraryActivityActorPayload
+    library_provider: Literal["direct", "rag"]
+    operation: str = Field(pattern=_STABLE_CODE_RE.pattern)
+    status: Literal["succeeded", "empty", "blocked", "failed"]
+    result_count: int = Field(ge=0, le=_RESULT_COUNT_MAX)
+    query_preview: str | None = Field(
+        default=None, max_length=LIBRARY_ACTIVITY_QUERY_PREVIEW_MAX_CHARS
+    )
+    source_refs: list[_LibraryActivitySourceRefPayload] = Field(
+        max_length=LIBRARY_ACTIVITY_SOURCE_REF_MAX_COUNT
+    )
+    error_code: str | None = Field(default=None, pattern=_STABLE_CODE_RE.pattern)
+    error_summary: str | None = Field(
+        default=None, max_length=LIBRARY_ACTIVITY_ERROR_SUMMARY_MAX_CHARS
+    )
+
+
 @dataclass(frozen=True, slots=True)
 class LibraryActivitySourceRef:
     """One bounded source identity safe for local activity review."""
@@ -70,7 +101,11 @@ class LibraryActivitySourceRef:
     title: str
 
     def to_payload(self) -> dict[str, str]:
-        """Return the stable v1 source-reference mapping."""
+        """Return the stable v1 source-reference mapping.
+
+        Returns:
+            Exact persistence mapping for this source reference.
+        """
         return {
             "type": self.source_type,
             "id": self.source_id,
@@ -98,7 +133,11 @@ class LibraryActivityEvent:
     error_summary: str | None
 
     def to_payload(self) -> dict[str, Any]:
-        """Return the exact bounded v1 persistence/export payload."""
+        """Return the exact bounded v1 persistence/export payload.
+
+        Returns:
+            JSON-compatible event mapping with explicit actor attribution.
+        """
         return {
             "version": self.version,
             "event_id": self.event_id,
@@ -142,7 +181,17 @@ class LibraryActivityContribution:
         conversation_id: str,
         message_ids: Mapping[str, str],
     ) -> None:
-        """Insert every event under its durable USER turn opener."""
+        """Insert every event under its durable user-turn opener.
+
+        Args:
+            writer: Transaction-scoped trajectory writer.
+            conversation_id: Durable conversation receiving the rows.
+            message_ids: Native-to-durable user-turn opener mapping.
+
+        Raises:
+            ValueError: If the contribution, owner mapping, or capture time is
+                invalid.
+        """
         if not self.items:
             raise ValueError("Library activity contribution cannot be empty.")
         prepared: list[tuple[str, str, float]] = []
@@ -200,7 +249,11 @@ class LibraryActivityView:
 
     @property
     def status(self) -> Literal["empty", "ready", "corrupt"]:
-        """Return the bounded presentation state for this projection."""
+        """Return the bounded presentation state for this projection.
+
+        Returns:
+            ``empty``, ``ready``, or ``corrupt`` for Inspector rendering.
+        """
         if self.corrupt_row_count:
             return "corrupt"
         return "ready" if self.actions else "empty"
@@ -319,7 +372,18 @@ def _result_count(result: object, rows: tuple[object, ...]) -> int:
 
 
 def minimize_library_activity(candidate: LibraryActivityCandidate) -> LibraryActivityEvent:
-    """Convert one trusted provider result into the bounded v1 review event."""
+    """Convert one trusted provider result into the bounded v1 review event.
+
+    Args:
+        candidate: Trusted provider-boundary result and exact run attribution.
+
+    Returns:
+        Minimized, size-bounded activity event.
+
+    Raises:
+        ValueError: If attribution, operation, identifiers, or payload bounds
+            are invalid.
+    """
     if candidate.actor_kind not in ("primary", "subagent"):
         raise ValueError("unsupported activity actor kind")
     if candidate.library_provider not in ("direct", "rag"):
@@ -377,7 +441,17 @@ def minimize_library_activity(candidate: LibraryActivityCandidate) -> LibraryAct
 
 
 def encode_library_activity_event(event: LibraryActivityEvent) -> str:
-    """Encode one exact bounded v1 activity payload."""
+    """Encode one exact bounded v1 activity payload.
+
+    Args:
+        event: Activity event to validate and encode.
+
+    Returns:
+        Compact JSON payload suitable for durable sidecar storage.
+
+    Raises:
+        ValueError: If event validation or the byte ceiling fails.
+    """
     _validate_event(event)
     encoded = json.dumps(
         event.to_payload(), ensure_ascii=False, separators=(",", ":")
@@ -388,7 +462,17 @@ def encode_library_activity_event(event: LibraryActivityEvent) -> str:
 
 
 def decode_library_activity_event(value: object) -> LibraryActivityEvent:
-    """Decode an exact v1 payload while rejecting additive or unsafe fields."""
+    """Decode an exact v1 payload while rejecting additive or unsafe fields.
+
+    Args:
+        value: JSON string at the durable activity boundary.
+
+    Returns:
+        Strictly validated domain event.
+
+    Raises:
+        ValueError: If JSON, schema, cross-field, privacy, or size validation fails.
+    """
     if type(value) is not str:
         raise ValueError("Invalid Library activity payload.")
     try:
@@ -416,47 +500,51 @@ def decode_library_activity_event(value: object) -> LibraryActivityEvent:
         )
     except (TypeError, ValueError, json.JSONDecodeError, RecursionError) as exc:
         raise ValueError("Invalid Library activity payload.") from exc
-    if type(data) is not dict or set(data) != _EVENT_KEYS:
-        raise ValueError("Invalid Library activity payload.")
-    actor = data["actor"]
-    refs = data["source_refs"]
-    if type(actor) is not dict or set(actor) != _ACTOR_KEYS or type(refs) is not list:
-        raise ValueError("Invalid Library activity payload.")
-    decoded_refs: list[LibraryActivitySourceRef] = []
-    for ref in refs:
-        if type(ref) is not dict or set(ref) != _SOURCE_REF_KEYS:
-            raise ValueError("Invalid Library activity payload.")
-        decoded_refs.append(
-            LibraryActivitySourceRef(
-                source_type=ref["type"],
-                source_id=ref["id"],
-                title=ref["title"],
-            )
-        )
+    try:
+        payload = _LibraryActivityEventPayload.model_validate(data)
+    except ValidationError as exc:
+        raise ValueError("Invalid Library activity payload.") from exc
     event = LibraryActivityEvent(
-        version=data["version"],
-        event_id=data["event_id"],
-        attempt_id=data["attempt_id"],
-        run_id=data["run_id"],
-        actor_kind=actor["kind"],
-        parent_run_id=actor["parent_run_id"],
-        library_provider=data["library_provider"],
-        operation=data["operation"],
-        status=data["status"],
-        result_count=data["result_count"],
-        query_preview=data["query_preview"],
-        source_refs=tuple(decoded_refs),
-        error_code=data["error_code"],
-        error_summary=data["error_summary"],
+        version=payload.version,
+        event_id=payload.event_id,
+        attempt_id=payload.attempt_id,
+        run_id=payload.run_id,
+        actor_kind=payload.actor.kind,
+        parent_run_id=payload.actor.parent_run_id,
+        library_provider=payload.library_provider,
+        operation=payload.operation,
+        status=payload.status,
+        result_count=payload.result_count,
+        query_preview=payload.query_preview,
+        source_refs=tuple(
+            LibraryActivitySourceRef(
+                source_type=ref.type,
+                source_id=ref.id,
+                title=ref.title,
+            )
+            for ref in payload.source_refs
+        ),
+        error_code=payload.error_code,
+        error_summary=payload.error_summary,
     )
-    if event.run_id != actor["run_id"]:
+    if event.run_id != payload.actor.run_id:
         raise ValueError("Invalid Library activity payload.")
     _validate_event(event)
     return event
 
 
 def redacted_library_activity_payload(event: LibraryActivityEvent) -> str:
-    """Return the default-export outcome summary without query/source identity."""
+    """Return an outcome summary without query or source identity.
+
+    Args:
+        event: Activity event to validate and redact.
+
+    Returns:
+        Compact JSON containing only bounded outcome fields.
+
+    Raises:
+        ValueError: If the event is invalid.
+    """
     _validate_event(event)
     source_types = list(
         dict.fromkeys(ref.source_type for ref in event.source_refs)
@@ -480,7 +568,16 @@ def project_library_activity(
     active_turn_ids: Sequence[str],
     selected_turn_id: str | None,
 ) -> LibraryActivityView:
-    """Project valid activity for one selected turn on the active lineage."""
+    """Project valid activity for one selected turn on the active lineage.
+
+    Args:
+        rows: Durable and pending trajectory-shaped activity rows.
+        active_turn_ids: Durable user-turn IDs on the active branch.
+        selected_turn_id: Durable selected user-turn ID, if any.
+
+    Returns:
+        Bounded selected-turn projection with corrupt-row count.
+    """
     active = frozenset(active_turn_ids)
     if selected_turn_id is None or selected_turn_id not in active:
         return LibraryActivityView(selected_turn_id=selected_turn_id, actions=())

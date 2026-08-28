@@ -1185,6 +1185,7 @@ class ConsoleChatStore:
                 restored policies bypass this reader.
         """
         self.persistence = persistence
+        self._library_activity_lifecycle_lock = threading.RLock()
         self._library_activity_buffer = ConsoleLibraryActivityBuffer(
             self._persist_library_activity_batch
         )
@@ -3208,15 +3209,58 @@ class ConsoleChatStore:
         turn_id: str,
         event: LibraryActivityEvent,
     ) -> None:
-        """Retain one minimized provider event under its native USER opener."""
-        session = self._session_or_raise(session_id)
-        owner = self._nodes_by_session.get(session_id, {}).get(turn_id)
-        if owner is None or owner.role is not ConsoleMessageRole.USER:
-            raise ValueError("Library activity requires a USER turn opener.")
-        if session.id != session_id:
-            raise RuntimeError("Library activity session owner changed.")
-        self._library_activity_buffer.admit(session_id, turn_id, event)
-        self._bump_library_activity_revision(session_id)
+        """Retain one minimized provider event under its native USER opener.
+
+        Args:
+            session_id: Native Console session receiving the event.
+            turn_id: Native user-turn opener that owns the event.
+            event: Validated minimized activity event.
+
+        Raises:
+            KeyError: If the session was closed before admission.
+            ValueError: If the turn is not a user opener or the event is invalid.
+            RuntimeError: If ownership changed or the bounded buffer is full.
+        """
+        with self._library_activity_lifecycle_lock:
+            session = self._session_or_raise(session_id)
+            owner = self._nodes_by_session.get(session_id, {}).get(turn_id)
+            if owner is None or owner.role is not ConsoleMessageRole.USER:
+                raise ValueError("Library activity requires a USER turn opener.")
+            if session.id != session_id:
+                raise RuntimeError("Library activity session owner changed.")
+            self._library_activity_buffer.admit(session_id, turn_id, event)
+            self._bump_library_activity_revision(session_id)
+
+    def capture_library_activity(
+        self,
+        session_id: str,
+        turn_id: str,
+        event: LibraryActivityEvent,
+    ) -> LibraryActivityFlushResult:
+        """Admit and conditionally persist one provider event atomically.
+
+        Temporary sessions keep the event pending for atomic promotion. Durable
+        sessions attempt one ordinary flush before releasing the lifecycle lock.
+
+        Args:
+            session_id: Native Console session receiving the event.
+            turn_id: Native user-turn opener that owns the event.
+            event: Validated minimized activity event.
+
+        Returns:
+            Current activity persistence state.
+
+        Raises:
+            KeyError: If the session closed before capture acquired ownership.
+            ValueError: If the turn or event is invalid.
+            RuntimeError: If capture cannot be retained safely.
+        """
+        with self._library_activity_lifecycle_lock:
+            self.admit_library_activity(session_id, turn_id, event)
+            session = self._session_or_raise(session_id)
+            if session.ephemeral:
+                return self._library_activity_buffer.state(session_id)
+            return self.flush_library_activity(session_id)
 
     def pending_library_activity(
         self, session_id: str
@@ -3337,27 +3381,59 @@ class ConsoleChatStore:
         )
 
     def flush_library_activity(self, session_id: str) -> LibraryActivityFlushResult:
-        """Attempt one ordinary durable activity flush."""
-        self._session_or_raise(session_id)
-        result = self._library_activity_buffer.flush(session_id)
-        self._bump_library_activity_revision(session_id)
-        return result
+        """Attempt one ordinary durable activity flush.
+
+        Args:
+            session_id: Native Console session to flush.
+
+        Returns:
+            Current persistence state. Ephemeral sessions remain pending without
+            consuming a retry attempt.
+        """
+        with self._library_activity_lifecycle_lock:
+            session = self._session_or_raise(session_id)
+            if session.ephemeral:
+                return self._library_activity_buffer.state(session_id)
+            result = self._library_activity_buffer.flush(session_id)
+            self._bump_library_activity_revision(session_id)
+            return result
 
     def retry_library_activity(self, session_id: str) -> LibraryActivityFlushResult:
-        """Retry the retained activity batch once."""
-        self._session_or_raise(session_id)
-        result = self._library_activity_buffer.retry(session_id)
-        self._bump_library_activity_revision(session_id)
-        return result
+        """Retry the retained activity batch once.
+
+        Args:
+            session_id: Native Console session to retry.
+
+        Returns:
+            Current persistence state. Ephemeral sessions remain pending.
+        """
+        with self._library_activity_lifecycle_lock:
+            session = self._session_or_raise(session_id)
+            if session.ephemeral:
+                return self._library_activity_buffer.state(session_id)
+            result = self._library_activity_buffer.retry(session_id)
+            self._bump_library_activity_revision(session_id)
+            return result
 
     def final_flush_library_activity(
         self, session_id: str
     ) -> LibraryActivityFlushResult:
-        """Perform the session's one bounded close/promotion/shutdown flush."""
-        self._session_or_raise(session_id)
-        result = self._library_activity_buffer.final_flush(session_id)
-        self._bump_library_activity_revision(session_id)
-        return result
+        """Drain a durable session's activity before close or shutdown.
+
+        Args:
+            session_id: Native Console session being finalized.
+
+        Returns:
+            Aggregate final state. Ephemeral activity remains pending for
+            promotion or explicit session disposal.
+        """
+        with self._library_activity_lifecycle_lock:
+            session = self._session_or_raise(session_id)
+            if session.ephemeral:
+                return self._library_activity_buffer.state(session_id)
+            result = self._library_activity_buffer.final_flush(session_id)
+            self._bump_library_activity_revision(session_id)
+            return result
 
     def final_flush_all_library_activity(
         self,
@@ -3445,8 +3521,18 @@ class ConsoleChatStore:
         session_ids = list(self._sessions.keys())
         closed_index = session_ids.index(session_id)
 
-        self.final_flush_library_activity(session_id)
-        self._purge_session_runtime_state(session_id)
+        with self._library_activity_lifecycle_lock:
+            session = self._session_or_raise(session_id)
+            result = self.final_flush_library_activity(session_id)
+            if not session.ephemeral and result.status != "saved":
+                logger.warning(
+                    "Library activity discarded during session close "
+                    "status={} pending_count={}",
+                    result.status,
+                    result.pending_count,
+                )
+            self._library_activity_buffer.discard_session(session_id)
+            self._purge_session_runtime_state(session_id)
 
         if self.active_session_id != session_id:
             return self._sessions.get(self.active_session_id or "")
