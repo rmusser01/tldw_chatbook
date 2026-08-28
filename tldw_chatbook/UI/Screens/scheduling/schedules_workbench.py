@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import inspect
 from collections.abc import Mapping
+from datetime import datetime, timezone
 from typing import TYPE_CHECKING, Any
 
 from loguru import logger
@@ -60,6 +61,11 @@ SCHEDULES_COMPACT_WORKBENCH_MAX_WIDTH = 120
 #: pass clears and rebuilds the whole `DataTable` (task-15476).
 QUEUE_FILTER_DEBOUNCE_SECONDS = 0.2
 
+#: Cadence for re-rendering the relative next-run column ("in 25m" goes
+#: stale otherwise -- task-23111 review F9). Paused while the screen is
+#: not current, per the hidden-progress-clock rule (TASK-23022).
+NEXT_RUN_REFRESH_SECONDS = 60.0
+
 
 class SchedulesWorkbench(BaseAppScreen):
     """Main workbench for managing scheduled runs, reminders, and jobs."""
@@ -97,6 +103,7 @@ class SchedulesWorkbench(BaseAppScreen):
         self._visible_tasks: list[ReminderTask | ScheduledTask] = []
         self._filter_text = ""
         self._filter_debounce_timer: Timer | None = None
+        self._next_run_refresh_timer: Timer | None = None
         # task-15476: the task id currently shown in the detail/inspector
         # panes, tracked independently of row index so a filter keystroke
         # can restore the same selection instead of always jumping to row 0.
@@ -206,11 +213,52 @@ class SchedulesWorkbench(BaseAppScreen):
         self._refresh_conflicts_tab()
         table = self.query_one("#scheduling-task-table", DataTable)
         table.add_columns("Title", "Type", "Status", "Next Run")
+        # task-23111 review F9: the relative next-run column ("in 25m")
+        # is render-time text; refresh it periodically while visible.
+        self._next_run_refresh_timer = self.set_interval(
+            NEXT_RUN_REFRESH_SECONDS, self._refresh_next_run_rendering
+        )
         self.run_worker(
             self.load_tasks,
             exclusive=True,
             group="schedules-load-tasks",
         )  # type: ignore[arg-type]
+
+    def _refresh_next_run_rendering(self) -> None:
+        """Re-render the queue so relative next-run text stays honest.
+
+        Skips unless this screen is the top of the stack. (Textual's
+        ``is_current`` also counts screens behind the top one --
+        ``_background_screens`` always includes the screen directly
+        beneath the top regardless of opacity -- so it cannot express
+        "covered"; the suspend/resume handlers pause the timer while
+        covered and refresh on uncover.) Also skips an empty queue:
+        nothing to refresh, and the no-service path must keep its own
+        detail-pane copy.
+        """
+        if self.app.screen is not self or not self._visible_tasks:
+            return
+        self._render_table()
+
+    def on_screen_suspend(self) -> None:
+        """Stop the relative-time refresh while another screen covers this.
+
+        Hidden clocks must not tick unseen (TASK-23022); the resume
+        handler refreshes immediately so no stale text is ever shown.
+        """
+        if self._next_run_refresh_timer is not None:
+            self._next_run_refresh_timer.pause()
+
+    def on_screen_resume(self) -> None:
+        """Refresh relative times and restart the cadence when uncovered.
+
+        No ``super().on_screen_resume()``: Textual's dispatcher invokes
+        every handler along the MRO for one event (see BaseAppScreen's
+        MRO contract), so the base handler runs regardless.
+        """
+        if self._next_run_refresh_timer is not None:
+            self._next_run_refresh_timer.resume()
+        self._refresh_next_run_rendering()
 
     def _sync_responsive_workbench(self) -> None:
         """Keep the primary queue and detail action visible at narrow widths."""
@@ -255,14 +303,20 @@ class SchedulesWorkbench(BaseAppScreen):
         self._render_table()
         await self._refresh_console_context()
 
-    def _render_table(self) -> None:
+    def _render_table(self, now: datetime | None = None) -> None:
         """Rebuild the queue rows from the current tasks + filter text.
 
         Restores the previously selected task's row (by id) when it is
         still visible after the filter narrows, instead of always jumping
         the detail/inspector panes back to row 0 (task-15476): a filter
         keystroke must not discard what the user was looking at.
+
+        ``now`` is one shared reference for every row's relative
+        next-run rendering (review F9: per-row ``datetime.now()`` let a
+        single frame straddle a bucket boundary); injectable for
+        deterministic tests.
         """
+        render_now = now if now is not None else datetime.now(timezone.utc)
         previous_selected_id = self._selected_task_id
         text = self._filter_text.strip().lower()
         self._visible_tasks = [
@@ -293,8 +347,9 @@ class SchedulesWorkbench(BaseAppScreen):
                 _task_type_label(task),
                 status_badge_text(_task_status(task)),
                 # Compact: same relative form as the detail pane, without
-                # the timezone token (task-23111).
-                _format_next_run(task, compact=True),
+                # the timezone token (task-23111); one shared `now` for
+                # every row (review F9).
+                _format_next_run(task, now=render_now, compact=True),
             )
             for task in self._visible_tasks
         ]

@@ -125,3 +125,90 @@ async def test_queue_cell_and_detail_pane_agree_on_the_relative_form():
         # Same relative rendering in both surfaces.
         relative = cell[cell.index("(") :]
         assert relative in detail, (cell, detail)
+
+
+# --- review F9: relative text refreshes instead of going stale ------------
+
+
+class _FixedTaskService(_Service):
+    """Task at a fixed absolute time so injected `now` moves the bucket."""
+
+    RUN_AT = datetime(2026, 8, 28, 9, 0, tzinfo=timezone.utc)
+
+    async def list_tasks(self):
+        return [
+            ReminderTask(
+                id="task-1",
+                title="Fixed",
+                schedule_kind=ScheduleKind.ONE_TIME,
+                run_at=self.RUN_AT,
+                next_run_at=self.RUN_AT,
+            )
+        ]
+
+
+class _FixedApp(ConsolidatedCSSApp):
+    def __init__(self, **kwargs) -> None:
+        super().__init__(**kwargs)
+        self.scheduling_service = _FixedTaskService()
+
+
+@pytest.mark.asyncio
+async def test_render_table_uses_one_injectable_now():
+    """One shared `now` per render; re-rendering with a later reference
+    moves the bucket -- the mechanism the 60s refresh timer drives."""
+    app = _FixedApp()
+    async with app.run_test(size=(160, 48)) as pilot:
+        workbench = SchedulesWorkbench(app_instance=pilot.app)
+        await pilot.app.push_screen(workbench)
+        await pilot.pause()
+        await pilot.app.workers.wait_for_complete()
+        await pilot.pause()
+
+        table = workbench.query_one("#scheduling-task-table", DataTable)
+        run_at = _FixedTaskService.RUN_AT
+
+        workbench._render_table(now=run_at - timedelta(hours=14))
+        assert "(in 14h)" in str(table.get_row_at(0)[3])
+
+        workbench._render_table(now=run_at - timedelta(minutes=25))
+        assert "(in 25m)" in str(table.get_row_at(0)[3])
+
+
+@pytest.mark.asyncio
+async def test_refresh_timer_exists_and_skips_when_not_current():
+    app = _FixedApp()
+    async with app.run_test(size=(160, 48)) as pilot:
+        workbench = SchedulesWorkbench(app_instance=pilot.app)
+        await pilot.app.push_screen(workbench)
+        await pilot.pause()
+        await pilot.app.workers.wait_for_complete()
+        await pilot.pause()
+
+        assert workbench._next_run_refresh_timer is not None
+
+        renders: list[int] = []
+        real_render = workbench._render_table
+        workbench._render_table = lambda **kw: renders.append(1)  # type: ignore[assignment]
+
+        workbench._refresh_next_run_rendering()
+        assert renders, "refresh must re-render while the screen is current"
+
+        # Covered by another screen: the refresh must skip. (Textual's
+        # is_current cannot express "covered" -- _background_screens
+        # always includes the screen directly beneath the top -- so the
+        # guard checks top-of-stack, and suspend pauses the timer.)
+        renders.clear()
+        from textual.screen import Screen
+
+        class _Cover(Screen):
+            pass
+
+        await pilot.app.push_screen(_Cover())
+        await pilot.pause()
+        assert pilot.app.screen is not workbench
+        workbench._refresh_next_run_rendering()
+        assert not renders, "refresh must skip while another screen covers it"
+        # And the suspend handler paused the cadence timer outright.
+        assert workbench._next_run_refresh_timer is not None
+        workbench._render_table = real_render  # type: ignore[assignment]
