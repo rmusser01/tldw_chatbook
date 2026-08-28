@@ -49,6 +49,12 @@ from .library_preparation import (
     decode_library_preparation_event,
     encode_library_preparation_event,
 )
+from .library_activity import (
+    LIBRARY_ACTIVITY_EVENT_KIND,
+    decode_library_activity_event,
+    encode_library_activity_event,
+    redacted_library_activity_payload,
+)
 from tldw_chatbook.Chat.trajectory import (
     TrajectoryRecord,
     TrajectorySnapshot,
@@ -1233,7 +1239,17 @@ def build_trajectory_export(
         data = _as_dict(row)
         kind = str(data.get("event_kind") or "")
         payload_json = data.get("payload_json")
-        if kind == LIBRARY_PREPARATION_EVENT_KIND:
+        if kind == LIBRARY_ACTIVITY_EVENT_KIND:
+            try:
+                activity = decode_library_activity_event(payload_json)
+                payload_json = (
+                    encode_library_activity_event(activity)
+                    if include_payloads
+                    else redacted_library_activity_payload(activity)
+                )
+            except ValueError:
+                payload_json = None
+        elif kind == LIBRARY_PREPARATION_EVENT_KIND:
             try:
                 payload_json = encode_library_preparation_event(
                     decode_library_preparation_event(payload_json)

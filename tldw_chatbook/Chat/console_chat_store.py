@@ -115,6 +115,10 @@ from tldw_chatbook.Chat.console_library_policy import (
 from tldw_chatbook.Chat.console_library_policy_coordinator import (
     ConsoleLibraryPolicyCoordinator,
 )
+from tldw_chatbook.Chat.console_library_activity_buffer import (
+    ConsoleLibraryActivityBuffer,
+    LibraryActivityFlushResult,
+)
 from tldw_chatbook.Chat.console_turn_preparation import (
     ConsolePreparationPauseKind,
     ConsolePreparationTransition,
@@ -124,6 +128,10 @@ from tldw_chatbook.Chat.console_turn_preparation import (
 )
 from tldw_chatbook.Chat.console_transaction_contribution import (
     ConsoleTransactionContribution,
+)
+from tldw_chatbook.Chat.library_activity import (
+    LibraryActivityContribution,
+    LibraryActivityEvent,
 )
 from tldw_chatbook.Chat.console_exchange_capture import CaptureDetail, capture_to_blob
 from tldw_chatbook.Chat.console_capture_policy_repository import (
@@ -525,6 +533,15 @@ class ConsoleChatPersistence(Protocol):
         conversation_kwargs: Mapping[str, object],
     ) -> ConsoleDispatchCheckpoint:
         """Atomically create/validate and accept one durable Console turn."""
+
+    def persist_console_library_activity(
+        self,
+        *,
+        conversation_id: str,
+        contribution: LibraryActivityContribution,
+        message_ids: Mapping[str, str],
+    ) -> None:
+        """Persist one activity batch in a caller-owned transaction."""
 
     def create_conversation(self, **kwargs) -> str:
         """Create a persisted conversation and return its ID."""
@@ -1165,6 +1182,9 @@ class ConsoleChatStore:
                 restored policies bypass this reader.
         """
         self.persistence = persistence
+        self._library_activity_buffer = ConsoleLibraryActivityBuffer(
+            self._persist_library_activity_batch
+        )
         self.workspace_context = workspace_context or ConsoleWorkspaceContext()
         self.sync_v2_chat_producer = sync_v2_chat_producer
         self.sync_v2_server_profile_id = sync_v2_server_profile_id
@@ -3178,6 +3198,94 @@ class ConsoleChatStore:
                     )
         return session, persisted
 
+    def admit_library_activity(
+        self,
+        session_id: str,
+        turn_id: str,
+        event: LibraryActivityEvent,
+    ) -> None:
+        """Retain one minimized provider event under its native USER opener."""
+        session = self._session_or_raise(session_id)
+        owner = self._nodes_by_session.get(session_id, {}).get(turn_id)
+        if owner is None or owner.role is not ConsoleMessageRole.USER:
+            raise ValueError("Library activity requires a USER turn opener.")
+        if session.id != session_id:
+            raise RuntimeError("Library activity session owner changed.")
+        self._library_activity_buffer.admit(session_id, turn_id, event)
+
+    def pending_library_activity(
+        self, session_id: str
+    ) -> tuple[object, ...]:
+        """Return one immutable process-local pending activity snapshot."""
+        self._session_or_raise(session_id)
+        return self._library_activity_buffer.pending_events(session_id)
+
+    def flush_library_activity(self, session_id: str) -> LibraryActivityFlushResult:
+        """Attempt one ordinary durable activity flush."""
+        self._session_or_raise(session_id)
+        return self._library_activity_buffer.flush(session_id)
+
+    def retry_library_activity(self, session_id: str) -> LibraryActivityFlushResult:
+        """Retry the retained activity batch once."""
+        self._session_or_raise(session_id)
+        return self._library_activity_buffer.retry(session_id)
+
+    def final_flush_library_activity(
+        self, session_id: str
+    ) -> LibraryActivityFlushResult:
+        """Perform the session's one bounded close/promotion/shutdown flush."""
+        self._session_or_raise(session_id)
+        return self._library_activity_buffer.final_flush(session_id)
+
+    def final_flush_all_library_activity(
+        self,
+    ) -> dict[str, LibraryActivityFlushResult]:
+        """Perform one bounded shutdown flush for every live Console session."""
+        return {
+            session_id: self.final_flush_library_activity(session_id)
+            for session_id in tuple(self._sessions)
+        }
+
+    def _persist_library_activity_batch(
+        self,
+        session_id: str,
+        contribution: LibraryActivityContribution,
+    ) -> None:
+        """Resolve native turn owners and delegate one atomic sidecar write."""
+        session = self._session_or_raise(session_id)
+        if session.ephemeral or session.persisted_conversation_id is None:
+            raise RuntimeError("Ephemeral Library activity awaits promotion.")
+        persistence = self.persistence
+        persist = getattr(persistence, "persist_console_library_activity", None)
+        if not callable(persist):
+            raise RuntimeError("Library activity persistence is unavailable.")
+
+        nodes = self._nodes_by_session.get(session_id, {})
+        message_ids: dict[str, str] = {}
+        for item in contribution.items:
+            owner = nodes.get(item.owner_message_key)
+            if owner is None:
+                owner = next(
+                    (
+                        candidate
+                        for candidate in nodes.values()
+                        if candidate.persisted_message_id == item.owner_message_key
+                    ),
+                    None,
+                )
+            if (
+                owner is None
+                or owner.role is not ConsoleMessageRole.USER
+                or not owner.persisted_message_id
+            ):
+                raise RuntimeError("Durable Library activity owner is unavailable.")
+            message_ids[item.owner_message_key] = owner.persisted_message_id
+        persist(
+            conversation_id=session.persisted_conversation_id,
+            contribution=contribution,
+            message_ids=message_ids,
+        )
+
     def close_session(self, session_id: str) -> ConsoleChatSession | None:
         """Close a native Console session and activate a neighboring session.
 
@@ -3215,6 +3323,7 @@ class ConsoleChatStore:
         session_ids = list(self._sessions.keys())
         closed_index = session_ids.index(session_id)
 
+        self.final_flush_library_activity(session_id)
         self._purge_session_runtime_state(session_id)
 
         if self.active_session_id != session_id:
@@ -12045,9 +12154,21 @@ class ConsoleChatStore:
         )
         if not callable(atomic_promote):
             raise RuntimeError("Persistence adapter cannot perform atomic promotion.")
+        activity_contribution = self._library_activity_buffer.promotion_contribution(
+            session_id
+        )
+        combined_contributions: tuple[ConsoleTransactionContribution, ...] = tuple(
+            contributions
+        )
+        if activity_contribution is not None:
+            combined_contributions = (
+                *combined_contributions,
+                activity_contribution,
+            )
         return self._promote_ephemeral_session_atomically(
             session,
-            contributions=contributions,
+            contributions=combined_contributions,
+            activity_contribution=activity_contribution,
         )
 
     def _promote_ephemeral_session_atomically(
@@ -12055,6 +12176,7 @@ class ConsoleChatStore:
         session: ConsoleChatSession,
         *,
         contributions: Sequence[ConsoleTransactionContribution],
+        activity_contribution: LibraryActivityContribution | None = None,
     ) -> str:
         """Stage a complete temporary transcript and publish after commit only."""
         if self.persistence is None:
@@ -12214,6 +12336,11 @@ class ConsoleChatStore:
             context_policy_overrides=session.context_policy_overrides,
             contributions=contributions,
         )
+
+        if activity_contribution is not None:
+            self._library_activity_buffer.confirm_contribution(
+                session_id, activity_contribution
+            )
 
         self.publish_committed_identity(session_id, identity)
         session.ephemeral = False
