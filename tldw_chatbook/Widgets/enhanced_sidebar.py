@@ -17,6 +17,7 @@ from textual.binding import Binding
 from textual.message import Message
 from textual import work
 from loguru import logger
+from tldw_chatbook.Widgets.pausable_progress import PausableLoadingIndicator
 
 
 class SidebarSection(Container):
@@ -58,12 +59,12 @@ class SidebarSection(Container):
             ):
                 if self.content:
                     yield self.content
-                yield LoadingIndicator(classes="section-loading hidden")
+                yield PausableLoadingIndicator(classes="section-loading hidden")
         else:
             yield Static(self.title, classes="section-title")
             if self.content:
                 yield self.content
-            yield LoadingIndicator(classes="section-loading hidden")
+            yield PausableLoadingIndicator(classes="section-loading hidden")
 
     def watch_is_loading(self, is_loading: bool) -> None:
         """Watch loading state changes."""

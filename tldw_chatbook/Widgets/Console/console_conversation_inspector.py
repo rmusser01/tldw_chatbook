@@ -102,6 +102,7 @@ from tldw_chatbook.Chat.console_project_instructions import EPHEMERAL_ORIGIN_KEY
 from tldw_chatbook.Chat.provider_usage import ProviderUsage
 from tldw_chatbook.LLM_Calls.pricing_catalog import get_pricing_catalog
 from tldw_chatbook.Utils.path_validation import validate_path
+from tldw_chatbook.Widgets.pausable_progress import PausableLoadingIndicator
 from tldw_chatbook.Utils.token_counter import estimate_tokens
 from tldw_chatbook.Widgets.modal_dismissal import SafeModalDismissMixin
 from tldw_chatbook.Widgets.Console.console_project_instructions import (
@@ -598,7 +599,12 @@ class ConsoleConversationInspector(SafeModalDismissMixin, ModalScreen[None]):
                                 session_id=self._project_instruction_session_id,
                                 id="console-context-project-instructions",
                             )
-                        yield LoadingIndicator(id="console-inspector-next-send-loading")
+                        # TASK-23022: mounted display:none on the persistent Console rail;
+                        # the pausable variant keeps its 16 Hz clock off until
+                        # the .loading class actually shows it.
+                        yield PausableLoadingIndicator(
+                            id="console-inspector-next-send-loading"
+                        )
 
                         with TabbedContent(id="console-inspector-next-send-tabs"):
                             with TabPane(

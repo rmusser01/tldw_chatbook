@@ -54,7 +54,6 @@ from tldw_chatbook.UI.Lab_Modules.lab_speech_status import (
 from textual.widgets import (
     Button,
     Collapsible,
-    ProgressBar,
     RichLog,
     Input,
     Select,
@@ -115,6 +114,7 @@ from tldw_chatbook.TTS.profile_reference_types import (
 from tldw_chatbook.Third_Party.textual_fspicker import Filters
 from tldw_chatbook.Utils.input_validation import validate_text_input
 from tldw_chatbook.Widgets.enhanced_file_picker import EnhancedFileOpen as FileOpen
+from tldw_chatbook.Widgets.pausable_progress import PausableProgressBar
 
 _AUDIO_CPP_RUNTIME_POLL_SECONDS = 5.0
 
@@ -2904,11 +2904,13 @@ class SpeechPlaygroundPane(
                 classes="speech-player-transport hidden",
             ):
                 # `total` and `hidden` both matter. Without `total` a
-                # ProgressBar renders its indeterminate pulse, so an idle
+                # progress bar renders its indeterminate pulse, so an idle
                 # screen animates two bars forever; without `hidden` it is
                 # on screen with nothing to report. Legacy carried both and
                 # the rebuild dropped them -- visible only on a live run.
-                yield ProgressBar(
+                # TASK-23022: PausableProgressBar additionally stops the
+                # hidden bar's 1 Hz ETA sampler, which `hidden` never did.
+                yield PausableProgressBar(
                     id="audio-progress-bar",
                     total=100,
                     show_eta=False,
@@ -2948,7 +2950,7 @@ class SpeechPlaygroundPane(
                 classes="speech-generation-text",
                 markup=False,
             )
-            yield ProgressBar(
+            yield PausableProgressBar(
                 id="generation-progress",
                 total=100,
                 show_eta=True,

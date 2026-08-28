@@ -10,6 +10,7 @@ from textual.widget import Widget
 from textual.reactive import reactive
 from textual.timer import Timer
 from loguru import logger
+from tldw_chatbook.Widgets.pausable_progress import PausableProgressBar
 
 
 class StatusDashboard(Widget):
@@ -88,7 +89,7 @@ class StatusDashboard(Widget):
                         )
 
             # Progress bar
-            yield ProgressBar(
+            yield PausableProgressBar(
                 id="progress-bar",
                 total=self.progress_total,
                 show_eta=False,
