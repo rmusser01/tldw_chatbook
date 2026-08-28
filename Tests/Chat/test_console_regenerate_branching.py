@@ -145,9 +145,7 @@ async def test_regenerate_stream_failure_retains_failed_sibling_and_restores_anc
     store = ConsoleChatStore()
     controller = ConsoleChatController(store=store, provider_gateway=StreamingGateway())
     session = store.ensure_session()
-    u1 = store.append_message(
-        session.id, role=ConsoleMessageRole.USER, content="Hi"
-    )
+    u1 = store.append_message(session.id, role=ConsoleMessageRole.USER, content="Hi")
     a1 = store.append_message(
         session.id, role=ConsoleMessageRole.ASSISTANT, content="seed"
     )
@@ -165,9 +163,7 @@ async def test_regenerate_stream_failure_retains_failed_sibling_and_restores_anc
 
     siblings, _index, count = store.siblings_at(a1.id)
     assert count == 2
-    new_sibling = next(
-        sibling for sibling in siblings if sibling.id != a1.id
-    )
+    new_sibling = next(sibling for sibling in siblings if sibling.id != a1.id)
     assert new_sibling.status == "failed"
     assert store.active_leaf(session.id) == a1.id
     assert store.active_path_message_ids(session.id) == [u1.id, a1.id]
