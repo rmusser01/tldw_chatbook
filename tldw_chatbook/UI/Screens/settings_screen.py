@@ -194,7 +194,9 @@ from .settings_search_index import (
     FIELD_SEARCH_INDEX,
     LIBRARY_READER_DESTINATIONS,
     RAG_FIELD_GROUP_BY_ID as _RAG_FIELD_GROUP_BY_ID,
-    build_field_search_index as _build_field_search_index,
+    # Load-bearing re-export: Tests/UI/test_settings_console_status_row.py
+    # rebuilds the index via settings_screen_module._build_field_search_index.
+    build_field_search_index as _build_field_search_index,  # noqa: F401
 )
 from .settings_context_memory import (
     CONTEXT_MEMORY_CONFIG_KEYS,

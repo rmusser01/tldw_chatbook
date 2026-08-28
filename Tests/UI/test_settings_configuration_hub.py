@@ -10626,7 +10626,9 @@ async def test_search_landing_on_disabled_field_explains_instead_of_no_op():
     async with host.run_test(size=(190, 55)) as pilot:
         await _settle_settings_mount_storm(pilot)
         screen = _active_destination_screen(host)
-        target_label = "Preferred Library rail width"
+        # The RENDERED row label (review finding 8 fixed the index's stale
+        # "Preferred Library rail width" phrasing).
+        target_label = "Preferred rail width"
         screen._submit_category_search(target_label)
         for _ in range(10):
             await pilot.pause()
