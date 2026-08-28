@@ -1,6 +1,6 @@
 # ADR-097: Use a reference-backed semantic trace ledger
 
-Status: Proposed (amended after final adversarial review; awaiting owner re-approval)
+Status: Accepted
 
 Date: 2026-08-28
 

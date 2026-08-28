@@ -2,7 +2,7 @@
 
 **Date:** 2026-08-28
 
-**Status:** Amended after final adversarial review; awaiting owner re-approval
+**Status:** Approved after final adversarial review
 
 **Originating task:** [TASK-23026](../../../backlog/tasks/task-23026%20-%20Exchange-capture-stores-the-whole-conversation-on-every-send-forever.md), completed by the now-superseded bounded-retention implementation
 
