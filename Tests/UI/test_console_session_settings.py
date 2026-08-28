@@ -560,11 +560,25 @@ def test_session_owner_refuses_session_switch_and_config_generation_races(
     assert _pending_first_chat(app) == intent
 
 
-def test_first_chat_consumer_activates_once_and_acknowledges_exact_target(
+def test_first_chat_handoff_constructor_preserves_reserved_source_settings(
     monkeypatch,
 ) -> None:
     app = _build_test_app()
     console = ChatScreen(app)
+    owner = _first_chat_owner(console)
+    app.app_config["chat_defaults"] = {
+        "provider": "openai",
+        "model": "ordinary-blank-model",
+    }
+    app.app_config["api_settings"] = {
+        "openai": {"api_key": "test-only-key"},
+    }
+    owner._provider_readiness_app_config_fn = lambda: app.app_config
+    blank_defaults = owner._blank_console_session_settings()
+    assert (blank_defaults.provider, blank_defaults.model) == (
+        "openai",
+        "ordinary-blank-model",
+    )
     store = ConsoleChatStore()
     console._console_chat_store = store
     snapshot = RuntimeConfigSnapshot(31, _first_chat_config("llama_cpp", "local-a"))
@@ -586,7 +600,6 @@ def test_first_chat_consumer_activates_once_and_acknowledges_exact_target(
         "first-run-future-session", "llama_cpp", "local-a", snapshot.generation
     )
     app.pending_handoffs.stage_reserved_console_first_chat(intent)
-    owner = _first_chat_owner(console)
     real_apply = owner._apply_first_chat_control_selection_fn
     presentation = MagicMock(side_effect=real_apply)
     restore_focus = MagicMock()
@@ -600,6 +613,7 @@ def test_first_chat_consumer_activates_once_and_acknowledges_exact_target(
     assert store.active_session_id == "first-run-future-session"
     assert store.session_settings("first-run-future-session").provider == "llama_cpp"
     assert store.session_settings("first-run-future-session").model == "local-a"
+    assert store.session_settings("first-run-future-session") != blank_defaults
     assert store.session_draft(prior.id) == "keep this draft"
     assert store.session_settings(prior.id) == prior_settings
     assert console._console_control_provider == "llama_cpp"

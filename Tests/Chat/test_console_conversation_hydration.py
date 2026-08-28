@@ -276,6 +276,28 @@ async def test_a_launch_hydrated_session_matches_a_screen_resumed_one(tmp_path):
 
 
 @pytest.mark.asyncio
+async def test_workspace_resume_rejects_legacy_plain_settings_accessor(tmp_path):
+    """Workspace resume requires the typed generation hydration contract."""
+    app = _fixture_app(tmp_path)
+    screen = ChatScreen(app)
+    screen._workspace._session_settings_for_resume_accessor = (
+        lambda _conversation: ConsoleSessionSettings(
+            provider="openai",
+            model="legacy-plain-settings",
+        )
+    )
+
+    async with app.run_test(size=(160, 48)) as pilot:
+        await app.push_screen(screen)
+        app._initial_screen_pushed = True
+        await pilot.pause()
+        with pytest.raises(TypeError, match="ConsoleGenerationSettingsHydration"):
+            await screen._workspace._resume_console_workspace_conversation(
+                CONVERSATION_ID
+            )
+
+
+@pytest.mark.asyncio
 async def test_production_hydration_never_activates_placeholder_authority(
     tmp_path, monkeypatch
 ):

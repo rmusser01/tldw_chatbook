@@ -3945,26 +3945,20 @@ class ConsoleWorkspaceController:
             conversation = {}
         store = self._ensure_console_chat_store()
         hydration = self._console_session_settings_for_resume(conversation)
-        hydration_kwargs: dict[str, Any] = {}
-        if isinstance(hydration, ConsoleGenerationSettingsHydration):
-            settings = hydration.settings
-            hydration_kwargs = {
-                "generation_durable_snapshot": hydration.durable_snapshot,
-                "generation_metadata_status": hydration.metadata_status,
-            }
-        else:
-            # Compatibility for embedders that still supply the former plain
-            # settings accessor while they migrate to the typed hydration.
-            settings = hydration
+        if not isinstance(hydration, ConsoleGenerationSettingsHydration):
+            raise TypeError(
+                "Console resume settings must be ConsoleGenerationSettingsHydration"
+            )
         session = await hydrate_console_session(
             app=self.app_instance,
             store=store,
             conversation_id=target,
             tree=tree,
-            settings=settings,
+            settings=hydration.settings,
+            generation_durable_snapshot=hydration.durable_snapshot,
+            generation_metadata_status=hydration.metadata_status,
             target_scope_type=target_scope_type,
             target_workspace_id=target_workspace_id,
-            **hydration_kwargs,
         )
         # Re-derive display-only agent TOOL markers from AgentRunsDB and overlay
         # them onto the restored active-path VIEW (markers are never tree nodes;
