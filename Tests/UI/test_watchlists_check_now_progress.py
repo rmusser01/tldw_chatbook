@@ -150,7 +150,9 @@ async def test_pressing_check_now_gives_an_immediate_toast_and_a_busy_button():
             if str(button.label) == "Check now":
                 break
 
-        assert str(button.label) == "Check now", "the busy state must clear on completion"
+        assert str(button.label) == "Check now", (
+            "the busy state must clear on completion"
+        )
         assert not button.disabled
         assert any(
             "complete" in m.lower() or "started" in m.lower()
@@ -435,9 +437,7 @@ async def test_the_inspector_check_now_button_shows_the_same_busy_state():
         pane.query_one("#sources-check-now-button", Button).press()
         for _ in range(40):
             await pilot.pause()
-            inspector = screen.query_one(
-                "#watchlists-entity-inspector", InspectorPane
-            )
+            inspector = screen.query_one("#watchlists-entity-inspector", InspectorPane)
             try:
                 inspector_button = inspector.query_one(
                     "#inspector-check-now-button", Button

@@ -119,7 +119,9 @@ def _install_item_source(screen) -> list[dict[str, Any]]:
 
     async def fake_list_items(**kwargs):
         calls.append(kwargs)
-        return [dict(item) for item in RUN_ITEMS.get(int(kwargs.get("run_id") or 0), [])]
+        return [
+            dict(item) for item in RUN_ITEMS.get(int(kwargs.get("run_id") or 0), [])
+        ]
 
     screen._controller.list_items = fake_list_items
     return calls
@@ -156,9 +158,11 @@ async def _wait_worker_group_idle(pilot, screen, group: str) -> bool:
     """Wait only for the worker group owned by the behavior under test."""
     return await _pump_until(
         pilot,
-        lambda: not any(
-            worker.group == group and not worker.is_finished
-            for worker in screen.workers
+        lambda: (
+            not any(
+                worker.group == group and not worker.is_finished
+                for worker in screen.workers
+            )
         ),
     )
 
@@ -167,9 +171,7 @@ async def _refresh_test_pane(pilot, host):
     """Mount Runs and let its initial loader finish before installing fakes."""
     screen = _active_destination_screen(host)
     screen.active_section = "runs"
-    assert await _pump_until(
-        pilot, lambda: bool(screen.query("#watchlists-runs-pane"))
-    )
+    assert await _pump_until(pilot, lambda: bool(screen.query("#watchlists-runs-pane")))
     assert await _wait_worker_group_idle(pilot, screen, "wc_runs")
     await pilot.pause()
     return screen, screen.query_one("#watchlists-runs-pane", RunsPane)
@@ -317,9 +319,7 @@ async def test_a_runs_items_never_outlive_the_run_they_belong_to():
         )
 
         assert pane.selected_run["id"] == RUNS[0]["id"]
-        assert emptied, (
-            "run 2's items must not be left standing under run 1's name"
-        )
+        assert emptied, "run 2's items must not be left standing under run 1's name"
         assert "Found: 3" in _stats_text(pane)
         assert "fetched 3 items" in _logs_text(pane)
 
@@ -360,13 +360,13 @@ async def test_run_detail_survives_a_workbench_rebuild():
             WatchlistsWorkbench,
         )
 
-        await screen.query_one(WatchlistsWorkbench).refresh_region_content(
-            Region.ITEMS
-        )
+        await screen.query_one(WatchlistsWorkbench).refresh_region_content(Region.ITEMS)
         rebuilt = await _settle_until(
             pilot,
-            lambda: bool(screen.query("#watchlists-runs-pane"))
-            and screen.query_one("#watchlists-runs-pane", RunsPane) is not pane,
+            lambda: (
+                bool(screen.query("#watchlists-runs-pane"))
+                and screen.query_one("#watchlists-runs-pane", RunsPane) is not pane
+            ),
         )
         assert rebuilt, "precondition: the pane really was reconstructed"
         fresh = screen.query_one("#watchlists-runs-pane", RunsPane)
@@ -639,8 +639,7 @@ async def test_a_run_that_genuinely_found_nothing_is_not_blamed_on_a_later_check
         note = _note_text(pane)
         assert "produced no items" in note, f"got {note!r}"
         assert "re-claimed" not in note, (
-            "a run that found nothing must not be told a later check took its "
-            "items"
+            "a run that found nothing must not be told a later check took its items"
         )
 
 
@@ -1109,8 +1108,7 @@ async def test_a_tick_for_a_run_the_user_has_left_does_nothing():
         await pilot.pause(0.4)
 
         assert reads == [], (
-            "a tick for a run the user has navigated away from must not even "
-            "read it"
+            "a tick for a run the user has navigated away from must not even read it"
         )
         assert pane.selected_run["id"] == RUNS[0]["id"]
 
@@ -1330,8 +1328,7 @@ async def test_refresh_authoritative_not_found_clears_selection_and_detail(
         assert screen._run_detail_items_note == pane.run_items_note == ""
         assert "No run selected" in _stats_text(pane)
         assert any(
-            call.get("exclusive") is True
-            and call.get("group") == "wc_run_detail"
+            call.get("exclusive") is True and call.get("group") == "wc_run_detail"
             for call in worker_calls
         ), "the authoritative clear must supersede older run-detail work"
 
@@ -1513,8 +1510,10 @@ async def test_second_refresh_generation_supersedes_an_older_late_response():
         releases[1].set()
         assert await _pump_until(
             pilot,
-            lambda: bool(screen._loaded_runs)
-            and screen._loaded_runs[0]["source_title"] == "newest response",
+            lambda: (
+                bool(screen._loaded_runs)
+                and screen._loaded_runs[0]["source_title"] == "newest response"
+            ),
         )
         releases[0].set()
         assert await _wait_worker_group_idle(pilot, screen, "wc_runs")
@@ -1603,8 +1602,10 @@ async def test_selecting_another_run_while_refresh_is_gated_keeps_that_selection
         pane.select_run_by_id(str(RUNS[0]["id"]))
         assert await _pump_until(
             pilot,
-            lambda: screen.selected_run is not None
-            and screen.selected_run.get("id") == RUNS[0]["id"],
+            lambda: (
+                screen.selected_run is not None
+                and screen.selected_run.get("id") == RUNS[0]["id"]
+            ),
         )
         release_refresh.set()
         assert await _wait_worker_group_idle(pilot, screen, "wc_runs")
@@ -1701,8 +1702,10 @@ async def test_newer_same_run_detail_request_owns_publication_when_older_finishe
         release_fresh.set()
         assert await _pump_until(
             pilot,
-            lambda: bool(pane.run_items)
-            and pane.run_items[0].get("title") == "Newest same-run item",
+            lambda: (
+                bool(pane.run_items)
+                and pane.run_items[0].get("title") == "Newest same-run item"
+            ),
         )
         await pilot.pause()
         release_older.set()
@@ -1792,8 +1795,10 @@ async def test_later_load_runs_intent_supersedes_an_older_refresh():
         await asyncio.wait_for(loader_started.wait(), timeout=2)
         assert await _pump_until(
             pilot,
-            lambda: bool(screen._loaded_runs)
-            and screen._loaded_runs[0].get("source_title") == "newer loader",
+            lambda: (
+                bool(screen._loaded_runs)
+                and screen._loaded_runs[0].get("source_title") == "newer loader"
+            ),
         )
 
         release_old_refresh.set()
@@ -1908,9 +1913,9 @@ async def test_immediate_pane_selection_blocks_an_older_refresh_before_mirroring
         assert await _pump_until(
             pilot,
             lambda: (
-                None if screen.selected_run is None else screen.selected_run.get("id")
-            )
-            == expected_id,
+                (None if screen.selected_run is None else screen.selected_run.get("id"))
+                == expected_id
+            ),
         )
         assert await _wait_worker_group_idle(pilot, screen, "wc_run_detail")
 
@@ -2072,8 +2077,10 @@ async def test_older_same_run_detail_error_is_silent_after_newer_success():
         screen.post_message(RefreshRunsRequested())
         assert await _pump_until(
             pilot,
-            lambda: bool(pane.run_items)
-            and pane.run_items[0].get("title") == "Newest successful item",
+            lambda: (
+                bool(pane.run_items)
+                and pane.run_items[0].get("title") == "Newest successful item"
+            ),
         )
 
         release_older.set()
@@ -2252,21 +2259,21 @@ async def test_selection_aba_supersedes_an_older_cancellation_resistant_tick():
         pane.select_run_by_id(str(RUNS[0]["id"]))
         b_mirrored = await _pump_until(
             pilot,
-            lambda: screen.selected_run is not None
-            and screen.selected_run.get("id") == RUNS[0]["id"],
+            lambda: (
+                screen.selected_run is not None
+                and screen.selected_run.get("id") == RUNS[0]["id"]
+            ),
         )
-        b_detail_settled = await _wait_worker_group_idle(
-            pilot, screen, "wc_run_detail"
-        )
+        b_detail_settled = await _wait_worker_group_idle(pilot, screen, "wc_run_detail")
         pane.select_run_by_id(str(RUNS[1]["id"]))
         a_mirrored = await _pump_until(
             pilot,
-            lambda: screen.selected_run is not None
-            and screen.selected_run.get("id") == RUNS[1]["id"],
+            lambda: (
+                screen.selected_run is not None
+                and screen.selected_run.get("id") == RUNS[1]["id"]
+            ),
         )
-        a_detail_settled = await _wait_worker_group_idle(
-            pilot, screen, "wc_run_detail"
-        )
+        a_detail_settled = await _wait_worker_group_idle(pilot, screen, "wc_run_detail")
         epoch_advanced = screen._run_selection_generation == selection_generation + 2
         settled_a_snapshot = _mounted_run_snapshot(screen, pane)
 

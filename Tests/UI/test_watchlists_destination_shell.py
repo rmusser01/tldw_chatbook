@@ -61,9 +61,7 @@ class _ScreenWorkerView:
 
     async def wait_for_complete(self) -> None:
         owned_workers = [
-            worker
-            for worker in self._owned_workers()
-            if not worker.is_finished
+            worker for worker in self._owned_workers() if not worker.is_finished
         ]
         if owned_workers:
             await self._app.workers.wait_for_complete(owned_workers)
@@ -162,8 +160,7 @@ async def test_the_backend_value_is_stated_exactly_once_on_a_normal_section():
         select = screen.query_one("#watchlists-backend-select", Select)
         assert select.disabled is False, "precondition: a real, live choice"
         assert not screen.query("#watchlists-backend-label"), (
-            "the value-restating label must not exist when the Select "
-            "already states it"
+            "the value-restating label must not exist when the Select already states it"
         )
         header_bar = screen.query_one("#watchlists-header-bar")
         children = list(header_bar.children)
@@ -209,9 +206,7 @@ async def test_the_inspector_first_run_hint_does_not_repeat_overviews_own_walkth
             await pilot.pause(0.02)
             if screen.query("#inspector-first-run-hint"):
                 break
-        hint = str(
-            screen.query_one("#inspector-first-run-hint", Static).renderable
-        )
+        hint = str(screen.query_one("#inspector-first-run-hint", Static).renderable)
         assert "New source" in hint, (
             "must still name the one action relevant to this pane"
         )
@@ -228,8 +223,7 @@ async def test_the_inspector_first_run_hint_does_not_repeat_overviews_own_walkth
             screen.query_one("#overview-first-run-body", Static).renderable
         )
         assert "New" in overview_body, (
-            "precondition: Overview is still the one place that teaches "
-            "the rail step"
+            "precondition: Overview is still the one place that teaches the rail step"
         )
 
 
@@ -249,7 +243,9 @@ async def test_the_selected_object_block_sits_above_console_actions():
         rail = screen.query_one("#watchlists-inspector-pane")
         children = list(rail.children)
         inspector_index = next(
-            i for i, child in enumerate(children) if child.id == "watchlists-entity-inspector"
+            i
+            for i, child in enumerate(children)
+            if child.id == "watchlists-entity-inspector"
         )
         console_heading_index = next(
             i
@@ -284,8 +280,7 @@ async def test_import_opml_appears_once_on_the_sources_tab():
         screen.active_section = "sources"
         await pilot.pause(0.2)
         assert not screen.query("#wc-empty-import-opml"), (
-            "the header's Import OPML must not duplicate the Sources "
-            "toolbar's own copy"
+            "the header's Import OPML must not duplicate the Sources toolbar's own copy"
         )
         assert not screen.query("#wc-empty-create-source")
         assert screen.query_one("#sources-import-opml-button"), (
@@ -812,7 +807,9 @@ async def test_existing_panes_survive_the_workbench_rehost():
     async with host.run_test(size=(180, 50)) as pilot:
         await pilot.pause(0.1)
         screen = host.screen_stack[-1]
-        assert screen.query("#wl-workbench"), "the workbench container should be mounted"
+        assert screen.query("#wl-workbench"), (
+            "the workbench container should be mounted"
+        )
         # The panes that existed before must still be mounted, not replaced.
         # The section navigator was retired for a centre tab strip (Phase C,
         # task 3); #wl-tabs is its direct successor as "a working
@@ -1083,13 +1080,15 @@ async def test_bracket_toggle_preserves_in_progress_create_form_draft():
         await pilot.press("[")
         await pilot.pause()
 
-        assert screen.query(
-            "#sources-create-name"
-        ), "the create form must still be open after an unrelated toggle"
+        assert screen.query("#sources-create-name"), (
+            "the create form must still be open after an unrelated toggle"
+        )
         name_after = screen.query_one("#sources-create-name", Input).value
         url_after = screen.query_one("#sources-create-url", Input).value
         assert name_after == "Draft Name", "typed Name text must survive the rebuild"
-        assert url_after == "https://draft.example", "typed URL text must survive the rebuild"
+        assert url_after == "https://draft.example", (
+            "typed URL text must survive the rebuild"
+        )
 
 
 @pytest.mark.asyncio
@@ -1188,9 +1187,9 @@ async def test_submitting_the_create_form_clears_the_draft():
         await pilot.press("[")
         await pilot.press("[")
         await pilot.pause()
-        assert not screen.query(
-            "#sources-create-name"
-        ), "the form should stay closed, not reopen with stale text"
+        assert not screen.query("#sources-create-name"), (
+            "the form should stay closed, not reopen with stale text"
+        )
 
 
 @pytest.mark.asyncio
@@ -1228,7 +1227,9 @@ async def test_cancelling_the_create_form_clears_the_draft():
 # Sources create-form draft fixed in round 1).
 
 
-async def _wait_for_table_rows(pilot, table_id: str, screen, expected: int) -> DataTable:
+async def _wait_for_table_rows(
+    pilot, table_id: str, screen, expected: int
+) -> DataTable:
     table = screen.query_one(table_id, DataTable)
     for _ in range(30):
         if table.row_count >= expected:
@@ -1251,14 +1252,20 @@ async def test_bracket_toggle_preserves_loaded_sources_items_and_rules_tables():
         )
         screen._controller.list_items = AsyncMock(
             return_value=[
-                {"id": "i1", "title": "Item One", "source_name": "Feed One",
-                 # The real backend always carries a status; without one the
-                 # reader-set filter (TASK-3072) legitimately hides the row.
-                 "status": "new"}
+                {
+                    "id": "i1",
+                    "title": "Item One",
+                    "source_name": "Feed One",
+                    # The real backend always carries a status; without one the
+                    # reader-set filter (TASK-3072) legitimately hides the row.
+                    "status": "new",
+                }
             ]
         )
         screen._controller.list_alert_rules = AsyncMock(
-            return_value=[{"id": "r1", "name": "Rule One", "condition_type": "no_items"}]
+            return_value=[
+                {"id": "r1", "name": "Rule One", "condition_type": "no_items"}
+            ]
         )
 
         for section, table_id in (
@@ -1296,9 +1303,7 @@ async def test_bracket_toggle_preserves_loaded_sources_items_and_rules_tables():
             await pilot.pause()
             if pane.displayed_items():
                 break
-        assert len(pane.displayed_items()) == 1, (
-            "items list never loaded its one row"
-        )
+        assert len(pane.displayed_items()) == 1, "items list never loaded its one row"
 
         await pilot.press("[")
         await pilot.pause()
@@ -1336,7 +1341,9 @@ async def test_bracket_toggle_preserves_inspector_selection():
         await pilot.press("[")
         await pilot.pause()
 
-        rebuilt_inspector = screen.query_one("#watchlists-entity-inspector", InspectorPane)
+        rebuilt_inspector = screen.query_one(
+            "#watchlists-entity-inspector", InspectorPane
+        )
         # task-15461 strengthened this from "rebuilt, and re-seeded correctly"
         # to "never rebuilt at all". A left-rail toggle used to recompose the
         # whole workbench, so the Inspector was torn down and rebuilt for a
@@ -1392,9 +1399,9 @@ async def test_bracket_toggle_preserves_in_progress_rule_edit():
         await pilot.press("[")
         await pilot.pause()
 
-        assert screen.query(
-            "#rules-create-name"
-        ), "the rule edit form must still be open after an unrelated toggle"
+        assert screen.query("#rules-create-name"), (
+            "the rule edit form must still be open after an unrelated toggle"
+        )
         name_input = screen.query_one("#rules-create-name", Input)
         assert name_input.value == "Rule One", (
             "the form must still be pre-filled for the SAME rule being edited"
@@ -1494,8 +1501,7 @@ async def test_saving_a_rule_edit_does_not_leave_a_phantom_form_open():
             "leaving an empty pane behind is the masked defect, not a fix"
         )
         assert not screen.query("#rules-create-name"), (
-            "no rule edit form fields should remain in the DOM after a "
-            "successful save"
+            "no rule edit form fields should remain in the DOM after a successful save"
         )
 
 
@@ -1593,7 +1599,9 @@ async def test_tree_selection_sets_the_screen_scope():
     async with host.run_test(size=(180, 50)) as pilot:
         await pilot.pause(0.1)
         screen = host.screen_stack[-1]
-        screen.post_message(TreeScopeChanged(TreeScope(kind="watchlist", watchlist_id=7)))
+        screen.post_message(
+            TreeScopeChanged(TreeScope(kind="watchlist", watchlist_id=7))
+        )
         await pilot.pause()
         assert screen.selected_scope.kind == "watchlist"
         assert screen.selected_scope.watchlist_id == 7
@@ -1611,7 +1619,9 @@ async def test_scope_survives_a_region_toggle():
     async with host.run_test(size=(180, 50)) as pilot:
         await pilot.pause(0.1)
         screen = host.screen_stack[-1]
-        screen.post_message(TreeScopeChanged(TreeScope(kind="watchlist", watchlist_id=7)))
+        screen.post_message(
+            TreeScopeChanged(TreeScope(kind="watchlist", watchlist_id=7))
+        )
         await pilot.pause()
         await pilot.press("[")
         await pilot.pause()
@@ -1630,7 +1640,10 @@ async def test_scoped_rows_follow_the_tree_scope():
     established pattern (see every other test above) rather than a
     `watchlists_app` fixture -- no such fixture exists in this file.
     """
-    from tldw_chatbook.UI.Watchlists_Modules.watchlist_tree import TreeScope, TreeScopeChanged
+    from tldw_chatbook.UI.Watchlists_Modules.watchlist_tree import (
+        TreeScope,
+        TreeScopeChanged,
+    )
 
     app = _build_test_app()
     # Seeded (fix round 1): against this harness's empty subscriptions DB
@@ -1676,7 +1689,10 @@ async def test_scoped_rows_follow_the_tree_scope():
 
 @pytest.mark.asyncio
 async def test_source_scope_narrows_to_exactly_one():
-    from tldw_chatbook.UI.Watchlists_Modules.watchlist_tree import TreeScope, TreeScopeChanged
+    from tldw_chatbook.UI.Watchlists_Modules.watchlist_tree import (
+        TreeScope,
+        TreeScopeChanged,
+    )
 
     app = _build_test_app()
     # Seeded (fix round 1): `len(rows) <= 1` is trivially true against an
@@ -1971,9 +1987,7 @@ async def test_unmounting_during_rerun_cleans_state_without_refreshing():
         operation_key = screen._rerun_operation_key("local", 5)
 
         screen.post_message(
-            RerunRunRequested(
-                runtime_backend="local", target_id=5, name="Feed [five]"
-            )
+            RerunRunRequested(runtime_backend="local", target_id=5, name="Feed [five]")
         )
         for _ in range(40):
             await pilot.pause()
@@ -1995,8 +2009,7 @@ async def test_unmounting_during_rerun_cleans_state_without_refreshing():
         assert screen._reruns_in_flight == set()
         screen._request_runs_refresh.assert_not_called()
         assert not any(
-            "failed" in str(call.args[0]).lower()
-            for call in app.notify.call_args_list
+            "failed" in str(call.args[0]).lower() for call in app.notify.call_args_list
         )
 
 
@@ -2338,9 +2351,7 @@ async def test_rerun_raises_with_a_safe_stated_error_and_warning_log():
     screen = WatchlistsCollectionsScreen(app)
     app.notify = Mock()
     screen._controller.launch_run = AsyncMock(
-        side_effect=RuntimeError(
-            "unexpected /Users/private/feed.xml?token=secret"
-        )
+        side_effect=RuntimeError("unexpected /Users/private/feed.xml?token=secret")
     )
     screen._request_runs_refresh = Mock()
     operation_key = screen._rerun_operation_key("local", 5)
@@ -2438,9 +2449,7 @@ async def test_moving_the_tree_clears_a_notification_selected_in_its_pane():
         screen.active_section = "notifications"
         await pilot.pause(0.2)
 
-        pane = screen.query_one(
-            "#watchlists-notifications-pane", NotificationsPane
-        )
+        pane = screen.query_one("#watchlists-notifications-pane", NotificationsPane)
         pane.notifications = [
             {"id": 1, "title": "Feed failed", "message": "boom", "is_read": False}
         ]
@@ -2454,9 +2463,7 @@ async def test_moving_the_tree_clears_a_notification_selected_in_its_pane():
         )
         await pilot.pause()
 
-        pane = screen.query_one(
-            "#watchlists-notifications-pane", NotificationsPane
-        )
+        pane = screen.query_one("#watchlists-notifications-pane", NotificationsPane)
         assert pane.selected_notification is None, (
             "the tree move must reach the pane's own copy, not only the mirror"
         )
@@ -2510,9 +2517,7 @@ async def test_tree_expansion_survives_a_section_switch():
         assert screen.query(source_node), "precondition: the watchlist expanded"
 
         screen.post_message(
-            TreeScopeChanged(
-                TreeScope(kind="source", watchlist_id=1, source_id=arxiv)
-            )
+            TreeScopeChanged(TreeScope(kind="source", watchlist_id=1, source_id=arxiv))
         )
         await pilot.pause()
 
@@ -2862,8 +2867,7 @@ async def test_z_with_focus_in_the_centre_header_does_not_toggle_a_stale_region(
         screen.query_one("#wl-tab-runs").focus()
         await pilot.pause()
         assert screen._focus_in_centre_header, (
-            "precondition: the tab strip must be recognized as the centre "
-            "header"
+            "precondition: the tab strip must be recognized as the centre header"
         )
 
         await pilot.press("z")
@@ -2938,8 +2942,7 @@ async def test_capital_z_in_the_header_activates_article_focus_only_effectively(
         screen.query_one("#wl-tab-runs").focus()
         await pilot.pause()
         assert screen._focus_in_centre_header, (
-            "precondition: the tab strip must be recognized as the centre "
-            "header"
+            "precondition: the tab strip must be recognized as the centre header"
         )
 
         await pilot.press("Z")
@@ -3041,7 +3044,13 @@ async def test_a_background_snapshot_lands_in_place_without_rebuilding_the_pane(
         )
         assert not screen.query("#wc-service-error")
 
-        screen._apply_local_wc_snapshot((), 0, True, "Watchlists services unavailable; retry Watchlists later.", None)
+        screen._apply_local_wc_snapshot(
+            (),
+            0,
+            True,
+            "Watchlists services unavailable; retry Watchlists later.",
+            None,
+        )
         for _ in range(200):
             await pilot.pause(0.01)
             if screen.query("#wc-service-error"):
@@ -3146,7 +3155,9 @@ def test_latest_run_status_text_distinguishes_not_configured_from_no_runs_yet():
     screen = object.__new__(WatchlistsCollectionsScreen)
     screen._id = 1
 
-    screen._reactive_overview_data = {"latest_run_status": WatchlistsBackendController.NOT_CONFIGURED_STATUS}
+    screen._reactive_overview_data = {
+        "latest_run_status": WatchlistsBackendController.NOT_CONFIGURED_STATUS
+    }
     not_configured_text = screen._latest_run_status_text()
 
     screen._reactive_overview_data = {"latest_run_status": None}
@@ -3169,7 +3180,9 @@ def test_latest_run_status_text_reports_a_real_lookup_failure_distinctly():
     """
     screen = object.__new__(WatchlistsCollectionsScreen)
     screen._id = 1
-    screen._reactive_overview_data = {"latest_run_status": WatchlistsBackendController.LOOKUP_FAILED_STATUS}
+    screen._reactive_overview_data = {
+        "latest_run_status": WatchlistsBackendController.LOOKUP_FAILED_STATUS
+    }
 
     text = screen._latest_run_status_text()
 
@@ -3504,8 +3517,7 @@ async def test_a_failed_surface_refresh_start_does_not_wedge_the_queue():
             if screen.query(node_id):
                 break
         assert screen.query(node_id), (
-            "the queue stayed wedged: a later background loader never reached "
-            "the rail"
+            "the queue stayed wedged: a later background loader never reached the rail"
         )
 
 
@@ -3744,7 +3756,9 @@ async def test_section_loader_results_landing_in_the_mount_window_still_paint():
             )
         )
         screen._controller.list_alert_rules = AsyncMock(
-            return_value=[{"id": "a1", "name": "Rule One", "condition_type": "no_items"}]
+            return_value=[
+                {"id": "a1", "name": "Rule One", "condition_type": "no_items"}
+            ]
         )
         screen._notifications_controller.load_rows = AsyncMock(
             return_value=[
@@ -3761,7 +3775,12 @@ async def test_section_loader_results_landing_in_the_mount_window_still_paint():
 
         cases = [
             ("runs", "#watchlists-runs-pane", "runs", lambda: screen._load_runs()),
-            ("sources", "#watchlists-sources-pane", "sources", lambda: screen._load_sources()),
+            (
+                "sources",
+                "#watchlists-sources-pane",
+                "sources",
+                lambda: screen._load_sources(),
+            ),
             (
                 "items",
                 "#watchlists-items-pane",

@@ -180,7 +180,10 @@ from ..Watchlists_Modules.region_layout import (
     RegionLayout,
     resolve_effective_layout,
 )
-from ..Watchlists_Modules.region_layout_store import load_region_layout, save_region_layout
+from ..Watchlists_Modules.region_layout_store import (
+    load_region_layout,
+    save_region_layout,
+)
 from ..Watchlists_Modules.reader_item_snapshot import (
     ReaderItemQuery,
     ReaderItemSnapshot,
@@ -227,9 +230,14 @@ from ..Watchlists_Modules.watchlist_tree import (
     TreeTagFilterChanged,
     WatchlistTree,
 )
-from ..Watchlists_Modules.watchlists_backend_controller import WatchlistsBackendController
+from ..Watchlists_Modules.watchlists_backend_controller import (
+    WatchlistsBackendController,
+)
 from ..Watchlists_Modules.watchlists_console_handoff import WatchlistsConsoleHandoff
-from ..Watchlists_Modules.watchlists_tab_strip import SectionSelected, WatchlistsTabStrip
+from ..Watchlists_Modules.watchlists_tab_strip import (
+    SectionSelected,
+    WatchlistsTabStrip,
+)
 from ..Watchlists_Modules.watchlists_workbench import (
     RegionLayoutApplied,
     RegionLayoutApplyFailed,
@@ -360,7 +368,11 @@ def _opml_import_summary_text(result: Mapping[str, Any]) -> str:
         else int(explicit_unassigned or 0)
     )
 
-    sources_bit = f"{created} new" if existing == 0 else f"{created} new + {existing} already present"
+    sources_bit = (
+        f"{created} new"
+        if existing == 0
+        else f"{created} new + {existing} already present"
+    )
     text = f"Imported {sources_bit} source(s) from OPML"
     if assignments:
         total_wl = len(created_wl) + len(reused_wl)
@@ -505,6 +517,7 @@ def watchlist_delete_consequence(source_count: int) -> str:
         "and appear under Unassigned unless they also belong to another "
         "watchlist."
     )
+
 
 # task-895. Watchlist bundles and their membership are a LOCAL concept: the
 # server API has no wire path for them at all -- `SourceUpdateRequest`
@@ -750,9 +763,9 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
         self._items_retry_inflight = False
         self._items_snapshot_generation = 0
         self._items_page_presentation_lock = asyncio.Lock()
-        self._items_inflight_replacement: tuple[
-            tuple[Any, ...], asyncio.Future[bool]
-        ] | None = None
+        self._items_inflight_replacement: (
+            tuple[tuple[Any, ...], asyncio.Future[bool]] | None
+        ) = None
         self._items_inflight_continuation: asyncio.Future[bool] | None = None
         self._selected_content_page_key: tuple[Any, ...] | None = None
         self._items_search_results_authoritative = False
@@ -1234,9 +1247,7 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
         # `_apply_layout` performs for anything that genuinely did change.
         self._rendered_section = self.active_section
         self._recompute_effective_layout(cause="initial")
-        server_read = (
-            self.active_section == "items" and self.runtime_backend != "local"
-        )
+        server_read = self.active_section == "items" and self.runtime_backend != "local"
         if server_read:
             self._enter_server_read_recovery()
         else:
@@ -1325,7 +1336,9 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
             )
             self.overview_data = data
         except Exception:
-            logger.opt(exception=True).debug("Failed to refresh watchlists overview data.")
+            logger.opt(exception=True).debug(
+                "Failed to refresh watchlists overview data."
+            )
             self.overview_data = {
                 "total_sources": 0,
                 "active_sources": 0,
@@ -1439,7 +1452,13 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
 
         if service is None:
             failures.update(
-                {"watchlists", "all_sources", "unassigned_sources", "counts", "source_counts"}
+                {
+                    "watchlists",
+                    "all_sources",
+                    "unassigned_sources",
+                    "counts",
+                    "source_counts",
+                }
             )
             return TreeDataSnapshot(
                 previous.watchlists,
@@ -1485,7 +1504,9 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
 
         counts = read_branch("counts", read_counts, previous.counts)
         source_counts = read_branch(
-            "source_counts", lambda: service.get_source_item_counts(), previous.source_counts
+            "source_counts",
+            lambda: service.get_source_item_counts(),
+            previous.source_counts,
         )
         watchlist_source_ids: dict[int, frozenset[int]] = {}
         for watchlist_id in reconciliation_watchlist_ids:
@@ -1506,7 +1527,10 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
             all_source_rows,
             unassigned_source_rows,
             {int(bucket): dict(values) for bucket, values in counts.items()},
-            {int(source_id): dict(values) for source_id, values in source_counts.items()},
+            {
+                int(source_id): dict(values)
+                for source_id, values in source_counts.items()
+            },
             frozenset(failures),
             watchlist_source_ids,
         )
@@ -1758,9 +1782,7 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
         """
         if not self._dom_is_live:
             return
-        self._request_surface_refresh(
-            self._SURFACE_HEADER, self._SURFACE_INSPECTOR
-        )
+        self._request_surface_refresh(self._SURFACE_HEADER, self._SURFACE_INSPECTOR)
         try:
             summary = self.query_one("#watchlists-state-summary", Static)
         except NoMatches:
@@ -1980,7 +2002,10 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
         pane widget just to read it.
         """
         if not self._wc_loaded:
-            return True, "Stage local Watchlists context after the local snapshot loads."
+            return (
+                True,
+                "Stage local Watchlists context after the local snapshot loads.",
+            )
         if self._wc_lookup_error:
             recovery_state = self._wc_lookup_recovery_state
             tooltip = (
@@ -2019,9 +2044,7 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
                 if recovering
                 else self._load_source_rows_for_tree
             ),
-            expanded=(
-                frozenset() if recovering else self._tree_expanded_watchlist_ids
-            ),
+            expanded=(frozenset() if recovering else self._tree_expanded_watchlist_ids),
             expanded_root_kinds=(
                 frozenset() if recovering else self._tree_expanded_root_kinds
             ),
@@ -2085,9 +2108,7 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
         if source_id not in all_source_ids:
             return TreeScope(kind="all")
         if scope.parent_context == "unassigned":
-            unassigned_ids = {
-                int(row["id"]) for row in snapshot.unassigned_source_rows
-            }
+            unassigned_ids = {int(row["id"]) for row in snapshot.unassigned_source_rows}
             if source_id not in unassigned_ids:
                 return TreeScope(kind="unassigned")
         elif scope.parent_context == "watchlist":
@@ -2204,13 +2225,21 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
         try:
             if scope.kind == "watchlist" and scope.watchlist_id is not None:
                 service = self._watchlist_bundle_service()
-                return [] if service is None else service.list_source_rows(scope.watchlist_id)
+                return (
+                    []
+                    if service is None
+                    else service.list_source_rows(scope.watchlist_id)
+                )
             if scope.kind == "source" and scope.source_id is not None:
                 if scope.parent_context == "unassigned":
                     rows = self._tree_unassigned_source_rows
                 elif scope.watchlist_id is not None:
                     service = self._watchlist_bundle_service()
-                    rows = [] if service is None else service.list_source_rows(scope.watchlist_id)
+                    rows = (
+                        []
+                        if service is None
+                        else service.list_source_rows(scope.watchlist_id)
+                    )
                 else:
                     rows = self._tree_all_source_rows
                 return [r for r in rows if int(r["id"]) == int(scope.source_id)]
@@ -2236,14 +2265,10 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
             return []
         return [dict(watchlist) for watchlist in self._tree_watchlists]
 
-    def _create_form_source_types(
-        self, runtime_backend: str
-    ) -> tuple[str, ...]:
+    def _create_form_source_types(self, runtime_backend: str) -> tuple[str, ...]:
         """Return the create-form contract for one runtime backend."""
         return tuple(
-            self._controller.create_form_source_types(
-                runtime_backend=runtime_backend
-            )
+            self._controller.create_form_source_types(runtime_backend=runtime_backend)
         )
 
     def _sync_live_source_create_backend(self) -> None:
@@ -2321,11 +2346,7 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
             labels = self._resolve_breadcrumb_labels(scope)
             if rows:
                 source_label = str(rows[0].get("name"))
-                return (
-                    f"{labels[0]} / {source_label}"
-                    if labels
-                    else source_label
-                )
+                return f"{labels[0]} / {source_label}" if labels else source_label
             if len(labels) == 2:
                 return " / ".join(labels)
             if scope.source_id is not None:
@@ -2552,9 +2573,7 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
             # Scoped (TASK-2304 AC#2): a rebuild must not quietly re-widen
             # the table back to every source while the header still names one
             # watchlist.
-            sources_pane.set_reactive(
-                SourcesPane.sources, self.scoped_loaded_sources()
-            )
+            sources_pane.set_reactive(SourcesPane.sources, self.scoped_loaded_sources())
             sources_pane.selected_source = self.selected_source
             # TASK-2309: re-seed from screen state for the identical
             # rebuild-survival reason as `selected_source` on the line
@@ -2598,9 +2617,7 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
             sources_pane.create_draft_url = self._source_create_draft["url"]
             sources_pane.create_draft_tags = self._source_create_draft["tags"]
             sources_pane.create_draft_active = self._source_create_draft_active
-            sources_pane.create_draft_frequency = (
-                self._source_create_draft_frequency
-            )
+            sources_pane.create_draft_frequency = self._source_create_draft_frequency
             if self._source_create_draft_selectors is not None:
                 sources_pane.create_draft_ignore_selectors = (
                     self._source_create_draft_selectors
@@ -2782,9 +2799,7 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
         pane.page_loading = self._items_page_loading
         pane.snapshot_count = self._items_snapshot_count
         pane.new_items_note = self._items_arrival_note()
-        pane.search_results_authoritative = (
-            self._items_search_results_authoritative
-        )
+        pane.search_results_authoritative = self._items_search_results_authoritative
 
     def _items_arrival_note(self) -> str:
         """Return the Reader pill copy for the committed arrival count."""
@@ -3238,8 +3253,7 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
         "artifacts": {
             "label": "Artifacts: local",
             "tooltip": (
-                "Briefings are written to and read from this device's "
-                "watchlist store."
+                "Briefings are written to and read from this device's watchlist store."
             ),
         },
     }
@@ -3328,7 +3342,9 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
                 id="watchlists-collections-title",
                 classes="ds-destination-header",
             )
-            with Horizontal(id="watchlists-header-bar", classes="destination-filter-strip"):
+            with Horizontal(
+                id="watchlists-header-bar", classes="destination-filter-strip"
+            ):
                 # TASK-995: `compact=True` for the same reason as the
                 # Sources/Items toolbars -- `.destination-filter-strip` is
                 # `height: 1` and a bordered Select is three rows, so this
@@ -3347,9 +3363,7 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
                     allow_blank=False,
                     compact=True,
                     disabled=self._local_only_section() is not None,
-                    tooltip=(
-                        self._local_only_section() or {}
-                    ).get("tooltip")
+                    tooltip=(self._local_only_section() or {}).get("tooltip")
                     or "Choose the Watchlists data backend.",
                 )
                 backend_label_text = self._backend_label_text()
@@ -3383,9 +3397,7 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
                 read_mode=self.active_section == "items",
                 id="wl-workbench",
                 classes=(
-                    "watchlists-read-mode"
-                    if self.active_section == "items"
-                    else ""
+                    "watchlists-read-mode" if self.active_section == "items" else ""
                 ),
             )
 
@@ -3401,10 +3413,7 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
         self._layout_request_generation += 1
         self._current_layout_request_token = self._layout_request_generation
         rollback = self._manual_layout_rollback
-        if (
-            rollback is not None
-            and self.region_layout == rollback.attempted_preferred
-        ):
+        if rollback is not None and self.region_layout == rollback.attempted_preferred:
             self._manual_layout_rollback = ManualLayoutRollback(
                 token=self._current_layout_request_token,
                 attempted_layout=self._effective_region_layout,
@@ -3483,9 +3492,7 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
 
         effective = responsive
         if self._article_focus_active:
-            effective = RegionLayout(
-                collapsed=responsive.collapsed.union(mounted)
-            )
+            effective = RegionLayout(collapsed=responsive.collapsed.union(mounted))
 
         previous = self._effective_region_layout
         if effective == previous:
@@ -3884,9 +3891,7 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
         self._toggle_preferred_region(event.region)
 
     @on(RegionLayoutApplyFailed)
-    def _on_region_layout_apply_failed(
-        self, event: RegionLayoutApplyFailed
-    ) -> None:
+    def _on_region_layout_apply_failed(self, event: RegionLayoutApplyFailed) -> None:
         """Correct screen preference only while the failed intent is current."""
         event.stop()
         if event.token != self._current_layout_request_token:
@@ -3918,9 +3923,8 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
             and event.token == self._manual_layout_rollback.token
         ):
             self._manual_layout_rollback = None
-        if (
-            event.previous.is_collapsed(Region.ITEMS)
-            and not event.layout.is_collapsed(Region.ITEMS)
+        if event.previous.is_collapsed(Region.ITEMS) and not event.layout.is_collapsed(
+            Region.ITEMS
         ):
             self._restore_items_view_state()
 
@@ -4051,9 +4055,7 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
             self._set_pending_tree_scope(scope)
             self._supersede_items_query_intent(scope=scope)
             try:
-                self.query_one("#wl-tree", WatchlistTree).active_scope = (
-                    self.tree_scope
-                )
+                self.query_one("#wl-tree", WatchlistTree).active_scope = self.tree_scope
             except NoMatches:
                 pass
             self.run_worker(
@@ -4336,7 +4338,7 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
             TreeScope(kind="watchlist", watchlist_id=int(created["id"]))
         )
         self._notify_watchlists(
-            f"Watchlist \"{escape_markup(str(created['name']))}\" created."
+            f'Watchlist "{escape_markup(str(created["name"]))}" created.'
         )
         self._load_tree_data()
 
@@ -4364,7 +4366,7 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
             return
         updated = service.rename(watchlist_id, name)
         self._notify_watchlists(
-            f"Watchlist renamed to \"{escape_markup(str(updated['name']))}\"."
+            f'Watchlist renamed to "{escape_markup(str(updated["name"]))}".'
         )
         self._load_tree_data()
 
@@ -4449,7 +4451,9 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
         # `list_all_source_rows`.
         members = {int(source_id) for source_id in service.list_sources(watchlist_id)}
         candidates = [
-            row for row in service.list_all_source_rows() if int(row["id"]) not in members
+            row
+            for row in service.list_all_source_rows()
+            if int(row["id"]) not in members
         ]
         chosen = await self.app.push_screen_wait(
             WatchlistSourcePickerDialog(
@@ -4520,9 +4524,7 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
             or f"Source {source_id}"
         )
         self._start_tree_write(
-            lambda: self._assign_source_to_watchlist_flow(
-                int(source_id), source_name
-            )
+            lambda: self._assign_source_to_watchlist_flow(int(source_id), source_name)
         )
 
     async def _assign_source_to_watchlist_flow(
@@ -4619,9 +4621,7 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
         service.remove_source(watchlist_id, source_id)
         # The scope named a node that no longer exists; fall back to its
         # parent watchlist, which does.
-        self._request_tree_scope(
-            TreeScope(kind="watchlist", watchlist_id=watchlist_id)
-        )
+        self._request_tree_scope(TreeScope(kind="watchlist", watchlist_id=watchlist_id))
         self._notify_watchlists(
             f'Removed "{escape_markup(source_name)}" from '
             f'"{escape_markup(watchlist_name)}". The source itself is kept.'
@@ -5073,9 +5073,9 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
             elif section == "runs":
                 self._reseed_live_detail_pane()
             elif section == "rules":
-                self.query_one("#watchlists-rules-pane", RulesPane).rules = (
-                    self._loaded_rules
-                )
+                self.query_one(
+                    "#watchlists-rules-pane", RulesPane
+                ).rules = self._loaded_rules
             elif section == "notifications":
                 pane = self.query_one(
                     "#watchlists-notifications-pane", NotificationsPane
@@ -5106,14 +5106,15 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
         """
         local_only = self._local_only_section()
         try:
-            backend_select = self.query_one("#watchlists-backend-select", PruneSafeSelect)
+            backend_select = self.query_one(
+                "#watchlists-backend-select", PruneSafeSelect
+            )
         except NoMatches:
             return
         backend_select.disabled = local_only is not None
-        backend_select.tooltip = (
-            (local_only or {}).get("tooltip")
-            or "Choose the Watchlists data backend."
-        )
+        backend_select.tooltip = (local_only or {}).get(
+            "tooltip"
+        ) or "Choose the Watchlists data backend."
         label_text = self._backend_label_text()
         try:
             label: Static | None = self.query_one("#watchlists-backend-label", Static)
@@ -5201,7 +5202,7 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
             for prefix in ("wl-region-", "wl-grip-"):
                 if node_id.startswith(prefix):
                     try:
-                        self.focused_region = Region(node_id[len(prefix):])
+                        self.focused_region = Region(node_id[len(prefix) :])
                     except ValueError:
                         pass
                     self._focus_in_centre_header = False
@@ -5247,9 +5248,7 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
                         WC_SNAPSHOT_TIMEOUT_SECONDS,
                         self._apply_snapshot_timeout_if_still_loading,
                     )
-        self._recompute_effective_layout(
-            cause="explicit", request_workbench=False
-        )
+        self._recompute_effective_layout(cause="explicit", request_workbench=False)
         if self.active_section == "overview":
             self.selected_entity = None
         if self.active_section != WATCHLISTS_SECTION_RUNS:
@@ -5312,9 +5311,7 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
             self.run_worker(
                 self._replace_items_snapshot(
                     reason=(
-                        "return_to_read"
-                        if self._items_snapshot is None
-                        else "initial"
+                        "return_to_read" if self._items_snapshot is None else "initial"
                     )
                 ),
                 exclusive=True,
@@ -5417,9 +5414,9 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
         # sit enabled over a backend that cannot service them -- the exact
         # "disabled button that looks enabled" shape in reverse.
         try:
-            self.query_one("#wl-tree", WatchlistTree).write_disabled_reason = (
-                self._tree_write_disabled_reason()
-            )
+            self.query_one(
+                "#wl-tree", WatchlistTree
+            ).write_disabled_reason = self._tree_write_disabled_reason()
         except NoMatches:
             pass
         self._sync_tree_navigation_authority()
@@ -5466,7 +5463,10 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
             (
                 "#watchlists-sources-pane",
                 SourcesPane,
-                {"sources": self._loaded_sources, "selected_source": self.selected_source},
+                {
+                    "sources": self._loaded_sources,
+                    "selected_source": self.selected_source,
+                },
             ),
             (
                 "#watchlists-runs-pane",
@@ -5778,13 +5778,11 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
         except NoMatches:
             return True
         return (
-            (pane_selected is not None) == selected_was_present
-            and self._canonical_run_identity(
-                pane_selected,
-                default_backend=backend,
-            )
-            == selected_identity
-        )
+            pane_selected is not None
+        ) == selected_was_present and self._canonical_run_identity(
+            pane_selected,
+            default_backend=backend,
+        ) == selected_identity
 
     @staticmethod
     def _run_refresh_not_found(exc: Exception, backend: str) -> bool:
@@ -5806,6 +5804,7 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
         selected_was_present: bool,
     ) -> None:
         """Stage and reconcile one authoritative Runs page before publishing."""
+
         def current() -> bool:
             return self._runs_refresh_is_current(
                 backend=backend,
@@ -5814,6 +5813,7 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
                 selected_identity=selected_identity,
                 selected_was_present=selected_was_present,
             )
+
         try:
             rows = await self._controller.list_runs(
                 runtime_backend=backend,
@@ -6054,9 +6054,9 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
         self.selected_run = record
         if self._dom_is_live:
             try:
-                self.query_one(
-                    "#watchlists-runs-pane", RunsPane
-                ).apply_run_progress(record)
+                self.query_one("#watchlists-runs-pane", RunsPane).apply_run_progress(
+                    record
+                )
             except Exception:
                 pass
         # Only now is a full detail load worth its cost: the run reached a new
@@ -6100,10 +6100,13 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
             return current is None
         if current is None:
             return False
-        return self._canonical_run_identity(
-            current,
-            default_backend=self.runtime_backend,
-        ) == requested_identity
+        return (
+            self._canonical_run_identity(
+                current,
+                default_backend=self.runtime_backend,
+            )
+            == requested_identity
+        )
 
     async def _load_run_detail(
         self,
@@ -6239,8 +6242,7 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
         "re-claimed the items that had not changed."
     )
     _RUN_ITEMS_ALL_FILTERED_NOTE = (
-        "Every item this run found was excluded by a filter, so it stored "
-        "none."
+        "Every item this run found was excluded by a filter, so it stored none."
     )
     _RUN_ITEMS_EMPTY_NOTE = "This run produced no items."
 
@@ -6420,11 +6422,7 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
             # markup=False: the destination is a user-typed watchlist name.
             self._notify_watchlists(
                 f"Source created in {destination}."
-                + (
-                    " The watchlist you chose could not be used."
-                    if degraded
-                    else ""
-                ),
+                + (" The watchlist you chose could not be used." if degraded else ""),
                 severity="warning" if degraded else "information",
                 markup=False,
             )
@@ -6478,9 +6476,7 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
         service = self._watchlist_bundle_service()
         if (
             service is None
-            or self._tree_write_disabled_reason(
-                runtime_backend=runtime_backend
-            )
+            or self._tree_write_disabled_reason(runtime_backend=runtime_backend)
             is not None
         ):
             return unassigned
@@ -6489,9 +6485,7 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
         # same distinction `_resume_source` documents.
         source_id = (created or {}).get("source_id")
         if source_id is None:
-            logger.warning(
-                "Created source carries no local id; leaving it unassigned."
-            )
+            logger.warning("Created source carries no local id; leaving it unassigned.")
             return unassigned
         try:
             service.add_source(int(watchlist_id), int(source_id))
@@ -6844,7 +6838,9 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
     #: Statuses meaning the run is over. `check_now` on the server backend
     #: delegates to `launch_run`, which returns `queued`/`running` while the
     #: fetch is still in flight — so "complete" may only be claimed for these.
-    _TERMINAL_RUN_STATUSES = frozenset({"completed", "complete", "succeeded", "success"})
+    _TERMINAL_RUN_STATUSES = frozenset(
+        {"completed", "complete", "succeeded", "success"}
+    )
 
     @classmethod
     def _check_failure_message(cls, result: Any) -> str | None:
@@ -7071,7 +7067,9 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
             # Check now / Delete at the first source (Qodo #3 on PR #1047, and
             # the defect filed as task-1161).
             self.run_worker(
-                self._load_sources_preserving_selection(), exclusive=True, group="wc_sources"
+                self._load_sources_preserving_selection(),
+                exclusive=True,
+                group="wc_sources",
             )
             # TASK-2304 AC#1. A check is the ONE gesture that manufactures items,
             # and the rail's numbers are unread item counts -- so this was the
@@ -7213,7 +7211,9 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
         # Resume button renders -- both pick up the cleared pause once the
         # reload lands.
         self.run_worker(
-            self._load_sources_preserving_selection(), exclusive=True, group="wc_sources"
+            self._load_sources_preserving_selection(),
+            exclusive=True,
+            group="wc_sources",
         )
 
     @on(ImportOpmlRequested)
@@ -7305,14 +7305,19 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
             backend listing's own order. Every loaded source when the scope is
             `all`, or when the runtime backend is not `local`.
         """
-        if self.tree_scope.kind in ("all", "starred", "unread", "today") or self.runtime_backend != "local":
+        if (
+            self.tree_scope.kind in ("all", "starred", "unread", "today")
+            or self.runtime_backend != "local"
+        ):
             # The smart feeds scope the ITEMS list (a flag/status/date
             # predicate), not the Sources table -- every source can hold an
             # unread/starred/today item, so the truthful listing here is the
             # same unscoped one `all` gets.
             return list(self._loaded_sources)
         allowed = {
-            str(row.get("id")) for row in self.scoped_source_rows() if row.get("id") is not None
+            str(row.get("id"))
+            for row in self.scoped_source_rows()
+            if row.get("id") is not None
         }
         return [
             source
@@ -7366,7 +7371,9 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
             self._loaded_sources = [dict(source) for source in sources]
             if self._dom_is_live:
                 try:
-                    sources_pane = self.query_one("#watchlists-sources-pane", SourcesPane)
+                    sources_pane = self.query_one(
+                        "#watchlists-sources-pane", SourcesPane
+                    )
                     sources_pane.sources = self.scoped_loaded_sources()
                     if self.selected_source is not None:
                         source_id = self.selected_source.get("id")
@@ -7448,9 +7455,7 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
         requested = self._pending_navigation_run_id
         if not requested:
             return None
-        requested_backend = (
-            self._pending_navigation_run_backend or self.runtime_backend
-        )
+        requested_backend = self._pending_navigation_run_backend or self.runtime_backend
         if requested_backend != self.runtime_backend:
             return None
         requested_identity = self._canonical_run_identity(
@@ -7458,10 +7463,13 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
             default_backend=requested_backend,
         )
         for run in runs:
-            if self._canonical_run_identity(
-                run,
-                default_backend=requested_backend,
-            ) == requested_identity:
+            if (
+                self._canonical_run_identity(
+                    run,
+                    default_backend=requested_backend,
+                )
+                == requested_identity
+            ):
                 return run if isinstance(run, dict) else dict(run)
         return None
 
@@ -7478,9 +7486,7 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
 
         self._loaded_notifications = [dict(row) for row in rows]
         selected_id = (
-            self.selected_notification.get("id")
-            if self.selected_notification
-            else None
+            self.selected_notification.get("id") if self.selected_notification else None
         )
         self.selected_notification = next(
             (
@@ -7673,7 +7679,9 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
         if not collapsed:
             return "no reason was recorded"
         if len(collapsed) > cls._MAX_BRIEFING_FAILURE_REASON_CHARS:
-            collapsed = collapsed[: cls._MAX_BRIEFING_FAILURE_REASON_CHARS].rstrip() + "…"
+            collapsed = (
+                collapsed[: cls._MAX_BRIEFING_FAILURE_REASON_CHARS].rstrip() + "…"
+            )
         return collapsed
 
     def _notify_briefing_failure(self, row: Mapping[str, Any]) -> None:
@@ -7767,9 +7775,7 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
         default, so a watchlist with a stored cadence still reads as
         scheduled unless an operator has explicitly turned the flag off.
         """
-        return bool(
-            get_cli_setting("scheduling", "briefing_schedules_enabled", True)
-        )
+        return bool(get_cli_setting("scheduling", "briefing_schedules_enabled", True))
 
     def _briefing_scope_label(self) -> str:
         """The pane's one-line statement of what it is showing, and from where."""
@@ -7808,9 +7814,7 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
         # a bare `str` in a `Static` IS parsed as markup.
         return f"Briefings for {name} · {provenance}"
 
-    async def _load_briefings(
-        self, *, select_briefing_id: int | None = None
-    ) -> None:
+    async def _load_briefings(self, *, select_briefing_id: int | None = None) -> None:
         """Re-read this watchlist's briefings and repaint the pane.
 
         Repaints the PANE, never the screen: `self.refresh(recompose=True)`
@@ -8012,9 +8016,7 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
                     # `_cast_sweep_is_safe`: a load racing a synthesis THIS
                     # screen started must not fail that attempt's own row
                     # out from under it.
-                    await self._fail_interrupted_audio_if_safe(
-                        db, selected_script_id
-                    )
+                    await self._fail_interrupted_audio_if_safe(db, selected_script_id)
                 except Exception as exc:  # noqa: BLE001 - best-effort, not fatal
                     logger.warning(
                         "Zombie-audio sweep failed for script "
@@ -8079,9 +8081,7 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
                         citations.append(
                             {
                                 "item_id": item_id,
-                                "label": Text(
-                                    f"item {item_id} — no longer available"
-                                ),
+                                "label": Text(f"item {item_id} — no longer available"),
                                 "available": False,
                             }
                         )
@@ -8466,9 +8466,7 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
     # --- Exporting a briefing as markdown (spec #2 phase 3, Task 1) --------
 
     @on(ExportBriefingRequested)
-    def handle_export_briefing_requested(
-        self, event: ExportBriefingRequested
-    ) -> None:
+    def handle_export_briefing_requested(self, event: ExportBriefingRequested) -> None:
         """Claim the one-export-at-a-time guard, then dispatch.
 
         `ArtifactsPane.compose` already disables Export for no-selection
@@ -8501,8 +8499,7 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
             return
         if self._briefing_export_in_flight:
             self._notify_watchlists(
-                "A briefing export is already in progress. Nothing else "
-                "was started.",
+                "A briefing export is already in progress. Nothing else was started.",
                 severity="warning",
                 markup=False,
             )
@@ -8576,9 +8573,7 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
                     title="Export Briefing as Markdown",
                     default_file=default_filename,
                 ),
-                callback=lambda path: self._write_briefing_export_file(
-                    path, enriched
-                ),
+                callback=lambda path: self._write_briefing_export_file(path, enriched),
             )
             pushed = True
         except Exception as exc:  # noqa: BLE001 - a worker crash exits the app
@@ -8636,9 +8631,7 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
                     selected_path, require_exists=False
                 )
             except ValueError as exc:
-                logger.warning(
-                    f"Rejected briefing export path: {type(exc).__name__}"
-                )
+                logger.warning(f"Rejected briefing export path: {type(exc).__name__}")
                 self._notify_watchlists(
                     f"Rejected export path: {exc}",
                     severity="warning",
@@ -8657,9 +8650,7 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
             except asyncio.CancelledError:
                 raise
             except Exception as exc:
-                logger.warning(
-                    f"Briefing export write failed: {type(exc).__name__}"
-                )
+                logger.warning(f"Briefing export write failed: {type(exc).__name__}")
                 self._notify_watchlists(
                     f"Error exporting briefing: {type(exc).__name__}",
                     severity="error",
@@ -8915,8 +8906,7 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
             return
         if self._feed_export_in_flight:
             self._notify_watchlists(
-                "A feed export is already in progress. Nothing else was "
-                "started.",
+                "A feed export is already in progress. Nothing else was started.",
                 severity="warning",
                 markup=False,
             )
@@ -8996,7 +8986,9 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
             just the id-stripped reasons, joined, with no trailer, when
             `len(reasons) <= _MAX_INLINE_SKIP_REASONS`.
         """
-        stripped = [cls._SKIP_REASON_ID_PREFIX.sub("", reason, count=1) for reason in reasons]
+        stripped = [
+            cls._SKIP_REASON_ID_PREFIX.sub("", reason, count=1) for reason in reasons
+        ]
         shown = stripped[: cls._MAX_INLINE_SKIP_REASONS]
         remaining = len(stripped) - len(shown)
         text = "; ".join(shown)
@@ -9260,9 +9252,7 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
         self._notify_watchlists(message, severity="warning", markup=False)
 
     @on(StopFeedServerRequested)
-    def handle_stop_feed_server_requested(
-        self, event: StopFeedServerRequested
-    ) -> None:
+    def handle_stop_feed_server_requested(self, event: StopFeedServerRequested) -> None:
         event.stop()
         if not self._feed_server.is_running:
             self._notify_watchlists(
@@ -9555,8 +9545,7 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
             )
             return []
         return [
-            (profile.display_name, str(profile.profile_id))
-            for profile in page.profiles
+            (profile.display_name, str(profile.profile_id)) for profile in page.profiles
         ]
 
     async def _load_briefing_presets(self) -> None:
@@ -9579,9 +9568,7 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
                 rows = await asyncio.to_thread(db.list_briefing_presets)
                 self._loaded_briefing_presets = [dict(row) for row in rows]
             except Exception as exc:  # noqa: BLE001 - reported, not raised
-                logger.warning(
-                    f"Failed to list briefing presets: {type(exc).__name__}"
-                )
+                logger.warning(f"Failed to list briefing presets: {type(exc).__name__}")
                 self._loaded_briefing_presets = []
         if not self.is_mounted:
             return
@@ -9681,8 +9668,7 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
                 )
             else:
                 message = (
-                    "A briefing is already being written. Nothing else was "
-                    "started."
+                    "A briefing is already being written. Nothing else was started."
                 )
             self._notify_watchlists(message, severity="warning", markup=False)
             return
@@ -9879,8 +9865,7 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
                     f"{type(exc).__name__}"
                 )
                 self._notify_watchlists(
-                    "Failed to read this watchlist's briefings. Nothing was "
-                    "started.",
+                    "Failed to read this watchlist's briefings. Nothing was started.",
                     severity="error",
                     markup=False,
                 )
@@ -9922,7 +9907,10 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
                 # found") only appeared after clicking the row, and the
                 # provider had silently defaulted to openai. `markup=False`:
                 # a provider's own error text is untrusted.
-                if str((row or {}).get("status") or "").strip().lower() == STATUS_FAILED:
+                if (
+                    str((row or {}).get("status") or "").strip().lower()
+                    == STATUS_FAILED
+                ):
                     self._notify_briefing_failure(row or {})
             except GenerationInFlightError as exc:
                 # The race `_sweep_and_guard` cannot close: another
@@ -9991,9 +9979,7 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
         """
         return not self._cast_in_flight
 
-    async def _fail_interrupted_scripts_if_safe(
-        self, db: Any, briefing_id: int
-    ) -> int:
+    async def _fail_interrupted_scripts_if_safe(self, db: Any, briefing_id: int) -> int:
         """Zombie recovery for the Artifacts-load path's scripts, off the
         UI thread. Sibling of `_fail_interrupted_briefings_if_safe`, scoped
         to one briefing's scripts rather than one watchlist's briefings.
@@ -10133,7 +10119,9 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
         briefing = self._selected_briefing
         if db is None or briefing is None:
             self._notify_watchlists(
-                "Select a briefing to cast.", severity="warning", markup=False,
+                "Select a briefing to cast.",
+                severity="warning",
+                markup=False,
             )
             return
         if self._briefing_default_preset_is_dangling():
@@ -10251,8 +10239,7 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
                     f"{type(exc).__name__}"
                 )
                 self._notify_watchlists(
-                    "Failed to check this briefing's scripts. Nothing was "
-                    "started.",
+                    "Failed to check this briefing's scripts. Nothing was started.",
                     severity="error",
                     markup=False,
                 )
@@ -10444,8 +10431,7 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
                 f"Audio is already being synthesized for script {running_id}. "
                 "Nothing else was started."
                 if running_id is not None
-                else "Audio is already being synthesized. Nothing else was "
-                "started."
+                else "Audio is already being synthesized. Nothing else was started."
             )
             self._notify_watchlists(message, severity="warning", markup=False)
             return
@@ -10520,12 +10506,10 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
                 )
             except Exception as exc:  # noqa: BLE001 - reported, not raised
                 logger.warning(
-                    f"Audio guard failed for script {script_id}: "
-                    f"{type(exc).__name__}"
+                    f"Audio guard failed for script {script_id}: {type(exc).__name__}"
                 )
                 self._notify_watchlists(
-                    "Failed to check this script's audio. Nothing was "
-                    "started.",
+                    "Failed to check this script's audio. Nothing was started.",
                     severity="error",
                     markup=False,
                 )
@@ -10655,9 +10639,7 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
 
         stop_audio_playback_if_current(Path(str(file_path)))
 
-    def _items_status_kwargs(
-        self, status_filter: str | None = None
-    ) -> dict[str, Any]:
+    def _items_status_kwargs(self, status_filter: str | None = None) -> dict[str, Any]:
         """The status predicate the item PAGE should be fetched with.
 
         Review wave, I2. TASK-2301 made the Reader query ask for every status,
@@ -10686,9 +10668,7 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
         correct in the window between a filter change and its reload landing.
         """
         effective_filter = (
-            self._items_status_filter
-            if status_filter is None
-            else status_filter
+            self._items_status_filter if status_filter is None else status_filter
         )
         if _normalize_items_status_filter(effective_filter) == "unread":
             return {"status": "new"}
@@ -10701,9 +10681,7 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
             scope.kind == "source" and scope.parent_context == "unread"
         )
 
-    def _effective_items_status_filter(
-        self, scope: TreeScope | None = None
-    ) -> str:
+    def _effective_items_status_filter(self, scope: TreeScope | None = None) -> str:
         """Return visible/query filter without mutating the manual choice."""
         candidate = self.tree_scope if scope is None else scope
         if self._scope_forces_unread(candidate):
@@ -10739,9 +10717,7 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
             search.strip().casefold(),
         )
 
-    def _items_scope_query(
-        self, scope: TreeScope | None = None
-    ) -> dict[str, Any]:
+    def _items_scope_query(self, scope: TreeScope | None = None) -> dict[str, Any]:
         """The tree scope as `list_items` kwargs.
 
         `all` passes nothing (every source). A `source` scope collapses to its
@@ -10770,10 +10746,7 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
                 query["unassigned_only"] = True
             elif scope.parent_context == "unread":
                 query["status"] = "new"
-            elif (
-                scope.parent_context == "watchlist"
-                and scope.watchlist_id is not None
-            ):
+            elif scope.parent_context == "watchlist" and scope.watchlist_id is not None:
                 query["watchlist_id"] = scope.watchlist_id
             return query
         if scope.kind == "watchlist" and scope.watchlist_id is not None:
@@ -10792,8 +10765,10 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
         `COALESCE(published_date, created_at) >= ?` string comparison, which
         is exact only between same-shape ISO strings.
         """
-        local_midnight = datetime.now().astimezone().replace(
-            hour=0, minute=0, second=0, microsecond=0
+        local_midnight = (
+            datetime.now()
+            .astimezone()
+            .replace(hour=0, minute=0, second=0, microsecond=0)
         )
         return local_midnight.astimezone(timezone.utc).isoformat()
 
@@ -10867,9 +10842,7 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
         carried = dict(open_item)
         created = effective_date(carried) or datetime.min.replace(tzinfo=timezone.utc)
         for index, row in enumerate(page):
-            row_date = effective_date(row) or datetime.min.replace(
-                tzinfo=timezone.utc
-            )
+            row_date = effective_date(row) or datetime.min.replace(tzinfo=timezone.utc)
             if row_date < created:
                 inserted = [*page[:index], carried, *page[index:]]
                 return inserted if max_items is None else inserted[:max_items]
@@ -10918,9 +10891,7 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
             and query_key == self._items_pending_query_key
         )
 
-    def _supersede_items_query_intent(
-        self, *, scope: TreeScope | None = None
-    ) -> None:
+    def _supersede_items_query_intent(self, *, scope: TreeScope | None = None) -> None:
         """Park old rows while immediately invalidating older query work."""
         if scope is None:
             self._set_pending_tree_scope(None)
@@ -11070,9 +11041,7 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
                     self._selected_content_item = None
                     self._selected_content_page_key = None
                     try:
-                        pane = self.query_one(
-                            "#watchlists-items-pane", ArticleListPane
-                        )
+                        pane = self.query_one("#watchlists-items-pane", ArticleListPane)
                         pane.selected_item = None
                     except NoMatches:
                         pass
@@ -11219,9 +11188,7 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
                         page, page_size=_ITEMS_PAGE_SIZE
                     )
                 elif candidate.pending_items:
-                    candidate, appended = candidate.with_pending_page(
-                        _ITEMS_PAGE_SIZE
-                    )
+                    candidate, appended = candidate.with_pending_page(_ITEMS_PAGE_SIZE)
                 else:
                     break
                 if not appended:
@@ -11242,9 +11209,7 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
                     self._items_snapshot = candidate
                     self._loaded_items = rows
                     self._items_page_index = candidate.page_count - 1
-                    self._items_has_next = candidate.has_next(
-                        self._items_page_index
-                    )
+                    self._items_has_next = candidate.has_next(self._items_page_index)
                     self._items_search_results_authoritative = True
                     self._items_page_loading = False
                     self._push_items_pager_state()
@@ -11967,9 +11932,7 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
         )
 
     @on(NextItemsPageRequested)
-    def handle_next_items_page_requested(
-        self, event: NextItemsPageRequested
-    ) -> None:
+    def handle_next_items_page_requested(self, event: NextItemsPageRequested) -> None:
         event.stop()
         if self._items_page_loading or not self._items_has_next:
             return
@@ -12083,9 +12046,7 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
             )
             notify = getattr(self.app_instance, "notify", None)
             if callable(notify):
-                notify(
-                    "Nothing to save: no source is selected.", severity="warning"
-                )
+                notify("Nothing to save: no source is selected.", severity="warning")
             return
         self.run_worker(
             self._save_noise_selectors(event.source_id, event.text),
@@ -12251,9 +12212,7 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
             group="wl-queue-toggle",
         )
 
-    async def _toggle_briefing_queue(
-        self, db: Any, item_id: Any, queued: bool
-    ) -> None:
+    async def _toggle_briefing_queue(self, db: Any, item_id: Any, queued: bool) -> None:
         """Worker body: write the flag off the UI thread, then patch+repaint.
 
         `asyncio.to_thread` is the load-bearing part -- `run_worker`
@@ -12339,9 +12298,7 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
                 inspector = self.query_one(
                     "#watchlists-entity-inspector", InspectorPane
                 )
-                button = inspector.query_one(
-                    "#inspector-queue-briefing-button", Button
-                )
+                button = inspector.query_one("#inspector-queue-briefing-button", Button)
             except NoMatches:
                 return
             button.label = (
@@ -12366,9 +12323,7 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
         row_key: Any = None
         for item in candidates:
             identity = id(item)
-            if identity in visited or not self._item_identity_matches(
-                item, item_id
-            ):
+            if identity in visited or not self._item_identity_matches(item, item_id):
                 continue
             visited.add(identity)
             item.update(changes)
@@ -12627,7 +12582,12 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
             self._dispatch_item_status(item_id, _ItemStatusIntent(status="ignored"))
             return
         self._pending_delete_entity = dict(entity)
-        title = entity.get("name") or entity.get("source_title") or entity.get("title") or "this item"
+        title = (
+            entity.get("name")
+            or entity.get("source_title")
+            or entity.get("title")
+            or "this item"
+        )
         self.app.push_screen(
             ConfirmDeleteDialog(title),
             callback=self._on_delete_confirmed,
@@ -13223,7 +13183,7 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
                 if candidate.get("id") == current_id:
                     start = position
                     break
-        for candidate in items[start + 1:]:
+        for candidate in items[start + 1 :]:
             if str(candidate.get("status") or "").strip().lower() == "new":
                 pane.select_and_reveal(candidate)
                 return
@@ -13258,13 +13218,15 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
             return
         self._last_mark_all_read_batch = [int(i) for i in ids]
         for item_id in self._last_mark_all_read_batch:
-            self._patch_committed_items_after_mutation(
-                item_id, status="reviewed"
-            )
+            self._patch_committed_items_after_mutation(item_id, status="reviewed")
         self._repaint_visible_status_cells()
         committed = self._items_snapshot
         refreshed = await self._replace_items_snapshot(reason="refresh")
-        if not refreshed and committed is not None and self._items_snapshot is committed:
+        if (
+            not refreshed
+            and committed is not None
+            and self._items_snapshot is committed
+        ):
             closed = committed.close_to_cached_pages()
             self._items_snapshot = closed
             self._items_snapshot_count = closed.snapshot_count

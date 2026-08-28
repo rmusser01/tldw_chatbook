@@ -139,7 +139,14 @@ class RunsPane(RecomposeCaptureGuard, Vertical):
         selected_key = str(self.selected_run.get("id")) if self.selected_run else None
         table = DataTable(id="runs-table")
         table.add_columns(
-            "Source / Job", "Status", "Started", "Duration", "Found", "Processed", "Filtered", "Errors"
+            "Source / Job",
+            "Status",
+            "Started",
+            "Duration",
+            "Found",
+            "Processed",
+            "Filtered",
+            "Errors",
         )
         for run in self.runs:
             row_key = str(run.get("id") or id(run))
@@ -289,8 +296,7 @@ class RunsPane(RecomposeCaptureGuard, Vertical):
         if watchlists:
             identity += f"Watchlists: {', '.join(watchlists)}\n"
         base = (
-            identity
-            + f"Status: {run.get('status', '-')}\n"
+            identity + f"Status: {run.get('status', '-')}\n"
             f"Started: {humane_timestamp(run.get('started_at'))}\n"
             f"Duration: {run.get('duration', '-')}\n"
             f"Found: {run.get('found_count', 0)} | "

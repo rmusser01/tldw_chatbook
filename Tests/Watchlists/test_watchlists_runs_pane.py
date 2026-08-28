@@ -459,9 +459,7 @@ def test_stats_text_shows_the_skipped_count_only_when_a_check_was_skipped():
 
     # No skip: the segment is absent entirely -- both for a new run with a
     # zero-filled counter and for an old row with no `skipped` key at all.
-    assert "skipped" not in RunsPane._stats_text(
-        _disposition_run(changed=2, skipped=0)
-    )
+    assert "skipped" not in RunsPane._stats_text(_disposition_run(changed=2, skipped=0))
     assert "skipped" not in RunsPane._stats_text(_disposition_run(changed=2))
 
 
@@ -750,9 +748,7 @@ def test_the_detail_block_lists_every_watchlist_not_just_the_first():
         }
     )
 
-    assert text.startswith(
-        "Source: Hacker News\nWatchlists: Morning read, Security\n"
-    )
+    assert text.startswith("Source: Hacker News\nWatchlists: Morning read, Security\n")
 
 
 @pytest.mark.asyncio
