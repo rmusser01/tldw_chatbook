@@ -9713,3 +9713,23 @@ Two things this cost, worth knowing before writing the same probe:
   fixture's stub reds the ratchet naming the function and the helper it lacks;
   removing one row from the mapping reds the derivation naming the controller
   and where it is built. A guard nobody has watched fail is not evidence.
+
+---
+
+## Process-local absence is not durable orphan evidence (TASK-22863, 2026-08-27)
+
+A single-coordinator recovery test passed after it treated a missing in-memory
+task as an orphaned durable receipt. Independent review then opened two SQLite
+connections and two coordinators over one real database: while the winner was
+still performing a briefing or source check, the loser saw no local task and
+incorrectly changed the winner's active row to failed. An earlier version of
+the briefing test even codified a second provider call as the expected recovery
+behavior.
+
+The repaired contract uses the coordinator's captured startup boundary as the
+only evidence that an active receipt predates the current process. Normal
+duplicate submission follows an ownerless incumbent without adopting,
+terminalizing, or replaying it. For durable claim ownership, test with distinct
+database connections and coordinators, capture the loser's startup boundary
+before the winner creates its row, block the winner after one observable side
+effect, and prove the loser cannot mutate the row or repeat the effect.
