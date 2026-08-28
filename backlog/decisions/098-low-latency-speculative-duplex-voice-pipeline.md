@@ -83,9 +83,13 @@ preference.
    cleanup exceeds two seconds, the remainder of that logical turn enters a serialized
    conservative state: wait for two seconds of stable silence and zero obsolete
    attempts, allow only one active request, and still fence it immediately on resumed
-   speech. Only turn promotion/cancellation or hands-free/session teardown resets the
-   state. These bounds limit cost and uncooperative provider work without weakening
-   immediate audio cancellation.
+   speech. At five seconds after cancellation, force-close the attempt-owned transport;
+   500 ms later, a still-running task is detached behind its epoch fence and the logical
+   turn terminates as a recoverable draft failure. One such orphan quarantines all later
+   hands-free provider dispatch in that session until it exits or the provider session
+   is rebuilt. It cannot publish state, audio, receipts, or captured content. These
+   rules give the turn a terminal outcome, cap orphan count at one, and limit cost and
+   uncooperative work without weakening immediate audio cancellation.
 
 7. **Speak only current-attempt safe prose.** The phrase sequencer releases punctuation-
    terminated prose first and uses a bounded word/time fallback only after resolving
@@ -132,13 +136,18 @@ preference.
     new one. Audible stop targets 150 ms p95. If speech output fails, text may commit only
     after generation finishes without a newer speech/revision event.
 
-    Transcript, render, and control events are serialized. Before promotion the
-    transcript engine seals through the last admitted audio timestamp. A material
-    revision produced before the terminal render boundary fences and restarts the
-    attempt even when delivered after the playback callback; promotion closes the
-    revision boundary. Manual barge-in fences and continues the same logical turn,
-    including in half duplex. Explicit Stop/Esc/mic-toggle/hands-free exit discards the
-    provisional turn.
+    Transcript, render, and control events are serialized. Every input frame is stamped
+    before DSP with an ordered sequence and the output render clock's monotonic time.
+    Before promotion, a full-duplex engine must advance its input watermark beyond the
+    terminal render boundary and drain AEC/VAD through every earlier sequence. Any
+    qualifying speech extends the turn. Only then may STT seal every revision derived
+    from downstream-acknowledged admitted audio. The combined drain has a 500 ms
+    deadline; timeout, sequence gaps, device reset, or failed acknowledgement prevents
+    promotion, preserves an editable draft, and suspends speculation until the duplex
+    engine is rebuilt healthy. Intentional half duplex has no eligible playback-period
+    capture frames, so render completion closes that gated interval and manual barge-in
+    is its only same-turn interruption path. Explicit Stop/Esc/mic-toggle/hands-free
+    exit discards the provisional turn.
 
 12. **Separate new pipeline settings from legacy and Realtime compatibility keys.**
     `dictation.response_eagerness_ms` belongs only to the speculative pipeline.
@@ -235,6 +244,10 @@ with an honest durability label.
   exact unseen-mark acknowledgement even though its provider work was pre-acceptance.
 - Temporary chats run speculative voice without durable capture and never synthesize a
   posthoc trace when later saved.
+- A provider task that survives force-close cannot deadlock a logical turn or accumulate:
+  the turn fails to a draft and one fenced orphan quarantines later session dispatch.
+- Promotion requires an end-to-end capture/AEC/VAD/STT watermark through the render
+  boundary; an unknown watermark fails closed rather than guessing turn ownership.
 - AEC-unhealthy routes remain functional but half duplex. Safe degradation is a passing
   capability result rather than a hidden failure.
 - Implementation requires several dependency-ordered Backlog tasks; each task must be

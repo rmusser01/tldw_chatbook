@@ -276,9 +276,22 @@ attempt exits. If cooperative cleanup exceeds two seconds, the coordinator enter
 `serialized_conservative` for the remainder of the logical turn: it waits for two
 seconds of stable silence and zero obsolete attempts, dispatches exactly one active
 attempt, and still fences that attempt immediately if speech resumes. It never overlaps
-a replacement with cleanup in this state. Only successful turn promotion, explicit
-turn cancellation, hands-free exit, or session teardown resets the mode for a later
-logical turn.
+a replacement with cleanup in this state.
+
+Every attempt owns a force-closable provider transport. Five seconds after the original
+cancellation request, the coordinator force-closes that transport. If the task has not
+exited after a further 500 ms, it is detached into a session-scoped orphan reaper behind
+its irreversible epoch fence. The coordinator then terminates the provisional logical
+turn as a recoverable failure, preserves the latest transcript as an editable voice
+draft, and reports that provider cleanup is stuck. While that orphan exists, the
+session admits no further speculative or ordinary provider dispatch from hands-free
+voice; the user may leave hands-free, change/rebuild the provider session, or retry the
+draft after the orphan exits. The reaper retains no transcript or response body and an
+orphan cannot publish callbacks, receipts, capture rows, or audio. Because dispatch is
+blocked before another attempt starts, at most one detached orphan exists per session.
+Successful turn promotion, explicit turn cancellation, this terminal cleanup failure,
+hands-free exit, or session teardown ends the current logical turn; the session-level
+orphan quarantine remains until the orphan exits or the provider session is rebuilt.
 
 The successful boundary is the estimated time the winning attempt's final audible
 sample reaches the output device. Speech whose capture timestamp begins no later than
@@ -288,12 +301,32 @@ failure waits for text generation to finish, commits the completed textual respo
 no newer speech exists, reports the speech failure, and reopens admission.
 
 All transcript, render, and control events enter one serialized coordinator mailbox.
-Before promotion, the coordinator asks the transcript engine to seal revisions through
-the last admitted audio timestamp and drains every already-produced material revision.
-A material correction produced before the terminal render boundary wins the race,
-fences the attempt, and restarts it even if its callback arrived after the playback
-terminal callback. Promotion closes that revision boundary; revisions produced after
-the seal cannot mutate the committed turn.
+The duplex input callback stamps each captured frame with a strictly increasing sequence
+and a timestamp from the same monotonic clock as the output render timeline, before AEC
+or VAD work begins. After playback reports terminal render boundary `R`, promotion first
+requests `drain_capture_through(R)`. The full-duplex engine must observe the first
+ordered input callback or explicit device-clock watermark later than `R`, drain AEC and
+VAD through the greatest captured sequence at or before `R`, and report every detected
+speech span from that range. A detected span whose start is at or before `R` is admitted
+to the existing logical turn and fences the attempt.
+
+Only after that capture/VAD acknowledgement reports no qualifying speech does the
+coordinator ask the transcript engine to seal through the last downstream-acknowledged
+admitted sequence and drain all material revisions derived from it. A material
+correction derived from audio at or before `R` wins the race, fences the attempt, and
+restarts it even if its callback arrived after the playback terminal callback.
+Promotion closes both causal watermarks; later callbacks cannot mutate the committed
+turn. In intentional half duplex there are no eligible capture frames during playback,
+so the playback terminal acknowledgement closes that gated interval and manual
+barge-in is the only same-turn interruption path.
+
+The combined capture, VAD, and transcript seal has a 500 ms deadline after `R`. Timeout,
+device reset, a skipped sequence, or a failed downstream acknowledgement fails closed:
+the pair is not promoted, the latest transcript becomes an editable voice draft, status
+reports capture synchronization failure, and speculative dispatch remains suspended
+until the duplex engine is rebuilt healthy. This may sacrifice an already-heard reply,
+but it never misclassifies pre-boundary speech as a new turn or commits a pair whose
+causal input boundary is unknown.
 
 A manual **barge-in** action while generating or speaking follows the same
 fence-and-continue path as admitted speech and reopens listening for the same logical
@@ -492,8 +525,9 @@ underruns, and device resets.
   stale jobs, coverage timestamps, and backend failure.
 - Coordinator tests use an injected clock for silence deadlines, freshness gating,
   every cancellation race, correction coalescing, attempt epochs, restart governor,
-  cleanup cap, serialized-conservative entry/dispatch/reset, tool barrier, manual
-  barge-in versus explicit exit, terminal outcomes, and timestamp turn boundaries.
+  cleanup cap, force-close/detach/quarantine/recovery, serialized-conservative
+  entry/dispatch/reset, tool barrier, manual barge-in versus explicit exit, terminal
+  outcomes, and timestamp turn boundaries.
 - Phrase tests cover punctuation, bounded fallback, ordering, cancellation, incomplete
   Markdown, links, fenced code, abbreviations, and synthesis failure.
 - Persistence tests prove cancelled attempts create no content-bearing durable owner,
@@ -503,7 +537,8 @@ underruns, and device resets.
   navigation-racing acknowledgement behavior, and temporary-chat no-capture behavior.
 - Integration uses a deterministic fake duplex transport with streaming and batch STT,
   cancellable and cancellation-resistant LLMs, streaming and file-producing TTS,
-  health transitions, and device changes.
+  ordered capture/render clocks, delayed VAD/STT delivery, seal timeout, skipped
+  sequences, health transitions, and device changes.
 - Regression tests prove ordinary dictation, manual message speech, and the Realtime
   engine remain unchanged.
 
@@ -554,8 +589,10 @@ independent acceptance criteria and targeted verification.
 | Winning capture conflicts with ADR-097 reservation | Explicit `provisional_voice_promoted` post-dispatch provenance and ADR-098 amendment |
 | Legacy settings retain old behavior | New pipeline-specific AEC/eagerness keys; old acoustic key remains Realtime-owned and old delay remains legacy-only |
 | Temporary chat has no durable capture lineage | Explicit capture-unavailable status; no retroactive trace invention on Save |
-| Promotion races a late STT correction | Serialized mailbox plus transcript seal through the last admitted audio timestamp |
+| Promotion races queued speech or a late STT correction | Serialized mailbox plus shared-clock capture/AEC/VAD/STT watermarks through the render boundary |
 | Winning promotion bypasses ADR-094 attention | Existing terminalization transaction mints the exact receipt and unseen mark |
+| Uncooperative cancellation never exits | Force-close deadline, terminal draft failure, one fenced orphan, and session dispatch quarantine |
+| Pre-boundary speech remains queued behind playback completion | Shared-clock capture sequence watermark plus AEC/VAD/STT drain before promotion |
 | Audio device switches invalidate AEC timing | Fence playback, rebuild one clock domain, keep transcript, regenerate |
 | Aggressive mode increases usage | Usage split, duplicated-STT duration, restart governor, Settings disclosure |
 | Native dependency becomes unmaintained | Narrow ABI, reproducible wheels, SBOM, license/update policy, capability fallback |
