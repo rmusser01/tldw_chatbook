@@ -507,9 +507,11 @@ git commit -m "fix: report and deduplicate Watchlists reruns"
 
 Run only affected Watchlists tests, not the full suite. The broad exploratory
 selection previously used `-k "runs or run_detail or rerun or check_now or
-launch_run"` is not the gate: it also selects eight unchanged unmounted-route
-deep-link tests that fail with the baseline `NoActiveAppError`. The exact
-changed Task-4 destination-shell nodes below are the gate.
+launch_run"` is not the gate: it reports 1 failed, 139 passed, 120 deselected,
+and 2 warnings; the sole failure is
+`test_leaving_runs_clears_pending_run_deep_link`, an unchanged unmounted
+reactive `NoActiveAppError` baseline. The exact changed Task-4
+destination-shell nodes below are the gate.
 
 ```bash
 ../../.venv/bin/python -m pytest -q \
