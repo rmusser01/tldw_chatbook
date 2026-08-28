@@ -146,9 +146,12 @@ sync/export, Settings, and Textual paths. Exact post-rebase Delivery 6
 verification passed 1,760 tests in 339.21 seconds, the focused new contract
 passed 41 tests in 2.61 seconds, and 23 exact counterfactual node IDs expanded
 to 29 passing cases across nine security/correctness guard families;
-TASK-19900.6 records the full list. Ruff, compileall, CSS bundle sync,
+TASK-19900.6 records the full list. After the subsequent required `dev`
+rebases, the focused documentation/UI/integration scope passed 45 tests and
+the affected Virtual CLI/Console approval scope plus changed bridge/schema
+nodes passed 23 tests. Ruff, compileall, CSS bundle sync,
 screen-size ratchet, production
-diagnostic inventory (541 owners, 1,260 TASK-492 calls, 7,396 TASK-494 calls,
+diagnostic inventory (541 owners, 1,262 TASK-492 calls, 7,396 TASK-494 calls,
 and 8 sink files), backlog-ID, and diff checks passed. An explicitly
 isolated real-app walkthrough proved Direct/RAG disclosure, all four policy
 states, exact manual-search draft preservation, atomic first persistence,
@@ -162,7 +165,10 @@ argument assertions. TASK-19900.6 records the red/green and focused evidence.
 The final `dev` rebase also inherited two Virtual CLI callback warnings that
 could persist raw exception text; canary-based regression coverage now proves
 they emit exception types only, and the reviewed diagnostic inventory includes
-that new two-call owner.
+that new two-call owner. The later rebase onto PR #2174 added two fixed-message
+raw-shell lifecycle diagnostics and only reformatted two existing diagnostic
+statements; statement-level review confirmed that none interpolate private
+content before the inventory was regenerated.
 
 TASK-19900.1 through TASK-19900.6 are Done with checked acceptance criteria.
 The owner approved the integrated targeted scope and chose not to run the full
