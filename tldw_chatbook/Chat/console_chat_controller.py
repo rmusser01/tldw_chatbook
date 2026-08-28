@@ -309,6 +309,7 @@ from tldw_chatbook.Chat.console_provider_gateway import (
 from tldw_chatbook.Chat.provider_readiness import provider_config_key
 from tldw_chatbook.Chat.provider_usage import ProviderUsage
 from tldw_chatbook.model_capabilities import (
+    anthropic_model_rejects_fixed_thinking_budget,
     is_vision_capable,
     moonshot_model_supports_reasoning_effort,
     moonshot_model_returns_reasoning_content,
@@ -482,8 +483,10 @@ _CONSOLE_PROVIDER_SPECIFIC_SETTINGS_FIELDS = frozenset(
         "thinking_budget_tokens",
     }
 )
-_CONSOLE_OPENAI_REASONING_PROVIDER_KEYS = frozenset({"openai"})
-_CONSOLE_ANTHROPIC_THINKING_PROVIDER_KEYS = frozenset({"anthropic"})
+_CONSOLE_DIRECT_PROVIDER_SETTINGS_FIELDS = {
+    "openai": frozenset({"reasoning_effort", "reasoning_summary", "verbosity"}),
+    "qwencloud": frozenset({"reasoning_effort"}),
+}
 _CONSOLE_LOCAL_THINKING_BUDGET_EXECUTION_KEYS = frozenset(
     {
         "llama_cpp",
@@ -508,10 +511,11 @@ def _supported_console_settings_fields(
         supported.add("reasoning_effort")
     if provider_key == "zai" and zai_model_supports_reasoning_effort(model):
         supported.add("reasoning_effort")
-    if provider_key in _CONSOLE_OPENAI_REASONING_PROVIDER_KEYS:
-        supported.update({"reasoning_effort", "reasoning_summary", "verbosity"})
-    if provider_key in _CONSOLE_ANTHROPIC_THINKING_PROVIDER_KEYS:
-        supported.update({"thinking_effort", "thinking_budget_tokens"})
+    supported.update(_CONSOLE_DIRECT_PROVIDER_SETTINGS_FIELDS.get(provider_key, ()))
+    if provider_key == "anthropic":
+        supported.add("thinking_effort")
+        if not anthropic_model_rejects_fixed_thinking_budget(model):
+            supported.add("thinking_budget_tokens")
 
     identity = resolve_console_provider_identity(
         provider_key,
@@ -6976,6 +6980,26 @@ class ConsoleChatController:
             else state.endpoint_draft
         )
 
+        quick_surface = exposed_fields == QUICK_MODEL_DEFAULT_FIELDS
+        inherited_dirty_fields = (
+            frozenset(
+                field.name
+                for field in source_fields
+                if field.dirty
+                and field.profile_override is None
+                and field.name in exposed_fields
+            )
+            if not quick_surface
+            else frozenset()
+        )
+        if inherited_dirty_fields:
+            target_defaults = build_target_default_console_session_settings(
+                app_config,
+                target_provider,
+                target_model,
+                excluded_model_profile_fields=inherited_dirty_fields,
+            )
+
         supported_fields = _supported_console_settings_fields(
             target_provider,
             target_model,
@@ -6986,7 +7010,6 @@ class ConsoleChatController:
             target_provider,
             target_model,
         )
-        quick_surface = exposed_fields == QUICK_MODEL_DEFAULT_FIELDS
         rebased_fields: dict[str, ConsoleSettingsFieldDraft] = {}
         for name in _CONSOLE_SETTINGS_FIELD_ORDER:
             if name not in exposed_supported_fields:
@@ -7020,11 +7043,21 @@ class ConsoleChatController:
                 continue
             if quick_surface and field.effective_value is None:
                 continue
-            dirty_values[field.name] = field.effective_value
+            inherits_target_default = (
+                not quick_surface and field.profile_override is None
+            )
+            effective_value = (
+                getattr(target_defaults, field.name)
+                if inherits_target_default
+                else field.effective_value
+            )
+            if not inherits_target_default:
+                dirty_values[field.name] = effective_value
             rebased_fields[field.name] = replace(
                 field,
+                effective_value=effective_value,
                 profile_override=(
-                    field.effective_value if quick_surface else field.profile_override
+                    effective_value if quick_surface else field.profile_override
                 ),
                 provenance=(
                     ConsoleSettingsFieldProvenance.CARRIED

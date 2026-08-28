@@ -231,6 +231,24 @@ def test_contract_value_objects_are_frozen_slotted_and_transfer_is_not_submissio
     assert "textual" not in inspect.getsource(settings_apply).lower()
 
 
+def test_submission_copies_a_mutable_default_field_mask() -> None:
+    mutable_mask = {"temperature"}
+    draft = _state(ConsoleSessionSettings(provider="openai", model="gpt-test"))
+    submission = ConsoleSettingsSubmission(
+        submission_id="submission-a",
+        action=ConsoleSettingsAction.SAVE_MODEL_DEFAULT,
+        origin=ConsoleSettingsOrigin("session-a", None, 0),
+        draft=draft,
+        user_display_name_override=None,
+        default_field_mask=mutable_mask,
+    )
+
+    mutable_mask.add("streaming")
+
+    assert submission.default_field_mask == frozenset({"temperature"})
+    assert isinstance(submission.default_field_mask, frozenset)
+
+
 def test_rebase_uses_target_defaults_keeps_supported_dirty_fields_and_clears_others() -> (
     None
 ):
@@ -397,6 +415,74 @@ def test_rebase_full_keeps_inherited_profile_controls_blank() -> None:
     assert fields["streaming"].profile_override is None
 
 
+def test_rebase_full_inherit_uses_unseen_target_default_instead_of_cached_value() -> (
+    None
+):
+    source = _state(
+        ConsoleSessionSettings(provider="openai", model="model-a", top_p=0.21),
+        _field(
+            "top_p",
+            0.21,
+            profile_override=None,
+            provenance=ConsoleSettingsFieldProvenance.INHERITED,
+            dirty=True,
+        ),
+    )
+
+    rebased = _rebase(
+        source,
+        provider="anthropic",
+        model="model-b",
+        app_config={"console": {"provider_defaults": {"anthropic": {"top_p": 0.83}}}},
+    )
+    field = {draft.name: draft for draft in rebased.field_drafts}["top_p"]
+
+    assert rebased.settings.top_p == 0.83
+    assert field.effective_value == 0.83
+    assert field.profile_override is None
+    assert field.provenance is ConsoleSettingsFieldProvenance.CARRIED
+    assert field.dirty is True
+
+
+def test_rebase_full_inherit_same_target_uses_refreshed_lower_precedence_default() -> (
+    None
+):
+    source = _state(
+        ConsoleSessionSettings(provider="openai", model="model-a", temperature=0.21),
+        _field(
+            "temperature",
+            0.21,
+            profile_override=None,
+            provenance=ConsoleSettingsFieldProvenance.INHERITED,
+            dirty=True,
+        ),
+    )
+    refreshed_config = {
+        "chat_defaults": {"temperature": 0.51},
+        "console": {"provider_defaults": {"openai": {"temperature": 0.83}}},
+        "api_settings": {
+            "openai": {
+                "temperature": 0.41,
+                "model_defaults": {"model-a": {"temperature": 0.31}},
+            }
+        },
+    }
+
+    rebased = _rebase(
+        source,
+        provider="openai",
+        model="model-a",
+        app_config=refreshed_config,
+    )
+    field = {draft.name: draft for draft in rebased.field_drafts}["temperature"]
+
+    assert rebased.settings.temperature == 0.83
+    assert field.effective_value == 0.83
+    assert field.profile_override is None
+    assert field.provenance is ConsoleSettingsFieldProvenance.INHERITED
+    assert field.dirty is True
+
+
 @pytest.mark.parametrize(
     (
         "field_name",
@@ -494,6 +580,10 @@ def test_rebase_normalizes_exact_profile_overrides(
         ("local_mlx_lm", "local-model", "reasoning_effort", True),
         ("local_mlx_lm", "local-model", "thinking_budget_tokens", False),
         ("aphrodite", "local-model", "reasoning_effort", False),
+        ("anthropic", "claude-sonnet-4-5", "thinking_budget_tokens", True),
+        ("anthropic", "claude-opus-5", "thinking_budget_tokens", False),
+        ("anthropic", "claude-opus-5", "thinking_effort", True),
+        ("qwencloud", "qwen3.8-max", "reasoning_effort", True),
     ),
 )
 def test_rebase_uses_model_and_local_wire_capabilities(

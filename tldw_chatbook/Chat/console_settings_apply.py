@@ -113,6 +113,12 @@ class ConsoleSettingsSubmission:
     user_display_name_override: str | None
     default_field_mask: frozenset[str]
 
+    def __post_init__(self) -> None:
+        """Detach the immutable submission from a caller-owned mask."""
+        object.__setattr__(
+            self, "default_field_mask", frozenset(self.default_field_mask)
+        )
+
 
 @dataclass(frozen=True, slots=True)
 class ConsoleSettingsLiveCommit:

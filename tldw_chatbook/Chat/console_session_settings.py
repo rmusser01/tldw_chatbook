@@ -415,6 +415,8 @@ def build_default_console_session_settings(
     app_config: Mapping[str, object],
     provider: str | None = None,
     model: str | None = None,
+    *,
+    excluded_model_profile_fields: frozenset[str] = frozenset(),
 ) -> ConsoleSessionSettings:
     """Build default Console settings from chat defaults and provider config."""
     chat_defaults = _chat_defaults_with_streaming_compat(
@@ -429,6 +431,12 @@ def build_default_console_session_settings(
     provider_settings = _provider_settings(app_config, configured_provider)
     configured_model = effective.model
     model_profile = _model_default_profile(provider_settings, configured_model)
+    if excluded_model_profile_fields:
+        model_profile = {
+            name: value
+            for name, value in model_profile.items()
+            if name not in excluded_model_profile_fields
+        }
     # TASK-342: [console.provider_defaults.<provider>] holds ONLY values the
     # Console's Save-as-default wrote, so it outranks everything except a
     # model profile. chat_defaults stays ahead of raw [api_settings.*]
@@ -479,6 +487,8 @@ def default_console_session_settings(
     app_config: Mapping[str, object],
     provider: str | None = None,
     model: str | None = None,
+    *,
+    excluded_model_profile_fields: frozenset[str] = frozenset(),
 ) -> ConsoleSessionSettings:
     """The default settings snapshot a NEW Console session starts from.
 
@@ -502,7 +512,12 @@ def default_console_session_settings(
     Returns:
         The default settings for a new session.
     """
-    settings = build_default_console_session_settings(app_config, provider, model)
+    settings = build_default_console_session_settings(
+        app_config,
+        provider,
+        model,
+        excluded_model_profile_fields=excluded_model_profile_fields,
+    )
     provider_key = provider_config_key(settings.provider)
     return replace(
         settings,
@@ -518,6 +533,8 @@ def build_target_default_console_session_settings(
     app_config: Mapping[str, object],
     provider: str,
     model: str | None,
+    *,
+    excluded_model_profile_fields: frozenset[str] = frozenset(),
 ) -> ConsoleSessionSettings:
     """Return fresh effective defaults for one provider and literal model ID.
 
@@ -534,7 +551,14 @@ def build_target_default_console_session_settings(
         A fresh settings value resolved for the exact target.
     """
 
-    return replace(default_console_session_settings(app_config, provider, model))
+    return replace(
+        default_console_session_settings(
+            app_config,
+            provider,
+            model,
+            excluded_model_profile_fields=excluded_model_profile_fields,
+        )
+    )
 
 
 def normalized_console_model_profile_overrides(
