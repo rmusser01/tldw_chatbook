@@ -29,6 +29,7 @@ from tldw_chatbook.Agents.builtin_tool_gate import (
     tool_gate_breadcrumb,
 )
 from tldw_chatbook.Agents.local_tool_provider import LocalToolProvider
+from tldw_chatbook.Agents.virtual_cli_provider import VirtualCliProvider
 from tldw_chatbook.config import (
     coerce_bool_setting,
     get_cli_setting,
@@ -1766,11 +1767,15 @@ class MCPWorkbench(Container):
         ):
             return []
         try:
-            provider = LocalToolProvider(
-                workspace_root=resolve_server_workspace_root()
+            root = resolve_server_workspace_root()
+            providers = (
+                LocalToolProvider(workspace_root=root),
+                VirtualCliProvider(workspace_root=root),
             )
             return [
-                replace(hub, executable=False) for hub in provider.hub_tools()
+                replace(hub, executable=False)
+                for provider in providers
+                for hub in provider.hub_tools()
             ]
         except Exception as exc:  # noqa: BLE001 -- catalog view must never break the hub
             logger.warning(f"MCP local agent tool catalog unavailable: {exc}")

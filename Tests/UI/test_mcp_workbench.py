@@ -8820,6 +8820,41 @@ async def test_tools_catalog_includes_local_agent_tools_as_own_group(monkeypatch
 
 
 @pytest.mark.asyncio
+async def test_tools_catalog_lists_virtual_cli_as_an_independent_group(monkeypatch):
+    _enable_local_tools(monkeypatch)
+    app = WorkbenchApp()
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        await app.workers.wait_for_complete()
+        workbench = app.query_one(MCPWorkbench)
+        await workbench._mount_deferred_canvases()
+        await workbench._sync_children()
+
+        virtual = [
+            tool
+            for tool in workbench._last_hub_tools
+            if tool.server_key == "local:__virtual_cli__"
+        ]
+        assert {tool.name for tool in virtual} == {
+            "ls",
+            "cat",
+            "grep",
+            "find",
+            "stat",
+            "git_status",
+            "git_diff",
+            "git_log",
+            "git_blame",
+            "git_branches",
+        }
+        assert {tool.server_label for tool in virtual} == {
+            "Virtual CLI (read-only)"
+        }
+        assert all("independent" in tool.description.lower() for tool in virtual)
+        assert all(tool.executable is False for tool in virtual)
+
+
+@pytest.mark.asyncio
 async def test_local_agent_group_absent_when_master_flag_explicitly_off():
     app = WorkbenchApp()
     async with app.run_test() as pilot:
