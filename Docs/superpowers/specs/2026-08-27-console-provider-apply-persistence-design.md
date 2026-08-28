@@ -1,6 +1,6 @@
-# Console Provider Apply and Conversation Persistence Design
+# Console Provider Apply, Conversation Persistence, and Defaults Design
 
-**Status:** Draft — awaiting user review
+**Status:** Draft — design approved; written-spec review pending
 **Date:** 2026-08-27
 **Task:** TASK-22515
 **ADR:** ADR-095
@@ -9,10 +9,13 @@
 
 Make Apply in the Console Provider/Model popover reliably close the popover,
 update the exact conversation immediately, and preserve the conversation's safe
-generation settings across restart. Give mouse and keyboard activation the same
-semantic path. Keep compaction mode in the quick surface and apply it through its
-existing independent persistence owner. Use the same conversation-settings Apply
-orchestration from the full Console Settings modal.
+generation settings across restart. Add explicit per-model and new-chat default
+actions that reuse the existing model-profile and configuration owners. Every
+eligible blank new chat uses the saved global provider/model and that exact model's
+profile in the running app and after reboot. Give mouse and keyboard activation the
+same semantic path. Keep compaction mode conversation-only through its existing
+independent persistence owner. Use the same conversation-settings Apply orchestration
+from the full Console Settings modal.
 
 ## User-Visible Contract
 
@@ -33,6 +36,19 @@ Apply means **apply to this conversation now**.
   closes, the Console keeps an explicit per-component failure visible until the
   current value is saved successfully, superseded by a newer Apply, or the session
   closes.
+- `Save as model default` applies the draft to the originating conversation, then
+  saves only the submitting surface's model-profile fields for the exact normalized
+  provider and literal model ID.
+- `Make default for new chats` performs the same live Apply and model-profile save,
+  then changes the global provider/model used by every eligible blank new chat in
+  the current process and after reboot.
+- The two default actions close after the live conversation commit. A later config
+  failure remains explicit and retryable without pretending that the live Apply
+  failed.
+- Ordinary `Apply to this chat` never changes a model profile, global default, or
+  endpoint.
+- Compaction is never part of either model or global defaults. It remains applied
+  only to the originating conversation.
 
 Apply includes provider, model, temperature, streaming, and compaction mode.
 Compaction keeps its existing context-policy owner and storage; it is not serialized
@@ -44,7 +60,9 @@ it edits.
 ## Selected Architecture
 
 The existing Console session remains the live owner. The existing conversation row
-becomes the durable owner of an allowlisted generation-settings snapshot.
+becomes the durable owner of an allowlisted generation-settings snapshot. Existing
+configuration sections remain the only owners of model profiles, the global
+provider/model, and provider endpoints.
 
 One conversation-settings Apply orchestrator accepts a typed intent containing:
 
@@ -54,6 +72,11 @@ One conversation-settings Apply orchestrator accepts a typed intent containing:
 - the submitted compaction mode or full-modal context-policy overrides;
 - the exact set of fields exposed by that surface;
 - a full-modal endpoint only when its draft is bound to the target provider.
+- a discriminated action: `apply_chat`, `save_model_default`, or
+  `make_new_chat_default`;
+- a field mask for the model-profile mutation when the action saves defaults;
+- a full-modal endpoint-save flag only when the endpoint was explicitly edited and
+  the user left the scoped checkbox enabled.
 
 The orchestrator validates that the origin still exists and still has the captured
 conversation identity. It delegates provider rebasing to one controller seam and
@@ -67,6 +90,12 @@ reports `Chat closed; nothing applied`.
 The quick popover and full modal both call this orchestration. No parallel
 quick-settings service, new database table, combined persistence abstraction, or
 cross-owner transaction is introduced.
+
+Default configuration mutation begins only after the exact-origin live commit
+succeeds. It runs as one locked, field-masked patch against the freshly reread config,
+then publishes the new runtime configuration. Conversation metadata and context
+policy keep their independent owners and outcomes. A bounded app-level default
+durability record is separate from each session's conversation durability record.
 
 ## Durable Data
 
@@ -117,24 +146,66 @@ Compaction remains a sparse `ConsoleContextPolicyOverrides` value in
 field from the quick surface, preserving the other context-policy overrides. Its
 existing first-persistence and resume paths remain authoritative.
 
-## Provider Rebase
+### Existing configuration owners
 
-A provider change is not implemented with a field-only `replace(...)`. The session
-controller owns this operation for both settings surfaces.
+The default actions reuse the established configuration schema:
+
+- `api_settings.<provider>.model_defaults[<exact model id>]` owns per-model
+  generation defaults. Model IDs are trimmed literal mapping keys; dots, slashes,
+  colons, and other punctuation are never interpreted as config paths.
+- `chat_defaults.provider` and `chat_defaults.model` own the global selection used
+  by eligible blank new chats.
+- A full-Settings `Make default for new chats` may also update the selected
+  provider's existing endpoint field when the endpoint is explicitly dirty and its
+  scoped checkbox remains checked.
+
+The quick surface's profile mask is `temperature` plus `streaming`. The full Model
+surface's mask is every supported exposed sampler, reasoning/thinking, token-limit,
+and streaming field. The patch changes only those exact fields, preserves unexposed
+profile fields and sibling model profiles, and removes an exact profile field when
+the submitted value means inherit. Provider aliases are matched canonically while
+the existing raw provider-section identity is preserved. Credentials and credential
+references are never copied.
+
+The mutation rereads the config while holding the existing config lock, applies the
+model-profile patch plus any global provider/model and eligible endpoint changes as
+one atomic file intent, replaces the file once, and then refreshes runtime config.
+It returns the existing rich phase result rather than collapsing file replacement
+and runtime publication into one boolean.
+
+## Provider and Model Rebase
+
+A provider or model change is not implemented with a field-only `replace(...)`. The
+session controller owns this operation for both settings surfaces.
 
 1. Normalize the selected provider and model.
-2. If the provider is unchanged, preserve compatible current values and overlay the
-   submitted surface fields.
-3. If the provider changed, build provider/model defaults for the selected provider.
+2. Build the complete effective defaults for the selected provider/model whenever
+   either selection changes.
+3. Rebase every untouched draft field from the target model profile, saved Console
+   provider defaults, chat defaults, and provider settings in the established
+   precedence order.
 4. Resolve the selected provider's configured endpoint through the existing
    provider-resolution path.
 5. Discard the previous provider's endpoint and incompatible provider-specific
    reasoning/thinking values.
-6. Overlay only values exposed by the submitting surface and supported by the
-   selected provider.
+6. Overlay only deliberately edited draft fields exposed by the submitting surface
+   and supported by the selected provider. Carried edits remain visibly marked
+   `edited`; untouched values display the target model's effective values.
 7. Accept a full-modal session endpoint only when the endpoint draft is explicitly
    bound to the selected provider; the quick popover never submits an endpoint.
 8. Mark the resulting snapshot as user-authored and commit it to the exact session.
+
+Each open settings transaction keeps only a process-local draft map keyed by
+canonical provider plus literal model ID. Switching A → B → A restores A's unfinished
+edits while rebasing untouched fields for B. Unsupported provider-specific fields are
+removed from the target draft rather than hidden and later resurrected. This draft
+map is discarded when the transaction ends and never becomes another persistence
+owner.
+
+`Full settings…` deepens the same transaction. It transfers the complete quick draft,
+field provenance, compaction draft, exact origin identity, and keyed draft map to the
+full modal, opens the Model view, and establishes predictable focus. It never applies
+or discards quick edits merely because the user requested the deeper surface.
 
 Conversation hydration performs the same ordering: parse the saved provider first,
 build defaults for that provider, then overlay the remaining saved fields. A model
@@ -146,12 +217,13 @@ silent fallback.
 
 1. Opening either settings surface captures the origin session ID and current
    conversation identity before catalog loading or other asynchronous work.
-2. Widget edits remain a local draft until Apply.
-3. Apply validates provider, model, and numeric fields. Validation failure keeps the
-   surface open and focuses the first invalid control.
-4. The surface submits one typed intent containing the generation draft and
-   compaction/context-policy draft.
-5. The Apply orchestrator verifies the captured origin, performs provider-aware
+2. Widget edits remain a local keyed draft until a committing action.
+3. A committing action validates provider, model, and numeric fields. Validation
+   failure keeps the surface open and focuses the first invalid control.
+4. The surface submits one typed intent containing the generation draft,
+   compaction/context-policy draft, discriminated action, and applicable default
+   field mask.
+5. The Apply orchestrator verifies the captured origin, performs provider/model-aware
    rebasing, and derives the new sparse context-policy overrides.
 6. It commits both live snapshots to the origin session and increments their
    process-local revisions before yielding. Mounted summaries and controls
@@ -178,11 +250,48 @@ silent fallback.
     Generation metadata is included at first conversation creation and context
     policy uses its existing post-create flush. Failures discovered at first
     persistence enter the same per-component durability record.
+11. For `save_model_default` or `make_new_chat_default`, the immutable config intent
+    runs after step 6. A missing, closed, or rebound origin prevents both live Apply
+    and default mutation; default saving never proceeds as a detached side effect.
+12. `save_model_default` patches only the exact model profile. The quick field mask
+    is temperature and streaming; the full field mask contains all supported fields
+    exposed by its Model view.
+13. `make_new_chat_default` atomically patches that model profile plus global
+    provider/model. Only a full-modal, explicitly dirty, checked endpoint is included.
+14. A successful runtime publication makes subsequent eligible blank-chat creation
+    observe the new global provider/model and model profile immediately. A file that
+    was replaced despite runtime-publication failure remains valid across restart;
+    the current process continues to advertise its stale-runtime recovery state.
+15. An ordinary `apply_chat` neither clears nor silently discards an earlier failed
+    default intent. A newer explicit default action supersedes the earlier pending
+    intent; revision and locked-config checks prevent stale retry from overwriting a
+    newer edit.
 
 The execution boundary is objective: consumers that already hold an execution
 context keep it; consumers resolving after the live commit in step 6 read the new
 settings. The design does not special-case user sends, retries, regenerations,
 queues, or agent work.
+
+## Eligible New Chats
+
+After a successful `Make default for new chats`, every blank Console creation path
+without an explicit source-settings intent resolves fresh settings through
+`build_default_console_session_settings` and therefore observes the saved global
+provider/model and that exact model's profile. This includes:
+
+- Ctrl+T blank chats;
+- new temporary chats;
+- workspace-created blank chats; and
+- the initial pristine Console chat after startup.
+
+Existing and already-open conversations never rebase merely because a global
+default changed. Deliberate Duplicate, Branch, Continue, or handoff operations that
+carry explicit source settings are not blank-chat creation; their explicit intent
+continues to win and the UI must not describe them as using the new-chat default.
+
+The previous Ctrl+T behavior that cloned the active session is replaced for blank
+chat creation. Tests enumerate each eligible path so `Make default for new chats`
+cannot be technically successful while the next ordinary chat ignores it.
 
 ## Mouse and Keyboard Reliability
 
@@ -200,15 +309,43 @@ lookups handle `NoMatches` or verify mounting before querying descendants.
 
 ## Presentation and Validation
 
-The compact surface keeps its existing purpose. It does not gain a new persistence
-state machine or additional configuration sections.
+The compact surface keeps its existing purpose and progressively discloses default
+actions. It does not gain additional configuration sections.
 
 - Title: `Conversation settings`
 - Visible labels: Provider, Model, Temperature, Streaming, Compaction
-- Actions: `Full settings…`, `Cancel`, `Apply`
+- Main actions: `Cancel`, `Full settings…`, `Defaults…`, `Apply to this chat`
 - Scope copy: `Applies to this conversation`
 - Unsaved chat copy: `Saved with the conversation after its first message`
 - Temporary chat copy: `Temporary until this chat is promoted`
+
+`Defaults…` replaces rather than expands the main footer. Its chooser keeps the
+current draft and exact target visible:
+
+- `Save as model default` — `Remember Temperature + Streaming for
+  {provider}/{model}. New-chat provider/model unchanged.`
+- `Make default for new chats` — `Save this model profile and start eligible new
+  chats with {provider}/{model}.`
+- `Back`
+- Scope copy: `Compaction stays with this chat.`
+
+The full Model view uses the same two intent labels but saves every supported field
+it exposes. Blank values display `Inherit`; for the conversation Apply they resolve
+the current lower-precedence value and freeze that effective value in the complete
+conversation snapshot, while the model-profile mutation deletes that exact override.
+Streaming is a three-state `Inherit` / `On` / `Off` control in the full view. The
+quick surface shows effective temperature and streaming and marks deliberately
+carried values `edited` after a provider/model switch.
+
+The chooser is a real substate with no more than three visible actions. First Escape
+or `Back` returns to the main footer without losing the draft; a second Escape from
+the main state cancels the popover. Mouse recovery, Enter activation, and duplicate
+activation guards apply to every committing action, not only ordinary Apply.
+
+An unconfigured or readiness-blocked provider may remain an explicit conversation
+selection, but `Make default for new chats` is disabled with a concise explanation
+until the provider is configured. Successful default actions report two independent
+receipts: `This chat updated` and the exact default scope saved.
 
 The current compaction threshold, help, and mode control remain in the quick
 popover. Full Settings Context remains the deeper editor for the rest of the
@@ -222,15 +359,31 @@ immediately.
 
 ## Full Settings Alignment
 
-Full Console Settings uses the same Apply orchestration, provider rebase, generation
-metadata writer, complete context-policy snapshot owner, and per-component
-durability reporting. Its safe generation fields therefore have the same restart
-behavior as the quick popover. A full-modal policy Retry is revision-guarded against
-the entire current context-policy snapshot, not only compaction mode.
+Full Console Settings uses the same Apply orchestration, provider/model rebase,
+generation metadata writer, complete context-policy snapshot owner, and
+per-component durability reporting. Its safe generation fields therefore have the
+same restart behavior as the quick popover. A full-modal policy Retry is
+revision-guarded against the entire current context-policy snapshot, not only
+compaction mode.
 
 The full modal's endpoint remains configuration-owned. A custom endpoint can affect
-the live session, but it survives restart only through the existing Save-as-default
-path and warning. This task does not copy endpoints into conversation metadata.
+the live session, but it survives restart only through `Make default for new chats`,
+only after that provider-bound endpoint was explicitly edited, and only while the
+scoped checkbox remains enabled. `Save as model default`, ordinary Apply, and the
+quick popover never persist an endpoint. This task does not copy endpoints into
+conversation metadata.
+
+The checked line shows only a sanitized host and conservative network class, for
+example `Also save connection: 192.168.1.20:8080 · LAN`. Sanitization removes
+userinfo, path, query, and fragment before presentation or logging. Classification
+is syntactic and performs no DNS lookup:
+
+- `Local`: localhost or a loopback literal;
+- `LAN`: private/link-local literals and `.local` hostnames;
+- `Remote`: public IP literals; and
+- `Remote/unknown`: other hostnames whose address class is not known locally.
+
+Credentials and credential references are never shown or copied by this action.
 
 System prompt and pinned prefill retain their existing storage paths; the shared
 commit coordinates live `ConsoleSessionSettings` replacement without duplicating
@@ -269,6 +422,23 @@ their durable data in `console_generation_settings`.
 - Retry: use the still-current component snapshot, component revision, and captured
   conversation identity. A context-policy Retry writes the complete current policy;
   stale retry state cannot overwrite any newer policy edit or generation Apply.
+- Default mutation before file replacement: retain the live conversation Apply and
+  show an app-level `Not written to disk` record with the exact action, provider,
+  literal model, field scope, and sanitized optional endpoint. Offer
+  `Retry default save` and `Discard retry`; Discard removes the pending retry and
+  never implies that the live conversation change was rolled back.
+- Runtime publication after successful file replacement: report `Saved on disk;
+  running app refresh failed`. Offer `Refresh running app` and `Dismiss`. Refresh
+  rereads and republishes the on-disk config without repeating the disk mutation;
+  Dismiss acknowledges the running-process limitation and never claims to undo the
+  durable default. Restart loads the already-saved values.
+- Default failure scope: configuration failure is app-global and appears from every
+  Console Model rail and full Settings until recovered, dismissed/discarded,
+  superseded by a newer explicit default action, or the app closes. Conversation
+  generation/context-policy failures remain session-local and process-local.
+- Default retry concurrency: the immutable intent is applied only after rereading
+  the locked config and preserves unrelated external edits. A stale intent cannot
+  replace a newer explicit edit to the same owned fields.
 - Unconfigured saved provider: preserve the selection and expose the normal blocked
   readiness/recovery UI; never silently substitute another provider.
 - Deferred callback after dismissal: treat the absent descendant as normal teardown.
@@ -302,6 +472,42 @@ Focused tests cover:
     other context-policy overrides and full Settings Context behavior.
 14. A newer non-compaction context-policy edit supersedes a failed policy snapshot;
     Retry cannot restore any value from the obsolete snapshot.
+15. Selecting a different model under the same provider rebases untouched fields
+    from that exact model profile while preserving and marking deliberate edits.
+16. Provider/model A → B → A restores A's unfinished keyed draft and never revives
+    fields unsupported by B.
+17. `Full settings…` transfers the complete quick draft, compaction draft, field
+    provenance, and exact origin without applying or losing edits.
+18. Quick `Save as model default` changes only temperature and streaming for the
+    exact provider/model and preserves every sibling profile and advanced field.
+19. Full `Save as model default` changes all supported exposed profile fields;
+    blank deletes the exact override and conversation Apply freezes the resolved
+    effective value. Streaming covers Inherit, On, and Off.
+20. `Make default for new chats` atomically patches the exact model profile plus
+    global provider/model, without changing compaction, credentials, or unrelated
+    provider settings.
+21. Ctrl+T, temporary, workspace-created, and initial pristine blank chats observe
+    the saved global provider/model and exact model profile immediately after runtime
+    publication and after restart.
+22. Existing/open conversations remain unchanged, while Duplicate, Branch,
+    Continue, and explicit handoff intents retain their source-specific behavior.
+23. A blocked provider cannot become the new-chat default and explains why the
+    action is unavailable.
+24. Only a full, explicitly dirty, checked endpoint is included in `Make default for
+    new chats`; quick actions and `Save as model default` never persist endpoints.
+25. Endpoint previews remove credentials and URL details, classify loopback/private/
+    public literals correctly, conservatively label other hostnames, and perform no
+    DNS lookup.
+26. Concurrent exact-model config patches preserve sibling models, unexposed fields,
+    and newer unrelated edits, including literal model IDs with punctuation.
+27. Before-replace failure exposes `Retry default save` / `Discard retry`; successful
+    file replacement plus publication failure exposes cache-only `Refresh running
+    app` / `Dismiss` and never repeats the disk write.
+28. Ordinary conversation Apply preserves an earlier app-global default failure;
+    a newer explicit default action supersedes it without stale overwrite.
+29. The main footer and Defaults substate fit and retain complete keyboard focus/tab
+    order at 60×24 and 72×24; mouse and Enter activate each committing action once,
+    and hierarchical Escape preserves or cancels the draft as specified.
 
 Verification uses only affected pytest modules plus targeted lint/format and
 `git diff --check`. A full-suite sweep requires explicit user approval under the
@@ -309,9 +515,12 @@ repository testing policy.
 
 ## Non-Goals
 
-- No global provider/default mutation from Apply.
+- No global provider/default mutation from ordinary `Apply to this chat`; only the
+  two explicit default actions mutate configuration.
 - No endpoint or credential persistence in conversation metadata.
+- No endpoint persistence from quick settings or `Save as model default`.
 - No new database table or schema migration.
+- No new preset/profile schema; reuse the existing exact-model profile mapping.
 - No compaction storage/schema change or combined generation/compaction transaction.
 - No broader Context & memory redesign beyond sharing the Apply orchestration and
   durability outcome reporting.
@@ -323,22 +532,24 @@ repository testing policy.
 
 **ADR required:** yes
 **ADR path:** `backlog/decisions/095-conversation-owned-console-generation-settings.md`
-**Reason:** This changes durable conversation ownership, restart hydration,
-provider-resolution precedence, and the cross-surface settings contract.
+**Reason:** This changes durable conversation ownership, exact-model/global config
+ownership, blank-chat creation, restart hydration, provider/model precedence, and
+the cross-surface settings contract.
 
 ## Acceptance Mapping
 
-- **AC1:** exact origin capture, routed mouse recovery, keyboard convergence, and
-  teardown-safe dismissal.
-- **AC2:** immediate session commit and immutable already-captured execution context.
-- **AC3:** one Apply orchestration and one safe generation snapshot for both settings
-  surfaces, with compaction delegated to its existing owner.
-- **AC4:** metadata serialization plus provider-first hydration.
-- **AC5:** provider-aware rebase and endpoint exclusion regression.
-- **AC6:** first-persistence, temporary, and promotion behavior for both durable
-  components.
-- **AC7:** inline validation and deferred-callback regression.
-- **AC8:** persistent per-component failure and current-snapshot retry behavior.
-- **AC9:** retention of quick-popover compaction through its independent owner.
-- **AC10:** focused interaction, persistence, concurrency, hydration, endpoint, and
-  partial-failure coverage.
+- **AC1–AC4:** exact-origin interaction, immediate execution boundary, shared Apply
+  orchestration, safe metadata, and restart hydration.
+- **AC5–AC6:** provider/model draft rebasing, keyed provenance, and lossless
+  quick-to-full transfer.
+- **AC7–AC8:** progressive Defaults interaction and exact-model field-masked saving.
+- **AC9–AC10:** atomic new-chat defaults and complete eligible/excluded creation
+  behavior in-process and after reboot.
+- **AC11–AC12:** full-only explicit endpoint persistence and conversation-only
+  compaction ownership.
+- **AC13–AC15:** staging/promotion, validation/teardown reliability, and
+  revision-guarded conversation durability recovery.
+- **AC16–AC17:** truthful app-global disk/runtime recovery and concurrency-safe exact
+  config mutation.
+- **AC18:** focused interaction, layout, persistence, concurrency, hydration,
+  endpoint, creation-path, and partial-failure coverage.

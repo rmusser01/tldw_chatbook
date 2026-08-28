@@ -1,4 +1,4 @@
-# ADR-095: Persist Console generation settings with the conversation
+# ADR-095: Own Console conversation settings and explicit defaults separately
 
 Status: Proposed
 Date: 2026-08-27
@@ -7,11 +7,25 @@ Extends: ADR-006, ADR-033, and ADR-052
 
 ## Decision
 
-An explicit Apply from either the Console Provider/Model popover or the full
-Console Settings modal updates the exact originating Console conversation's
-generation settings immediately. Any consumer that resolves its execution
-settings after that commit observes the new values. Work that already captured an
-immutable execution context continues with that captured context.
+An explicit `Apply to this chat` from either the Console Provider/Model popover or
+the full Console Settings modal updates the exact originating Console conversation's
+generation settings immediately. Any consumer that resolves its execution settings
+after that commit observes the new values. Work that already captured an immutable
+execution context continues with that captured context.
+
+The settings surfaces also expose two explicit default actions. `Save as model
+default` first performs the same exact-origin live Apply, then field-masked-patches
+`api_settings.<provider>.model_defaults[<exact model id>]`. `Make default for new
+chats` performs that model-profile patch and atomically changes
+`chat_defaults.provider` plus `chat_defaults.model`. Ordinary Apply never mutates
+configuration, and compaction is excluded from both default actions.
+
+Every blank new-chat creation path without an explicit source-settings intent uses
+the saved global provider/model and its exact model profile. This includes Ctrl+T,
+temporary chats, workspace-created blank chats, and the initial pristine Console
+chat after startup. Existing/open conversations do not rebase. Duplicate, Branch,
+Continue, and handoff operations carrying explicit settings remain source-owned and
+are not eligible blank-chat creation.
 
 Persisted conversations store a versioned `console_generation_settings` object in
 `conversations.metadata`. The object is an allowlisted snapshot of safe,
@@ -40,20 +54,38 @@ credential resolution remains provider-configuration-owned. System prompt and
 pinned prefill keep their existing conversation-owned persistence paths.
 
 Both Console settings surfaces call one conversation-settings Apply orchestration.
-Each surface submits its validated target values plus the fields it exposes;
+Each surface submits its validated target values, discriminated action, and field
+mask;
 neither surface rebases settings itself. The session controller is the sole
-provider-rebase owner. It serializes the resulting complete safe allowlist so a
-provider change cannot leave stale provider-specific fields in the durable overlay.
+provider/model-rebase owner. It serializes the resulting complete safe allowlist so
+a provider or model change cannot leave stale values in the durable overlay.
 
-When the provider is unchanged, the controller preserves compatible current values
-and overlays the fields exposed by the submitting surface. On a provider change,
-it starts from defaults for the selected provider/model, resolves that provider's
-endpoint afresh, overlays only fields exposed by the surface and supported by the
-target, and clears unsupported reasoning/thinking fields. The quick popover never
-submits an endpoint. The full modal may submit a session-only endpoint only when
-the endpoint draft is explicitly bound to the selected provider; otherwise the
-controller uses the configured endpoint. Conversation resume performs the same
-provider-first rebase before applying the saved safe snapshot.
+Whenever provider or model changes, the controller starts from the selected
+provider/model's established default chain, resolves that provider's endpoint
+afresh, overlays only deliberately edited fields supported by the target, and clears
+unsupported reasoning/thinking fields. Untouched fields therefore load the target
+model profile; deliberate edits remain visibly marked. An open settings transaction
+keeps a process-local draft map keyed by canonical provider plus literal model ID so
+A → B → A restores A's unfinished edits. `Full settings…` transfers that draft map,
+field provenance, compaction draft, and exact origin into the full Model view without
+applying or discarding it. Conversation resume performs the same provider-first
+rebase before applying the saved safe snapshot.
+
+The quick model-profile field mask is temperature and streaming. The full Model
+mask is every supported sampler, reasoning/thinking, token-limit, and streaming
+field it exposes. Blank profile values delete the exact override so lower-precedence
+defaults apply; the conversation still stores the effective value resolved at Apply
+time as a complete snapshot. Full Settings therefore represents streaming as
+Inherit, On, or Off.
+
+Default mutation rereads config under the existing lock and patches only the exact
+masked profile fields, global provider/model when applicable, and an eligible
+endpoint. It preserves sibling profiles, unexposed fields, unrelated concurrent
+edits, and literal model IDs containing punctuation. Only full Settings `Make
+default for new chats` may include an endpoint, and only when it was explicitly
+edited and the user left the scoped checkbox checked. Its UI and logs contain only
+a sanitized host plus a syntactic Local/LAN/Remote-or-unknown classification; no DNS
+lookup, credential, userinfo, path, query, or fragment is used.
 
 Each live Apply increments a process-local settings revision on the exact session.
 Metadata persistence carries that revision plus the captured conversation identity.
@@ -96,6 +128,17 @@ Promotion includes generation metadata in the conversation bundle and persists
 compaction through its existing owner afterward; a compaction failure leaves the
 successful promotion intact and visible as `compaction` not saved.
 
+Default configuration failures use a separate bounded app-level record because the
+failed owner affects future chats rather than one conversation. Failure before file
+replacement reads `Not written to disk` and offers `Retry default save` plus
+`Discard retry`. Failure after successful file replacement reads `Saved on disk;
+running app refresh failed` and offers cache-only `Refresh running app` plus
+`Dismiss`; it never repeats the disk mutation, and restart loads the saved values.
+Discard and Dismiss acknowledge the pending recovery state and never imply rollback
+of live or already-durable values. A newer explicit default action supersedes an
+older failed intent, while locked reread and exact-field patching prevent stale retry
+from overwriting unrelated or newer config edits.
+
 ## Context
 
 The Provider/Model popover currently creates a new in-memory
@@ -116,12 +159,21 @@ provider's endpoint. Persisting the full settings dataclass would make the probl
 worse and could copy configuration-owned or sensitive values into conversation
 data.
 
+The existing per-model profile schema already has the required precedence and full
+Settings support, but current Console default saving writes broader provider/global
+sections instead of the exact profile. Current Ctrl+T blank-chat creation also clones
+the active session, so a global default can be saved successfully without controlling
+the next obvious new chat. This decision makes blank-chat creation resolve the saved
+default and reserves source cloning for explicitly source-owned flows.
+
 ## Alternatives Considered
 
 | Option | Why rejected |
 | --- | --- |
 | Keep settings in process memory | Fails the required reopen-after-restart behavior and continues to make Apply appear ineffective. |
-| Persist a global default | Mutates unrelated and future conversations; contradicts exact Console-session ownership in ADR-033. |
+| Make ordinary Apply also mutate the global default | Silently changes future chats and contradicts the explicit exact-conversation scope; global mutation is allowed only through `Make default for new chats`. |
+| Add a new preset/profile schema | Duplicates the existing exact-model profile owner and creates another precedence layer without user value. |
+| Keep Ctrl+T cloning the active session | Makes `Make default for new chats` false for the primary blank-chat path; explicit Duplicate/Branch/Continue already cover intentional carryover. |
 | Add a dedicated conversation-settings table | Adds a migration and repository surface without improving the required single-conversation lookup; versioned conversation metadata already provides the needed ownership and merge rules. |
 | Store the full `ConsoleSessionSettings` dataclass | Would persist endpoints and runtime-only fields and would couple the storage schema to an internal Python type. |
 | Put generation settings in the compaction policy store | Mixes independent owners and makes an unrelated context policy capable of blocking Provider/Model Apply. |
@@ -132,8 +184,13 @@ data.
   schema migration.
 - Quick and full Console Settings can no longer disagree about whether their safe
   generation fields survive restart.
-- Provider endpoints remain configuration-owned. A custom session endpoint still
-  requires the existing Save-as-default path to survive restart.
+- Exact-model defaults reuse the existing model-profile schema; no new preset owner
+  or precedence layer is introduced.
+- `Make default for new chats` controls every eligible blank-chat path in the current
+  process after runtime publication and across reboot. Existing/open and explicitly
+  source-owned conversations remain unchanged.
+- Provider endpoints remain configuration-owned. Only full Settings `Make default
+  for new chats` may persist an explicitly edited, checked endpoint.
 - Apply remains successful in live session state even when either durable write
   fails. The user sees the exact failed components persistently after the popover
   closes and can retry their still-current generation or complete context-policy
@@ -143,7 +200,11 @@ data.
 - Metadata parsing and serialization require a small versioned helper with an
   explicit allowlist and sibling-preserving merge.
 - Provider changes must use one provider-aware rebase path from both settings
-  surfaces and conversation hydration.
+  surfaces and conversation hydration; model changes use the same path and draft
+  provenance rules.
+- Default config failure is app-global and distinguishes not-written state from
+  already-written/runtime-stale state, while conversation durability remains local
+  to the owning session.
 - The popover interaction needs captured-click recovery and teardown-safe deferred
   callbacks, using the existing full-modal pattern rather than a new event system.
 - Compaction keeps its existing schema and repository, while the shared Apply
