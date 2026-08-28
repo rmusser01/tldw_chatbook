@@ -2,7 +2,7 @@
 id: TASK-613
 title: >-
   Library skills import: second submit cancels UI await but in-flight install still lands
-status: In Progress
+status: Done
 assignee:
   - codex
 created_date: '2026-07-24 14:10'
@@ -26,9 +26,9 @@ All Library skill-import paths (loose file, folder, zip, URL) run the service ca
 
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
-- [ ] #1 Either the Import control is disabled while an import is in flight, or a cancellation check prevents the superseded install from landing after its UI await is cancelled.
-- [ ] #2 Behavior is consistent across loose-file, folder, zip, and URL import paths.
-- [ ] #3 A test covers the superseded-import scenario.
+- [x] #1 Either the Import control is disabled while an import is in flight, or a cancellation check prevents the superseded install from landing after its UI await is cancelled.
+- [x] #2 Behavior is consistent across loose-file, folder, zip, and URL import paths.
+- [x] #3 A test covers the superseded-import scenario.
 <!-- AC:END -->
 
 ## Implementation Plan
@@ -51,4 +51,5 @@ Reason: This closes an existing Library worker-ownership race while preserving A
 - Removed the parallel screen-owned import implementation; loose Markdown, folder, zip, and URL now share exactly one coordinator path. All success routes still pass `trust_approved=False`, preserving ADR-009, remote-fetch, storage, and runtime boundaries.
 - Added routed replacement, completion-before-departure, completion-while-away, picker reset/reopen, cancellation settlement, and sole-owner tests. Updated the guide and testing-evidence lesson. No ADR was required because this directly implements the existing worker-ownership plan without changing a durable or security contract.
 - Review round 2 made settlement cancellation-resistant: repeated outer cancellations are consumed until the one accepted operation terminates; inner cancellation publishes a generic failure; fatal `BaseException` publishes/releases exactly once before re-raising without logging exception text. The two picker fakes now carry the real lifecycle contract.
-- Reusing the established production-`LibraryScreen` harness for the new mounted cases reduced FD growth from +183 to +17 under a zero-threshold diagnostic while retaining real Textual screen replacement and the app-owned coordinator. Verification: complete `test_skills_import.py` passed 27 tests with no FD sentinel warning; the plan target passed 97; focused Skills import/reset UI passed 10. Task stays In Progress with acceptance criteria unchecked pending fresh independent review.
+- Reusing the established production-`LibraryScreen` harness for the new mounted cases reduced FD growth from +183 to +17 under a zero-threshold diagnostic while retaining real Textual screen replacement and the app-owned coordinator.
+- Independent review round 3 approved the app-owned lifecycle at `f308d8958`. Final controller verification: complete `test_skills_import.py` passed 27 tests with no FD sentinel warning; focused boundary and UI gates passed; Ruff and `git diff --check` passed. The only warning is the incumbent Requests dependency warning.
