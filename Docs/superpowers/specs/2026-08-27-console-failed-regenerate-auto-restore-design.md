@@ -1,7 +1,7 @@
 # Console Failed-Regenerate Auto-Restore — Design
 
 **Date:** 2026-08-27
-**Status:** Approved in conversation; pending document review
+**Status:** Approved in conversation and document review
 **Task:** `TASK-571`
 
 ## Problem
@@ -26,6 +26,10 @@ message as the active leaf when the newly created sibling has status `failed`.
 - The failed sibling remains stored, traceable, and reachable through sibling
   navigation for inspection or retry.
 - Existing failure run state and toast behavior remains unchanged.
+
+For a mid-conversation regenerate, the selected anchor itself becomes the restored
+leaf. Its former descendant tail remains preserved off-path under the existing
+branching contract; this correction is not a full pre-operation path rollback.
 
 This is implemented as a postcondition in `ConsoleChatController.regenerate_message`,
 the one call site that knows both the original anchor and the replacement sibling.
