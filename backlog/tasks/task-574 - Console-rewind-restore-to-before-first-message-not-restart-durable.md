@@ -20,10 +20,10 @@ Documented v1 limitation of the `/rewind` menu (SP2, PR #844): restoring to befo
 
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
-- [ ] #1 A /rewind restore to before the first message survives an app restart: the conversation resumes showing an empty active path, not the most-recent leaf; all existing turns remain stored and become navigable through the existing branch controls after a new root prompt is sent
+- [ ] #1 A /rewind restore to before the first message survives an app restart: the conversation resumes showing an empty active path, not the most-recent leaf, and no existing message is deleted or rewritten
 - [ ] #2 Conversations with a genuinely-unset pointer (legacy, or never rewound) keep the existing most-recent-leaf resume fallback
 - [ ] #3 The persisted representation stays local-only (no sync_log row, matching active_leaf_message_id's write-through)
-- [ ] #4 After restart, the deliberately-before-first state restores the selected first prompt's original text into the composer; later unsent edits remain session-only and another restart restores the original text again
+- [ ] #4 After restart, the deliberately-before-first state restores the selected first prompt row's current durable text into the composer; later unsent edits remain session-only and another restart restores that durable text again
 <!-- AC:END -->
 
 ## Implementation Plan
@@ -31,10 +31,10 @@ Documented v1 limitation of the `/rewind` menu (SP2, PR #844): restoring to befo
 <!-- SECTION:PLAN:BEGIN -->
 1. Record the approved local tri-state cursor contract in ADR-100 and the reviewed design spec.
 2. Rebase on the latest `dev`, confirm the current schema version, then add the next local-only `active_leaf_before_message_id` migration and atomic cursor persistence API.
-3. Hydrate explicit-before-first cursor state and original prompt text through the session draft setter, while preserving unset, persisted-root validation, and invalid-state fallback behavior.
-4. Route first-prompt `/rewind` through the dedicated before-message operation, and clear the marker atomically in every durable leaf-advance path, including direct message-acceptance SQL.
+3. Hydrate explicit-before-first cursor state and the target row's current durable prompt text through the session draft setter, while preserving unset behavior, pre-repair imported-root validation, empty-tree cleanup, and invalid-state fallback.
+4. Route first-prompt `/rewind` through the dedicated before-message operation, warn without rolling back an in-memory rewind when its durable write fails, and clear the marker atomically in every durable leaf-advance path, including direct message-acceptance SQL.
 5. Update the stale rewind integration fixture's durable Library-policy hydration, then add focused migration, store, UI, integration, and sync-log regression coverage using TDD.
-6. Run focused verification, self-review, and document implementation notes.
+6. Verify canonical root-branch recovery and legacy flat-tree non-deletion separately, then run focused verification, self-review, and document implementation notes.
 
 ADR required: yes
 
