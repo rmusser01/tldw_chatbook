@@ -158,10 +158,13 @@ integers are the same identity.
    - an authoritative not-found result produces a `None` candidate;
    - a transient lookup failure aborts the refresh and preserves the mounted
      snapshot.
-6. Before publication, the worker verifies that the backend is unchanged and
-   the captured list-publication token still equals the screen's current token.
+6. Before publication, the worker verifies that Runs is still the active
+   section, the backend is unchanged, and the captured list-publication token
+   still equals the screen's current token.
    Every newer accepted authoritative list/load or Refresh supersedes the older
-   token immediately; obsolete results are discarded silently.
+   token immediately. Leaving Runs also makes its pending list/tick work stale,
+   so it cannot replace a newer Source, Item, Rule, or other Inspector
+   selection. Obsolete results are discarded silently.
 7. Rows and selection publish together.
 8. The selected fresh record is loaded through an exclusive
    `wc_run_detail` worker. A cleared selection schedules the same grouped

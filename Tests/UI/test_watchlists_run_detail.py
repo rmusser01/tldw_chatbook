@@ -45,6 +45,7 @@ from tldw_chatbook.UI.Watchlists_Modules.runs_pane import (
     RunSelected,
     RunsPane,
 )
+from tldw_chatbook.UI.Watchlists_Modules.sources_pane import SourceSelected
 from tldw_chatbook.tldw_api.exceptions import APIResponseError
 
 # TWO runs, and every click targets the SECOND row -- the same discipline as
@@ -1685,6 +1686,53 @@ async def test_clearing_selection_while_refresh_is_gated_stays_cleared():
         assert screen._loaded_runs == pane.runs == before_rows
         assert screen.selected_run is pane.selected_run is None
         assert screen._run_detail_items == pane.run_items == []
+
+
+@pytest.mark.asyncio
+async def test_refresh_cannot_replace_a_source_selected_after_leaving_runs():
+    app = _build_test_app()
+    app.watchlist_scope_service = StaticWatchlistsScopeService([])
+    host = _visual_destination_harness(app, "watchlists_collections")
+    async with host.run_test(size=(235, 52)) as pilot:
+        screen, pane = await _refresh_test_pane(pilot, host)
+        await _seed_refresh_snapshot(screen, pane, pilot)
+        before_rows = deepcopy(screen._loaded_runs)
+        refresh_started = asyncio.Event()
+        release_refresh = asyncio.Event()
+        source = {
+            "id": "local:watchlist_source:42",
+            "source_id": 42,
+            "entity_kind": "watchlist_source",
+            "name": "Newer source selection",
+        }
+
+        async def list_runs(**_kwargs):
+            refresh_started.set()
+            await release_refresh.wait()
+            return [
+                dict(RUNS[0]),
+                dict(RUNS[1], source_title="stale captured run"),
+            ]
+
+        async def list_sources(**_kwargs):
+            return [source]
+
+        screen._controller.list_runs = list_runs
+        screen._controller.list_sources = list_sources
+        screen.post_message(RefreshRunsRequested())
+        await asyncio.wait_for(refresh_started.wait(), timeout=2)
+
+        screen.active_section = "sources"
+        screen.post_message(SourceSelected(source))
+        assert await _pump_until(pilot, lambda: screen.selected_entity == source)
+
+        release_refresh.set()
+        assert await _wait_worker_group_idle(pilot, screen, "wc_runs")
+        await pilot.pause()
+
+        assert screen.active_section == "sources"
+        assert screen.selected_entity == source
+        assert screen._loaded_runs == before_rows
 
 
 @pytest.mark.asyncio

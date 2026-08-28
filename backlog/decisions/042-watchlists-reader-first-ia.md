@@ -83,7 +83,9 @@ within the existing Watchlists screen:
   newest-wins epoch and remain guarded by backend and selection ABA checks, and
   are suppressed while authoritative list work is pending so they cannot discard
   a user Refresh or added/deleted rows. A backend transition invalidates both
-  authorities before any result may publish.
+  authorities before any result may publish. Runs list/tick publication also
+  requires Runs to remain the active section, preventing delayed work from
+  replacing a newer entity selected in another section.
 
 ## Context
 

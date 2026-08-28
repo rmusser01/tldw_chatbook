@@ -332,7 +332,8 @@ def _run_refresh_not_found(exc: Exception, backend: str) -> bool:
 - stage `list_runs(runtime_backend=backend, limit=100)` into local dicts;
 - match `selected_id` against normalized `run["id"]`;
 - when absent, call `get_run(runtime_backend=backend, run_id=<raw run id>)`, append a valid pinned row after the page, clear only on the narrow not-found cases, and abort on every other error;
-- check both `backend == self.runtime_backend` and `generation == self._runs_refresh_generation` before any publication;
+- check that Runs remains the active section, `backend == self.runtime_backend`,
+  and `generation == self._runs_refresh_generation` before any publication;
 - publish `_loaded_runs`, `selected_run`, pane rows, and pane selection as one synchronous commit;
 - schedule `_load_run_detail(candidate)` with `exclusive=True, group="wc_run_detail"`, including `candidate=None`.
 

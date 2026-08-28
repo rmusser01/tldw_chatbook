@@ -553,19 +553,35 @@ class RunsPane(RecomposeCaptureGuard, Vertical):
         )
 
     def watch_selected_operation_key(self, _value: str | None) -> None:
-        """Repaint action buttons without rebuilding the table."""
+        """Repaint action buttons without rebuilding the table.
+
+        Args:
+            _value: Newly selected operation key.
+        """
         self._update_action_buttons()
 
     def watch_busy_operation_keys(self, _value: frozenset[str]) -> None:
-        """Repaint shared Check-now busy state in place."""
+        """Repaint shared Check-now busy state in place.
+
+        Args:
+            _value: Current set of busy operation keys.
+        """
         self._update_action_buttons()
 
     def watch_rerun_operation_keys(self, _value: frozenset[str]) -> None:
-        """Repaint Re-run-origin busy state in place."""
+        """Repaint Re-run-origin busy state in place.
+
+        Args:
+            _value: Current set of Re-run-origin operation keys.
+        """
         self._update_action_buttons()
 
     def watch_runtime_backend(self, _value: str) -> None:
-        """Re-evaluate backend-specific Re-run eligibility in place."""
+        """Re-evaluate backend-specific Re-run eligibility in place.
+
+        Args:
+            _value: Newly selected runtime backend.
+        """
         self._update_action_buttons()
 
     @staticmethod

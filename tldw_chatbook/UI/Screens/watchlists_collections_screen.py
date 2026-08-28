@@ -5809,7 +5809,8 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
     ) -> bool:
         """Check both selection mirrors, including a pane event still queued."""
         if (
-            backend != self.runtime_backend
+            self.active_section != WATCHLISTS_SECTION_RUNS
+            or backend != self.runtime_backend
             or (self.selected_run is not None) != selected_was_present
             or self._canonical_run_identity(
                 self.selected_run,
