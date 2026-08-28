@@ -96,6 +96,13 @@
       "reason": "remaining Chatbook production diagnostic owner"
     },
     {
+      "call_count": 2,
+      "diagnostic_digest": "6893f57f0dcf3808f1b3",
+      "owner": "TASK-494",
+      "path": "tldw_chatbook/Agents/virtual_cli_provider.py",
+      "reason": "remaining Chatbook production diagnostic owner"
+    },
+    {
       "call_count": 1,
       "diagnostic_digest": "ebd5049a714019fa236d",
       "owner": "TASK-494",
@@ -3987,9 +3994,9 @@
   "schema_version": 2,
   "scope": "tldw_chatbook/**/*.py",
   "summary": {
-    "owner_files": 540,
+    "owner_files": 541,
     "persistent_sink_files": 8,
     "task_492_calls": 1260,
-    "task_494_calls": 7394
+    "task_494_calls": 7396
   }
 }
