@@ -45,17 +45,24 @@ prompt. A conversation may contain multiple root user branches, so a boolean
    columns `NULL` and therefore retains the historical unset semantics.
    Preserve the existing scalar active-leaf getter for compatibility; only
    cursor-aware hydration opts into the two-component read.
+   The existing-conversation acceptance SQL in
+   `ConsoleDispatchRepository.insert_with_messages` must also clear the companion
+   marker in the same transaction that accepts the new active leaf; a later
+   best-effort pointer write is not the correctness boundary.
 4. Expose a dedicated store operation for positioning before a message instead
    of changing the meaning of every existing `set_active_leaf(..., None)` call.
-   The operation accepts only a root user node in the session tree.
+   The operation accepts only a root user node in the session tree. Root status is
+   determined by the persisted `parent_message_id`, captured before any
+   `_chain_legacy_flat_roots` compatibility re-parenting.
 5. On resume, a non-null active-leaf pointer takes precedence. If it resolves,
    any contradictory before-message marker is cleared. If it dangles, resume
    uses the existing newest-leaf fallback and repairs both columns.
 6. When the active leaf is null and the before-message pointer resolves to a
    root user node, keep the active path empty and load that node's original text
-   into the restored session's in-memory composer draft. Unsent edits after
-   hydration remain session-only; another restart restores the original message
-   text again.
+   into the restored session's in-memory composer draft through
+   `set_session_draft()`. This marks the hydrated composer as user work so normal
+   hydration safeguards do not overwrite it. Unsent edits after hydration remain
+   session-only; another restart restores the original message text again.
 7. A dangling, non-user, or non-root before-message pointer is invalid local
    state. Resume falls back to the newest leaf and atomically repairs the cursor.
 8. The migration and cursor writes do not bump conversation version or
@@ -77,6 +84,10 @@ prompt. A conversation may contain multiple root user branches, so a boolean
   draft persistence, autosave, conflict, sync, or privacy surface.
 - Explicit-before-first state is device-local and restart-durable, but not
   portable through exports or conversation-copy formats.
+- While the active path is empty, the current `/rewind` and swipe controls have no
+  visible message anchor. The old branch remains durable and becomes navigable
+  after a new root is sent. An immediate pre-send undo/recovery affordance is a
+  separate UX decision, not part of this storage fix.
 
 ## Alternatives considered
 
