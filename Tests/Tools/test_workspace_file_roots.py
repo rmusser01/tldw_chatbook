@@ -361,7 +361,7 @@ def test_consumers_share_exact_path_free_drift_warning(
     target.mkdir()
     if shape == "symlink":
         locator = tmp_path / "linked-root"
-        locator.symlink_to(target)
+        locator.symlink_to(target, target_is_directory=True)
     else:
         locator = target / ".." / target.name
     registry = _root_consumer_registry(locator)
@@ -383,23 +383,17 @@ def test_consumers_share_exact_path_free_drift_warning(
 def test_missing_and_broken_symlink_bindings_remain_silent(tmp_path) -> None:
     missing = SimpleNamespace(locator=str(tmp_path / "missing"))
     broken = tmp_path / "broken"
-    broken.symlink_to(tmp_path / "absent-target")
-    records = []
-    sink_id = wfr.logger.add(
-        lambda message: records.append(message.record), level="WARNING"
-    )
-    try:
-        assert (
-            list(
-                wfr._iter_valid_folder_bindings(
-                    (missing, SimpleNamespace(locator=str(broken)))
-                )
-            )
-            == []
+    broken.symlink_to(tmp_path / "absent-target", target_is_directory=True)
+    for binding in (missing, SimpleNamespace(locator=str(broken))):
+        records = []
+        sink_id = wfr.logger.add(
+            lambda message: records.append(message.record), level="WARNING"
         )
-    finally:
-        wfr.logger.remove(sink_id)
-    assert _DRIFT_WARNING not in [record["message"] for record in records]
+        try:
+            assert list(wfr._iter_valid_folder_bindings((binding,))) == []
+        finally:
+            wfr.logger.remove(sink_id)
+        assert records == []
 
 
 # --- Launched-location accessor (feat/workspace-agent-context-note) ---
