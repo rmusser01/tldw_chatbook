@@ -20,9 +20,10 @@ What it pins:
   same condition as the review's TTI metric. Measured 938-939 across
   consecutive warm boots, 2026-08-25, this branch (run-to-run wobble
   observed: +/-1). Budget 970: ~30 modules of headroom, mirroring the
-  import-weight guard's just-above-reality philosophy. Do NOT re-baseline
-  against a fresh-profile boot: that measures ~975 and includes the
-  first-boot residents below.
+  import-weight guard's just-above-reality philosophy. Re-measured 963 on
+  2026-08-28 (dev b5eaa9cf64, TASK-23029): headroom is down to 7. Do NOT
+  re-baseline against a fresh-profile boot: that measures ~975 and includes
+  the first-boot residents below.
 * The heavy deferred families stay off the whole first-paint window, not
   just off the import phase: ``Chunking``, ``RAG_Search.simplified``
   (TASK-21731's packages), and the trajectory family TASK-22213 deferred.
@@ -39,13 +40,19 @@ imported: **1.0-2.4 ms warm** -- not worth touching the security-relevant
 ruling). If the bridge edge is ever made lazy, ADD the prefix to
 ``ABSENT_AT_READY_PREFIXES`` in the same commit.
 
-Raising the budget: re-run this test's probe three times (it prints one
-``MOD:<name>`` line per resident module -- diff runs against this
-docstring's numbers with ``LC_ALL=C sort`` + ``comm``), name the modules
-that moved the count and the feature that added them, then update
-``MAX_TLDW_MODULES_AT_UI_READY`` and this docstring with the new measured
-number and the cause, in the same commit. A raise without a named cause is
-the failure mode this guard exists to catch.
+RATCHET (TASK-23029 / ADR-097,
+``backlog/decisions/097-boot-budget-ratchets.md``):
+``MAX_TLDW_MODULES_AT_UI_READY`` never rises. On a breach, defer the new
+mount-leg cost or shed equivalent cost elsewhere in the same PR; the only
+other path is an explicit owner exception recorded in the ADR's exception
+ledger. The breach message diffs the census against the pinned snapshot
+(``boot_budget_snapshots/ui_ready_modules.txt``) so the new residents are
+named; because a warm boot wobbles +/-1 module run-to-run, the snapshot is
+diagnostic (it feeds the breach message and the headroom drift marker), not
+a hard equality pin. Refresh it only via
+``scripts/update_boot_budget_snapshots.py``. When a diet drops the measured
+number well below the limit, LOWER the limit to measured + standard slack
+(ADR-097's tightening convention) in that same PR.
 
 First-boot residents (found by this guard's own first RED run, traced with
 an ``__import__``-stack wrapper, 2026-08-25): a FRESH profile's very first
@@ -88,8 +95,8 @@ import pytest
 REPO_ROOT = Path(__file__).resolve().parents[2]
 
 #: Drift budget for this repo's own modules resident at `_ui_ready` on a
-#: WARM (second) boot. Measured 938-939 on 2026-08-25; see the module
-#: docstring's raise procedure before touching this number.
+#: WARM (second) boot. Measured 938-939 on 2026-08-25. RATCHET (ADR-097):
+#: this constant never rises -- see the module docstring before touching it.
 MAX_TLDW_MODULES_AT_UI_READY = 970
 
 #: Families that must not be resident anywhere in the first-paint window.
@@ -241,11 +248,14 @@ def _boot_and_census(tmp_path: Path) -> list[str]:
 
 
 @pytest.mark.integration
-def test_ui_ready_module_census_stays_at_the_pinned_size(tmp_path: Path) -> None:
+def test_ui_ready_module_census_stays_at_the_pinned_size(
+    tmp_path: Path, ratchet
+) -> None:
     """Boot to `_ui_ready`; this repo's resident modules stay within budget.
 
     Args:
         tmp_path: pytest fixture; isolated dir for the subprocess's profile.
+        ratchet: shared ratchet helper (see ``conftest.py``).
     """
     mods = _boot_and_census(tmp_path)
 
@@ -256,10 +266,18 @@ def test_ui_ready_module_census_stays_at_the_pinned_size(tmp_path: Path) -> None
 
     assert len(mods) <= MAX_TLDW_MODULES_AT_UI_READY, (
         f"{len(mods)} tldw_chatbook modules resident at _ui_ready "
-        f"(budget {MAX_TLDW_MODULES_AT_UI_READY}). Mount-leg growth is "
-        "invisible to the import guards -- diff this test's MOD: output "
-        "against a clean checkout, name what grew, and either defer it or "
-        "raise the budget per the module docstring's procedure."
+        f"(ratchet limit {MAX_TLDW_MODULES_AT_UI_READY}). Mount-leg growth "
+        "is invisible to the import guards.\n"
+        f"{ratchet.format_module_diff(mods, 'ui-ready-census')}\n"
+        f"{ratchet.ratchet_policy('MAX_TLDW_MODULES_AT_UI_READY')}\n"
+        f"Deliberate snapshot refresh: `{ratchet.SNAPSHOT_REFRESH}`"
+    )
+    ratchet.emit_headroom(
+        ratchet.headroom_line(
+            "ui-ready-census",
+            [("modules", len(mods), MAX_TLDW_MODULES_AT_UI_READY)],
+        )
+        + ratchet.snapshot_drift_suffix(mods, "ui-ready-census")
     )
 
     on_leg = [

@@ -97,6 +97,22 @@ ELIMINATED_MODULES = ("torch", "transformers")
 #   count toward it, so it moves when -- and essentially only when -- the
 #   boot import graph changes. It is set just above the measured 630.
 #
+#   RATCHET (TASK-23029 / ADR-097,
+#   backlog/decisions/097-boot-budget-ratchets.md): this constant never
+#   rises. A breach means the cost defers or is shed elsewhere in the same
+#   PR; the only other path is an explicit owner exception recorded in the
+#   ADR's exception ledger. When a diet drops the measured number well below
+#   the limit, LOWER the limit to measured + standard slack (ADR-097's
+#   tightening convention) in that same PR. The pinned module-name snapshot
+#   lives in boot_budget_snapshots/boot_import_modules.txt; refresh it only
+#   via `scripts/update_boot_budget_snapshots.py`.
+#
+#   STANDING BREACH: dev b5eaa9cf64 measures 666 (2026-08-28) -- this guard
+#   is red on dev until the 17 modules named in its failure message are
+#   deferred (ADR-097 "Standing breach at adoption"; repayment tracked as
+#   task-23112). The snapshot is deliberately pinned at c6218918d1's 657
+#   in-budget set so the breach keeps naming the culprits.
+#
 #   Know what this does NOT catch. Measured by reverting each 21108 deferral
 #   on its own and re-running this probe: panel only -> 649, notes-sync chain
 #   only -> 645. Both PASS. Only the combined 34-module regression trips 660.
@@ -182,14 +198,15 @@ import tldw_chatbook.app
 elapsed = time.perf_counter() - t0
 
 loaded = sorted(m for m in {heavy_modules!r} if m in sys.modules)
-tldw_modules = [
+tldw_modules = sorted(
     m for m in sys.modules
     if m.startswith("tldw_chatbook") and sys.modules[m] is not None
-]
+)
 print(json.dumps({{
     "elapsed": elapsed,
     "module_count": len(sys.modules),
     "tldw_module_count": len(tldw_modules),
+    "tldw_modules": tldw_modules,
     "loaded_heavy": loaded,
 }}))
 """.format(heavy_modules=HEAVY_MODULES)
@@ -251,7 +268,7 @@ def test_app_import_stays_well_under_pre_fix_baseline(tmp_path: Path) -> None:
 
 
 def test_app_import_own_module_count_stays_at_the_post_diet_size(
-    tmp_path: Path,
+    tmp_path: Path, ratchet
 ) -> None:
     """This repo's own boot import graph must stay at its post-diet size.
 
@@ -265,16 +282,32 @@ def test_app_import_own_module_count_stays_at_the_post_diet_size(
     the notes-sync chain alone 645, both of which PASS here. Per-deferral
     coverage is ``Tests/Packaging/test_app_import_diet_closure.py``.
 
+    ``MAX_TLDW_MODULE_COUNT`` is a RATCHET (TASK-23029 / ADR-097): it never
+    rises. A breach diffs the live module set against the pinned snapshot
+    (``boot_budget_snapshots/boot_import_modules.txt``) so the failure names
+    the modules that consumed the headroom; on a pass the guard emits one
+    ``boot-import-weight: used/limit`` headroom line.
+
     Args:
         tmp_path: pytest fixture; isolated dir for the subprocess's HOME/XDG.
+        ratchet: shared ratchet helper (see ``conftest.py``).
     """
     payload = _measure_app_import(tmp_path)
-    assert payload["tldw_module_count"] < MAX_TLDW_MODULE_COUNT, (
-        f"import tldw_chatbook.app loaded {payload['tldw_module_count']} "
-        f"tldw_chatbook modules (limit {MAX_TLDW_MODULE_COUNT}). Something "
-        "new is eager on the boot path -- find it with `python -X importtime "
-        "-c 'import tldw_chatbook.app'` and defer it, or justify raising the "
-        "budget in this docstring."
+    count = payload["tldw_module_count"]
+    modules = payload["tldw_modules"]
+    assert count < MAX_TLDW_MODULE_COUNT, (
+        f"import tldw_chatbook.app loaded {count} tldw_chatbook modules "
+        f"(ratchet limit {MAX_TLDW_MODULE_COUNT}). Something new is eager on "
+        "the boot path.\n"
+        f"{ratchet.format_module_diff(modules, 'boot-import-weight')}\n"
+        f"{ratchet.ratchet_policy('MAX_TLDW_MODULE_COUNT')}\n"
+        f"Deliberate snapshot refresh: `{ratchet.SNAPSHOT_REFRESH}`"
+    )
+    ratchet.emit_headroom(
+        ratchet.headroom_line(
+            "boot-import-weight", [("modules", count, MAX_TLDW_MODULE_COUNT)]
+        )
+        + ratchet.snapshot_drift_suffix(modules, "boot-import-weight")
     )
 
 
