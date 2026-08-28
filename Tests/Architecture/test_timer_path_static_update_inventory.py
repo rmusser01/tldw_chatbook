@@ -679,11 +679,18 @@ EXPECTED_CLOCK_ROOTS: frozenset[tuple[str, str, str | None, str]] = frozenset(
             "ConsolePromptQueueModal",
             "_poll_snapshot",
         ),
+        # ConsoleSetupBackdrop._tick retired by TASK-23021 (snow is a still frame).
         (
             "set_interval",
-            "tldw_chatbook/Widgets/Console/console_setup_modal.py",
-            "ConsoleSetupBackdrop",
-            "_tick",
+            "tldw_chatbook/Widgets/Console/console_assistant_turn.py",
+            "ConsoleActivityHeader",
+            "_tick_raw_cli_elapsed",
+        ),
+        (
+            "set_interval",
+            "tldw_chatbook/Widgets/Console/console_transcript.py",
+            "ConsoleMessageHeader",
+            "_tick_raw_cli_elapsed",
         ),
         (
             "set_interval",
