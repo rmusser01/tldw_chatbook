@@ -658,3 +658,33 @@ async def test_one_time_fields_painted_at_80x24():
         await pilot.pause()
         assert _painted_at_own_center(app, run_at)
         assert _painted_at_own_center(app, form.query_one("#reminder-save"))
+
+
+@pytest.mark.asyncio
+async def test_footer_survives_wrapped_error_lines_at_45x24():
+    """Review F8: the old footer height budget counted one row per error
+    line; at ~45 columns errors wrap and used to push Save off screen.
+    The docked footer must keep Save painted with multi-line wrapped
+    errors present."""
+    app = FormTestApp()
+    async with app.run_test(size=(45, 24)) as pilot:
+        await app.push_screen(ReminderForm())
+        await pilot.pause()
+        form = pilot.app.screen
+
+        # Empty form -> two validation errors, each wrapping at 45 cols.
+        await pilot.click("#reminder-save")
+        await pilot.pause()
+        errors = form.query_one("#reminder-errors")
+        assert errors.display and errors.region.height >= 2
+
+        save = form.query_one("#reminder-save")
+        assert _painted_at_own_center(app, save), (
+            "wrapped validation lines pushed Save out of the modal"
+        )
+
+        # And a focused field is still painted above the docked footer.
+        run_at = form.query_one("#reminder-run-at", Input)
+        run_at.focus()
+        await pilot.pause()
+        assert _painted_at_own_center(app, run_at)

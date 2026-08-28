@@ -12,7 +12,7 @@ from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 from croniter import croniter
 from textual.app import ComposeResult
 from textual.binding import Binding
-from textual.containers import Container, Horizontal, Vertical, VerticalScroll
+from textual.containers import Horizontal, Vertical, VerticalScroll
 from textual.screen import ModalScreen
 from textual.widgets import Button, Input, Label, Select, Static, TextArea
 
@@ -204,7 +204,15 @@ class ReminderForm(ModalScreen):
         align: center middle;
     }
 
-    ReminderForm > Container {
+    /* task-23100 (shape revised in the review round, F8): the modal box
+       IS the scroll container (height:auto clamped by max-height means
+       overflow becomes a scrollbar, never clipping), and the
+       preview/errors/buttons footer is DOCKED to its bottom -- docked
+       children are positioned against the visible bottom edge, so the
+       footer can never be clipped and no height arithmetic is needed
+       (wrapped error/preview lines simply grow the dock reserve). Same
+       pattern as voice_blend_dialog / feedback_dialog. */
+    ReminderForm > VerticalScroll {
         width: 80;
         max-width: 100%;
         height: auto;
@@ -214,13 +222,10 @@ class ReminderForm(ModalScreen):
         padding: 1 2;
     }
 
-    /* task-23100: the field column scrolls; the preview/errors/buttons
-       footer is pinned below it so it can never be clipped off screen.
-       The scroll area's max-height is set from Python (an auto-height
-       parent clamps by CLIPPING, so the bound must live on the scroll
-       container itself, where overflow becomes a scrollbar instead). */
-    #reminder-form-fields {
+    #reminder-form-footer {
+        dock: bottom;
         height: auto;
+        background: $surface;
     }
 
     /* Plain Vertical defaults to height:1fr, which measures as ~1 row in
@@ -231,10 +236,6 @@ class ReminderForm(ModalScreen):
     #reminder-timezone-group,
     #reminder-preset-time-group,
     #reminder-cron-custom-group {
-        height: auto;
-    }
-
-    #reminder-form-footer {
         height: auto;
     }
 
@@ -309,9 +310,6 @@ class ReminderForm(ModalScreen):
         self._known_timezones = tuple(known_timezones)
         self._dirty = False
         self._ready = False
-        #: Rows currently used by the validation line; part of the pinned
-        #: footer's height budget (task-23100).
-        self._error_line_count = 0
 
     def _timezone_options(self) -> list[tuple[str, str]]:
         """(label, zone) options: system zone first, then curated zones,
@@ -390,82 +388,87 @@ class ReminderForm(ModalScreen):
         )
 
     def compose(self) -> ComposeResult:
-        """Build the form layout."""
-        with Container():
+        """Build the form layout.
+
+        The modal box is the scroll container itself; the footer is
+        docked to its bottom so the live preview, validation line, and
+        actions are visible at every terminal size (task-23100, review
+        round F8).
+        """
+        with VerticalScroll(id="reminder-form-box"):
             yield Label(
                 "Edit Scheduled Task" if self._reminder_task else "New Scheduled Task",
                 classes="form-title",
             )
 
-            with VerticalScroll(id="reminder-form-fields"):
-                yield Label("Title:", classes="form-label")
-                yield Input(placeholder="Name this scheduled task…", id="reminder-title")
+            yield Label("Title:", classes="form-label")
+            yield Input(placeholder="Name this scheduled task…", id="reminder-title")
 
-                yield Label("Body:", classes="form-label")
-                yield TextArea(id="reminder-body")
+            yield Label("Body:", classes="form-label")
+            yield TextArea(id="reminder-body")
 
-                yield Label("Schedule Kind:", classes="form-label")
-                yield Select(
-                    self._schedule_options(),
-                    allow_blank=False,
-                    value=ScheduleKind.ONE_TIME.value,
-                    id="reminder-kind",
+            yield Label("Schedule Kind:", classes="form-label")
+            yield Select(
+                self._schedule_options(),
+                allow_blank=False,
+                value=ScheduleKind.ONE_TIME.value,
+                id="reminder-kind",
+            )
+            yield Static(
+                "One-time runs once; recurring repeats on a cron schedule.",
+                classes="form-helper",
+            )
+
+            with Vertical(id="reminder-run-at-group"):
+                yield Label("Run at:", classes="form-label")
+                yield Input(
+                    placeholder="2026-08-28 09:00",
+                    id="reminder-run-at",
                 )
                 yield Static(
-                    "One-time runs once; recurring repeats on a cron schedule.",
+                    "A local time like 2026-08-28 09:00, or full ISO-8601 with offset.",
                     classes="form-helper",
                 )
 
-                with Vertical(id="reminder-run-at-group"):
-                    yield Label("Run at:", classes="form-label")
+            with Vertical(id="reminder-cron-group"):
+                yield Label("Frequency:", classes="form-label")
+                yield Select(
+                    self._preset_options(),
+                    allow_blank=False,
+                    value="daily",
+                    id="reminder-cron-preset",
+                )
+                with Vertical(id="reminder-preset-time-group"):
+                    yield Label("Time of day (24-hour):", classes="form-label")
                     yield Input(
-                        placeholder="2026-08-28 09:00",
-                        id="reminder-run-at",
+                        placeholder="09:00",
+                        id="reminder-preset-time",
                     )
+                with Vertical(id="reminder-cron-custom-group"):
+                    yield Label("Cron Expression:", classes="form-label")
+                    yield Input(placeholder="0 9 * * 1", id="reminder-cron")
                     yield Static(
-                        "A local time like 2026-08-28 09:00, or full ISO-8601 with offset.",
+                        "5-field cron (minute hour day month weekday): 0 9 * * * = daily at 9:00.",
                         classes="form-helper",
                     )
 
-                with Vertical(id="reminder-cron-group"):
-                    yield Label("Frequency:", classes="form-label")
-                    yield Select(
-                        self._preset_options(),
-                        allow_blank=False,
-                        value="daily",
-                        id="reminder-cron-preset",
-                    )
-                    with Vertical(id="reminder-preset-time-group"):
-                        yield Label("Time of day (24-hour):", classes="form-label")
-                        yield Input(
-                            placeholder="09:00",
-                            id="reminder-preset-time",
-                        )
-                    with Vertical(id="reminder-cron-custom-group"):
-                        yield Label("Cron Expression:", classes="form-label")
-                        yield Input(placeholder="0 9 * * 1", id="reminder-cron")
-                        yield Static(
-                            "5-field cron (minute hour day month weekday): 0 9 * * * = daily at 9:00.",
-                            classes="form-helper",
-                        )
+            with Vertical(id="reminder-timezone-group"):
+                yield Label("Timezone:", classes="form-label")
+                yield Select(
+                    self._timezone_options(),
+                    allow_blank=False,
+                    value=self._initial_timezone(),
+                    id="reminder-timezone",
+                )
+                yield Static(
+                    self._timezone_helper_copy(),
+                    id="reminder-timezone-helper",
+                    classes="form-helper",
+                )
 
-                with Vertical(id="reminder-timezone-group"):
-                    yield Label("Timezone:", classes="form-label")
-                    yield Select(
-                        self._timezone_options(),
-                        allow_blank=False,
-                        value=self._initial_timezone(),
-                        id="reminder-timezone",
-                    )
-                    yield Static(
-                        self._timezone_helper_copy(),
-                        id="reminder-timezone-helper",
-                        classes="form-helper",
-                    )
-
-            # Pinned footer (task-23100): the live schedule preview, the
-            # validation line, and the actions stay visible while the field
-            # column above scrolls.
+            # Docked footer (task-23100/F8): the live schedule preview,
+            # the validation line, and the actions stay pinned to the
+            # visible bottom edge while the fields scroll behind them.
             with Vertical(id="reminder-form-footer"):
                 yield Static("", id="reminder-run-at-preview", classes="form-preview")
                 yield Static("", id="reminder-cron-preview", classes="form-preview")
@@ -476,7 +479,6 @@ class ReminderForm(ModalScreen):
 
     def on_mount(self) -> None:
         """Prefill the form when editing an existing reminder."""
-        self._sync_field_scroll_height()
         if self._reminder_task is None:
             # Create mode: start from the default preset (daily at 09:00).
             self.query_one("#reminder-preset-time", Input).value = "09:00"
@@ -516,36 +518,11 @@ class ReminderForm(ModalScreen):
         self._dirty = False
         self._ready = True
 
-    def on_resize(self) -> None:
-        """Re-bound the scrolling field column when the terminal resizes."""
-        self._sync_field_scroll_height()
-
-    def _sync_field_scroll_height(self) -> None:
-        """Bound the field column so the pinned footer stays on screen.
-
-        The modal container is ``height: auto; max-height: 100%`` -- an
-        auto-height parent clamps by CLIPPING its children, so the bound
-        must live on the scroll container itself, where overflow becomes a
-        scrollbar instead of invisible-but-focusable fields (task-23100).
-        """
-        try:
-            scroll = self.query_one("#reminder-form-fields", VerticalScroll)
-        except Exception:  # noqa: BLE001 - not composed yet
-            return
-        # Fixed chrome outside the scroll area: container border (2) +
-        # vertical padding (2) + title row (1) + preview line (1) + button
-        # row incl. its top margin (4), plus the current validation lines.
-        overhead = 10 + self._error_line_count
-        scroll.styles.max_height = max(5, self.app.size.height - overhead)
-
     def _set_errors(self, errors: list[str]) -> None:
-        """Render validation errors and re-budget the field column height."""
+        """Render (or clear) the validation lines in the docked footer."""
         error_widget = self.query_one("#reminder-errors", Static)
         error_widget.update("\n".join(errors))
-        # Hidden when empty so the footer row budget stays exact.
         error_widget.display = bool(errors)
-        self._error_line_count = len(errors)
-        self._sync_field_scroll_height()
 
     def on_select_changed(self, event: Select.Changed) -> None:
         """Show/hide schedule field groups based on the selected schedule kind."""
