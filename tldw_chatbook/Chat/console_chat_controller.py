@@ -11435,10 +11435,18 @@ class ConsoleChatController:
         so it is safe to build once, up front.
 
         On stream FAILURE, the new sibling node itself becomes a ``failed``
-        node on the active path (retryable via ``retry_message``), rather
-        than restoring the anchor's prior reply in place -- this is the
-        intended node-model behavior, not a regression: the anchor is a
+        node and remains stored/retryable via ``retry_message``, while the
+        original anchor becomes the active leaf again. The anchor is a
         completely separate node and was never touched.
+
+        Args:
+            message_id: Identifier of the assistant message to regenerate.
+            queue_authorization: Optional authorization for a queued generation
+                to operate on the message's session when it is not active.
+
+        Returns:
+            The submission result describing whether regeneration started and
+            any user-facing rejection reason.
         """
         active_session_id = self.store.active_session_id
         if active_session_id is None and queue_authorization is None:
@@ -11543,6 +11551,8 @@ class ConsoleChatController:
             persisted_sibling = self.store.get_message(new_message.id)
         except KeyError:
             persisted_sibling = None
+        if persisted_sibling is not None and persisted_sibling.status == "failed":
+            self.store.set_active_leaf(session_id, message_id)
         replacement_event_id = (
             f"message:{persisted_sibling.persisted_message_id}"
             if persisted_sibling is not None

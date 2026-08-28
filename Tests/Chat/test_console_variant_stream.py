@@ -363,20 +363,7 @@ async def test_regenerate_delegates_and_streams_incrementally():
 
 
 @pytest.mark.asyncio
-async def test_regenerate_empty_stream_leaves_anchor_untouched_and_new_sibling_failed():
-    """TASK-6 supersedes the original Plan-B Task 1 finding here: under the
-    old in-place regenerate, a zero-chunk (empty-stream) regenerate had to
-    restore the anchor's own prior status so the turn did not silently drop
-    out of context (``_provider_messages_for_session(..., skip_failed=
-    True)``). Under the sibling/branching model that concern moves with the
-    node: regenerate ALWAYS forks a new node and makes it the active leaf,
-    so an empty-stream (zero-chunk) regenerate leaves that NEW node
-    "failed" (empty, retryable) as the active tip -- the anchor itself is
-    a completely separate, untouched node that simply drops off the active
-    path (not deleted, and not silently mutated to a failed status either).
-    Swiping back to the anchor (``set_active_leaf``) restores it -- and its
-    "complete" status/content -- to the active path and provider context.
-    """
+async def test_regenerate_empty_stream_retains_failed_sibling_and_restores_anchor():
     from tldw_chatbook.Chat.console_chat_controller import ConsoleChatController
 
     store, session, mid = _store_with_answer()
@@ -393,24 +380,18 @@ async def test_regenerate_empty_stream_leaves_anchor_untouched_and_new_sibling_f
     unchanged = store.get_message(mid)
     assert unchanged.status == "complete"
     assert unchanged.content == "original"
-    assert mid not in store.active_path_message_ids(session.id)
+    assert store.active_leaf(session.id) == mid
+    assert mid in store.active_path_message_ids(session.id)
 
-    new_leaf_id = store.active_leaf(session.id)
-    assert new_leaf_id != mid
-    new_sibling = store.get_message(new_leaf_id)
+    siblings, _index, count = store.siblings_at(mid)
+    assert count == 2
+    new_sibling = next(sibling for sibling in siblings if sibling.id != mid)
     assert new_sibling.status == "failed"
     assert new_sibling.content == ""
 
-    # The failed, empty new sibling is correctly excluded from context...
-    provider_messages = controller._provider_messages_for_session(session.id)
-    assert {"role": "assistant", "content": "original"} not in provider_messages
-    assert {"role": "assistant", "content": ""} not in provider_messages
-
-    # ...but swiping back to the anchor restores it to the active path
-    # (and therefore to context) exactly as before.
-    store.set_active_leaf(session.id, mid)
     provider_messages = controller._provider_messages_for_session(session.id)
     assert {"role": "assistant", "content": "original"} in provider_messages
+    assert {"role": "assistant", "content": ""} not in provider_messages
 
 
 @pytest.mark.asyncio
@@ -475,6 +456,9 @@ async def test_regenerate_stop_mid_stream_leaves_anchor_untouched_new_sibling_st
     stopped_sibling = store.get_message(new_leaf_id)
     assert stopped_sibling.content == "partial regen "
     assert stopped_sibling.status == "stopped"
+    active_path = store.active_path_message_ids(session.id)
+    assert new_leaf_id in active_path
+    assert mid not in active_path
     # (stop_active_run's own "Response stopped by user." system row becomes
     # the new active leaf, parented under the stopped sibling above --
     # pre-existing behavior, unrelated to Task 6, not asserted here.)
