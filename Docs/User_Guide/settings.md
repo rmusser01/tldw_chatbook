@@ -50,10 +50,17 @@ Moving around: **click** a rail row, or **Tab** from the nav bar to drop focus
 into the rail at **Overview**, then **j**/**k** or **↑**/**↓** to move and
 **Enter** to open; Tab again walks into the detail pane's fields. **/** focuses
 the filter from anywhere; its status line reads "No filter | / focus category
-search", "Filter: \<text\> | N matches | Enter opens \<Category\>" (singular
-"1 match" for a lone hit, and the target gains "› \<Field\>" when your text
-named a field), or "Filter: \<text\> | 0 matches | Esc clears". **Enter** jumps
-to the top match and clears the filter; **Esc** just clears it. Some pages also
+search", "Filter: \<text\> | N matches | Enter opens \<Category\> (\<Group\>)"
+(singular "1 match" for a lone hit; when your text named a **setting**, the
+target becomes "\<Category\> › \<Field\> (\<Group\>)" — e.g. "reduce motion"
+promises "Appearance › Reduce motion (Interface)" — and with more than one
+match a "| Next: \<second match with its scope\>" segment disambiguates, so
+"theme" shows both the Theme category and Appearance's Theme setting), or
+"Filter: \<text\> | 0 matches | Esc clears". **Enter** jumps to the top match
+and clears the filter — landing focus **on the matched setting** when your text
+named one (typing a category's own name just opens the category); **Esc** just
+clears it. The filter knows every rendered setting's visible label, on every
+category. Some pages also
 carry jump buttons: **Open Providers & Models** and **Open Advanced Config** on
 Privacy & Security, five guided-path chips on Advanced Config, and **Open Theme
 editor** on Overview and Appearance.
@@ -645,7 +652,12 @@ hints as "Esc, s" while a field has focus. Only then do the letters work.
 
 **F6 does nothing on this screen.** Settings has no pane-cycle target, so it
 only shows a notice — use **Tab**, the rail keys, or the mouse. **F1** opens
-this screen's shortcut list, with the RAG-only keys shown only while on RAG.
+the active category's help: a "How this category works" section (its save
+contract, scope, runtime owner, whether writes are allowed, boundary, and
+recovery — the same contract the State banner and Scope Inspector carry)
+followed by the category's working shortcut keys, with the RAG-only keys shown
+only while on RAG. Every category has a non-empty help body; one without
+category-specific keys says so.
 
 Command palette (**Ctrl+P**) entries that land here: "Settings & Preferences:
 Open Settings Tab" opens the screen; "Settings & Preferences: Show Database
@@ -789,3 +801,15 @@ painted frame dismissed it and boot completed; `F9` at the same moment
 dismissed it and left the app on Home, not Settings; and with the setting off
 the same key left the splash up for its full 20 s. The rest of this page's
 content unchanged from the prior stamp.)*
+
+*Verified against feat/settings-ux-critique-burndown @ c38314a26 — 2026-08-28
+(TASK-23104/23108/23109/23110: the State banner renders exactly once per
+category with exactly one "State:" segment (domain pages and Overview used to
+show it doubled and self-colliding); unexpected model-discovery and RAG
+backfill failures now surface plain-language status/toast copy with a next
+step instead of raw exception text; F1 help gained the per-category contract
+body described above; and "/" search gained setting-level coverage with the
+scoped "Enter opens … (Group)" / "Next: …" echo line. Driven live headless:
+"reduce motion" surfaced "Appearance › Reduce motion (Interface)" and Enter
+landed focus on the control; "theme" echoed both scoped matches. The rest of
+this page's content unchanged from the prior stamp.)*
