@@ -7,6 +7,7 @@ from contextlib import contextmanager
 from pathlib import Path
 import threading
 from typing import Any, Literal, Protocol, cast
+from uuid import uuid4
 
 from tldw_chatbook.MCP.hub_tool_catalog import HubTool
 from tldw_chatbook.MCP.permission_store import EffectiveToolState
@@ -21,7 +22,7 @@ from tldw_chatbook.Tools.raw_cli_executor import (
 
 from .agent_models import ToolCall, ToolCatalogEntry, ToolResult, ToolSchema
 from .mcp_tool_provider import MCPPendingCall
-from .run_context import current_tool_call_id
+from .run_context import current_run_id, current_tool_call_id
 
 RAW_SHELL_TOOL_NAME = "shell_exec"
 RAW_SHELL_SERVER_KEY = "local:__local__"
@@ -42,6 +43,7 @@ RAW_SHELL_SESSION_SCOPE_NOTICE = (
     "when Chatbook exits."
 )
 RAW_SHELL_APPROVAL_OPTIONS = ("approve_once", "approve_session", "deny")
+_MAX_MODEL_RESULT_CHARS = 4000
 
 _ALLOWED_ARGUMENTS = frozenset(
     {"command", "shell", "initial_directory", "timeout_seconds"}
@@ -334,16 +336,80 @@ class RawShellToolProvider:
         if name != RAW_SHELL_TOOL_NAME:
             return ToolResult(ok=False, error=f"Unknown raw shell tool: {name}")
         try:
-            self._validated_request(args)
+            request = self._validated_request(
+                args,
+                invocation_id=(
+                    current_tool_call_id() or f"raw-shell-{uuid4()}"
+                ),
+            )
         except (TypeError, ValueError, OSError) as exc:
             return ToolResult(ok=False, error=f"invalid shell_exec request: {exc}")
+        stamp = self._pop_stamp(current_run_id(), RAW_SHELL_TOOL_NAME)
+        if not self.catalog_enabled():
+            return ToolResult.blocked(RAW_SHELL_DENY_REFUSAL)
         try:
             state = resolve_raw_shell_state(self._resolve_state(self.hub_tool()))
         except Exception:
             return ToolResult.blocked(RAW_SHELL_DENY_REFUSAL)
         if state == "deny":
             return ToolResult.blocked(RAW_SHELL_DENY_REFUSAL)
-        return ToolResult.blocked(RAW_SHELL_APPROVAL_REFUSAL)
+        if stamp in {"deny", "timeout"}:
+            return ToolResult.blocked(RAW_SHELL_APPROVAL_REFUSAL)
+        approved = stamp in {"approve_once", "approve_session"}
+        if not approved:
+            try:
+                approved = self._runtime.model_session_granted(
+                    self.console_session_id
+                )
+            except Exception:
+                approved = False
+        if not approved:
+            return ToolResult.blocked(RAW_SHELL_APPROVAL_REFUSAL)
+
+        # Final provider-side recheck immediately before handing the validated
+        # request to RawCliRuntime. The runtime performs its own lock-protected
+        # permission/arm recheck again at worker admission.
+        if not self.catalog_enabled():
+            return ToolResult.blocked(RAW_SHELL_DENY_REFUSAL)
+        try:
+            if resolve_raw_shell_state(self._resolve_state(self.hub_tool())) == "deny":
+                return ToolResult.blocked(RAW_SHELL_DENY_REFUSAL)
+            result = self._runtime.execute(request, lambda _event: None)
+        except Exception as exc:
+            detail = (str(exc) or type(exc).__name__)[:300]
+            return ToolResult(
+                ok=False,
+                error=f"raw shell execution failed: {detail}",
+                outcome="failed",
+            )
+        return self._tool_result(result)
+
+    @staticmethod
+    def _tool_result(result: RawCliResult) -> ToolResult:
+        """Map one executor settlement to the ordinary bounded tool contract."""
+        exit_code = "none" if result.exit_code is None else str(result.exit_code)
+        detail = (
+            f"terminal_state: {result.terminal_state}\n"
+            f"resolved_shell: {result.resolved_shell}\n"
+            f"initial_directory: {result.initial_directory}\n"
+            f"elapsed_seconds: {result.elapsed_seconds:.3f}\n"
+            f"exit_code: {exit_code}\n"
+            f"truncated: {str(result.truncated).lower()}\n"
+            f"cleanup_proven: {str(result.cleanup_proven).lower()}\n"
+            f"stdout:\n{result.stdout_preview or '(no output)'}\n"
+            f"stderr:\n{result.stderr_preview or '(no output)'}"
+        )[:_MAX_MODEL_RESULT_CHARS]
+        if result.terminal_state == "exited" and result.exit_code == 0:
+            return ToolResult(ok=True, content=detail)
+        if result.terminal_state == "timed_out":
+            outcome = "timeout"
+        elif result.terminal_state == "cancelled":
+            outcome = "cancelled"
+        elif result.terminal_state == "refused":
+            outcome = "blocked"
+        else:
+            outcome = "failed"
+        return ToolResult(ok=False, error=detail, outcome=outcome)
 
 
 __all__ = [

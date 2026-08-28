@@ -273,6 +273,7 @@ from tldw_chatbook.Agents.session_todo_store import (
     TodoChangeCallback,
 )
 from tldw_chatbook.Agents.tool_catalog import BuiltinToolProvider
+from tldw_chatbook.Agents.raw_shell_tool_provider import RawShellToolProvider
 from tldw_chatbook.Agents.virtual_cli_provider import VirtualCliProvider
 from tldw_chatbook.config import (
     ConfigMutationResult,
@@ -335,7 +336,6 @@ from tldw_chatbook.model_capabilities import (
 if TYPE_CHECKING:
     from tldw_chatbook.Agents.agent_models import ToolCall
     from tldw_chatbook.Agents.builtin_tool_gate import BuiltinToolGate
-    from tldw_chatbook.Agents.raw_shell_tool_provider import RawShellToolProvider
     from tldw_chatbook.Chat.console_agent_bridge import ConsoleAgentBridge
     from tldw_chatbook.MCP.hub_tool_catalog import HubTool
 
@@ -9721,6 +9721,74 @@ class ConsoleChatController:
         )
         return provider, build_virtual_cli_review_hook(provider, bound_request)
 
+    def _compose_raw_shell_provider(
+        self,
+        session_id: str | None = None,
+        turn_context: ConsoleTurnExecutionContext | None = None,
+        *,
+        project_root: Path | None = None,
+    ) -> tuple[
+        RawShellToolProvider | None,
+        Callable[[list["ToolCall"], str], dict[str, str]] | None,
+    ]:
+        """Compose model raw shell only while every live safety gate is open."""
+        configured = (
+            turn_context.tool_configuration.get(
+                "local_tools_enabled", LOCAL_TOOLS_DEFAULT_ENABLED
+            )
+            if turn_context is not None
+            else get_cli_setting(
+                "console", "local_tools_enabled", LOCAL_TOOLS_DEFAULT_ENABLED
+            )
+        )
+        local_enabled = coerce_bool_setting(
+            configured, LOCAL_TOOLS_DEFAULT_ENABLED
+        )
+        if not local_enabled or not session_id:
+            return None, None
+        service = getattr(self.app, "unified_mcp_service", None)
+        runtime = getattr(self.app, "raw_cli_runtime", None)
+        if service is None or runtime is None:
+            return None, None
+        try:
+            if (
+                runtime.permitted is not True
+                or runtime.armed is not True
+                or service.get_kill_switch()
+            ):
+                return None, None
+        except Exception:
+            return None, None
+
+        if project_root is not None:
+            initial_directory = project_root
+        else:
+            snapshot = turn_context.scratch_space if turn_context is not None else None
+            if snapshot is None:
+                return None, None
+            initial_directory = snapshot.root
+
+        def kill_switch() -> bool:
+            try:
+                return bool(service.get_kill_switch())
+            except Exception:
+                return True
+
+        bound_request = functools.partial(
+            self.request_mcp_approvals, session_id=session_id
+        )
+        provider = RawShellToolProvider(
+            runtime=runtime,
+            console_session_id=session_id,
+            initial_directory=lambda: initial_directory,
+            resolve_state=service.gate_tool_test,
+            local_tools_enabled=lambda: local_enabled,
+            kill_switch=kill_switch,
+        )
+        if not provider.catalog_enabled():
+            return None, None
+        return provider, build_raw_shell_review_hook(provider, bound_request)
+
     def _todo_wiring(self, session_id: str | None) -> _TodoWiring:
         """The todo_store/on_todo_change kwargs for ``_compose_local_provider``.
 
@@ -12408,6 +12476,13 @@ class ConsoleChatController:
                 project_root_identity=selection.root_identity,
             )
         )
+        raw_shell_provider, _raw_shell_review_hook = (
+            self._compose_raw_shell_provider(
+                session_id=session_id,
+                turn_context=turn_context,
+                project_root=selection.root,
+            )
+        )
         try:
             preview_result = await asyncio.to_thread(
                 bridge.build_project_instruction_preview_request,
@@ -12425,6 +12500,7 @@ class ConsoleChatController:
                 builtin_gate=builtin_gate,
                 local_provider=local_provider,
                 virtual_cli_provider=virtual_cli_provider,
+                raw_shell_provider=raw_shell_provider,
                 scratch_root=scratch_snapshot.root,
                 scratch_lease=scratch_lease,
                 turn_skill_bindings=turn_skill_bindings,
@@ -16868,6 +16944,15 @@ class ConsoleChatController:
                 project_root_guard=project_authority_guard,
             )
         )
+        raw_shell_provider, raw_shell_review_hook = (
+            self._compose_raw_shell_provider(
+                session_id=session_id,
+                turn_context=turn_context,
+                project_root=(
+                    project_selection.root if project_selection is not None else None
+                ),
+            )
+        )
         self._mcp_provider = mcp_provider
 
         # task-545/T6: build THIS run's built-in permission gate and hand
@@ -16931,6 +17016,10 @@ class ConsoleChatController:
         if virtual_cli_review_hook is not None:
             review_hook = build_combined_review_hook(
                 [review_hook, virtual_cli_review_hook]
+            )
+        if raw_shell_review_hook is not None:
+            review_hook = build_combined_review_hook(
+                [review_hook, raw_shell_review_hook]
             )
 
         # task-1337: THIS run's Library retrieval provider (direct tools or
@@ -17013,6 +17102,7 @@ class ConsoleChatController:
                 review_tool_calls=review_hook,
                 local_provider=local_provider,
                 virtual_cli_provider=virtual_cli_provider,
+                raw_shell_provider=raw_shell_provider,
                 library_provider=library_provider,
                 library_authority=library_provider_authority,
                 native_tools_enabled=bool(

@@ -3015,6 +3015,7 @@ def _compose_run_registry_and_allowed(
     scratch_lease: Callable[[], ContextManager[Path]] | None = None,
     local_provider: Any | None = None,
     virtual_cli_provider: Any | None = None,
+    raw_shell_provider: Any | None = None,
     library_provider: Any | None = None,
     library_authority: Any | None = None,
 ) -> tuple[ToolCatalogRegistry, tuple[str, ...], tuple[str, ...], tuple[str, ...]]:
@@ -3131,6 +3132,9 @@ def _compose_run_registry_and_allowed(
     if virtual_cli_provider is not None:
         registry.register_provider(virtual_cli_provider)
         local_names += tuple(e.name for e in virtual_cli_provider.list_catalog())
+    if raw_shell_provider is not None:
+        registry.register_provider(raw_shell_provider)
+        local_names += tuple(e.name for e in raw_shell_provider.list_catalog())
     # task-1337: Library retrieval (direct tools OR the bounded RAG fallback)
     # registers after builtins/local and before skills/MCP; its names join
     # every collision filter below so a skill or MCP tool can never shadow
@@ -3221,6 +3225,7 @@ def build_console_first_request_plan(
     builtin_gate: Any | None,
     local_provider: Any | None,
     virtual_cli_provider: Any | None = None,
+    raw_shell_provider: Any | None = None,
     library_provider: Any | None,
     library_authority: Any | None,
     workspace_id: str | None,
@@ -3245,6 +3250,7 @@ def build_console_first_request_plan(
         or builtin_gate is not None
         or local_provider is not None
         or virtual_cli_provider is not None
+        or raw_shell_provider is not None
         or library_provider is not None
         or scratch_root is not None
         or scratch_lease is not None
@@ -3262,6 +3268,7 @@ def build_console_first_request_plan(
                 scratch_lease=scratch_lease,
                 local_provider=local_provider,
                 virtual_cli_provider=virtual_cli_provider,
+                raw_shell_provider=raw_shell_provider,
                 library_provider=library_provider,
                 library_authority=library_authority,
             )
@@ -3703,6 +3710,7 @@ class ConsoleAgentBridge:
         builtin_gate: Any | None = None,
         local_provider: Any | None = None,
         virtual_cli_provider: Any | None = None,
+        raw_shell_provider: Any | None = None,
         scratch_root: Path | None = None,
         scratch_lease: Callable[[], ContextManager[Path]] | None = None,
         turn_skill_bindings: tuple[str, ...] = (),
@@ -3746,6 +3754,7 @@ class ConsoleAgentBridge:
             builtin_gate=builtin_gate,
             local_provider=local_provider,
             virtual_cli_provider=virtual_cli_provider,
+            raw_shell_provider=raw_shell_provider,
             library_provider=None,
             library_authority=None,
             workspace_id=workspace_id,
@@ -3830,6 +3839,7 @@ class ConsoleAgentBridge:
         request_skill_script_confirm: Callable[[dict], dict] | None = None,
         local_provider: Any | None = None,
         virtual_cli_provider: Any | None = None,
+        raw_shell_provider: Any | None = None,
         library_provider: Any | None = None,
         library_authority: Any | None = None,
         # PR2a Task 7: called with the run id of every sub-agent this turn
@@ -3984,6 +3994,7 @@ class ConsoleAgentBridge:
             builtin_gate=builtin_gate,
             local_provider=local_provider,
             virtual_cli_provider=virtual_cli_provider,
+            raw_shell_provider=raw_shell_provider,
             library_provider=library_provider,
             library_authority=library_authority,
             workspace_id=run_workspace_id,
@@ -4648,6 +4659,9 @@ class ConsoleAgentBridge:
                 else None,
                 getattr(virtual_cli_provider, "stamp_scope", None)
                 if virtual_cli_provider is not None
+                else None,
+                getattr(raw_shell_provider, "stamp_scope", None)
+                if raw_shell_provider is not None
                 else None,
             )
             if scope is not None

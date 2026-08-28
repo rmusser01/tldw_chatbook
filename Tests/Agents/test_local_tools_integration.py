@@ -18,6 +18,7 @@ review_tool_calls=hook, review_state_scope=provider.stamp_scope).
 
 import dataclasses
 import json
+from types import SimpleNamespace
 
 import pytest
 
@@ -35,6 +36,7 @@ from tldw_chatbook.Agents.local_tool_provider import (
     _default_specs,
 )
 from tldw_chatbook.Agents.mcp_tool_provider import MCPPendingCall
+from tldw_chatbook.Agents.raw_shell_tool_provider import RawShellToolProvider
 from tldw_chatbook.Agents.session_todo_store import SessionTodoStore
 from tldw_chatbook.Agents.tool_catalog import (
     BuiltinToolProvider,
@@ -42,6 +44,7 @@ from tldw_chatbook.Agents.tool_catalog import (
     initial_disclosure,
 )
 from tldw_chatbook.Chat.console_chat_controller import build_local_review_hook
+from tldw_chatbook.Chat.console_agent_bridge import _compose_run_registry_and_allowed
 from tldw_chatbook.DB.AgentRuns_DB import AgentRunsDB
 from tldw_chatbook.MCP.permission_store import (
     EffectiveToolState,
@@ -338,6 +341,28 @@ def test_direct_disclosure_boundary(workspace):
     schemas, offer_find_load = initial_disclosure(past, RunBudget())
     assert offer_find_load is True
     assert schemas == []
+
+
+def test_raw_shell_provider_joins_the_local_registry_partition(workspace):
+    runtime = SimpleNamespace(
+        permitted=True,
+        armed=True,
+        model_session_granted=lambda _session_id: False,
+        grant_model_session=lambda _session_id: None,
+    )
+    provider = RawShellToolProvider(
+        runtime=runtime,
+        console_session_id="console-session",
+        initial_directory=lambda: workspace,
+    )
+
+    registry, allowed, _builtin_names, local_names = (
+        _compose_run_registry_and_allowed({}, raw_shell_provider=provider)
+    )
+
+    assert "shell_exec" in allowed
+    assert "shell_exec" in local_names
+    assert registry.load_schema("raw_shell:shell_exec").name == "shell_exec"
 
 
 def test_find_load_path_executes_fs_edit_after_approve_once(db, workspace):
