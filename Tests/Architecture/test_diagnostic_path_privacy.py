@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import ast
 import json
 import re
 from pathlib import Path
@@ -10,6 +11,8 @@ from textwrap import dedent
 import pytest
 
 from scripts.check_persistent_diagnostic_inventory import (
+    _is_diagnostic_call,
+    _logger_symbols,
     render_diff,
     scan_path_diagnostic_candidates,
 )
@@ -745,6 +748,58 @@ def _candidate_detail(candidate: dict[str, object]) -> str:
     )
 
 
+def _traceback_capture_calls(source: str, *, filename: str) -> list[dict[str, object]]:
+    """Return complete source locations for diagnostics that retain tracebacks."""
+    tree = ast.parse(source, filename=filename)
+    logger_symbols = _logger_symbols(tree)
+    captures: list[dict[str, object]] = []
+
+    for node in ast.walk(tree):
+        if not isinstance(node, ast.Call) or not _is_diagnostic_call(
+            node, logger_symbols
+        ):
+            continue
+
+        method = node.func.attr
+        capture: str | None = None
+        if method == "exception":
+            capture = "logger.exception"
+        elif isinstance(node.func.value, ast.Call):
+            options_call = node.func.value
+            if (
+                isinstance(options_call.func, ast.Attribute)
+                and options_call.func.attr == "opt"
+            ):
+                exception_option = next(
+                    (
+                        keyword.value
+                        for keyword in options_call.keywords
+                        if keyword.arg == "exception"
+                    ),
+                    None,
+                )
+                disabled = isinstance(
+                    exception_option, ast.Constant
+                ) and exception_option.value in (False, None)
+                if exception_option is not None and not disabled:
+                    capture = f"logger.opt(exception={ast.unparse(exception_option)})"
+
+        if capture is not None:
+            captures.append(
+                {
+                    "line": node.lineno,
+                    "column": node.col_offset + 1,
+                    "method": method,
+                    "capture": capture,
+                }
+            )
+
+    return sorted(
+        captures,
+        key=lambda entry: (entry["line"], entry["column"], entry["method"]),
+    )
+
+
 def test_path_candidate_report_preserves_all_files_and_duplicate_findings() -> None:
     duplicate_source = dedent(
         """
@@ -845,23 +900,28 @@ def test_path_privacy_rules_are_inventory_metadata() -> None:
 
 
 def test_task_19864_owner_files_have_no_raw_path_diagnostics() -> None:
-    """Every owned file must reach zero candidates without first-match hiding."""
-    candidates_by_owner = {
-        relative_path: scan_path_diagnostic_candidates(
-            (_REPOSITORY_ROOT / relative_path).read_text(encoding="utf-8"),
+    """Every owner must reach zero path inputs and implicit traceback capture."""
+    evidence_by_owner: dict[str, dict[str, list[dict[str, object]]]] = {}
+    for relative_path in TASK_19864_OWNER_PATHS:
+        source = (_REPOSITORY_ROOT / relative_path).read_text(encoding="utf-8")
+        path_candidates = scan_path_diagnostic_candidates(
+            source,
             filename=relative_path,
         )
-        for relative_path in TASK_19864_OWNER_PATHS
-    }
-    violations = {
-        path: candidates
-        for path, candidates in candidates_by_owner.items()
-        if candidates
-    }
+        traceback_captures = _traceback_capture_calls(
+            source,
+            filename=relative_path,
+        )
+        if path_candidates or traceback_captures:
+            evidence_by_owner[relative_path] = {
+                "path_diagnostic_candidates": path_candidates,
+                "traceback_captures": traceback_captures,
+            }
 
-    if violations:
+    if evidence_by_owner:
         pytest.fail(
-            "TASK-19864 owner path diagnostics remain; complete candidate sets:\n"
-            + json.dumps(violations, indent=2, sort_keys=True),
+            "TASK-19864 owner path diagnostics or traceback capture remain; "
+            "complete evidence sets:\n"
+            + json.dumps(evidence_by_owner, indent=2, sort_keys=True),
             pytrace=False,
         )

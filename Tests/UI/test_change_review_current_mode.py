@@ -244,7 +244,10 @@ def plain_review_fixture(tmp_path):
     provider = AgentRunsChangeReviewProvider(
         db=db, service=service, conversation_id=conv
     )
-    return provider, root, db, run1
+    try:
+        yield provider, root, db, run1
+    finally:
+        db.close()
 
 
 @pytest.mark.asyncio
@@ -319,19 +322,22 @@ async def test_current_status_worker_failure_logs_safe_metadata(
     app = _Harness(provider, workspace_roots=[str(root)])
     records: list[str] = []
     banner = ""
-    async with app.run_test(size=(160, 48)) as pilot:
-        screen = await _open_screen(pilot, app)
-        await _wait_for_detection(pilot, screen)
-        sink_id = logger.add(lambda message: records.append(str(message)))
-        try:
-            screen.query_one(
-                "#change-review-turn-select", Select
-            ).value = CURRENT_MODE_SENTINEL
-            await _wait_idle(pilot, app, "change-review-current")
-            await pilot.pause()
-            banner = _static_text(screen, "#change-review-banner")
-        finally:
-            logger.remove(sink_id)
+    try:
+        async with app.run_test(size=(160, 48)) as pilot:
+            screen = await _open_screen(pilot, app)
+            await _wait_for_detection(pilot, screen)
+            sink_id = logger.add(lambda message: records.append(str(message)))
+            try:
+                screen.query_one(
+                    "#change-review-turn-select", Select
+                ).value = CURRENT_MODE_SENTINEL
+                await _wait_idle(pilot, app, "change-review-current")
+                await pilot.pause()
+                banner = _static_text(screen, "#change-review-banner")
+            finally:
+                logger.remove(sink_id)
+    finally:
+        database.close()
 
     assert root.name in banner
     assert raw_exception in banner
