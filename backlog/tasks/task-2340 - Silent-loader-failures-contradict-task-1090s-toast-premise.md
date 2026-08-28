@@ -1,11 +1,11 @@
 ---
 id: TASK-2340
 title: Silent loader failures contradict task-1090s toast premise
-status: In Progress
+status: Done
 assignee:
   - '@codex'
 created_date: '2026-08-04'
-updated_date: '2026-08-28 15:45'
+updated_date: '2026-08-28 15:46'
 labels:
   - watchlists
   - error-recovery
@@ -45,15 +45,10 @@ loaders sit outside its enforcement by construction.
 - [x] #5 Mounted regressions prove both affected loaders retain their empty
       fallback and emit exactly one markup-disabled error toast without
       leaking sentinel exception content.
-- [ ] #6 Focused Watchlists tests, modified-file Ruff lint and format checks, and
+- [x] #6 Focused Watchlists tests, modified-file Ruff lint and format checks, and
       `git diff --check` pass.
 <!-- SECTION:ACCEPTANCE_CRITERIA:END -->
 <!-- AC:END -->
-
-## References
-
-- Design: `Docs/superpowers/specs/2026-08-28-watchlists-synchronous-loader-failure-toasts-design.md`
-- Plan: `Docs/superpowers/plans/2026-08-28-watchlists-synchronous-loader-failure-toasts.md`
 
 ## Implementation Plan
 
@@ -71,5 +66,10 @@ Reason: bounded error reporting within the existing Watchlists screen; no schema
 ## Implementation Notes
 
 <!-- SECTION:NOTES:BEGIN -->
-Added fixed markup-disabled error toasts to both live synchronous source loaders while preserving debug diagnostics and empty fallbacks. Added mounted regressions plus an exact handler-level AST contract with documented lifecycle/preference-write exemptions. ADR required: no; ADR path: N/A; this is a bounded screen error-reporting repair. Focused verification is pending its final combined completion gate.
+Added fixed markup-disabled error toasts to both live synchronous source loaders while preserving debug diagnostics and empty fallbacks. Added mounted regressions plus an exact handler-level AST contract with documented lifecycle/preference-write exemptions. ADR required: no; ADR path: N/A; reason: bounded screen error-reporting repair with no schema, ownership, service, runtime, dependency, or long-lived UX boundary change. Compatibility verification: 17 passed, 2 warnings. Final combined gate: 43 passed, 2 warnings. Both pytest runs also emitted non-failing post-summary PytestWarning cleanup messages from stale pytest garbage directories. Modified-file Ruff lint and format checks, both diff checks, and the final clean-worktree gate passed.
 <!-- SECTION:NOTES:END -->
+
+## References
+
+- Design: `Docs/superpowers/specs/2026-08-28-watchlists-synchronous-loader-failure-toasts-design.md`
+- Plan: `Docs/superpowers/plans/2026-08-28-watchlists-synchronous-loader-failure-toasts.md`
