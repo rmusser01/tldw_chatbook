@@ -2,7 +2,7 @@
 
 **Task:** TASK-2340 — Silent loader failures contradict TASK-1090's toast premise
 
-**Status:** Ready for user review
+**Status:** Approved on 2026-08-28
 
 ## Context
 

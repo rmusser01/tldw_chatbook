@@ -5,7 +5,7 @@ status: In Progress
 assignee:
   - '@codex'
 created_date: '2026-08-04'
-updated_date: '2026-08-28 14:55'
+updated_date: '2026-08-28 15:10'
 labels:
   - watchlists
   - error-recovery
@@ -45,6 +45,20 @@ loaders sit outside its enforcement by construction.
 - [ ] Focused Watchlists tests, modified-file Ruff lint and format checks, and
       `git diff --check` pass.
 
+## Implementation Plan
+
+<!-- SECTION:PLAN:BEGIN -->
+1. Add mounted red regressions for both synchronous source loaders and a handler-level AST contract with exact exemptions.
+2. Add the two fixed severity=error, markup=False notifications through _notify_watchlists while preserving debug logs and empty fallbacks.
+3. Run the focused failure-policy and source-scope modules, modified-file Ruff lint/format, and git diff --check.
+4. Complete TASK-2340 acceptance criteria and implementation notes only after the final focused gate passes.
+
+ADR required: no
+ADR path: N/A
+Reason: bounded error reporting within the existing Watchlists screen; no schema, ownership, service, runtime, dependency, or long-lived UX boundary changes.
+<!-- SECTION:PLAN:END -->
+
 ## References
 
 - Design: `Docs/superpowers/specs/2026-08-28-watchlists-synchronous-loader-failure-toasts-design.md`
+- Plan: `Docs/superpowers/plans/2026-08-28-watchlists-synchronous-loader-failure-toasts.md`
