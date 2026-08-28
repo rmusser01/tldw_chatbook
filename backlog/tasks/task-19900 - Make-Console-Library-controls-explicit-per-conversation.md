@@ -143,16 +143,22 @@ logs.
 The final qualification reconciled all governed documentation and joined the
 migration, policy, runtime, send, recovery, queue, continuation, activity,
 sync/export, Settings, and Textual paths. Exact post-rebase Delivery 6
-verification passed 1,760 tests in 410.38 seconds, the focused new contract
-passed 41 tests in 2.55 seconds, and 23 exact counterfactual node IDs expanded to 29 passing
-cases across nine security/correctness guard families; TASK-19900.6 records the
-full list. Ruff, compileall, CSS bundle sync, screen-size ratchet, production
-diagnostic inventory (540 owners, 1,261 TASK-492 calls, 7,394 TASK-494 calls,
+verification passed 1,760 tests in 347.59 seconds, the focused new contract
+passed 41 tests in 2.51 seconds, and 23 exact counterfactual node IDs expanded
+to 29 passing cases across nine security/correctness guard families;
+TASK-19900.6 records the full list. Ruff, compileall, CSS bundle sync,
+screen-size ratchet, production
+diagnostic inventory (540 owners, 1,260 TASK-492 calls, 7,394 TASK-494 calls,
 and 8 sink files), backlog-ID, and diff checks passed. An explicitly
 isolated real-app walkthrough proved Direct/RAG disclosure, all four policy
 states, exact manual-search draft preservation, atomic first persistence,
 restart hydration, and soft-delete/restore; repository coverage proves hard
 purge cascades all device-local sidecars.
+
+PR review also closed Qodo's three findings by moving purge reads under the
+transaction boundary, routing scripted tool/continuation turns through the
+production streaming adapter, and restoring exact privacy-safe direct-tool
+argument assertions. TASK-19900.6 records the red/green and focused evidence.
 
 TASK-19900.1 through TASK-19900.6 are Done with checked acceptance criteria.
 The owner approved the integrated targeted scope and chose not to run the full

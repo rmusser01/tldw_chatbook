@@ -8,12 +8,16 @@ from collections import deque
 from dataclasses import dataclass, field
 from typing import Any, Literal
 
-from tldw_chatbook.Agents.agent_models import ModelTurn, ToolCall
+from tldw_chatbook.Agents.agent_models import ToolCall
 from tldw_chatbook.Chat.console_dispatch_checkpoint import (
     ConsoleEgressClass,
     ConsoleResolvedDestination,
 )
-from tldw_chatbook.Chat.console_provider_gateway import ConsoleProviderResolution
+from tldw_chatbook.Chat.console_provider_gateway import (
+    ConsoleProviderResolution,
+    ProviderToolCalls,
+    ProviderTurnMetadata,
+)
 from tldw_chatbook.Chat.provider_continuation import (
     ContinuationCall,
     ContinuationRound,
@@ -236,11 +240,31 @@ class RecordingConsoleProvider:
         if stream_index < len(self.stream_gates):
             self.stream_started[stream_index].set()
             await self.stream_gates[stream_index].wait()
-        script = (
-            self.stream_scripts.popleft()
-            if self.stream_scripts
-            else StreamScript.terminal("ok")
-        )
+        if self.model_scripts:
+            script = self.model_scripts.popleft()
+        elif self.stream_scripts:
+            script = self.stream_scripts.popleft()
+        else:
+            script = StreamScript.terminal("ok")
+        if isinstance(script, ToolBatchScript):
+            yield ProviderToolCalls(
+                tuple(
+                    {
+                        "id": call.call_id,
+                        "type": "function",
+                        "function": {
+                            "name": call.name,
+                            "arguments": call.raw_arguments,
+                        },
+                    }
+                    for call in script.calls
+                ),
+                metadata=ProviderTurnMetadata(
+                    finish_reason="tool_calls",
+                    provider_continuation=script.continuation,
+                ),
+            )
+            return
         if script.outcome == "failure":
             raise RuntimeError("scripted provider failure")
         if script.outcome == "timeout":
@@ -294,42 +318,30 @@ class RecordingConsoleProvider:
 
     def invoke(self, name: str, arguments: object) -> dict[str, Any]:
         """Serve bounded direct-tool data while recording no result body."""
-        query = arguments.get("query") if isinstance(arguments, dict) else None
+        argument_map = arguments if isinstance(arguments, dict) else {}
+        query = argument_map.get("query")
+        tool_name = name.rsplit(":", 1)[-1]
+        metadata: dict[str, Any] = {
+            "name": tool_name,
+            "argument_keys": tuple(sorted(str(key) for key in argument_map)),
+            "has_query": isinstance(query, str) and bool(query),
+        }
+        if tool_name == "library_list_notes":
+            limit = argument_map.get("limit")
+            metadata["limit"] = limit if type(limit) is int else None
+        elif tool_name == "library_get_note":
+            note_id = argument_map.get("note_id")
+            encoded_note_id = (
+                note_id.encode("utf-8") if isinstance(note_id, str) else b""
+            )
+            metadata["note_id_bytes"] = len(encoded_note_id)
+            metadata["note_id_sha256"] = hashlib.sha256(encoded_note_id).hexdigest()
         self._record(
             "direct_tool",
             "local_library",
-            name=name.rsplit(":", 1)[-1],
-            has_query=isinstance(query, str) and bool(query),
+            **metadata,
         )
         return {
             "items": [{"id": "note:qualification", "title": "Qualification"}],
             "total": 1,
         }
-
-    def next_model_turn(
-        self,
-        messages: list[dict[str, Any]],
-        tools: tuple[Any, ...],
-    ) -> ModelTurn:
-        """Return a scripted native batch, timeout, failure, or terminal."""
-        self._record(
-            "model_turn",
-            self.egress.value,
-            message_count=len(messages),
-            tool_count=len(tools),
-        )
-        script = (
-            self.model_scripts.popleft()
-            if self.model_scripts
-            else StreamScript.terminal("done")
-        )
-        if isinstance(script, ToolBatchScript):
-            return ModelTurn(
-                tool_calls=script.calls,
-                provider_continuation=script.continuation,
-            )
-        if script.outcome == "failure":
-            raise RuntimeError("scripted model failure")
-        if script.outcome == "timeout":
-            raise TimeoutError("scripted model timeout")
-        return ModelTurn(text="".join(script.chunks))

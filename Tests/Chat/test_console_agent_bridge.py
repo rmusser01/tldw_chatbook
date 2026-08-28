@@ -3,6 +3,7 @@
 import asyncio
 import contextlib
 import copy
+import hashlib
 import json
 import os
 import threading
@@ -7815,9 +7816,20 @@ def test_parent_and_child_share_one_library_provider_and_child_can_only_narrow(
     )
 
     assert outcome.status == "done"
-    assert [call.metadata["name"] for call in recorder.calls_of("direct_tool")] == [
-        "library_list_notes",
-        "library_get_note",
+    assert [call.metadata for call in recorder.calls_of("direct_tool")] == [
+        {
+            "name": "library_list_notes",
+            "argument_keys": ("limit",),
+            "has_query": False,
+            "limit": 1,
+        },
+        {
+            "name": "library_get_note",
+            "argument_keys": ("note_id",),
+            "has_query": False,
+            "note_id_bytes": 6,
+            "note_id_sha256": hashlib.sha256(b"note-1").hexdigest(),
+        },
     ]
     assert len(recorder.activity_events) == 2
     assert "PRIVATE USER BODY" not in repr(recorder.calls)

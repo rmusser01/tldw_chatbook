@@ -32,12 +32,17 @@ from tldw_chatbook.Agents.library_rag_tool_provider import (
 )
 from tldw_chatbook.Agents.library_tool_provider import LibraryToolProvider
 from tldw_chatbook.Chat.console_agent_bridge import (
+    _ModelCallLifeline,
+    _StreamingModelAdapter,
     _compose_run_registry_and_allowed,
 )
 from tldw_chatbook.Chat.chat_persistence_service import ChatPersistenceService
 from tldw_chatbook.Chat.console_chat_controller import ConsoleChatController
-from tldw_chatbook.Chat.console_chat_models import ConsoleProviderSelection
-from tldw_chatbook.Chat.console_chat_models import ConsoleDispatchRecoveryKind
+from tldw_chatbook.Chat.console_chat_models import (
+    ConsoleDispatchRecoveryKind,
+    ConsoleMessageRole,
+    ConsoleProviderSelection,
+)
 from tldw_chatbook.Chat.console_chat_store import ConsoleChatStore
 from tldw_chatbook.Chat.console_dispatch_checkpoint import (
     ConsoleContinuationHandoff,
@@ -242,27 +247,72 @@ async def test_automatic_preparation_uses_fixed_categories_and_scripted_outcomes
 
 @pytest.mark.asyncio
 async def test_recording_provider_covers_stream_tool_continuation_and_redacts_bodies() -> None:
+    tool_batch = ToolBatchScript.library_search_then_continue()
     recorder = RecordingConsoleProvider(
         stream_scripts=[StreamScript.tokens("hel", "lo")],
-        model_scripts=[ToolBatchScript.library_search_then_continue()],
+        model_scripts=[tool_batch],
     )
     resolution = await recorder.resolve_for_send(
         ConsoleProviderSelection("llama_cpp", "qualification-model")
     )
-
-    chunks = [
-        chunk
-        async for chunk in recorder.stream_chat(
-            resolution,
-            [{"role": "user", "content": "PRIVATE USER BODY"}],
+    store = ConsoleChatStore()
+    session = store.ensure_session()
+    assistant = store.append_message(
+        session.id,
+        role=ConsoleMessageRole.ASSISTANT,
+        content="",
+    )
+    lifeline = _ModelCallLifeline("library-qualification-loop")
+    lifeline.start()
+    try:
+        adapter = _StreamingModelAdapter(
+            store=store,
+            provider_gateway=recorder,
+            resolution=resolution,
+            assistant_message_id=assistant.id,
+            should_cancel=lambda: False,
+            loop=lifeline.loop,
+            native_tools=True,
         )
-    ]
-    turn = recorder.next_model_turn([], ())
+        tools = (
+            {
+                "type": "function",
+                "function": {
+                    "name": "search_library_rag",
+                    "description": "Search the Library.",
+                    "parameters": {"type": "object", "properties": {}},
+                },
+            },
+        )
+        first = adapter.chat_call(
+            messages_payload=[{"role": "user", "content": "PRIVATE USER BODY"}],
+            tools=tools,
+        )
+        second = adapter.chat_call(
+            messages_payload=[
+                {"role": "user", "content": "PRIVATE USER BODY"},
+                {
+                    "role": "tool",
+                    "tool_call_id": "call-library-1",
+                    "content": "PRIVATE LIBRARY BODY",
+                },
+            ],
+            tools=tools,
+        )
+    finally:
+        lifeline.shutdown()
 
-    assert chunks == ["hel", "lo"]
-    assert len(turn.tool_calls) == 1
-    assert turn.provider_continuation is not None
+    native_calls = first["choices"][0]["message"]["tool_calls"]
+    assert native_calls[0]["function"]["name"] == "search_library_rag"
+    assert first.provider_continuation == tool_batch.continuation
+    assert second["choices"][0]["message"]["content"] == "hello"
+    assert store.get_message(assistant.id).content == "hello"
+    assert [call.metadata["tool_names"] for call in recorder.calls_of("stream")] == [
+        ("search_library_rag",),
+        ("search_library_rag",),
+    ]
     assert "PRIVATE USER BODY" not in repr(recorder.calls)
+    assert "PRIVATE LIBRARY BODY" not in repr(recorder.calls)
     assert recorder.calls_of("readiness")[0].destination == "on_device"
 
 
@@ -448,30 +498,33 @@ def test_permanent_conversation_purge_cascades_every_library_sidecar(tmp_path) -
             ),
         )
 
-    connection = db.get_connection()
     sidecars = (
         "console_conversation_library_policy",
         "console_dispatch_checkpoints",
         "message_trajectory_metadata",
     )
-    assert {
-        table: connection.execute(
-            f"SELECT COUNT(*) FROM {table} WHERE conversation_id = ?",
-            (conversation_id,),
-        ).fetchone()[0]
-        for table in sidecars
-    } == {table: 1 for table in sidecars}
+    with db.transaction() as cursor:
+        before_counts = {
+            table: cursor.execute(
+                f"SELECT COUNT(*) FROM {table} WHERE conversation_id = ?",
+                (conversation_id,),
+            ).fetchone()[0]
+            for table in sidecars
+        }
+    assert before_counts == {table: 1 for table in sidecars}
 
     with db.transaction(immediate=True) as cursor:
         cursor.execute("DELETE FROM conversations WHERE id = ?", (conversation_id,))
 
-    assert {
-        table: connection.execute(
-            f"SELECT COUNT(*) FROM {table} WHERE conversation_id = ?",
-            (conversation_id,),
-        ).fetchone()[0]
-        for table in sidecars
-    } == {table: 0 for table in sidecars}
+    with db.transaction() as cursor:
+        after_counts = {
+            table: cursor.execute(
+                f"SELECT COUNT(*) FROM {table} WHERE conversation_id = ?",
+                (conversation_id,),
+            ).fetchone()[0]
+            for table in sidecars
+        }
+    assert after_counts == {table: 0 for table in sidecars}
 
 
 def test_continuation_handoff_deletes_dispatch_owner_before_any_provider_call(
