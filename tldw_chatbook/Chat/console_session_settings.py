@@ -6,7 +6,7 @@ import functools
 import os
 import re
 from dataclasses import dataclass, replace
-from typing import Callable, Mapping, Sequence
+from typing import Callable, Mapping, Sequence, overload
 from urllib.parse import urlparse, urlunparse
 
 from tldw_chatbook.Chat.console_provider_support import (
@@ -535,6 +535,61 @@ def build_target_default_console_session_settings(
     """
 
     return replace(default_console_session_settings(app_config, provider, model))
+
+
+def normalized_console_model_profile_overrides(
+    app_config: Mapping[str, object],
+    provider: str,
+    model: str | None,
+) -> dict[str, object]:
+    """Return valid normalized overrides from one exact model profile.
+
+    Blank and invalid entries are omitted so callers can distinguish inheritance
+    from an explicit override. The conversions delegate to the same per-field
+    helpers used by :func:`build_default_console_session_settings`; this function
+    does not resolve any fallback precedence.
+    """
+
+    provider_settings = _provider_settings(
+        app_config,
+        _canonical_chat_provider_id(provider),
+    )
+    profile = _model_default_profile(provider_settings, model)
+    sources = (profile,)
+    overrides: dict[str, object] = {}
+
+    for name in (
+        "temperature",
+        "top_p",
+        "min_p",
+        "presence_penalty",
+        "frequency_penalty",
+    ):
+        value = _optional_float_setting_from_sources(sources, name)
+        if value is not None:
+            overrides[name] = value
+    for name in (
+        "top_k",
+        "max_tokens",
+        "seed",
+        "thinking_budget_tokens",
+    ):
+        value = _optional_int_setting_from_sources(sources, name)
+        if value is not None:
+            overrides[name] = value
+    for name in (
+        "reasoning_effort",
+        "reasoning_summary",
+        "verbosity",
+        "thinking_effort",
+    ):
+        value = _optional_string_setting_from_sources(sources, name)
+        if value is not None:
+            overrides[name] = value
+    streaming = _bool_setting_from_sources(sources, "streaming", None)
+    if streaming is not None:
+        overrides["streaming"] = streaming
+    return overrides
 
 
 def resolve_effective_chat_configuration(
@@ -1429,11 +1484,27 @@ def _optional_string_setting_from_sources(
     return None
 
 
+@overload
 def _bool_setting_from_sources(
     sources: Sequence[Mapping[str, object]],
     key: str,
     default: bool,
-) -> bool:
+) -> bool: ...
+
+
+@overload
+def _bool_setting_from_sources(
+    sources: Sequence[Mapping[str, object]],
+    key: str,
+    default: None,
+) -> bool | None: ...
+
+
+def _bool_setting_from_sources(
+    sources: Sequence[Mapping[str, object]],
+    key: str,
+    default: bool | None,
+) -> bool | None:
     for source in sources:
         if key not in source:
             continue

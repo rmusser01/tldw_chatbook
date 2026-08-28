@@ -172,6 +172,7 @@ from tldw_chatbook.Chat.console_session_settings import (
     build_target_default_console_session_settings,
     normalize_llamacpp_base_url,
     normalize_console_model_value,
+    normalized_console_model_profile_overrides,
 )
 from tldw_chatbook.Chat.console_provider_support import (
     build_local_thinking_payload_fields,
@@ -274,11 +275,9 @@ from tldw_chatbook.config import (
     DEFAULT_CONSOLE_PROJECT_INSTRUCTIONS_MAX_BYTES,
     MAX_CONSOLE_PROJECT_INSTRUCTIONS_MAX_BYTES,
     MIN_CONSOLE_PROJECT_INSTRUCTIONS_MAX_BYTES,
-    ProviderSettingsError,
     coerce_bool_setting,
     coerce_int_setting,
     get_cli_setting,
-    provider_settings_for_key,
 )
 from tldw_chatbook.Library.library_tool_contract import LIBRARY_TOOL_DESCRIPTORS
 from tldw_chatbook.Library.library_rag_service import (
@@ -523,31 +522,6 @@ def _supported_console_settings_fields(
     if identity.execution_key in _CONSOLE_LOCAL_THINKING_BUDGET_EXECUTION_KEYS:
         supported.add("thinking_budget_tokens")
     return frozenset(supported)
-
-
-def _console_model_profile(
-    app_config: Mapping[str, object],
-    *,
-    provider: str,
-    model: str | None,
-) -> Mapping[str, object]:
-    """Return the exact literal-model profile without resolving precedence."""
-
-    model_id = normalize_console_model_value(model)
-    if model_id is None:
-        return {}
-    api_settings = app_config.get("api_settings", {})
-    if not isinstance(api_settings, Mapping):
-        return {}
-    try:
-        provider_settings = provider_settings_for_key(api_settings, provider)
-    except ProviderSettingsError:
-        return {}
-    model_defaults = provider_settings.get("model_defaults", {})
-    if not isinstance(model_defaults, Mapping):
-        return {}
-    profile = model_defaults.get(model_id, {})
-    return profile if isinstance(profile, Mapping) else {}
 
 
 #: Fallback used when no `mcp_approval_timeout_seconds` seam is injected --
@@ -6988,15 +6962,18 @@ class ConsoleChatController:
             ),
             None,
         )
+        restoring_remembered_target = (
+            current_key != target_key and remembered_target is not None
+        )
         source_fields = (
-            state.field_drafts
-            if current_key == target_key or remembered_target is None
-            else remembered_target.field_drafts
+            remembered_target.field_drafts
+            if restoring_remembered_target
+            else state.field_drafts
         )
         source_endpoint = (
-            state.endpoint_draft
-            if current_key == target_key or remembered_target is None
-            else remembered_target.endpoint_draft
+            remembered_target.endpoint_draft
+            if restoring_remembered_target
+            else state.endpoint_draft
         )
 
         supported_fields = _supported_console_settings_fields(
@@ -7004,10 +6981,10 @@ class ConsoleChatController:
             target_model,
         )
         exposed_supported_fields = exposed_fields & supported_fields
-        profile = _console_model_profile(
+        profile = normalized_console_model_profile_overrides(
             app_config,
-            provider=target_provider,
-            model=target_model,
+            target_provider,
+            target_model,
         )
         quick_surface = exposed_fields == QUICK_MODEL_DEFAULT_FIELDS
         rebased_fields: dict[str, ConsoleSettingsFieldDraft] = {}
@@ -7035,7 +7012,9 @@ class ConsoleChatController:
             )
 
         dirty_values: dict[str, object | None] = {}
-        changed_target = current_key != target_key
+        carrying_to_unseen_target = (
+            current_key != target_key and remembered_target is None
+        )
         for field in source_fields:
             if not field.dirty or field.name not in exposed_supported_fields:
                 continue
@@ -7045,13 +7024,11 @@ class ConsoleChatController:
             rebased_fields[field.name] = replace(
                 field,
                 profile_override=(
-                    field.effective_value
-                    if quick_surface
-                    else field.profile_override
+                    field.effective_value if quick_surface else field.profile_override
                 ),
                 provenance=(
                     ConsoleSettingsFieldProvenance.CARRIED
-                    if changed_target
+                    if carrying_to_unseen_target
                     else field.provenance
                 ),
                 dirty=True,

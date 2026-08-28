@@ -398,32 +398,120 @@ def test_rebase_full_keeps_inherited_profile_controls_blank() -> None:
 
 
 @pytest.mark.parametrize(
-    ("provider", "target_model", "unsupported_field"),
     (
-        ("moonshot", "moonshot-v1-8k", "reasoning_effort"),
-        ("zai", "glm-4", "reasoning_effort"),
-        ("vllm", "local-model", "thinking_budget_tokens"),
-        ("aphrodite", "local-model", "reasoning_effort"),
+        "field_name",
+        "profile_value",
+        "fallback_value",
+        "expected_effective",
+        "expected_override",
+        "expected_provenance",
+    ),
+    (
+        (
+            "temperature",
+            "",
+            0.44,
+            0.44,
+            None,
+            ConsoleSettingsFieldProvenance.INHERITED,
+        ),
+        (
+            "reasoning_effort",
+            None,
+            "low",
+            "low",
+            None,
+            ConsoleSettingsFieldProvenance.INHERITED,
+        ),
+        (
+            "streaming",
+            False,
+            True,
+            False,
+            False,
+            ConsoleSettingsFieldProvenance.EXPLICIT,
+        ),
+        (
+            "top_k",
+            "0",
+            7,
+            0,
+            0,
+            ConsoleSettingsFieldProvenance.EXPLICIT,
+        ),
+        (
+            "temperature",
+            "0",
+            0.44,
+            0.0,
+            0.0,
+            ConsoleSettingsFieldProvenance.EXPLICIT,
+        ),
     ),
 )
-def test_rebase_clears_model_specific_unsupported_fields(
+def test_rebase_normalizes_exact_profile_overrides(
+    field_name: str,
+    profile_value: object,
+    fallback_value: object,
+    expected_effective: object,
+    expected_override: object,
+    expected_provenance: ConsoleSettingsFieldProvenance,
+) -> None:
+    source = _state(
+        ConsoleSessionSettings(provider="openai", model="source-model"),
+    )
+    app_config = {
+        "chat_defaults": {field_name: fallback_value},
+        "api_settings": {
+            "openai": {"model_defaults": {"target-model": {field_name: profile_value}}}
+        },
+    }
+
+    rebased = _rebase(
+        source,
+        provider="openai",
+        model="target-model",
+        app_config=app_config,
+    )
+    field = {draft.name: draft for draft in rebased.field_drafts}[field_name]
+
+    assert field.effective_value == expected_effective
+    assert field.profile_override == expected_override
+    assert field.provenance is expected_provenance
+
+
+@pytest.mark.parametrize(
+    ("provider", "target_model", "field_name", "supported"),
+    (
+        ("moonshot", "kimi-k2.5", "reasoning_effort", True),
+        ("moonshot", "moonshot-v1-8k", "reasoning_effort", False),
+        ("zai", "glm-5.2", "reasoning_effort", True),
+        ("zai", "glm-4", "reasoning_effort", False),
+        ("vllm", "local-model", "reasoning_effort", True),
+        ("vllm", "local-model", "thinking_budget_tokens", False),
+        ("llama_cpp", "local-model", "reasoning_effort", True),
+        ("llama_cpp", "local-model", "thinking_budget_tokens", True),
+        ("local_mlx_lm", "local-model", "reasoning_effort", True),
+        ("local_mlx_lm", "local-model", "thinking_budget_tokens", False),
+        ("aphrodite", "local-model", "reasoning_effort", False),
+    ),
+)
+def test_rebase_uses_model_and_local_wire_capabilities(
     provider: str,
     target_model: str,
-    unsupported_field: str,
+    field_name: str,
+    supported: bool,
 ) -> None:
+    value = 2048 if field_name.endswith("tokens") else "high"
     source = _state(
         replace(
             ConsoleSessionSettings(provider=provider, model="source-model"),
-            **{
-                unsupported_field: 2048
-                if unsupported_field.endswith("tokens")
-                else "high"
-            },
+            **{field_name: value},
         ),
         _field(
-            unsupported_field,
-            2048 if unsupported_field.endswith("tokens") else "high",
-            profile_override=(2048 if unsupported_field.endswith("tokens") else "high"),
+            field_name,
+            value,
+            profile_override=value,
             provenance=ConsoleSettingsFieldProvenance.EXPLICIT,
             dirty=True,
         ),
@@ -435,9 +523,10 @@ def test_rebase_clears_model_specific_unsupported_fields(
         model=target_model,
         app_config={},
     )
+    field_names = {field.name for field in rebased.field_drafts}
 
-    assert getattr(rebased.settings, unsupported_field) is None
-    assert unsupported_field not in {field.name for field in rebased.field_drafts}
+    assert (field_name in field_names) is supported
+    assert (getattr(rebased.settings, field_name) == value) is supported
 
 
 def test_rebase_quick_ignores_even_provider_bound_dirty_endpoint() -> None:
@@ -548,7 +637,7 @@ def test_rebase_keyed_a_b_a_drafts_restore_deliberate_a_edits() -> None:
     assert restored_a.settings.temperature == 0.13
     assert restored_fields["temperature"].dirty is True
     assert restored_fields["temperature"].provenance is (
-        ConsoleSettingsFieldProvenance.CARRIED
+        ConsoleSettingsFieldProvenance.EXPLICIT
     )
     assert restored_a.settings.base_url == "https://a-edited.example.test/v1"
     assert restored_a.endpoint_draft == ConsoleEndpointDraft(
@@ -557,3 +646,62 @@ def test_rebase_keyed_a_b_a_drafts_restore_deliberate_a_edits() -> None:
         dirty=True,
         checked=True,
     )
+
+
+def test_rebase_exact_key_restores_provenance_exactly_as_remembered() -> None:
+    remembered_a = remember_model_draft(
+        _state(
+            ConsoleSessionSettings(provider="openai", model="model-a"),
+            _field(
+                "temperature",
+                0.11,
+                profile_override=0.11,
+                provenance=ConsoleSettingsFieldProvenance.EXPLICIT,
+                dirty=True,
+            ),
+            _field(
+                "top_p",
+                0.22,
+                provenance=ConsoleSettingsFieldProvenance.INHERITED,
+                dirty=True,
+            ),
+            _field(
+                "streaming",
+                False,
+                profile_override=False,
+                provenance=ConsoleSettingsFieldProvenance.CARRIED,
+                dirty=True,
+            ),
+        )
+    )
+    state_b = _rebase(
+        remembered_a,
+        provider="anthropic",
+        model="model-b",
+        app_config={},
+    )
+
+    restored_a = _rebase(
+        state_b,
+        provider="openai",
+        model="model-a",
+        app_config={},
+    )
+    restored_provenance = {
+        field.name: field.provenance for field in restored_a.field_drafts
+    }
+
+    assert restored_provenance == {
+        "temperature": ConsoleSettingsFieldProvenance.EXPLICIT,
+        "top_p": ConsoleSettingsFieldProvenance.INHERITED,
+        "streaming": ConsoleSettingsFieldProvenance.CARRIED,
+        "min_p": ConsoleSettingsFieldProvenance.INHERITED,
+        "top_k": ConsoleSettingsFieldProvenance.INHERITED,
+        "max_tokens": ConsoleSettingsFieldProvenance.INHERITED,
+        "seed": ConsoleSettingsFieldProvenance.INHERITED,
+        "presence_penalty": ConsoleSettingsFieldProvenance.INHERITED,
+        "frequency_penalty": ConsoleSettingsFieldProvenance.INHERITED,
+        "reasoning_effort": ConsoleSettingsFieldProvenance.INHERITED,
+        "reasoning_summary": ConsoleSettingsFieldProvenance.INHERITED,
+        "verbosity": ConsoleSettingsFieldProvenance.INHERITED,
+    }
