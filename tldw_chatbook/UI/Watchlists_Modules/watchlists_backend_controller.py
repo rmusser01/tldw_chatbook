@@ -72,9 +72,11 @@ class WatchlistsBackendController:
             return self._CREATE_FORM_SOURCE_TYPES[backend]
         try:
             return tuple(capability(runtime_backend=backend))
-        except Exception:
-            logger.opt(exception=True).debug(
-                "Watchlists create-form source types unavailable; using defaults."
+        except Exception as exc:
+            logger.debug(
+                "Watchlists create-form source types unavailable; using defaults "
+                "(failure_type={}).",
+                type(exc).__name__,
             )
             return self._CREATE_FORM_SOURCE_TYPES[backend]
 

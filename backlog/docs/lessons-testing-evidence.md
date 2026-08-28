@@ -9226,3 +9226,31 @@ prefix removed the unbounded state without weakening start anchoring. Boundary
 tests must sit immediately below and above the former cap, include a much larger
 input, and partition the opener across chunks. A test that proves memory stays
 small is incomplete until it also proves the private/public channel assignment.
+
+## Simulate a candidate fix's cost with the framework's own primitives before building it
+
+**TASK-23021, 2026-08-27.** The setup-modal snow burned 4% of a core at idle;
+TASK-21134 had already made the tick cheap and the cost hid one layer down, in
+`Screen._on_timer_update`. The filing named a plausible fix: rewrite the
+full-viewport `Static` as a `render_line` widget that dirties only changed
+cells. Instead of building it, a probe arm reproduced only its *compositor
+footprint* — advance the flake physics and call `refresh(*Region(x,y,1,1)...)`
+for the changed cells, without touching the content. Measured interleaved on
+the real screen: **2.7–3.6% vs the shipped 3.6–4.3%** — the candidate was dead
+before a line of it existed. Mechanism: Textual's
+`Compositor.render_partial_update` crops to the *bounding box* of the dirty
+regions, and `_get_renders(crop)` re-renders every widget whose clip overlaps
+that crop — scattered one-cell dirties across a full-viewport widget re-render
+the world exactly like a full-viewport dirty (124 widget renders x 44 rows both
+ways). A second simulated arm (a single 3x3 dirty at the same 2.5 Hz) priced
+the floor of ANY animation on that screen at ~0.55% — ~30 widgets stack under
+every cell of an overlay — which is what justified retiring the animation
+outright rather than optimising it.
+
+**What to do.** When a proposed perf fix changes *what gets dirtied* rather
+than *what gets computed*, the framework will usually let you dirty exactly
+that shape from the existing widget (`Widget.refresh(*regions)`) — measure
+that arm interleaved with shipped and the floor before building the rewrite.
+And when the prior fix in the same spot "worked" while the cost moved down a
+layer, instrument the layer you claim to fix (`_on_timer_update` time,
+renders-per-update), not the layer you touched.

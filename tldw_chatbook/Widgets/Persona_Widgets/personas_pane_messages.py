@@ -79,6 +79,10 @@ class ConversationRowSelected(Message):
         super().__init__()
 
 
+class OlderConversationsRequested(Message):
+    """Request the next or failed page of saved conversations."""
+
+
 class EditCharacterRequested(Message):
     """User requested to edit the character.
 

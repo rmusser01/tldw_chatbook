@@ -59,6 +59,9 @@ CONSOLE_NAV_CONTEXT_RESUME_LOCAL_CONVERSATION_ID = (
     "resume_local_conversation_id"
 )
 
+# Saved-conversation pagination shared by the Roleplay controller and inspector.
+PERSONAS_CONVERSATIONS_PAGE_SIZE = 20
+
 # Watchlists navigation-context contract keys and values.
 WATCHLISTS_NAV_CONTEXT_SECTION = "section"
 WATCHLISTS_NAV_CONTEXT_BACKEND = "backend"

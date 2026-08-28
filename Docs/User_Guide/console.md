@@ -155,7 +155,10 @@ If no provider is configured when you open Console, the shell is replaced
 by a **Get started** card with three numbered steps — "Connect a provider
 (API key or local server)", "Pick a model", "Send your first message" —
 marked with ● (current) and ○ (pending) glyphs, plus the note "Composer
-unlocks after setup". Its button follows the current step (**Set up
+unlocks after setup". Behind the card, the workbench dims under a still
+field of scattered snow glyphs — a purely decorative backdrop that holds
+one frame (it re-scatters only when the window resizes) and costs nothing
+while the card waits. Its button follows the current step (**Set up
 provider**, then **Choose model**) and opens the Console Settings modal.
 The composer stays locked until a provider and model are configured; once
 they are, the empty transcript reads "Ready — type a message to begin."
@@ -466,7 +469,12 @@ are covered on the child pages, chiefly [Context & RAG](console/context-and-rag.
   "Console: Change model…".
 
 —
-*Verified against working tree — 2026-08-25 (TASK-21145: clickable setup-blocked reason; first send never intercepted by the project-instructions folder dialog on a fresh profile). Verified against 4646922ed — 2026-08-04 (PR-4 Task 6 live check, including
+*Verified against working tree — 2026-08-27 (TASK-23021: the Get started
+card's snow backdrop is now a still frame — mounted-harness check on the
+real unconfigured ChatScreen: field renders behind the card, no timers, no
+repaints between resizes; idle CPU 0.02–0.05% vs 2.0–7.4% with the retired
+animation re-emulated, interleaved 15 s windows). Verified against working
+tree — 2026-08-25 (TASK-21145: clickable setup-blocked reason; first send never intercepted by the project-instructions folder dialog on a fresh profile). Verified against 4646922ed — 2026-08-04 (PR-4 Task 6 live check, including
 a real-provider send round trip). Verified against e2c706303 — 2026-08-06
 (PR-T2, docs pass against shipped code/tests, live check pending Task 9):
 a legacy `[API] <provider>_api_key` now satisfies this screen's own

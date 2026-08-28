@@ -2982,6 +2982,17 @@
         text-overflow: ellipsis;
     }
 
+    PersonasInspectorPane .personas-conversations-tail {
+        height: auto;
+        min-height: 2;
+    }
+
+    PersonasInspectorPane .personas-conversations-tail Static {
+        height: auto;
+        min-height: 2;
+        text-wrap: wrap;
+    }
+
     PersonasInspectorPane #personas-inspector-actions {
         height: auto;
     }

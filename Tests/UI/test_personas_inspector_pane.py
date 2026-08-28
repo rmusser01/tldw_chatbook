@@ -1,19 +1,28 @@
 """Mounted tests for the Personas inspector pane."""
 
+import asyncio
+from pathlib import Path
+
 import pytest
+from textual.containers import Horizontal
 from textual.message import Message
+from textual.widgets import Button, Checkbox, ListItem, ListView, Static
 
 # Harness apps load the consolidated widget CSS the real app loads
 # (TASK-15450); without it the widgets under test mount unstyled.
 from Tests.UI.consolidated_css import ConsolidatedCSSApp
-from textual.widgets import Button, Checkbox, ListItem, ListView, Static
 
+from tldw_chatbook import Constants as constants
+from tldw_chatbook.Widgets.Persona_Widgets import (
+    personas_messages,
+    personas_pane_messages,
+)
 from tldw_chatbook.Widgets.Persona_Widgets.personas_inspector_pane import (
     PersonasInspectorPane,
 )
-from tldw_chatbook.Widgets.Persona_Widgets import personas_messages
 from tldw_chatbook.Widgets.Persona_Widgets.personas_pane_messages import (
     ConversationRowSelected,
+    OlderConversationsRequested,
 )
 
 pytestmark = pytest.mark.asyncio
@@ -24,11 +33,31 @@ def _row_text(item: ListItem) -> str:
     return str(item.query_one(Static).renderable)
 
 
+def _painted_region_text(app, widget) -> tuple[str, ...]:
+    """Return only compositor-painted cells inside a contained widget region."""
+    screen_region = app.screen.region
+    assert screen_region.contains_region(widget.region), (
+        f"{widget!r} must fit the viewport: "
+        f"widget_region={widget.region!r}, screen_region={screen_region!r}"
+    )
+    strips = list(app.screen._compositor.render_strips())
+    assert 0 <= widget.region.y and widget.region.bottom <= len(strips)
+    return tuple(
+        "".join(
+            segment.text
+            for segment in strips[y].crop(widget.region.x, widget.region.right)
+        )
+        for y in range(widget.region.y, widget.region.bottom)
+    )
+
+
 class InspectorApp(ConsolidatedCSSApp):
     def __init__(self):
         super().__init__()
         self.buddy_messages = []
         self.actor_pack_export_messages = []
+        self.conversation_messages = []
+        self.older_conversation_messages = []
 
     def compose(self):
         yield PersonasInspectorPane(id="personas-inspector-pane")
@@ -38,6 +67,45 @@ class InspectorApp(ConsolidatedCSSApp):
 
     def on_actor_pack_export_requested(self, message) -> None:
         self.actor_pack_export_messages.append(message)
+
+    def on_conversation_row_selected(self, message: ConversationRowSelected) -> None:
+        self.conversation_messages.append(message)
+
+    def on_older_conversations_requested(
+        self, message: OlderConversationsRequested
+    ) -> None:
+        self.older_conversation_messages.append(message)
+
+
+class StyledInspectorApp(InspectorApp):
+    CSS_PATH = str(
+        Path(__file__).resolve().parents[2]
+        / "tldw_chatbook"
+        / "css"
+        / "tldw_cli_modular.tcss"
+    )
+
+    def compose(self):
+        with Horizontal(
+            id="personas-workbench",
+            classes="destination-workbench personas-workbench-compact",
+        ):
+            yield PersonasInspectorPane(
+                id="personas-inspector-pane",
+                classes=(
+                    "destination-workbench-pane ds-inspector "
+                    "personas-workbench-compact-pane"
+                ),
+            )
+
+
+async def test_older_conversations_request_is_a_parameterless_typed_message():
+    message_type = getattr(personas_pane_messages, "OlderConversationsRequested", None)
+
+    assert message_type is not None
+    message = message_type()
+    assert isinstance(message, Message)
+    assert not hasattr(message, "conversation_id")
 
 
 async def test_actor_pack_export_message_is_typed_frozen_and_slotted():
@@ -650,8 +718,6 @@ async def test_disabled_tts_checkbox_stays_legible():
     hidden outright until a profile is assigned, so this test assigns one
     first (still disabled here: nothing is selected/exportable).
     """
-    from pathlib import Path
-
     from textual.color import Color
 
     class StyledInspectorApp(ConsolidatedCSSApp):
@@ -973,6 +1039,458 @@ async def test_conversations_panel_rows_post_selection():
         await pilot.click("#personas-conversation-row-conv-1")
         await pilot.pause()
     assert received == ["conv-1"]
+
+
+async def test_initial_paginated_conversations_end_with_actionable_load_tail():
+    app = InspectorApp()
+    async with app.run_test() as pilot:
+        pane = app.query_one(PersonasInspectorPane)
+        pane.show_selection(name="Detective Sam", kind="character")
+        await pane.show_conversations(
+            (("conv-1", "First case"), ("conv-2", "Cold trail")),
+            has_more=True,
+        )
+        await pilot.pause()
+
+        list_view = app.query_one("#personas-conversations-list", ListView)
+        items = list(list_view.children)
+        assert [_row_text(item) for item in items] == [
+            "First case",
+            "Cold trail",
+            f"Load {constants.PERSONAS_CONVERSATIONS_PAGE_SIZE} older conversations",
+        ]
+
+        tail = items[-1]
+        list_view.focus()
+        list_view.index = len(items) - 1
+        await pilot.pause()
+        assert list_view.highlighted_child is tail
+
+        await pilot.press("enter")
+        await pilot.pause()
+
+        assert len(app.older_conversation_messages) == 1
+        assert app.conversation_messages == []
+
+
+async def test_older_loading_replaces_only_tail_and_is_highlightable_but_inert():
+    app = InspectorApp()
+    async with app.run_test() as pilot:
+        pane = app.query_one(PersonasInspectorPane)
+        pane.show_selection(name="Detective Sam", kind="character")
+        await pane.show_conversations(
+            (("conv-1", "First case"), ("conv-2", "Cold trail")),
+            has_more=True,
+        )
+        list_view = app.query_one("#personas-conversations-list", ListView)
+        first_row = list_view.children[0]
+        old_tail = list_view.children[-1]
+        list_view.focus()
+        list_view.index = len(list_view.children) - 1
+        await pilot.pause()
+
+        await pane.show_older_conversations_loading()
+        await pilot.pause()
+
+        loading_tail = list_view.children[-1]
+        assert list_view.children[0] is first_row
+        assert loading_tail is old_tail
+        assert _row_text(loading_tail) == "Loading older conversations..."
+        assert loading_tail.disabled is False
+        assert list_view.highlighted_child is loading_tail
+        assert loading_tail.highlighted is True
+        assert loading_tail.has_class("-highlight") is True
+
+        await pilot.press("enter")
+        await pilot.press("enter")
+        await pilot.pause()
+
+        assert app.older_conversation_messages == []
+        assert app.conversation_messages == []
+
+
+async def test_older_loading_retains_tail_highlight_only_while_list_has_focus():
+    app = InspectorApp()
+    async with app.run_test() as pilot:
+        pane = app.query_one(PersonasInspectorPane)
+        pane.show_selection(name="Detective Sam", kind="character")
+        await pane.show_conversations((("conv-1", "First case"),), has_more=True)
+        list_view = app.query_one("#personas-conversations-list", ListView)
+        list_view.focus()
+        list_view.index = len(list_view.children) - 1
+        await pilot.pause()
+        tail = list_view.highlighted_child
+        app.query_one("#personas-inspector-rail-collapse", Button).focus()
+        await pilot.pause()
+
+        await pane.show_older_conversations_loading()
+        await pilot.pause()
+
+        assert list_view.highlighted_child is not tail
+
+
+async def test_initial_conversation_loading_is_disabled_and_clears_old_rows():
+    app = InspectorApp()
+    async with app.run_test() as pilot:
+        pane = app.query_one(PersonasInspectorPane)
+        pane.show_selection(name="Detective Sam", kind="character")
+        await pane.show_conversations((("conv-1", "First case"),), has_more=True)
+
+        await pane.show_conversations_loading()
+        await pilot.pause()
+
+        list_view = app.query_one("#personas-conversations-list", ListView)
+        assert len(list_view.children) == 1
+        loading = list_view.children[0]
+        assert _row_text(loading) == "Loading conversations..."
+        assert loading.disabled is True
+        assert len(app.query(".personas-conversation-row")) == 0
+
+
+async def test_initial_conversation_failure_is_two_line_actionable_retry():
+    app = InspectorApp()
+    async with app.run_test() as pilot:
+        pane = app.query_one(PersonasInspectorPane)
+        pane.show_selection(name="Detective Sam", kind="character")
+
+        await pane.show_conversations_failure(initial=True)
+        await pilot.pause()
+
+        list_view = app.query_one("#personas-conversations-list", ListView)
+        retry_tail = list_view.children[0]
+        assert _row_text(retry_tail).splitlines() == [
+            "Load failed.",
+            "Retry conversations",
+        ]
+
+        list_view.focus()
+        list_view.index = 0
+        await pilot.press("enter")
+        await pilot.pause()
+
+        assert len(app.older_conversation_messages) == 1
+        assert app.conversation_messages == []
+
+
+async def test_append_failure_preserves_rows_and_retries_the_tail():
+    app = InspectorApp()
+    async with app.run_test() as pilot:
+        pane = app.query_one(PersonasInspectorPane)
+        pane.show_selection(name="Detective Sam", kind="character")
+        await pane.show_conversations(
+            (("conv-1", "First case"), ("conv-2", "Cold trail")),
+            has_more=True,
+        )
+        list_view = app.query_one("#personas-conversations-list", ListView)
+        first_row = list_view.children[0]
+        await pane.show_older_conversations_loading()
+
+        await pane.show_conversations_failure(initial=False)
+        await pilot.pause()
+
+        retry_tail = list_view.children[-1]
+        assert list_view.children[0] is first_row
+        assert _row_text(retry_tail).splitlines() == [
+            "Load failed.",
+            "Retry older conversations",
+        ]
+
+        list_view.focus()
+        list_view.index = len(list_view.children) - 1
+        await pilot.press("enter")
+        await pilot.pause()
+
+        assert len(app.older_conversation_messages) == 1
+        assert app.conversation_messages == []
+
+
+@pytest.mark.parametrize(
+    ("rows", "expected_copy"),
+    (
+        ((), "No saved conversations."),
+        ((("conv-1", "First case"),), "All conversations shown."),
+    ),
+)
+async def test_empty_and_exhausted_conversation_states_are_distinct_and_inert(
+    rows: tuple[tuple[str, str], ...], expected_copy: str
+):
+    app = InspectorApp()
+    async with app.run_test() as pilot:
+        pane = app.query_one(PersonasInspectorPane)
+        pane.show_selection(name="Detective Sam", kind="character")
+
+        await pane.show_conversations(rows, has_more=False)
+        await pilot.pause()
+
+        list_view = app.query_one("#personas-conversations-list", ListView)
+        assert _row_text(list_view.children[-1]) == expected_copy
+        list_view.focus()
+        list_view.index = len(list_view.children) - 1
+        await pilot.press("enter")
+        await pilot.pause()
+
+        assert app.older_conversation_messages == []
+        assert app.conversation_messages == []
+
+
+async def test_append_keeps_old_widgets_and_new_rows_use_conversation_selection():
+    app = InspectorApp()
+    async with app.run_test() as pilot:
+        pane = app.query_one(PersonasInspectorPane)
+        pane.show_selection(name="Detective Sam", kind="character")
+        await pane.show_conversations((("conv-1", "First case"),), has_more=True)
+        list_view = app.query_one("#personas-conversations-list", ListView)
+        original_row = list_view.children[0]
+        await pane.show_older_conversations_loading()
+
+        await pane.append_conversations(
+            (("conv-2", "Cold trail"), ("conv-3", "Closed file")),
+            has_more=False,
+        )
+        await pilot.pause()
+
+        assert list_view.children[0] is original_row
+        assert [_row_text(item) for item in list_view.children] == [
+            "First case",
+            "Cold trail",
+            "Closed file",
+            "All conversations shown.",
+        ]
+
+        await pilot.click("#personas-conversation-row-conv-3")
+        await pilot.pause()
+
+        assert [
+            message.conversation_id for message in app.conversation_messages
+        ] == ["conv-3"]
+        assert app.older_conversation_messages == []
+
+
+async def test_append_highlights_first_new_row_only_from_focused_loading_tail():
+    app = InspectorApp()
+    async with app.run_test() as pilot:
+        pane = app.query_one(PersonasInspectorPane)
+        pane.show_selection(name="Detective Sam", kind="character")
+        await pane.show_conversations(
+            (("conv-1", "First case"), ("conv-2", "Cold trail")),
+            has_more=True,
+        )
+        list_view = app.query_one("#personas-conversations-list", ListView)
+        list_view.focus()
+        list_view.index = len(list_view.children) - 1
+        await pilot.pause()
+        await pane.show_older_conversations_loading()
+        loading_tail = list_view.children[-1]
+        assert list_view.has_focus is True
+        assert list_view.highlighted_child is loading_tail
+
+        await pane.append_conversations((("conv-3", "Closed file"),), has_more=True)
+        await pilot.pause()
+
+        new_row = app.query_one("#personas-conversation-row-conv-3", ListItem)
+        assert list_view.has_focus is True
+        assert list_view.highlighted_child is new_row
+        assert new_row.highlighted is True
+        assert new_row.has_class("-highlight") is True
+        assert loading_tail.highlighted is False
+        assert loading_tail.has_class("-highlight") is False
+        assert [item for item in list_view.children if item.highlighted] == [new_row]
+
+
+@pytest.mark.parametrize("interaction", ("cursor", "focus"))
+async def test_append_completion_preserves_interaction_during_real_mount(
+    interaction: str, monkeypatch
+):
+    app = InspectorApp()
+    async with app.run_test() as pilot:
+        pane = app.query_one(PersonasInspectorPane)
+        pane.show_selection(name="Detective Sam", kind="character")
+        await pane.show_conversations(
+            (("conv-1", "First case"), ("conv-2", "Cold trail")),
+            has_more=True,
+        )
+        list_view = app.query_one("#personas-conversations-list", ListView)
+        list_view.focus()
+        list_view.index = len(list_view.children) - 1
+        await pilot.pause()
+        await pane.show_older_conversations_loading()
+        loading_tail = list_view.children[-1]
+        mount_settled = asyncio.Event()
+        release_mount = asyncio.Event()
+        real_mount = list_view.mount
+
+        async def gated_real_mount(*widgets, **kwargs):
+            await real_mount(*widgets, **kwargs)
+            mount_settled.set()
+            await release_mount.wait()
+
+        monkeypatch.setattr(list_view, "mount", gated_real_mount)
+        append_task = asyncio.create_task(
+            pane.append_conversations((("conv-3", "Closed file"),), has_more=False)
+        )
+        await mount_settled.wait()
+        assert append_task.done() is False
+        assert loading_tail.highlighted is True
+        assert loading_tail.has_class("-highlight") is True
+
+        if interaction == "cursor":
+            list_view.index = 0
+            expected_highlight = list_view.children[0]
+            expected_focus = list_view
+        else:
+            expected_focus = app.query_one(
+                "#personas-inspector-rail-collapse", Button
+            )
+            expected_focus.focus()
+            expected_highlight = loading_tail
+        await pilot.pause()
+
+        release_mount.set()
+        await append_task
+        await pilot.pause()
+
+        new_row = app.query_one("#personas-conversation-row-conv-3", ListItem)
+        assert app.focused is expected_focus
+        assert list_view.highlighted_child is expected_highlight
+        assert [item for item in list_view.children if item.highlighted] == [
+            expected_highlight
+        ]
+        assert new_row.highlighted is (expected_highlight is new_row)
+
+
+@pytest.mark.parametrize("tail_state", ("load", "retry", "exhausted"))
+async def test_append_does_not_advance_from_a_non_loading_tail(tail_state: str):
+    app = InspectorApp()
+    async with app.run_test() as pilot:
+        pane = app.query_one(PersonasInspectorPane)
+        pane.show_selection(name="Detective Sam", kind="character")
+        await pane.show_conversations(
+            (("conv-1", "First case"),),
+            has_more=tail_state != "exhausted",
+        )
+        if tail_state == "retry":
+            await pane.show_conversations_failure(initial=False)
+        list_view = app.query_one("#personas-conversations-list", ListView)
+        list_view.focus()
+        list_view.index = len(list_view.children) - 1
+        await pilot.pause()
+        highlighted_tail = list_view.highlighted_child
+
+        await pane.append_conversations((("conv-2", "Cold trail"),), has_more=False)
+        await pilot.pause()
+
+        new_row = app.query_one("#personas-conversation-row-conv-2", ListItem)
+        assert list_view.highlighted_child is highlighted_tail
+        assert list_view.highlighted_child is not new_row
+
+
+async def test_append_does_not_steal_focus_or_highlight_a_new_row():
+    app = InspectorApp()
+    async with app.run_test() as pilot:
+        pane = app.query_one(PersonasInspectorPane)
+        pane.show_selection(name="Detective Sam", kind="character")
+        await pane.show_conversations((("conv-1", "First case"),), has_more=True)
+        list_view = app.query_one("#personas-conversations-list", ListView)
+        list_view.focus()
+        list_view.index = len(list_view.children) - 1
+        await pane.show_older_conversations_loading()
+        collapse_button = app.query_one(
+            "#personas-inspector-rail-collapse", Button
+        )
+        collapse_button.focus()
+        await pilot.pause()
+        assert collapse_button.has_focus is True
+
+        await pane.append_conversations((("conv-2", "Cold trail"),), has_more=False)
+        await pilot.pause()
+
+        new_row = app.query_one("#personas-conversation-row-conv-2", ListItem)
+        assert collapse_button.has_focus is True
+        assert list_view.highlighted_child is not new_row
+
+
+async def test_append_preserves_another_highlighted_conversation():
+    app = InspectorApp()
+    async with app.run_test() as pilot:
+        pane = app.query_one(PersonasInspectorPane)
+        pane.show_selection(name="Detective Sam", kind="character")
+        await pane.show_conversations(
+            (("conv-1", "First case"), ("conv-2", "Cold trail")),
+            has_more=True,
+        )
+        list_view = app.query_one("#personas-conversations-list", ListView)
+        list_view.focus()
+        list_view.index = len(list_view.children) - 1
+        await pane.show_older_conversations_loading()
+        list_view.index = 0
+        selected_row = list_view.children[0]
+
+        await pane.append_conversations((("conv-3", "Closed file"),), has_more=False)
+        await pilot.pause()
+
+        assert list_view.highlighted_child is selected_row
+
+
+async def test_append_with_no_new_row_does_not_advance_past_exhausted_tail():
+    app = InspectorApp()
+    async with app.run_test() as pilot:
+        pane = app.query_one(PersonasInspectorPane)
+        pane.show_selection(name="Detective Sam", kind="character")
+        await pane.show_conversations((("conv-1", "First case"),), has_more=True)
+        list_view = app.query_one("#personas-conversations-list", ListView)
+        list_view.focus()
+        list_view.index = len(list_view.children) - 1
+        await pane.show_older_conversations_loading()
+
+        await pane.append_conversations((), has_more=False)
+        await pilot.pause()
+
+        assert [_row_text(item) for item in list_view.children] == [
+            "First case",
+            "All conversations shown.",
+        ]
+        assert list_view.highlighted_child is not list_view.children[0]
+
+
+@pytest.mark.parametrize("size", ((24, 20), (80, 24)))
+@pytest.mark.parametrize("initial", (True, False))
+async def test_retry_tail_wraps_without_changing_conversation_row_ellipsis(
+    size: tuple[int, int], initial: bool
+):
+    app = StyledInspectorApp()
+    async with app.run_test(size=size) as pilot:
+        pane = app.query_one(PersonasInspectorPane)
+        pane.show_selection(name="Detective Sam", kind="character")
+        if initial:
+            await pane.show_conversations_failure(initial=True)
+            expected_retry = "Retry conversations"
+        else:
+            await pane.show_conversations(
+                (("conv-1", "A conversation title much wider than the inspector"),),
+                has_more=True,
+            )
+            await pane.show_older_conversations_loading()
+            await pane.show_conversations_failure(initial=False)
+            expected_retry = "Retry older conversations"
+        await pilot.pause()
+
+        list_view = app.query_one("#personas-conversations-list", ListView)
+        tail = list_view.children[-1]
+        tail_copy = tail.query_one(Static)
+        assert app.screen.region.contains_region(pane.region)
+        assert tail.region.height >= 2
+        assert tail_copy.region.height >= 2
+        painted_copy = " ".join("\n".join(_painted_region_text(app, tail)).split())
+        assert "Load failed." in painted_copy
+        assert expected_retry in painted_copy
+
+        if not initial:
+            row = list_view.children[0]
+            row_copy = row.query_one(Static)
+            assert row.region.height == 1
+            assert row_copy.region.height == 1
+            assert str(row_copy.styles.text_wrap) == "nowrap"
+            assert str(row_copy.styles.text_overflow) == "ellipsis"
 
 
 async def test_conversation_click_after_rerender_posts_new_id():

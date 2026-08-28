@@ -15,7 +15,14 @@ from tldw_chatbook.Chat.console_exchange_capture import (
 from tldw_chatbook.Chat.console_project_instructions import (
     canonical_provider_endpoint_identity,
 )
-from tldw_chatbook.Chat.trajectory_export import TraceExportProfile
+# The profile vocabulary comes from the stdlib-only leaf, NEVER from
+# `Chat.trajectory_export`: this module is on the Chat first-paint leg at
+# module scope (console_exchange_export_dialog -> console_conversation_
+# inspector -> chat_screen), and importing even one name from the exporter
+# executes its ~1,400 LOC plus `Chat.trajectory` before first paint
+# (TASK-23020, the regression #2126 shipped; guard:
+# `Tests/Packaging/test_exchange_export_trajectory_deferral.py`).
+from tldw_chatbook.Chat.trace_export_profiles import TraceExportProfile
 
 __all__ = [
     "ExchangeExportProjection",

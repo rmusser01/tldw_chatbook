@@ -13,10 +13,10 @@ from textual.events import DescendantBlur, DescendantFocus
 from textual.screen import ModalScreen
 from textual.widgets import Button, Input, RadioButton, RadioSet, Static
 
+from tldw_chatbook.Chat.trace_export_profiles import TraceExportProfile
 from tldw_chatbook.Chat.trajectory import TrajectorySnapshot
 from tldw_chatbook.Chat.trajectory_export import (
     TraceExportPreflight,
-    TraceExportProfile,
     build_trace_export,
     preflight_trace_export,
     write_trajectory_export,
@@ -25,46 +25,25 @@ from tldw_chatbook.Utils.path_validation import validate_path_simple
 from tldw_chatbook.Widgets.confirmation_dialog import ConfirmationDialog
 from tldw_chatbook.Widgets.modal_dismissal import SafeModalDismissMixin
 
+# Re-exported for this dialog's own (deferred-family) consumers. The shared
+# copy/labels/confirmation live in `trace_export_profile_ui` (TASK-23020) so
+# the Chat-first-paint-leg exchange export dialog can import them WITHOUT
+# resolving this module -- this module's imports above drag the whole
+# `Chat/trajectory_export.py` engine, which must stay off that leg
+# (TASK-22213; guard:
+# `Tests/Packaging/test_exchange_export_trajectory_deferral.py`).
+from tldw_chatbook.Widgets.Console.trace_export_profile_ui import (
+    TRACE_EXPORT_PROFILE_COPY,
+    TRACE_EXPORT_PROFILE_LABELS,
+    full_trace_confirmation,
+)
+
 __all__ = [
     "TRACE_EXPORT_PROFILE_COPY",
     "TRACE_EXPORT_PROFILE_LABELS",
     "TraceExportDialog",
     "full_trace_confirmation",
 ]
-
-
-TRACE_EXPORT_PROFILE_COPY = {
-    TraceExportProfile.SAFE_SUMMARY: (
-        "Safe summary — causal structure, status, and coarse timing; payload bodies omitted."
-    ),
-    TraceExportProfile.REDACTED_DIAGNOSTIC: (
-        "Redacted diagnostic — useful debugging context with paths, identifiers, "
-        "and sensitive values governed. Recommended for collaboration."
-    ),
-    TraceExportProfile.FULL_TRACE: (
-        "Full trace — includes ordinary captured detail after an additional warning. "
-        "Credentials remain forbidden."
-    ),
-}
-
-TRACE_EXPORT_PROFILE_LABELS = {
-    TraceExportProfile.SAFE_SUMMARY: "Safe summary",
-    TraceExportProfile.REDACTED_DIAGNOSTIC: "Redacted diagnostic (recommended)",
-    TraceExportProfile.FULL_TRACE: "Full trace",
-}
-
-
-def full_trace_confirmation(*, noun: str) -> ConfirmationDialog:
-    """Build the shared every-disclosure Full export warning."""
-    return ConfirmationDialog(
-        title=f"Export full {noun}?",
-        message=(
-            "Full trace may include prompts, injected instructions, tool arguments, "
-            "outputs, and local paths. Credentials remain structurally blocked."
-        ),
-        confirm_label=f"Export full {noun.lower()}",
-        cancel_label="Go back",
-    )
 
 
 class TraceExportDialog(SafeModalDismissMixin, ModalScreen[Path | None]):

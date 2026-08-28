@@ -11695,7 +11695,19 @@ class TldwCli(
 
             logger.info(f"Successfully switched to {screen_name} screen")
         else:
-            logger.error(f"Unknown screen requested: {requested_screen}")
+            # No class for the route: unroutable target, or the screen module
+            # failed to import (`load_screen_class` degrades ImportError/
+            # AttributeError to None). Since TASK-23023 resolved the
+            # Research_Workspace facade lazily, a submodule broken at install
+            # time surfaces HERE at first navigation instead of killing the
+            # whole app at boot -- and a log-only failure is exactly the
+            # task-2720 defect (stuck nav highlight, swallowed retries, no
+            # message). Tell the user and roll the nav bar back.
+            logger.error(
+                f"Unknown screen requested: {requested_screen} "
+                f"({screen_load_error(requested_screen)})"
+            )
+            self._notify_navigation_failure(screen_name)
 
     @on(TTSRequestEvent)
     async def handle_tts_request_event(self, event: TTSRequestEvent) -> None:
