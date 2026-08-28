@@ -1012,6 +1012,36 @@ def _model_discovery_ui_outcome(result: object) -> tuple[list[str], str, str]:
     return [], "connection_failed", category
 
 
+def _handed_off_failure_category(owner: object, discovery_key: object) -> str:
+    """Recover the real failure category from the owner's recorded outcome.
+
+    ProviderStep records the typed ``ModelDiscoveryResult`` for a selection
+    even on the handoff paths where ModelStep never receives one directly.
+    Without this, those paths reported a flat "request failed", so an
+    authentication rejection rendered as "Couldn't reach the server. Check
+    it's running" -- telling the user to check a server when the problem was
+    their key, and defeating the provider-aware copy added for UAT M-4. That
+    wording masked the true cause for most of the TASK-23089 investigation.
+
+    Args:
+        owner: The ProviderStep that owned the discovery, if any.
+        discovery_key: The exact discovery identity ModelStep is rendering.
+
+    Returns:
+        The category derived from the recorded outcome, or "request failed"
+        when no typed outcome is available to be more specific than that.
+    """
+
+    outcomes = getattr(owner, "_selected_provider_outcomes", None)
+    if not isinstance(outcomes, Mapping) or discovery_key not in outcomes:
+        return "request failed"
+    try:
+        _models, _state, category = _model_discovery_ui_outcome(outcomes[discovery_key])
+    except ValueError:
+        return "request failed"
+    return category or "request failed"
+
+
 def _first_run_discovery_staged_settings(
     provider_draft: wizard_state.FirstRunProviderDraft,
     discovery_key: wizard_state.FirstRunModelDiscoveryKey,
@@ -3473,7 +3503,7 @@ class ModelStep(SetupStep):
                 and owner._selected_discovery_state == "failed"
             ):
                 discovery_state = "connection_failed"
-                failure_category = "request failed"
+                failure_category = _handed_off_failure_category(owner, discovery_key)
             discover = None
         elif (
             isinstance(owner, ProviderStep)
@@ -3501,7 +3531,7 @@ class ModelStep(SetupStep):
                 and owner._selected_discovery_state == "failed"
             ):
                 discovery_state = "connection_failed"
-                failure_category = "request failed"
+                failure_category = _handed_off_failure_category(owner, discovery_key)
             # ProviderStep owns setup network work for this selection. If the
             # user advances before it finishes, use curated fallback rather
             # than issuing the same provider catalog request from ModelStep.
