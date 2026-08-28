@@ -385,6 +385,93 @@ def test_shadowed_unqualified_safe_transform_is_a_candidate(source: str) -> None
 
 
 @pytest.mark.parametrize(
+    "source",
+    [
+        pytest.param(
+            dedent(
+                """
+                def outer(content_fingerprint):
+                    def emit():
+                        logger.info("Path {}", content_fingerprint(user_path))
+                """
+            ),
+            id="outer-parameter",
+        ),
+        pytest.param(
+            dedent(
+                """
+                def outer(transform):
+                    content_fingerprint = transform
+
+                    def emit():
+                        logger.info("Path {}", content_fingerprint(user_path))
+                """
+            ),
+            id="outer-assignment",
+        ),
+        pytest.param(
+            dedent(
+                """
+                def outer():
+                    def content_fingerprint(value):
+                        return value
+
+                    def emit():
+                        logger.info("Path {}", content_fingerprint(user_path))
+                """
+            ),
+            id="outer-function-definition",
+        ),
+        pytest.param(
+            dedent(
+                """
+                def outer():
+                    class content_fingerprint:
+                        pass
+
+                    def emit():
+                        logger.info("Path {}", content_fingerprint(user_path))
+                """
+            ),
+            id="outer-class-definition",
+        ),
+    ],
+)
+def test_enclosing_function_shadow_is_a_candidate_in_nested_closure(
+    source: str,
+) -> None:
+    candidates = scan_path_diagnostic_candidates(
+        source, filename="enclosing_function_shadow.py"
+    )
+
+    assert len(candidates) == 1
+    assert candidates[0]["scope"] == "outer.emit"
+    assert candidates[0]["path_expressions"] == ["content_fingerprint(user_path)"]
+
+
+def test_enclosing_function_shadow_does_not_leak_to_sibling_scope() -> None:
+    source = dedent(
+        """
+        def shadowing_outer(content_fingerprint):
+            def unsafe_emit():
+                logger.info("Path {}", content_fingerprint(user_path))
+
+        def clean_outer():
+            def safe_emit():
+                logger.info("Path {}", content_fingerprint(user_path))
+        """
+    )
+
+    candidates = scan_path_diagnostic_candidates(
+        source, filename="enclosing_function_siblings.py"
+    )
+
+    assert len(candidates) == 1
+    assert candidates[0]["scope"] == "shadowing_outer.unsafe_emit"
+    assert candidates[0]["path_expressions"] == ["content_fingerprint(user_path)"]
+
+
+@pytest.mark.parametrize(
     "definition_template",
     [
         pytest.param(

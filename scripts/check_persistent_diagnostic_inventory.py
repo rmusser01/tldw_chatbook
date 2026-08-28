@@ -202,6 +202,21 @@ def _import_bound_name(node: ast.Import | ast.ImportFrom, alias: ast.alias) -> s
     return alias.name
 
 
+def _enclosing_function_shadowed_names(
+    scope: ast.AST,
+    definition_parent_scopes: dict[int, ast.AST],
+    shadowed: dict[int, set[str]],
+) -> set[str]:
+    """Collect shadows inherited from enclosing function scopes."""
+    inherited: set[str] = set()
+    parent = definition_parent_scopes.get(id(scope))
+    while parent is not None:
+        if isinstance(parent, (ast.FunctionDef, ast.AsyncFunctionDef)):
+            inherited.update(shadowed[id(parent)])
+        parent = definition_parent_scopes.get(id(parent))
+    return inherited
+
+
 def _safe_transform_contexts(
     tree: ast.Module,
     lexical_scopes: dict[int, ast.AST],
@@ -260,20 +275,24 @@ def _safe_transform_contexts(
     contexts: dict[int, tuple[frozenset[tuple[str, ...]], frozenset[str]]] = {}
     for scope_id in scope_ids:
         local_shadowed = shadowed[scope_id]
+        inherited_shadowed = _enclosing_function_shadowed_names(
+            lexical_scopes[scope_id], definition_parent_scopes, shadowed
+        )
+        visible_shadowed = module_shadowed | inherited_shadowed | local_shadowed
         qualifiers = {
             qualifier
             for qualifier in local_qualifiers[scope_id]
-            if qualifier[0] not in local_shadowed
+            if qualifier[0] not in visible_shadowed
         }
         if scope_id != module_scope_id:
             qualifiers.update(
                 qualifier
                 for qualifier in module_qualifiers
-                if qualifier[0] not in local_shadowed
+                if qualifier[0] not in visible_shadowed
             )
         contexts[scope_id] = (
             frozenset(qualifiers),
-            frozenset(module_shadowed | local_shadowed),
+            frozenset(visible_shadowed),
         )
     return contexts
 
