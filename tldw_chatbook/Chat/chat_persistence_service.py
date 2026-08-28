@@ -42,6 +42,7 @@ from tldw_chatbook.Chat.console_transaction_contribution import (
     ConsoleTransactionContribution,
     _scoped_console_transaction_writer,
 )
+from tldw_chatbook.Chat.library_activity import LibraryActivityContribution
 from tldw_chatbook.Chat.console_prefill import PINNED_PREFILL_METADATA_KEY
 from tldw_chatbook.Chat.console_roleplay_metadata import (
     ConsoleRoleplayContext,
@@ -135,6 +136,32 @@ class ChatPersistenceService:
     def thinking_round_trip_version() -> int:
         """Return the thinking envelope version this local adapter round-trips."""
         return 1
+
+    def persist_console_library_activity(
+        self,
+        *,
+        conversation_id: str,
+        contribution: LibraryActivityContribution,
+        message_ids: Mapping[str, str],
+    ) -> None:
+        """Persist one bounded activity batch in a single owned transaction."""
+        if not isinstance(contribution, LibraryActivityContribution):
+            raise TypeError("contribution must be LibraryActivityContribution")
+        with self.db.transaction(immediate=True) as cursor:
+            conversation = cursor.execute(
+                "SELECT deleted FROM conversations WHERE id = ?",
+                (conversation_id,),
+            ).fetchone()
+            if conversation is None or conversation["deleted"]:
+                raise RuntimeError("Durable conversation is unavailable.")
+            with _scoped_console_transaction_writer(
+                cursor, conversation_id
+            ) as writer:
+                contribution.write(
+                    writer=writer,
+                    conversation_id=conversation_id,
+                    message_ids=message_ids,
+                )
 
     @property
     def canonical_citation_writes_ready(self) -> bool:

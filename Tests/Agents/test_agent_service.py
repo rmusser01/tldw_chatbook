@@ -2794,6 +2794,43 @@ def test_make_invoke_tool_bypasses_wrapper_when_unlimited(db, monkeypatch):
     assert json.loads(result.content)["result"] == 4
 
 
+def test_make_invoke_tool_binds_exact_subagent_actor_on_timeout_thread(
+    db, monkeypatch
+):
+    """Provider capture sees child and parent identity on the actual tool thread."""
+    from tldw_chatbook.Agents.agent_models import ToolCall
+    from tldw_chatbook.Agents.run_context import (
+        CurrentRunActor,
+        current_run_actor,
+    )
+
+    service = _service_with_chat(db, lambda **_kwargs: provider_reply("unused"))
+    seen = []
+
+    def invoke_by_name(_name, _args):
+        seen.append(current_run_actor())
+        return ToolResult(ok=True, content="ok")
+
+    monkeypatch.setattr(service.registry, "invoke_by_name", invoke_by_name)
+    cfg = AgentConfig(
+        model="test-model",
+        system_prompt="s",
+        allowed_tools=("calculator",),
+        budget=RunBudget(max_tool_call_seconds=1.0),
+    )
+    actor = CurrentRunActor("subagent", "run-child", "run-parent")
+    invoke_tool = service._make_invoke_tool(
+        cfg,
+        disclosed_names={"calculator"},
+        run_id=actor.run_id,
+        run_actor=actor,
+    )
+
+    assert invoke_tool(ToolCall(name="calculator", args={})).ok is True
+    assert seen == [actor]
+    assert current_run_actor() is None
+
+
 def test_make_invoke_tool_wraps_slow_custom_tool_in_timeout(db, monkeypatch):
     """A blocking custom tool provider must not wedge the run past
     max_tool_call_seconds -- the boundary this task exists to add."""

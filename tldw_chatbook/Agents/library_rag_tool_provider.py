@@ -21,6 +21,7 @@ worker thread, where bridging the async retrieval service with
 from __future__ import annotations
 
 import asyncio
+import json
 from collections.abc import Mapping
 from typing import Any
 
@@ -33,6 +34,12 @@ from tldw_chatbook.Agents.agent_models import (
 )
 from tldw_chatbook.Agents.library_tool_provider import (
     _BuiltinLibraryAuthorityIssuer,
+)
+from tldw_chatbook.Agents.run_context import current_run_actor
+from tldw_chatbook.Chat.library_activity import (
+    LibraryActivityCandidate,
+    LibraryActivitySink,
+    minimize_library_activity,
 )
 from tldw_chatbook.Library.library_expand_policy import (
     EXPANDABLE_SOURCE_TYPES,
@@ -49,6 +56,7 @@ from tldw_chatbook.Library.library_rag_service import (
 from tldw_chatbook.Library.library_tool_contract import (
     ERROR_INDEX_UNAVAILABLE,
     ERROR_INVALID_ARGUMENT,
+    ERROR_STORAGE_ERROR,
     LibraryToolError,
     MAX_RESULT_BYTES,
     MAX_SEARCH_QUERY_CHARS,
@@ -209,7 +217,13 @@ class LibraryRagToolProvider(_BuiltinLibraryAuthorityIssuer):
 
     SOURCE = "library"
 
-    def __init__(self, rag_service: Any) -> None:
+    def __init__(
+        self,
+        rag_service: Any,
+        *,
+        activity_attempt_id: str | None = None,
+        activity_sink: LibraryActivitySink | None = None,
+    ) -> None:
         """Bind the app-owned Library RAG search service (duck-typed ``search``).
 
         ``None`` (or a service without ``search``) is a supported construction:
@@ -218,6 +232,65 @@ class LibraryRagToolProvider(_BuiltinLibraryAuthorityIssuer):
         """
         self._initialize_builtin_authority_issuer()
         self._rag_service = rag_service
+        self._activity_attempt_id = activity_attempt_id
+        self._activity_sink = activity_sink
+
+    @staticmethod
+    def _capture_failure() -> ToolResult:
+        return _error_result(
+            LibraryToolError(
+                ERROR_STORAGE_ERROR,
+                "Library result withheld because activity could not be recorded.",
+                retryable=True,
+                details={"category": "review_capture_failed"},
+            )
+        )
+
+    def _capture_activity(self, arguments: Mapping[str, Any], outcome: object) -> bool:
+        if self._activity_sink is None:
+            return True
+        actor = current_run_actor()
+        if actor is None or not self._activity_attempt_id:
+            logger.warning(
+                "Library activity capture failed; result withheld "
+                "category=review_capture_failed"
+            )
+            return False
+        structured: object = outcome
+        if isinstance(outcome, ToolResult):
+            try:
+                structured = json.loads(outcome.error or outcome.content or "{}")
+            except (TypeError, ValueError):
+                structured = {"error": {"code": "activity_failed"}}
+        try:
+            event = minimize_library_activity(
+                LibraryActivityCandidate(
+                    attempt_id=self._activity_attempt_id,
+                    actor_kind=actor.kind,
+                    run_id=actor.run_id,
+                    parent_run_id=actor.parent_run_id,
+                    library_provider="rag",
+                    operation=RAG_TOOL_NAME,
+                    arguments=arguments,
+                    structured_result=structured,
+                    failure_code=None,
+                )
+            )
+            self._activity_sink(event)
+        except Exception:  # noqa: BLE001 - payload/exception text must not log
+            logger.warning(
+                "Library activity capture failed; result withheld "
+                "category=review_capture_failed"
+            )
+            return False
+        return True
+
+    def _refuse(self, arguments: Mapping[str, Any], message: str) -> ToolResult:
+        """Capture one valid RAG operation refused before backend dispatch."""
+        outcome = _invalid(message)
+        if not self._capture_activity(arguments, outcome):
+            return self._capture_failure()
+        return outcome
 
     def _tool_id(self) -> str:
         return f"{self.SOURCE}:{RAG_TOOL_NAME}"
@@ -250,23 +323,29 @@ class LibraryRagToolProvider(_BuiltinLibraryAuthorityIssuer):
         if args is None:
             args = {}
         if not isinstance(args, dict):
-            return _invalid("arguments must be a JSON object")
+            return self._refuse({}, "arguments must be a JSON object")
         unknown = sorted(set(args) - _ARGUMENT_KEYS)
         if unknown:
-            return _invalid(f"unsupported argument(s): {', '.join(unknown)}")
+            return self._refuse(
+                args, f"unsupported argument(s): {', '.join(unknown)}"
+            )
 
         query = args.get("query")
         if not isinstance(query, str) or not query.strip():
-            return _invalid("a non-empty query string is required")
+            return self._refuse(args, "a non-empty query string is required")
         query = query.strip()
         if len(query) > MAX_SEARCH_QUERY_CHARS:
-            return _invalid(f"query must be at most {MAX_SEARCH_QUERY_CHARS} characters")
+            return self._refuse(
+                args, f"query must be at most {MAX_SEARCH_QUERY_CHARS} characters"
+            )
 
         top_k = args.get("top_k", _DEFAULT_TOP_K)
         if isinstance(top_k, bool) or not isinstance(top_k, int):
-            return _invalid("top_k must be an integer")
+            return self._refuse(args, "top_k must be an integer")
         if not 1 <= top_k <= _MAX_TOP_K:
-            return _invalid(f"top_k must be between 1 and {_MAX_TOP_K}")
+            return self._refuse(
+                args, f"top_k must be between 1 and {_MAX_TOP_K}"
+            )
 
         source_types = args.get("source_types")
         if source_types is None:
@@ -280,13 +359,16 @@ class LibraryRagToolProvider(_BuiltinLibraryAuthorityIssuer):
                     for item in source_types
                 )
             ):
-                return _invalid(
+                return self._refuse(
+                    args,
                     "source_types must be a non-empty subset of: "
-                    + ", ".join(SUPPORTED_RAG_SOURCE_TYPES)
+                    + ", ".join(SUPPORTED_RAG_SOURCE_TYPES),
                 )
             selected = tuple(dict.fromkeys(source_types))
 
         outcome = self._run_search(query, selected, top_k)
+        if not self._capture_activity(args, outcome):
+            return self._capture_failure()
         if isinstance(outcome, ToolResult):
             return outcome
         return self._success_result(outcome, query, selected)

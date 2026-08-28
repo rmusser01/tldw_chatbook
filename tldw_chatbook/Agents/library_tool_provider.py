@@ -30,6 +30,12 @@ from tldw_chatbook.Agents.agent_models import (
 from tldw_chatbook.Chat.console_library_policy import (
     ConsoleAssistantLibraryAccess,
 )
+from tldw_chatbook.Chat.library_activity import (
+    LibraryActivityCandidate,
+    LibraryActivitySink,
+    minimize_library_activity,
+)
+from tldw_chatbook.Agents.run_context import current_run_actor
 from tldw_chatbook.Library.library_tool_contract import (
     ERROR_INVALID_ARGUMENT,
     ERROR_STORAGE_ERROR,
@@ -122,10 +128,64 @@ class LibraryToolProvider(_BuiltinLibraryAuthorityIssuer):
 
     SOURCE = "library"
 
-    def __init__(self, service: Any) -> None:
+    def __init__(
+        self,
+        service: Any,
+        *,
+        activity_attempt_id: str | None = None,
+        activity_sink: LibraryActivitySink | None = None,
+    ) -> None:
         """Bind the shared synchronous Library service (duck-typed ``invoke``)."""
         self._initialize_builtin_authority_issuer()
         self._service = service
+        self._activity_attempt_id = activity_attempt_id
+        self._activity_sink = activity_sink
+
+    @staticmethod
+    def _capture_failure() -> ToolResult:
+        return _error_result(
+            LibraryToolError(
+                ERROR_STORAGE_ERROR,
+                "Library result withheld because activity could not be recorded.",
+                retryable=True,
+                details={"category": "review_capture_failed"},
+            )
+        )
+
+    def _capture_activity(
+        self, name: str, arguments: Mapping[str, Any], payload: object
+    ) -> bool:
+        if self._activity_sink is None:
+            return True
+        actor = current_run_actor()
+        if actor is None or not self._activity_attempt_id:
+            logger.warning(
+                "Library activity capture failed; result withheld "
+                "category=review_capture_failed"
+            )
+            return False
+        try:
+            event = minimize_library_activity(
+                LibraryActivityCandidate(
+                    attempt_id=self._activity_attempt_id,
+                    actor_kind=actor.kind,
+                    run_id=actor.run_id,
+                    parent_run_id=actor.parent_run_id,
+                    library_provider="direct",
+                    operation=name,
+                    arguments=arguments,
+                    structured_result=payload,
+                    failure_code=None,
+                )
+            )
+            self._activity_sink(event)
+        except Exception:  # noqa: BLE001 - payload/exception text must not log
+            logger.warning(
+                "Library activity capture failed; result withheld "
+                "category=review_capture_failed"
+            )
+            return False
+        return True
 
     def _tool_id(self, name: str) -> str:
         return f"{self.SOURCE}:{name}"
@@ -176,6 +236,8 @@ class LibraryToolProvider(_BuiltinLibraryAuthorityIssuer):
                 "The local Library store could not complete the read.",
                 retryable=True,
             ).to_payload()
+        if not self._capture_activity(name, arguments, payload):
+            return self._capture_failure()
         text = json_dumps_compact(payload)
         if isinstance(payload, Mapping) and "error" in payload:
             return ToolResult(ok=False, error=text)

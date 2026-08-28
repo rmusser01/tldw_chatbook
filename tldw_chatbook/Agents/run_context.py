@@ -1,7 +1,7 @@
-"""The dispatching run's id, bound around a run's tool-facing work.
+"""The dispatching run actor, bound around a run's tool-facing work.
 
-Two bindings exist, both established by ``AgentService`` and both reading
-back through ``current_run_id()``. They are not redundant: they cover
+Two bindings exist, both established by ``AgentService`` and readable through
+``current_run_actor()``/``current_run_id()``. They are not redundant: they cover
 different THREADS, because the work they guard runs in different places.
 
 1. **Per-invocation** (PR2a Task 5, ``_make_invoke_tool``) -- bound around
@@ -26,7 +26,7 @@ different THREADS, because the work they guard runs in different places.
    built one layer below any run identity). One binding there covers both
    -- and every future loop-thread consumer -- with no signature churn.
 
-The two nest harmlessly: the inner binding sets the same id the outer one
+The two nest harmlessly: the inner binding sets the same actor the outer one
 holds, on a different thread.
 
 WHY A ContextVar AT ALL (PR2a Task 5). Both permission gates key this
@@ -44,7 +44,7 @@ signature is a Protocol (``tool_catalog.ToolProvider``) implemented by
 every provider and called generically by
 ``ToolCatalogRegistry.invoke_by_name``; widening it would touch every
 provider and hundreds of call sites for a value only three of them want.
-So the run id rides a ``ContextVar`` that ``AgentService`` binds around
+So the run actor rides a ``ContextVar`` that ``AgentService`` binds around
 each invocation instead -- the same shape, and for the same reason, as
 ``Tools/workspace_file_roots.run_workspace``, which already binds THIS
 run's workspace around ``BuiltinToolProvider.invoke``'s tool execution.
@@ -68,10 +68,31 @@ from __future__ import annotations
 
 from contextlib import contextmanager
 from contextvars import ContextVar
-from typing import Iterator
+from dataclasses import dataclass
+from typing import Iterator, Literal
 
-#: The run id whose tool call is executing on this thread, or "" for none.
-_CURRENT_RUN_ID: ContextVar[str] = ContextVar("tldw_agent_run_id", default="")
+
+@dataclass(frozen=True, slots=True)
+class CurrentRunActor:
+    """Attribution for the primary or subagent invoking a provider tool."""
+
+    kind: Literal["primary", "subagent"]
+    run_id: str
+    parent_run_id: str | None
+
+
+_CURRENT_RUN_ACTOR: ContextVar[CurrentRunActor | None] = ContextVar(
+    "tldw_agent_run_actor", default=None
+)
+
+
+def current_run_actor() -> CurrentRunActor | None:
+    """Return the actor bound to this tool thread, if any.
+
+    Returns:
+        Exact bound actor, or ``None`` outside an agent run.
+    """
+    return _CURRENT_RUN_ACTOR.get()
 
 
 def current_run_id() -> str:
@@ -81,7 +102,30 @@ def current_run_id() -> str:
         The bound run id, or ``""`` when no agent run bound one on this
         thread (a direct provider call outside any run). Never raises.
     """
-    return _CURRENT_RUN_ID.get()
+    actor = current_run_actor()
+    return actor.run_id if actor is not None else ""
+
+
+@contextmanager
+def use_run_actor(actor: CurrentRunActor) -> Iterator[None]:
+    """Bind exact provider-call attribution for the duration of a block.
+
+    Args:
+        actor: Non-empty primary or subagent attribution to bind.
+
+    Yields:
+        None while the actor is bound on the current context.
+
+    Raises:
+        ValueError: If ``actor`` is not a valid non-empty attribution.
+    """
+    if not isinstance(actor, CurrentRunActor) or not actor.run_id:
+        raise ValueError("a non-empty CurrentRunActor is required")
+    token = _CURRENT_RUN_ACTOR.set(actor)
+    try:
+        yield
+    finally:
+        _CURRENT_RUN_ACTOR.reset(token)
 
 
 @contextmanager
@@ -96,8 +140,9 @@ def use_run_id(run_id: str) -> Iterator[None]:
         None. The previous binding is restored on exit, including on an
         exception, so nested inline runs on one thread unwind correctly.
     """
-    token = _CURRENT_RUN_ID.set(run_id or "")
+    actor = CurrentRunActor("primary", run_id, None) if run_id else None
+    token = _CURRENT_RUN_ACTOR.set(actor)
     try:
         yield
     finally:
-        _CURRENT_RUN_ID.reset(token)
+        _CURRENT_RUN_ACTOR.reset(token)

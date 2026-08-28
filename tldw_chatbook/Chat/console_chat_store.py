@@ -115,6 +115,10 @@ from tldw_chatbook.Chat.console_library_policy import (
 from tldw_chatbook.Chat.console_library_policy_coordinator import (
     ConsoleLibraryPolicyCoordinator,
 )
+from tldw_chatbook.Chat.console_library_activity_buffer import (
+    ConsoleLibraryActivityBuffer,
+    LibraryActivityFlushResult,
+)
 from tldw_chatbook.Chat.console_turn_preparation import (
     ConsolePreparationPauseKind,
     ConsolePreparationTransition,
@@ -124,6 +128,13 @@ from tldw_chatbook.Chat.console_turn_preparation import (
 )
 from tldw_chatbook.Chat.console_transaction_contribution import (
     ConsoleTransactionContribution,
+)
+from tldw_chatbook.Chat.library_activity import (
+    LibraryActivityContribution,
+    LibraryActivityEvent,
+    LibraryActivityView,
+    encode_library_activity_event,
+    project_library_activity,
 )
 from tldw_chatbook.Chat.console_exchange_capture import CaptureDetail, capture_to_blob
 from tldw_chatbook.Chat.console_capture_policy_repository import (
@@ -525,6 +536,15 @@ class ConsoleChatPersistence(Protocol):
         conversation_kwargs: Mapping[str, object],
     ) -> ConsoleDispatchCheckpoint:
         """Atomically create/validate and accept one durable Console turn."""
+
+    def persist_console_library_activity(
+        self,
+        *,
+        conversation_id: str,
+        contribution: LibraryActivityContribution,
+        message_ids: Mapping[str, str],
+    ) -> None:
+        """Persist one activity batch in a caller-owned transaction."""
 
     def create_conversation(self, **kwargs) -> str:
         """Create a persisted conversation and return its ID."""
@@ -1165,6 +1185,11 @@ class ConsoleChatStore:
                 restored policies bypass this reader.
         """
         self.persistence = persistence
+        self._library_activity_lifecycle_lock = threading.RLock()
+        self._library_activity_buffer = ConsoleLibraryActivityBuffer(
+            self._persist_library_activity_batch
+        )
+        self._library_activity_revisions: dict[str, int] = {}
         self.workspace_context = workspace_context or ConsoleWorkspaceContext()
         self.sync_v2_chat_producer = sync_v2_chat_producer
         self.sync_v2_server_profile_id = sync_v2_server_profile_id
@@ -3178,6 +3203,287 @@ class ConsoleChatStore:
                     )
         return session, persisted
 
+    def admit_library_activity(
+        self,
+        session_id: str,
+        turn_id: str,
+        event: LibraryActivityEvent,
+    ) -> None:
+        """Retain one minimized provider event under its native USER opener.
+
+        Args:
+            session_id: Native Console session receiving the event.
+            turn_id: Native user-turn opener that owns the event.
+            event: Validated minimized activity event.
+
+        Raises:
+            KeyError: If the session was closed before admission.
+            ValueError: If the turn is not a user opener or the event is invalid.
+            RuntimeError: If ownership changed or the bounded buffer is full.
+        """
+        with self._library_activity_lifecycle_lock:
+            session = self._session_or_raise(session_id)
+            owner = self._nodes_by_session.get(session_id, {}).get(turn_id)
+            if owner is None or owner.role is not ConsoleMessageRole.USER:
+                raise ValueError("Library activity requires a USER turn opener.")
+            if session.id != session_id:
+                raise RuntimeError("Library activity session owner changed.")
+            self._library_activity_buffer.admit(session_id, turn_id, event)
+            self._bump_library_activity_revision(session_id)
+
+    def capture_library_activity(
+        self,
+        session_id: str,
+        turn_id: str,
+        event: LibraryActivityEvent,
+    ) -> LibraryActivityFlushResult:
+        """Admit and conditionally persist one provider event atomically.
+
+        Temporary sessions keep the event pending for atomic promotion. Durable
+        sessions attempt one ordinary flush before releasing the lifecycle lock.
+
+        Args:
+            session_id: Native Console session receiving the event.
+            turn_id: Native user-turn opener that owns the event.
+            event: Validated minimized activity event.
+
+        Returns:
+            Current activity persistence state.
+
+        Raises:
+            KeyError: If the session closed before capture acquired ownership.
+            ValueError: If the turn or event is invalid.
+            RuntimeError: If capture cannot be retained safely.
+        """
+        with self._library_activity_lifecycle_lock:
+            self.admit_library_activity(session_id, turn_id, event)
+            session = self._session_or_raise(session_id)
+            if session.ephemeral:
+                return self._library_activity_buffer.state(session_id)
+            return self.flush_library_activity(session_id)
+
+    def pending_library_activity(
+        self, session_id: str
+    ) -> tuple[object, ...]:
+        """Return one immutable process-local pending activity snapshot."""
+        self._session_or_raise(session_id)
+        return self._library_activity_buffer.pending_events(session_id)
+
+    def library_activity_revision(self, session_id: str) -> int:
+        """Return the process-local projection revision for one session."""
+
+        self._session_or_raise(session_id)
+        return self._library_activity_revisions.get(session_id, 0)
+
+    def current_library_activity_turn_id(self, session_id: str) -> str:
+        """Return the latest active-path USER opener's native identifier."""
+
+        self._session_or_raise(session_id)
+        nodes = self._nodes_by_session.get(session_id, {})
+        for message_id in reversed(self.active_path_message_ids(session_id)):
+            message = nodes.get(message_id)
+            if message is not None and message.role is ConsoleMessageRole.USER:
+                return message.id
+        raise RuntimeError("Library activity requires an active USER turn opener.")
+
+    def library_activity_snapshot(
+        self,
+        session_id: str,
+        selected_message_id: str | None,
+    ) -> tuple[
+        LibraryActivityView,
+        tuple[tuple[str, int], ...],
+        LibraryActivityFlushResult,
+    ]:
+        """Project durable and retained activity onto the active selected turn.
+
+        The returned count keys are native assistant message IDs so the
+        transcript can render a local affordance without learning durable
+        trajectory identity.
+        """
+
+        session = self._session_or_raise(session_id)
+        nodes = self._nodes_by_session.get(session_id, {})
+        active_path = self.active_path_message_ids(session_id)
+        durable_by_native: dict[str, str] = {}
+        active_turn_ids: list[str] = []
+        for native_id in active_path:
+            message = nodes.get(native_id)
+            if message is None or message.role is not ConsoleMessageRole.USER:
+                continue
+            durable_id = message.persisted_message_id or message.id
+            durable_by_native[message.id] = durable_id
+            active_turn_ids.append(durable_id)
+
+        rows: list[Any] = []
+        db = getattr(self.persistence, "db", None)
+        if session.persisted_conversation_id is not None and db is not None:
+            try:
+                rows.extend(db.get_trajectory_rows(session.persisted_conversation_id))
+            except Exception:  # noqa: BLE001 - payload-free review degradation
+                logger.warning("library_activity_projection_read_failed")
+
+        next_sequence = max(
+            (
+                int(getattr(row, "seq", 0) or 0)
+                for row in rows
+                if type(getattr(row, "seq", None)) is int
+            ),
+            default=0,
+        )
+        for item in self._library_activity_buffer.pending_events(session_id):
+            next_sequence += 1
+            owner_id = durable_by_native.get(
+                item.owner_message_key, item.owner_message_key
+            )
+            rows.append(
+                {
+                    "message_id": owner_id,
+                    "turn_id": owner_id,
+                    "seq": next_sequence,
+                    "event_kind": "library_activity",
+                    "step_started_at": item.captured_at,
+                    "payload_json": encode_library_activity_event(item.event),
+                }
+            )
+
+        selected_turn_id: str | None = None
+        if selected_message_id in active_path:
+            selected_index = active_path.index(selected_message_id)
+            for native_id in reversed(active_path[: selected_index + 1]):
+                message = nodes.get(native_id)
+                if message is not None and message.role is ConsoleMessageRole.USER:
+                    selected_turn_id = message.persisted_message_id or message.id
+                    break
+        view = project_library_activity(rows, active_turn_ids, selected_turn_id)
+
+        count_by_turn = {
+            turn_id: len(project_library_activity(rows, active_turn_ids, turn_id).actions)
+            for turn_id in active_turn_ids
+        }
+        counts: list[tuple[str, int]] = []
+        current_turn_id: str | None = None
+        for native_id in active_path:
+            message = nodes.get(native_id)
+            if message is None:
+                continue
+            if message.role is ConsoleMessageRole.USER:
+                current_turn_id = message.persisted_message_id or message.id
+            elif message.role is ConsoleMessageRole.ASSISTANT and current_turn_id:
+                count = count_by_turn.get(current_turn_id, 0)
+                if count:
+                    counts.append((message.id, count))
+        return view, tuple(counts), self._library_activity_buffer.state(session_id)
+
+    def _bump_library_activity_revision(self, session_id: str) -> None:
+        self._library_activity_revisions[session_id] = (
+            self._library_activity_revisions.get(session_id, 0) + 1
+        )
+
+    def flush_library_activity(self, session_id: str) -> LibraryActivityFlushResult:
+        """Attempt one ordinary durable activity flush.
+
+        Args:
+            session_id: Native Console session to flush.
+
+        Returns:
+            Current persistence state. Ephemeral sessions remain pending without
+            consuming a retry attempt.
+        """
+        with self._library_activity_lifecycle_lock:
+            session = self._session_or_raise(session_id)
+            if session.ephemeral:
+                return self._library_activity_buffer.state(session_id)
+            result = self._library_activity_buffer.flush(session_id)
+            self._bump_library_activity_revision(session_id)
+            return result
+
+    def retry_library_activity(self, session_id: str) -> LibraryActivityFlushResult:
+        """Retry the retained activity batch once.
+
+        Args:
+            session_id: Native Console session to retry.
+
+        Returns:
+            Current persistence state. Ephemeral sessions remain pending.
+        """
+        with self._library_activity_lifecycle_lock:
+            session = self._session_or_raise(session_id)
+            if session.ephemeral:
+                return self._library_activity_buffer.state(session_id)
+            result = self._library_activity_buffer.retry(session_id)
+            self._bump_library_activity_revision(session_id)
+            return result
+
+    def final_flush_library_activity(
+        self, session_id: str
+    ) -> LibraryActivityFlushResult:
+        """Drain a durable session's activity before close or shutdown.
+
+        Args:
+            session_id: Native Console session being finalized.
+
+        Returns:
+            Aggregate final state. Ephemeral activity remains pending for
+            promotion or explicit session disposal.
+        """
+        with self._library_activity_lifecycle_lock:
+            session = self._session_or_raise(session_id)
+            if session.ephemeral:
+                return self._library_activity_buffer.state(session_id)
+            result = self._library_activity_buffer.final_flush(session_id)
+            self._bump_library_activity_revision(session_id)
+            return result
+
+    def final_flush_all_library_activity(
+        self,
+    ) -> dict[str, LibraryActivityFlushResult]:
+        """Perform one bounded shutdown flush for every live Console session."""
+        return {
+            session_id: self.final_flush_library_activity(session_id)
+            for session_id in tuple(self._sessions)
+        }
+
+    def _persist_library_activity_batch(
+        self,
+        session_id: str,
+        contribution: LibraryActivityContribution,
+    ) -> None:
+        """Resolve native turn owners and delegate one atomic sidecar write."""
+        session = self._session_or_raise(session_id)
+        if session.ephemeral or session.persisted_conversation_id is None:
+            raise RuntimeError("Ephemeral Library activity awaits promotion.")
+        persistence = self.persistence
+        persist = getattr(persistence, "persist_console_library_activity", None)
+        if not callable(persist):
+            raise RuntimeError("Library activity persistence is unavailable.")
+
+        nodes = self._nodes_by_session.get(session_id, {})
+        message_ids: dict[str, str] = {}
+        for item in contribution.items:
+            owner = nodes.get(item.owner_message_key)
+            if owner is None:
+                owner = next(
+                    (
+                        candidate
+                        for candidate in nodes.values()
+                        if candidate.persisted_message_id == item.owner_message_key
+                    ),
+                    None,
+                )
+            if (
+                owner is None
+                or owner.role is not ConsoleMessageRole.USER
+                or not owner.persisted_message_id
+            ):
+                raise RuntimeError("Durable Library activity owner is unavailable.")
+            message_ids[item.owner_message_key] = owner.persisted_message_id
+        persist(
+            conversation_id=session.persisted_conversation_id,
+            contribution=contribution,
+            message_ids=message_ids,
+        )
+
     def close_session(self, session_id: str) -> ConsoleChatSession | None:
         """Close a native Console session and activate a neighboring session.
 
@@ -3215,7 +3521,18 @@ class ConsoleChatStore:
         session_ids = list(self._sessions.keys())
         closed_index = session_ids.index(session_id)
 
-        self._purge_session_runtime_state(session_id)
+        with self._library_activity_lifecycle_lock:
+            session = self._session_or_raise(session_id)
+            result = self.final_flush_library_activity(session_id)
+            if not session.ephemeral and result.status != "saved":
+                logger.warning(
+                    "Library activity discarded during session close "
+                    "status={} pending_count={}",
+                    result.status,
+                    result.pending_count,
+                )
+            self._library_activity_buffer.discard_session(session_id)
+            self._purge_session_runtime_state(session_id)
 
         if self.active_session_id != session_id:
             return self._sessions.get(self.active_session_id or "")
@@ -3283,6 +3600,7 @@ class ConsoleChatStore:
         self._deferred_project_instruction_state_session_ids.discard(session_id)
         self._roleplay_system_projection_candidates.pop(session_id, None)
         self._payload_revisions.pop(session_id, None)
+        self._library_activity_revisions.pop(session_id, None)
         self._conversation_context_epochs.pop(session_id, None)
         self._speech_preference_epochs.pop(session_id, None)
         self._character_emote_feed_by_session.pop(session_id, None)
@@ -7001,6 +7319,7 @@ class ConsoleChatStore:
         self._abandoned_exchange_run_tags.clear()
         self._exchange_blob_cache.clear()
         self._payload_revisions.clear()
+        self._library_activity_revisions.clear()
         self._conversation_context_epochs.clear()
         self._speech_preference_epochs.clear()
         self._nodes_by_session.clear()
@@ -12045,9 +12364,21 @@ class ConsoleChatStore:
         )
         if not callable(atomic_promote):
             raise RuntimeError("Persistence adapter cannot perform atomic promotion.")
+        activity_contribution = self._library_activity_buffer.promotion_contribution(
+            session_id
+        )
+        combined_contributions: tuple[ConsoleTransactionContribution, ...] = tuple(
+            contributions
+        )
+        if activity_contribution is not None:
+            combined_contributions = (
+                *combined_contributions,
+                activity_contribution,
+            )
         return self._promote_ephemeral_session_atomically(
             session,
-            contributions=contributions,
+            contributions=combined_contributions,
+            activity_contribution=activity_contribution,
         )
 
     def _promote_ephemeral_session_atomically(
@@ -12055,6 +12386,7 @@ class ConsoleChatStore:
         session: ConsoleChatSession,
         *,
         contributions: Sequence[ConsoleTransactionContribution],
+        activity_contribution: LibraryActivityContribution | None = None,
     ) -> str:
         """Stage a complete temporary transcript and publish after commit only."""
         if self.persistence is None:
@@ -12214,6 +12546,12 @@ class ConsoleChatStore:
             context_policy_overrides=session.context_policy_overrides,
             contributions=contributions,
         )
+
+        if activity_contribution is not None:
+            self._library_activity_buffer.confirm_contribution(
+                session_id, activity_contribution
+            )
+            self._bump_library_activity_revision(session_id)
 
         self.publish_committed_identity(session_id, identity)
         session.ephemeral = False

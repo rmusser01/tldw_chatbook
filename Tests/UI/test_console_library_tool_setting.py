@@ -48,7 +48,7 @@ def _turn_context(*, direct: bool):
     )
 
 
-# --- ChatScreen provider factory --------------------------------------------
+# --- Library activity controller provider factory ---------------------------
 
 
 def test_factory_direct_mode_builds_library_tool_provider(monkeypatch):
@@ -60,7 +60,7 @@ def test_factory_direct_mode_builds_library_tool_provider(monkeypatch):
     _patch_cli_config(monkeypatch, {"console": {"direct_library_tools": True}})
     _app, screen = _build_screen()
 
-    provider = screen._console_library_provider_factory(_turn_context(direct=True))
+    provider = screen._library_activity.build_provider(_turn_context(direct=True))
 
     assert isinstance(provider, LibraryToolProvider)
     assert isinstance(provider._service, LocalLibraryToolService)
@@ -74,7 +74,7 @@ def test_factory_off_mode_builds_bounded_rag_provider(monkeypatch):
     _patch_cli_config(monkeypatch, {"console": {"direct_library_tools": False}})
     app, screen = _build_screen()
 
-    provider = screen._console_library_provider_factory(_turn_context(direct=False))
+    provider = screen._library_activity.build_provider(_turn_context(direct=False))
 
     assert isinstance(provider, LibraryRagToolProvider)
     assert provider._rag_service is getattr(app, "library_rag_search_service", None)
@@ -84,7 +84,7 @@ def test_factory_fails_closed_when_turn_context_is_missing(monkeypatch):
     _patch_cli_config(monkeypatch, {})
     _app, screen = _build_screen()
 
-    assert screen._console_library_provider_factory() is None
+    assert screen._library_activity.build_provider(None) is None
 
 
 def test_factory_reads_captured_context_without_rebuilding_controller(monkeypatch):
@@ -108,6 +108,101 @@ def test_factory_reads_captured_context_without_rebuilding_controller(monkeypatc
     assert screen._console_chat_controller is controller
 
 
+def test_factory_wires_activity_capture_from_real_turn_context(monkeypatch):
+    from tldw_chatbook.Chat.console_chat_models import (
+        ConsoleMessageRole,
+        ConsoleProviderSelection,
+    )
+    from tldw_chatbook.Chat.console_dispatch_checkpoint import (
+        ConsoleEgressClass,
+        ConsoleLibraryItemScopeSnapshot,
+        ConsoleProviderIntent,
+        ConsoleResolvedDestination,
+        ConsoleTurnLibraryAuthority,
+    )
+    from tldw_chatbook.Chat.console_library_policy import (
+        AUTOMATIC_LIBRARY_SOURCE_TYPES,
+        ConsoleAssistantLibraryAccess,
+        ConsoleAutoRetrieve,
+        ConsoleLibraryPolicySnapshot,
+    )
+    from tldw_chatbook.Chat.console_turn_context import (
+        ConsoleTurnConfigurationSnapshot,
+        ConsoleTurnExecutionContext,
+    )
+    from tldw_chatbook.Chat.library_activity import LibraryActivityEvent
+
+    _patch_cli_config(monkeypatch, {"console": {"direct_library_tools": True}})
+    _app, screen = _build_screen()
+    store = screen._ensure_console_chat_store()
+    session = store.create_session(ephemeral=True)
+    user = store.append_message(
+        session.id,
+        role=ConsoleMessageRole.USER,
+        content="question",
+    )
+    authority = ConsoleTurnLibraryAuthority(
+        policy=ConsoleLibraryPolicySnapshot(
+            auto_retrieve=ConsoleAutoRetrieve.NEVER,
+            assistant_access=ConsoleAssistantLibraryAccess.ALLOWED,
+            policy_revision=1,
+            source="durable",
+            error_code=None,
+        ),
+        direct_library_tools=True,
+        source_types=AUTOMATIC_LIBRARY_SOURCE_TYPES,
+        scope_snapshot=ConsoleLibraryItemScopeSnapshot(
+            note_ids=(), media_ids=(), conversations_allowed=True
+        ),
+        provider_intent=ConsoleProviderIntent(
+            provider="openai", model="model-a", endpoint=None
+        ),
+        attempt_id="attempt-live",
+    )
+    context = ConsoleTurnExecutionContext(
+        configuration=ConsoleTurnConfigurationSnapshot.capture(
+            session_id=session.id,
+            provider_selection=ConsoleProviderSelection(
+                provider="openai", explicit_model="model-a"
+            ),
+        ),
+        library_authority=authority,
+        resolved_destination=ConsoleResolvedDestination(
+            provider="openai",
+            model="model-a",
+            endpoint_identity="https://api.openai.com",
+            egress_class=ConsoleEgressClass.PUBLIC_NETWORK,
+        ),
+    )
+
+    provider = screen._library_activity.build_provider(context)
+    event = LibraryActivityEvent(
+        version=1,
+        event_id="event-live",
+        attempt_id="attempt-live",
+        run_id="run-live",
+        actor_kind="primary",
+        parent_run_id=None,
+        library_provider="direct",
+        operation="library_search_notes",
+        status="succeeded",
+        result_count=1,
+        query_preview="query",
+        source_refs=(),
+        error_code=None,
+        error_summary=None,
+    )
+
+    assert provider is not None
+    assert provider._activity_attempt_id == "attempt-live"
+    assert provider._activity_sink is not None
+    provider._activity_sink(event)
+    pending = store.pending_library_activity(session.id)
+    assert [(item.owner_message_key, item.event) for item in pending] == [
+        (user.id, event)
+    ]
+
+
 def test_factory_assembles_service_only_from_local_app_attributes(monkeypatch):
     """The direct service is wired from the app's local service attributes --
     and only those (identity, not reconstruction)."""
@@ -122,7 +217,7 @@ def test_factory_assembles_service_only_from_local_app_attributes(monkeypatch):
     app.local_chat_conversation_service = SimpleNamespace(marker="conversations")
     app.local_library_collections_service = SimpleNamespace(marker="collections")
 
-    provider = screen._console_library_provider_factory(_turn_context(direct=True))
+    provider = screen._library_activity.build_provider(_turn_context(direct=True))
 
     assert isinstance(provider, LibraryToolProvider)
     service = provider._service
@@ -146,7 +241,7 @@ def test_factory_wires_the_policy_enforcer_into_the_chunk_tool_service(monkeypat
     app, screen = _build_screen()
     app.local_media_reading_service = SimpleNamespace(marker="media")
 
-    provider = screen._console_library_provider_factory(_turn_context(direct=True))
+    provider = screen._library_activity.build_provider(_turn_context(direct=True))
 
     assert isinstance(provider, LibraryToolProvider)
     chunk_service = provider._service._media_chunk
@@ -176,7 +271,7 @@ def test_factory_chunk_read_tools_degrade_when_one_media_handle_is_missing(
     )
     app.local_media_reading_service = None
 
-    provider = screen._console_library_provider_factory(_turn_context(direct=True))
+    provider = screen._library_activity.build_provider(_turn_context(direct=True))
 
     assert isinstance(provider, LibraryToolProvider)
     assert provider._service._media_chunk is not None
@@ -208,7 +303,7 @@ def test_factory_missing_backend_yields_per_tool_feature_unavailable(monkeypatch
     app.local_chat_conversation_service = None
     app.local_library_collections_service = None
 
-    provider = screen._console_library_provider_factory(_turn_context(direct=True))
+    provider = screen._library_activity.build_provider(_turn_context(direct=True))
 
     assert isinstance(provider, LibraryToolProvider)
     # Catalog still exposes the full descriptor set (no total failure).
@@ -238,7 +333,7 @@ def test_factory_present_backend_serves_its_tool(monkeypatch):
     app.local_chat_conversation_service = None
     app.local_library_collections_service = None
 
-    provider = screen._console_library_provider_factory(_turn_context(direct=True))
+    provider = screen._library_activity.build_provider(_turn_context(direct=True))
     result = provider.invoke("library:library_list_notes", {"limit": 5})
 
     assert result.ok is True
