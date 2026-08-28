@@ -375,7 +375,10 @@ def _optional_float(
         return None
     if isinstance(value, bool) or not isinstance(value, (int, float)):
         raise ValueError(f"{name} must be a JSON number or null.")
-    number = float(value)
+    try:
+        number = float(value)
+    except OverflowError as exc:
+        raise ValueError(f"{name} is outside its supported range.") from exc
     if not math.isfinite(number) or not minimum <= number <= maximum:
         raise ValueError(f"{name} is outside its supported range.")
     return number

@@ -285,9 +285,33 @@ class ChatPersistenceService:
                     expected_version=record["version"],
                 )
             except ConflictError:
-                if attempt == 1:
-                    raise
-                continue
+                if attempt == 0:
+                    continue
+                fresh_record = self.db.get_conversation_by_id(target)
+                if fresh_record is None or fresh_record.get("deleted"):
+                    return ConsoleGenerationSettingsWriteResult(
+                        ConsoleGenerationSettingsWriteStatus.MISSING
+                    )
+                fresh = parse_console_generation_settings(
+                    fresh_record.get("metadata")
+                )
+                if fresh.status is ConsoleGenerationSettingsReadStatus.INVALID:
+                    return ConsoleGenerationSettingsWriteResult(
+                        ConsoleGenerationSettingsWriteStatus.INVALID
+                    )
+                if (
+                    fresh.status
+                    is ConsoleGenerationSettingsReadStatus.UNSUPPORTED_VERSION
+                ):
+                    return ConsoleGenerationSettingsWriteResult(
+                        ConsoleGenerationSettingsWriteStatus.UNSUPPORTED_VERSION
+                    )
+                if fresh.snapshot != expected_snapshot:
+                    return ConsoleGenerationSettingsWriteResult(
+                        ConsoleGenerationSettingsWriteStatus.SUPERSEDED,
+                        fresh.snapshot,
+                    )
+                raise
             return ConsoleGenerationSettingsWriteResult(
                 ConsoleGenerationSettingsWriteStatus.WRITTEN,
                 snapshot,

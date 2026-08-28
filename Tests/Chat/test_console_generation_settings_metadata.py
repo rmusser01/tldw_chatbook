@@ -244,6 +244,21 @@ def test_parse_rejects_unknown_or_invalid_owned_fields(
     assert result.snapshot is None
 
 
+def test_oversized_float_input_fails_closed_during_parse_and_projection() -> None:
+    oversized = 10**400
+
+    parsed = parse_console_generation_settings(
+        _metadata(_snapshot(temperature=oversized))
+    )
+
+    assert parsed.status is ConsoleGenerationSettingsReadStatus.INVALID
+    assert parsed.snapshot is None
+    with pytest.raises(ValueError):
+        snapshot_from_session_settings(
+            ConsoleSessionSettings(provider="openai", temperature=oversized)
+        )
+
+
 def test_merge_refuses_malformed_invalid_and_future_owned_objects() -> None:
     invalid_owned = _metadata()
     invalid_owned[CONSOLE_GENERATION_SETTINGS_METADATA_KEY]["unexpected"] = True  # type: ignore[index]
@@ -306,6 +321,26 @@ def test_persistence_treats_missing_owned_object_as_expected_none(persistence) -
 
     assert before.status is ConsoleGenerationSettingsReadStatus.ABSENT
     assert result.status is ConsoleGenerationSettingsWriteStatus.WRITTEN
+
+
+def test_persistence_refuses_oversized_float_without_mutation(persistence) -> None:
+    service, db = persistence
+    conversation_id = service.create_conversation(
+        conversation_title="Oversized",
+        metadata={"sibling": "keep"},
+    )
+    before = db.get_conversation_by_id(conversation_id)
+
+    result = service.update_conversation_generation_settings(
+        conversation_id=conversation_id,
+        snapshot=_snapshot(temperature=10**400),
+        expected_snapshot=None,
+    )
+
+    after = db.get_conversation_by_id(conversation_id)
+    assert result.status is ConsoleGenerationSettingsWriteStatus.INVALID
+    assert after["version"] == before["version"]
+    assert after["metadata"] == before["metadata"]
 
 
 @pytest.mark.parametrize(
@@ -420,6 +455,98 @@ def test_persistence_refuses_owned_base_supersession(persistence, monkeypatch) -
         service.get_conversation_generation_settings(conversation_id).snapshot
         == external
     )
+
+
+@pytest.mark.parametrize(
+    ("transition", "expected_status", "expected_snapshot_kind"),
+    [
+        ("deleted", ConsoleGenerationSettingsWriteStatus.MISSING, None),
+        ("invalid", ConsoleGenerationSettingsWriteStatus.INVALID, None),
+        (
+            "future",
+            ConsoleGenerationSettingsWriteStatus.UNSUPPORTED_VERSION,
+            None,
+        ),
+        (
+            "owned-removed",
+            ConsoleGenerationSettingsWriteStatus.SUPERSEDED,
+            None,
+        ),
+        (
+            "owned-changed",
+            ConsoleGenerationSettingsWriteStatus.SUPERSEDED,
+            "external",
+        ),
+    ],
+)
+def test_persistence_classifies_fresh_state_after_final_conflict(
+    persistence,
+    monkeypatch,
+    transition,
+    expected_status,
+    expected_snapshot_kind,
+) -> None:
+    service, db = persistence
+    baseline = _snapshot()
+    external = _snapshot(temperature=1.8)
+    conversation_id = service.create_conversation(
+        conversation_title="Saved",
+        metadata=_metadata(baseline),
+    )
+    original_update = db.update_conversation
+    attempt_number = 0
+
+    def race(conversation_id_arg, update_data, expected_version):
+        nonlocal attempt_number
+        attempt_number += 1
+        current = db.get_conversation_by_id(conversation_id_arg)
+        if attempt_number == 1:
+            metadata = json.loads(current["metadata"])
+            metadata["first_sibling"] = True
+            original_update(
+                conversation_id_arg,
+                {"metadata": json.dumps(metadata, sort_keys=True)},
+                expected_version=current["version"],
+            )
+        elif transition == "deleted":
+            db.soft_delete_conversation(
+                conversation_id_arg,
+                expected_version=current["version"],
+            )
+        else:
+            metadata = json.loads(current["metadata"])
+            if transition == "invalid":
+                metadata[CONSOLE_GENERATION_SETTINGS_METADATA_KEY] = {"version": 1}
+            elif transition == "future":
+                metadata[CONSOLE_GENERATION_SETTINGS_METADATA_KEY] = {
+                    "version": 2,
+                    "future": True,
+                }
+            elif transition == "owned-removed":
+                metadata.pop(CONSOLE_GENERATION_SETTINGS_METADATA_KEY)
+            else:
+                metadata.update(_metadata(external))
+            original_update(
+                conversation_id_arg,
+                {"metadata": json.dumps(metadata, sort_keys=True)},
+                expected_version=current["version"],
+            )
+        return original_update(conversation_id_arg, update_data, expected_version)
+
+    monkeypatch.setattr(db, "update_conversation", race)
+
+    result = service.update_conversation_generation_settings(
+        conversation_id=conversation_id,
+        snapshot=_snapshot(temperature=1.0),
+        expected_snapshot=baseline,
+    )
+
+    assert result.status is expected_status
+    assert attempt_number == 2
+    if expected_snapshot_kind == "external":
+        assert result.snapshot == external
+    else:
+        assert result.snapshot is None
 
 
 def test_persistence_returns_missing_and_propagates_final_sibling_conflict(
