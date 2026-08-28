@@ -15,6 +15,8 @@ dependencies:
   - TASK-22512
 references:
   - backlog/decisions/094-raw-and-virtual-cli-execution-boundaries.md
+  - backlog/decisions/099-persistent-terminal-session-runtime-boundary.md
+  - Docs/superpowers/specs/2026-08-28-persistent-terminal-sessions-design.md
 priority: medium
 ---
 
