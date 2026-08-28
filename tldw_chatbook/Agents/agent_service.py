@@ -120,7 +120,7 @@ from .native_tools import (
     provider_supports_native_tools,
     schemas_to_openai_tools,
 )
-from .run_context import use_run_id
+from .run_context import CurrentRunActor, use_run_actor
 from .run_log import _setting
 from .run_log_eviction import (
     DEFAULT_MIN_RECENT_ROUNDS,
@@ -2240,6 +2240,7 @@ class AgentService:
         should_cancel: Callable[[], bool] = lambda: False,
         *,
         run_id: str,
+        run_actor: CurrentRunActor | None = None,
     ):
         """Build this run's ``LoopDeps.invoke_tool``.
 
@@ -2247,8 +2248,10 @@ class AgentService:
             config: This run's config (allow-list and budgets).
             disclosed_names: The tool names whose schemas this run has.
             should_cancel: Cooperative cancellation probe.
-            run_id: THIS run's id, bound via ``run_context.use_run_id``
-                around each invocation so the permission gates can find
+            run_id: THIS run's id, used for the legacy primary-actor fallback.
+            run_actor: Exact primary/subagent attribution, bound via
+                ``run_context.use_run_actor`` around each invocation so the
+                permission gates can find
                 this run's own approval stamps (PR2a Task 5). Bound
                 INSIDE the callable handed to ``_call_with_timeout``, so
                 it is established on the per-call daemon thread that
@@ -2263,6 +2266,8 @@ class AgentService:
                 a loud ``TypeError`` at the call site.
         """
 
+        actor = run_actor or CurrentRunActor("primary", run_id, None)
+
         def invoke_tool(call: ToolCall) -> ToolResult:
             if (
                 call.name not in config.allowed_tools
@@ -2274,7 +2279,7 @@ class AgentService:
             )
 
             def _invoke() -> ToolResult:
-                with use_run_id(run_id):
+                with use_run_actor(actor):
                     return self.registry.invoke_by_name(call.name, call.args)
 
             if timeout and timeout > 0:
@@ -4697,8 +4702,17 @@ class AgentService:
         # run's spawn -- so it is budget-counted (via spawn's own shared
         # sub_agent_spawns counter -- see Finding 2 above), cancellable, and
         # DB-lineage-tracked exactly like a spawn_subagent call.
+        run_actor = CurrentRunActor(
+            "subagent" if agent_kind == AGENT_KIND_SUBAGENT else "primary",
+            run_id,
+            parent_run_id,
+        )
         builtin_invoke_tool = self._make_invoke_tool(
-            config, disclosed_names, should_cancel, run_id=run_id
+            config,
+            disclosed_names,
+            should_cancel,
+            run_id=run_id,
+            run_actor=run_actor,
         )
 
         def invoke_tool(
@@ -5452,7 +5466,7 @@ class AgentService:
             # its verdicts against the run that will consume them.
             # (PR2a Task 7 binds this run's id as the `run_context` for the
             # whole loop below, so the approval bridge this hook calls can
-            # record which run armed each card -- see the `use_run_id`
+            # record which run armed each card -- see the `use_run_actor`
             # wrapper on `run_agent_loop`.)
             review_tool_calls=(
                 (lambda calls: self.review_tool_calls(calls, run_id))
@@ -5568,7 +5582,7 @@ class AgentService:
             # identity). One binding here covers both, and every future
             # loop-thread consumer, with no signature churn.
             #
-            # Nested inline sub-agent runs unwind LIFO (`use_run_id`
+            # Nested inline sub-agent runs unwind LIFO (`use_run_actor`
             # resets in its own `finally`), and a threaded child simply
             # sets its own value on its own thread.
             continuation_kwargs: dict[str, Any] = {}
@@ -5580,7 +5594,7 @@ class AgentService:
                 continuation_kwargs["restore_provider_target"] = restore_provider_target
             if resume_provider_continuation:
                 continuation_kwargs["resume_provider_continuation"] = True
-            with use_run_id(run_id):
+            with use_run_actor(run_actor):
                 outcome = run_agent_loop(
                     config,
                     run_messages,
