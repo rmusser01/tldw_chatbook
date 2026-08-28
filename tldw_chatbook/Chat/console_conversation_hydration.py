@@ -1,4 +1,4 @@
-"""Turning a persisted conversation into a Console session, with no view.
+"""Turn a persisted conversation into a Console session, with no view.
 
 task-15860 Task 6 (wake at launch). A wake delivered at process start has
 to run in a **session** for a conversation nobody has opened -- and until
@@ -8,22 +8,23 @@ this module existed, the only code that could build one lived on
 policy with a screen's own work (composer snapshot, toasts, resume-marker
 overlay, retrieval-scope warm, transcript repaint, focus).
 
-This module is the **session-producing half, moved verbatim** so the two
-callers share one policy instead of two:
+This module contains the shared session-producing policy so the two callers
+do not independently reconstruct a conversation:
 
 | Caller | View work it keeps |
 |---|---|
 | `ChatScreen._resume_console_workspace_conversation` | draft snapshot, both failure toasts, resume-marker overlay, character-name/label resolution, scope warm, UI sync, focus |
 | the launch wake (`console_launch_wake.py`) | none -- it has no view |
 
-**What is deliberately NOT here.** The screen's base settings come from
-the currently active session (`_console_session_settings_for_resume` ->
-`_active_console_session_settings`); a launch has no active session, so it
-uses the config defaults the screen falls back to
-(`default_console_session_settings`). That difference is inherent to
-having no view, and the part that a *conversation* contributes -- its
-saved system prompt and pinned prefill -- IS shared, through
-`apply_resume_settings_overrides`.
+`hydrate_console_generation_settings` is the canonical generation-settings
+entry point. It derives live defaults for the saved provider/model from the
+current app configuration, overlays only the safe durable snapshot, resolves
+the endpoint from current configuration, and finally applies the existing
+conversation-row owners for system prompt and pinned prefill.
+
+`apply_resume_settings_overrides` remains a legacy compatibility wrapper for
+existing callers until Task 5 migrates them to the canonical entry point. It
+only applies the two conversation-row-owned values to a caller-provided base.
 
 Nothing here touches the DOM, `app.notify`, or any screen attribute; the
 only app members read are `chat_conversation_scope_service` and
@@ -82,6 +83,15 @@ class ConsoleGenerationSettingsHydration:
     settings: ConsoleSessionSettings
     durable_snapshot: ConsoleGenerationSettingsSnapshot | None
     metadata_status: ConsoleGenerationSettingsReadStatus
+
+    def __post_init__(self) -> None:
+        carries_snapshot = self.durable_snapshot is not None
+        if carries_snapshot != (
+            self.metadata_status is ConsoleGenerationSettingsReadStatus.VALID
+        ):
+            raise ValueError(
+                "Valid generation metadata must carry its durable snapshot."
+            )
 
 
 class ConversationServiceUnavailable(RuntimeError):
@@ -263,9 +273,7 @@ def console_messages_from_conversation_tree(
                     usage=usage,
                     metadata=metadata,
                     assistant_generation_state=(
-                        str(generation_state)
-                        if generation_state is not None
-                        else None
+                        str(generation_state) if generation_state is not None else None
                     ),
                     video_metadata=video_metadata,
                 )
@@ -330,13 +338,13 @@ async def load_console_conversation_tree(
 def apply_resume_settings_overrides(
     settings: ConsoleSessionSettings, conversation: Mapping[str, Any]
 ) -> ConsoleSessionSettings:
-    """Overlay what the CONVERSATION ROW contributes to a resumed session.
+    """Apply legacy conversation-row overrides to caller-provided settings.
 
     Only ``system_prompt`` and ``pinned_prefill`` come from the persisted
-    conversation; every other field is inherited from whatever base the
-    caller supplied (the screen: the active session's settings; a launch:
-    the config defaults). A saved system prompt is never seeded from
-    ``[chat_defaults]``, which is why it has to travel this way.
+    conversation; every other field is inherited from the supplied base.
+    New generation-settings hydration should use
+    :func:`hydrate_console_generation_settings`. This wrapper remains for
+    existing callers until Task 5 migrates them.
 
     Blank/whitespace-only prompt text collapses to "no system prompt";
     anything else is restored verbatim (leading/trailing whitespace and
@@ -446,9 +454,7 @@ async def hydrate_console_session(
     conversation = tree.get("conversation")
     if not isinstance(conversation, dict):
         conversation = {}
-    active_workspace_id = str(
-        store.workspace_context.active_workspace_id or ""
-    ).strip()
+    active_workspace_id = str(store.workspace_context.active_workspace_id or "").strip()
     persisted_workspace_id = (
         str(conversation.get("workspace_id")).strip()
         if conversation.get("workspace_id") is not None
@@ -476,7 +482,9 @@ async def hydrate_console_session(
     # navigable (swipe) right after resume.
     db = getattr(app, "chachanotes_db", None)
     all_nodes = console_messages_from_conversation_tree(tree, db=db)
-    active_leaf_id = getattr(db, "get_conversation_active_leaf", lambda _c: None)(target)
+    active_leaf_id = getattr(db, "get_conversation_active_leaf", lambda _c: None)(
+        target
+    )
     raw_runtime_backend = conversation.get("runtime_backend")
     if type(raw_runtime_backend) is str:
         runtime_backend = raw_runtime_backend
@@ -488,9 +496,7 @@ async def hydrate_console_session(
     assistant_id = raw_assistant_id if type(raw_assistant_id) is str else None
     raw_assistant_authority_id = conversation.get("assistant_authority_id")
     assistant_authority_id = (
-        raw_assistant_authority_id
-        if type(raw_assistant_authority_id) is str
-        else None
+        raw_assistant_authority_id if type(raw_assistant_authority_id) is str else None
     )
     raw_character_id = conversation.get("character_id")
     character_id = (

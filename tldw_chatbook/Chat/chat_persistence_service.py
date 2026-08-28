@@ -36,6 +36,7 @@ from tldw_chatbook.Chat.console_generation_settings_metadata import (
     ConsoleGenerationSettingsWriteStatus,
     merge_console_generation_settings,
     parse_console_generation_settings,
+    strict_json_metadata_object,
 )
 from tldw_chatbook.Chat.console_transaction_contribution import (
     ConsoleTransactionContribution,
@@ -65,37 +66,7 @@ _ASSISTANT_AUTHORITY_UNSET = cast(Optional[str], object())
 
 def _initial_metadata_object(metadata: object) -> dict[str, object]:
     """Return strict JSON-object metadata without lossy key coercion."""
-
-    def reject_constant(value: str) -> None:
-        raise ValueError(f"Non-finite JSON constant {value!r} is not supported.")
-
-    try:
-        if isinstance(metadata, Mapping):
-            candidate = dict(metadata)
-            if not _mapping_keys_are_strings(candidate):
-                raise ValueError("Mapping keys must be strings.")
-            serialized = json.dumps(candidate, allow_nan=False, sort_keys=True)
-            decoded = json.loads(serialized, parse_constant=reject_constant)
-        elif type(metadata) is str:
-            decoded = json.loads(metadata, parse_constant=reject_constant)
-        else:
-            raise ValueError("Unsupported metadata type.")
-    except (TypeError, ValueError, json.JSONDecodeError, RecursionError) as exc:
-        raise ValueError("metadata must be a valid JSON object.") from exc
-    if not isinstance(decoded, dict):
-        raise ValueError("metadata must be a valid JSON object.")
-    return decoded
-
-
-def _mapping_keys_are_strings(value: object) -> bool:
-    if isinstance(value, Mapping):
-        return all(
-            type(key) is str and _mapping_keys_are_strings(item)
-            for key, item in value.items()
-        )
-    if isinstance(value, (list, tuple)):
-        return all(_mapping_keys_are_strings(item) for item in value)
-    return True
+    return strict_json_metadata_object(metadata)
 
 
 class ChatPersistenceService:
@@ -156,11 +127,7 @@ class ChatPersistenceService:
         if conversation is None or conversation.get("deleted"):
             return None
         version = conversation.get("version")
-        if (
-            not isinstance(version, int)
-            or isinstance(version, bool)
-            or version < 1
-        ):
+        if not isinstance(version, int) or isinstance(version, bool) or version < 1:
             return None
         return version
 
@@ -292,9 +259,7 @@ class ChatPersistenceService:
                     return ConsoleGenerationSettingsWriteResult(
                         ConsoleGenerationSettingsWriteStatus.MISSING
                     )
-                fresh = parse_console_generation_settings(
-                    fresh_record.get("metadata")
-                )
+                fresh = parse_console_generation_settings(fresh_record.get("metadata"))
                 if fresh.status is ConsoleGenerationSettingsReadStatus.INVALID:
                     return ConsoleGenerationSettingsWriteResult(
                         ConsoleGenerationSettingsWriteStatus.INVALID
@@ -476,7 +441,9 @@ class ChatPersistenceService:
                 **dict(conversation_kwargs),
             )
             if created_id != conversation_id:
-                raise RuntimeError("Persistence returned an unexpected conversation id.")
+                raise RuntimeError(
+                    "Persistence returned an unexpected conversation id."
+                )
             result = self.console_library_policy_repository.insert(
                 conversation_id,
                 policy_candidate,
@@ -574,7 +541,9 @@ class ChatPersistenceService:
                 **dict(conversation_kwargs),
             )
             if created_id != conversation_id:
-                raise RuntimeError("Persistence returned an unexpected conversation id.")
+                raise RuntimeError(
+                    "Persistence returned an unexpected conversation id."
+                )
             policy_result = self.console_library_policy_repository.insert(
                 conversation_id,
                 policy_candidate,
@@ -759,8 +728,7 @@ class ChatPersistenceService:
         if (
             expected_system_prompts is not None
             and not allow_source_owned_repair
-            and current_conversation.get("system_prompt")
-            not in expected_system_prompts
+            and current_conversation.get("system_prompt") not in expected_system_prompts
         ):
             return False
 
@@ -1011,8 +979,7 @@ class ChatPersistenceService:
             if (
                 current_metadata is None
                 or current_metadata.template_kind != "character_greeting"
-                or current_metadata.template_source
-                != expected_roleplay_template_source
+                or current_metadata.template_source != expected_roleplay_template_source
             ):
                 return False
         if (
@@ -1552,11 +1519,9 @@ class ChatPersistenceService:
         ):
             raise CitationPersistenceUnavailable("message_identity_conflict")
 
-        existing_generation_metadata = (
-            self.db.get_generation_metadata_for_messages([existing_message["id"]]).get(
-                existing_message["id"], []
-            )
-        )
+        existing_generation_metadata = self.db.get_generation_metadata_for_messages(
+            [existing_message["id"]]
+        ).get(existing_message["id"], [])
 
         def generation_identity(row: Mapping[str, Any]) -> tuple[Any, ...]:
             return (

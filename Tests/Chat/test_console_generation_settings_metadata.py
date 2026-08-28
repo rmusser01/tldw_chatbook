@@ -5,12 +5,16 @@ from dataclasses import replace
 
 import pytest
 
-from tldw_chatbook.Chat.chat_persistence_service import ChatPersistenceService
+from tldw_chatbook.Chat.chat_persistence_service import (
+    ChatPersistenceService,
+    _initial_metadata_object,
+)
 from tldw_chatbook.Chat.console_generation_settings_metadata import (
     CONSOLE_GENERATION_SETTINGS_METADATA_KEY,
     CONSOLE_GENERATION_SETTINGS_VERSION,
     ConsoleGenerationSettingsReadStatus,
     ConsoleGenerationSettingsSnapshot,
+    ConsoleGenerationSettingsWriteResult,
     ConsoleGenerationSettingsWriteStatus,
     merge_console_generation_settings,
     parse_console_generation_settings,
@@ -202,7 +206,7 @@ def test_parse_rejects_malformed_or_non_object_metadata(metadata: object) -> Non
         ("provider", ""),
         ("provider", "p" * 129),
         ("model", ""),
-        ("model", "m" * 121),
+        ("model", "m" * 257),
         ("temperature", True),
         ("temperature", float("nan")),
         ("temperature", float("inf")),
@@ -217,7 +221,6 @@ def test_parse_rejects_malformed_or_non_object_metadata(metadata: object) -> Non
         ("top_k", -1),
         ("max_tokens", 0),
         ("seed", -1),
-        ("seed", 10**100),
         ("presence_penalty", -2.01),
         ("presence_penalty", 2.01),
         ("frequency_penalty", -2.01),
@@ -257,6 +260,81 @@ def test_oversized_float_input_fails_closed_during_parse_and_projection() -> Non
         snapshot_from_session_settings(
             ConsoleSessionSettings(provider="openai", temperature=oversized)
         )
+
+
+def test_string_metadata_rejects_exponent_overflow_in_unrelated_sibling() -> None:
+    metadata = json.dumps(_metadata())[:-1] + ', "sibling": 1e400}'
+
+    parsed = parse_console_generation_settings(metadata)
+
+    assert parsed.status is ConsoleGenerationSettingsReadStatus.INVALID
+    assert parsed.snapshot is None
+
+
+@pytest.mark.parametrize("model_length", [121, 256])
+def test_model_ids_through_console_input_limit_are_durable(model_length: int) -> None:
+    snapshot = _snapshot(model="m" * model_length)
+
+    merged = merge_console_generation_settings({}, snapshot)
+
+    assert parse_console_generation_settings(merged).snapshot == snapshot
+
+
+def test_exact_integers_above_64_bit_are_durable() -> None:
+    exact_integer = 2**80
+    snapshot = _snapshot(
+        top_k=exact_integer,
+        max_tokens=exact_integer,
+        seed=exact_integer,
+        thinking_budget_tokens=exact_integer,
+    )
+
+    merged = merge_console_generation_settings({}, snapshot)
+
+    assert parse_console_generation_settings(merged).snapshot == snapshot
+
+
+def test_write_result_enforces_snapshot_status_invariants() -> None:
+    snapshot = _snapshot()
+
+    with pytest.raises(ValueError):
+        ConsoleGenerationSettingsWriteResult(
+            ConsoleGenerationSettingsWriteStatus.WRITTEN
+        )
+    for status in (
+        ConsoleGenerationSettingsWriteStatus.INVALID,
+        ConsoleGenerationSettingsWriteStatus.UNSUPPORTED_VERSION,
+        ConsoleGenerationSettingsWriteStatus.MISSING,
+    ):
+        with pytest.raises(ValueError):
+            ConsoleGenerationSettingsWriteResult(status, snapshot)
+
+    assert (
+        ConsoleGenerationSettingsWriteResult(
+            ConsoleGenerationSettingsWriteStatus.WRITTEN, snapshot
+        ).snapshot
+        == snapshot
+    )
+    assert (
+        ConsoleGenerationSettingsWriteResult(
+            ConsoleGenerationSettingsWriteStatus.SUPERSEDED, snapshot
+        ).snapshot
+        == snapshot
+    )
+    assert (
+        ConsoleGenerationSettingsWriteResult(
+            ConsoleGenerationSettingsWriteStatus.SUPERSEDED
+        ).snapshot
+        is None
+    )
+
+
+def test_initial_metadata_object_preserves_strict_legacy_contract() -> None:
+    assert _initial_metadata_object({"sibling": [1, True]}) == {"sibling": [1, True]}
+    assert _initial_metadata_object('{"sibling": [1, true]}') == {"sibling": [1, True]}
+    for invalid in (None, [], "null", {1: "value"}, '{"sibling": 1e400}'):
+        with pytest.raises(ValueError):
+            _initial_metadata_object(invalid)
 
 
 def test_merge_refuses_malformed_invalid_and_future_owned_objects() -> None:
@@ -339,6 +417,38 @@ def test_persistence_refuses_oversized_float_without_mutation(persistence) -> No
 
     after = db.get_conversation_by_id(conversation_id)
     assert result.status is ConsoleGenerationSettingsWriteStatus.INVALID
+    assert after["version"] == before["version"]
+    assert after["metadata"] == before["metadata"]
+
+
+def test_persistence_refuses_exponent_overflow_sibling_without_mutation(
+    persistence,
+) -> None:
+    service, db = persistence
+    conversation_id = service.create_conversation(
+        conversation_title="Exponent overflow",
+        metadata=_metadata(_snapshot()),
+    )
+    current = db.get_conversation_by_id(conversation_id)
+    overflow_metadata = json.dumps(_metadata(_snapshot()))[:-1] + (
+        ', "sibling": 1e400}'
+    )
+    db.update_conversation(
+        conversation_id,
+        {"metadata": overflow_metadata},
+        expected_version=current["version"],
+    )
+    before = db.get_conversation_by_id(conversation_id)
+
+    result = service.update_conversation_generation_settings(
+        conversation_id=conversation_id,
+        snapshot=_snapshot(temperature=1.0),
+        expected_snapshot=_snapshot(),
+    )
+
+    after = db.get_conversation_by_id(conversation_id)
+    assert result.status is ConsoleGenerationSettingsWriteStatus.INVALID
+    assert result.snapshot is None
     assert after["version"] == before["version"]
     assert after["metadata"] == before["metadata"]
 

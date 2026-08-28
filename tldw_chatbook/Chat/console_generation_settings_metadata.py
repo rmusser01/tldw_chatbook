@@ -15,8 +15,7 @@ CONSOLE_GENERATION_SETTINGS_METADATA_KEY = "console_generation_settings"
 CONSOLE_GENERATION_SETTINGS_VERSION = 1
 
 _MAX_PROVIDER_CHARS = 128
-_MAX_MODEL_CHARS = 120
-_MAX_INTEGER = (1 << 63) - 1
+_MAX_MODEL_CHARS = 256
 _REASONING_EFFORT_VALUES = frozenset(
     {"none", "minimal", "low", "medium", "high", "xhigh"}
 )
@@ -109,6 +108,18 @@ class ConsoleGenerationSettingsWriteResult:
     status: ConsoleGenerationSettingsWriteStatus
     snapshot: ConsoleGenerationSettingsSnapshot | None = None
 
+    def __post_init__(self) -> None:
+        carries_snapshot = self.snapshot is not None
+        if self.status is ConsoleGenerationSettingsWriteStatus.WRITTEN:
+            if not carries_snapshot:
+                raise ValueError("A written result must carry its snapshot.")
+            return
+        if (
+            carries_snapshot
+            and self.status is not ConsoleGenerationSettingsWriteStatus.SUPERSEDED
+        ):
+            raise ValueError("Only written or superseded results may carry a snapshot.")
+
 
 class ConsoleGenerationSettingsVersionError(ValueError):
     """The owned metadata belongs to a newer application version."""
@@ -147,7 +158,7 @@ def parse_console_generation_settings(
 ) -> ConsoleGenerationSettingsReadResult:
     """Parse one complete version-one snapshot, failing closed as one unit."""
     try:
-        outer = _strict_metadata_object(metadata)
+        outer = strict_json_metadata_object(metadata, none_as_empty=True)
     except ValueError:
         return ConsoleGenerationSettingsReadResult(
             ConsoleGenerationSettingsReadStatus.INVALID
@@ -211,7 +222,7 @@ def merge_console_generation_settings(
     snapshot: ConsoleGenerationSettingsSnapshot,
 ) -> dict[str, object]:
     """Replace only this codec's owned key and preserve all metadata siblings."""
-    outer = _strict_metadata_object(metadata)
+    outer = strict_json_metadata_object(metadata, none_as_empty=True)
     existing = parse_console_generation_settings(outer)
     if existing.status is ConsoleGenerationSettingsReadStatus.INVALID:
         raise ValueError(
@@ -246,26 +257,62 @@ def merge_console_generation_settings(
     return outer
 
 
-def _strict_metadata_object(metadata: object) -> dict[str, object]:
-    """Return a JSON-round-tripped object without key or number coercion."""
+def strict_json_metadata_object(
+    metadata: object,
+    *,
+    none_as_empty: bool = False,
+) -> dict[str, object]:
+    """Normalize strict JSON-object metadata without lossy coercion.
+
+    Args:
+        metadata: A JSON object string or a mapping containing JSON values.
+        none_as_empty: Whether missing metadata represents an empty object.
+
+    Returns:
+        A detached JSON-compatible object with exact string keys.
+
+    Raises:
+        ValueError: If the value is not a strict JSON object or contains a
+            non-finite number anywhere in the object.
+    """
 
     def reject_constant(value: str) -> None:
         raise ValueError(f"Non-finite JSON constant {value!r} is not supported.")
 
+    def finite_float(value: str) -> float:
+        number = float(value)
+        if not math.isfinite(number):
+            raise ValueError(f"Non-finite JSON number {value!r} is not supported.")
+        return number
+
     try:
-        if metadata is None:
+        if metadata is None and none_as_empty:
             decoded = {}
         elif isinstance(metadata, Mapping):
             candidate = dict(metadata)
             if not _mapping_keys_are_strings(candidate):
                 raise ValueError("Mapping keys must be strings.")
             encoded = json.dumps(candidate, allow_nan=False, sort_keys=True)
-            decoded = json.loads(encoded, parse_constant=reject_constant)
+            decoded = json.loads(
+                encoded,
+                parse_constant=reject_constant,
+                parse_float=finite_float,
+            )
         elif type(metadata) is str:
-            decoded = json.loads(metadata, parse_constant=reject_constant)
+            decoded = json.loads(
+                metadata,
+                parse_constant=reject_constant,
+                parse_float=finite_float,
+            )
         else:
             raise ValueError("Unsupported metadata type.")
-    except (TypeError, ValueError, json.JSONDecodeError, RecursionError) as exc:
+    except (
+        TypeError,
+        ValueError,
+        json.JSONDecodeError,
+        OverflowError,
+        RecursionError,
+    ) as exc:
         raise ValueError("metadata must be a valid JSON object.") from exc
     if not isinstance(decoded, dict):
         raise ValueError("metadata must be a valid JSON object.")
@@ -387,8 +434,8 @@ def _optional_float(
 def _optional_int(value: object, name: str, *, minimum: int) -> int | None:
     if value is None:
         return None
-    if type(value) is not int or not minimum <= value <= _MAX_INTEGER:
-        raise ValueError(f"{name} must be an exact bounded integer or null.")
+    if type(value) is not int or value < minimum:
+        raise ValueError(f"{name} must be an exact integer or null.")
     return value
 
 
