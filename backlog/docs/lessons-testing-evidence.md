@@ -9824,3 +9824,23 @@ objects are not. Reconstruct fixed copy from the validated category at each acce
 boundary, and test spoof types, forged structured objects, original-plus-fallback
 failure chains, and the final logging owner. A green classifier helper does not prove
 redaction if callers or outer fallback owners can bypass it.
+
+---
+
+## A single-flight choice handoff needs its own synchronous claim (TASK-22867, 2026-08-28)
+
+The first multi-skill import implementation correctly kept the original inspection
+single-flight while its choice modal was open, but treated the selected import as a
+fresh ordinary coroutine. A repeated-cancellation probe then showed that cancelling
+the app-worker wrapper could detach that second phase, and a stale-modal probe showed
+that an older callback could target a newer retained package if it read only the
+current coordinator state.
+
+The repaired coordinator admits the exact displayed candidate synchronously, advances
+the operation generation, and runs the retained-package import through the same
+cancellation-resistant terminal owner as initial inspection. Modal callbacks carry
+the generation they displayed, and retained bytes are cleared on cancel and every
+terminal path. When one logical operation pauses for human choice, test the handoff as
+a second concurrency boundary: double selection, stale callbacks, repeated outer
+cancellation, routed replacement, and exact retained input all need proof even when
+the pre-choice phase is already single-flight.

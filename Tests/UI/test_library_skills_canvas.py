@@ -3596,7 +3596,14 @@ async def test_import_browse_folder_clears_stale_status_and_review():
     """Review finding: picking a new folder left the previous import's
     success status and 'Review …' button showing against the new path."""
     pushed: dict = {}
+    coordinator = LibrarySkillImportCoordinator(SimpleNamespace())
+    coordinator.open_draft()
+    coordinator.update(
+        status='Imported "old" · re-review it in the trust panel',
+        review_name="old",
+    )
     fake = SimpleNamespace(
+        _library_skill_import_coordinator=coordinator,
         _library_skills_import_generation=0,
         _library_skills_import_in_flight=False,
         _library_skills_import_open=True,
@@ -3613,16 +3620,23 @@ async def test_import_browse_folder_clears_stale_status_and_review():
         fake, SimpleNamespace(stop=lambda: None)
     )
     await pushed["cb"](Path("/new/folder"))
-    assert fake._library_skills_import_path == "/new/folder"
-    assert fake._library_skills_import_status == ""
-    assert fake._library_skills_import_review_name == ""
+    assert coordinator.snapshot.path == "/new/folder"
+    assert coordinator.snapshot.status == ""
+    assert coordinator.snapshot.review_name == ""
 
 
 @pytest.mark.asyncio
 async def test_import_browse_file_clears_stale_status_and_review():
     """Same stranding via the file 'Browse…' variant."""
     pushed: dict = {}
+    coordinator = LibrarySkillImportCoordinator(SimpleNamespace())
+    coordinator.open_draft()
+    coordinator.update(
+        status='Imported "old" · re-review it in the trust panel',
+        review_name="old",
+    )
     fake = SimpleNamespace(
+        _library_skill_import_coordinator=coordinator,
         _library_skills_import_generation=0,
         _library_skills_import_in_flight=False,
         _library_skills_import_open=True,
@@ -3639,8 +3653,9 @@ async def test_import_browse_file_clears_stale_status_and_review():
         fake, SimpleNamespace(stop=lambda: None)
     )
     await pushed["cb"](Path("/new/file/SKILL.md"))
-    assert fake._library_skills_import_status == ""
-    assert fake._library_skills_import_review_name == ""
+    assert coordinator.snapshot.path == "/new/file/SKILL.md"
+    assert coordinator.snapshot.status == ""
+    assert coordinator.snapshot.review_name == ""
 
 
 @pytest.mark.asyncio

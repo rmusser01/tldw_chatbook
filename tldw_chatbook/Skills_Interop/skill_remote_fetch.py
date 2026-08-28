@@ -9,6 +9,7 @@ The install path for "paste a GitHub link": classify -> fetch (SSRF-hardened)
 from __future__ import annotations
 
 import asyncio
+import hashlib
 import ipaddress
 import socket
 import stat
@@ -20,6 +21,12 @@ from typing import TYPE_CHECKING
 from urllib.parse import urlparse
 
 import httpx
+
+from .skill_package_inspection import (
+    SkillPackageInspection,
+    SkillPackageKind,
+    inspect_skill_zip,
+)
 
 if TYPE_CHECKING:
     from .skills_scope_service import SkillsScopeService
@@ -46,6 +53,23 @@ class DirectZipSource:
 
 class RemoteSkillError(ValueError):
     """User-presentable remote-install failure."""
+
+
+@dataclass(frozen=True, repr=False)
+class RemoteSkillPackage:
+    """One bounded download retained only until selection or settlement."""
+
+    inspection: SkillPackageInspection
+    archive_bytes: bytes | None = None
+    archive_sha256: str = ""
+    suggested_name: str = ""
+
+    def __repr__(self) -> str:
+        return (
+            "RemoteSkillPackage(inspection="
+            f"{self.inspection!r}, "
+            f"archive_bytes={'retained' if self.archive_bytes else None})"
+        )
 
 
 def _zip_basename(path_segment: str) -> str:
@@ -436,42 +460,14 @@ def re_root_skill_zip(
         return out.getvalue(), final_name
 
 
-async def install_skill_from_url(
+async def _download_skill_archive(
     url: str,
     *,
     scope_service: "SkillsScopeService",
-    overwrite: bool = False,
-    transport: httpx.AsyncBaseTransport | None = None,
-    resolver: Callable[[str], list[str]] | None = None,
-) -> dict:
-    """Install a skill pasted as a GitHub/zip URL (the public install seam).
-
-    Composes every piece this module owns -- classification, the
-    ``SkillsScopeService`` policy gate, GitHub token/branch lookups, the
-    SSRF-hardened fetch, and the bounded re-root -- then hands the final
-    single-skill zip to the EXISTING hardened ``import_skill_file`` seam.
-    Network I/O never runs before ``scope_service.enforce_install_remote()``
-    -- classification is pure (URL parsing only) and may run first.
-
-    Args:
-        url: The pasted URL (GitHub repo/tree, GitHub release asset, or
-            any direct https ``.zip`` link).
-        scope_service: A ``SkillsScopeService``-shaped object exposing
-            ``enforce_install_remote()`` and ``import_skill_file(...)``.
-        overwrite: Forwarded to ``import_skill_file`` (re-import over an
-            existing skill of the same name).
-        transport: httpx transport override (tests).
-        resolver: ``(host) -> list[str]`` resolver override (tests).
-
-    Returns:
-        The ``import_skill_file`` result dict, unchanged.
-
-    Raises:
-        RemoteSkillError: Every user-presentable failure (bad URL, SSRF
-            rejection, download failure, corrupt/ambiguous archive).
-        PolicyDeniedError: When the wired policy enforcer denies the
-            install (via ``scope_service.enforce_install_remote()``).
-    """
+    transport: httpx.AsyncBaseTransport | None,
+    resolver: Callable[[str], list[str]] | None,
+) -> tuple[GitHubZipSource | DirectZipSource, bytes, str]:
+    """Return one policy-admitted bounded archive and selected URL subdir."""
     source = classify_skill_source_url(url)
     scope_service.enforce_install_remote()
 
@@ -510,6 +506,106 @@ async def install_skill_from_url(
             )
     finally:
         await api.close()
+    return source, zip_bytes, subdir
+
+
+async def inspect_skill_from_url(
+    url: str,
+    *,
+    scope_service: "SkillsScopeService",
+    transport: httpx.AsyncBaseTransport | None = None,
+    resolver: Callable[[str], list[str]] | None = None,
+) -> RemoteSkillPackage:
+    """Fetch and classify once, retaining no URL or raw failure details."""
+    try:
+        source, zip_bytes, requested_subdir = await _download_skill_archive(
+            url,
+            scope_service=scope_service,
+            transport=transport,
+            resolver=resolver,
+        )
+    except RemoteSkillError:
+        try:
+            classify_skill_source_url(url)
+        except RemoteSkillError:
+            kind = SkillPackageKind.MALFORMED_OR_UNSUPPORTED
+            message = "That URL is malformed or unsupported."
+        else:
+            kind = SkillPackageKind.FETCH_OR_AUTH_FAILURE
+            message = "Could not fetch that skill package. Retry when access is available."
+        return RemoteSkillPackage(SkillPackageInspection(kind, message=message))
+
+    inspection = inspect_skill_zip(
+        zip_bytes,
+        repository_source=isinstance(source, GitHubZipSource),
+    )
+    if requested_subdir:
+        if requested_subdir in inspection.candidates:
+            inspection = SkillPackageInspection(
+                SkillPackageKind.ROOT_SKILL,
+                (requested_subdir,),
+            )
+        else:
+            inspection = SkillPackageInspection(
+                SkillPackageKind.MALFORMED_OR_UNSUPPORTED,
+                message="No installable skill was found at that subdirectory.",
+            )
+    return RemoteSkillPackage(
+        inspection=inspection,
+        archive_bytes=zip_bytes,
+        archive_sha256=hashlib.sha256(zip_bytes).hexdigest(),
+        suggested_name=source.suggested_name,
+    )
+
+
+async def import_inspected_skill(
+    package: RemoteSkillPackage,
+    *,
+    scope_service: "SkillsScopeService",
+    candidate: str | None = None,
+    overwrite: bool = False,
+) -> dict:
+    """Import one explicit candidate from the exact retained archive bytes."""
+    zip_bytes = package.archive_bytes
+    if zip_bytes is None or hashlib.sha256(zip_bytes).hexdigest() != package.archive_sha256:
+        raise RemoteSkillError("The inspected skill package is no longer available.")
+    candidates = package.inspection.candidates
+    if candidate is None:
+        if package.inspection.kind is not SkillPackageKind.ROOT_SKILL or len(candidates) != 1:
+            raise RemoteSkillError("Choose one installable skill first.")
+        candidate = candidates[0]
+    if candidate not in candidates:
+        raise RemoteSkillError("That skill candidate is no longer available.")
+    final_bytes, final_name = re_root_skill_zip(
+        zip_bytes,
+        subdir=candidate,
+        suggested_name=(candidate.rsplit("/", 1)[-1] or package.suggested_name),
+    )
+    return await scope_service.import_skill_file(
+        final_bytes,
+        mode="local",
+        filename=f"{final_name}.zip",
+        content_type="application/zip",
+        overwrite=overwrite,
+        trust_approved=False,
+    )
+
+
+async def install_skill_from_url(
+    url: str,
+    *,
+    scope_service: "SkillsScopeService",
+    overwrite: bool = False,
+    transport: httpx.AsyncBaseTransport | None = None,
+    resolver: Callable[[str], list[str]] | None = None,
+) -> dict:
+    """Install a single skill pasted as a GitHub/zip URL."""
+    source, zip_bytes, subdir = await _download_skill_archive(
+        url,
+        scope_service=scope_service,
+        transport=transport,
+        resolver=resolver,
+    )
 
     final_bytes, final_name = re_root_skill_zip(
         zip_bytes, subdir=subdir, suggested_name=source.suggested_name

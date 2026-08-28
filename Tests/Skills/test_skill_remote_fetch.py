@@ -7,12 +7,26 @@ defaults to 30 results/page -- installers need the full branch list).
 """
 
 import asyncio
+import hashlib
 import io
 import json
 import zipfile
 
-import pytest
 import httpx
+import pytest
+
+from tldw_chatbook.Agents.agent_runtime import FENCE_OPEN
+from tldw_chatbook.Skills_Interop.skill_package_inspection import SkillPackageKind
+from tldw_chatbook.Skills_Interop.skill_remote_fetch import (
+    REMOTE_FETCH_MAX_BYTES,
+    DirectZipSource,
+    GitHubZipSource,
+    RemoteSkillError,
+    classify_skill_source_url,
+    fetch_zip_bytes,
+    re_root_skill_zip,
+    resolve_ref_and_subdir,
+)
 
 
 def test_policy_action_id_registered():
@@ -69,19 +83,6 @@ async def test_get_branches_requests_full_page():
     branches = await client.get_branches("o", "r")
     assert branches == ["main"]
     assert captured["params"] == {"per_page": 100}
-
-
-from tldw_chatbook.Skills_Interop.skill_remote_fetch import (
-    GITHUB_AUTH_HOSTS,
-    REMOTE_FETCH_MAX_BYTES,
-    DirectZipSource,
-    GitHubZipSource,
-    RemoteSkillError,
-    classify_skill_source_url,
-    fetch_zip_bytes,
-    resolve_ref_and_subdir,
-    re_root_skill_zip,
-)
 
 
 def test_classify_repo_root():
@@ -158,7 +159,8 @@ async def test_ref_split_api_failure_falls_back():
     assert await resolve_ref_and_subdir(src, _branches) == ("main", "skills/x")
 
 
-_PUB = lambda host: ["93.184.216.34"]          # public resolver
+def _PUB(host):
+    return ["93.184.216.34"]
 
 
 def _transport(handler):
@@ -290,6 +292,121 @@ def _zipball(entries, wrapper="repo-abc123/"):
         for name, data in entries:
             z.writestr(wrapper + name, data)
     return buf.getvalue()
+
+
+@pytest.mark.asyncio
+async def test_remote_inspection_returns_retained_multi_skill_archive_without_import():
+    from tldw_chatbook.Skills_Interop.skill_remote_fetch import inspect_skill_from_url
+
+    payload = _zipball([
+        ("skills/z/SKILL.md", "z"),
+        ("skills/a/SKILL.md", "a"),
+    ])
+    scope = _RecordingScopeService()
+
+    package = await inspect_skill_from_url(
+        "https://github.com/o/framework",
+        scope_service=scope,
+        transport=_transport(lambda request: httpx.Response(200, content=payload)),
+        resolver=_PUB,
+    )
+
+    assert package.inspection.kind is SkillPackageKind.MULTI_SKILL_REPOSITORY
+    assert package.inspection.candidates == ("skills/a", "skills/z")
+    assert package.archive_bytes is payload
+    assert package.archive_sha256 == hashlib.sha256(payload).hexdigest()
+    assert scope.calls == ["enforce"]
+
+
+@pytest.mark.asyncio
+async def test_selected_candidate_import_uses_retained_bytes_once_and_stays_untrusted():
+    from tldw_chatbook.Skills_Interop.skill_remote_fetch import (
+        import_inspected_skill,
+        inspect_skill_from_url,
+    )
+
+    payload = _zipball([
+        ("skills/a/SKILL.md", "a"),
+        ("skills/b/SKILL.md", "b"),
+    ])
+    requests = 0
+
+    def handler(request):
+        nonlocal requests
+        requests += 1
+        return httpx.Response(200, content=payload)
+
+    scope = _RecordingScopeService()
+    package = await inspect_skill_from_url(
+        "https://github.com/o/framework",
+        scope_service=scope,
+        transport=_transport(handler),
+        resolver=_PUB,
+    )
+    result = await import_inspected_skill(
+        package,
+        candidate="skills/b",
+        scope_service=scope,
+    )
+
+    assert requests == 1
+    assert result["name"] == "b"
+    assert scope.import_kwargs["trust_approved"] is False
+    assert scope.import_kwargs["filename"] == "b.zip"
+
+
+@pytest.mark.asyncio
+async def test_framework_and_remote_failures_are_classified_without_sensitive_text():
+    from tldw_chatbook.Skills_Interop.skill_remote_fetch import inspect_skill_from_url
+
+    framework = await inspect_skill_from_url(
+        "https://github.com/o/framework",
+        scope_service=_RecordingScopeService(),
+        transport=_transport(
+            lambda request: httpx.Response(
+                200, content=_zipball([("README.md", "framework")])
+            )
+        ),
+        resolver=_PUB,
+    )
+    assert framework.inspection.kind is SkillPackageKind.FRAMEWORK_REPOSITORY
+
+    secret = "token=TOP-SECRET&sig=SIGNED"
+    failed = await inspect_skill_from_url(
+        f"https://example.com/pkg.zip?{secret}",
+        scope_service=_RecordingScopeService(),
+        transport=_transport(
+            lambda request: httpx.Response(401, text=f"denied {secret}")
+        ),
+        resolver=_PUB,
+    )
+    assert failed.inspection.kind is SkillPackageKind.FETCH_OR_AUTH_FAILURE
+    rendered = repr(failed)
+    assert "TOP-SECRET" not in rendered
+    assert "SIGNED" not in rendered
+    assert failed.archive_bytes is None
+
+
+@pytest.mark.asyncio
+async def test_inspected_package_repr_never_exposes_url_derived_name_or_bytes():
+    from tldw_chatbook.Skills_Interop.skill_remote_fetch import inspect_skill_from_url
+
+    package = await inspect_skill_from_url(
+        "https://example.com/PATH-SECRET.zip?token=QUERY-SECRET",
+        scope_service=_RecordingScopeService(),
+        transport=_transport(
+            lambda request: httpx.Response(
+                200, content=_zipball([("SKILL.md", "body")], wrapper="")
+            )
+        ),
+        resolver=_PUB,
+    )
+
+    rendered = repr(package)
+    assert package.inspection.kind is SkillPackageKind.ROOT_SKILL
+    assert "PATH-SECRET" not in rendered
+    assert "QUERY-SECRET" not in rendered
+    assert package.archive_bytes not in rendered.encode()
 
 
 def test_reroot_subdir_install():
@@ -837,7 +954,8 @@ async def test_e2e_install_skill_from_github_tree_url_real_services(tmp_path, mo
             return httpx.Response(200, content=zip_bytes)
         raise AssertionError(f"unexpected host hit: {host}")
 
-    fake_public = lambda host: ["93.184.216.34"]
+    def fake_public(host):
+        return ["93.184.216.34"]
 
     result = await install_skill_from_url(
         "https://github.com/obra/superpowers/tree/main/skills/demo",
@@ -892,9 +1010,6 @@ async def test_e2e_install_skill_from_github_tree_url_real_services(tmp_path, mo
 # install_skill(url), the bridge's in-chat confirm callback either allows or
 # denies it, and the second script turn supplies the model's follow-up reply.
 # ---------------------------------------------------------------------------
-
-
-from tldw_chatbook.Agents.agent_runtime import FENCE_OPEN
 
 
 def _fence(name, args):

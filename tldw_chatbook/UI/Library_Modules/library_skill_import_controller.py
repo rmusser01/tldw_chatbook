@@ -3,17 +3,26 @@
 from __future__ import annotations
 
 import asyncio
+import hashlib
 import inspect
 from dataclasses import dataclass, replace
 from pathlib import Path
 from typing import Any
+from urllib.parse import urlsplit, urlunsplit
 
 from loguru import logger
 
 from ...Skills_Interop.skill_remote_fetch import (
     RemoteSkillError,
-    classify_skill_source_url,
-    install_skill_from_url,
+    RemoteSkillPackage,
+    import_inspected_skill,
+    inspect_skill_from_url,
+    re_root_skill_zip,
+)
+from ...Skills_Interop.skill_package_inspection import (
+    SkillPackageKind,
+    inspect_skill_directory,
+    inspect_skill_zip,
 )
 from ...Utils.input_validation import sanitize_string, validate_text_input
 from ...Utils.path_validation import validate_path_simple
@@ -33,6 +42,10 @@ class LibrarySkillImportSnapshot:
     review_name: str = ""
     in_flight: bool = False
     generation: int = 0
+    candidates: tuple[str, ...] = ()
+    recovery_actions: tuple[str, ...] = ()
+    package_kind: str = ""
+    retryable: bool = False
 
 
 @dataclass(frozen=True)
@@ -41,6 +54,19 @@ class _LibrarySkillImportOutcome:
     review_name: str = ""
     clear_path: bool = False
     refresh_sources: bool = False
+    candidates: tuple[str, ...] = ()
+    recovery_actions: tuple[str, ...] = ()
+    package_kind: str = ""
+    retryable: bool = False
+    pending_package: RemoteSkillPackage | "_PendingDirectory" | None = None
+
+
+@dataclass(frozen=True)
+class _PendingDirectory:
+    """A validated local repository path awaiting one explicit subdir."""
+
+    path: Path
+    candidates: tuple[str, ...]
 
 
 class LibrarySkillImportCoordinator:
@@ -54,6 +80,9 @@ class LibrarySkillImportCoordinator:
     def __init__(self, app_instance: Any) -> None:
         self._app_instance = app_instance
         self._snapshot = LibrarySkillImportSnapshot()
+        self._pending_package: RemoteSkillPackage | _PendingDirectory | None = None
+        self._accepted_input = ""
+        self._selected_candidate = ""
 
     @property
     def snapshot(self) -> LibrarySkillImportSnapshot:
@@ -68,6 +97,9 @@ class LibrarySkillImportCoordinator:
         """Open a fresh row, explicitly dismissing any prior receipt."""
         if self._snapshot.in_flight:
             return False
+        self._pending_package = None
+        self._accepted_input = ""
+        self._selected_candidate = ""
         self._snapshot = LibrarySkillImportSnapshot(
             row_open=True,
             generation=self._snapshot.generation + 1,
@@ -78,6 +110,9 @@ class LibrarySkillImportCoordinator:
         """Explicitly close the row without claiming cancellation."""
         if self._snapshot.in_flight:
             return False
+        self._pending_package = None
+        self._accepted_input = ""
+        self._selected_candidate = ""
         self._snapshot = LibrarySkillImportSnapshot(
             generation=self._snapshot.generation + 1
         )
@@ -87,25 +122,96 @@ class LibrarySkillImportCoordinator:
         """Fence callbacks from a row lifecycle that is no longer current."""
         self.update(generation=self._snapshot.generation + 1)
 
+    def update_draft_path(self, path: str) -> bool:
+        """Replace an idle draft and clear every outcome tied to the old input."""
+        if self._snapshot.in_flight:
+            return False
+        self._pending_package = None
+        self._accepted_input = ""
+        self._selected_candidate = ""
+        self.update(
+            path=path,
+            status="",
+            review_name="",
+            candidates=(),
+            recovery_actions=(),
+            package_kind="",
+            retryable=False,
+        )
+        return True
+
     def claim(self, raw_path: str) -> bool:
         """Synchronously admit one operation before its app worker exists."""
         if self._snapshot.in_flight:
             return False
+        self._accepted_input = raw_path
+        self._selected_candidate = ""
         self.update(
             row_open=True,
-            path=raw_path,
+            path=self._display_path(raw_path),
             status="Inspecting/importing…",
             review_name="",
             in_flight=True,
             generation=self._snapshot.generation + 1,
+            candidates=(),
+            recovery_actions=(),
+            package_kind="",
+            retryable=False,
         )
         return True
+
+    def cancel_choice(self) -> bool:
+        """Release a pre-import candidate choice and preserve its safe draft."""
+        if not self._snapshot.candidates or self._pending_package is None:
+            return False
+        self._pending_package = None
+        self._selected_candidate = ""
+        self.update(
+            status="",
+            in_flight=False,
+            candidates=(),
+            recovery_actions=(),
+            package_kind="",
+            retryable=False,
+            generation=self._snapshot.generation + 1,
+        )
+        return True
+
+    def claim_candidate(self, candidate: str) -> bool:
+        """Synchronously claim one displayed candidate before scheduling."""
+        if (
+            self._pending_package is None
+            or self._selected_candidate
+            or candidate not in self._snapshot.candidates
+            or not self._snapshot.in_flight
+        ):
+            return False
+        self._selected_candidate = candidate
+        self.update(
+            status="Inspecting/importing…",
+            candidates=(),
+            generation=self._snapshot.generation + 1,
+        )
+        return True
+
+    def claim_retry(self) -> str | None:
+        """Re-admit the last failed input without exposing its raw URL."""
+        raw_path = self._accepted_input
+        if not self._snapshot.retryable or not raw_path or not self.claim(raw_path):
+            return None
+        return raw_path
 
     async def run(self, raw_path: str, *, runtime_app: Any) -> None:
         """Run the accepted mutation and publish one authoritative receipt."""
         operation = asyncio.create_task(
             self._run_and_settle(raw_path, runtime_app=runtime_app)
         )
+        await self._await_terminal_operation(operation, runtime_app=runtime_app)
+
+    async def _await_terminal_operation(
+        self, operation: asyncio.Task[None], *, runtime_app: Any
+    ) -> None:
+        """Keep one accepted operation owned through repeated outer cancellation."""
         while True:
             try:
                 await asyncio.shield(operation)
@@ -127,6 +233,68 @@ class LibrarySkillImportCoordinator:
                     return
                 operation.result()
                 return
+
+    async def run_candidate(self, candidate: str, *, runtime_app: Any) -> None:
+        """Import one explicit candidate from the retained inspected bytes."""
+        package = self._pending_package
+        if (
+            package is None
+            or candidate != self._selected_candidate
+            or not self._snapshot.in_flight
+        ):
+            return
+        operation = asyncio.create_task(
+            self._run_candidate_and_settle(
+                package, candidate, runtime_app=runtime_app
+            )
+        )
+        await self._await_terminal_operation(operation, runtime_app=runtime_app)
+
+    async def _run_candidate_and_settle(
+        self,
+        package: RemoteSkillPackage | _PendingDirectory,
+        candidate: str,
+        *,
+        runtime_app: Any,
+    ) -> None:
+        """Settle one selected candidate inside the cancellation shield."""
+        fatal_error: BaseException | None = None
+        try:
+            service = getattr(self._app_instance, "skills_scope_service", None)
+            if isinstance(package, _PendingDirectory):
+                skill_dir = package.path / candidate
+                result = await self._call_service(
+                    service.import_skill_directory,
+                    skill_dir,
+                    mode="local",
+                    name=skill_dir.name,
+                    trust_approved=False,
+                )
+            else:
+                result = await self._call_service(
+                    import_inspected_skill,
+                    package,
+                    candidate=candidate,
+                    scope_service=service,
+                )
+            name = self._safe_name(
+                result.get("name", "") if isinstance(result, dict) else ""
+            )
+            outcome = self._success(name)
+        except asyncio.CancelledError:
+            outcome = _LibrarySkillImportOutcome("Could not import that skill.")
+        except Exception:
+            logger.warning("Library selected skill import failed.")
+            outcome = _LibrarySkillImportOutcome(
+                "Could not import that skill.", retryable=True
+            )
+        except BaseException as exc:
+            fatal_error = exc
+            outcome = _LibrarySkillImportOutcome("Could not import that skill.")
+        self._pending_package = None
+        self._settle(outcome, runtime_app=runtime_app)
+        if fatal_error is not None:
+            raise fatal_error
 
     async def _run_and_settle(self, raw_path: str, *, runtime_app: Any) -> None:
         """Settle the accepted mutation in its own cancellation-shielded task."""
@@ -150,11 +318,18 @@ class LibrarySkillImportCoordinator:
         self, outcome: _LibrarySkillImportOutcome, *, runtime_app: Any
     ) -> None:
         """Publish the one terminal snapshot before the operation task ends."""
+        self._pending_package = outcome.pending_package
+        self._selected_candidate = ""
+        choice_pending = bool(outcome.candidates and outcome.pending_package)
         self.update(
             path="" if outcome.clear_path else self._snapshot.path,
             status=outcome.status,
             review_name=outcome.review_name,
-            in_flight=False,
+            in_flight=choice_pending,
+            candidates=outcome.candidates,
+            recovery_actions=outcome.recovery_actions,
+            package_kind=outcome.package_kind,
+            retryable=outcome.retryable,
         )
         self._publish_current_screen(
             runtime_app, refresh_sources=outcome.refresh_sources
@@ -196,7 +371,26 @@ class LibrarySkillImportCoordinator:
             return _LibrarySkillImportOutcome("Skill import is unavailable.")
 
         if validated_path.is_dir():
-            skill_dir = validated_path
+            inspection = await asyncio.to_thread(
+                inspect_skill_directory, validated_path
+            )
+            if inspection.kind is SkillPackageKind.MULTI_SKILL_REPOSITORY:
+                return _LibrarySkillImportOutcome(
+                    "Choose one skill to import.",
+                    candidates=inspection.candidates,
+                    package_kind=inspection.kind.value,
+                    pending_package=_PendingDirectory(
+                        validated_path, inspection.candidates
+                    ),
+                )
+            if inspection.kind is not SkillPackageKind.ROOT_SKILL:
+                return _LibrarySkillImportOutcome(
+                    inspection.message,
+                    recovery_actions=inspection.recovery_actions,
+                    package_kind=inspection.kind.value,
+                )
+            candidate = inspection.candidates[0]
+            skill_dir = validated_path / candidate if candidate else validated_path
         elif validated_path.name.lower() == _SKILL_MD_FILENAME.lower():
             skill_dir = validated_path.parent
         else:
@@ -233,6 +427,38 @@ class LibrarySkillImportCoordinator:
                     "Could not read Library skill import file."
                 )
                 return _LibrarySkillImportOutcome("Could not read that file.")
+            inspection = inspect_skill_zip(data, repository_source=False)
+            if inspection.kind is SkillPackageKind.MULTI_SKILL_REPOSITORY:
+                package = RemoteSkillPackage(
+                    inspection=inspection,
+                    archive_bytes=data,
+                    archive_sha256=hashlib.sha256(data).hexdigest(),
+                    suggested_name=file_path.stem,
+                )
+                return _LibrarySkillImportOutcome(
+                    "Choose one skill to import.",
+                    candidates=inspection.candidates,
+                    package_kind=inspection.kind.value,
+                    pending_package=package,
+                )
+            if inspection.kind is not SkillPackageKind.ROOT_SKILL:
+                return _LibrarySkillImportOutcome(
+                    inspection.message,
+                    package_kind=inspection.kind.value,
+                )
+            candidate = inspection.candidates[0]
+            try:
+                data, final_name = re_root_skill_zip(
+                    data,
+                    subdir=candidate,
+                    suggested_name=(candidate.rsplit("/", 1)[-1] or file_path.stem),
+                )
+            except RemoteSkillError:
+                return _LibrarySkillImportOutcome(
+                    "That package is malformed or unsupported.",
+                    package_kind=SkillPackageKind.MALFORMED_OR_UNSUPPORTED.value,
+                )
+            file_path = file_path.with_name(f"{final_name}.zip")
         elif suffix == ".md":
             content_type = "text/markdown"
             try:
@@ -271,24 +497,66 @@ class LibrarySkillImportCoordinator:
         if service is None:
             return _LibrarySkillImportOutcome("Skill import is unavailable.")
         try:
-            name_guess = self._safe_name(
-                classify_skill_source_url(url).suggested_name
-            )
-        except RemoteSkillError:
-            name_guess = self._safe_name(url.rstrip("/").rsplit("/", 1)[-1])
-        try:
-            result = await self._call_service(
-                install_skill_from_url,
+            package = await self._call_service(
+                inspect_skill_from_url,
                 url,
                 scope_service=service,
             )
-        except RemoteSkillError as exc:
-            return _LibrarySkillImportOutcome(str(exc))
+        except Exception:
+            logger.warning("Library remote skill inspection failed.")
+            return _LibrarySkillImportOutcome(
+                "Could not fetch that skill package. Retry when access is available.",
+                package_kind=SkillPackageKind.FETCH_OR_AUTH_FAILURE.value,
+                retryable=True,
+            )
+        inspection = package.inspection
+        if inspection.kind is SkillPackageKind.MULTI_SKILL_REPOSITORY:
+            return _LibrarySkillImportOutcome(
+                "Choose one skill to import.",
+                candidates=inspection.candidates,
+                package_kind=inspection.kind.value,
+                pending_package=package,
+            )
+        if inspection.kind is not SkillPackageKind.ROOT_SKILL:
+            return _LibrarySkillImportOutcome(
+                inspection.message,
+                recovery_actions=inspection.recovery_actions,
+                package_kind=inspection.kind.value,
+                retryable=(
+                    inspection.kind is SkillPackageKind.FETCH_OR_AUTH_FAILURE
+                ),
+            )
+        try:
+            result = await self._call_service(
+                import_inspected_skill,
+                package,
+                scope_service=service,
+            )
         except Exception as exc:
-            return self._failure(name_guess, exc)
+            return self._failure(
+                self._safe_name(package.suggested_name), exc
+            )
         if not isinstance(result, dict):
-            return _LibrarySkillImportOutcome("Could not import that skill.")
+            return _LibrarySkillImportOutcome(
+                "Could not import that skill.", retryable=True
+            )
         return self._success(self._safe_name(result.get("name", "")))
+
+    @staticmethod
+    def _display_path(raw_path: str) -> str:
+        if not raw_path.startswith(("http://", "https://")):
+            return raw_path
+        try:
+            parsed = urlsplit(raw_path)
+            hostname = parsed.hostname
+            if not hostname:
+                return "Remote package URL"
+            netloc = f"[{hostname}]" if ":" in hostname else hostname
+            if parsed.port is not None:
+                netloc = f"{netloc}:{parsed.port}"
+            return urlunsplit((parsed.scheme, netloc, parsed.path, "", ""))
+        except ValueError:
+            return "Remote package URL"
 
     @staticmethod
     async def _call_service(callable_obj: Any, *args: Any, **kwargs: Any) -> Any:
@@ -340,6 +608,7 @@ class LibrarySkillImportCoordinator:
             review_name=skill_name,
             clear_path=True,
             refresh_sources=True,
+            package_kind=SkillPackageKind.ROOT_SKILL.value,
         )
 
     @staticmethod

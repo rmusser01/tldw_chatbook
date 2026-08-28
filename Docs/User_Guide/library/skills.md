@@ -25,7 +25,7 @@ Library rail                 Skills list / editor
 ┌────────────────────┐       ┌──────────────────────────────────────────┐
 │ Browse             │       │ Skills (N)                               │
 │   Skills           │  ───▶ │ Filter skills…                           │
-│ Create             │       │ sort: Name        Import…                │
+│ Create             │       │ sort: Name        Import skill…          │
 │   New skill        │       │ ✓ code-review                            │
 └────────────────────┘       │ ⚠ summarize                              │
                              └──────────────────────────────────────────┘
@@ -40,11 +40,11 @@ The list canvas, top to bottom:
 - **Filter** — "Filter skills… (Enter)".
 - **Toolbar** — "sort: Name" / "sort: Status" (press to open a one-row
   strip of Name / Status with ✓ on the active one and pick directly;
-  Status puts needs-review skills first) and "Import…".
+  Status puts needs-review skills first) and "Import skill…".
 - **Rows** — one per skill: **⚠ name** (blocked — needs review before use)
   or **✓ name** (usable), with a dimmer description line underneath.
 - **Empty state** — "No skills yet — use Create ▸ New skill in the rail,
-  or Import… above." (a filter with no matches shows "No skills match your
+  or Import skill… above." (a filter with no matches shows "No skills match your
   filter." instead).
 
 Clicking a row opens the **editor**, with the **Trust** panel below it —
@@ -71,7 +71,7 @@ trust? Every skill will need re-approval. Your skills are not deleted."
 
 ### Importing
 
-**Import…** opens an inline row: an input with placeholder "SKILL.md file
+**Import skill…** opens an inline row: an input with placeholder "SKILL.md file
 or skill folder path… or GitHub/zip URL", plus **Browse…** (pick a
 SKILL.md file), **Browse folder…** (pick a skill folder), **Import**, and
 **Cancel**. A `http(s)://` value fetches the skill from that URL.
@@ -83,6 +83,25 @@ Skills list does not cancel filesystem or network work, and returning shows
 the accepted import's current state or actual result. A forced repeat submit
 is refused with `An import is already in progress.` The result stays available
 until you choose **Cancel**, open **Review…**, or begin a new import draft.
+
+Chatbook inspects a folder or archive before importing it:
+
+- A package with one installable skill proceeds to import and trust review.
+- A repository containing several skills opens **Choose one skill to import**.
+  Select one subdirectory and press **Import skill**; Chatbook never chooses or
+  batch-imports candidates. **Cancel** returns to the preserved import draft.
+- A valid repository with no installable skill reports `This repository is a
+  framework, not an installable Codex skill.` The row offers only generic next
+  steps: choose a subdirectory containing `SKILL.md`, use project instructions,
+  use the framework's external CLI outside Chatbook, or create a separately
+  reviewed wrapper skill.
+- A malformed or unsupported package is not imported. A remote fetch or access
+  failure offers **Retry** without displaying URL credentials, signed queries,
+  response bodies, or raw exception details.
+
+Remote candidate selection uses the already-inspected download; Chatbook does
+not fetch the branch again after you choose. Import still copies only the
+selected skill into the local skill store and never executes repository code.
 
 - Success: `Imported "name" · re-review it in the trust panel`, with a
   follow-up button `Review "name"…` that jumps straight to its trust
@@ -138,7 +157,7 @@ here to review and approve them (see [Trust panel](#trust-panel) above).
 The whole feature can be turned off — no scanning, no prompts, at either
 trigger — with `[skills] project_skills_prompt_enabled = false` in
 `config.toml`; it defaults to on. This does not affect the manual
-**Import…** row above, which is always available regardless of this
+**Import skill…** row above, which is always available regardless of this
 setting.
 
 ### Editor
@@ -260,7 +279,7 @@ parentheses when something differs from the trusted baseline.
    Ctrl+S). Then
    scroll to the Trust panel, **Review changes**, **Approve**, and enter
    your passphrase — now `$name` runs in Console.
-2. **Import from a GitHub URL.** In the list, click **Import…**, paste the
+2. **Import from a GitHub URL.** In the list, click **Import skill…**, paste the
    URL into the input, click **Import**, then click the `Review "name"…`
    follow-up to review and approve it.
 3. **Set up skill trust.** Click **Set up skill trust** (in the list

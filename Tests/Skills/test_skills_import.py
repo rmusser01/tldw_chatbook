@@ -25,6 +25,7 @@ import shutil
 import threading
 import time
 import zipfile
+import io
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -35,8 +36,18 @@ from textual.widgets import Button, Input
 from tldw_chatbook.Skills_Interop.local_skills_service import LocalSkillsService
 from tldw_chatbook.Skills_Interop.skills_scope_service import SkillsScopeService
 from tldw_chatbook.tldw_api.skills_schemas import SKILL_NAME_PATTERN
+from tldw_chatbook.Library.library_shell_state import LIBRARY_ROW_BROWSE_SKILLS
 from tldw_chatbook.UI.Library_Modules import library_skill_import_controller
 from tldw_chatbook.UI.Screens.library_screen import LibraryScreen
+from tldw_chatbook.UI.Library_Modules.skill_import_choice_modal import (
+    SkillImportChoiceModal,
+)
+from tldw_chatbook.Skills_Interop.skill_package_inspection import (
+    FRAMEWORK_MESSAGE,
+    SkillPackageInspection,
+    SkillPackageKind,
+)
+from tldw_chatbook.Skills_Interop.skill_remote_fetch import RemoteSkillPackage
 
 from Tests.Skills.test_skills_library_flow import (
     _real_trust_service,
@@ -50,6 +61,7 @@ from Tests.UI.test_library_shell import (
     _wait_for_library_shell,
     _wait_for_selector,
 )
+from Tests.UI.test_library_skills_canvas import _CanvasHost, _two_row_state
 
 
 FIXTURES_DIR = Path(__file__).resolve().parents[1] / "fixtures" / "superpowers_skills"
@@ -202,6 +214,404 @@ def test_library_screen_has_no_parallel_skill_import_pipeline():
     assert all(
         not hasattr(LibraryScreen, name) for name in retired_screen_owners
     )
+
+
+def _multi_package() -> RemoteSkillPackage:
+    buffer = io.BytesIO()
+    with zipfile.ZipFile(buffer, "w") as archive:
+        archive.writestr("repo/skills/a/SKILL.md", "a")
+        archive.writestr("repo/skills/b/SKILL.md", "b")
+    payload = buffer.getvalue()
+    import hashlib
+
+    return RemoteSkillPackage(
+        inspection=SkillPackageInspection(
+            SkillPackageKind.MULTI_SKILL_REPOSITORY,
+            ("skills/a", "skills/b"),
+            "Choose one installable skill.",
+        ),
+        archive_bytes=payload,
+        archive_sha256=hashlib.sha256(payload).hexdigest(),
+        suggested_name="repo",
+    )
+
+
+def _root_package(name: str = "remote-skill") -> RemoteSkillPackage:
+    buffer = io.BytesIO()
+    with zipfile.ZipFile(buffer, "w") as archive:
+        archive.writestr(
+            "repo/SKILL.md",
+            f"---\nname: {name}\ndescription: Remote fixture.\n---\n\nBody.\n",
+        )
+    payload = buffer.getvalue()
+    import hashlib
+
+    return RemoteSkillPackage(
+        inspection=SkillPackageInspection(SkillPackageKind.ROOT_SKILL, ("",)),
+        archive_bytes=payload,
+        archive_sha256=hashlib.sha256(payload).hexdigest(),
+        suggested_name=name,
+    )
+
+
+@pytest.mark.asyncio
+async def test_coordinator_holds_single_flight_through_candidate_choice(monkeypatch):
+    coordinator = library_skill_import_controller.LibrarySkillImportCoordinator(
+        SimpleNamespace(skills_scope_service=SimpleNamespace())
+    )
+    package = _multi_package()
+
+    async def inspect(*args, **kwargs):
+        return package
+
+    monkeypatch.setattr(library_skill_import_controller, "inspect_skill_from_url", inspect)
+    coordinator.open_draft()
+    url = "https://github.com/o/repo"
+    assert coordinator.claim(url) is True
+    await coordinator.run(url, runtime_app=SimpleNamespace(screen=SimpleNamespace()))
+
+    assert coordinator.snapshot.in_flight is True
+    assert coordinator.snapshot.candidates == ("skills/a", "skills/b")
+    assert coordinator.snapshot.status == "Choose one skill to import."
+    assert coordinator.claim("/competing.zip") is False
+    assert coordinator.cancel_choice() is True
+    assert coordinator.snapshot.in_flight is False
+    assert coordinator.snapshot.path == url
+    assert coordinator.snapshot.status == ""
+
+
+@pytest.mark.asyncio
+async def test_coordinator_imports_explicit_retained_candidate_once(monkeypatch):
+    coordinator = library_skill_import_controller.LibrarySkillImportCoordinator(
+        SimpleNamespace(skills_scope_service=SimpleNamespace())
+    )
+    package = _multi_package()
+    imports: list[tuple[RemoteSkillPackage, str]] = []
+
+    async def inspect(*args, **kwargs):
+        return package
+
+    async def import_one(pending, *, candidate, scope_service):
+        imports.append((pending, candidate))
+        return {"name": "b"}
+
+    monkeypatch.setattr(library_skill_import_controller, "inspect_skill_from_url", inspect)
+    monkeypatch.setattr(library_skill_import_controller, "import_inspected_skill", import_one)
+    coordinator.open_draft()
+    assert coordinator.claim("https://github.com/o/repo") is True
+    await coordinator.run(
+        "https://github.com/o/repo", runtime_app=SimpleNamespace(screen=SimpleNamespace())
+    )
+    assert coordinator.claim_candidate("skills/b") is True
+    assert coordinator.claim_candidate("skills/a") is False
+    await coordinator.run_candidate(
+        "skills/b", runtime_app=SimpleNamespace(screen=SimpleNamespace())
+    )
+
+    assert imports == [(package, "skills/b")]
+    assert coordinator.snapshot.in_flight is False
+    assert coordinator.snapshot.candidates == ()
+    assert coordinator.snapshot.review_name == "b"
+
+
+@pytest.mark.asyncio
+async def test_selected_candidate_owner_survives_repeated_cancellation(monkeypatch):
+    coordinator = library_skill_import_controller.LibrarySkillImportCoordinator(
+        SimpleNamespace(skills_scope_service=SimpleNamespace())
+    )
+    package = _multi_package()
+    started = threading.Event()
+    release = threading.Event()
+    imports = 0
+
+    async def inspect(*args, **kwargs):
+        return package
+
+    async def import_one(*args, **kwargs):
+        nonlocal imports
+        started.set()
+        await asyncio.to_thread(release.wait)
+        imports += 1
+        return {"name": "a"}
+
+    monkeypatch.setattr(library_skill_import_controller, "inspect_skill_from_url", inspect)
+    monkeypatch.setattr(library_skill_import_controller, "import_inspected_skill", import_one)
+    coordinator.open_draft()
+    assert coordinator.claim("https://github.com/o/repo") is True
+    await coordinator.run(
+        "https://github.com/o/repo", runtime_app=SimpleNamespace(screen=SimpleNamespace())
+    )
+    assert coordinator.claim_candidate("skills/a") is True
+    owner = asyncio.create_task(
+        coordinator.run_candidate(
+            "skills/a", runtime_app=SimpleNamespace(screen=SimpleNamespace())
+        )
+    )
+    assert await asyncio.to_thread(started.wait, 5)
+    owner.cancel()
+    await asyncio.sleep(0)
+    owner.cancel()
+    await asyncio.sleep(0)
+    assert owner.done() is False
+    assert coordinator.snapshot.in_flight is True
+
+    release.set()
+    await owner
+    assert imports == 1
+    assert coordinator.snapshot.in_flight is False
+    assert coordinator.snapshot.review_name == "a"
+
+
+@pytest.mark.asyncio
+async def test_coordinator_surfaces_framework_and_redacted_fetch_failure(monkeypatch):
+    outcomes = (
+        RemoteSkillPackage(
+            SkillPackageInspection(
+                SkillPackageKind.FRAMEWORK_REPOSITORY,
+                message=FRAMEWORK_MESSAGE,
+                recovery_actions=("Use project instructions.",),
+            )
+        ),
+        RemoteSkillPackage(
+            SkillPackageInspection(
+                SkillPackageKind.FETCH_OR_AUTH_FAILURE,
+                message="Could not fetch that skill package. Retry when access is available.",
+            )
+        ),
+    )
+    for package in outcomes:
+        coordinator = library_skill_import_controller.LibrarySkillImportCoordinator(
+            SimpleNamespace(skills_scope_service=SimpleNamespace())
+        )
+
+        async def inspect(*args, **kwargs):
+            return package
+
+        monkeypatch.setattr(
+            library_skill_import_controller, "inspect_skill_from_url", inspect
+        )
+        coordinator.open_draft()
+        assert coordinator.claim("https://example.com/pkg.zip?token=SECRET") is True
+        await coordinator.run(
+            "https://example.com/pkg.zip?token=SECRET",
+            runtime_app=SimpleNamespace(screen=SimpleNamespace()),
+        )
+        assert "SECRET" not in repr(coordinator.snapshot)
+        assert coordinator.snapshot.package_kind == package.inspection.kind.value
+        assert coordinator.snapshot.retryable is (
+            package.inspection.kind is SkillPackageKind.FETCH_OR_AUTH_FAILURE
+        )
+
+
+def test_coordinator_keeps_retry_url_private_and_display_url_credential_free():
+    coordinator = library_skill_import_controller.LibrarySkillImportCoordinator(
+        SimpleNamespace(skills_scope_service=SimpleNamespace())
+    )
+    coordinator.open_draft()
+
+    assert coordinator.claim(
+        "https://alice:URL-SECRET@example.com/pkg.zip?token=QUERY-SECRET"
+    )
+
+    assert coordinator.snapshot.path == "https://example.com/pkg.zip"
+    rendered = repr(coordinator.snapshot)
+    assert "URL-SECRET" not in rendered
+    assert "QUERY-SECRET" not in rendered
+
+    coordinator.update(in_flight=False, retryable=True)
+    assert coordinator.claim_retry() == (
+        "https://alice:URL-SECRET@example.com/pkg.zip?token=QUERY-SECRET"
+    )
+    assert coordinator.claim_retry() is None
+    assert coordinator.snapshot.path == "https://example.com/pkg.zip"
+
+
+@pytest.mark.asyncio
+async def test_local_multi_skill_folder_requires_choice_and_imports_only_selected(tmp_path):
+    source = tmp_path / "repository"
+    for relative in ("skills/a", "skills/b"):
+        skill_dir = source / relative
+        skill_dir.mkdir(parents=True)
+        (skill_dir / "SKILL.md").write_text("body", encoding="utf-8")
+    calls: list[tuple[Path, dict]] = []
+
+    async def import_directory(path, **kwargs):
+        calls.append((path, kwargs))
+        return {"name": kwargs["name"]}
+
+    service = SimpleNamespace(
+        import_skill_directory=import_directory,
+        import_skill_file=lambda *args, **kwargs: None,
+    )
+    coordinator = library_skill_import_controller.LibrarySkillImportCoordinator(
+        SimpleNamespace(skills_scope_service=service)
+    )
+    coordinator.open_draft()
+    assert coordinator.claim(str(source)) is True
+    await coordinator.run(
+        str(source), runtime_app=SimpleNamespace(screen=SimpleNamespace())
+    )
+    assert coordinator.snapshot.candidates == ("skills/a", "skills/b")
+
+    assert coordinator.claim_candidate("skills/a") is True
+    await coordinator.run_candidate(
+        "skills/a", runtime_app=SimpleNamespace(screen=SimpleNamespace())
+    )
+
+    assert calls == [
+        (
+            source / "skills/a",
+            {"mode": "local", "name": "a", "trust_approved": False},
+        )
+    ]
+    assert coordinator.snapshot.review_name == "a"
+
+
+@pytest.mark.asyncio
+async def test_mounted_library_multi_skill_choice_imports_one_to_trust_review(tmp_path):
+    source = tmp_path / "repository"
+    for name in ("alpha", "zeta"):
+        skill_dir = source / "skills" / name
+        skill_dir.mkdir(parents=True)
+        (skill_dir / "SKILL.md").write_text(
+            f"---\nname: {name}\ndescription: Candidate fixture.\n---\n\nBody.\n",
+            encoding="utf-8",
+        )
+    local_service, service = _real_skills_scope_service_with_trust(tmp_path / "store")
+    app = _build_test_app(configured_default="library")
+    _wire_empty_non_skill_services(app)
+    app.skills_scope_service = service
+    host = LibraryHarness(app)
+
+    async with host.run_test(size=LIBRARY_TEST_SIZE) as pilot:
+        screen = _active_library_screen(host)
+        await _wait_for_library_shell(screen, pilot)
+        await _open_skills_import_row(screen, pilot)
+        screen.query_one("#library-skills-import-path", Input).value = str(source)
+        await pilot.pause()
+        screen.query_one("#library-skills-import-run", Button).press()
+        for _ in range(200):
+            if isinstance(host.screen, SkillImportChoiceModal):
+                break
+            await pilot.pause(0.01)
+        assert isinstance(host.screen, SkillImportChoiceModal)
+        assert app.library_skill_import_coordinator.snapshot.in_flight is True
+        choices = host.screen.query_one("#skill-import-choice-list")
+        choices.highlighted = 1
+        await pilot.pause()
+        host.screen.query_one("#skill-import-choice-import", Button).press()
+        for _ in range(300):
+            if (
+                host.screen is screen
+                and not screen._library_skills_import_in_flight
+                and screen._library_skills_import_review_name
+            ):
+                break
+            await pilot.pause(0.01)
+
+        assert host.screen is screen
+        assert screen._library_skills_import_review_name == "zeta"
+        assert (
+            screen._library_skills_import_status
+            == 'Imported "zeta" · re-review it in the trust panel'
+        )
+        await host.workers.wait_for_complete()
+
+    context = await service.get_context(mode="local")
+    assert [skill["name"] for skill in context["blocked_skills"]] == ["zeta"]
+    with pytest.raises(ValueError, match="local_skill_not_found:alpha"):
+        await local_service.get_skill("alpha")
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("size", ((120, 36), (72, 22)))
+async def test_framework_recovery_and_failed_retry_render_at_supported_sizes(size):
+    recovery = (
+        "Choose a repository subdirectory that contains SKILL.md.",
+        "Use its project instructions when that is the intended integration.",
+        "Use the framework's external CLI outside Chatbook.",
+        "Create a separately reviewed wrapper skill.",
+    )
+    framework = _CanvasHost(
+        _two_row_state(),
+        import_open=True,
+        import_status=FRAMEWORK_MESSAGE,
+        import_package_kind=SkillPackageKind.FRAMEWORK_REPOSITORY.value,
+        import_recovery_actions=recovery,
+    )
+    async with framework.run_test(size=size):
+        status = framework.query_one("#library-skills-import-status")
+        assert str(status.renderable) == FRAMEWORK_MESSAGE
+        guidance = framework.query_one("#library-skills-import-recovery")
+        guidance_text = str(guidance.renderable)
+        assert all(action in guidance_text for action in recovery)
+        assert not list(framework.query("#library-skills-import-retry"))
+        assert str(framework.query_one("#library-skills-import", Button).label) == (
+            "Import skill…"
+        )
+
+    failed = _CanvasHost(
+        _two_row_state(),
+        import_open=True,
+        import_status="Could not fetch that skill package.",
+        import_package_kind=SkillPackageKind.FETCH_OR_AUTH_FAILURE.value,
+        import_retryable=True,
+    )
+    async with failed.run_test(size=size):
+        assert failed.query_one("#library-skills-import-retry", Button)
+
+
+def test_stale_candidate_modal_callback_cannot_target_a_new_package(monkeypatch):
+    """A callback owns the generation it displayed, never a later package."""
+    coordinator = library_skill_import_controller.LibrarySkillImportCoordinator(
+        SimpleNamespace(skills_scope_service=SimpleNamespace())
+    )
+    first = _multi_package()
+    coordinator._pending_package = first
+    coordinator.update(
+        row_open=True,
+        path="https://github.com/o/first",
+        status="Choose one skill to import.",
+        in_flight=True,
+        candidates=first.inspection.candidates,
+        generation=4,
+    )
+    pushed: dict[str, object] = {}
+    workers: list[object] = []
+    fake = SimpleNamespace(
+        is_mounted=True,
+        _library_selected_row_id=LIBRARY_ROW_BROWSE_SKILLS,
+        _library_skill_import_coordinator=coordinator,
+        _library_skill_choice_presented_generation=-1,
+    )
+    fake.app = SimpleNamespace(
+        screen=fake,
+        push_screen=lambda modal, callback: pushed.update(
+            modal=modal, callback=callback
+        ),
+        run_worker=lambda coroutine, **kwargs: workers.append(coroutine),
+    )
+    monkeypatch.setattr(
+        "tldw_chatbook.UI.Screens.library_screen._sync_library_canvas",
+        lambda *args, **kwargs: None,
+    )
+
+    LibraryScreen._present_library_skills_import_choice_if_needed(fake)
+    old_callback = pushed["callback"]
+    assert coordinator.cancel_choice() is True
+    second = _multi_package()
+    coordinator._pending_package = second
+    coordinator.update(
+        status="Choose one skill to import.",
+        in_flight=True,
+        candidates=second.inspection.candidates,
+        generation=5,
+    )
+
+    old_callback("skills/a")
+
+    assert workers == []
+    assert coordinator.snapshot.generation == 5
 
 
 @pytest.mark.asyncio
@@ -429,7 +839,7 @@ async def test_skill_import_is_single_flight_across_every_route_and_navigation(
         owner, attribute = service, "import_skill_file"
     else:
         import_value = "https://github.com/example/remote-skill"
-        owner, attribute = library_skill_import_controller, "install_skill_from_url"
+        owner, attribute = library_skill_import_controller, "inspect_skill_from_url"
 
     original = getattr(owner, attribute)
     first_started = threading.Event()
@@ -447,7 +857,7 @@ async def test_skill_import_is_single_flight_across_every_route_and_navigation(
         await asyncio.to_thread(release.wait)
         try:
             if route == "url":
-                return {"name": "remote-skill"}
+                return _root_package()
             return await original(*args, **kwargs)
         finally:
             if call_number == 1:
@@ -1076,7 +1486,7 @@ async def test_import_row_reports_missing_skill_md_and_unknown_path_gracefully(
         await _open_skills_import_row(screen, pilot)
 
         status = await _run_skills_import_via_ui(screen, pilot, empty_folder)
-        assert status == "No SKILL.md found in that folder."
+        assert status == "That package is malformed or unsupported."
 
         status = await _run_skills_import_via_ui(screen, pilot, missing_path)
         assert status == "Could not find that file or folder."
@@ -1243,16 +1653,16 @@ async def test_import_row_url_routes_to_remote_install_and_primes_review(
 
     captured: dict = {}
 
-    async def _fake_install_skill_from_url(url, *, scope_service, **kwargs):
+    async def _fake_inspect_skill_from_url(url, *, scope_service, **kwargs):
         captured["url"] = url
         captured["scope_service"] = scope_service
         captured["kwargs"] = kwargs
-        return {"name": "remote-skill"}
+        return _root_package()
 
     monkeypatch.setattr(
         library_skill_import_controller,
-        "install_skill_from_url",
-        _fake_install_skill_from_url,
+        "inspect_skill_from_url",
+        _fake_inspect_skill_from_url,
     )
 
     async with host.run_test(size=LIBRARY_TEST_SIZE) as pilot:
@@ -1295,23 +1705,25 @@ async def test_import_row_url_routes_to_remote_install_and_primes_review(
 async def test_import_row_url_remote_skill_error_becomes_status_line(
     tmp_path, monkeypatch
 ):
-    """``RemoteSkillError`` messages are user-presentable by construction --
-    the Import row must surface the message verbatim, not a generic
-    failure line."""
-    from tldw_chatbook.Skills_Interop.skill_remote_fetch import RemoteSkillError
+    """Malformed remote input is surfaced as one classified safe outcome."""
     _local_service, service = _real_skills_scope_service_with_trust(tmp_path)
     app = _build_test_app()
     _wire_empty_non_skill_services(app)
     app.skills_scope_service = service
     host = LibraryHarness(app)
 
-    async def _fake_install_skill_from_url(url, *, scope_service, **kwargs):
-        raise RemoteSkillError("Only .zip release assets are supported.")
+    async def _fake_inspect_skill_from_url(url, *, scope_service, **kwargs):
+        return RemoteSkillPackage(
+            SkillPackageInspection(
+                SkillPackageKind.MALFORMED_OR_UNSUPPORTED,
+                message="That URL is malformed or unsupported.",
+            )
+        )
 
     monkeypatch.setattr(
         library_skill_import_controller,
-        "install_skill_from_url",
-        _fake_install_skill_from_url,
+        "inspect_skill_from_url",
+        _fake_inspect_skill_from_url,
     )
 
     async with host.run_test(size=LIBRARY_TEST_SIZE) as pilot:
@@ -1322,7 +1734,7 @@ async def test_import_row_url_remote_skill_error_becomes_status_line(
         status = await _run_skills_import_via_ui(
             screen, pilot, "https://github.com/o/r/releases/download/v1/pkg"
         )
-        assert status == "Only .zip release assets are supported."
+        assert status == "That URL is malformed or unsupported."
 
     context = await service.get_context(mode="local")
     assert context["available_skills"] == []
@@ -1347,13 +1759,21 @@ async def test_import_row_url_generic_failure_uses_classified_name_guess(
     app.skills_scope_service = service
     host = LibraryHarness(app)
 
-    async def _fake_install_skill_from_url(url, *, scope_service, **kwargs):
+    async def _fake_inspect_skill_from_url(url, *, scope_service, **kwargs):
+        return _root_package("brainstorm")
+
+    async def _fake_import_inspected_skill(*args, **kwargs):
         raise ValueError("local_skill_exists: brainstorm")
 
     monkeypatch.setattr(
         library_skill_import_controller,
-        "install_skill_from_url",
-        _fake_install_skill_from_url,
+        "inspect_skill_from_url",
+        _fake_inspect_skill_from_url,
+    )
+    monkeypatch.setattr(
+        library_skill_import_controller,
+        "import_inspected_skill",
+        _fake_import_inspected_skill,
     )
 
     async with host.run_test(size=LIBRARY_TEST_SIZE) as pilot:

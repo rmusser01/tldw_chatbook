@@ -1,10 +1,11 @@
 ---
 id: TASK-22867
 title: Classify framework repositories during Library skill import
-status: To Do
-assignee: []
+status: In Progress
+assignee:
+  - codex
 created_date: '2026-08-27 04:14'
-updated_date: '2026-08-27 04:17'
+updated_date: '2026-08-28 00:00'
 labels:
   - skills
   - library
@@ -33,3 +34,38 @@ Distinguish installable skill bundles from generic framework repositories and pr
 - [ ] #5 TASK-613's single in-flight import contract applies across file, folder, zip, and URL imports; leaving Library reports authoritative completion rather than pretending to cancel an accepted threaded install.
 - [ ] #6 Local fixture tests cover each classification, multiple-skill selection, shared in-flight behavior, trust handoff, and redacted network failures.
 <!-- AC:END -->
+
+## Implementation Plan
+
+ADR required: no
+
+ADR path: N/A
+
+Reason: This adds truthful classification and recovery states while preserving ADR-009's trust boundary, ADR-069's import-copy posture, TASK-613's app-owned single-flight coordinator, and the existing remote-fetch/import security contracts.
+
+1. Define and test one pure bounded classifier for root skills, multi-skill repositories, valid framework repositories, malformed/unsupported inputs, and remote fetch/auth failures.
+2. Preserve fetch/import separation: retain one bounded archive through explicit candidate choice, never execute repository code, and route successful selected imports through the existing trust-pending seam.
+3. Add generic multi-skill choice and framework recovery states to Library, sharing TASK-613's app-owned operation lifecycle across local and remote paths.
+4. Verify local fixtures, trust handoff, redacted failures, normal/compact Library UX, and unchanged SSRF/runtime/project-skill boundaries; update user guidance and implementation notes.
+
+## Implementation Notes
+
+- Added one bounded directory/zip classifier and a retained remote
+  inspect-then-import seam. Multiple candidates require one explicit selection and
+  reuse the exact inspected bytes/hash; framework and malformed packages import
+  nothing.
+- Extended TASK-613's existing app-owned coordinator rather than adding another
+  pipeline. Initial inspection, choice, selected import, Cancel, Retry, navigation,
+  routed replacement, and terminal cleanup share its one single-flight lifecycle.
+- Added the generic framework recovery and failed/Retry states, a mounted
+  normal/compact candidate modal, the explicit **Import skill…** vocabulary, and the
+  existing trust-review handoff with `trust_approved=False`.
+- Preserved ADR-009, ADR-069, SSRF/redirect/deadline/archive caps, and runtime-policy
+  boundaries. No new ADR, dependency, framework-specific integration, repository-code
+  execution, or briefing-to-hunt handoff was added.
+- Exact targeted verification: 121 passed with one inherited Requests dependency
+  warning. Additional focused canvas coverage: 9 passed, 136 deselected. Ruff,
+  compilation, Impeccable detector, and `git diff --check` passed. See
+  `.superpowers/sdd/2026-08-28-library-skill-framework-classification/task-1-report.md`.
+- Status remains In Progress and the acceptance criteria remain unchecked pending
+  independent review.

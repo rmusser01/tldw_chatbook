@@ -432,6 +432,7 @@ from ..Library_Modules.library_skill_import_controller import (
     LIBRARY_SKILLS_IMPORT_WORKER_GROUP,
     ensure_library_skill_import_coordinator,
 )
+from ..Library_Modules.skill_import_choice_modal import SkillImportChoiceModal
 from ...STT.transcribe_cpp_config import (
     configure_model_path as configure_transcribe_cpp_model_path,
     is_gguf_file,
@@ -3203,6 +3204,7 @@ class LibraryScreen(BaseAppScreen):
         self._library_skill_import_coordinator = (
             ensure_library_skill_import_coordinator(app_instance)
         )
+        self._library_skill_choice_presented_generation = -1
         self._library_new_profile_admission = bool(
             getattr(app_instance, "library_new_profile_admission", False)
         )
@@ -9093,6 +9095,9 @@ class LibraryScreen(BaseAppScreen):
         self._register_footer_shortcuts()
         self.call_after_refresh(self._sync_library_media_reader_layout_from_shell)
         self.call_after_refresh(self._sync_library_ordinary_rail_width_contract)
+        self.call_after_refresh(
+            self._present_library_skills_import_choice_if_needed
+        )
         if (
             self._library_new_profile_admission
             and not self._library_lifecycle_was_stored
@@ -14763,6 +14768,15 @@ class LibraryScreen(BaseAppScreen):
                             import_status=self._library_skills_import_status,
                             import_review_name=self._library_skills_import_review_name,
                             import_in_flight=self._library_skills_import_in_flight,
+                            import_package_kind=(
+                                self._library_skill_import_coordinator.snapshot.package_kind
+                            ),
+                            import_recovery_actions=(
+                                self._library_skill_import_coordinator.snapshot.recovery_actions
+                            ),
+                            import_retryable=(
+                                self._library_skill_import_coordinator.snapshot.retryable
+                            ),
                             # Task 5: the adaptive trust header + its
                             # confirm-gated standalone Reset action, computed
                             # off-thread (see ``_refresh_library_skills_trust_posture``).
@@ -17364,6 +17378,9 @@ class LibraryScreen(BaseAppScreen):
             "import_status": "",
             "import_review_name": "",
             "import_in_flight": False,
+            "import_package_kind": "",
+            "import_recovery_actions": (),
+            "import_retryable": False,
             "sort_choices_visible": False,
             "editor_mode": self._library_skill_editor_mode,
             "tool_catalog": self._library_skill_tool_catalog,
@@ -17416,6 +17433,15 @@ class LibraryScreen(BaseAppScreen):
                 "import_status": self._library_skills_import_status,
                 "import_review_name": self._library_skills_import_review_name,
                 "import_in_flight": self._library_skills_import_in_flight,
+                "import_package_kind": (
+                    self._library_skill_import_coordinator.snapshot.package_kind
+                ),
+                "import_recovery_actions": (
+                    self._library_skill_import_coordinator.snapshot.recovery_actions
+                ),
+                "import_retryable": (
+                    self._library_skill_import_coordinator.snapshot.retryable
+                ),
                 "sort_choices_visible": self._library_skills_sort_choices_visible,
             }
         )
@@ -25195,12 +25221,9 @@ class LibraryScreen(BaseAppScreen):
             ):
                 return
             self._library_skills_import_generation += 1
-            self._library_skills_import_path = str(selected_path)
-            # Clear a prior import's success status + "Review …" button so
-            # they don't hang against the newly-picked, not-yet-imported
-            # path (review finding).
-            self._library_skills_import_status = ""
-            self._library_skills_import_review_name = ""
+            self._library_skill_import_coordinator.update_draft_path(
+                str(selected_path)
+            )
             _sync_library_canvas(self, "skills")
 
         self.app.push_screen(
@@ -25247,12 +25270,9 @@ class LibraryScreen(BaseAppScreen):
             ):
                 return
             self._library_skills_import_generation += 1
-            self._library_skills_import_path = str(selected_path)
-            # Clear a prior import's success status + "Review …" button so
-            # they don't hang against the newly-picked, not-yet-imported
-            # path (review finding).
-            self._library_skills_import_status = ""
-            self._library_skills_import_review_name = ""
+            self._library_skill_import_coordinator.update_draft_path(
+                str(selected_path)
+            )
             _sync_library_canvas(self, "skills")
 
         self.app.push_screen(
@@ -25335,9 +25355,7 @@ class LibraryScreen(BaseAppScreen):
                 return
         if self._library_skills_import_path != event.value:
             self._library_skills_import_generation += 1
-            self._library_skills_import_path = event.value
-            self._library_skills_import_status = ""
-            self._library_skills_import_review_name = ""
+            self._library_skill_import_coordinator.update_draft_path(event.value)
 
     @on(Input.Submitted, "#library-skills-import-path")
     def handle_library_skills_import_path_submitted(
@@ -25362,6 +25380,23 @@ class LibraryScreen(BaseAppScreen):
         """
         event.stop()
         self._start_library_skills_import()
+
+    @on(Button.Pressed, "#library-skills-import-retry")
+    def handle_library_skills_import_retry(self, event: Button.Pressed) -> None:
+        """Retry the exact private input behind the current safe failure receipt."""
+        event.stop()
+        if not _library_screen_is_current(self):
+            return
+        raw_path = self._library_skill_import_coordinator.claim_retry()
+        if raw_path is None:
+            return
+        _sync_library_canvas(self, "skills")
+        self.app.run_worker(
+            self._library_skill_import_coordinator.run(
+                raw_path, runtime_app=self.app
+            ),
+            group=LIBRARY_SKILLS_IMPORT_WORKER_GROUP,
+        )
 
     def _start_library_skills_import(self) -> None:
         """Validate the Import row has a non-blank path, then run the import worker.
@@ -25432,6 +25467,57 @@ class LibraryScreen(BaseAppScreen):
                     terminal_status
                 ),
             )
+            self.call_after_refresh(
+                self._present_library_skills_import_choice_if_needed
+            )
+
+    def _present_library_skills_import_choice_if_needed(self) -> None:
+        """Present one modal for the current app-owned candidate generation."""
+        snapshot = self._library_skill_import_coordinator.snapshot
+        if (
+            not self.is_mounted
+            or self.app.screen is not self
+            or self._library_selected_row_id != LIBRARY_ROW_BROWSE_SKILLS
+            or not snapshot.candidates
+            or self._library_skill_choice_presented_generation
+            == snapshot.generation
+        ):
+            return
+        choice_generation = snapshot.generation
+        self._library_skill_choice_presented_generation = choice_generation
+
+        def resolve(candidate: str | None) -> None:
+            if (
+                self._library_skill_import_coordinator.snapshot.generation
+                != choice_generation
+            ):
+                return
+            if candidate is None:
+                self._library_skill_import_coordinator.cancel_choice()
+                _sync_library_canvas(
+                    self,
+                    "skills",
+                    then=lambda: self._focus_library_control(
+                        "#library-skills-import-path"
+                    ),
+                )
+                return
+            if not self._library_skill_import_coordinator.claim_candidate(
+                candidate
+            ):
+                return
+            _sync_library_canvas(self, "skills")
+            self.app.run_worker(
+                self._library_skill_import_coordinator.run_candidate(
+                    candidate, runtime_app=self.app
+                ),
+                group=LIBRARY_SKILLS_IMPORT_WORKER_GROUP,
+            )
+
+        self.app.push_screen(
+            SkillImportChoiceModal(snapshot.candidates),
+            resolve,
+        )
 
     @on(Button.Pressed, ".library-skill-row")
     async def handle_library_skill_row(self, event: Button.Pressed) -> None:
