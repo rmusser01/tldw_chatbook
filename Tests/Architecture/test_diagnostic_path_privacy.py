@@ -294,6 +294,96 @@ def test_safe_path_transforms_are_not_candidates(source: str) -> None:
     assert scan_path_diagnostic_candidates(source, filename="safe.py") == []
 
 
+def test_module_sanitizer_alias_is_safe_in_an_unshadowed_function() -> None:
+    source = dedent(
+        """
+        import tldw_chatbook.Utils.log_sanitizer as sanitizer
+
+        def emit():
+            logger.info("Path {}", sanitizer.content_fingerprint(user_path))
+        """
+    )
+
+    assert scan_path_diagnostic_candidates(source, filename="module_alias.py") == []
+
+
+def test_module_sanitizer_alias_shadowed_by_a_parameter_is_a_candidate() -> None:
+    source = dedent(
+        """
+        import tldw_chatbook.Utils.log_sanitizer as sanitizer
+
+        def emit(sanitizer):
+            logger.info("Path {}", sanitizer.content_fingerprint(user_path))
+        """
+    )
+
+    candidates = scan_path_diagnostic_candidates(
+        source, filename="shadowed_module_alias.py"
+    )
+
+    assert len(candidates) == 1
+    assert candidates[0]["scope"] == "emit"
+    assert candidates[0]["path_expressions"] == [
+        "sanitizer.content_fingerprint(user_path)"
+    ]
+
+
+def test_function_local_sanitizer_alias_does_not_bless_a_sibling_scope() -> None:
+    source = dedent(
+        """
+        def safe_emit():
+            import tldw_chatbook.Utils.log_sanitizer as sanitizer
+            logger.info("Path {}", sanitizer.content_fingerprint(user_path))
+
+        def unsafe_emit(sanitizer):
+            logger.info("Path {}", sanitizer.content_fingerprint(user_path))
+        """
+    )
+
+    candidates = scan_path_diagnostic_candidates(
+        source, filename="function_local_alias.py"
+    )
+
+    assert len(candidates) == 1
+    assert candidates[0]["scope"] == "unsafe_emit"
+    assert candidates[0]["path_expressions"] == [
+        "sanitizer.content_fingerprint(user_path)"
+    ]
+
+
+@pytest.mark.parametrize(
+    "source",
+    [
+        pytest.param(
+            dedent(
+                """
+                def emit(content_fingerprint):
+                    logger.info("Path {}", content_fingerprint(user_path))
+                """
+            ),
+            id="parameter",
+        ),
+        pytest.param(
+            dedent(
+                """
+                def emit(transform):
+                    content_fingerprint = transform
+                    logger.info("Path {}", content_fingerprint(user_path))
+                """
+            ),
+            id="assignment",
+        ),
+    ],
+)
+def test_shadowed_unqualified_safe_transform_is_a_candidate(source: str) -> None:
+    candidates = scan_path_diagnostic_candidates(
+        source, filename="shadowed_unqualified.py"
+    )
+
+    assert len(candidates) == 1
+    assert candidates[0]["path_expressions"] == ["content_fingerprint(user_path)"]
+
+
 @pytest.mark.parametrize(
     "method",
     ["content_fingerprint", "redact_user_paths"],
@@ -317,6 +407,40 @@ def test_loguru_path_shaped_keyword_taints_a_generic_value() -> None:
 
     assert len(candidates) == 1
     assert candidates[0]["path_expressions"] == ["root=value"]
+
+
+def test_path_shaped_hint_preserves_recursively_proven_safe_value() -> None:
+    source = 'logger.info("Workspace {root}", root=str(content_fingerprint(user_path)))'
+
+    assert scan_path_diagnostic_candidates(source, filename="safe_wrapper.py") == []
+
+
+def test_tainted_child_dominates_an_ordinary_wrapper() -> None:
+    candidates = scan_path_diagnostic_candidates(
+        'logger.info("Workspace {root}", root=str(user_path))',
+        filename="tainted_wrapper.py",
+    )
+
+    assert len(candidates) == 1
+    assert candidates[0]["path_expressions"] == ["str(user_path)"]
+
+
+def test_tainted_descendant_dominates_a_comprehension_wrapper() -> None:
+    source = dedent(
+        """
+        def emit(raw):
+            source_path = Path(raw)
+            wrapped = [str(value) for value in source_path]
+            logger.info("Wrapped {}", wrapped)
+        """
+    )
+
+    candidates = scan_path_diagnostic_candidates(
+        source, filename="tainted_comprehension.py"
+    )
+
+    assert len(candidates) == 1
+    assert candidates[0]["path_expressions"] == ["wrapped"]
 
 
 @pytest.mark.parametrize(

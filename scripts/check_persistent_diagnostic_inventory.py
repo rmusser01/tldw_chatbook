@@ -40,6 +40,7 @@ import os
 import sys
 import warnings
 from collections import Counter
+from enum import Enum
 from pathlib import Path
 from typing import Any
 
@@ -104,6 +105,12 @@ PATH_PRIVACY_RULES = {
 }
 
 
+class _PathState(Enum):
+    UNKNOWN = 0
+    PROVEN_SAFE = 1
+    TAINTED = 2
+
+
 def _attribute_parts(node: ast.AST) -> list[str]:
     parts: list[str] = []
     while isinstance(node, (ast.Attribute, ast.Call)):
@@ -142,22 +149,127 @@ def _logger_symbols(tree: ast.AST) -> set[str]:
     return symbols
 
 
-def _log_sanitizer_qualifiers(tree: ast.AST) -> set[tuple[str, ...]]:
-    qualifiers = {LOG_SANITIZER_MODULE}
+def _target_bound_names(target: ast.AST) -> set[str]:
+    if isinstance(target, ast.Name):
+        return {target.id}
+    if isinstance(target, (ast.List, ast.Tuple)):
+        return {
+            name for element in target.elts for name in _target_bound_names(element)
+        }
+    if isinstance(target, ast.Starred):
+        return _target_bound_names(target.value)
+    return set()
+
+
+def _parameter_names(node: ast.FunctionDef | ast.AsyncFunctionDef) -> set[str]:
+    arguments = node.args
+    names = {
+        argument.arg
+        for argument in [
+            *arguments.posonlyargs,
+            *arguments.args,
+            *arguments.kwonlyargs,
+        ]
+    }
+    if arguments.vararg is not None:
+        names.add(arguments.vararg.arg)
+    if arguments.kwarg is not None:
+        names.add(arguments.kwarg.arg)
+    return names
+
+
+def _approved_sanitizer_qualifier(
+    node: ast.Import | ast.ImportFrom, alias: ast.alias
+) -> tuple[str, ...] | None:
+    if isinstance(node, ast.Import):
+        if tuple(alias.name.split(".")) != LOG_SANITIZER_MODULE:
+            return None
+        return (alias.asname,) if alias.asname else LOG_SANITIZER_MODULE
+    if (
+        node.module == ".".join(LOG_SANITIZER_MODULE[:-1])
+        and alias.name == LOG_SANITIZER_MODULE[-1]
+    ):
+        return (alias.asname or alias.name,)
+    return None
+
+
+def _import_bound_name(node: ast.Import | ast.ImportFrom, alias: ast.alias) -> str:
+    if alias.asname:
+        return alias.asname
+    if isinstance(node, ast.Import):
+        return alias.name.split(".", 1)[0]
+    return alias.name
+
+
+def _safe_transform_contexts(
+    tree: ast.Module, lexical_scopes: dict[int, ast.AST]
+) -> dict[int, tuple[frozenset[tuple[str, ...]], frozenset[str]]]:
+    """Resolve approved sanitizer names without leaking aliases across scopes."""
+    scope_ids = {id(scope) for scope in lexical_scopes.values()}
+    local_qualifiers: dict[int, set[tuple[str, ...]]] = {
+        scope_id: set() for scope_id in scope_ids
+    }
+    shadowed: dict[int, set[str]] = {scope_id: set() for scope_id in scope_ids}
+    module_scope_id = id(tree)
+    local_qualifiers[module_scope_id].add(LOG_SANITIZER_MODULE)
+
     for node in ast.walk(tree):
-        if isinstance(node, ast.Import):
+        scope_id = id(lexical_scopes[id(node)])
+        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+            shadowed[scope_id].update(_parameter_names(node))
+        elif isinstance(node, ast.Assign):
+            for target in node.targets:
+                shadowed[scope_id].update(_target_bound_names(target))
+        elif isinstance(node, (ast.AnnAssign, ast.AugAssign, ast.NamedExpr)):
+            shadowed[scope_id].update(_target_bound_names(node.target))
+        elif isinstance(node, (ast.For, ast.AsyncFor)):
+            shadowed[scope_id].update(_target_bound_names(node.target))
+        elif isinstance(node, (ast.With, ast.AsyncWith)):
+            for item in node.items:
+                if item.optional_vars is not None:
+                    shadowed[scope_id].update(_target_bound_names(item.optional_vars))
+        elif isinstance(node, ast.ExceptHandler) and node.name is not None:
+            shadowed[scope_id].add(node.name)
+        elif isinstance(node, (ast.Import, ast.ImportFrom)):
             for alias in node.names:
-                if tuple(alias.name.split(".")) == LOG_SANITIZER_MODULE:
-                    qualifiers.add(
-                        (alias.asname,) if alias.asname else LOG_SANITIZER_MODULE
-                    )
-        elif isinstance(node, ast.ImportFrom) and node.module == ".".join(
-            LOG_SANITIZER_MODULE[:-1]
-        ):
-            for alias in node.names:
-                if alias.name == LOG_SANITIZER_MODULE[-1]:
-                    qualifiers.add((alias.asname or alias.name,))
-    return qualifiers
+                qualifier = _approved_sanitizer_qualifier(node, alias)
+                if qualifier is not None:
+                    local_qualifiers[scope_id].add(qualifier)
+                    continue
+                is_approved_direct_import = (
+                    isinstance(node, ast.ImportFrom)
+                    and node.module == ".".join(LOG_SANITIZER_MODULE)
+                    and alias.name in SAFE_PATH_TRANSFORMS
+                    and (alias.asname or alias.name) in SAFE_PATH_TRANSFORMS
+                )
+                if not is_approved_direct_import:
+                    shadowed[scope_id].add(_import_bound_name(node, alias))
+
+    module_shadowed = shadowed[module_scope_id]
+    module_qualifiers = {
+        qualifier
+        for qualifier in local_qualifiers[module_scope_id]
+        if qualifier[0] not in module_shadowed
+    }
+    contexts: dict[int, tuple[frozenset[tuple[str, ...]], frozenset[str]]] = {}
+    for scope_id in scope_ids:
+        local_shadowed = shadowed[scope_id]
+        qualifiers = {
+            qualifier
+            for qualifier in local_qualifiers[scope_id]
+            if qualifier[0] not in local_shadowed
+        }
+        if scope_id != module_scope_id:
+            qualifiers.update(
+                qualifier
+                for qualifier in module_qualifiers
+                if qualifier[0] not in local_shadowed
+            )
+        contexts[scope_id] = (
+            frozenset(qualifiers),
+            frozenset(module_shadowed | local_shadowed),
+        )
+    return contexts
 
 
 def _is_diagnostic_call(node: ast.Call, logger_symbols: set[str]) -> bool:
@@ -307,7 +419,9 @@ def _assignment_target_label(target: ast.AST) -> str | None:
 
 
 def _is_safe_path_transform(
-    node: ast.AST, log_sanitizer_qualifiers: set[tuple[str, ...]]
+    node: ast.AST,
+    log_sanitizer_qualifiers: frozenset[tuple[str, ...]],
+    shadowed_names: frozenset[str],
 ) -> bool:
     if isinstance(node, ast.Attribute):
         if node.attr == "suffix":
@@ -326,7 +440,7 @@ def _is_safe_path_transform(
     if parts == ["len"]:
         return True
     if len(parts) == 1:
-        return parts[0] in SAFE_PATH_TRANSFORMS
+        return parts[0] in SAFE_PATH_TRANSFORMS and parts[0] not in shadowed_names
     return (
         parts[-1] in SAFE_PATH_TRANSFORMS
         and tuple(parts[:-1]) in log_sanitizer_qualifiers
@@ -363,36 +477,95 @@ def _get_literal_path_key(node: ast.AST) -> str | None:
     return key if _identifier_is_path_shaped(key) else None
 
 
-def _expression_is_path_tainted(
+def _expression_path_state(
     node: ast.AST,
     aliases: set[str],
-    log_sanitizer_qualifiers: set[tuple[str, ...]],
-) -> bool:
-    if _is_safe_path_transform(node, log_sanitizer_qualifiers):
-        return False
+    log_sanitizer_qualifiers: frozenset[tuple[str, ...]],
+    shadowed_names: frozenset[str],
+) -> _PathState:
+    if _is_safe_path_transform(node, log_sanitizer_qualifiers, shadowed_names):
+        return _PathState.PROVEN_SAFE
     if _is_known_path_producer(node) or _get_literal_path_key(node) is not None:
-        return True
+        return _PathState.TAINTED
     if isinstance(node, ast.Name):
-        return node.id in aliases or _identifier_is_path_shaped(node.id)
+        if node.id in aliases or _identifier_is_path_shaped(node.id):
+            return _PathState.TAINTED
+        return _PathState.UNKNOWN
     if isinstance(node, ast.Attribute):
         label = ast.unparse(node)
         if label in aliases or _identifier_is_path_shaped(node.attr):
-            return True
-    return any(
-        _expression_is_path_tainted(child, aliases, log_sanitizer_qualifiers)
+            return _PathState.TAINTED
+    if isinstance(node, ast.Constant):
+        return _PathState.PROVEN_SAFE
+
+    if isinstance(node, ast.Call):
+        function_state = _expression_path_state(
+            node.func, aliases, log_sanitizer_qualifiers, shadowed_names
+        )
+        value_states = [
+            _expression_path_state(
+                value, aliases, log_sanitizer_qualifiers, shadowed_names
+            )
+            for value in [
+                *node.args,
+                *(keyword.value for keyword in node.keywords),
+            ]
+        ]
+        if function_state is _PathState.TAINTED or any(
+            state is _PathState.TAINTED for state in value_states
+        ):
+            return _PathState.TAINTED
+        if value_states and all(
+            state is _PathState.PROVEN_SAFE for state in value_states
+        ):
+            return _PathState.PROVEN_SAFE
+        if (
+            not value_states
+            and isinstance(node.func, ast.Attribute)
+            and _expression_path_state(
+                node.func.value,
+                aliases,
+                log_sanitizer_qualifiers,
+                shadowed_names,
+            )
+            is _PathState.PROVEN_SAFE
+        ):
+            return _PathState.PROVEN_SAFE
+        return _PathState.UNKNOWN
+
+    child_states = [
+        _expression_path_state(child, aliases, log_sanitizer_qualifiers, shadowed_names)
         for child in ast.iter_child_nodes(node)
-    )
+        if not isinstance(
+            child,
+            (
+                ast.boolop,
+                ast.cmpop,
+                ast.expr_context,
+                ast.operator,
+                ast.unaryop,
+            ),
+        )
+    ]
+    if any(state is _PathState.TAINTED for state in child_states):
+        return _PathState.TAINTED
+    if child_states and all(state is _PathState.PROVEN_SAFE for state in child_states):
+        return _PathState.PROVEN_SAFE
+    return _PathState.UNKNOWN
 
 
 def _scope_path_aliases(
     assignments: dict[int, list[tuple[ast.AST, ast.AST]]],
     active_scope_ids: set[int],
-    log_sanitizer_qualifiers: set[tuple[str, ...]],
+    safe_transform_contexts: dict[
+        int, tuple[frozenset[tuple[str, ...]], frozenset[str]]
+    ],
 ) -> dict[int, set[str]]:
     aliases: dict[int, set[str]] = {
         scope_id: set() for scope_id in active_scope_ids if scope_id in assignments
     }
     for scope_id in aliases:
+        log_sanitizer_qualifiers, shadowed_names = safe_transform_contexts[scope_id]
         changed = True
         while changed:
             changed = False
@@ -402,8 +575,14 @@ def _scope_path_aliases(
                     continue
                 if label in aliases[scope_id]:
                     continue
-                if _expression_is_path_tainted(
-                    value, aliases[scope_id], log_sanitizer_qualifiers
+                if (
+                    _expression_path_state(
+                        value,
+                        aliases[scope_id],
+                        log_sanitizer_qualifiers,
+                        shadowed_names,
+                    )
+                    is _PathState.TAINTED
                 ):
                     aliases[scope_id].add(label)
                     changed = True
@@ -465,16 +644,25 @@ def _path_candidate_entry(
     *,
     scope: str,
     aliases: set[str],
-    log_sanitizer_qualifiers: set[tuple[str, ...]],
+    log_sanitizer_qualifiers: frozenset[tuple[str, ...]],
+    shadowed_names: frozenset[str],
 ) -> dict[str, Any] | None:
     labels: set[str] = set()
     for expression, hint in _diagnostic_dynamic_expressions(node):
-        if _is_safe_path_transform(expression, log_sanitizer_qualifiers):
-            continue
         expression_label = ast.unparse(expression)
-        if _expression_is_path_tainted(expression, aliases, log_sanitizer_qualifiers):
+        state = _expression_path_state(
+            expression,
+            aliases,
+            log_sanitizer_qualifiers,
+            shadowed_names,
+        )
+        if state is _PathState.TAINTED:
             labels.add(expression_label)
-        elif hint is not None and _identifier_is_path_shaped(hint):
+        elif (
+            state is _PathState.UNKNOWN
+            and hint is not None
+            and _identifier_is_path_shaped(hint)
+        ):
             labels.add(f"{hint}={expression_label}")
     sorted_labels = sorted(labels)
     if not sorted_labels:
@@ -493,8 +681,8 @@ def _scan_parsed_source(
     source: str, tree: ast.Module
 ) -> tuple[list[dict[str, Any]], list[dict[str, Any]], list[dict[str, Any]]]:
     symbols = _logger_symbols(tree)
-    log_sanitizer_qualifiers = _log_sanitizer_qualifiers(tree)
     scope_names, lexical_scopes, assignments = _scope_contexts(tree)
+    safe_transform_contexts = _safe_transform_contexts(tree, lexical_scopes)
     diagnostics: list[dict[str, Any]] = []
     sinks: list[dict[str, Any]] = []
     diagnostic_calls: list[ast.Call] = []
@@ -529,17 +717,19 @@ def _scan_parsed_source(
     aliases = _scope_path_aliases(
         assignments,
         {id(lexical_scopes[id(node)]) for node in diagnostic_calls},
-        log_sanitizer_qualifiers,
+        safe_transform_contexts,
     )
     candidates: list[dict[str, Any]] = []
     for node in diagnostic_calls:
         scope_id = id(lexical_scopes[id(node)])
+        log_sanitizer_qualifiers, shadowed_names = safe_transform_contexts[scope_id]
         candidate = _path_candidate_entry(
             source,
             node,
             scope=scope_names.get(id(node), ""),
             aliases=aliases.get(scope_id, set()),
             log_sanitizer_qualifiers=log_sanitizer_qualifiers,
+            shadowed_names=shadowed_names,
         )
         if candidate is not None:
             candidates.append(candidate)
