@@ -7449,8 +7449,9 @@ class ConsoleChatStore:
         round owner and is likewise session-only.
 
         ``raw_cli_presentation`` is the narrower callback-free raw-command
-        display contract. ``record_trajectory=False`` is reserved for direct
-        user commands, which are local actions rather than agent tool calls.
+        display contract. ``record_trajectory=False`` is reserved for raw CLI
+        markers whose durable accounting lives elsewhere: direct user commands
+        use local-command run logs, while model calls use the agent run log.
         """
         self._session_or_raise(session_id)
         if raw_cli_presentation is not None and (

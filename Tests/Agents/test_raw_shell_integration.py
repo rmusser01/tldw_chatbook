@@ -213,6 +213,13 @@ def test_controller_composes_raw_provider_only_while_all_live_gates_are_open(
     runtime.armed = armed
     gates: dict[str, object] = {"blocked": blocked, "state": ASK}
     controller = object.__new__(ConsoleChatController)
+
+    def progress_sink(_run_id, _call_id, _event) -> None:
+        return None
+
+    controller._agent_bridge = SimpleNamespace(
+        raw_shell_progress_sink=progress_sink
+    )
     controller.app = SimpleNamespace(
         unified_mcp_service=_PermissionService(gates),
         raw_cli_runtime=runtime,
@@ -229,6 +236,8 @@ def test_controller_composes_raw_provider_only_while_all_live_gates_are_open(
 
     assert (provider is not None) is expected
     assert (hook is not None) is expected
+    if provider is not None:
+        assert provider._progress_sink is progress_sink  # noqa: SLF001
 
 
 class _ScriptedChat:
@@ -289,7 +298,11 @@ def test_agent_service_executes_raw_shell_as_an_ordinary_tool_result(
     assert outcome.final_text == "The raw command completed."
     assert len(runtime.execute_calls) == 1
     assert len(approval_rows) == 1
+    tool_calls = [step for step in outcome.steps if step.kind == "tool_call"]
     tool_results = [step for step in outcome.steps if step.kind == "tool_result"]
+    assert tool_calls[0].call_id
+    assert tool_results[0].call_id == tool_calls[0].call_id
+    assert runtime.execute_calls[0].invocation_id == tool_calls[0].call_id
     assert [step.tool_name for step in tool_results] == ["shell_exec"]
     assert "hello from raw shell" in tool_results[0].result
     assert any(

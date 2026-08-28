@@ -8,6 +8,7 @@ from tldw_chatbook.Agents.agent_models import (
     SPAWN_TOOL_NAME,
     STEP_SPAWN,
     STEP_TOOL_CALL,
+    STEP_TOOL_RESULT,
     AgentConfig,
 )
 from tldw_chatbook.Agents.agent_service import AgentService
@@ -46,7 +47,9 @@ def test_on_step_receives_primary_steps_in_order(tmp_path):
         db,
         reg,
         chat_call=chat_call,
-        on_step=lambda step, kind, run_id: seen.append((kind, step.kind)),
+        on_step=lambda step, kind, run_id: seen.append(
+            (kind, step.kind, step.call_id)
+        ),
     )
     _run_id, outcome = service.run_turn(
         conversation_id="c1",
@@ -57,9 +60,16 @@ def test_on_step_receives_primary_steps_in_order(tmp_path):
         api_endpoint="llama_cpp",
     )
     assert outcome.status == "done"
-    kinds = [k for (_who, k) in seen]
+    kinds = [kind for (_who, kind, _call_id) in seen]
     assert STEP_TOOL_CALL in kinds
-    assert all(who == AGENT_KIND_PRIMARY for (who, _k) in seen)
+    assert all(who == AGENT_KIND_PRIMARY for (who, _kind, _call_id) in seen)
+    tool_pair = [
+        call_id
+        for (_who, kind, call_id) in seen
+        if kind in {STEP_TOOL_CALL, STEP_TOOL_RESULT}
+    ]
+    assert tool_pair[0]
+    assert tool_pair == [tool_pair[0], tool_pair[0]]
 
 
 def test_on_step_distinguishes_subagent_steps(tmp_path, inline_spawns):

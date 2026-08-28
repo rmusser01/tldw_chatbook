@@ -517,7 +517,7 @@ class LoopDeps:
     wall_clock: Callable[[], datetime] = _utc_now
     # Optional production-only causal dispatch seams. Appended after every
     # legacy field so positional LoopDeps callers retain their exact slots.
-    invoke_tool_at_step: Callable[[ToolCall, int], ToolResult] | None = None
+    invoke_tool_at_step: Callable[[ToolCall, int, str], ToolResult] | None = None
     spawn_at_step: Callable[[str, int, str | None], ToolResult] | None = None
     send_to_agent_at_step: (
         Callable[[str, str, int], ToolResult] | None
@@ -895,6 +895,7 @@ def run_agent_loop(
     restore_history_start: int | None = None
     recent_calls: deque = deque(maxlen=LOOP_DETECTION_N * MAX_LOOP_PERIOD)
     context_trace_reserved = False
+    current_call_correlation = ""
 
     def claim_owner_seq() -> int:
         nonlocal owner_sequence
@@ -906,6 +907,8 @@ def run_agent_loop(
 
     def add(kind: str, *, counts_toward_budget: bool = True, **kw) -> AgentStep:
         nonlocal budget_steps
+        if kind in {STEP_TOOL_CALL, STEP_TOOL_RESULT} and "call_id" not in kw:
+            kw["call_id"] = current_call_correlation
         if not kw.get("created_at"):
             kw["created_at"] = safe_utc_timestamp(deps.wall_clock)
         if kw.get("owner_seq") is None:
@@ -1490,6 +1493,7 @@ def run_agent_loop(
                 trace_state["decision"] = decision_step
 
         for call in calls:
+            current_call_correlation = str(call_trace[id(call)]["correlation"])
             verdict = (
                 (verdicts.get(call.call_id) if call.call_id else None)
                 or verdicts.get(call.name, "proceed")
@@ -1909,7 +1913,11 @@ def run_agent_loop(
                         STEP_TOOL_CALL, tool_name=call.name, args=dict(call.args)
                     )
                     if deps.invoke_tool_at_step is not None:
-                        result = deps.invoke_tool_at_step(call, tool_step.index)
+                        result = deps.invoke_tool_at_step(
+                            call,
+                            tool_step.index,
+                            current_call_correlation,
+                        )
                     else:
                         result = deps.invoke_tool(call)
 

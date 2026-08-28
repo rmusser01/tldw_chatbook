@@ -44,6 +44,9 @@ RAW_SHELL_SESSION_SCOPE_NOTICE = (
 )
 RAW_SHELL_APPROVAL_OPTIONS = ("approve_once", "approve_session", "deny")
 _MAX_MODEL_RESULT_CHARS = 4000
+RawShellProgressSink = Callable[
+    [str, str, RawCliStreamEvent | RawCliResult], None
+]
 
 _ALLOWED_ARGUMENTS = frozenset(
     {"command", "shell", "initial_directory", "timeout_seconds"}
@@ -132,6 +135,7 @@ class RawShellToolProvider:
         resolve_state: Callable[[HubTool], EffectiveToolState] | None = None,
         local_tools_enabled: Callable[[], bool] = lambda: True,
         kill_switch: Callable[[], bool] = lambda: False,
+        progress_sink: RawShellProgressSink | None = None,
     ) -> None:
         if not isinstance(console_session_id, str) or not console_session_id.strip():
             raise ValueError("console_session_id must be a nonblank string")
@@ -145,6 +149,7 @@ class RawShellToolProvider:
         )
         self._local_tools_enabled = local_tools_enabled
         self._kill_switch = kill_switch
+        self._progress_sink = progress_sink
         self._stamps: dict[tuple[str, str], str] = {}
         self._stamps_lock = threading.Lock()
         self._authority_generation = 0
@@ -339,7 +344,10 @@ class RawShellToolProvider:
     def _pop_stamp(self, run_id: str, fallback: str) -> str | None:
         key = current_tool_call_id() or fallback
         with self._stamps_lock:
-            return self._stamps.pop((run_id, key), None)
+            stamp = self._stamps.pop((run_id, key), None)
+            if stamp is None and key != fallback:
+                stamp = self._stamps.pop((run_id, fallback), None)
+            return stamp
 
     @contextmanager
     def stamp_scope(self, run_id: str) -> Iterator[None]:
@@ -368,16 +376,16 @@ class RawShellToolProvider:
         name = tool_id.split(":", 1)[-1]
         if name != RAW_SHELL_TOOL_NAME:
             return ToolResult(ok=False, error=f"Unknown raw shell tool: {name}")
+        run_id = current_run_id()
+        call_id = current_tool_call_id() or RAW_SHELL_TOOL_NAME
         try:
             request = self._validated_request(
                 args,
-                invocation_id=(
-                    current_tool_call_id() or f"raw-shell-{uuid4()}"
-                ),
+                invocation_id=current_tool_call_id() or f"raw-shell-{uuid4()}",
             )
         except (TypeError, ValueError, OSError) as exc:
             return ToolResult(ok=False, error=f"invalid shell_exec request: {exc}")
-        stamp = self._pop_stamp(current_run_id(), RAW_SHELL_TOOL_NAME)
+        stamp = self._pop_stamp(run_id, RAW_SHELL_TOOL_NAME)
         if not self.catalog_enabled():
             return ToolResult.blocked(RAW_SHELL_DENY_REFUSAL)
         try:
@@ -407,7 +415,11 @@ class RawShellToolProvider:
         try:
             if resolve_raw_shell_state(self._resolve_state(self.hub_tool())) == "deny":
                 return ToolResult.blocked(RAW_SHELL_DENY_REFUSAL)
-            result = self._runtime.execute(request, lambda _event: None)
+            result = self._runtime.execute(
+                request,
+                lambda event: self._emit_progress(run_id, call_id, event),
+            )
+            self._emit_progress(run_id, call_id, result)
         except Exception as exc:
             detail = (str(exc) or type(exc).__name__)[:300]
             return ToolResult(
@@ -416,6 +428,21 @@ class RawShellToolProvider:
                 outcome="failed",
             )
         return self._tool_result(result)
+
+    def _emit_progress(
+        self,
+        run_id: str,
+        call_id: str,
+        event: RawCliStreamEvent | RawCliResult,
+    ) -> None:
+        """Forward bounded session-only progress without affecting execution."""
+        sink = self._progress_sink
+        if sink is None:
+            return
+        try:
+            sink(run_id, call_id, event)
+        except Exception:
+            return
 
     @staticmethod
     def _tool_result(result: RawCliResult) -> ToolResult:
@@ -449,6 +476,7 @@ __all__ = [
     "RAW_SHELL_SERVER_KEY",
     "RAW_SHELL_SERVER_LABEL",
     "RAW_SHELL_TOOL_NAME",
+    "RawShellProgressSink",
     "RawShellToolProvider",
     "resolve_raw_shell_state",
 ]

@@ -9794,6 +9794,7 @@ class ConsoleChatController:
         bound_request = functools.partial(
             self.request_mcp_approvals, session_id=session_id
         )
+        agent_bridge = getattr(self, "_agent_bridge", None)
         provider = RawShellToolProvider(
             runtime=runtime,
             console_session_id=session_id,
@@ -9801,6 +9802,11 @@ class ConsoleChatController:
             resolve_state=service.gate_tool_test,
             local_tools_enabled=lambda: local_enabled,
             kill_switch=kill_switch,
+            progress_sink=(
+                agent_bridge.raw_shell_progress_sink
+                if agent_bridge is not None
+                else None
+            ),
         )
         providers = getattr(self, "_raw_shell_providers", None)
         if providers is None:
