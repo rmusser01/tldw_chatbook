@@ -3442,3 +3442,128 @@ async def test_run_setup_wizard_action_opens_once(
                 if type(screen).__name__ == "FirstRunSetupWizard"
             ]
             assert len(wizards) == 1, "action must never stack a second wizard"
+
+
+# ---------------------------------------------------------------------------
+# TASK-23089 (Qodo review, PR #2158): the encoding defect was invisible to
+# every mocked test, because httpx.MockTransport never compresses and a 401
+# returns before the body is read. This drives the real ProviderStep UI
+# against a real local HTTP peer that content-negotiates the way
+# api.openai.com does, so the identity-encoding contract is covered through
+# the flow a user actually takes rather than at the function that changed.
+# ---------------------------------------------------------------------------
+
+
+class _RecordingModelsServer:
+    """A real HTTP peer that gzips when offered, like api.openai.com does."""
+
+    def __init__(self, model_ids: "list[str]") -> None:
+        import http.server
+        import json as _json
+        import threading
+
+        self.accept_encodings: list[str] = []
+        payload = _json.dumps(
+            {"data": [{"id": model_id} for model_id in model_ids]}
+        ).encode("utf-8")
+        recorder = self.accept_encodings
+
+        class Handler(http.server.BaseHTTPRequestHandler):
+            def do_GET(self) -> None:  # noqa: N802 - stdlib callback name
+                accept = self.headers.get("Accept-Encoding", "")
+                recorder.append(accept)
+                body = payload
+                extra = []
+                # The bounded reader streams raw bytes and rejects any
+                # non-identity encoding, so a caller that forgets to ask for
+                # identity fails here exactly as it did against the real API.
+                if "gzip" in accept.casefold():
+                    import gzip as _gzip
+
+                    body = _gzip.compress(payload)
+                    extra.append(("Content-Encoding", "gzip"))
+                self.send_response(200)
+                self.send_header("Content-Type", "application/json")
+                for name, value in extra:
+                    self.send_header(name, value)
+                self.send_header("Content-Length", str(len(body)))
+                self.end_headers()
+                self.wfile.write(body)
+
+            def log_message(self, *args) -> None:  # noqa: D102 - silence stdlib
+                return
+
+        self._server = http.server.ThreadingHTTPServer(("127.0.0.1", 0), Handler)
+        self.base_url = f"http://127.0.0.1:{self._server.server_port}"
+        self._thread = threading.Thread(target=self._server.serve_forever, daemon=True)
+
+    def __enter__(self) -> "_RecordingModelsServer":
+        self._thread.start()
+        return self
+
+    def __exit__(self, *_exc) -> None:
+        self._server.shutdown()
+        self._server.server_close()
+        self._thread.join(timeout=5)
+
+
+@pytest.mark.loopback_network
+@pytest.mark.asyncio
+async def test_provider_test_button_requests_identity_encoding_from_a_real_peer(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """Pressing Test must not advertise gzip to a content-negotiating peer.
+
+    Live incident: httpx advertised "gzip, deflate" by default,
+    api.openai.com honored it, and the bounded raw reader rejected the
+    compressed body -- so a *valid* key reported "unreachable: connection
+    error". This asserts the header on the wire from a real server's point
+    of view, through the step's own button, which is the only vantage point
+    that would have caught it: the unit tests assert the same contract but
+    against httpx.MockTransport, which never compresses.
+    """
+    with _RecordingModelsServer([f"model-{index}" for index in range(128)]) as server:
+        app = _build_fresh_wizard_app(monkeypatch, tmp_path)
+        with patch("tldw_chatbook.app.get_cli_setting", side_effect=_test_cli_setting):
+            async with app.run_test(size=(140, 45)) as pilot:
+                await _wait_until(
+                    pilot, lambda: type(app.screen).__name__ == "FirstRunSetupWizard"
+                )
+                container = app.screen.query_one(SetupWizardContainer)
+                await _wait_until(pilot, lambda: container.can_proceed)
+                _press(app.screen, "#wizard-next")
+                await _wait_until(
+                    pilot, lambda: _current_step_id(container) == STEP_PROVIDER
+                )
+
+                provider = next(
+                    s for s in container.steps if isinstance(s, ProviderStep)
+                )
+                provider.select_provider("llama_cpp")
+                await pilot.pause(0.3)
+                provider.query_one("#setup-provider-endpoint", Input).value = (
+                    server.base_url
+                )
+                await pilot.pause(0.3)
+
+                status = provider.query_one("#setup-provider-probe-status", Static)
+                provider.query_one("#setup-provider-test", Button).press()
+                await _wait_until(
+                    pilot,
+                    lambda: bool(server.accept_encodings)
+                    and str(status.renderable).startswith(("✗", "✓")),
+                    timeout_seconds=25.0,
+                )
+
+    assert server.accept_encodings, "the step never reached the models endpoint"
+    assert all(
+        "gzip" not in encoding.casefold() for encoding in server.accept_encodings
+    ), (
+        "a request advertised gzip; the bounded raw reader rejects compressed "
+        f"bodies and the step reports a live peer as unreachable: "
+        f"{server.accept_encodings}"
+    )
+    assert str(status.renderable).startswith("✓"), (
+        "a reachable, gzip-capable peer must verify as reachable, not fail "
+        f"the way the live incident did: {status.renderable!r}"
+    )
