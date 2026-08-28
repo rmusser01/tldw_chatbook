@@ -8,6 +8,7 @@ import socket
 import subprocess
 import sys
 import textwrap
+import time
 from pathlib import Path
 
 import pytest
@@ -20,6 +21,9 @@ RUNNER_PATH = (
 CHILD_PATH = (
     REPO_ROOT
     / "Docs/superpowers/reviews/evidence/task-23019/task23019_closeout_child.py"
+)
+SCENARIO_PATH = (
+    REPO_ROOT / "Docs/superpowers/reviews/evidence/task-23019/task23019_scenarios.py"
 )
 
 NETWORK_ATTEMPTS = (
@@ -136,12 +140,36 @@ def _load_runner():
     return module
 
 
+def test_parent_module_does_not_require_selectors_for_pipe_drain(monkeypatch):
+    real_import = builtins.__import__
+
+    def without_selectors(name, *args, **kwargs):
+        if name == "selectors":
+            raise ImportError(name)
+        return real_import(name, *args, **kwargs)
+
+    monkeypatch.setattr(builtins, "__import__", without_selectors)
+
+    module = _load_runner()
+
+    assert callable(module._run_bounded_process)
+
+
 def _load_child():
     spec = importlib.util.spec_from_file_location(
         "task23019_closeout_child", CHILD_PATH
     )
     assert spec is not None and spec.loader is not None
     module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
+def _load_scenarios():
+    spec = importlib.util.spec_from_file_location("task23019_scenarios", SCENARIO_PATH)
+    assert spec is not None and spec.loader is not None
+    module = importlib.util.module_from_spec(spec)
+    sys.modules[spec.name] = module
     spec.loader.exec_module(module)
     return module
 
@@ -160,6 +188,20 @@ def _fake_git(*, head: str = "abc", tree: str = "tree-1", dirty: bool = False):
 
 def _error_category(error: pytest.ExceptionInfo[Exception]) -> str:
     return getattr(error.value, "category")
+
+
+def _expected_live_keys(root: str) -> set[str]:
+    if root == "common_matrix":
+        return {
+            f"{destination}-{width}x{height}"
+            for destination in ("media", "conversations", "notes", "prompts", "skills")
+            for width, height in ((160, 50), (120, 35), (100, 30), (80, 24))
+        }
+    return {root}
+
+
+def _passing_live_payload(root: str) -> dict[str, dict[str, str]]:
+    return {key: {"status": "PASS"} for key in _expected_live_keys(root)}
 
 
 def test_child_module_imports_when_fcntl_and_msvcrt_are_unavailable(monkeypatch):
@@ -741,10 +783,21 @@ def test_parent_cli_accepts_each_declared_option():
     live_only = module.parse_options(["--live-only", "--no-promote"])
     assert live_only.live_only is True
     assert live_only.no_promote is True
-    assert set(live_only.live_cases) == module.DECLARED_LIVE_CASES
+    assert live_only.live_cases == module.EXECUTABLE_LIVE_ROOTS
 
     evidence = module.parse_options(["--verify-evidence", "some/bundle"])
     assert evidence.verify_evidence == Path("some/bundle")
+
+
+@pytest.mark.parametrize("durable_key", ("resize_purity", "single_app_route_cycle"))
+def test_catalogue_durable_key_is_not_accepted_as_a_live_scenario(durable_key):
+    module = _load_runner()
+
+    with pytest.raises(module.CloseoutError, match="scenario_not_defined"):
+        module.parse_options(["--development-run", "--live-case", durable_key])
+
+    assert durable_key in module.DURABLE_EVIDENCE_ALIASES
+    assert module.DURABLE_EVIDENCE_ALIASES[durable_key]
 
 
 @pytest.mark.parametrize("arguments", [["--not-an-option"], ["--subject-revision"]])
@@ -1348,6 +1401,96 @@ def test_child_ancestor_traversal_does_not_grant_content_or_metadata_read(
         reached = os.path.join(os.environ["TMPDIR"], "reached.txt")
         open(reached, "w", encoding="utf-8").write("yes")
         {attempt}
+        """
+    ).strip()
+
+    result, scratch, _checkout = _run_pytest_child(module, tmp_path, body)
+
+    assert (scratch / "tmp/reached.txt").read_text(encoding="utf-8") == "yes"
+    _assert_containment_attempt(module, result, scratch, "filesystem_read_denied")
+
+
+@pytest.mark.skipif(sys.platform != "darwin", reason="macOS /private traversal")
+def test_macos_runtime_ancestors_are_not_content_read_files(monkeypatch):
+    module = _load_child()
+    scratch = "/private/var/folders/aa/bb/T/task23019/scratch"
+    monkeypatch.setattr(module.sys, "platform", "darwin")
+
+    _roots, files = module._runtime_authority(
+        "/checkout",
+        scratch,
+        configured_paths=(),
+        locale_root="/missing-locale",
+        language="C",
+    )
+
+    assert "/private" not in files
+    assert "/private/var/folders/aa/bb/T" not in files
+
+
+@pytest.mark.skipif(sys.platform != "darwin", reason="macOS /private traversal")
+def test_child_allows_named_nofollow_metadata_for_macos_ancestor(tmp_path):
+    module = _load_runner()
+    body = textwrap.dedent(
+        """
+        os.lstat("/private")
+        os.stat("/private", follow_symlinks=False)
+        open(os.path.join(os.environ["TMPDIR"], "metadata.txt"), "w").write("ok")
+        """
+    ).strip()
+
+    result, scratch, _checkout = _run_pytest_child(
+        module, tmp_path, body, must_not_continue=False
+    )
+
+    assert result.returncode == 0
+    assert (scratch / "tmp/metadata.txt").read_text() == "ok"
+    assert (scratch / "attempts.jsonl").read_bytes() == b""
+
+
+@pytest.mark.skipif(sys.platform != "darwin", reason="macOS /private traversal")
+@pytest.mark.parametrize(
+    "attempt",
+    (
+        'os.open("/private", os.O_RDONLY)',
+        'os.listdir("/private")',
+        'glob.glob("/private/*")',
+    ),
+)
+def test_child_macos_metadata_ancestor_denies_content_and_enumeration(
+    attempt, tmp_path
+):
+    module = _load_runner()
+    body = textwrap.dedent(
+        f"""
+        import glob
+        reached = os.path.join(os.environ["TMPDIR"], "reached.txt")
+        open(reached, "w", encoding="utf-8").write("yes")
+        {attempt}
+        """
+    ).strip()
+
+    result, scratch, _checkout = _run_pytest_child(module, tmp_path, body)
+
+    assert (scratch / "tmp/reached.txt").read_text() == "yes"
+    _assert_containment_attempt(module, result, scratch, "filesystem_read_denied")
+
+
+@pytest.mark.skipif(
+    not HAS_DIRECTORY_FD_TRAVERSAL,
+    reason="ancestor traversal coverage requires POSIX directory fds",
+)
+def test_child_traversal_descriptor_does_not_grant_absolute_metadata_read(tmp_path):
+    module = _load_runner()
+    body = textwrap.dedent(
+        """
+        flags = os.O_RDONLY | os.O_DIRECTORY
+        if hasattr(os, "O_NOFOLLOW"):
+            flags |= os.O_NOFOLLOW
+        root_fd = os.open(os.sep, flags)
+        reached = os.path.join(os.environ["TMPDIR"], "reached.txt")
+        open(reached, "w", encoding="utf-8").write("yes")
+        os.stat(os.sep, dir_fd=root_fd, follow_symlinks=False)
         """
     ).strip()
 
@@ -1985,7 +2128,7 @@ def test_parent_spawns_child_with_argument_vector_and_explicit_boundary(
             command, module.CONTAINMENT_EXIT_STATUS, "", ""
         )
 
-    monkeypatch.setattr(module.subprocess, "run", fake_run)
+    monkeypatch.setattr(module, "_run_bounded_process", fake_run)
 
     result = module.run_closeout_child(
         checkout=checkout,
@@ -2021,7 +2164,7 @@ def test_parent_child_timeout_is_stable_and_rejects_existing_results(
         )
         raise subprocess.TimeoutExpired(command, kwargs.get("timeout"))
 
-    monkeypatch.setattr(module.subprocess, "run", fake_run)
+    monkeypatch.setattr(module, "_run_bounded_process", fake_run)
 
     with pytest.raises(module.CloseoutError) as error:
         module.run_closeout_child(
@@ -2206,6 +2349,868 @@ def test_child_live_mode_imports_only_supplied_scenario_after_boundary(tmp_path)
         "contained_case": {"status": "PASS"}
     }
     assert (scratch / "tmp/live.txt").read_text(encoding="utf-8") == "settled"
+
+
+def test_child_live_mode_keeps_independently_named_results(tmp_path):
+    module = _load_runner()
+    checkout = tmp_path / "checkout"
+    checkout.mkdir()
+    scenario_file = checkout / "synthetic_scenarios.py"
+    scenario_file.write_text(
+        textwrap.dedent(
+            """
+            async def matrix():
+                return {
+                    "media-160x50": {"status": "PASS"},
+                    "notes-80x24": {"status": "PASS"},
+                }
+
+            SCENARIOS = {"common_matrix": matrix}
+            """
+        ),
+        encoding="utf-8",
+    )
+    scratch = tmp_path / "scratch"
+
+    result = module.run_closeout_child(
+        checkout=checkout,
+        scratch=scratch,
+        mode="live",
+        target=scenario_file,
+        scenario="common_matrix",
+    )
+
+    assert result.returncode == 0
+    assert result.error is None
+    assert json.loads((scratch / "live-results.json").read_text()) == {
+        "media-160x50": {"status": "PASS"},
+        "notes-80x24": {"status": "PASS"},
+    }
+
+
+def test_parent_development_live_case_uses_task_scenario_module(monkeypatch, tmp_path):
+    module = _load_runner()
+    calls = []
+
+    def fake_child(**kwargs):
+        calls.append(kwargs)
+        result_path = kwargs["scratch"] / "live-results.json"
+        result_path.parent.mkdir(parents=True, exist_ok=True)
+        result_path.write_text(
+            json.dumps(_passing_live_payload(kwargs["scenario"])),
+            encoding="utf-8",
+        )
+        return module.ChildRunResult(0, None, result_path)
+
+    monkeypatch.setattr(module, "run_closeout_child", fake_child)
+
+    result = module.run_development_live_cases(
+        checkout=REPO_ROOT,
+        scratch=tmp_path,
+        live_cases=("common_matrix",),
+    )
+
+    assert set(result) == _expected_live_keys("common_matrix")
+    assert len(calls) == 1
+    assert calls[0]["mode"] == "live"
+    assert calls[0]["scenario"] == "common_matrix"
+    assert calls[0]["target"] == SCENARIO_PATH
+
+
+@pytest.mark.parametrize("payload_kind", ("empty", "partial", "extra", "wrong-root"))
+def test_parent_rejects_nonexact_common_matrix_result_keys(
+    payload_kind, monkeypatch, tmp_path
+):
+    module = _load_runner()
+    payload = _passing_live_payload("common_matrix")
+    if payload_kind == "empty":
+        payload = {}
+    elif payload_kind == "partial":
+        payload.pop("media-160x50")
+    elif payload_kind == "extra":
+        payload["unexpected-999x999"] = {"status": "PASS"}
+    else:
+        payload = _passing_live_payload("media_capability")
+
+    def fake_child(**kwargs):
+        result_path = kwargs["scratch"] / "live-results.json"
+        result_path.parent.mkdir(parents=True, exist_ok=True)
+        result_path.write_text(json.dumps(payload), encoding="utf-8")
+        return module.ChildRunResult(0, None, result_path)
+
+    monkeypatch.setattr(module, "run_closeout_child", fake_child)
+
+    with pytest.raises(module.CloseoutError) as error:
+        module.run_development_live_cases(
+            checkout=REPO_ROOT,
+            scratch=tmp_path,
+            live_cases=("common_matrix",),
+        )
+
+    assert _error_category(error) == "live_result_keys_mismatch"
+
+
+@pytest.mark.parametrize(
+    "root",
+    (
+        "media_capability",
+        "conversations_capability",
+        "notes_capability",
+        "prompts_capability",
+        "skills_capability",
+    ),
+)
+def test_parent_requires_each_capability_root_canonical_result_name(
+    root, monkeypatch, tmp_path
+):
+    module = _load_runner()
+
+    def fake_child(**kwargs):
+        result_path = kwargs["scratch"] / "live-results.json"
+        result_path.parent.mkdir(parents=True, exist_ok=True)
+        result_path.write_text(
+            json.dumps({f"{root}-wrong": {"status": "PASS"}}), encoding="utf-8"
+        )
+        return module.ChildRunResult(0, None, result_path)
+
+    monkeypatch.setattr(module, "run_closeout_child", fake_child)
+
+    with pytest.raises(module.CloseoutError) as error:
+        module.run_development_live_cases(
+            checkout=REPO_ROOT,
+            scratch=tmp_path,
+            live_cases=(root,),
+        )
+
+    assert _error_category(error) == "live_result_keys_mismatch"
+
+
+def test_parent_rejects_duplicate_live_roots(monkeypatch, tmp_path):
+    module = _load_runner()
+
+    def fake_child(**kwargs):
+        result_path = kwargs["scratch"] / "live-results.json"
+        result_path.parent.mkdir(parents=True, exist_ok=True)
+        result_path.write_text(
+            json.dumps(_passing_live_payload(kwargs["scenario"])), encoding="utf-8"
+        )
+        return module.ChildRunResult(0, None, result_path)
+
+    monkeypatch.setattr(module, "run_closeout_child", fake_child)
+
+    with pytest.raises(module.CloseoutError) as error:
+        module.run_development_live_cases(
+            checkout=REPO_ROOT,
+            scratch=tmp_path,
+            live_cases=("media_capability", "media_capability"),
+        )
+
+    assert _error_category(error) == "live_result_duplicate"
+
+
+def test_parent_live_only_requires_and_returns_exact_25_results(monkeypatch, tmp_path):
+    module = _load_runner()
+
+    def fake_child(**kwargs):
+        result_path = kwargs["scratch"] / "live-results.json"
+        result_path.parent.mkdir(parents=True, exist_ok=True)
+        result_path.write_text(
+            json.dumps(_passing_live_payload(kwargs["scenario"])), encoding="utf-8"
+        )
+        return module.ChildRunResult(0, None, result_path)
+
+    monkeypatch.setattr(module, "run_closeout_child", fake_child)
+
+    results = module.run_development_live_cases(
+        checkout=REPO_ROOT,
+        scratch=tmp_path,
+        live_cases=module.EXECUTABLE_LIVE_ROOTS,
+    )
+
+    expected = set().union(
+        *(_expected_live_keys(root) for root in module.EXECUTABLE_LIVE_ROOTS)
+    )
+    assert len(results) == len(expected) == 25
+    assert set(results) == expected
+
+
+@pytest.mark.asyncio
+async def test_common_matrix_records_one_failed_cell_and_continues(
+    monkeypatch, tmp_path
+):
+    module = _load_scenarios()
+    monkeypatch.setenv("TASK23019_RAW_ROOT", str(tmp_path))
+    monkeypatch.setattr(module, "DESTINATIONS", ("media", "notes"))
+    monkeypatch.setattr(module, "SIZES", ((160, 50),))
+    calls = []
+
+    async def fake_cell(destination, terminal_size, context):
+        calls.append((destination, terminal_size, context.root))
+        if destination == "media":
+            raise AssertionError("media contract")
+        return {"status": "PASS"}
+
+    monkeypatch.setattr(module, "run_common_cell", fake_cell)
+
+    results = await module.run_common_matrix()
+
+    assert list(results) == ["media-160x50", "notes-160x50"]
+    assert results["media-160x50"] == {
+        "status": "FAIL",
+        "error_type": "AssertionError",
+        "error": "media contract",
+    }
+    assert results["notes-160x50"] == {"status": "PASS"}
+    assert len(calls) == 2
+
+
+def test_scenario_cleanup_failure_is_not_suppressed(tmp_path):
+    module = _load_scenarios()
+    context = module.ScenarioContext(tmp_path)
+
+    def fail_cleanup():
+        raise RuntimeError("cleanup failed")
+
+    context.add_cleanup(fail_cleanup)
+
+    with pytest.raises(RuntimeError, match="cleanup failed"):
+        context.close()
+
+
+def test_parent_rejects_a_named_failed_live_result(monkeypatch, tmp_path):
+    module = _load_runner()
+    payload = _passing_live_payload("common_matrix")
+    payload["media-160x50"] = {
+        "status": "FAIL",
+        "error_type": "AssertionError",
+        "error": "media contract",
+    }
+
+    def fake_child(**kwargs):
+        result_path = kwargs["scratch"] / "live-results.json"
+        result_path.parent.mkdir(parents=True, exist_ok=True)
+        result_path.write_text(json.dumps(payload), encoding="utf-8")
+        return module.ChildRunResult(0, None, result_path)
+
+    monkeypatch.setattr(module, "run_closeout_child", fake_child)
+
+    with pytest.raises(module.CloseoutError, match="live_case_failed") as error:
+        module.run_development_live_cases(
+            checkout=REPO_ROOT,
+            scratch=tmp_path,
+            live_cases=("common_matrix",),
+        )
+
+    assert error.value.category == "live_case_failed"
+    assert error.value.details == {
+        "failures": [
+            {
+                "cell": "media-160x50",
+                "error_type": "AssertionError",
+                "error": "media contract",
+            }
+        ]
+    }
+
+
+def test_live_cell_failure_details_are_bounded_and_sanitized(monkeypatch, tmp_path):
+    module = _load_runner()
+    payload = _passing_live_payload("common_matrix")
+    secret = "should-not-appear"
+    payload["skills-80x24"] = {
+        "status": "FAIL",
+        "error_type": "AssertionError",
+        "error": (
+            f"failed at /Users/person/private.py API_TOKEN={secret} "
+            + "x" * (module.MAX_DIAGNOSTIC_TEXT * 2)
+        ),
+    }
+
+    def fake_child(**kwargs):
+        result_path = kwargs["scratch"] / "live-results.json"
+        result_path.parent.mkdir(parents=True, exist_ok=True)
+        result_path.write_text(json.dumps(payload), encoding="utf-8")
+        return module.ChildRunResult(0, None, result_path)
+
+    monkeypatch.setattr(module, "run_closeout_child", fake_child)
+
+    with pytest.raises(module.CloseoutError) as error:
+        module.run_development_live_cases(
+            checkout=REPO_ROOT,
+            scratch=tmp_path,
+            live_cases=("common_matrix",),
+        )
+
+    failure = error.value.details["failures"][0]
+    assert failure["cell"] == "skills-80x24"
+    assert failure["error_type"] == "AssertionError"
+    assert len(failure["error"]) <= module.MAX_DIAGNOSTIC_TEXT
+    assert "/Users/person" not in failure["error"]
+    assert secret not in failure["error"]
+    assert "<path>" in failure["error"]
+    assert "<redacted>" in failure["error"]
+
+
+def test_parent_emits_bounded_live_failure_details_as_json(monkeypatch, capsys):
+    module = _load_runner()
+
+    def fail_live_cases(**_kwargs):
+        raise module.CloseoutError(
+            "live_case_failed",
+            {
+                "failures": [
+                    {
+                        "cell": "media-160x50",
+                        "error_type": "AssertionError",
+                        "error": "media contract",
+                    }
+                ]
+            },
+        )
+
+    monkeypatch.setattr(module, "run_development_live_cases", fail_live_cases)
+
+    assert module.main(["--development-run", "--live-case", "common_matrix"]) == 2
+    emitted = json.loads(capsys.readouterr().err)
+    assert emitted == {
+        "error": "live_case_failed",
+        "details": {
+            "failures": [
+                {
+                    "cell": "media-160x50",
+                    "error_type": "AssertionError",
+                    "error": "media contract",
+                }
+            ]
+        },
+    }
+
+
+def test_child_nonzero_diagnostics_are_bounded_and_sanitized(tmp_path, monkeypatch):
+    module = _load_runner()
+    checkout = tmp_path / "checkout"
+    checkout.mkdir()
+    target = checkout / "synthetic_scenarios.py"
+    target.write_text("SCENARIOS = {}\n", encoding="utf-8")
+    secret = "should-never-escape"
+
+    def fake_run(command, **_kwargs):
+        return subprocess.CompletedProcess(
+            command,
+            7,
+            stdout="partial output\n",
+            stderr=(
+                f"RuntimeError: {checkout}/private.py API_TOKEN={secret} "
+                + "x" * (module.MAX_DIAGNOSTIC_TEXT * 2)
+            ),
+        )
+
+    monkeypatch.setattr(module, "_run_bounded_process", fake_run)
+
+    result = module.run_closeout_child(
+        checkout=checkout,
+        scratch=tmp_path / "scratch",
+        mode="live",
+        target=target,
+        scenario="common_matrix",
+        environ={"HOME": str(tmp_path / "home"), "API_TOKEN": secret},
+    )
+
+    assert result.error == "child_failed"
+    assert result.details["returncode"] == 7
+    assert result.details["stdout"] == "partial output"
+    assert len(result.details["stderr"]) <= module.MAX_DIAGNOSTIC_TEXT
+    assert str(checkout) not in result.details["stderr"]
+    assert secret not in result.details["stderr"]
+    assert "<path>" in result.details["stderr"]
+    assert "<redacted>" in result.details["stderr"]
+
+
+@pytest.mark.parametrize(
+    ("name", "returncode", "result_text", "parse_detail"),
+    (
+        ("missing", 7, None, "missing"),
+        ("partial", 7, '{"status":"PASS"}', "error_missing"),
+        ("malformed", 7, '{"error":', "malformed_json"),
+        ("non-dict", 7, "[]", "not_object"),
+        ("non-string-error", 7, '{"error":{}}', "error_not_string"),
+        ("zero-malformed", 0, "{", "malformed_json"),
+    ),
+)
+def test_child_result_failures_are_stably_classified(
+    name, returncode, result_text, parse_detail, tmp_path, monkeypatch
+):
+    module = _load_runner()
+    checkout = tmp_path / "checkout"
+    checkout.mkdir()
+    target = checkout / "synthetic_scenarios.py"
+    target.write_text("SCENARIOS = {}\n", encoding="utf-8")
+    scratch = tmp_path / "scratch"
+
+    def fake_run(command, **_kwargs):
+        if result_text is not None:
+            (scratch / "live-results.json").write_text(result_text, encoding="utf-8")
+        return subprocess.CompletedProcess(
+            command,
+            returncode,
+            stdout=f"{name} stdout",
+            stderr=f"{name} stderr",
+        )
+
+    monkeypatch.setattr(module, "_run_bounded_process", fake_run)
+
+    result = module.run_closeout_child(
+        checkout=checkout,
+        scratch=scratch,
+        mode="live",
+        target=target,
+        scenario="common_matrix",
+    )
+
+    assert result.error == "child_failed"
+    assert result.details == {
+        "returncode": returncode,
+        "stdout": f"{name} stdout",
+        "stderr": f"{name} stderr",
+        "result_parse": parse_detail,
+    }
+
+
+def test_unknown_child_error_is_demoted_and_sanitized(tmp_path, monkeypatch):
+    module = _load_runner()
+    checkout = tmp_path / "Checkout With Spaces"
+    checkout.mkdir()
+    target = checkout / "synthetic_scenarios.py"
+    target.write_text("SCENARIOS = {}\n", encoding="utf-8")
+    scratch = tmp_path / "scratch"
+    secret = "first-secret-line\nsecond-secret-line"
+    unknown_error = (
+        f"unknown category\n{checkout}/private file.py\nAPI_TOKEN={secret}\n"
+        + "x" * (module.MAX_DIAGNOSTIC_TEXT * 2)
+    )
+
+    def fake_run(command, **_kwargs):
+        (scratch / "live-results.json").write_text(
+            json.dumps({"error": unknown_error}), encoding="utf-8"
+        )
+        return subprocess.CompletedProcess(command, 7, stdout="", stderr="")
+
+    monkeypatch.setattr(module, "_run_bounded_process", fake_run)
+
+    result = module.run_closeout_child(
+        checkout=checkout,
+        scratch=scratch,
+        mode="live",
+        target=target,
+        scenario="common_matrix",
+        environ={"HOME": str(tmp_path / "home"), "API_TOKEN": secret},
+    )
+
+    assert result.error == "child_failed"
+    assert len(result.details["child_error"]) <= module.MAX_DIAGNOSTIC_TEXT
+    assert "Checkout With Spaces" not in result.details["child_error"]
+    assert "first-secret-line" not in result.details["child_error"]
+    assert "second-secret-line" not in result.details["child_error"]
+    assert "<path>" in result.details["child_error"]
+    assert "<redacted>" in result.details["child_error"]
+
+
+@pytest.mark.parametrize("returncode", (0, 7))
+def test_parent_rejects_oversized_child_result_before_json_parse(
+    returncode, tmp_path, monkeypatch
+):
+    module = _load_runner()
+    checkout = tmp_path / "checkout"
+    checkout.mkdir()
+    target = checkout / "synthetic_scenarios.py"
+    target.write_text("SCENARIOS = {}\n", encoding="utf-8")
+    scratch = tmp_path / "scratch"
+
+    def fake_run(command, **_kwargs):
+        (scratch / "live-results.json").write_bytes(
+            b'{"oversized":"' + b"x" * module.RAW_RESULT_BYTE_LIMIT + b'"}'
+        )
+        return subprocess.CompletedProcess(command, returncode, stdout="", stderr="")
+
+    monkeypatch.setattr(module, "_run_bounded_process", fake_run)
+
+    result = module.run_closeout_child(
+        checkout=checkout,
+        scratch=scratch,
+        mode="live",
+        target=target,
+        scenario="common_matrix",
+    )
+
+    assert result.error == "child_failed"
+    assert result.details["result_parse"] == "result_too_large"
+
+
+def test_child_result_writer_is_atomic_and_fails_closed_at_raw_ceiling(
+    tmp_path, monkeypatch
+):
+    module = _load_child()
+    result_path = tmp_path / "live-results.json"
+    replacements = []
+    real_replace = os.replace
+
+    def observed_replace(source, destination, *args, **kwargs):
+        replacements.append((Path(source), Path(destination)))
+        return real_replace(source, destination, *args, **kwargs)
+
+    monkeypatch.setattr(module.os, "replace", observed_replace)
+
+    written = module._write_json(
+        result_path, {"fact": "x" * module.RAW_RESULT_BYTE_LIMIT}
+    )
+
+    assert written is False
+    assert json.loads(result_path.read_text(encoding="utf-8")) == {
+        "error": "result_too_large"
+    }
+    assert result_path.stat().st_size <= module.RAW_RESULT_BYTE_LIMIT
+    assert not result_path.with_name(result_path.name + ".tmp").exists()
+    assert replacements[-1][1] == result_path
+
+
+def test_parent_malformed_result_emits_stable_json_not_traceback(monkeypatch, capsys):
+    module = _load_runner()
+
+    def fake_child(**kwargs):
+        result_path = kwargs["scratch"] / "live-results.json"
+        result_path.parent.mkdir(parents=True, exist_ok=True)
+        result_path.write_text("{", encoding="utf-8")
+        return module.ChildRunResult(0, None, result_path)
+
+    monkeypatch.setattr(module, "run_closeout_child", fake_child)
+
+    assert module.main(["--development-run", "--live-case", "common_matrix"]) == 2
+    assert json.loads(capsys.readouterr().err) == {
+        "error": "child_failed",
+        "details": {"result_parse": "malformed_json"},
+    }
+
+
+def test_noisy_child_output_is_capped_on_disk_during_execution(tmp_path):
+    module = _load_runner()
+    checkout = tmp_path / "checkout"
+    checkout.mkdir()
+    scenario_file = checkout / "synthetic_scenarios.py"
+    scenario_file.write_text(
+        textwrap.dedent(
+            """
+            import sys
+
+            async def noisy():
+                sys.stdout.write("o" * 262144)
+                sys.stdout.flush()
+                sys.stderr.write("e" * 262144)
+                sys.stderr.flush()
+                raise RuntimeError("noisy child failure")
+
+            SCENARIOS = {"noisy": noisy}
+            """
+        ),
+        encoding="utf-8",
+    )
+    scratch = tmp_path / "scratch"
+
+    result = module.run_closeout_child(
+        checkout=checkout,
+        scratch=scratch,
+        mode="live",
+        target=scenario_file,
+        scenario="noisy",
+    )
+
+    assert result.error == "child_failed"
+    assert result.details["returncode"] != 0
+    assert len(result.details["stdout"]) <= module.MAX_DIAGNOSTIC_TEXT
+    assert len(result.details["stderr"]) <= module.MAX_DIAGNOSTIC_TEXT
+    for name in ("child-stdout.log", "child-stderr.log"):
+        output_path = scratch / name
+        assert 0 < output_path.stat().st_size <= module.CHILD_OUTPUT_BYTE_LIMIT
+
+
+def test_noisy_child_timeout_kills_process_and_joins_pipe_readers(tmp_path):
+    module = _load_runner()
+    scratch = tmp_path / "scratch"
+    scratch.mkdir()
+    command = [
+        sys.executable,
+        "-c",
+        (
+            "import sys,time;"
+            "sys.stdout.write('o'*262144);sys.stdout.flush();"
+            "sys.stderr.write('e'*262144);sys.stderr.flush();"
+            "time.sleep(30)"
+        ),
+    ]
+
+    with pytest.raises(subprocess.TimeoutExpired):
+        module._run_bounded_process(
+            command,
+            cwd=tmp_path,
+            env=os.environ,
+            stdin=subprocess.DEVNULL,
+            scratch=scratch,
+            timeout=1,
+        )
+
+    for name in ("child-stdout.log", "child-stderr.log"):
+        output_path = scratch / name
+        assert output_path.stat().st_size == module.CHILD_OUTPUT_BYTE_LIMIT
+    assert not any(
+        thread.name.startswith("task23019-pipe-")
+        for thread in module.threading.enumerate()
+    )
+
+
+@pytest.mark.parametrize(
+    ("boundary", "failure_index"),
+    (("log_open", 1), ("log_open", 2), ("thread_start", 1), ("thread_start", 2)),
+)
+def test_post_popen_setup_failure_reaps_child_and_closes_every_endpoint(
+    boundary, failure_index, tmp_path, monkeypatch
+):
+    module = _load_runner()
+    checkout = tmp_path / "Checkout With Spaces"
+    checkout.mkdir()
+    target = checkout / "synthetic_scenarios.py"
+    target.write_text("SCENARIOS = {}\n", encoding="utf-8")
+    scratch = tmp_path / "scratch"
+    secret = "post-popen-secret"
+    diagnostic = f"setup failed at {checkout}/private file.py API_TOKEN={secret}"
+    processes = []
+    log_handles = []
+    log_open_count = 0
+    thread_start_count = 0
+    real_popen = module.subprocess.Popen
+    real_path_open = module.Path.open
+    real_thread_start = module.threading.Thread.start
+
+    def observed_popen(*args, **kwargs):
+        process = real_popen(*args, **kwargs)
+        processes.append(process)
+        return process
+
+    def failing_path_open(path, *args, **kwargs):
+        nonlocal log_open_count
+        if path.name in {"child-stdout.log", "child-stderr.log"}:
+            log_open_count += 1
+            if boundary == "log_open" and log_open_count == failure_index:
+                raise OSError(diagnostic)
+            handle = real_path_open(path, *args, **kwargs)
+            log_handles.append(handle)
+            return handle
+        return real_path_open(path, *args, **kwargs)
+
+    def failing_thread_start(thread, *args, **kwargs):
+        nonlocal thread_start_count
+        if thread.name.startswith("task23019-pipe-"):
+            thread_start_count += 1
+            if boundary == "thread_start" and thread_start_count == failure_index:
+                raise RuntimeError(diagnostic)
+        return real_thread_start(thread, *args, **kwargs)
+
+    monkeypatch.setattr(module.subprocess, "Popen", observed_popen)
+    monkeypatch.setattr(module.Path, "open", failing_path_open)
+    monkeypatch.setattr(module.threading.Thread, "start", failing_thread_start)
+
+    errors = []
+    finished = module.threading.Event()
+
+    def invoke() -> None:
+        try:
+            module.run_closeout_child(
+                checkout=checkout,
+                scratch=scratch,
+                mode="live",
+                target=target,
+                scenario="common_matrix",
+                environ={"HOME": str(tmp_path / "home"), "API_TOKEN": secret},
+            )
+        except BaseException as error:
+            errors.append(error)
+        finally:
+            finished.set()
+
+    worker = module.threading.Thread(target=invoke, name="post-popen-test")
+    worker.start()
+    completed_without_rescue = finished.wait(1)
+    process = processes[0]
+    alive_before_rescue = process.poll() is None
+    pipes_closed_before_rescue = process.stdout.closed and process.stderr.closed
+    logs_closed_before_rescue = all(handle.closed for handle in log_handles)
+    if alive_before_rescue:
+        process.kill()
+        process.wait(timeout=2)
+    worker.join(timeout=2)
+
+    assert completed_without_rescue
+    assert not alive_before_rescue
+    assert pipes_closed_before_rescue
+    assert logs_closed_before_rescue
+    assert not worker.is_alive()
+    assert len(errors) == 1
+    assert isinstance(errors[0], module.CloseoutError)
+    assert errors[0].category == "child_failed"
+    assert len(errors[0].details["process"]) <= module.MAX_DIAGNOSTIC_TEXT
+    assert str(checkout) not in errors[0].details["process"]
+    assert secret not in errors[0].details["process"]
+    assert "<path>" in errors[0].details["process"]
+    assert "<redacted>" in errors[0].details["process"]
+
+
+def test_reader_failure_kills_child_without_waiting_for_global_timeout(
+    tmp_path, monkeypatch
+):
+    module = _load_runner()
+    checkout = tmp_path / "Checkout With Spaces"
+    checkout.mkdir()
+    target = checkout / "synthetic_scenarios.py"
+    target.write_text(
+        textwrap.dedent(
+            """
+            import sys
+
+            async def noisy():
+                sys.stdout.write("o" * 2097152)
+                sys.stdout.flush()
+                return {"status": "PASS"}
+
+            SCENARIOS = {"noisy": noisy}
+            """
+        ),
+        encoding="utf-8",
+    )
+    secret = "reader-secret"
+    diagnostic = f"reader failed at {checkout}/private file.py API_TOKEN={secret}"
+    processes = []
+    real_popen = module.subprocess.Popen
+
+    def observed_popen(*args, **kwargs):
+        process = real_popen(*args, **kwargs)
+        processes.append(process)
+        return process
+
+    def fail_write(_handle, _chunk):
+        raise OSError(diagnostic)
+
+    monkeypatch.setattr(module.subprocess, "Popen", observed_popen)
+    monkeypatch.setattr(module, "_write_capped", fail_write)
+    monkeypatch.setattr(module, "CHILD_TIMEOUT_SECONDS", 2)
+
+    started = time.monotonic()
+    with pytest.raises(module.CloseoutError) as error:
+        module.run_closeout_child(
+            checkout=checkout,
+            scratch=tmp_path / "scratch",
+            mode="live",
+            target=target,
+            scenario="noisy",
+            environ={"HOME": str(tmp_path / "home"), "API_TOKEN": secret},
+        )
+    elapsed = time.monotonic() - started
+
+    process = processes[0]
+    assert elapsed < 1.5
+    assert process.poll() is not None
+    assert process.stdout.closed and process.stderr.closed
+    assert error.value.category == "child_failed"
+    assert str(checkout) not in error.value.details["process"]
+    assert secret not in error.value.details["process"]
+    assert "<path>" in error.value.details["process"]
+    assert "<redacted>" in error.value.details["process"]
+    assert not any(
+        thread.name.startswith("task23019-pipe-")
+        for thread in module.threading.enumerate()
+    )
+
+
+def test_diagnostic_redacts_multiline_secret_and_spaced_root_before_normalizing():
+    module = _load_runner()
+    root = "/Users/Example User/Private Checkout"
+    secret = "first-secret-line\nsecond-secret-line"
+    raw = f"RuntimeError: {root}/private.py API_TOKEN={secret} trailing"
+
+    diagnostic = module._bounded_diagnostic(raw, secrets=(secret,), roots=(root,))
+    emitted = json.dumps({"error": "child_failed", "details": diagnostic})
+
+    assert diagnostic == (
+        "RuntimeError: <path>/private.py API_TOKEN=<redacted> trailing"
+    )
+    assert "Example User" not in emitted
+    assert "first-secret-line" not in emitted
+    assert "second-secret-line" not in emitted
+
+
+def test_parent_preserves_child_failure_diagnostics(monkeypatch, tmp_path):
+    module = _load_runner()
+    diagnostics = {
+        "returncode": 7,
+        "stderr": "RuntimeError: contained child failure",
+    }
+
+    monkeypatch.setattr(
+        module,
+        "run_closeout_child",
+        lambda **_kwargs: module.ChildRunResult(7, "child_failed", None, diagnostics),
+    )
+
+    with pytest.raises(module.CloseoutError) as error:
+        module.run_development_live_cases(
+            checkout=REPO_ROOT,
+            scratch=tmp_path,
+            live_cases=("common_matrix",),
+        )
+
+    assert error.value.category == "child_failed"
+    assert error.value.details == diagnostics
+
+
+def test_capability_scenarios_are_distinct_journeys_not_a_shared_stub():
+    source = SCENARIO_PATH.read_text(encoding="utf-8")
+
+    assert "async def _run_capability" not in source
+    required_contracts = {
+        "run_media_capability": (
+            "library-media-content-search",
+            "library-media-bulk-delete-cancel",
+        ),
+        "run_conversations_capability": (
+            "_ProgressiveConversationService",
+            "_GatedFindRetryConversationService",
+            "library-conversation-reader-retry",
+            "library-conversation-open-console",
+        ),
+        "run_notes_capability": (
+            "dirty_navigation_veto",
+            ".library-notes-row",
+            "library-note-conflict-reload",
+            "library-note-bulk-status",
+        ),
+        "run_prompts_capability": (
+            "prompt-block-title-delivery",
+            "library-prompt-history-collapsible",
+        ),
+        "run_skills_capability": (
+            "library-skill-trust-review",
+            "library-skill-delete-cancel",
+        ),
+    }
+    for function_name, markers in required_contracts.items():
+        function_source = source.split(f"async def {function_name}", 1)[1].split(
+            "\n\nasync def ", 1
+        )[0]
+        assert all(marker in function_source for marker in markers)
+
+
+def test_common_matrix_comfort_oracle_requires_strict_expansion():
+    source = SCENARIO_PATH.read_text(encoding="utf-8")
+
+    assert "collapsed_items_width > initial_items_width" in source
+    assert "collapsed_items_width >= initial_items_width" not in source
 
 
 def test_child_live_mode_rejects_unknown_scenario_with_stable_error(tmp_path):

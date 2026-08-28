@@ -29,11 +29,13 @@ FILESYSTEM_READ_DENIED = b'{"category":"filesystem_read_denied"}\n'
 FILESYSTEM_WRITE_DENIED = b'{"category":"filesystem_write_denied"}\n'
 NETWORK_DENIED = b'{"category":"network_denied"}\n'
 PROCESS_DENIED = b'{"category":"process_denied"}\n'
+RAW_RESULT_BYTE_LIMIT = 1024 * 1024
 
 _ATTEMPT_FD = -1
 _SCRATCH = ""
 _READ_ROOTS: tuple[str, ...] = ()
 _READ_FILES: frozenset[str] = frozenset()
+_METADATA_ONLY_PATHS: frozenset[str] = frozenset()
 _ENUMERATION_DIRS: frozenset[str] = frozenset()
 _OPEN_FDS: dict[int, tuple[str, bool, bool, tuple[int, int, int, tuple[str, int]]]] = {}
 _RESOLVING_PATH = threading.local()
@@ -327,6 +329,14 @@ def _process_guard():
     return guarded
 
 
+def _contained_architecture(
+    executable: str = sys.executable, bits: str = "", linkage: str = ""
+) -> tuple[str, str]:
+    """Report interpreter width without platform's subprocess fallback."""
+    del executable
+    return bits or ("64bit" if sys.maxsize > 2**32 else "32bit"), linkage
+
+
 def _guarded_os_open(
     path: object, flags: int, mode: int = 0o777, *, dir_fd: int | None = None
 ) -> int:
@@ -364,10 +374,11 @@ def _guarded_os_open(
 
 
 def _guarded_os_close(descriptor: int) -> None:
-    try:
-        _REAL_OS_CLOSE(descriptor)
-    finally:
-        _OPEN_FDS.pop(descriptor, None)
+    # Revoke before close: another thread may reuse the numeric descriptor as
+    # soon as the kernel close succeeds, and a post-close pop could erase the
+    # newly opened descriptor's independent authority.
+    _OPEN_FDS.pop(descriptor, None)
+    _REAL_OS_CLOSE(descriptor)
 
 
 def _inherit_fd_authority(source: int, destination: int) -> None:
@@ -413,8 +424,30 @@ def _guarded_metadata_read(name: str, path: object, *args: object, **kwargs: obj
     if getattr(_RESOLVING_PATH, "active", False):
         return _REAL_METADATA_READ_APIS[name](path, *args, **kwargs)
     frozen_path = path if isinstance(path, int) else os.fspath(path)
-    resolved = _resolved_at(frozen_path, kwargs.get("dir_fd"))
-    if resolved is None or not _read_allowed(resolved):
+    dir_fd = kwargs.get("dir_fd")
+    resolved = _resolved_at(frozen_path, dir_fd)
+    traversal_component = (
+        os.fsdecode(frozen_path) if isinstance(frozen_path, (str, bytes)) else ""
+    )
+    traversal_stat = (
+        name == "stat"
+        and isinstance(dir_fd, int)
+        and kwargs.get("follow_symlinks") is False
+        and traversal_component not in {"", os.curdir, os.pardir}
+        and not os.path.isabs(traversal_component)
+        and os.sep not in traversal_component
+        and (os.altsep is None or os.altsep not in traversal_component)
+        and (opened := _fd_authority(dir_fd)) is not None
+        and opened[1]
+        and resolved is not None
+        and _strict_ancestor(resolved)
+    )
+    named_nofollow_ancestor = resolved in _METADATA_ONLY_PATHS and (
+        name == "lstat" or (name == "stat" and kwargs.get("follow_symlinks") is False)
+    )
+    if resolved is None or not (
+        _read_allowed(resolved) or traversal_stat or named_nofollow_ancestor
+    ):
         _contain(FILESYSTEM_READ_DENIED)
     return _REAL_METADATA_READ_APIS[name](frozen_path, *args, **kwargs)
 
@@ -484,6 +517,8 @@ def _runtime_authority(
 ) -> tuple[tuple[str, ...], frozenset[str]]:
     roots = {checkout, scratch}
     files = {_REAL_OS_REALPATH(sys.executable), _REAL_OS_REALPATH(os.devnull)}
+    if os.name == "posix":
+        files.add(_REAL_OS_REALPATH("/proc/stat"))
     locale = _REAL_OS_REALPATH(
         locale_root or os.path.join(sys.base_prefix, "share", "locale")
     )
@@ -538,8 +573,25 @@ def _runtime_authority(
     return tuple(sorted(roots)), frozenset(files)
 
 
+def _runtime_metadata_ancestors(scratch: str) -> frozenset[str]:
+    """Return exact no-follow metadata probes needed to reach macOS temp roots."""
+    if sys.platform != "darwin":
+        return frozenset()
+    parts = Path(scratch).parts
+    if parts[:3] == (os.sep, "private", "tmp"):
+        return frozenset({"/private", "/private/tmp"})
+    if (
+        len(parts) >= 7
+        and parts[:4] == (os.sep, "private", "var", "folders")
+        and parts[6] == "T"
+    ):
+        return frozenset(str(Path(*parts[:part_count])) for part_count in range(2, 8))
+    return frozenset()
+
+
 def _install_boundary(checkout: str, scratch: str) -> None:
-    global _ATTEMPT_FD, _ENUMERATION_DIRS, _READ_FILES, _READ_ROOTS, _SCRATCH
+    global _ATTEMPT_FD, _ENUMERATION_DIRS, _METADATA_ONLY_PATHS
+    global _READ_FILES, _READ_ROOTS, _SCRATCH
     global TASK_BASELINE, THREAD_BASELINE
 
     _SCRATCH = _REAL_OS_REALPATH(scratch)
@@ -569,12 +621,15 @@ def _install_boundary(checkout: str, scratch: str) -> None:
         open_flags |= os.O_NOFOLLOW
     _ATTEMPT_FD = _REAL_OS_OPEN(attempts_path, open_flags, 0o600)
     _READ_ROOTS, _READ_FILES = _runtime_authority(checkout_root, _SCRATCH)
+    _METADATA_ONLY_PATHS = _runtime_metadata_ancestors(_SCRATCH)
     _ENUMERATION_DIRS = frozenset({_REAL_OS_REALPATH("/dev/fd")})
     sys.addaudithook(_audit)
 
+    import platform
     import socket
     import subprocess
 
+    platform.architecture = _contained_architecture
     socket.has_ipv6 = False
     for name in (
         "connect",
@@ -641,10 +696,34 @@ class ResultRecorder:
             }[report.outcome]
 
 
-def _write_json(path: Path, payload: object) -> None:
-    with path.open("w", encoding="utf-8") as handle:
-        json.dump(payload, handle, indent=2, sort_keys=True)
-        handle.write("\n")
+def _write_json(path: Path, payload: object) -> bool:
+    """Atomically write a bounded result or a small fail-closed marker."""
+    temporary = path.with_name(path.name + ".tmp")
+    oversized = False
+    try:
+        with temporary.open("wb") as handle:
+            size = 0
+            for text in json.JSONEncoder(indent=2, sort_keys=True).iterencode(payload):
+                chunk = text.encode("utf-8")
+                if size + len(chunk) > RAW_RESULT_BYTE_LIMIT:
+                    oversized = True
+                    break
+                handle.write(chunk)
+                size += len(chunk)
+            if not oversized and size < RAW_RESULT_BYTE_LIMIT:
+                handle.write(b"\n")
+            handle.flush()
+            os.fsync(handle.fileno())
+        if oversized:
+            with temporary.open("wb") as handle:
+                handle.write(b'{\n  "error": "result_too_large"\n}\n')
+                handle.flush()
+                os.fsync(handle.fileno())
+        os.replace(temporary, path)
+    except BaseException:
+        temporary.unlink(missing_ok=True)
+        raise
+    return not oversized
 
 
 def _run_pytest(target: Path, scratch: Path) -> int:
@@ -682,8 +761,8 @@ def _run_pytest(target: Path, scratch: Path) -> int:
             plugins=[recorder],
         )
     )
-    _write_json(scratch / "automated-results.json", recorder.results)
-    return returncode
+    results_written = _write_json(scratch / "automated-results.json", recorder.results)
+    return returncode if results_written else 2
 
 
 def _run_live(target: Path, scenario: str, scratch: Path) -> int:
@@ -696,15 +775,22 @@ def _run_live(target: Path, scenario: str, scratch: Path) -> int:
         _write_json(scratch / "live-results.json", {"error": "scenario_not_defined"})
         return 2
     module = importlib.util.module_from_spec(spec)
+    sys.modules[spec.name] = module
     spec.loader.exec_module(module)
     scenarios = getattr(module, "SCENARIOS", None)
     selected = scenarios.get(scenario) if isinstance(scenarios, dict) else None
     if selected is None or not asyncio.iscoroutinefunction(selected):
         _write_json(scratch / "live-results.json", {"error": "scenario_not_defined"})
         return 2
+    raw_root = scratch / "raw-evidence"
+    raw_root.mkdir(parents=True, exist_ok=True)
+    os.environ["TASK23019_RAW_ROOT"] = str(raw_root)
     result = asyncio.run(selected())
-    _write_json(scratch / "live-results.json", {scenario: result})
-    return 0
+    if not isinstance(result, dict):
+        _write_json(scratch / "live-results.json", {"error": "scenario_result_invalid"})
+        return 2
+    payload = {scenario: result} if "status" in result else result
+    return 0 if _write_json(scratch / "live-results.json", payload) else 2
 
 
 def _parse_arguments(arguments: list[str] | None = None) -> argparse.Namespace:

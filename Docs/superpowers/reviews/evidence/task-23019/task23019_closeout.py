@@ -5,8 +5,12 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import re
+import stat
 import subprocess
 import sys
+import tempfile
+import threading
 from collections.abc import Collection, Mapping
 from dataclasses import dataclass
 from pathlib import Path
@@ -15,8 +19,11 @@ from pathlib import Path
 class CloseoutError(Exception):
     """A stable semantic failure from the closeout runner."""
 
-    def __init__(self, category: str) -> None:
+    def __init__(
+        self, category: str, details: Mapping[str, object] | None = None
+    ) -> None:
         self.category = category
+        self.details = dict(details or {})
         super().__init__(category)
 
 
@@ -55,11 +62,23 @@ class ChildRunResult:
     returncode: int
     error: str | None
     result_path: Path | None
+    details: Mapping[str, object] | None = None
 
 
 CONTAINMENT_EXIT_STATUS = 86
 CHILD_TIMEOUT_SECONDS = 3600
+PROCESS_CLEANUP_TIMEOUT_SECONDS = 5
+READER_JOIN_TIMEOUT_SECONDS = 5
+CHILD_OUTPUT_BYTE_LIMIT = 64 * 1024
+CHILD_OUTPUT_CHUNK_BYTES = 16 * 1024
+RAW_RESULT_BYTE_LIMIT = 1024 * 1024
+MAX_DIAGNOSTIC_TEXT = 512
+MAX_ERROR_TYPE_TEXT = 80
 CHILD_PATH = Path(__file__).with_name("task23019_closeout_child.py")
+SCENARIO_PATH = Path(__file__).with_name("task23019_scenarios.py")
+CHILD_SEMANTIC_ERRORS = frozenset(
+    {"result_too_large", "scenario_not_defined", "scenario_result_invalid"}
+)
 CREDENTIAL_ENV_NAMES = frozenset(
     {
         "AWS_ACCESS_KEY_ID",
@@ -275,6 +294,41 @@ CURATED_PYTEST_FILES = (
 DECLARED_LIVE_CASES = frozenset(
     case for contract in CATALOGUE.values() for case in contract.live_cases
 )
+EXECUTABLE_LIVE_ROOTS = (
+    "common_matrix",
+    "media_capability",
+    "conversations_capability",
+    "notes_capability",
+    "prompts_capability",
+    "skills_capability",
+)
+EXPECTED_LIVE_RESULT_KEYS = {
+    "common_matrix": frozenset(
+        f"{destination}-{width}x{height}"
+        for destination in DESTINATIONS
+        for width, height in SIZES
+    ),
+    **{
+        root: frozenset({root})
+        for root in EXECUTABLE_LIVE_ROOTS
+        if root != "common_matrix"
+    },
+}
+DURABLE_PYTEST_SELECTORS = (
+    "Tests/UI/test_library_adaptive_reader_closeout.py::test_closeout_resize_is_presentation_only",
+    "Tests/UI/test_library_adaptive_reader_closeout.py::test_closeout_preferences_restore_in_fresh_screen",
+    "Tests/UI/test_library_adaptive_reader_closeout.py::test_closeout_single_app_route_cycle",
+)
+DURABLE_EVIDENCE_ALIASES = {
+    "resize_purity": (DURABLE_PYTEST_SELECTORS[0],),
+    "single_app_route_cycle": (DURABLE_PYTEST_SELECTORS[2],),
+}
+
+_ABSOLUTE_PATH = re.compile(r"(?<!>)(?:[A-Za-z]:[\\/]|/)[^\s\"']+")
+_CREDENTIAL_ASSIGNMENT = re.compile(
+    r"(?i)\b([A-Z0-9_-]*(?:API[_-]?KEY|TOKEN|PASSWORD|SECRET|CREDENTIALS?|PRIVATE[_-]?KEY))"
+    r"\s*[:=]\s*[^\s,;]+"
+)
 
 
 def validate_catalogue(catalogue: Mapping[str, Contract]) -> None:
@@ -288,6 +342,11 @@ def validate_catalogue(catalogue: Mapping[str, Contract]) -> None:
             raise CloseoutError("live_cases_missing")
         if len(contract.live_cases) != len(set(contract.live_cases)):
             raise CloseoutError("live_key_duplicate")
+        if any(
+            key not in EXECUTABLE_LIVE_ROOTS and key not in DURABLE_EVIDENCE_ALIASES
+            for key in contract.live_cases
+        ):
+            raise CloseoutError("live_case_not_mapped")
 
 
 def matching_node_ids(selector: str, node_ids: Collection[str]) -> tuple[str, ...]:
@@ -394,6 +453,7 @@ def prepare_scratch_environment(
         "TMPDIR": scratch_root / "tmp",
         "TEMP": scratch_root / "tmp",
         "TMP": scratch_root / "tmp",
+        "PATH": scratch_root / "bin",
     }
     resolved_owned = {name: path.resolve() for name, path in owned_paths.items()}
     child_stdin = (scratch_root / "stdin").resolve()
@@ -429,6 +489,213 @@ def prepare_scratch_environment(
     )
 
 
+def _bounded_diagnostic(
+    value: object,
+    *,
+    secrets: Collection[str] = (),
+    roots: Collection[str] = (),
+) -> str:
+    """Normalize one diagnostic without retaining credentials or host paths."""
+    text = "" if value is None else str(value)
+    for secret in sorted((item for item in secrets if item), key=len, reverse=True):
+        text = text.replace(secret, "<redacted>")
+    for root in sorted((item for item in roots if item), key=len, reverse=True):
+        text = text.replace(root, "<path>")
+    text = _CREDENTIAL_ASSIGNMENT.sub(r"\1=<redacted>", text)
+    text = _ABSOLUTE_PATH.sub("<path>", text)
+    return " ".join(text.split())[:MAX_DIAGNOSTIC_TEXT]
+
+
+def _child_failure_details(
+    completed: subprocess.CompletedProcess[str],
+    *,
+    secrets: Collection[str],
+    roots: Collection[str],
+) -> dict[str, object]:
+    details: dict[str, object] = {"returncode": completed.returncode}
+    for stream in ("stdout", "stderr"):
+        diagnostic = _bounded_diagnostic(
+            getattr(completed, stream, ""), secrets=secrets, roots=roots
+        )
+        if diagnostic:
+            details[stream] = diagnostic
+    return details
+
+
+def _live_failure_details(
+    payload: Mapping[str, object], *, roots: Collection[str]
+) -> dict[str, object]:
+    failures = []
+    for name, cell in sorted(payload.items()):
+        if isinstance(cell, dict) and cell.get("status") == "PASS":
+            continue
+        error_type = cell.get("error_type") if isinstance(cell, dict) else None
+        message = cell.get("error") if isinstance(cell, dict) else None
+        failures.append(
+            {
+                "cell": name,
+                "error_type": _bounded_diagnostic(error_type or "InvalidResult")[
+                    :MAX_ERROR_TYPE_TEXT
+                ],
+                "error": _bounded_diagnostic(
+                    message or "Live cell did not pass", roots=roots
+                ),
+            }
+        )
+    return {"failures": failures}
+
+
+def _read_json_object(path: Path) -> tuple[dict[str, object] | None, str | None]:
+    try:
+        status = path.stat()
+    except OSError:
+        return None, "missing"
+    if not stat.S_ISREG(status.st_mode):
+        return None, "missing"
+    if status.st_size > RAW_RESULT_BYTE_LIMIT:
+        return None, "result_too_large"
+    try:
+        with path.open("rb") as handle:
+            raw_payload = handle.read(RAW_RESULT_BYTE_LIMIT + 1)
+    except (OSError, UnicodeError, json.JSONDecodeError):
+        return None, "malformed_json"
+    if len(raw_payload) > RAW_RESULT_BYTE_LIMIT:
+        return None, "result_too_large"
+    try:
+        payload = json.loads(raw_payload)
+    except (UnicodeError, json.JSONDecodeError):
+        return None, "malformed_json"
+    if not isinstance(payload, dict):
+        return None, "not_object"
+    return payload, None
+
+
+def _write_capped(handle: object, chunk: bytes) -> None:
+    remaining = CHILD_OUTPUT_BYTE_LIMIT - handle.tell()
+    if remaining > 0:
+        handle.write(chunk[:remaining])
+
+
+def _run_bounded_process(
+    command: list[str],
+    *,
+    cwd: Path,
+    env: Mapping[str, str],
+    stdin: object,
+    scratch: Path,
+    timeout: int,
+) -> subprocess.CompletedProcess[str]:
+    """Drain both child streams while retaining at most a fixed file cap."""
+    stdout_path = scratch / "child-stdout.log"
+    stderr_path = scratch / "child-stderr.log"
+    process = subprocess.Popen(
+        command,
+        cwd=cwd,
+        env=env,
+        stdin=stdin,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+    )
+    process_pipes = (process.stdout, process.stderr)
+    stream_specs = []
+    outputs = []
+    threads = []
+    reader_errors = []
+    cleanup_errors = []
+    failure: BaseException | None = None
+    returncode: int | None = None
+
+    def close_endpoints() -> None:
+        for stream in process_pipes:
+            if stream is None:
+                continue
+            try:
+                stream.close()
+            except BaseException as error:
+                cleanup_errors.append(error)
+        for output in outputs:
+            try:
+                output.close()
+            except BaseException as error:
+                cleanup_errors.append(error)
+
+    def drain(stream: object, output: object) -> None:
+        try:
+            while chunk := stream.read(CHILD_OUTPUT_CHUNK_BYTES):
+                _write_capped(output, chunk)
+        except BaseException as error:
+            reader_errors.append(error)
+            try:
+                process.kill()
+            except BaseException as cleanup_error:
+                cleanup_errors.append(cleanup_error)
+
+    try:
+        if process.stdout is None or process.stderr is None:
+            raise RuntimeError("child_pipe_missing")
+        stream_specs.extend(
+            (
+                ("stdout", process.stdout, stdout_path),
+                ("stderr", process.stderr, stderr_path),
+            )
+        )
+        for _name, _stream, output_path in stream_specs:
+            outputs.append(output_path.open("wb"))
+        for (name, stream, _output_path), output in zip(
+            stream_specs, outputs, strict=True
+        ):
+            thread = threading.Thread(
+                target=drain,
+                args=(stream, output),
+                name=f"task23019-pipe-{name}",
+            )
+            thread.start()
+            threads.append(thread)
+        returncode = process.wait(timeout=timeout)
+        if reader_errors:
+            raise reader_errors[0]
+    except BaseException as error:
+        failure = error
+    finally:
+        if failure is not None:
+            try:
+                process.kill()
+            except BaseException as cleanup_error:
+                cleanup_errors.append(cleanup_error)
+            try:
+                process.wait(timeout=PROCESS_CLEANUP_TIMEOUT_SECONDS)
+            except BaseException as cleanup_error:
+                cleanup_errors.append(cleanup_error)
+            close_endpoints()
+        for thread in threads:
+            try:
+                thread.join(timeout=READER_JOIN_TIMEOUT_SECONDS)
+            except BaseException as cleanup_error:
+                cleanup_errors.append(cleanup_error)
+        close_endpoints()
+        for thread in threads:
+            try:
+                if thread.is_alive():
+                    thread.join(timeout=READER_JOIN_TIMEOUT_SECONDS)
+            except BaseException as cleanup_error:
+                cleanup_errors.append(cleanup_error)
+    if failure is not None:
+        raise failure
+    if reader_errors:
+        raise reader_errors[0]
+    if cleanup_errors:
+        raise cleanup_errors[0]
+    if any(thread.is_alive() for thread in threads):
+        raise RuntimeError("pipe_reader_cleanup_failed")
+    assert returncode is not None
+    return subprocess.CompletedProcess(
+        command,
+        returncode,
+        stdout=stdout_path.read_bytes().decode("utf-8", errors="replace"),
+        stderr=stderr_path.read_bytes().decode("utf-8", errors="replace"),
+    )
+
+
 def run_closeout_child(
     *,
     checkout: Path,
@@ -446,6 +713,12 @@ def run_closeout_child(
 
     checkout_root = checkout.resolve()
     scratch_root = scratch.resolve()
+    source_environment = os.environ if environ is None else environ
+    credential_values = tuple(
+        value
+        for name, value in source_environment.items()
+        if value and _is_credential_environment_name(name)
+    )
     prepared = prepare_scratch_environment(scratch_root, environ=environ)
     command = [
         sys.executable,
@@ -466,39 +739,123 @@ def run_closeout_child(
 
     try:
         with (scratch_root / "stdin").open("rb") as child_stdin:
-            completed = subprocess.run(
+            completed = _run_bounded_process(
                 command,
                 cwd=checkout_root,
                 env=prepared.env,
                 stdin=child_stdin,
-                check=False,
-                capture_output=True,
-                text=True,
+                scratch=scratch_root,
                 timeout=CHILD_TIMEOUT_SECONDS,
             )
     except subprocess.TimeoutExpired:
         raise CloseoutError("child_timeout") from None
+    except Exception as error:
+        diagnostic = _bounded_diagnostic(
+            f"{type(error).__name__}: {error}",
+            secrets=credential_values,
+            roots=(str(checkout_root), str(scratch_root), *prepared.denied_roots),
+        )
+        raise CloseoutError(
+            "child_failed", {"process": diagnostic or "process_failure"}
+        ) from None
     if completed.returncode == CONTAINMENT_EXIT_STATUS:
         return ChildRunResult(
             returncode=completed.returncode,
             error="containment_failure",
             result_path=None,
+            details={"returncode": completed.returncode},
         )
 
     result_path = scratch_root / (
         "automated-results.json" if mode == "pytest" else "live-results.json"
     )
-    payload: object = {}
-    if result_path.is_file():
-        payload = json.loads(result_path.read_text(encoding="utf-8"))
-    child_error = payload.get("error") if isinstance(payload, dict) else None
-    if child_error is None and completed.returncode:
-        child_error = "pytest_failed" if mode == "pytest" else "child_failed"
+    payload, result_problem = _read_json_object(result_path)
+    details = (
+        _child_failure_details(
+            completed,
+            secrets=credential_values,
+            roots=(str(checkout_root), str(scratch_root), *prepared.denied_roots),
+        )
+        if completed.returncode or result_problem
+        else None
+    )
+    child_error: str | None = None
+    if result_problem is not None:
+        assert details is not None
+        details["result_parse"] = result_problem
+        child_error = "child_failed"
+    elif completed.returncode:
+        assert payload is not None and details is not None
+        raw_error = payload.get("error")
+        if "error" in payload and not isinstance(raw_error, str):
+            details["result_parse"] = "error_not_string"
+            child_error = "child_failed"
+        elif raw_error in CHILD_SEMANTIC_ERRORS:
+            child_error = raw_error
+        elif isinstance(raw_error, str):
+            details["child_error"] = _bounded_diagnostic(
+                raw_error,
+                secrets=credential_values,
+                roots=(
+                    str(checkout_root),
+                    str(scratch_root),
+                    *prepared.denied_roots,
+                ),
+            )
+            child_error = "child_failed"
+        elif mode == "live":
+            details["result_parse"] = "error_missing"
+            child_error = "child_failed"
+        else:
+            child_error = "pytest_failed"
     return ChildRunResult(
         returncode=completed.returncode,
-        error=child_error if isinstance(child_error, str) else None,
+        error=child_error,
         result_path=result_path if result_path.is_file() else None,
+        details=details,
     )
+
+
+def run_development_live_cases(
+    *, checkout: Path, scratch: Path, live_cases: tuple[str, ...]
+) -> dict[str, object]:
+    """Run declared live roots through isolated children and merge their cells."""
+    if not SCENARIO_PATH.is_file():
+        raise CloseoutError("scenario_not_defined")
+    combined: dict[str, object] = {}
+    for live_case in live_cases:
+        expected_keys = EXPECTED_LIVE_RESULT_KEYS.get(live_case)
+        if expected_keys is None:
+            raise CloseoutError("scenario_not_defined")
+        case_scratch = scratch / "raw-results" / live_case
+        result = run_closeout_child(
+            checkout=checkout,
+            scratch=case_scratch,
+            mode="live",
+            target=SCENARIO_PATH,
+            scenario=live_case,
+        )
+        if result.error is not None:
+            raise CloseoutError(result.error, result.details)
+        if result.result_path is None:
+            raise CloseoutError("child_failed")
+        payload, result_problem = _read_json_object(result.result_path)
+        if result_problem is not None or payload is None:
+            raise CloseoutError(
+                "child_failed", {"result_parse": result_problem or "missing"}
+            )
+        if set(payload) != expected_keys:
+            raise CloseoutError("live_result_keys_mismatch")
+        failure_details = _live_failure_details(
+            payload, roots=(str(checkout.resolve()), str(scratch.resolve()))
+        )
+        if failure_details["failures"]:
+            raise CloseoutError("live_case_failed", failure_details)
+        overlap = combined.keys() & payload.keys()
+        if overlap:
+            raise CloseoutError("live_result_duplicate")
+        combined.update(payload)
+    return combined
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -536,11 +893,11 @@ def parse_options(arguments: list[str] | None = None) -> ParentOptions:
         raise CloseoutError("promotion_subject_required")
     if parsed.promote and parsed.no_promote:
         raise CloseoutError("promotion_mode_conflict")
-    if live_case_provided and parsed.live_case not in DECLARED_LIVE_CASES:
+    if live_case_provided and parsed.live_case not in EXECUTABLE_LIVE_ROOTS:
         raise CloseoutError("scenario_not_defined")
 
     live_cases = (
-        tuple(sorted(DECLARED_LIVE_CASES))
+        EXECUTABLE_LIVE_ROOTS
         if parsed.live_only
         else ((parsed.live_case,) if parsed.live_case else ())
     )
@@ -559,3 +916,34 @@ def parse_options(arguments: list[str] | None = None) -> ParentOptions:
 
 
 validate_catalogue(CATALOGUE)
+
+
+def main(arguments: list[str] | None = None) -> int:
+    """Execute the development-only Task 4 live path."""
+    try:
+        options = parse_options(arguments)
+        if not options.development_run:
+            raise CloseoutError("run_mode_not_implemented")
+        if not options.live_cases:
+            raise CloseoutError("live_selection_required")
+        checkout = Path(__file__).resolve().parents[5]
+        with tempfile.TemporaryDirectory(prefix="task23019-") as raw:
+            results = run_development_live_cases(
+                checkout=checkout,
+                scratch=Path(raw),
+                live_cases=options.live_cases,
+            )
+        print(
+            json.dumps({"live_count": len(results), "results": results}, sort_keys=True)
+        )
+        return 0
+    except CloseoutError as error:
+        failure = {"error": error.category}
+        if error.details:
+            failure["details"] = error.details
+        print(json.dumps(failure, sort_keys=True), file=sys.stderr)
+        return 2
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())
