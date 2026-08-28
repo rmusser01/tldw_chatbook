@@ -49,7 +49,11 @@ from tldw_chatbook.UI.Console_Modules.image import ConsoleImageController
 from tldw_chatbook.UI.Console_Modules.message import ConsoleMessageController
 from tldw_chatbook.UI.Console_Modules.session import ConsoleSessionController
 from tldw_chatbook.UI.Screens import chat_screen as chat_screen_module
-from Tests.UI.console_controller_stubs import stub_fleet_controller
+from Tests.UI.console_controller_stubs import (
+    NO_APP,
+    stub_fleet_controller,
+    stub_library_activity_controller,
+)
 from tldw_chatbook.UI.Screens.chat_screen import ChatScreen
 
 
@@ -131,12 +135,20 @@ def _bare_generation_screen(store: ConsoleChatStore) -> ChatScreen:
     """
     screen = ChatScreen.__new__(ChatScreen)
     # Must precede the `_console_chat_store` assignment below: that is a
-    # property whose setter reaches `_console_runtime().set_chat_store`, which
-    # builds the chat controller's kwargs, which reads
-    # `self._fleet._console_wake_user_priority`. Without a fleet controller the
-    # shell dies during SETUP with an AttributeError naming an attribute this
-    # file never mentions (TASK-21381).
+    # property whose setter reaches `ConsoleRuntime.attach_view` ->
+    # `ChatScreen.console_view_hooks`, which reads
+    # `self._fleet._console_wake_user_priority` (TASK-21381) and
+    # `self._library_activity.build_provider` (TASK-23144). Without either
+    # controller the shell dies during SETUP with an AttributeError naming an
+    # attribute this file never mentions.
     stub_fleet_controller(screen, context="_bare_generation_screen")
+    stub_library_activity_controller(
+        screen,
+        context="_bare_generation_screen",
+        # `app_instance` is assigned two lines further down; the
+        # generation branches touch no library-activity seam.
+        app_instance=NO_APP,
+    )
     screen._console_chat_store = store
     screen._session = ConsoleSessionController.__new__(ConsoleSessionController)
     screen._session._chat_store_accessor = lambda: screen._console_chat_store
