@@ -84,6 +84,9 @@ class CurrentRunActor:
 _CURRENT_RUN_ACTOR: ContextVar[CurrentRunActor | None] = ContextVar(
     "tldw_agent_run_actor", default=None
 )
+_CURRENT_TOOL_CALL_ID: ContextVar[str] = ContextVar(
+    "tldw_agent_tool_call_id", default=""
+)
 
 
 def current_run_actor() -> CurrentRunActor | None:
@@ -104,6 +107,11 @@ def current_run_id() -> str:
     """
     actor = current_run_actor()
     return actor.run_id if actor is not None else ""
+
+
+def current_tool_call_id() -> str:
+    """Return the native id of the tool call currently being dispatched."""
+    return _CURRENT_TOOL_CALL_ID.get()
 
 
 @contextmanager
@@ -146,3 +154,13 @@ def use_run_id(run_id: str) -> Iterator[None]:
         yield
     finally:
         _CURRENT_RUN_ACTOR.reset(token)
+
+
+@contextmanager
+def use_tool_call_id(call_id: str) -> Iterator[None]:
+    """Bind one tool-call id without changing its run attribution."""
+    token = _CURRENT_TOOL_CALL_ID.set(str(call_id or ""))
+    try:
+        yield
+    finally:
+        _CURRENT_TOOL_CALL_ID.reset(token)

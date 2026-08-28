@@ -160,6 +160,18 @@ def validate_request(command: str, argv: Sequence[str]) -> VirtualCliRequest:
     return VirtualCliRequest(cast(VirtualCliCommand, command), tuple(normalized))
 
 
+def parse_request(command: str, argv: Sequence[str]) -> tuple[VirtualCliRequest, argparse.Namespace]:
+    """Validate the outer request and its command-specific argv grammar."""
+    request = validate_request(command, argv)
+    try:
+        parsed = _PARSERS[request.command].parse_args(list(request.argv))
+    except (argparse.ArgumentError, TypeError, ValueError) as exc:
+        if isinstance(exc, VirtualCliArgumentError):
+            raise
+        raise VirtualCliArgumentError(f"invalid arguments: {exc}") from exc
+    return request, parsed
+
+
 class VirtualCliRegistry:
     """Parse fixed argv forms and dispatch directly to policy-checked cores."""
 
@@ -171,13 +183,7 @@ class VirtualCliRegistry:
         return self._root
 
     def execute(self, command: str, argv: Sequence[str]) -> str:
-        request = validate_request(command, argv)
-        try:
-            args = _PARSERS[request.command].parse_args(list(request.argv))
-        except (argparse.ArgumentError, TypeError, ValueError) as exc:
-            if isinstance(exc, VirtualCliArgumentError):
-                raise
-            raise VirtualCliArgumentError(f"invalid arguments: {exc}") from exc
+        request, args = parse_request(command, argv)
 
         if request.command == "ls":
             return list_directory(args.path, workspace_root=self._root)
