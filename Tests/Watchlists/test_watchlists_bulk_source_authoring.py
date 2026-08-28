@@ -13,6 +13,7 @@ from Tests.UI.consolidated_css import BUNDLED_STYLESHEET, ConsolidatedCSSApp
 from Tests.UI.app_factory import _build_test_app
 from Tests.UI.test_destination_shells import DestinationHarness
 from tldw_chatbook.UI.Screens.watchlists_collections_screen import (
+    WatchlistsCollectionsScreen,
     WatchlistsSourceSelectionCommandProvider,
 )
 from tldw_chatbook.UI.Watchlists_Modules.bulk_sources_modal import (
@@ -55,6 +56,17 @@ class BulkSourcesHarness(ConsolidatedCSSApp):
 
 class BulkSourcesScreenHarness(DestinationHarness):
     CSS_PATH = str(BUNDLED_STYLESHEET)
+
+
+class ConfiguredWatchlistsHarness(ConsolidatedCSSApp):
+    CSS_PATH = [str(BUNDLED_STYLESHEET)]
+
+    def __init__(self, screen: WatchlistsCollectionsScreen) -> None:
+        super().__init__()
+        self.configured_screen = screen
+
+    async def on_mount(self) -> None:
+        await self.push_screen(self.configured_screen)
 
 
 @pytest.mark.asyncio
@@ -158,6 +170,44 @@ async def test_bulk_modal_cannot_dismiss_an_admitted_write():
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("size", [(160, 42), (220, 52)])
+async def test_partial_result_escape_returns_to_the_preserved_draft(size):
+    """Escape is Return to draft, not a hidden third partial-result choice."""
+    app = BulkSourcesHarness()
+    async with app.run_test(size=size) as pilot:
+        modal = app.screen
+        assert isinstance(modal, BulkSourcesModal)
+        draft = modal.query_one("#bulk-sources-draft", TextArea)
+        original = "https://ready.example/feed\nnot a URL"
+        draft.text = original
+        modal.query_one("#bulk-sources-create", Button).press()
+        await pilot.pause()
+        modal.apply_results(
+            [
+                {
+                    "input_index": 0,
+                    "outcome": "created",
+                    "source": {"id": "local:subscription:11"},
+                }
+            ]
+        )
+        await pilot.pause()
+        assert modal.query_one("#bulk-sources-actions").display is False
+        assert modal.query_one("#bulk-sources-decisions").display is True
+
+        await pilot.press("escape")
+        await pilot.pause()
+
+        assert app.screen is modal
+        assert draft.text == original
+        assert modal.query_one("#bulk-sources-actions").display is True
+        assert modal.query_one("#bulk-sources-decisions").display is False
+        assert modal.query_one("#bulk-sources-create", Button).disabled is False
+        assert modal.query_one("#bulk-sources-cancel", Button).disabled is False
+        assert modal.focused is draft
+
+
+@pytest.mark.asyncio
 async def test_help_advertises_source_selection_keys_only_for_the_focused_table():
     """Focus-scoped keys must be discoverable without being promised globally."""
     app_instance = _build_test_app()
@@ -174,6 +224,7 @@ async def test_help_advertises_source_selection_keys_only_for_the_focused_table(
         screen.action_show_help()
         focused_copy = app_instance.notify.call_args.args[0]
         assert "Space=toggle source" in focused_copy
+        assert "space=next-unread" not in focused_copy.casefold()
         assert "Shift+Up/Down=range" in focused_copy
         assert "v=visible" in focused_copy
         assert "x=clear selected" in focused_copy
@@ -184,6 +235,7 @@ async def test_help_advertises_source_selection_keys_only_for_the_focused_table(
         screen.action_show_help()
         typing_copy = app_instance.notify.call_args.args[0]
         assert "Space=toggle source" not in typing_copy
+        assert "space=next-unread" in typing_copy.casefold()
         assert "v=visible" not in typing_copy
 
 
@@ -209,6 +261,10 @@ async def test_command_palette_exposes_only_focus_valid_source_selection_actions
             "Sources: Toggle visible sources",
             "Sources: Clear selected sources",
         ]
+        assert all(
+            "next unread" not in f"{label} {help_text}".casefold()
+            for label, _callback, help_text in provider.commands()
+        )
 
         pane.query_one("#sources-search-input").focus()
         await pilot.pause()
@@ -447,6 +503,55 @@ async def test_server_mode_rejects_local_bulk_and_selected_bundle_mutations():
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("size", [(160, 42), (220, 52)])
+async def test_server_mode_never_enables_local_only_source_actions(size):
+    """Local-only actions are visibly unavailable at mount and after switch."""
+    app_instance = _build_test_app()
+    screen = WatchlistsCollectionsScreen(app_instance)
+    screen.set_reactive(WatchlistsCollectionsScreen.active_section, "sources")
+    screen.set_reactive(WatchlistsCollectionsScreen.runtime_backend, "server")
+    host = ConfiguredWatchlistsHarness(screen)
+
+    async with host.run_test(size=size) as pilot:
+        await pilot.pause()
+        pane = screen.query_one("#watchlists-sources-pane", SourcesPane)
+
+        def assert_server_actions_disabled() -> None:
+            add_several = pane.query_one("#sources-add-several-button", Button)
+            create_watchlist = pane.query_one(
+                "#sources-create-watchlist-selected", Button
+            )
+            assert add_several.disabled is True
+            assert create_watchlist.disabled is True
+            assert "Local only" in str(add_several.label)
+            assert "Local only" in str(create_watchlist.label)
+            assert add_several.region.right <= pane.region.right
+            assert create_watchlist.region.right <= pane.region.right
+
+        assert_server_actions_disabled()
+
+        screen.runtime_backend = "local"
+        await pilot.pause()
+        pane.set_selected_source_ids(("local:subscription:11",))
+        await pilot.pause()
+        assert pane.query_one("#sources-add-several-button", Button).disabled is False
+        assert pane.query_one(
+            "#sources-create-watchlist-selected", Button
+        ).disabled is False
+
+        screen.runtime_backend = "server"
+        await pilot.pause()
+        assert pane.selected_source_ids == frozenset({"local:subscription:11"})
+        assert_server_actions_disabled()
+        screen._start_tree_write = Mock()
+        pane.query_one("#sources-add-several-button", Button).press()
+        pane.query_one("#sources-create-watchlist-selected", Button).press()
+        await pilot.pause()
+        assert host.screen is screen
+        screen._start_tree_write.assert_not_called()
+
+
+@pytest.mark.asyncio
 async def test_bulk_modal_keeps_draft_after_validation_and_write_failure():
     """Catches either validation or persistence failure erasing the draft."""
     app = BulkSourcesHarness()
@@ -550,6 +655,67 @@ async def test_bulk_continue_preserves_created_ids_from_a_watchlist_scope():
         pane = screen.query_one("#watchlists-sources-pane", SourcesPane)
         assert pane.selected_source_ids == frozenset({created["id"]})
         assert screen._selected_source_ids == (created["id"],)
+
+
+@pytest.mark.asyncio
+async def test_scoped_rows_never_prune_selection_until_authoritative_reload_deletes_id():
+    """Scope/filter/reorder are visibility; only a full reload may prune IDs."""
+    app_instance = _build_test_app()
+    bundles = app_instance.watchlist_bundle_service
+    db = bundles._db
+    first_watchlist = bundles.create("First collection")
+    second_watchlist = bundles.create("Second collection")
+    first_id = db.add_subscription(
+        name="Alpha feed", type="rss", source="https://alpha.example/feed"
+    )
+    second_id = db.add_subscription(
+        name="Beta feed", type="rss", source="https://beta.example/feed"
+    )
+    bundles.add_source(first_watchlist["id"], first_id)
+    bundles.add_source(second_watchlist["id"], second_id)
+    canonical_ids = (
+        f"local:subscription:{first_id}",
+        f"local:subscription:{second_id}",
+    )
+    host = BulkSourcesScreenHarness(app_instance, "watchlists_collections")
+
+    async with host.run_test(size=(160, 42)) as pilot:
+        screen = host.screen_stack[-1]
+        screen.active_section = "sources"
+        await screen._load_sources()
+        await pilot.pause()
+        pane = screen.query_one("#watchlists-sources-pane", SourcesPane)
+        pane.set_selected_source_ids(canonical_ids)
+        await pilot.pause()
+
+        for watchlist_id in (first_watchlist["id"], second_watchlist["id"]):
+            screen.tree_scope = TreeScope(
+                kind="watchlist",
+                watchlist_id=watchlist_id,
+            )
+            await pilot.pause()
+            assert pane.selected_source_ids == frozenset(canonical_ids)
+            assert screen._selected_source_ids == canonical_ids
+
+        pane.search_query = "Beta"
+        await pilot.pause()
+        assert pane.selected_source_ids == frozenset(canonical_ids)
+        assert screen._selected_source_ids == canonical_ids
+
+        screen.tree_scope = TreeScope(kind="all")
+        pane.search_query = ""
+        await pilot.pause()
+        pane.sources = list(reversed(pane.sources))
+        await pilot.pause()
+        assert pane.selected_source_ids == frozenset(canonical_ids)
+        assert screen._selected_source_ids == canonical_ids
+
+        await app_instance.local_watchlists_service.delete_source(second_id)
+        await screen._load_sources()
+        await pilot.pause()
+
+        assert pane.selected_source_ids == frozenset({canonical_ids[0]})
+        assert screen._selected_source_ids == (canonical_ids[0],)
 
 
 @pytest.mark.asyncio

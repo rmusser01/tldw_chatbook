@@ -152,6 +152,9 @@ class BulkSourcesModal(ModalScreen[None]):
         if self._batch_posted:
             self._show_status("Creating sources… Keep this dialog open for results.")
             return
+        if self.query_one("#bulk-sources-decisions").display:
+            self._return_to_draft()
+            return
         self.dismiss(None)
 
     def on_button_pressed(self, event: Button.Pressed) -> None:

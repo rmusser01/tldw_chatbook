@@ -99,6 +99,32 @@ class ArtifactsScreenHarness(DestinationHarness):
     CSS_PATH = str(BUNDLED_STYLESHEET)
 
 
+class _EventuallyVisibleBriefingsDB:
+    """Delegate all DB work while hiding one accepted receipt until retry."""
+
+    def __init__(self, delegate, hidden_id: int) -> None:
+        self._delegate = delegate
+        self.hidden_id = hidden_id
+        self.visible = False
+
+    def __getattr__(self, name):
+        return getattr(self._delegate, name)
+
+    def get_briefing(self, briefing_id: int):
+        if not self.visible and briefing_id == self.hidden_id:
+            return None
+        return self._delegate.get_briefing(briefing_id)
+
+    def list_briefings(self, watchlist_id: int):
+        if self.visible:
+            return self._delegate.list_briefings(watchlist_id)
+        return [
+            row
+            for row in self._delegate.list_briefings(watchlist_id)
+            if row["id"] != self.hidden_id
+        ]
+
+
 def _seed_complete_briefing(app) -> tuple[int, int]:
     watchlist_id = app.watchlist_bundle_service.create("Threat Intel")["id"]
     db = app.watchlist_bundle_service.db
@@ -446,6 +472,83 @@ async def test_durable_receipt_mismatch_retains_last_good_content():
         assert pane.view_state == "storage_mismatch"
         assert pane.query_one("#artifacts-retry-button", Button).display is True
         assert pane.query_one("#artifacts-inspect-runs-button", Button).display is True
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("size", [(160, 42), (220, 52)])
+@pytest.mark.parametrize("coordinated", [False, True])
+async def test_accepted_missing_receipt_retries_its_exact_id(
+    monkeypatch,
+    size,
+    coordinated,
+):
+    """Accepted local/coordinated IDs stay the mismatch target until visible."""
+    app_instance = _build_test_app()
+    watchlist_id, last_good_id = _seed_complete_briefing(app_instance)
+    db = app_instance.watchlist_bundle_service.db
+    accepted_id = db.insert_briefing(watchlist_id)
+    db.update_briefing(
+        accepted_id,
+        status="complete",
+        body_markdown="## Eventually visible briefing",
+    )
+    hidden_db = _EventuallyVisibleBriefingsDB(db, accepted_id)
+    host = ArtifactsScreenHarness(app_instance, "watchlists_collections")
+
+    async with host.run_test(size=size) as pilot:
+        screen = host.screen_stack[-1]
+        screen.tree_scope = TreeScope(kind="watchlist", watchlist_id=watchlist_id)
+        screen.active_section = "artifacts"
+        await pilot.pause()
+        await host.workers.wait_for_complete()
+        screen._selected_briefing = next(
+            row for row in screen._loaded_briefings if row["id"] == last_good_id
+        )
+        screen._apply_briefing_state_to_pane()
+        await pilot.pause()
+        screen._briefings_db = lambda: hidden_db
+        notifications: list[str] = []
+        screen._notify_watchlists = (
+            lambda message, *_args, **_kwargs: notifications.append(message)
+        )
+
+        if coordinated:
+            class Coordinator:
+                async def accept_briefing(self, _watchlist_id, _preset_id):
+                    return {"id": accepted_id}
+
+            await screen._follow_coordinated_briefing(
+                hidden_db,
+                watchlist_id,
+                None,
+                Coordinator(),
+            )
+        else:
+            async def accepted_local_receipt(_db, _watchlist_id, **_kwargs):
+                return db.get_briefing(accepted_id)
+
+            monkeypatch.setattr(
+                screen_module,
+                "generate_briefing",
+                accepted_local_receipt,
+            )
+            await screen._generate_briefing(hidden_db, watchlist_id, None)
+        await pilot.pause()
+
+        pane = screen.query_one("#watchlists-artifacts-pane", ArtifactsPane)
+        assert pane.view_state == "storage_mismatch"
+        assert pane.selected_briefing["id"] == last_good_id
+        assert pane.query_one("#artifacts-retry-button", Button).display is True
+        assert pane.query_one("#artifacts-inspect-runs-button", Button).display is True
+        assert all("Nothing new was started" not in message for message in notifications)
+
+        hidden_db.visible = True
+        pane.query_one("#artifacts-retry-button", Button).press()
+        await host.workers.wait_for_complete()
+        await pilot.pause()
+
+        assert pane.view_state == "idle"
+        assert pane.selected_briefing["id"] == accepted_id
 
 
 @pytest.mark.asyncio

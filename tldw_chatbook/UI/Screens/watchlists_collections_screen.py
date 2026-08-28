@@ -806,6 +806,7 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
         self._pending_navigation_run_id: str | None = None
         self._pending_navigation_run_backend: str | None = None
         self._pending_navigation_briefing_id: str | None = None
+        self._durable_briefing_reload_target: tuple[int, int] | None = None
         self._loaded_runs: list[dict[str, Any]] = []
         self._runs_refresh_generation = 0
         self._pending_runs_refresh_generation: int | None = None
@@ -2691,6 +2692,9 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
             # watchlist.
             sources_pane.set_reactive(
                 SourcesPane.sources, self.scoped_loaded_sources()
+            )
+            sources_pane.set_authoritative_source_ids(
+                self._loaded_source_canonical_ids()
             )
             sources_pane.set_selected_source_ids(self._selected_source_ids)
             sources_pane.selected_source = self.selected_source
@@ -7733,6 +7737,14 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
             if str(source.get("source_id")) in allowed
         ]
 
+    def _loaded_source_canonical_ids(self) -> tuple[str, ...]:
+        """Return the authoritative all-source IDs from the last full reload."""
+        return tuple(
+            str(source["id"])
+            for source in self._loaded_sources
+            if source.get("id") is not None
+        )
+
     def _push_scoped_sources_to_pane(self) -> None:
         """Push the scoped source rows into the mounted `SourcesPane`.
 
@@ -7773,12 +7785,21 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
             # SourcesPane instead of leaving its table empty; see
             # `_build_detail_pane` and `_loaded_sources` in __init__.
             self._loaded_sources = [dict(source) for source in sources]
+            authoritative_ids = self._loaded_source_canonical_ids()
+            existing_ids = set(authoritative_ids)
+            self._selected_source_ids = tuple(
+                source_id
+                for source_id in self._selected_source_ids
+                if source_id in existing_ids
+            )
             if self._dom_is_live:
                 try:
                     sources_pane = self.query_one(
                         "#watchlists-sources-pane", SourcesPane
                     )
                     sources_pane.sources = self.scoped_loaded_sources()
+                    sources_pane.set_authoritative_source_ids(authoritative_ids)
+                    sources_pane.set_selected_source_ids(self._selected_source_ids)
                     if self.selected_source is not None:
                         source_id = self.selected_source.get("id")
                         if source_id is not None:
@@ -8362,6 +8383,10 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
                     row.get("id") == select_briefing_id for row in loaded_rows
                 )
             ):
+                self._durable_briefing_reload_target = (
+                    watchlist_id,
+                    int(select_briefing_id),
+                )
                 if pending_navigation_id is not None:
                     self._pending_navigation_briefing_id = None
                 self._set_artifacts_view_state(
@@ -8370,6 +8395,11 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
                 )
                 self._apply_briefing_state_to_pane()
                 return
+            if self._durable_briefing_reload_target == (
+                watchlist_id,
+                select_briefing_id,
+            ):
+                self._durable_briefing_reload_target = None
             self._loaded_briefings = loaded_rows
             wanted = (
                 select_briefing_id
@@ -9024,7 +9054,17 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
         self, event: RefreshBriefingsRequested
     ) -> None:
         event.stop()
-        self._request_briefings_refresh()
+        watchlist_id = self._briefing_watchlist_id()
+        target = self._durable_briefing_reload_target
+        select_briefing_id = (
+            target[1]
+            if target is not None and target[0] == watchlist_id
+            else None
+        )
+        self._request_briefings_refresh(
+            select_briefing_id=select_briefing_id,
+            expect_durable_receipt=select_briefing_id is not None,
+        )
 
     @on(InspectArtifactRecoveryRequested)
     def handle_inspect_artifact_recovery_requested(
@@ -10706,29 +10746,35 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
             receipt = await coordinator.accept_briefing(watchlist_id, preset_id)
             generated_id = int(receipt["id"])
             accepted = True
+            self._durable_briefing_reload_target = (watchlist_id, generated_id)
+            status = ""
             while True:
                 row = await asyncio.to_thread(db.get_briefing, generated_id)
+                if row is None:
+                    break
                 status = str(row.get("status") or "").strip().casefold()
                 if status != STATUS_GENERATING:
                     break
                 await asyncio.sleep(0.1)
             if status == STATUS_FAILED:
                 generation_failed = True
+                self._durable_briefing_reload_target = None
                 self._notify_briefing_failure(row)
         except asyncio.CancelledError:
             following_cancelled = True
             raise
         except Exception as exc:  # noqa: BLE001 - UI reports fixed, safe copy
-            generation_failed = True
             logger.warning(
                 f"Briefing acceptance failed for watchlist {watchlist_id}: "
                 f"{type(exc).__name__}"
             )
-            self._notify_watchlists(
-                "Could not accept this briefing. Nothing new was started.",
-                severity="error",
-                markup=False,
-            )
+            if not accepted:
+                generation_failed = True
+                self._notify_watchlists(
+                    "Could not accept this briefing. Nothing new was started.",
+                    severity="error",
+                    markup=False,
+                )
         finally:
             self._briefing_in_flight = False
             self._briefing_in_flight_watchlist_id = None
@@ -13521,24 +13567,22 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
         # named here is bound above and covered by tests. TASK-3791 adds
         # the search and refresh-all verbs.
         focused = self.focused
-        source_selection_help = (
-            " | Space=toggle source Shift+Up/Down=range "
-            "v=visible x=clear selected"
+        space_help = (
+            "Space=toggle source Shift+Up/Down=range v=visible x=clear selected"
             if (
                 self.active_section == "sources"
                 and isinstance(focused, DataTable)
                 and focused.id == "sources-table"
             )
-            else ""
+            else "space=next-unread"
         )
         self.app_instance.notify(
             "1=Read 2=Sources 3=Runs 4=Rules 5=Notifications 6=Artifacts "
             "7=Overview | n=new d=delete/ignore c=check p=preview ?=help | "
-            "j/k=move space=next-unread m=read/unread s=star o=open "
+            f"j/k=move {space_help} m=read/unread s=star o=open "
             "a=mark-all-read u=undo /=search r=refresh-all | "
             "z=toggle focused side pane Z=Article Focus (Read only) "
-            "[=Navigation ]=Inspector | Reader is permanent"
-            f"{source_selection_help}",
+            "[=Navigation ]=Inspector | Reader is permanent",
             severity="information",
             timeout=8,
         )

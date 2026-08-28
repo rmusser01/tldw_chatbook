@@ -175,7 +175,7 @@ class SourcesPane(RecomposeCaptureGuard, Vertical):
     tags_filter = reactive("")
     show_create_form = reactive(False, recompose=True)
     show_filter_editor = reactive(False, recompose=True)
-    create_runtime_backend = reactive("local")
+    create_runtime_backend = reactive("local", recompose=True)
     create_form_source_types = reactive[tuple[str, ...]](
         ("rss", "atom", "url"), recompose=True
     )
@@ -361,6 +361,7 @@ class SourcesPane(RecomposeCaptureGuard, Vertical):
     def __init__(self, *args: Any, **kwargs: Any) -> None:
         super().__init__(*args, **kwargs)
         self._multi_selection = IdSelectionModel()
+        self._authoritative_source_ids: tuple[str, ...] = ()
 
     @property
     def selected_source_ids(self) -> frozenset[str]:
@@ -369,14 +370,14 @@ class SourcesPane(RecomposeCaptureGuard, Vertical):
 
     def set_selected_source_ids(self, source_ids: tuple[str, ...]) -> None:
         """Seed selection restored by the owning screen or a bulk result."""
-        existing = tuple(
-            str(source.get("id"))
-            for source in self.sources
-            if source.get("id") is not None
-        )
         self._multi_selection.replace(source_ids)
-        self._multi_selection.prune(existing)
+        if self._authoritative_source_ids:
+            self._multi_selection.prune(self._authoritative_source_ids)
         self._update_multi_selection_ui()
+
+    def set_authoritative_source_ids(self, source_ids: tuple[str, ...]) -> None:
+        """Mirror the owning screen's full-reload order for selected IDs."""
+        self._authoritative_source_ids = tuple(dict.fromkeys(source_ids))
 
     def configure_create_backend(
         self, backend: str, source_types: tuple[str, ...]
@@ -454,9 +455,14 @@ class SourcesPane(RecomposeCaptureGuard, Vertical):
                     ),
                 )
                 yield Button(
-                    "Add several…",
+                    (
+                        "Add several…"
+                        if self.create_runtime_backend == "local"
+                        else "Add several (Local only)"
+                    ),
                     id="sources-add-several-button",
                     variant="default",
+                    disabled=self.create_runtime_backend != "local",
                 )
                 yield Button("Filters", id="sources-filter-toggle", variant="default")
             if self.show_filter_editor:
@@ -522,9 +528,16 @@ class SourcesPane(RecomposeCaptureGuard, Vertical):
                         id="sources-selection-status",
                     )
                     yield Button(
-                        "Create Watchlist from selected…",
+                        (
+                            "Create Watchlist from selected…"
+                            if self.create_runtime_backend == "local"
+                            else "Create Watchlist from selected (Local only)"
+                        ),
                         id="sources-create-watchlist-selected",
-                        disabled=not 1 <= len(self._multi_selection.selected_ids) <= 100,
+                        disabled=(
+                            self.create_runtime_backend != "local"
+                            or not 1 <= len(self._multi_selection.selected_ids) <= 100
+                        ),
                     )
 
         if self.show_create_form:
@@ -968,19 +981,7 @@ class SourcesPane(RecomposeCaptureGuard, Vertical):
         self._refresh_table_rows()
 
     def watch_sources(self, sources: list[dict[str, Any]]) -> None:
-        """Prune only canonical IDs no longer present after a source reload."""
-        before = self._multi_selection.selected_ids
-        self._multi_selection.prune(
-            tuple(
-                str(source.get("id"))
-                for source in sources
-                if source.get("id") is not None
-            )
-        )
-        if self.is_mounted and self._multi_selection.selected_ids != before:
-            self.post_message(
-                SourceSelectionChanged(self._ordered_selected_source_ids())
-            )
+        """Treat assigned rows as visible-order input, never deletion truth."""
 
     def on_input_changed(self, event: Input.Changed) -> None:
         if event.input.id == "sources-search-input":
@@ -1704,11 +1705,12 @@ class SourcesPane(RecomposeCaptureGuard, Vertical):
 
     def _ordered_selected_source_ids(self) -> tuple[str, ...]:
         selected = self._multi_selection.selected_ids
-        return tuple(
+        order = self._authoritative_source_ids or tuple(
             str(source.get("id"))
             for source in self.sources
-            if str(source.get("id")) in selected
+            if source.get("id") is not None
         )
+        return tuple(source_id for source_id in order if source_id in selected)
 
     def _update_multi_selection_ui(self) -> None:
         """Refresh selection markers, count, action state, and owner mirror."""
@@ -1729,7 +1731,10 @@ class SourcesPane(RecomposeCaptureGuard, Vertical):
             )
             self.query_one(
                 "#sources-create-watchlist-selected", Button
-            ).disabled = not 1 <= len(self._multi_selection.selected_ids) <= 100
+            ).disabled = (
+                self.create_runtime_backend != "local"
+                or not 1 <= len(self._multi_selection.selected_ids) <= 100
+            )
         except (CellDoesNotExist, NoMatches, IndexError):
             pass
         if self.is_mounted:

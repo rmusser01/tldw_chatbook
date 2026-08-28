@@ -100,12 +100,15 @@ def test_id_selection_model_reanchors_range_after_anchor_is_deleted():
 
 
 @pytest.mark.asyncio
-async def test_source_reload_prunes_deleted_ids_from_the_owner_mirror(sample_sources):
-    """Catches a deleted source surviving only in screen-owned selection state."""
+async def test_scoped_source_rows_do_not_prune_authoritative_selection(sample_sources):
+    """A pane row subset is visibility input, not source-deletion truth."""
     app = SourcesPaneHarness()
     async with app.run_test(size=(160, 42)) as pilot:
         pane = app.query_one(SourcesPane)
         pane.sources = sample_sources
+        pane.set_authoritative_source_ids(
+            tuple(str(source["id"]) for source in sample_sources)
+        )
         await pilot.pause()
         pane.set_selected_source_ids(("source-1", "source-3"))
         await pilot.pause()
@@ -114,10 +117,8 @@ async def test_source_reload_prunes_deleted_ids_from_the_owner_mirror(sample_sou
         pane.sources = sample_sources[:2]
         await pilot.pause()
 
-        assert pane.selected_source_ids == frozenset({"source-1"})
-        assert app.captured_messages == [
-            ("source_selection_changed", ("source-1",))
-        ]
+        assert pane.selected_source_ids == frozenset({"source-1", "source-3"})
+        assert app.captured_messages == []
 
 
 class SourcesPaneHarness(App):
