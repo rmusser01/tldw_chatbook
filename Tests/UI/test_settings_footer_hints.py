@@ -333,8 +333,12 @@ def test_f1_help_has_contract_content_for_every_category():
         assert any(
             note.startswith("Save contract: ") for note in state.notes
         ), category
+        # Ownership: either the matrix's runtime-owner line, or the
+        # read-only domain pages' single "Owned by X" sentence
+        # (review finding 11 de-duplicated their four echoes).
         assert any(
-            note.startswith("Runtime owner: ") for note in state.notes
+            note.startswith(("Runtime owner: ", "Owned by "))
+            for note in state.notes
         ), category
         # Verbs: either real category shortcuts, or an explicit statement
         # that none exist here.
@@ -344,6 +348,56 @@ def test_f1_help_has_contract_content_for_every_category():
         # The ownership matrix must actually cover the category -- the
         # missing-record placeholder is developer copy, not help.
         assert "Ownership record missing" not in body, category
+        # Finding 11: no note's substantial value is repeated under a
+        # second prefix within one body. The ownership line is exempt --
+        # it stays explicit even when the boundary sentence names the
+        # same owner.
+        values = [
+            note.split(": ", 1)[1].strip().rstrip(".").lower()
+            for note in state.notes
+            if ": " in note and not note.startswith("Runtime owner: ")
+        ]
+        for value in values:
+            if len(value) >= 20:
+                carriers = [v for v in values if value in v]
+                assert len(carriers) == 1, (category, value)
+
+
+def test_f1_help_video_gen_states_a_coherent_write_contract():
+    """Review finding 6 (TASK-23110): Video Gen mutates like Image Gen --
+    its help must not pair a draft badge with read-only-ownership copy."""
+    app = _build_test_app()
+    screen = SettingsScreen(app)
+    body = screen._workbench_help_state(
+        SettingsCategoryId.VIDEO_GENERATION
+    ).render_text()
+    assert "Save contract: Draft — save/revert below." in body
+    assert "Writes here: yes." in body
+    assert "Console owns /generate-video" in body
+    assert "read-only defaults" not in body, body
+    assert "Settings shows read-only" not in body, body
+
+
+@pytest.mark.asyncio
+async def test_f1_help_renders_literal_brackets_in_notes():
+    """Review finding 7 (TASK-23110): the help body must not eat literal
+    bracket text as Textual markup -- Agents' boundary copy contains
+    "[tools]"."""
+    app = _build_test_app()
+    host = DestinationHarness(app, "settings")
+    async with host.run_test(size=(180, 50)) as pilot:
+        await _settle_settings(pilot)
+        await _click_settings_category(pilot, "agents")
+        screen = _active_destination_screen(host)
+        screen.action_show_workbench_help()
+        await pilot.pause()
+        panel = host.screen
+        assert isinstance(panel, WorkbenchHelpPanel)
+        assert "[tools] gates" in panel.state.render_text()
+        body = panel.query_one("#workbench-help-body", Static)
+        assert "[tools] gates" in str(body.render()), (
+            "help body consumed the literal [tools] text as markup"
+        )
 
 
 _TEST_STUB_TOAST = "No test action is available"

@@ -3124,7 +3124,11 @@ class SettingsScreen(BaseAppScreen):
         Reuses copy the screen already maintains -- the persistence badge
         (save contract), the State-banner scope line, and the ownership
         matrix -- so the help body cannot drift from the surfaces it
-        summarizes and never falls back to an empty scroll.
+        summarizes and never falls back to an empty scroll. Review
+        finding 11's copy rules: Overview's boundary keeps its owner
+        labels, the read-only domain pages say their one sentence once,
+        and a value another note already carries is not repeated under a
+        second prefix.
 
         Args:
             category: The Settings category to describe.
@@ -3133,17 +3137,74 @@ class SettingsScreen(BaseAppScreen):
             Non-empty tuple of plain-text help lines.
         """
         ownership = self._ownership_record(category)
-        notes = [
-            f"Save contract: {self._persistence_badge(category)}.",
-            f"Scope: {self._category_state_scope_text(category)}",
-            f"Runtime owner: {ownership.runtime_owner}.",
-            "Writes here: "
-            + ("yes." if ownership.writes_allowed else "no — view-only."),
-        ]
-        if ownership.boundary_copy:
-            notes.append(f"Boundary: {ownership.boundary_copy}")
-        if ownership.recovery_copy:
-            notes.append(f"Recovery: {ownership.recovery_copy}")
+        badge_note = f"Save contract: {self._persistence_badge(category)}."
+        if category is SettingsCategoryId.OVERVIEW:
+            notes = [
+                badge_note,
+                f"Scope: {self._category_state_scope_text(category)}",
+                (
+                    "Runtime owner: the owning destinations — Settings "
+                    "summarizes their status."
+                ),
+                # Labeled rows, not a subject-less "; ".join run-on.
+                *(
+                    f"{label}: {value}"
+                    for label, value in SETTINGS_OVERVIEW_BOUNDARY_ROWS
+                ),
+            ]
+            if ownership.recovery_copy:
+                notes.append(f"Recovery: {ownership.recovery_copy}")
+        elif (
+            category in DOMAIN_SETTINGS_CATEGORY_IDS
+            and not ownership.writes_allowed
+        ):
+            # One sentence, once -- Scope/Runtime owner/Boundary/Recovery
+            # all restated "X owns the workflow" on these pages.
+            contract = self._domain_category_contract(category)
+            owner = contract.owner_destination
+            notes = [
+                badge_note,
+                (
+                    f"Owned by {owner}: workflow actions and setup happen "
+                    f"on the {owner} screen; Settings shows read-only "
+                    "defaults and status."
+                ),
+            ]
+        else:
+            candidates = [
+                ("Scope: ", self._category_state_scope_text(category)),
+                ("Runtime owner: ", f"{ownership.runtime_owner}."),
+                (
+                    "Writes here: ",
+                    "yes." if ownership.writes_allowed else "no — view-only.",
+                ),
+                ("Boundary: ", ownership.boundary_copy),
+                ("Recovery: ", ownership.recovery_copy),
+            ]
+            normalized = [
+                (prefix, value, value.strip().rstrip(".").lower())
+                for prefix, value in candidates
+                if value
+            ]
+            notes = [badge_note]
+            seen_values: set[str] = set()
+            for prefix, value, norm in normalized:
+                # Skip a substantial value another note carries verbatim
+                # (Agents repeated one clause under two prefixes). The
+                # ownership line is exempt: it must stay explicit even when
+                # the boundary sentence names the same owner.
+                contained_elsewhere = (
+                    prefix != "Runtime owner: "
+                    and len(norm) >= 20
+                    and any(
+                        norm != other_norm and norm in other_norm
+                        for _p, _v, other_norm in normalized
+                    )
+                )
+                if contained_elsewhere or norm in seen_values:
+                    continue
+                seen_values.add(norm)
+                notes.append(f"{prefix}{value}")
         if not self._category_footer_shortcuts(category):
             notes.append("No shortcut keys are specific to this category.")
         return tuple(notes)
@@ -3601,6 +3662,40 @@ class SettingsScreen(BaseAppScreen):
                         ),
                         recovery_copy=(
                             "Revert unsaved edits, or edit image_generation values "
+                            "directly in Advanced Config."
+                        ),
+                    )
+                )
+                continue
+            if contract.category is SettingsCategoryId.VIDEO_GENERATION:
+                # TASK-23110 review (finding 6): Video Gen mutates like
+                # Image Gen -- the generic read-only record below paired a
+                # "Draft — save/revert below" badge with "read-only
+                # defaults" copy in F1 help.
+                records.append(
+                    SettingsOwnershipRecord(
+                        category=contract.category,
+                        owns_config_sections=(
+                            "video_generation.default_backend",
+                            "video_generation.enabled_backends",
+                            "video_generation.<backend>.*",
+                            "video_generation.retention",
+                            "video_generation.retention_ttl_hours",
+                            "video_generation.max_store_mb",
+                            "video_generation.confirm_cost_estimate",
+                        ),
+                        reads_runtime_state_from=contract.source_of_truth,
+                        writes_allowed=True,
+                        runtime_owner=(
+                            "Settings persisted defaults; Console /generate-video"
+                        ),
+                        boundary_copy=(
+                            "Settings owns persisted backend and generation-default "
+                            "config; Console owns /generate-video, cards, and "
+                            "playback."
+                        ),
+                        recovery_copy=(
+                            "Revert unsaved edits, or edit video_generation values "
                             "directly in Advanced Config."
                         ),
                     )
