@@ -4,6 +4,8 @@ from dataclasses import FrozenInstanceError, fields, is_dataclass
 import importlib
 import importlib.util
 from pathlib import Path
+import subprocess
+import sys
 from types import SimpleNamespace
 from typing import get_args
 
@@ -38,6 +40,27 @@ def _request(raw_cli, directory: Path, **overrides):
     }
     values.update(overrides)
     return _required(raw_cli, "RawCliRequest")(**values)
+
+
+def test_raw_cli_executor_imports_in_a_fresh_interpreter() -> None:
+    """The spawned worker must import its executor without parent preload order."""
+    project_root = Path(__file__).resolve().parents[2]
+    source = (
+        "import sys; "
+        f"sys.path.insert(0, {str(project_root)!r}); "
+        "import tldw_chatbook.Tools.raw_cli_executor"
+    )
+
+    completed = subprocess.run(
+        [sys.executable, "-c", source],
+        cwd=project_root,
+        text=True,
+        capture_output=True,
+        timeout=20.0,
+        check=False,
+    )
+
+    assert completed.returncode == 0, completed.stderr
 
 
 def test_raw_cli_public_vocabulary_and_limits_are_pinned(raw_cli):

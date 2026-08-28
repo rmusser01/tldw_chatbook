@@ -10,8 +10,6 @@ from urllib.parse import urlparse
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
-from tldw_chatbook.Chat.console_chat_models import derive_console_session_title
-
 from ..Metrics.metrics_logger import log_counter, log_histogram
 
 
@@ -19,6 +17,15 @@ PROVIDER_API_KEY_MAX_LENGTH = 4096
 CONSOLE_DRAFT_MAX_LENGTH = 100_000
 CONSOLE_FORK_TITLE_MAX_LENGTH = 60
 RAW_CLI_COMMAND_MAX_BYTES = 16 * 1024
+
+
+def derive_console_session_title(draft: str, *, max_length: int) -> str:
+    """Load the Console title helper lazily to keep validation imports acyclic."""
+    from tldw_chatbook.Chat.console_chat_models import (
+        derive_console_session_title as derive_title,
+    )
+
+    return derive_title(draft, max_length=max_length)
 
 
 def validate_console_fork_title(value: object) -> str:
