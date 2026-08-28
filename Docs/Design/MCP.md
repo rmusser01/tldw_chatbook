@@ -258,7 +258,8 @@ In addition to the standalone tools above, the in-process local MCP surface
 exposes 18 read-only `library_*` tools — `library_list_*`, `library_get_*`, and
 `library_search_*` for each of Media, Notes, Prompts, Skills, Conversations,
 and Collections. The same shared service and all 18 tools are also callable by
-Console agents when `[console].direct_library_tools` is enabled. They answer
+Console agents when that conversation allows assistant Library access and its
+**Direct / RAG selector** chooses Direct. They answer
 factual Library questions (list, count, view, lexical search) without touching
 the RAG/embedding pipeline.
 
@@ -272,8 +273,9 @@ the RAG/embedding pipeline.
   get tools read bounded windows with revision-checked continuation cursors;
   every serialized response fits within 32 KiB.
 - **Compatibility**: the standalone tools above are unchanged; the `library_*`
-  namespace is additive and independent of the Console
-  `[console].direct_library_tools` toggle.
+  namespace is additive and **independent of Console's per-conversation
+  Library policy**. MCP registration and permissions remain authoritative for
+  MCP calls.
 
 See `Docs/Development/Agent-Tools/local-library-tools.md` for the full
 contract (exact names, pagination, continuation, error codes, and security

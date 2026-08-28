@@ -1,6 +1,7 @@
 from pathlib import Path
 
 import pytest
+from loguru import logger
 
 from tldw_chatbook.Agents.agent_models import ToolCall
 from tldw_chatbook.Agents.run_context import (
@@ -206,3 +207,33 @@ def test_permission_is_rechecked_after_review(tmp_path):
         result = provider.invoke("virtual_cli", call.args)
 
     assert not result.ok and result.outcome == "blocked"
+
+
+def test_callback_failures_log_only_exception_types(tmp_path):
+    private_canary = "/private/console-secret/note-42 https://internal.example/token"
+
+    def fail_callback(*_args):
+        raise RuntimeError(private_canary)
+
+    messages = []
+    sink_id = logger.add(
+        lambda message: messages.append(str(message)),
+        level="WARNING",
+        format="{message}",
+    )
+    provider = make_provider(
+        tmp_path,
+        persist_approval=fail_callback,
+        record_decision=fail_callback,
+    )
+    hub = provider.hub_tool_for("ls")
+
+    try:
+        provider._persist(hub, "always_allow")
+        provider._record(hub, "denied")
+    finally:
+        logger.remove(sink_id)
+
+    joined = "".join(messages)
+    assert private_canary not in joined
+    assert joined.count("RuntimeError") == 2

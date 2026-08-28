@@ -1321,9 +1321,9 @@ class ConsoleLibraryActivityBuffer:
 ### Task 26: Add deterministic production-UI scenarios and run integrated targeted gates
 
 **Files:**
-- Create: `Tests/Fixtures/console_library_recording_provider.py`
+- Create: `Tests/fixtures/console_library_recording_provider.py`
 - Create: `Tests/UI/test_console_library_controls_workflow.py`
-- Create: `Tests/Integration/test_console_library_control_integration.py`
+- Create: `Tests/integration/test_console_library_control_integration.py`
 - Modify: `Tests/Chat/test_console_chat_controller.py`, `Tests/Chat/test_console_prompt_queue_coordinator.py`, `Tests/Chat/test_console_agent_bridge.py`, `Tests/UI/test_console_status_chips.py`, `Tests/UI/test_console_right_rail.py`, and `Tests/UI/test_console_library_controls_render.py`
 
 **Interfaces:**
@@ -1373,7 +1373,7 @@ python -m pytest \
   Tests/UI/test_console_library_activity.py \
   Tests/Docs/test_console_library_controls_docs.py \
   Tests/UI/test_console_library_controls_workflow.py \
-  Tests/Integration/test_console_library_control_integration.py \
+  Tests/integration/test_console_library_control_integration.py \
   Tests/Sync_Interop/test_chat_outbox_producer.py \
   Tests/Sync_Interop/test_envelope_builder.py \
   Tests/Sync_Interop/test_envelope_applier.py \
@@ -1389,7 +1389,7 @@ python -m pytest \
   -q
 ```
 
-- [ ] **Step 5: Run scoped static checks.** Run `python -m ruff check Tests/Fixtures/console_library_recording_provider.py Tests/UI/test_console_library_controls_workflow.py Tests/Integration/test_console_library_control_integration.py Tests/Docs/test_console_library_controls_docs.py`, `python tldw_chatbook/css/build_css.py`, `python tldw_chatbook/css/check_bundle_sync.py`, `python -m pytest Tests/UI/test_css_bundle_sync_guard.py Tests/Architecture/test_screen_size_ratchet.py -q`, and `git diff --check`. The product modules were already Ruff-checked in their owning delivery; do not replace those per-delivery gates with this fixture-only command.
+- [ ] **Step 5: Run scoped static checks.** Run `python -m ruff check Tests/fixtures/console_library_recording_provider.py Tests/UI/test_console_library_controls_workflow.py Tests/integration/test_console_library_control_integration.py Tests/Docs/test_console_library_controls_docs.py`, `python tldw_chatbook/css/build_css.py`, `python tldw_chatbook/css/check_bundle_sync.py`, `python -m pytest Tests/UI/test_css_bundle_sync_guard.py Tests/Architecture/test_screen_size_ratchet.py -q`, and `git diff --check`. The product modules were already Ruff-checked in their owning delivery; do not replace those per-delivery gates with this fixture-only command.
 - [ ] **Step 6: Run counterfactual checks.** Mutation-check authorization, static reservation, retrieval no-dispatch, activity minimization, continuation pre-tool handoff, message-version/deletion CAS, sync/export normalization, rollback drain, and literal rendering; record each named test that turns red.
 - [ ] **Step 7: Commit.** Commit `test(console): cover Library control workflows`.
 
