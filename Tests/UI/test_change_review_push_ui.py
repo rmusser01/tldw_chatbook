@@ -37,6 +37,7 @@ import time
 from pathlib import Path
 
 import pytest
+from loguru import logger
 from rich.text import Text
 from textual.app import App
 from textual.widgets import Button, Select, Static
@@ -59,6 +60,7 @@ from tldw_chatbook.UI.Screens.change_review_screen import (
     ChangeGitPushModal,
     ChangeReviewScreen,
 )
+from tldw_chatbook.Utils.log_sanitizer import content_fingerprint
 from tldw_chatbook.Workspaces.change_tracking import ShadowRepoService
 from tldw_chatbook.Workspaces.git_workspace import PushResult as _PushResult
 
@@ -1011,6 +1013,38 @@ async def test_pr_asks_which_repository_when_several_qualify(
         modal.query_one("#change-git-push-yes", Button).press()
         await _wait_for(pilot, lambda: opened or None, "the browser open")
         assert opened == ["https://github.com/o2/beta/compare/main?expand=1"], opened
+
+
+def test_pr_root_switch_failure_logs_pr_identity_without_path_data(
+    monkeypatch, tmp_path
+) -> None:
+    """A shared push/PR modal must retain the PR operation identity on failure."""
+    root = str(tmp_path / "task-19864-private-pr-root")
+    raw_exception = f"TASK-19864 private PR root-switch failure at {root}"
+    traceback_local = f"TASK-19864 private traceback local at {root}"
+    modal = ChangeGitPushModal(action="pr", entries=[(root, object())])
+
+    def fail_query(*_args, **_kwargs):
+        assert traceback_local
+        raise RuntimeError(raw_exception)
+
+    monkeypatch.setattr(modal, "query_one", fail_query)
+    records: list[str] = []
+    sink_id = logger.add(lambda message: records.append(str(message)))
+    try:
+        modal._apply_root(root)
+    finally:
+        logger.remove(sink_id)
+
+    rendered = "".join(records)
+    assert "change_review: push modal root switch failed" in rendered
+    assert "operation=pr" in rendered
+    assert f"root_sha256={content_fingerprint(root)}" in rendered
+    assert "exception_type=RuntimeError" in rendered
+    assert root not in rendered
+    assert Path(root).name not in rendered
+    assert raw_exception not in rendered
+    assert traceback_local not in rendered
 
 
 # ---------------------------------------------------------------------------

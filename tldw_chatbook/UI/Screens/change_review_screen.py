@@ -4859,8 +4859,9 @@ class ChangeGitPushModal(SafeModalDismissMixin, ModalScreen["dict | None"]):
             remote_select.display = self._needs_remote_choice(root)
         except Exception as exc:  # noqa: BLE001 -- never raise out of a handler
             logger.warning(
-                "change_review: push modal root switch failed operation=push "
+                "change_review: push modal root switch failed operation={} "
                 "root_sha256={} exception_type={}",
+                self._action,
                 content_fingerprint(root),
                 type(exc).__name__,
             )
