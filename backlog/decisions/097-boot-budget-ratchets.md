@@ -19,6 +19,13 @@ of breach:
 | boot CSS bytes (`Tests/Performance/test_boot_css_byte_budget.py`) | `MAX_BOOT_PARSED_CSS_BYTES` | 860,000 | 842,236 | 854,720 (headroom 5,280) |
 | screen pre-import payload (`Tests/Performance/test_screen_preimport_payload_budget.py`) | `MAX_PASS_ADDED_MODULES` / `MAX_PASS_ADDED_LOC` / `MAX_SINGLE_ROUTE_ADDED_LOC` | 500 / 380,000 / 145,000 | 481 / 368,814 | 488 / 374,697 / 137,494 |
 
+The import-weight breach in that last column was repaid by TASK-23112 (646,
+headroom 14) — see "Standing breach at adoption" below. Measured on dev
+`473e7c9298` at the same time, the other three read 968/970 (headroom **2**),
+854,943/860,000 and 488/500 + 375,925/380,000 + 137,783/145,000: the `_ui_ready`
+census consumed 5 of its 7 remaining modules in three commits, which is the same
+consumption pattern this ADR was written about.
+
 Three holistic reviews in six days (2026-08-22, 08-24, 08-27) each bought
 headroom that ordinary merge traffic consumed within days. The sharpest
 instance: the guards forbidding `Chat.trajectory_export` on the first-paint
@@ -98,7 +105,44 @@ commit, with the owner's explicit sign-off recorded in the PR.
 |---|---|---|---|---|---|
 | — | — | — | — | *(none granted yet)* | — |
 
-## Standing breach at adoption (not an exception — a debt)
+## Standing breach at adoption (not an exception — a debt) — REPAID
+
+**Repaid 2026-08-28 by TASK-23112: 666 → 646 own modules, ratchet still 660,
+no ledger row.** Two deferrals, each re-measured with an import-parent tracer
+rather than inferred from the diff:
+
+* `Chat/Chat_Functions.py` now imports `ChatPersistenceService` inside
+  `save_chat_history_to_db_wrapper` (its only construction site, never reached
+  at import or during `TldwCli.__init__`): **−18 modules** — every module below
+  that only the persistence service reached (`attachment_core`,
+  `console_chat_fork` + `Event_Handlers.Chat_Events` + `chat_image_events`,
+  `video_metadata` + `video_formats` + the package, the console
+  context/dispatch/library-policy repositories, `Utils.file_handlers`, …).
+* `Chat/console_raw_cli.py` reaches `Tools.raw_cli_executor` through a lazy
+  `_raw_cli_executor()` accessor, and builds the default `RawShellExecutor` on
+  first `execute()` rather than in `RawCliRuntime.__init__` (which `app.py`
+  calls during construction): **−2 modules**.
+
+Two of the traced items below did **not** survive measurement, and the
+attribution is why: the import-parent tracer records only the FIRST importer,
+so an edge can look load-bearing while a second boot-path importer keeps the
+module resident regardless. `Chat.thinking_blocks` is imported at module scope
+by `Chat/Chat_Functions.py` as well as by `console_runtime`, so deferring the
+`console_runtime` edge buys **0**; `Chat.library_activity` (with
+`Chat.trajectory` and `Utils.log_sanitizer`) is also imported by
+`Agents/library_tool_provider.py`, reached via the pre-existing
+`app -> UI.Tools_Settings_Window -> Agents.local_tool_provider ->
+Agents.tool_catalog -> Agents.library_rag_tool_provider` chain, so those three
+stayed. `Widgets.pausable_progress` and `Utils.tiktoken_runtime` were verified
+genuine, as the trace predicted.
+
+The tightening convention does not fire: the reduction (20) is under the
+30-module standard slack, and `646 + 30 = 676` is above 660, so lowering the
+constant would be raising it. Per-edge guards:
+`Tests/Packaging/test_chat_persistence_import_closure.py`,
+`Tests/Packaging/test_raw_cli_import_closure.py`.
+
+The original debt, for the record:
 
 At this ADR's adoption, dev (`b5eaa9cf64`) already breaches the import-weight
 ratchet: **666 own modules against 660**. The constant was NOT raised. Vs the
@@ -119,7 +163,7 @@ removed (TASK-23023's Research_Workspace diet). The added edges, traced:
   each; both look like genuine boot-path needs.
 
 Under this ADR the debt is repaid by deferral/shedding, not by raising 660.
-The `boot_import_modules.txt` snapshot is pinned at the `c6218918d1` set so
-the guard's failure message keeps naming exactly these modules until the debt
-is cleared; once dev is back under 660, re-pin via the update script. The
-repayment is tracked as **TASK-23112**.
+The `boot_import_modules.txt` snapshot was pinned at the `c6218918d1` set so
+the guard's failure message kept naming exactly these modules until the debt
+was cleared; it is now re-pinned at the post-repayment 646-module set. The
+repayment is **TASK-23112** (see above).

@@ -7,7 +7,8 @@ from dataclasses import dataclass
 import math
 import threading
 import time
-from typing import Any, Literal, TypeAlias
+from types import ModuleType
+from typing import TYPE_CHECKING, Any, Literal, TypeAlias
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
@@ -20,15 +21,38 @@ from tldw_chatbook.Chat.console_chat_models import (
     RawCliPresentation,
 )
 from tldw_chatbook.STT.executor_process_tree import ExecutorProcessTree
-from tldw_chatbook.Tools.raw_cli_executor import (
-    MAX_RAW_COMMAND_BYTES,
-    MAX_RAW_PREVIEW_BYTES,
-    RawCliRequest,
-    RawCliResult,
-    RawCliStreamEvent,
-    RawShellExecutor,
-    validate_raw_cli_request,
-)
+
+if TYPE_CHECKING:  # pragma: no cover - typing only
+    from tldw_chatbook.Tools.raw_cli_executor import (
+        RawCliRequest,
+        RawCliResult,
+        RawCliStreamEvent,
+    )
+
+
+def _raw_cli_executor() -> ModuleType:
+    """Return ``Tools.raw_cli_executor``, importing it on first use.
+
+    Deferred (TASK-23112 / ADR-097). ``app.py`` imports this module at module
+    scope for ``RawCliRuntime``, so a module-scope import here reached
+    ``Tools`` + ``Tools.tool_executor`` + ``Tools.raw_cli_executor`` +
+    ``Agents`` + ``Agents.run_log`` + ``Agents.run_log_format`` during
+    ``import tldw_chatbook.app``. Nothing needs any of them until a raw CLI
+    request is actually validated or executed, and every call site below runs
+    only on a user-driven raw CLI turn -- never at import time and never during
+    ``TldwCli.__init__`` (the executor default is built lazily too, see
+    ``RawCliRuntime._executor_or_default``).
+
+    Measured saving: 2 modules (``Tools.raw_cli_executor`` and
+    ``Agents.run_log``). The other four stay on the boot path regardless, pulled
+    by ``app -> UI.Tools_Settings_Window -> Agents.local_tool_provider ->
+    Agents.tool_catalog``. Guarded by
+    ``Tests/Packaging/test_raw_cli_import_closure.py``.
+    """
+    from tldw_chatbook.Tools import raw_cli_executor
+
+    return raw_cli_executor
+
 
 RAW_CLI_SHUTDOWN_TIMEOUT_SECONDS = 5.0
 LOCAL_COMMAND_AGENT_KIND = "local_command"
@@ -39,7 +63,9 @@ LOCAL_COMMAND_RUN_LOG_DIR = "local-command-runs"
 _RAW_CLI_COMPACT_OUTPUT_BYTES = 4 * 1024
 
 RawCliArmReason: TypeAlias = Literal["armed", "locked", "shutdown"]
-RawCliEventSink: TypeAlias = Callable[[RawCliStreamEvent], None]
+# Forward-referenced so the alias does not resolve `RawCliStreamEvent` at
+# import time (it lives in the deferred `Tools.raw_cli_executor`).
+RawCliEventSink: TypeAlias = Callable[["RawCliStreamEvent"], None]
 RawCliRegisteredSink: TypeAlias = Callable[[], None]
 RawCliStartedSink: TypeAlias = Callable[[float], None]
 
@@ -191,7 +217,7 @@ class LocalCommandCallArgs(_LocalCommandResumeModel):
     def _validate_command(cls, value: str) -> str:
         return _resume_utf8_text(
             value,
-            max_bytes=MAX_RAW_COMMAND_BYTES,
+            max_bytes=_raw_cli_executor().MAX_RAW_COMMAND_BYTES,
             nonblank=True,
             nul_free=True,
         )
@@ -256,7 +282,9 @@ class LocalCommandResultArgs(_LocalCommandResumeModel):
     @field_validator("stdout_preview", "stderr_preview")
     @classmethod
     def _validate_preview(cls, value: str) -> str:
-        return _resume_utf8_text(value, max_bytes=MAX_RAW_PREVIEW_BYTES)
+        return _resume_utf8_text(
+            value, max_bytes=_raw_cli_executor().MAX_RAW_PREVIEW_BYTES
+        )
 
     @field_validator("elapsed_seconds", mode="before")
     @classmethod
@@ -270,7 +298,7 @@ class LocalCommandResultArgs(_LocalCommandResumeModel):
         preview_bytes = len(self.stdout_preview.encode("utf-8")) + len(
             self.stderr_preview.encode("utf-8")
         )
-        if preview_bytes > MAX_RAW_PREVIEW_BYTES:
+        if preview_bytes > _raw_cli_executor().MAX_RAW_PREVIEW_BYTES:
             raise ValueError("combined raw CLI preview exceeds its live limit")
         return self
 
@@ -468,7 +496,11 @@ class RawCliRuntime:
         ):
             raise ValueError("shutdown timeout must be a finite nonnegative number")
         self._read_permitted = read_permitted
-        self._executor = executor if executor is not None else RawShellExecutor()
+        # `None` means "use the default shell executor", built on first
+        # execute() rather than here: this constructor runs during
+        # `TldwCli.__init__`, and `RawShellExecutor` lives in the deferred
+        # `Tools.raw_cli_executor` (TASK-23112).
+        self._executor: Any | None = executor
         self._shutdown_timeout_seconds = float(shutdown_timeout_seconds)
         self._lock = threading.RLock()
         self._admission_lock = threading.Lock()
@@ -565,7 +597,7 @@ class RawCliRuntime:
         on_started: RawCliStartedSink | None = None,
     ) -> RawCliResult:
         """Synchronously execute one request through the guarded admission seam."""
-        request = validate_raw_cli_request(request)
+        request = _raw_cli_executor().validate_raw_cli_request(request)
         if not callable(on_event):
             raise TypeError("on_event must be callable")
         if on_registered is not None and not callable(on_registered):
@@ -624,7 +656,7 @@ class RawCliRuntime:
         try:
             if on_registered is not None:
                 on_registered()
-            return self._executor.execute(
+            return self._executor_or_default().execute(
                 request,
                 cancel_event=active.cancel_event,
                 on_event=on_event,
@@ -703,6 +735,26 @@ class RawCliRuntime:
                 self._shutdown_result = result
                 return result
 
+    def _executor_or_default(self) -> Any:
+        """Return the executor, building the default one on first execute().
+
+        Deferred (TASK-23112): `RawShellExecutor` lives in the lazily imported
+        `Tools.raw_cli_executor`, and this runtime is constructed during
+        `TldwCli.__init__`. Resolving here keeps both the import and the
+        executor construction off the startup path. Idempotent and guarded by
+        the runtime's re-entrant lock, so concurrent first executes share one
+        executor. The module import happens BEFORE the lock is taken, so the
+        runtime lock is never held across the import lock.
+        """
+        with self._lock:
+            if self._executor is not None:
+                return self._executor
+        executor = _raw_cli_executor().RawShellExecutor()
+        with self._lock:
+            if self._executor is None:
+                self._executor = executor
+            return self._executor
+
     def _latest_permitted_locked(self) -> bool:
         try:
             return self._read_permitted() is True
@@ -729,7 +781,7 @@ class RawCliRuntime:
 
     @staticmethod
     def _refused_result(request: RawCliRequest) -> RawCliResult:
-        return RawCliResult(
+        return _raw_cli_executor().RawCliResult(
             invocation_id=request.invocation_id,
             caller=request.caller,
             resolved_shell=request.shell,

@@ -86,7 +86,6 @@ from tldw_chatbook.Utils.sensitive_llm_logging import (  # noqa: E402
 )
 from tldw_chatbook.Metrics.metrics_logger import log_counter, log_histogram  # noqa: E402
 from tldw_chatbook.config import load_settings  # noqa: E402
-from .chat_persistence_service import ChatPersistenceService  # noqa: E402
 from .console_project_instructions import EPHEMERAL_ORIGIN_KEY  # noqa: E402
 from .provider_continuation import (  # noqa: E402
     ProviderContinuationCheckpoint,
@@ -2195,6 +2194,18 @@ def save_chat_history_to_db_wrapper(
                            to create a conversation entry.
         - `str`: A status message indicating success or failure.
     """
+    # Deferred (TASK-23112 / ADR-097): a module-scope import here put
+    # `chat_persistence_service` and 17 of its dependencies on the
+    # `import tldw_chatbook.app` closure (app.py reaches this module through
+    # Library.library_local_rag_search_service), breaching the 660-module
+    # ratchet. This is the service's only construction site in this module and
+    # this function runs only on a user-driven save -- never at import time,
+    # never during `TldwCli.__init__`. Kept ABOVE the `try` below so an import
+    # failure surfaces as an ImportError instead of being swallowed into a
+    # "save failed" status string. Guarded by
+    # `Tests/Packaging/test_chat_persistence_import_closure.py`.
+    from .chat_persistence_service import ChatPersistenceService
+
     log_counter("save_chat_history_to_db_attempt")
     start_time = time.time()
     logging.info(

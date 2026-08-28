@@ -9339,3 +9339,70 @@ but its own runtime side effect made the documented command non-repeatable.
 runtime behavior. Suppress bytecode in the documented command and inside the task-local runner,
 then run the exact verifier twice and assert that neither cache directories nor unmanifested files
 appear. A single PASS does not prove an evidence verifier is idempotent.
+
+---
+
+## An import-parent tracer names the FIRST importer, so its attribution is an upper bound — re-measure after every deferral
+
+**TASK-23112, 2026-08-28.** ADR-097's standing import-weight breach (666 own
+modules against the 660 ratchet) came with a traced list of the 17 added edges,
+produced by the house `sys.meta_path` import-parent recorder. Four edges were
+named as the debt. Two of them, deferred, would have bought **exactly zero
+modules**, and the trace could not have told you:
+
+* `Chat.console_runtime -> Chat.thinking_blocks` was real — and irrelevant.
+  `Chat/Chat_Functions.py:98` also imports `thinking_blocks` at module scope,
+  and `Chat_Functions` is on the boot path. Whoever imports first gets the
+  attribution; the other importer is invisible.
+* `chat_persistence_service -> Chat.library_activity` (with `Chat.trajectory`
+  and `Utils.log_sanitizer`) was likewise real and likewise irrelevant:
+  `Agents/library_tool_provider.py` imports it too, reached through
+  `app -> UI.Tools_Settings_Window -> Agents.local_tool_provider ->
+  Agents.tool_catalog -> Agents.library_rag_tool_provider`.
+
+The recorder stores one parent per module — the module whose body triggered the
+*first* import — so the parent map is a tree over a graph. A subtree's size is
+therefore the **maximum** a deferral can buy, never the actual number. Measured:
+the `chat_persistence_service` subtree was 31 modules and deferring its single
+boot-path consumer removed 18; the `console_raw_cli` subtree was 8 and deferring
+its executor import removed 2 (`Tools`, `Tools.tool_executor`, `Agents`,
+`Agents.run_log_format` stayed, pulled by the `Tools_Settings_Window` chain).
+
+**What to do.** Treat a traced chain as *where to look*, never as *what it is
+worth*. Re-run the count in a fresh interpreter after each individual deferral
+and diff the module sets; that is the only statement about savings you can
+defend. And when a deferral buys zero, say so in the notes with the second
+importer named — otherwise the next person re-files the same edge. (Companion
+to the existing rule that a tracer beats reading `-X importtime` or the diff:
+the tracer is still the right instrument, it just answers "who imported this
+first", not "who needs it".)
+
+---
+
+## To prove a failure is pre-existing, use a detached worktree at the base — not a file swap in your own tree
+
+**TASK-23112, 2026-08-28.** Establishing that four red tests belonged to dev and
+not to the change under review meant running them against pristine sources. The
+obvious method — copy `git show HEAD:<file>` over the working copy, run, copy the
+saved version back — failed twice in one session, in two different ways:
+
+1. **The run outlived its shell.** A 10-minute-capped command was killed by the
+   harness; the `trap ... EXIT` restore never ran, and the working tree was left
+   holding `HEAD` content with the implementation silently gone. Nothing failed
+   loudly — the next command just measured the wrong tree.
+2. **The saved copy went stale.** Two more edits landed after the "mine" snapshot
+   was taken; copying it back reverted them. `git diff --stat` was the only thing
+   that noticed (83 insertions became 80), and only because the number had been
+   read before.
+
+`git stash` is not the alternative here — it is repo-wide across 100+ worktrees
+and banned. The safe form is `git worktree add --detach <path> <base-sha>`, run
+the tests there, `git worktree remove --force`. Your own tree is never touched,
+the comparison is against the exact base commit rather than "HEAD content of the
+two files I happened to think about", and a killed run leaves nothing to restore.
+It settled the two `Tests/ProductionApp/` failures with byte-identical assertion
+messages on both sides.
+
+**What to do.** Never mutate the tree you are trying to evaluate. If you do it
+anyway, `git diff --stat` before AND after the swap and compare the numbers —
+that is the only cheap detector for both failure modes above.

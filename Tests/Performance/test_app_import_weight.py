@@ -107,11 +107,19 @@ ELIMINATED_MODULES = ("torch", "transformers")
 #   lives in boot_budget_snapshots/boot_import_modules.txt; refresh it only
 #   via `scripts/update_boot_budget_snapshots.py`.
 #
-#   STANDING BREACH: dev b5eaa9cf64 measures 666 (2026-08-28) -- this guard
-#   is red on dev until the 17 modules named in its failure message are
-#   deferred (ADR-097 "Standing breach at adoption"; repayment tracked as
-#   task-23112). The snapshot is deliberately pinned at c6218918d1's 657
-#   in-budget set so the breach keeps naming the culprits.
+#   The ADR-097 standing breach (dev b5eaa9cf64: 666 vs the 660 ratchet) was
+#   repaid by TASK-23112, NOT by raising this constant: 646 measured
+#   (headroom 14), snapshot re-pinned at that set. Two deferrals did it, each
+#   re-measured with an import-parent tracer: `Chat_Functions` now reaches
+#   `ChatPersistenceService` inside `save_chat_history_to_db_wrapper`
+#   (666 -> 648, 18 modules), and `Chat/console_raw_cli.py` reaches
+#   `Tools.raw_cli_executor` through a lazy accessor with the default
+#   `RawShellExecutor` built on first execute (648 -> 646). ADR-097's
+#   tightening convention does NOT fire here: the 20-module reduction is under
+#   the 30-module standard slack, and 646 + 30 = 676 is above 660, so lowering
+#   would be raising. Per-edge guards:
+#   `Tests/Packaging/test_chat_persistence_import_closure.py` and
+#   `Tests/Packaging/test_raw_cli_import_closure.py`.
 #
 #   Know what this does NOT catch. Measured by reverting each 21108 deferral
 #   on its own and re-running this probe: panel only -> 649, notes-sync chain
