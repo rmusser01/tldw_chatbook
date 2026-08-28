@@ -858,6 +858,59 @@ async def test_compose_local_provider_wires_transactional_watchlists_commands(
     }
 
 
+def test_compose_local_provider_routes_schedule_through_shared_app_command_service(
+    monkeypatch, tmp_path
+):
+    """Console and Artifacts use the same app-owned schedule command seam."""
+    monkeypatch.setattr(
+        controller_mod,
+        "get_cli_setting",
+        _console_settings(workspace_root=str(tmp_path)),
+    )
+    calls = []
+
+    def _record_schedule(arguments):
+        calls.append(dict(arguments))
+        return '{"status":"ok","reload_requested":true,"reload_acknowledged":true}'
+
+    def unavailable(_arguments):
+        return '{"status":"feature_unavailable"}'
+
+    commands = SimpleNamespace(
+        create_sources=unavailable,
+        create_collection=unavailable,
+        update_collection_sources=unavailable,
+        check_sources=unavailable,
+        generate_briefing=unavailable,
+        set_briefing_schedule=_record_schedule,
+        approval_source_destinations=lambda _arguments: {},
+    )
+    controller = _bare_controller(
+        SimpleNamespace(
+            unified_mcp_service=_FakeService(state=ALLOW),
+            watchlists_command_service=commands,
+        )
+    )
+
+    provider, _hook = _compose_local_provider(controller)
+    result = provider.invoke(
+        "local:watchlists_set_briefing_schedule",
+        {
+            "collection_id": "local:watchlist:7",
+            "cadence": "every_24_hours",
+        },
+    )
+
+    assert result.ok is True
+    assert json.loads(result.content)["reload_acknowledged"] is True
+    assert calls == [
+        {
+            "collection_id": "local:watchlist:7",
+            "cadence": "every_24_hours",
+        }
+    ]
+
+
 @pytest.mark.asyncio
 async def test_compose_local_provider_routes_long_watchlists_work_to_app_coordinator(
     monkeypatch, tmp_path

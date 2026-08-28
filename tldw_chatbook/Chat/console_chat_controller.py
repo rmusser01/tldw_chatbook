@@ -10087,27 +10087,31 @@ class ConsoleChatController:
                 raise RuntimeError("Watchlists source service unavailable")
             return local_watchlists_service.create_sources_exact_batch_sync(rows)
 
-        watchlists_command_service = WatchlistsCommandService(
-            runtime_source_loader=load_default_runtime_source_state,
-            create_sources_batch=_create_sources_batch,
-            create_collection=_create_collection,
-            update_collection_sources=_update_collection_sources,
-            accept_source_checks=(
-                watchlists_coordinator.submit_checks
-                if watchlists_coordinator is not None
-                else None
-            ),
-            accept_briefing=(
-                watchlists_coordinator.submit_briefing
-                if watchlists_coordinator is not None
-                else None
-            ),
-            resolve_collection_sources=(
-                watchlist_bundle_service.list_sources
-                if watchlist_bundle_service is not None
-                else None
-            ),
+        watchlists_command_service = getattr(
+            self.app, "watchlists_command_service", None
         )
+        if watchlists_command_service is None:
+            watchlists_command_service = WatchlistsCommandService(
+                runtime_source_loader=load_default_runtime_source_state,
+                create_sources_batch=_create_sources_batch,
+                create_collection=_create_collection,
+                update_collection_sources=_update_collection_sources,
+                accept_source_checks=(
+                    watchlists_coordinator.submit_checks
+                    if watchlists_coordinator is not None
+                    else None
+                ),
+                accept_briefing=(
+                    watchlists_coordinator.submit_briefing
+                    if watchlists_coordinator is not None
+                    else None
+                ),
+                resolve_collection_sources=(
+                    watchlist_bundle_service.list_sources
+                    if watchlist_bundle_service is not None
+                    else None
+                ),
+            )
         provider = LocalToolProvider(
             workspace_root=root,
             allow_write=allow_write,

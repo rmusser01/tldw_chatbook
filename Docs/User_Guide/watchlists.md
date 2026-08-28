@@ -126,7 +126,7 @@ By default, a briefing is written only when you press **Generate** in the
 Artifacts section — nothing runs unless you ask for it. The **cadence**
 picker next to the selection-mode and default-preset pickers in that same
 toolbar turns this into a recurring job for one watchlist: choose **Every
-12h**, **Daily**, or **Weekly**, and a new briefing is written on that
+12 hours**, **Every 24 hours**, or **Every 7 days**, and a new briefing is written on that
 schedule without you pressing anything. Choose **Off** — the default — to
 turn scheduling back off.
 
@@ -144,10 +144,11 @@ A few things worth knowing before turning it on:
   next period — but it also doesn't retry right away. The next attempt
   lands one cadence period after the failure, the same timing a normal
   run would have used.
-- **A freshly picked cadence can take up to ~30 minutes to start.** The
-  running scheduler only re-reads watchlists' cadences periodically, not
-  the instant you change one, so a cadence you just picked can sit inert
-  for up to one reload cycle before the schedule actually takes effect.
+- **A saved cadence requests an immediate scheduler reload.** The receipt
+  distinguishes the durable save and reload request from a reload the running
+  scheduler has actually acknowledged. If the scheduler is stopped or the
+  acknowledgement times out, the cadence remains stored and is loaded when
+  the scheduler next runs.
 - **An app-level setting can turn scheduling off entirely.** The
   `[scheduling] briefing_schedules_enabled` setting in `config.toml` (`true`
   by default, hand-edit only today — there is no in-app control for it)
@@ -159,9 +160,9 @@ A few things worth knowing before turning it on:
 
 The Artifacts section's scope line states plainly which of these applies:
 "on request" when no cadence is stored, the actual cadence — "scheduled
-daily while the app is open", for example — when one is stored and
+every 24 hours while the app is open", for example — when one is stored and
 scheduling is enabled for the app, or, when a cadence is stored but
 `briefing_schedules_enabled` is off, a third line naming the stored cadence
-and stating plainly that it will not fire — "stored to run daily, but
+and stating plainly that it will not fire — "stored to run every 24 hours, but
 scheduled briefings are turned off for this app — this schedule will not
 fire", for example.

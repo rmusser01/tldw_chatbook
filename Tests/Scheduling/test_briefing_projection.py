@@ -23,6 +23,7 @@ from tldw_chatbook.Scheduling.services.briefing_projection import (
     BriefingProjection,
     parse_briefing_task_id,
 )
+from tldw_chatbook.Scheduling.services import briefing_projection as projection_module
 from tldw_chatbook.Subscriptions.watchlist_bundle_service import WatchlistBundleService
 
 pytestmark = pytest.mark.unit
@@ -248,3 +249,36 @@ def test_parse_briefing_task_id_rejects_malformed_ids(task_id):
 
 def test_parse_briefing_task_id_accepts_the_shape_list_jobs_builds():
     assert parse_briefing_task_id("briefing:123") == 123
+
+
+def test_next_eligibility_helper_normalizes_latest_attempt_to_utc(tmp_path):
+    """Receipts and queue tasks must derive the same UTC eligibility instant."""
+    db = SubscriptionsDB(tmp_path / "subscriptions.db", "test")
+    watchlist_id = _make_watchlist(db, name="Timezone")
+    db.set_watchlist_briefing_settings(
+        watchlist_id, briefing_cadence_seconds=86_400
+    )
+    failed_id = db.insert_briefing(watchlist_id, status="failed")
+    _force_created_at(db, failed_id, "2026-08-27T10:00:00-07:00")
+    [row] = db.list_briefing_schedules()
+    compute = getattr(projection_module, "next_briefing_eligibility", None)
+
+    assert compute is not None, "projection must expose its eligibility calculation"
+    assert compute(row, now=datetime(2030, 1, 1, tzinfo=timezone.utc)) == datetime(
+        2026, 8, 28, 17, 0, tzinfo=timezone.utc
+    )
+
+
+def test_overdue_schedule_keeps_its_past_eligibility_on_resume(tmp_path):
+    """Resuming late must dispatch overdue work, not slide it forward from now."""
+    db = SubscriptionsDB(tmp_path / "subscriptions.db", "test")
+    watchlist_id = _make_watchlist(db, name="Overdue")
+    db.set_watchlist_briefing_settings(watchlist_id, briefing_cadence_seconds=3600)
+    failed_id = db.insert_briefing(watchlist_id, status="failed")
+    _force_created_at(db, failed_id, "2026-08-26 08:00:00")
+
+    [task] = BriefingProjection(db).list_jobs(
+        now=datetime(2026, 8, 27, 12, 0, tzinfo=timezone.utc)
+    )
+
+    assert task.next_run_at == datetime(2026, 8, 26, 9, 0, tzinfo=timezone.utc)

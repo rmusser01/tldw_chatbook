@@ -3,6 +3,9 @@
 from __future__ import annotations
 
 import asyncio
+import threading
+import time
+from dataclasses import dataclass
 from datetime import datetime, timezone
 from typing import Any, Callable, Coroutine, Optional
 
@@ -24,6 +27,13 @@ from tldw_chatbook.Scheduling.services.briefing_projection import BriefingProjec
 from tldw_chatbook.Scheduling.services.watchlist_projection import WatchlistProjection
 
 Handler = Callable[[dict[str, Any]], Coroutine[Any, Any, None]]
+
+
+@dataclass(frozen=True)
+class QueueReloadToken:
+    """Identity for one scheduler queue-reload request."""
+
+    value: int
 
 #: Why a dispatch was late (`_report_lateness_cause`). These three strings are
 #: simultaneously branch outcomes, the `cause` label on the
@@ -108,27 +118,90 @@ class SchedulerLoop:
         #: "an earlier handler held the loop", which is simply false.
         self._last_tick_dispatch_seconds: float = 0.0
         self._tick_count = 0
-        self._reload_requested = False
+        self._reload_condition = threading.Condition()
+        self._reload_requested_serial = 0
+        self._reload_acknowledged_serial = 0
+        self._owner_loop: asyncio.AbstractEventLoop | None = None
+        self._reload_event: asyncio.Event | None = None
         self.queue = PriorityQueue(
             db,
             watchlist_projection=watchlist_projection,
             briefing_projection=briefing_projection,
         )
 
-    def request_reload(self) -> None:
-        """Ask the loop to reload the queue before its next tick.
+    def request_reload(self) -> QueueReloadToken:
+        """Ask the loop to reload the queue and return its request identity.
 
         Without this, a reminder created mid-session sits in the database for
         up to ``queue_reload_interval_ticks`` polls (~30 minutes at the
         defaults) before the periodic reload picks it up -- and under
         task-18937's missed-fire accounting, that delay would be reported as
         a false "missed while away" the moment the task finally dispatched.
-        The service layer calls this from its mutation paths via
-        ``on_queue_changed``. Thread-safe enough for its caller: setting a
-        bool flag races benignly with the loop reading it (worst case the
-        reload happens one poll later).
+        The service layer calls this from mutation workers. Serial allocation
+        and wake-up state are synchronized because those workers are not the
+        scheduler's asyncio thread.
         """
-        self._reload_requested = True
+        with self._reload_condition:
+            self._reload_requested_serial += 1
+            token = QueueReloadToken(self._reload_requested_serial)
+            owner_loop = self._owner_loop
+            reload_event = self._reload_event
+
+        if owner_loop is not None and reload_event is not None:
+            try:
+                owner_loop.call_soon_threadsafe(
+                    self._wake_for_reload, token.value, reload_event
+                )
+            except RuntimeError:
+                # The owning event loop can close between the synchronized
+                # snapshot and call_soon_threadsafe. The durable DB write still
+                # stands; a later scheduler start will load and acknowledge it.
+                pass
+        return token
+
+    def _wake_for_reload(self, serial: int, reload_event: asyncio.Event) -> None:
+        """Wake the owning loop only while ``serial`` still needs a load."""
+        with self._reload_condition:
+            should_wake = (
+                reload_event is self._reload_event
+                and serial > self._reload_acknowledged_serial
+            )
+        if should_wake:
+            reload_event.set()
+
+    def wait_for_reload_blocking(
+        self, token: QueueReloadToken, timeout: float
+    ) -> bool:
+        """Block for at most ``timeout`` seconds for ``token`` to be loaded."""
+        deadline = time.monotonic() + max(timeout, 0.0)
+        with self._reload_condition:
+            while self._reload_acknowledged_serial < token.value:
+                if not self.running:
+                    return False
+                remaining = deadline - time.monotonic()
+                if remaining <= 0:
+                    return False
+                self._reload_condition.wait(remaining)
+            return True
+
+    async def wait_for_reload(
+        self, token: QueueReloadToken, timeout: float
+    ) -> bool:
+        """Wait asynchronously and boundedly for ``token`` to be loaded."""
+        return await asyncio.to_thread(
+            self.wait_for_reload_blocking, token, timeout=timeout
+        )
+
+    async def _reload_queue(self) -> None:
+        """Load the queue and acknowledge only requests covered by that load."""
+        with self._reload_condition:
+            covered_serial = self._reload_requested_serial
+        await asyncio.to_thread(self.queue.load)
+        with self._reload_condition:
+            self._reload_acknowledged_serial = max(
+                self._reload_acknowledged_serial, covered_serial
+            )
+            self._reload_condition.notify_all()
 
     def report_configuration(self) -> None:
         """Log what this scheduler will and will not run, once, at startup.
@@ -198,25 +271,58 @@ class SchedulerLoop:
         moment the loop actually leaves, including on cancellation, which is
         the only instant the claim is true.
         """
-        self.running = True
+        owner_loop = asyncio.get_running_loop()
+        with self._reload_condition:
+            self.running = True
+            self._owner_loop = owner_loop
+            self._reload_event = asyncio.Event()
         self._running_since = self.clock()
         try:
-            await asyncio.to_thread(self.queue.load)
+            await self._reload_queue()
             self.report_configuration()
             while self.running:
+                reload_event = self._reload_event
+                if reload_event is None:
+                    break
+                # Clear at the START of an iteration. Clearing after tick()
+                # would erase a worker-thread request that arrived while a
+                # handler was active and then put the loop to sleep for a full
+                # poll interval despite the still-pending serial.
+                reload_event.clear()
                 if (
                     self._tick_count > 0
                     and self._tick_count % self.queue_reload_interval_ticks == 0
                 ):
-                    await asyncio.to_thread(self.queue.load)
-                if self._reload_requested:
-                    self._reload_requested = False
-                    await asyncio.to_thread(self.queue.load)
+                    await self._reload_queue()
+                with self._reload_condition:
+                    reload_pending = (
+                        self._reload_requested_serial
+                        > self._reload_acknowledged_serial
+                    )
+                if reload_pending:
+                    await self._reload_queue()
                 self._tick_count += 1
                 await self.tick()
-                await asyncio.sleep(self.poll_interval)
+                with self._reload_condition:
+                    reload_pending = (
+                        self._reload_requested_serial
+                        > self._reload_acknowledged_serial
+                    )
+                if reload_pending:
+                    continue
+                try:
+                    await asyncio.wait_for(
+                        reload_event.wait(), timeout=self.poll_interval
+                    )
+                except asyncio.TimeoutError:
+                    pass
         finally:
             self._running_since = None
+            with self._reload_condition:
+                self.running = False
+                self._owner_loop = None
+                self._reload_event = None
+                self._reload_condition.notify_all()
 
     async def tick(self) -> None:
         """Evaluate once and dispatch any due tasks.
@@ -509,4 +615,13 @@ class SchedulerLoop:
         when the loop actually leaves, which still covers the gap before the
         next `run()`.
         """
-        self.running = False
+        with self._reload_condition:
+            self.running = False
+            owner_loop = self._owner_loop
+            reload_event = self._reload_event
+            self._reload_condition.notify_all()
+        if owner_loop is not None and reload_event is not None:
+            try:
+                owner_loop.call_soon_threadsafe(reload_event.set)
+            except RuntimeError:
+                pass

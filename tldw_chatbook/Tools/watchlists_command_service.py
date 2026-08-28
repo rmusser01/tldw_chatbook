@@ -7,8 +7,13 @@ import json
 import re
 import unicodedata
 from collections.abc import Callable, Mapping
+from datetime import datetime
 from typing import Any
 from urllib.parse import urlsplit
+
+from tldw_chatbook.Scheduling.services.briefing_projection import (
+    next_briefing_eligibility,
+)
 
 
 _SOURCE_ID = re.compile(r"^local:subscription:([1-9][0-9]*)$")
@@ -25,6 +30,20 @@ _UPDATE_KEYS = frozenset(
 )
 _CHECK_KEYS = frozenset({"source_ids", "collection_id"})
 _GENERATE_KEYS = frozenset({"collection_id", "preset_id"})
+_SCHEDULE_KEYS = frozenset(
+    {"collection_id", "cadence", "preset_id", "selection_mode"}
+)
+_SCHEDULE_INTERVALS = {
+    "every_12_hours": 43_200,
+    "every_24_hours": 86_400,
+    "every_7_days": 604_800,
+    "off": None,
+}
+_SELECTION_MODES = frozenset({"auto", "curated", "auto_featured"})
+_SCHEDULE_RECOVERY = (
+    "Chatbook schedules run while the app is open. Review the global gate in "
+    "Settings and this collection's cadence in Artifacts."
+)
 _COLLISION_POLICIES = frozenset({"conflict", "return_existing", "auto_suffix"})
 _HOST_LABEL = re.compile(r"[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\Z", re.IGNORECASE)
 
@@ -42,6 +61,12 @@ class WatchlistsCommandService:
         accept_source_checks: Callable[[list[int]], Any] | None = None,
         accept_briefing: Callable[[int, int | None], Any] | None = None,
         resolve_collection_sources: Callable[[int], Any] | None = None,
+        set_briefing_schedule: Callable[..., Any] | None = None,
+        briefing_schedules_enabled: Callable[[], bool] | None = None,
+        scheduler_running: Callable[[], bool] | None = None,
+        request_scheduler_reload: Callable[[], Any] | None = None,
+        wait_scheduler_reload: Callable[[Any, float], bool] | None = None,
+        default_briefing_provider: Callable[[], str] | None = None,
     ) -> None:
         self._runtime_source_loader = runtime_source_loader
         self._create_sources_batch = create_sources_batch
@@ -50,6 +75,12 @@ class WatchlistsCommandService:
         self._accept_source_checks = accept_source_checks
         self._accept_briefing = accept_briefing
         self._resolve_collection_sources = resolve_collection_sources
+        self._set_briefing_schedule = set_briefing_schedule
+        self._briefing_schedules_enabled = briefing_schedules_enabled
+        self._scheduler_running = scheduler_running
+        self._request_scheduler_reload = request_scheduler_reload
+        self._wait_scheduler_reload = wait_scheduler_reload
+        self._default_briefing_provider = default_briefing_provider
 
     @staticmethod
     def _json(payload: Mapping[str, Any]) -> str:
@@ -626,3 +657,184 @@ class WatchlistsCommandService:
             )
         except Exception:  # noqa: BLE001 - fixed protocol-safe failure
             return self._unavailable()
+
+    @staticmethod
+    def _cadence_argument(value: object) -> tuple[int | None, str] | None:
+        """Normalize one canonical cadence preset or bounded advanced interval."""
+        if isinstance(value, str):
+            if value not in _SCHEDULE_INTERVALS:
+                return None
+            return _SCHEDULE_INTERVALS[value], value
+        if type(value) is int and 3_600 <= value <= 2_678_400:
+            return value, "advanced"
+        return None
+
+    @staticmethod
+    def _stored_cadence(value: object) -> str | None:
+        """Name one stored cadence without pretending an advanced value is a preset."""
+        if value is None:
+            return "off"
+        for name, seconds in _SCHEDULE_INTERVALS.items():
+            if seconds == value:
+                return name
+        return "advanced" if type(value) is int else None
+
+    def set_briefing_schedule(self, arguments: object) -> str:
+        """Commit one collection cadence and report scheduler reload evidence."""
+        refusal = self._local_or_refusal()
+        if refusal is not None:
+            return refusal
+        values = self._exact_object(
+            arguments,
+            allowed=_SCHEDULE_KEYS,
+            required=frozenset({"collection_id", "cadence"}),
+        )
+        if values is None:
+            return self._invalid("Briefing schedule arguments are invalid.")
+        watchlist_id = self._canonical_id(values["collection_id"], _WATCHLIST_ID)
+        cadence = self._cadence_argument(values["cadence"])
+        if watchlist_id is None or cadence is None:
+            return self._invalid(
+                "Use a canonical collection ID and supported briefing cadence."
+            )
+
+        write_arguments: dict[str, Any] = {
+            "briefing_cadence_seconds": cadence[0]
+        }
+        if "preset_id" in values:
+            preset_id = values["preset_id"]
+            if preset_id is not None and (
+                type(preset_id) is not int or not 1 <= preset_id <= 2**63 - 1
+            ):
+                return self._invalid("Preset ID must be a positive integer or null.")
+            write_arguments["default_preset_id"] = preset_id
+        if "selection_mode" in values:
+            selection_mode = values["selection_mode"]
+            if selection_mode not in _SELECTION_MODES:
+                return self._invalid("Briefing selection mode is invalid.")
+            write_arguments["selection_mode"] = selection_mode
+
+        if self._set_briefing_schedule is None:
+            return self._unavailable()
+        try:
+            stored = self._set_briefing_schedule(watchlist_id, **write_arguments)
+        except KeyError:
+            return self._json(
+                {
+                    "status": "not_found",
+                    "retryable": False,
+                    "message": "The collection or briefing preset was not found.",
+                }
+            )
+        except Exception:  # noqa: BLE001 - fixed protocol-safe failure
+            return self._unavailable()
+        if not isinstance(stored, Mapping) or stored.get("watchlist_id") != watchlist_id:
+            return self._unavailable()
+
+        cadence_seconds = stored.get("briefing_cadence_seconds")
+        cadence_name = self._stored_cadence(cadence_seconds)
+        selection_mode = stored.get("briefing_selection_mode")
+        preset_id = stored.get("default_briefing_preset_id")
+        preset_provider = stored.get("preset_provider")
+        preset_model = stored.get("preset_model")
+        if (
+            cadence_name is None
+            or (cadence_seconds is not None and type(cadence_seconds) is not int)
+            or selection_mode not in _SELECTION_MODES
+            or (preset_id is not None and type(preset_id) is not int)
+            or (preset_provider is not None and not isinstance(preset_provider, str))
+            or (preset_model is not None and not isinstance(preset_model, str))
+        ):
+            return self._unavailable()
+
+        try:
+            gate_enabled = bool(
+                self._briefing_schedules_enabled
+                and self._briefing_schedules_enabled()
+            )
+            scheduler_running = bool(
+                self._scheduler_running and self._scheduler_running()
+            )
+            provider = (
+                preset_provider
+                or (self._default_briefing_provider and self._default_briefing_provider())
+                or ""
+            )
+        except Exception:  # noqa: BLE001 - fixed protocol-safe receipt boundary
+            return self._unavailable()
+
+        reload_requested = False
+        reload_token: int | None = None
+        reload_acknowledged = False
+        if gate_enabled and self._request_scheduler_reload is not None:
+            try:
+                token = self._request_scheduler_reload()
+                token_value = getattr(token, "value", None)
+                if type(token_value) is int and token_value > 0:
+                    reload_requested = True
+                    reload_token = token_value
+                    if scheduler_running and self._wait_scheduler_reload is not None:
+                        reload_acknowledged = bool(
+                            self._wait_scheduler_reload(token, 1.0)
+                        )
+            except Exception:  # noqa: BLE001 - persistence remains the durable truth
+                reload_acknowledged = False
+
+        next_eligible_at: str | None = None
+        if cadence_seconds is not None:
+            try:
+                next_eligible_at = next_briefing_eligibility(dict(stored)).isoformat()
+            except (TypeError, ValueError, OverflowError):
+                return self._unavailable()
+
+        def receipt_value(key: str) -> str | None:
+            value = stored.get(key)
+            if value is None:
+                return None
+            if isinstance(value, datetime):
+                return value.isoformat()
+            if isinstance(value, str) and len(value) <= 512:
+                return value
+            raise ValueError(key)
+
+        try:
+            collection_name = receipt_value("name")
+            preset_name = receipt_value("default_preset_name")
+            last_attempt_at = receipt_value("last_attempt_at")
+            last_success_at = receipt_value("last_success_at")
+        except ValueError:
+            return self._unavailable()
+
+        return self._json(
+            {
+                "status": "ok",
+                "retryable": False,
+                "collection_id": f"local:watchlist:{watchlist_id}",
+                "collection_name": collection_name,
+                "cadence": cadence_name,
+                "cadence_seconds": cadence_seconds,
+                "selection_mode": selection_mode,
+                "preset_id": preset_id,
+                "preset_name": preset_name,
+                "global_gate_enabled": gate_enabled,
+                "scheduler_running": scheduler_running,
+                "reload_requested": reload_requested,
+                "reload_token": reload_token,
+                "reload_acknowledged": reload_acknowledged,
+                "next_eligible_at": next_eligible_at,
+                "last_attempt_at": last_attempt_at,
+                "last_success_at": last_success_at,
+                "preset_resolution_source": (
+                    "stored_preset" if preset_id is not None else "app_default"
+                ),
+                "provider": provider,
+                "provider_resolution_source": (
+                    "preset" if preset_provider else "app_default"
+                ),
+                "model": preset_model,
+                "model_resolution_source": (
+                    "preset" if preset_model else "provider_default"
+                ),
+                "recovery": _SCHEDULE_RECOVERY,
+            }
+        )

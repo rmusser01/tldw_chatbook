@@ -168,6 +168,16 @@ def _seed_watchlist(app, *, items: int = 2) -> int:
     return watchlist_id
 
 
+def _wire_schedule_command(app) -> None:
+    """Mirror the app-mount ownership omitted by ``DestinationHarness``."""
+    app.watchlists_operation_coordinator = WatchlistsOperationCoordinator(
+        local_service=app.local_watchlists_service,
+        briefing_db=app.subscriptions_db,
+    )
+    app.watchlists_operation_coordinator.bind_running_loop()
+    app._wire_watchlists_command_service()
+
+
 @asynccontextmanager
 async def _open_artifacts(app, watchlist_id, *, size=(180, 50), visual=False):
     """Open the Watchlists screen on Artifacts, scoped to one watchlist."""
@@ -1715,7 +1725,6 @@ async def test_changing_mode_writes_off_loop_and_does_not_rebuild_the_screen():
         return real_set(watchlist_id_arg, **kwargs)
 
     db.set_watchlist_briefing_settings = _spy
-
     async with _open_artifacts(app, watchlist_id) as (screen, pilot, host):
         await host.workers.wait_for_complete()
         pane_before = screen.query_one("#watchlists-artifacts-pane", ArtifactsPane)
@@ -2051,6 +2060,7 @@ async def test_changing_cadence_writes_off_loop_and_does_not_rebuild_the_screen(
         return real_set(watchlist_id_arg, **kwargs)
 
     db.set_watchlist_briefing_settings = _spy
+    _wire_schedule_command(app)
 
     async with _open_artifacts(app, watchlist_id) as (screen, pilot, host):
         await host.workers.wait_for_complete()
@@ -2060,7 +2070,10 @@ async def test_changing_cadence_writes_off_loop_and_does_not_rebuild_the_screen(
         # this is a genuine change, not a same-value mount-time no-op.
         assert select.value is None
 
-        select.value = 86_400  # "Daily"
+        option_labels = {value: str(label) for label, value in select._options}
+        assert option_labels[86_400] == "Every 24 hours"
+
+        select.value = 86_400
         await pilot.pause()
         await host.workers.wait_for_complete()
         await pilot.pause()
@@ -2082,6 +2095,8 @@ async def test_changing_cadence_writes_off_loop_and_does_not_rebuild_the_screen(
         )
         assert screen._briefing_cadence_seconds == 86_400
         assert pane.briefing_cadence_seconds == 86_400
+        assert "scheduler is stopped" in pane.automation_receipt
+        assert "while the app is open" in pane.automation_receipt
 
 
 @pytest.mark.asyncio
@@ -2095,6 +2110,7 @@ async def test_choosing_off_clears_the_stored_cadence():
     watchlist_id = _seed_watchlist(app)
     db = app.watchlist_bundle_service.db
     db.set_watchlist_briefing_settings(watchlist_id, briefing_cadence_seconds=604_800)
+    _wire_schedule_command(app)
 
     async with _open_artifacts(app, watchlist_id) as (screen, pilot, host):
         await host.workers.wait_for_complete()
@@ -2130,6 +2146,7 @@ async def test_the_scope_label_states_on_request_or_the_actual_schedule_honestly
     """
     app = _build_test_app()
     watchlist_id = _seed_watchlist(app)
+    _wire_schedule_command(app)
 
     async with _open_artifacts(app, watchlist_id) as (screen, pilot, host):
         await host.workers.wait_for_complete()
@@ -2146,7 +2163,7 @@ async def test_the_scope_label_states_on_request_or_the_actual_schedule_honestly
         await pilot.pause()
 
         pane = screen.query_one("#watchlists-artifacts-pane", ArtifactsPane)
-        assert "scheduled every 12h while the app is open" in pane.scope_label
+        assert "scheduled every 12 hours while the app is open" in pane.scope_label
         assert "on request" not in pane.scope_label
 
 
@@ -2245,7 +2262,7 @@ async def test_the_kill_switch_off_disables_the_cadence_select_and_states_schedu
             "cleared"
         )
         assert "off for this app" in pane.scope_label
-        assert "scheduled every 12h while the app is open" not in pane.scope_label
+        assert "scheduled every 12 hours while the app is open" not in pane.scope_label
 
         tooltip = str(cadence_select.tooltip)
         assert "briefing_schedules_enabled is false" in tooltip
@@ -2282,18 +2299,13 @@ async def test_the_kill_switch_on_leaves_the_cadence_picker_unchanged(monkeypatc
         cadence_select = pane.query_one("#artifacts-cadence-select", Select)
         assert cadence_select.disabled is False
         assert cadence_select.value == 43_200
-        assert "scheduled every 12h while the app is open" in pane.scope_label
+        assert "scheduled every 12 hours while the app is open" in pane.scope_label
         assert "off for this app" not in pane.scope_label
 
 
 @pytest.mark.asyncio
-async def test_the_cadence_pickers_tooltip_states_the_activation_delay():
-    """Task-1812, AC #2: a freshly picked cadence is not instant -- the
-    running scheduler only re-reads schedules once per `queue_reload_
-    interval_ticks` (`Scheduling/scheduler/loop.py`), so a pick made right
-    now can sit inert for up to that long. Pinned against the picker's own
-    enabled-state tooltip, the smallest honest surface for it.
-    """
+async def test_the_cadence_pickers_tooltip_states_immediate_reload_and_app_open_scope():
+    """The picker describes the immediate reload and app-open limitation."""
     app = _build_test_app()
     watchlist_id = _seed_watchlist(app)
 
@@ -2304,8 +2316,29 @@ async def test_the_cadence_pickers_tooltip_states_the_activation_delay():
         pane = screen.query_one("#watchlists-artifacts-pane", ArtifactsPane)
         cadence_select = pane.query_one("#artifacts-cadence-select", Select)
         tooltip = str(cadence_select.tooltip)
-        assert "~30 minutes" in tooltip
-        assert "reload cycle" in tooltip
+        assert "reload is requested immediately" in tooltip
+        assert "while the app is open" in tooltip
+
+
+@pytest.mark.parametrize("size", [(180, 50), (100, 30)])
+@pytest.mark.asyncio
+async def test_every_24_hours_copy_survives_normal_and_pressure_layouts(size):
+    """The canonical interval remains legible in both mounted layouts."""
+    app = _build_test_app()
+    watchlist_id = _seed_watchlist(app)
+
+    async with _open_artifacts(app, watchlist_id, size=size) as (screen, pilot, host):
+        await host.workers.wait_for_complete()
+        await pilot.pause()
+
+        select = screen.query_one("#artifacts-cadence-select", Select)
+        option_labels = {value: str(label) for label, value in select._options}
+        assert option_labels[86_400] == "Every 24 hours"
+        assert "while the app is open" in str(select.tooltip)
+        receipt = screen.query_one("#artifacts-automation-receipt", Static)
+        receipt_copy = _static_text(receipt)
+        assert "Automation:" in receipt_copy
+        assert "while the app is open" in receipt_copy
 
 
 def test_cadence_scope_phrase_states_scheduling_is_off_when_the_kill_switch_is_off():
@@ -2315,7 +2348,7 @@ def test_cadence_scope_phrase_states_scheduling_is_off_when_the_kill_switch_is_o
     function itself.
     """
     assert cadence_scope_phrase(43_200, schedules_enabled=False) == (
-        "stored to run every 12h, but scheduled briefings are turned off "
+        "stored to run every 12 hours, but scheduled briefings are turned off "
         "for this app -- this schedule will not fire"
     )
     # `None` (never scheduled) reads identically regardless of the flag --
@@ -2325,7 +2358,8 @@ def test_cadence_scope_phrase_states_scheduling_is_off_when_the_kill_switch_is_o
     # The flag defaults to `True`, so every pre-task-1812 caller (and every
     # OTHER existing test of this function) reads unchanged.
     assert (
-        cadence_scope_phrase(43_200) == "scheduled every 12h while the app is open"
+        cadence_scope_phrase(43_200)
+        == "scheduled every 12 hours while the app is open"
     )
 
 

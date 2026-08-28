@@ -397,6 +397,7 @@ def test_catalog_lists_default_specs_with_local_ids(tmp_path):
         "local:watchlists_create_collection",
         "local:watchlists_update_collection_sources",
         "local:watchlists_check_sources",
+        "local:watchlists_set_briefing_schedule",
         "local:watchlists_generate_briefing",
     ]
     assert entries[0].name == "fs_list" and entries[0].source == "local"
@@ -450,6 +451,7 @@ def test_catalog_exposure_and_effects_are_explicit_and_queryable(tmp_path):
         "watchlists_create_collection",
         "watchlists_update_collection_sources",
         "watchlists_check_sources",
+        "watchlists_set_briefing_schedule",
         "watchlists_generate_briefing",
         "watchlists_check_sources",
         "watchlists_generate_briefing",
@@ -467,7 +469,7 @@ def test_catalog_exposure_and_effects_are_explicit_and_queryable(tmp_path):
     )
 
 
-def test_long_watchlists_commands_are_console_only_and_definitive_on_accept(tmp_path):
+def test_operational_watchlists_commands_are_console_only_and_definitive_on_accept(tmp_path):
     provider = make_provider(root=tmp_path)
 
     console_specs = {
@@ -476,8 +478,14 @@ def test_long_watchlists_commands_are_console_only_and_definitive_on_accept(tmp_
     }
     check = console_specs["watchlists_check_sources"]
     briefing = console_specs["watchlists_generate_briefing"]
+    schedule = console_specs["watchlists_set_briefing_schedule"]
 
-    assert check.exposure is briefing.exposure is LocalToolExposure.CONSOLE_ONLY
+    assert (
+        check.exposure
+        is briefing.exposure
+        is schedule.exposure
+        is LocalToolExposure.CONSOLE_ONLY
+    )
     assert check.approval_effects == (
         LocalApprovalEffect.MUTATES_LOCAL,
         LocalApprovalEffect.NETWORK,
@@ -486,13 +494,23 @@ def test_long_watchlists_commands_are_console_only_and_definitive_on_accept(tmp_
         LocalApprovalEffect.MUTATES_LOCAL,
         LocalApprovalEffect.LLM_SPEND,
     )
+    assert schedule.approval_effects == (LocalApprovalEffect.MUTATES_LOCAL,)
     assert check.execution_policy is ToolExecutionPolicy.DEFINITIVE_AFTER_START
     assert briefing.execution_policy is ToolExecutionPolicy.DEFINITIVE_AFTER_START
+    assert schedule.execution_policy is ToolExecutionPolicy.DEFINITIVE_AFTER_START
     assert check.parameters["oneOf"] == [
         {"required": ["source_ids"]},
         {"required": ["collection_id"]},
     ]
     assert briefing.parameters["required"] == ["collection_id"]
+    assert schedule.parameters["required"] == ["collection_id", "cadence"]
+    assert schedule.parameters["properties"]["cadence"]["oneOf"] == [
+        {
+            "type": "string",
+            "enum": ["every_12_hours", "every_24_hours", "every_7_days", "off"],
+        },
+        {"type": "integer", "minimum": 3_600, "maximum": 2_678_400},
+    ]
 
 
 def test_read_only_provider_omits_future_watchlists_mutations_by_effect(tmp_path):
@@ -567,6 +585,7 @@ def test_hub_tools_lists_every_spec_under_the_local_server_key(tmp_path):
         "watchlists_create_collection",
         "watchlists_update_collection_sources",
         "watchlists_check_sources",
+        "watchlists_set_briefing_schedule",
         "watchlists_generate_briefing",
     ]
     for hub in hubs:
@@ -648,6 +667,10 @@ class RecordingWatchlistsCommandService:
         self.calls.append(("generate_briefing", dict(arguments)))
         return '{"status":"accepted"}'
 
+    def set_briefing_schedule(self, arguments: object) -> str:
+        self.calls.append(("set_briefing_schedule", dict(arguments)))
+        return '{"status":"ok"}'
+
     @staticmethod
     def approval_source_destinations(arguments):
         return {"source_count": len(arguments["sources"]), "destination_hosts": ["example.com"]}
@@ -666,6 +689,7 @@ def test_watchlists_authoring_specs_are_console_only_mutations_with_safe_approva
         "watchlists_create_collection",
         "watchlists_update_collection_sources",
         "watchlists_check_sources",
+        "watchlists_set_briefing_schedule",
         "watchlists_generate_briefing",
     }
 
@@ -732,6 +756,7 @@ def test_watchlists_catalog_has_exact_read_only_schemas_and_trust_warnings(tmp_p
         "local:watchlists_create_collection",
         "local:watchlists_update_collection_sources",
         "local:watchlists_check_sources",
+        "local:watchlists_set_briefing_schedule",
         "local:watchlists_generate_briefing",
     }
 
@@ -2996,6 +3021,7 @@ def test_web_deep_search_pinned_catalog_list_unchanged_by_default(tmp_path):
         "watchlists_create_collection",
         "watchlists_update_collection_sources",
         "watchlists_check_sources",
+        "watchlists_set_briefing_schedule",
         "watchlists_generate_briefing",
     ]
 

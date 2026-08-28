@@ -404,9 +404,9 @@ _APP_DEFAULT_PRESET_LABEL = "App default"
 #: among the option values, `None` is a legal, distinct selection.
 _CADENCE_OPTIONS: list[tuple[str, int | None]] = [
     ("Off", None),
-    ("Every 12h", 43_200),
-    ("Daily", 86_400),
-    ("Weekly", 604_800),
+    ("Every 12 hours", 43_200),
+    ("Every 24 hours", 86_400),
+    ("Every 7 days", 604_800),
 ]
 
 #: What each non-Off cadence means in the scope label's own words, keyed by
@@ -414,9 +414,9 @@ _CADENCE_OPTIONS: list[tuple[str, int | None]] = [
 #: cadence option cannot silently drift out of sync with what the scope
 #: label says about it. `cadence_scope_phrase` below is the only reader.
 _CADENCE_SCOPE_PHRASES: dict[int, str] = {
-    43_200: "every 12h",
-    86_400: "daily",
-    604_800: "weekly",
+    43_200: "every 12 hours",
+    86_400: "every 24 hours",
+    604_800: "every 7 days",
 }
 
 
@@ -778,6 +778,9 @@ class ArtifactsPane(RecomposeCaptureGuard, Vertical):
     #: The scope line, supplied by the screen: which watchlist these
     #: briefings belong to, or the reason there are none to show.
     scope_label = reactive("", recompose=True)
+    #: Compact operational state for the selected collection's automation:
+    #: interval, app-open boundary, eligibility/history, and reload attention.
+    automation_receipt = reactive("", recompose=True)
     #: False when no single watchlist is in scope -- briefings are per
     #: watchlist by schema, so there is nothing for Generate to act on.
     can_generate = reactive(False, recompose=True)
@@ -1158,6 +1161,13 @@ class ArtifactsPane(RecomposeCaptureGuard, Vertical):
                 f"{self.default_provider_display}."
             )
         yield Static(Text(scope_text), id="artifacts-scope-note")
+        yield Static(
+            Text(
+                self.automation_receipt
+                or "Automation: select a collection to inspect its schedule."
+            ),
+            id="artifacts-automation-receipt",
+        )
         with Horizontal(id="artifacts-toolbar", classes="destination-filter-strip"):
             # `compact=True` for the reason TASK-995 records for the Sources
             # toolbar: `.destination-filter-strip` is `height: 1`, and a
@@ -1409,18 +1419,11 @@ class ArtifactsPane(RecomposeCaptureGuard, Vertical):
                         "-- it will resume firing as soon as scheduling is "
                         "turned back on."
                         if schedules_disabled
-                        # Task-1812, AC #2: a freshly picked cadence is not
-                        # instant -- the running scheduler only re-reads
-                        # schedules every `queue_reload_interval_ticks`
-                        # (`Scheduling/scheduler/loop.py`, ~30 minutes by
-                        # default), so a pick made right now can sit inert
-                        # until the next reload. Stated here, and in
-                        # `Docs/User_Guide/watchlists.md`'s "Scheduled
-                        # briefings" section.
                         else "How often this watchlist writes a new briefing "
                         "on its own, while the app is open. Off by default. "
-                        "A freshly picked cadence can take up to ~30 minutes "
-                        "(one scheduler reload cycle) to start."
+                        "After a durable save, a scheduler reload is requested "
+                        "immediately and the receipt reports whether it was "
+                        "acknowledged."
                     ),
                 )
                 yield Button(

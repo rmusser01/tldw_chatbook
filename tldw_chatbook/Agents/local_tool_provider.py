@@ -2205,6 +2205,59 @@ def _default_specs(
             tags=("mutates",),
         ),
         LocalToolSpec(
+            name="watchlists_set_briefing_schedule",
+            description=(
+                "Set one local Watchlists collection's briefing interval, then "
+                "return durable stored state and separate scheduler reload-request "
+                "and reload-acknowledgement evidence. Schedules run while Chatbook "
+                "is open and the global briefing-schedules gate is enabled."
+            ),
+            parameters={
+                "type": "object",
+                "properties": {
+                    "collection_id": {
+                        "type": "string",
+                        "pattern": r"^local:watchlist:[1-9][0-9]*$",
+                        "maxLength": 36,
+                    },
+                    "cadence": {
+                        "oneOf": [
+                            {
+                                "type": "string",
+                                "enum": [
+                                    "every_12_hours",
+                                    "every_24_hours",
+                                    "every_7_days",
+                                    "off",
+                                ],
+                            },
+                            {
+                                "type": "integer",
+                                "minimum": 3_600,
+                                "maximum": 2_678_400,
+                            },
+                        ]
+                    },
+                    "preset_id": {
+                        "type": ["integer", "null"],
+                        "minimum": 1,
+                        "maximum": 2**63 - 1,
+                    },
+                    "selection_mode": {
+                        "type": "string",
+                        "enum": ["auto", "curated", "auto_featured"],
+                    },
+                },
+                "required": ["collection_id", "cadence"],
+                "additionalProperties": False,
+            },
+            handler=watchlists_command_service.set_briefing_schedule,
+            exposure=LocalToolExposure.CONSOLE_ONLY,
+            approval_effects=(LocalApprovalEffect.MUTATES_LOCAL,),
+            execution_policy=ToolExecutionPolicy.DEFINITIVE_AFTER_START,
+            tags=("mutates",),
+        ),
+        LocalToolSpec(
             name="watchlists_generate_briefing",
             description=(
                 "Accept one durable briefing generation for a local Watchlists "

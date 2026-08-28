@@ -5811,7 +5811,7 @@ class SubscriptionsDB(BaseDB):
         selection_mode: Optional[str] = None,
         default_preset_id: object = _UNSET,
         briefing_cadence_seconds: object = _UNSET,
-    ) -> None:
+    ) -> Optional[Dict[str, Any]]:
         """Write a watchlist's briefing selection mode, preset, and/or cadence.
 
         Three independent, optional writes in one call:
@@ -5852,7 +5852,8 @@ class SubscriptionsDB(BaseDB):
                 the current value alone.
 
         Returns:
-            None.
+            The committed schedule/settings receipt, or `None` when no
+            fields were supplied or the watchlist does not exist.
 
         Raises:
             ValueError: If `selection_mode` is given and is not one of the
@@ -5881,6 +5882,14 @@ class SubscriptionsDB(BaseDB):
             updates.append("briefing_selection_mode = ?")
             values.append(selection_mode)
         if default_preset_id is not _UNSET:
+            if default_preset_id is not None and (
+                type(default_preset_id) is not int
+                or not 1 <= default_preset_id <= 2**63 - 1
+            ):
+                raise ValueError(
+                    "set_watchlist_briefing_settings: default_preset_id must "
+                    "be a positive int, None, or omitted"
+                )
             updates.append("default_briefing_preset_id = ?")
             values.append(default_preset_id)
         if briefing_cadence_seconds is not _UNSET:
@@ -5902,10 +5911,49 @@ class SubscriptionsDB(BaseDB):
 
         values.append(watchlist_id)
         with self.transaction() as conn:
-            conn.execute(
+            if default_preset_id is not _UNSET and default_preset_id is not None:
+                preset = conn.execute(
+                    "SELECT 1 FROM briefing_presets WHERE id = ?",
+                    (default_preset_id,),
+                ).fetchone()
+                if preset is None:
+                    raise KeyError(default_preset_id)
+            cursor = conn.execute(
                 f"UPDATE watchlists SET {', '.join(updates)} WHERE id = ?",
                 values,
             )
+            if cursor.rowcount != 1:
+                return None
+            row = conn.execute(
+                """
+                SELECT
+                    w.id AS watchlist_id,
+                    w.name AS name,
+                    w.briefing_selection_mode AS briefing_selection_mode,
+                    w.default_briefing_preset_id AS default_briefing_preset_id,
+                    p.name AS default_preset_name,
+                    p.provider AS preset_provider,
+                    p.model AS preset_model,
+                    w.briefing_cadence_seconds AS briefing_cadence_seconds,
+                    (
+                        SELECT MAX(b.created_at)
+                        FROM briefings AS b
+                        WHERE b.watchlist_id = w.id
+                    ) AS last_attempt_at,
+                    (
+                        SELECT MAX(b.created_at)
+                        FROM briefings AS b
+                        WHERE b.watchlist_id = w.id
+                          AND b.status IN ('complete', 'empty')
+                    ) AS last_success_at
+                FROM watchlists AS w
+                LEFT JOIN briefing_presets AS p
+                  ON p.id = w.default_briefing_preset_id
+                WHERE w.id = ?
+                """,
+                (watchlist_id,),
+            ).fetchone()
+            return dict(row) if row is not None else None
 
     def get_subscription_items_by_ids(
         self, item_ids: Sequence[int]

@@ -12600,6 +12600,40 @@ class TldwCli(
         if callable(refresh):
             self.call_after_refresh(refresh)
 
+    def _wire_watchlists_command_service(self) -> None:
+        """Share one Console/UI Watchlists command facade over app owners."""
+        from tldw_chatbook.Subscriptions.briefing_service import (
+            default_briefing_provider,
+        )
+        from tldw_chatbook.Tools.watchlists_command_service import (
+            WatchlistsCommandService,
+        )
+        from tldw_chatbook.runtime_policy.bootstrap import (
+            load_default_runtime_source_state,
+        )
+
+        scheduler = self.scheduler_loop
+        coordinator = self.watchlists_operation_coordinator
+        self.watchlists_command_service = WatchlistsCommandService(
+            runtime_source_loader=load_default_runtime_source_state,
+            create_sources_batch=self.local_watchlists_service.create_sources_exact_batch_sync,
+            create_collection=self.watchlist_bundle_service.create_with_sources,
+            update_collection_sources=self.watchlist_bundle_service.update_sources,
+            accept_source_checks=coordinator.submit_checks,
+            accept_briefing=coordinator.submit_briefing,
+            resolve_collection_sources=self.watchlist_bundle_service.list_sources,
+            set_briefing_schedule=self.subscriptions_db.set_watchlist_briefing_settings,
+            briefing_schedules_enabled=lambda: bool(
+                get_cli_setting("scheduling", "briefing_schedules_enabled", True)
+            ),
+            scheduler_running=lambda: bool(scheduler.running),
+            request_scheduler_reload=scheduler.request_reload,
+            wait_scheduler_reload=lambda token, timeout: (
+                scheduler.wait_for_reload_blocking(token, timeout=timeout)
+            ),
+            default_briefing_provider=default_briefing_provider,
+        )
+
     def on_mount(self) -> None:
         """Configure logging and schedule post-mount setup."""
         self.watchlists_operation_coordinator = WatchlistsOperationCoordinator(
@@ -12607,6 +12641,7 @@ class TldwCli(
             briefing_db=self.subscriptions_db,
         )
         self.watchlists_operation_coordinator.bind_running_loop()
+        self._wire_watchlists_command_service()
         self._bind_tts_service()
         self._notes_sync_runtime_start_task = asyncio.create_task(
             self.notes_sync_runtime_owner.start(),

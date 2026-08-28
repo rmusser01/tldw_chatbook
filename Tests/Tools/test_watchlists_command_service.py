@@ -1,5 +1,6 @@
 import json
 from concurrent.futures import ThreadPoolExecutor
+from types import SimpleNamespace
 from threading import Event
 
 import pytest
@@ -18,6 +19,12 @@ def _service(
     accept_checks=None,
     accept_briefing=None,
     collection_sources=None,
+    set_briefing_schedule=None,
+    briefing_gate=lambda: True,
+    scheduler_running=lambda: True,
+    request_reload=None,
+    wait_reload=None,
+    default_provider=lambda: "openai",
 ):
     def default_sources(rows):
         return [
@@ -52,7 +59,297 @@ def _service(
         accept_source_checks=accept_checks,
         accept_briefing=accept_briefing,
         resolve_collection_sources=collection_sources,
+        set_briefing_schedule=set_briefing_schedule,
+        briefing_schedules_enabled=briefing_gate,
+        scheduler_running=scheduler_running,
+        request_scheduler_reload=request_reload,
+        wait_scheduler_reload=wait_reload,
+        default_briefing_provider=default_provider,
     )
+
+
+def _schedule_receipt(**overrides):
+    receipt = {
+        "watchlist_id": 7,
+        "name": "Threat intel",
+        "briefing_selection_mode": "auto_featured",
+        "default_briefing_preset_id": 3,
+        "default_preset_name": "Analyst",
+        "preset_provider": "anthropic",
+        "preset_model": "claude-sonnet",
+        "briefing_cadence_seconds": 86_400,
+        "last_attempt_at": "2026-08-27 18:00:00",
+        "last_success_at": "2026-08-26 18:00:00",
+    }
+    receipt.update(overrides)
+    return receipt
+
+
+def test_set_briefing_schedule_returns_durable_acknowledged_receipt():
+    writes = []
+    waits = []
+    token = SimpleNamespace(value=41)
+
+    result = json.loads(
+        _service(
+            set_briefing_schedule=lambda watchlist_id, **kwargs: (
+                writes.append((watchlist_id, kwargs)) or _schedule_receipt()
+            ),
+            request_reload=lambda: token,
+            wait_reload=lambda supplied, timeout: (
+                waits.append((supplied, timeout)) or True
+            ),
+        ).set_briefing_schedule(
+            {
+                "collection_id": "local:watchlist:7",
+                "cadence": "every_24_hours",
+            }
+        )
+    )
+
+    assert writes == [(7, {"briefing_cadence_seconds": 86_400})]
+    assert waits == [(token, 1.0)]
+    assert result == {
+        "status": "ok",
+        "retryable": False,
+        "collection_id": "local:watchlist:7",
+        "collection_name": "Threat intel",
+        "cadence": "every_24_hours",
+        "cadence_seconds": 86_400,
+        "selection_mode": "auto_featured",
+        "preset_id": 3,
+        "preset_name": "Analyst",
+        "global_gate_enabled": True,
+        "scheduler_running": True,
+        "reload_requested": True,
+        "reload_token": 41,
+        "reload_acknowledged": True,
+        "next_eligible_at": "2026-08-28T18:00:00+00:00",
+        "last_attempt_at": "2026-08-27 18:00:00",
+        "last_success_at": "2026-08-26 18:00:00",
+        "preset_resolution_source": "stored_preset",
+        "provider": "anthropic",
+        "provider_resolution_source": "preset",
+        "model": "claude-sonnet",
+        "model_resolution_source": "preset",
+        "recovery": "Chatbook schedules run while the app is open. Review the global gate in Settings and this collection's cadence in Artifacts.",
+    }
+
+
+@pytest.mark.parametrize(
+    ("cadence", "stored_seconds", "canonical"),
+    [
+        ("every_12_hours", 43_200, "every_12_hours"),
+        ("every_7_days", 604_800, "every_7_days"),
+        ("off", None, "off"),
+        (3_600, 3_600, "advanced"),
+        (2_678_400, 2_678_400, "advanced"),
+    ],
+)
+def test_set_briefing_schedule_accepts_exact_interval_vocabulary(
+    cadence, stored_seconds, canonical
+):
+    writes = []
+
+    result = json.loads(
+        _service(
+            set_briefing_schedule=lambda watchlist_id, **kwargs: (
+                writes.append((watchlist_id, kwargs))
+                or _schedule_receipt(
+                    briefing_cadence_seconds=stored_seconds,
+                    last_attempt_at=None,
+                    last_success_at=None,
+                )
+            ),
+            request_reload=lambda: SimpleNamespace(value=1),
+            wait_reload=lambda _token, _timeout: True,
+        ).set_briefing_schedule(
+            {"collection_id": "local:watchlist:7", "cadence": cadence}
+        )
+    )
+
+    assert writes == [(7, {"briefing_cadence_seconds": stored_seconds})]
+    assert result["cadence"] == canonical
+    if stored_seconds is None:
+        assert result["next_eligible_at"] is None
+    else:
+        assert result["next_eligible_at"] is not None
+
+
+@pytest.mark.parametrize(
+    "cadence",
+    [True, False, 3_599, 2_678_401, 86_400.0, "daily", "86400"],
+)
+def test_set_briefing_schedule_rejects_noncanonical_intervals_before_write(cadence):
+    writes = []
+
+    result = json.loads(
+        _service(set_briefing_schedule=lambda *args, **kwargs: writes.append((args, kwargs)))
+        .set_briefing_schedule(
+            {"collection_id": "local:watchlist:7", "cadence": cadence}
+        )
+    )
+
+    assert result["status"] == "invalid_argument"
+    assert writes == []
+
+
+def test_set_briefing_schedule_preserves_omitted_choices_and_commits_supplied_choices():
+    writes = []
+
+    json.loads(
+        _service(
+            set_briefing_schedule=lambda watchlist_id, **kwargs: (
+                writes.append((watchlist_id, kwargs)) or _schedule_receipt()
+            ),
+            request_reload=lambda: SimpleNamespace(value=1),
+            wait_reload=lambda _token, _timeout: True,
+        ).set_briefing_schedule(
+            {
+                "collection_id": "local:watchlist:7",
+                "cadence": "off",
+                "preset_id": None,
+                "selection_mode": "curated",
+            }
+        )
+    )
+
+    assert writes == [
+        (
+            7,
+            {
+                "briefing_cadence_seconds": None,
+                "default_preset_id": None,
+                "selection_mode": "curated",
+            },
+        )
+    ]
+
+
+@pytest.mark.parametrize(
+    ("gate", "running", "wait_result", "requested", "acknowledged"),
+    [
+        (False, True, True, False, False),
+        (True, False, False, True, False),
+        (True, True, False, True, False),
+    ],
+)
+def test_set_briefing_schedule_reports_disabled_stopped_and_timeout_honestly(
+    gate, running, wait_result, requested, acknowledged
+):
+    request_count = []
+
+    result = json.loads(
+        _service(
+            set_briefing_schedule=lambda _watchlist_id, **_kwargs: _schedule_receipt(),
+            briefing_gate=lambda: gate,
+            scheduler_running=lambda: running,
+            request_reload=lambda: (
+                request_count.append(True) or SimpleNamespace(value=9)
+            ),
+            wait_reload=lambda _token, _timeout: wait_result,
+        ).set_briefing_schedule(
+            {
+                "collection_id": "local:watchlist:7",
+                "cadence": "every_24_hours",
+            }
+        )
+    )
+
+    assert result["reload_requested"] is requested
+    assert result["reload_acknowledged"] is acknowledged
+    assert result["global_gate_enabled"] is gate
+    assert result["scheduler_running"] is running
+    assert len(request_count) == int(requested)
+
+
+def test_set_briefing_schedule_refuses_server_mode_before_persistence():
+    writes = []
+    result = json.loads(
+        _service(
+            runtime="server",
+            set_briefing_schedule=lambda *args, **kwargs: writes.append((args, kwargs)),
+        ).set_briefing_schedule(
+            {
+                "collection_id": "local:watchlist:7",
+                "cadence": "every_24_hours",
+            }
+        )
+    )
+
+    assert result["status"] == "unsupported"
+    assert writes == []
+
+
+def test_set_briefing_schedule_scrubs_persistence_failure_and_does_not_reload():
+    reloads = []
+
+    def fail(*_args, **_kwargs):
+        raise RuntimeError("token=secret /private/user.db")
+
+    raw = _service(
+        set_briefing_schedule=fail,
+        request_reload=lambda: reloads.append(True),
+    ).set_briefing_schedule(
+        {
+            "collection_id": "local:watchlist:7",
+            "cadence": "every_24_hours",
+        }
+    )
+    result = json.loads(raw)
+
+    assert result == {
+        "status": "feature_unavailable",
+        "retryable": True,
+        "message": "Watchlists storage is temporarily unavailable. Try again.",
+    }
+    assert "secret" not in raw and "user.db" not in raw
+    assert reloads == []
+
+
+def test_set_briefing_schedule_uses_pipeline_defaults_not_console_model_arguments():
+    default_calls = []
+    writes = []
+    service = _service(
+        set_briefing_schedule=lambda watchlist_id, **kwargs: (
+            writes.append((watchlist_id, kwargs))
+            or _schedule_receipt(
+                default_briefing_preset_id=None,
+                default_preset_name=None,
+                preset_provider=None,
+                preset_model=None,
+            )
+        ),
+        request_reload=lambda: SimpleNamespace(value=1),
+        wait_reload=lambda _token, _timeout: True,
+        default_provider=lambda: default_calls.append(True) or "app-default",
+    )
+
+    result = json.loads(
+        service.set_briefing_schedule(
+            {
+                "collection_id": "local:watchlist:7",
+                "cadence": "every_24_hours",
+            }
+        )
+    )
+    rejected = json.loads(
+        service.set_briefing_schedule(
+            {
+                "collection_id": "local:watchlist:7",
+                "cadence": "every_24_hours",
+                "model": "current-console-model",
+            }
+        )
+    )
+
+    assert result["provider"] == "app-default"
+    assert result["provider_resolution_source"] == "app_default"
+    assert result["model"] is None
+    assert result["model_resolution_source"] == "provider_default"
+    assert default_calls == [True]
+    assert writes == [(7, {"briefing_cadence_seconds": 86_400})]
+    assert rejected["status"] == "invalid_argument"
 
 
 def test_check_sources_accepts_exact_receipts_with_poll_contract():

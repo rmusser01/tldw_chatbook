@@ -8,6 +8,7 @@ handoffs keep working while Collections moves under Library.
 from __future__ import annotations
 
 import asyncio
+import json
 import re
 import threading
 import webbrowser
@@ -39,6 +40,7 @@ from ...Constants import (
 from ...config import get_cli_setting
 from ...runtime_policy.types import PolicyDeniedError
 from ...tldw_api.exceptions import APIResponseError
+from ...Scheduling.services.briefing_projection import next_briefing_eligibility
 from ...Subscriptions.briefing_audio import (
     AudioGenerationError,
     active_audio_claim_row_ids,
@@ -808,6 +810,7 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
         # column's own default and `ArtifactsPane.briefing_cadence_
         # seconds`'s own fallback.
         self._briefing_cadence_seconds: int | None = None
+        self._briefing_schedule_receipt: str | None = None
         # True only while THIS screen's `wl-briefing` worker is running.
         # `fail_interrupted_briefings` cannot tell a crashed worker's row
         # from a live one -- both read `generating` -- so the live case is
@@ -2784,6 +2787,10 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
             seed(ArtifactsPane.briefings, self._loaded_briefings)
             seed(ArtifactsPane.selected_briefing, self._selected_briefing)
             seed(ArtifactsPane.scope_label, self._briefing_scope_label())
+            seed(
+                ArtifactsPane.automation_receipt,
+                self._briefing_schedule_receipt or "",
+            )
             seed(ArtifactsPane.can_generate, self._can_generate_briefing())
             seed(
                 ArtifactsPane.default_provider_display,
@@ -8000,6 +8007,7 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
             self._briefing_selection_mode = MODE_AUTO_FEATURED
             self._briefing_default_preset_id = None
             self._briefing_cadence_seconds = None
+            self._briefing_schedule_receipt = None
             self._loaded_scripts = []
             self._selected_script = None
             self._loaded_script_audio = None
@@ -8317,6 +8325,11 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
             self._briefing_cadence_seconds = settings_row.get(
                 "briefing_cadence_seconds"
             )
+            self._briefing_schedule_receipt = (
+                self._briefing_schedule_receipt_copy(settings_row, saved=False)
+                if settings_row
+                else None
+            )
             self._loaded_briefing_presets = preset_rows
             self._watchlist_has_audio_episodes = has_audio_episodes
         self._apply_briefing_state_to_pane()
@@ -8350,6 +8363,7 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
         pane.briefings = self._loaded_briefings
         pane.selected_briefing = self._selected_briefing
         pane.scope_label = self._briefing_scope_label()
+        pane.automation_receipt = self._briefing_schedule_receipt or ""
         pane.can_generate = self._can_generate_briefing()
         pane.default_provider_display = self._briefing_provider_display()
         pane.selection_mode = self._briefing_selection_mode
@@ -8387,7 +8401,13 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
         with db.transaction() as conn:
             row = conn.execute(
                 "SELECT briefing_selection_mode, default_briefing_preset_id, "
-                "briefing_cadence_seconds FROM watchlists WHERE id = ?",
+                "briefing_cadence_seconds, "
+                "(SELECT MAX(created_at) FROM briefings "
+                " WHERE watchlist_id = watchlists.id) AS last_attempt_at, "
+                "(SELECT MAX(created_at) FROM briefings "
+                " WHERE watchlist_id = watchlists.id "
+                " AND status IN ('complete', 'empty')) AS last_success_at "
+                "FROM watchlists WHERE id = ?",
                 (watchlist_id,),
             ).fetchone()
         return dict(row) if row is not None else {}
@@ -9598,36 +9618,39 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
 
     @on(BriefingCadenceChanged)
     def handle_briefing_cadence_changed(self, event: BriefingCadenceChanged) -> None:
-        """Spec #2 phase 4, Task 4: same shape as `handle_briefing_mode_
-        changed`/`handle_briefing_default_preset_changed` above -- the
-        no-database case is answered from memory, the real write dispatches
-        a worker in the same `wl-briefing-settings-write` group (so an
-        overlapping mode/preset/cadence write for the same watchlist is
-        safe to interleave, last write wins, exactly like its two siblings).
-        """
+        """Persist cadence through the shared Console/UI schedule command."""
         event.stop()
-        db = self._briefings_db()
         watchlist_id = self._briefing_watchlist_id()
-        if db is None or watchlist_id is None:
+        if watchlist_id is None:
             self._notify_watchlists(
-                "Could not reach the local database, so nothing was saved.",
+                "Select one collection before changing its schedule.",
                 severity="error",
             )
             return
         self.run_worker(
-            self._write_briefing_cadence(db, watchlist_id, event.seconds),
+            self._write_briefing_cadence(watchlist_id, event.seconds),
             group="wl-briefing-settings-write",
         )
 
     async def _write_briefing_cadence(
-        self, db: Any, watchlist_id: int, seconds: int | None
+        self, watchlist_id: int, seconds: int | None
     ) -> None:
+        command_service = getattr(
+            self.app_instance, "watchlists_command_service", None
+        )
         try:
-            await asyncio.to_thread(
-                db.set_watchlist_briefing_settings,
-                watchlist_id,
-                briefing_cadence_seconds=seconds,
+            if command_service is None:
+                raise RuntimeError("schedule command service is unavailable")
+            raw_payload = await asyncio.to_thread(
+                command_service.set_briefing_schedule,
+                {
+                    "collection_id": f"local:watchlist:{watchlist_id}",
+                    "cadence": self._briefing_cadence_argument(seconds),
+                },
             )
+            payload = json.loads(raw_payload)
+            if payload.get("status") != "ok":
+                raise ValueError("schedule command did not commit")
         except Exception as exc:  # noqa: BLE001 - reported, not raised
             logger.warning(
                 f"Failed to save the briefing schedule for watchlist "
@@ -9646,14 +9669,20 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
         # has since moved to a different watchlist.
         if self._briefing_watchlist_id() != watchlist_id:
             return
-        self._briefing_cadence_seconds = seconds
+        stored_seconds = payload.get("cadence_seconds")
+        if stored_seconds is not None and type(stored_seconds) is not int:
+            return
+        self._briefing_cadence_seconds = stored_seconds
+        self._briefing_schedule_receipt = self._briefing_schedule_receipt_copy(
+            payload, saved=True
+        )
         if not self.is_attached:
             return
         try:
             pane = self.query_one("#watchlists-artifacts-pane", ArtifactsPane)
         except NoMatches:
             return
-        pane.briefing_cadence_seconds = seconds
+        pane.briefing_cadence_seconds = stored_seconds
         # Unlike mode/preset, the scope label's TEXT depends on cadence
         # (`_briefing_scope_label` -> `cadence_scope_phrase`) -- without
         # this, the honesty fix this task exists to ship would only take
@@ -9661,6 +9690,137 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
         # instant the user picks a cadence, leaving the toolbar Select and
         # the scope note disagreeing until then.
         pane.scope_label = self._briefing_scope_label()
+        pane.automation_receipt = self._briefing_schedule_receipt
+
+    @staticmethod
+    def _briefing_cadence_argument(seconds: int | None) -> str | int:
+        """Return the command vocabulary for one UI cadence value."""
+        return {
+            None: "off",
+            43_200: "every_12_hours",
+            86_400: "every_24_hours",
+            604_800: "every_7_days",
+        }.get(seconds, seconds if seconds is not None else "off")
+
+    def _briefing_schedule_receipt_copy(
+        self, payload: Mapping[str, Any], *, saved: bool
+    ) -> str:
+        """Format stored or just-saved schedule state as one compact receipt."""
+        seconds = payload.get(
+            "cadence_seconds", payload.get("briefing_cadence_seconds")
+        )
+        cadence = payload.get("cadence")
+        if cadence is None:
+            cadence = self._briefing_cadence_argument(
+                seconds if type(seconds) is int else None
+            )
+        cadence_label = {
+            "off": "Off",
+            "every_12_hours": "Every 12 hours",
+            "every_24_hours": "Every 24 hours",
+            "every_7_days": "Every 7 days",
+            "advanced": f"Every {seconds}s",
+        }.get(str(cadence), f"Every {seconds}s")
+        limitation = "Schedules run while the app is open."
+        history = WatchlistsCollectionsScreen._schedule_history_copy(payload)
+
+        gate_enabled = (
+            bool(payload.get("global_gate_enabled"))
+            if saved
+            else self._briefing_schedules_enabled()
+        )
+        scheduler_running = (
+            bool(payload.get("scheduler_running"))
+            if saved
+            else bool(
+                getattr(
+                    getattr(self.app_instance, "scheduler_loop", None),
+                    "running",
+                    False,
+                )
+            )
+        )
+        if not gate_enabled:
+            return (
+                f"Automation: {'saved ' if saved else ''}{cadence_label}, but scheduled briefings are turned off "
+                f"in Settings; the stored cadence is inactive. {limitation}"
+                f" {history}"
+            )
+        if cadence == "off":
+            return (
+                f"Automation: {'saved ' if saved else ''}Off for this collection. {limitation} "
+                f"{history}"
+            )
+        if not saved:
+            if not scheduler_running:
+                attention = "stored; scheduler stopped"
+            else:
+                try:
+                    next_at = next_briefing_eligibility(dict(payload))
+                    attention = (
+                        "eligible now"
+                        if next_at <= datetime.now(timezone.utc)
+                        else f"next eligible {self._local_schedule_time(next_at)}"
+                    )
+                except (TypeError, ValueError, OverflowError):
+                    attention = "stored; next eligibility unavailable"
+            return (
+                f"Automation: {cadence_label} · {attention}. {limitation} {history}"
+            )
+        if payload.get("reload_acknowledged"):
+            next_copy = ""
+            next_raw = payload.get("next_eligible_at")
+            if isinstance(next_raw, str):
+                try:
+                    next_value = datetime.fromisoformat(next_raw)
+                    if next_value.tzinfo is None:
+                        next_value = next_value.replace(tzinfo=timezone.utc)
+                    next_local = next_value.astimezone()
+                    next_copy = (
+                        " Next eligible locally: "
+                        f"{next_local.strftime('%Y-%m-%d %H:%M %Z')}."
+                    )
+                except ValueError:
+                    pass
+            return (
+                f"Automation: saved {cadence_label}; scheduler reloaded.{next_copy} "
+                f"{limitation} {history}"
+            )
+        if not scheduler_running:
+            return (
+                f"Automation: saved {cadence_label}; the scheduler is stopped and will load "
+                f"it when Chatbook next runs. {limitation} {history}"
+            )
+        if payload.get("reload_requested"):
+            return (
+                f"Automation: saved {cadence_label}; scheduler reload requested but not yet "
+                f"acknowledged. {limitation} {history}"
+            )
+        return (
+            f"Automation: saved {cadence_label}; scheduler reload was not requested. "
+            f"Review Settings. {limitation} {history}"
+        )
+
+    @staticmethod
+    def _local_schedule_time(value: object) -> str:
+        """Render a stored UTC timestamp in the user's local timezone."""
+        if value is None:
+            return "Never"
+        try:
+            parsed = value if isinstance(value, datetime) else datetime.fromisoformat(str(value))
+        except (TypeError, ValueError):
+            return "Unknown"
+        if parsed.tzinfo is None:
+            parsed = parsed.replace(tzinfo=timezone.utc)
+        return parsed.astimezone().strftime("%Y-%m-%d %H:%M %Z")
+
+    @classmethod
+    def _schedule_history_copy(cls, payload: Mapping[str, Any]) -> str:
+        """Return bounded local-time attempt/success receipt fields."""
+        return (
+            f"Last attempt: {cls._local_schedule_time(payload.get('last_attempt_at'))}. "
+            f"Last success: {cls._local_schedule_time(payload.get('last_success_at'))}."
+        )
 
     # --- Briefing presets (spec #2 phase 2a, Task 3): manager modal --------
     #
