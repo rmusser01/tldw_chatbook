@@ -23011,6 +23011,9 @@ class LibraryScreen(BaseAppScreen):
             self._request_library_skills_browse(
                 self._library_skills_browse_controller.mutation_refresh_scope,
             )
+            self.call_after_refresh(
+                self._present_library_skills_import_choice_if_needed
+            )
         if self._library_selected_row_id == LIBRARY_ROW_BROWSE_MEDIA:
             self.call_after_refresh(self._sync_library_media_reader_layout_from_shell)
             self._request_library_media_browse(

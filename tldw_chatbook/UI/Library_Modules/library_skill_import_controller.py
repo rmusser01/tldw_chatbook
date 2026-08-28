@@ -5,8 +5,10 @@ from __future__ import annotations
 import asyncio
 import hashlib
 import inspect
+import os
+import stat
 from dataclasses import dataclass, replace
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 from typing import Any
 from urllib.parse import urlsplit, urlunsplit
 
@@ -67,6 +69,9 @@ class _PendingDirectory:
 
     path: Path
     candidates: tuple[str, ...]
+    stamps: tuple[
+        tuple[str, tuple[int, ...], tuple[int, ...]], ...
+    ]
 
 
 class LibrarySkillImportCoordinator:
@@ -144,11 +149,16 @@ class LibrarySkillImportCoordinator:
         """Synchronously admit one operation before its app worker exists."""
         if self._snapshot.in_flight:
             return False
-        self._accepted_input = raw_path
+        accepted_input = (
+            self._accepted_input
+            if self._accepted_input and raw_path == self._snapshot.path
+            else raw_path
+        )
+        self._accepted_input = accepted_input
         self._selected_candidate = ""
         self.update(
             row_open=True,
-            path=self._display_path(raw_path),
+            path=self._display_path(accepted_input),
             status="Inspecting/importing…",
             review_name="",
             in_flight=True,
@@ -203,8 +213,11 @@ class LibrarySkillImportCoordinator:
 
     async def run(self, raw_path: str, *, runtime_app: Any) -> None:
         """Run the accepted mutation and publish one authoritative receipt."""
+        del raw_path
         operation = asyncio.create_task(
-            self._run_and_settle(raw_path, runtime_app=runtime_app)
+            self._run_and_settle(
+                self._accepted_input, runtime_app=runtime_app
+            )
         )
         await self._await_terminal_operation(operation, runtime_app=runtime_app)
 
@@ -262,7 +275,11 @@ class LibrarySkillImportCoordinator:
         try:
             service = getattr(self._app_instance, "skills_scope_service", None)
             if isinstance(package, _PendingDirectory):
-                skill_dir = package.path / candidate
+                skill_dir = self._resolve_pending_directory_candidate(
+                    package, candidate
+                )
+                if skill_dir is None:
+                    raise ValueError("local_skill_candidate_changed")
                 result = await self._call_service(
                     service.import_skill_directory,
                     skill_dir,
@@ -356,9 +373,10 @@ class LibrarySkillImportCoordinator:
             validated_path = validate_path_simple(
                 Path(raw_path).expanduser(), require_exists=True
             )
-        except ValueError:
-            logger.opt(exception=True).warning(
-                "Rejected Library skills import path."
+        except ValueError as exc:
+            logger.warning(
+                "Rejected Library skills import path; exception_type={}.",
+                type(exc).__name__,
             )
             return _LibrarySkillImportOutcome(
                 "Could not find that file or folder."
@@ -375,13 +393,21 @@ class LibrarySkillImportCoordinator:
                 inspect_skill_directory, validated_path
             )
             if inspection.kind is SkillPackageKind.MULTI_SKILL_REPOSITORY:
+                pending = self._pending_directory(
+                    validated_path, inspection.candidates
+                )
+                if pending is None:
+                    return _LibrarySkillImportOutcome(
+                        "That package is malformed or unsupported.",
+                        package_kind=(
+                            SkillPackageKind.MALFORMED_OR_UNSUPPORTED.value
+                        ),
+                    )
                 return _LibrarySkillImportOutcome(
                     "Choose one skill to import.",
                     candidates=inspection.candidates,
                     package_kind=inspection.kind.value,
-                    pending_package=_PendingDirectory(
-                        validated_path, inspection.candidates
-                    ),
+                    pending_package=pending,
                 )
             if inspection.kind is not SkillPackageKind.ROOT_SKILL:
                 return _LibrarySkillImportOutcome(
@@ -422,9 +448,10 @@ class LibrarySkillImportCoordinator:
             content_type = "application/zip"
             try:
                 data = await asyncio.to_thread(file_path.read_bytes)
-            except Exception:
-                logger.opt(exception=True).warning(
-                    "Could not read Library skill import file."
+            except Exception as exc:
+                logger.warning(
+                    "Could not read Library skill import file; exception_type={}.",
+                    type(exc).__name__,
                 )
                 return _LibrarySkillImportOutcome("Could not read that file.")
             inspection = inspect_skill_zip(data, repository_source=False)
@@ -465,9 +492,10 @@ class LibrarySkillImportCoordinator:
                 text = await asyncio.to_thread(
                     file_path.read_text, encoding="utf-8", errors="strict"
                 )
-            except Exception:
-                logger.opt(exception=True).warning(
-                    "Could not read Library skill import file."
+            except Exception as exc:
+                logger.warning(
+                    "Could not read Library skill import file; exception_type={}.",
+                    type(exc).__name__,
                 )
                 return _LibrarySkillImportOutcome("Could not read that file.")
             data = text.encode("utf-8")
@@ -554,7 +582,7 @@ class LibrarySkillImportCoordinator:
             netloc = f"[{hostname}]" if ":" in hostname else hostname
             if parsed.port is not None:
                 netloc = f"{netloc}:{parsed.port}"
-            return urlunsplit((parsed.scheme, netloc, parsed.path, "", ""))
+            return urlunsplit((parsed.scheme, netloc, "", "", ""))
         except ValueError:
             return "Remote package URL"
 
@@ -592,6 +620,92 @@ class LibrarySkillImportCoordinator:
         )
 
     @staticmethod
+    def _stat_stamp(path: Path, *, directory: bool) -> tuple[int, ...] | None:
+        """Capture one no-follow identity for a candidate path."""
+        try:
+            info = os.lstat(path)
+        except OSError:
+            return None
+        expected = stat.S_ISDIR(info.st_mode) if directory else stat.S_ISREG(
+            info.st_mode
+        )
+        if not expected or stat.S_ISLNK(info.st_mode):
+            return None
+        return (
+            info.st_dev,
+            info.st_ino,
+            info.st_mode,
+            info.st_size,
+            info.st_mtime_ns,
+            info.st_ctime_ns,
+        )
+
+    @classmethod
+    def _pending_directory(
+        cls, path: Path, candidates: tuple[str, ...]
+    ) -> _PendingDirectory | None:
+        """Freeze no-follow identities for every displayed local candidate."""
+        try:
+            root = path.resolve(strict=True)
+        except OSError:
+            return None
+        if cls._stat_stamp(root, directory=True) is None:
+            return None
+        stamps: list[tuple[str, tuple[int, ...], tuple[int, ...]]] = []
+        for candidate in candidates:
+            candidate_path = root.joinpath(*PurePosixPath(candidate).parts)
+            directory_stamp = cls._stat_stamp(candidate_path, directory=True)
+            body_stamp = cls._stat_stamp(
+                candidate_path / _SKILL_MD_FILENAME, directory=False
+            )
+            if directory_stamp is None or body_stamp is None:
+                return None
+            stamps.append((candidate, directory_stamp, body_stamp))
+        return _PendingDirectory(root, candidates, tuple(stamps))
+
+    @classmethod
+    def _resolve_pending_directory_candidate(
+        cls, package: _PendingDirectory, candidate: str
+    ) -> Path | None:
+        """Revalidate containment and the inspected body identity before copy."""
+        if candidate not in package.candidates:
+            return None
+        relative = PurePosixPath(candidate)
+        if relative.is_absolute() or any(
+            part in {"", ".", ".."} for part in relative.parts
+        ):
+            return None
+        try:
+            root = package.path.resolve(strict=True)
+        except OSError:
+            return None
+        if root != package.path or cls._stat_stamp(root, directory=True) is None:
+            return None
+        current = root
+        for part in relative.parts:
+            current /= part
+            if cls._stat_stamp(current, directory=True) is None:
+                return None
+        try:
+            resolved = current.resolve(strict=True)
+        except OSError:
+            return None
+        if resolved != current or root not in resolved.parents:
+            return None
+        body = resolved / _SKILL_MD_FILENAME
+        current_directory_stamp = cls._stat_stamp(resolved, directory=True)
+        current_body_stamp = cls._stat_stamp(body, directory=False)
+        expected = next(
+            (stamp for stamp in package.stamps if stamp[0] == candidate), None
+        )
+        if expected is None or (
+            current_directory_stamp,
+            current_body_stamp,
+        ) != expected[1:]:
+            return None
+        return resolved
+
+    @staticmethod
     def _safe_name(value: Any) -> str:
         text = sanitize_string(str(value or ""), max_length=64).strip()
         text = text.replace("<", "").replace(">", "")
@@ -613,10 +727,13 @@ class LibrarySkillImportCoordinator:
 
     @staticmethod
     def _failure(skill_name: str, exc: Exception) -> _LibrarySkillImportOutcome:
-        logger.opt(exception=True).warning(
-            "Library skill import failed for {!r}.", skill_name
+        logger.warning(
+            "Library skill import failed; exception_type={}.",
+            type(exc).__name__,
         )
-        if "local_skill_exists:" in str(exc):
+        if type(exc) is ValueError and exc.args == (
+            f"local_skill_exists:{skill_name}",
+        ):
             return _LibrarySkillImportOutcome(
                 f'Skipped — a skill named "{skill_name}" already exists.',
                 clear_path=True,

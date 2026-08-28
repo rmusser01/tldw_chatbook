@@ -21,6 +21,7 @@ committed as fixture files, to keep the fixtures directory small.
 from __future__ import annotations
 
 import asyncio
+import os
 import shutil
 import threading
 import time
@@ -30,6 +31,7 @@ from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
+from loguru import logger
 from textual.screen import Screen
 from textual.widgets import Button, Input
 
@@ -276,7 +278,7 @@ async def test_coordinator_holds_single_flight_through_candidate_choice(monkeypa
     assert coordinator.claim("/competing.zip") is False
     assert coordinator.cancel_choice() is True
     assert coordinator.snapshot.in_flight is False
-    assert coordinator.snapshot.path == url
+    assert coordinator.snapshot.path == "https://github.com"
     assert coordinator.snapshot.status == ""
 
 
@@ -413,7 +415,7 @@ def test_coordinator_keeps_retry_url_private_and_display_url_credential_free():
         "https://alice:URL-SECRET@example.com/pkg.zip?token=QUERY-SECRET"
     )
 
-    assert coordinator.snapshot.path == "https://example.com/pkg.zip"
+    assert coordinator.snapshot.path == "https://example.com"
     rendered = repr(coordinator.snapshot)
     assert "URL-SECRET" not in rendered
     assert "QUERY-SECRET" not in rendered
@@ -423,7 +425,74 @@ def test_coordinator_keeps_retry_url_private_and_display_url_credential_free():
         "https://alice:URL-SECRET@example.com/pkg.zip?token=QUERY-SECRET"
     )
     assert coordinator.claim_retry() is None
-    assert coordinator.snapshot.path == "https://example.com/pkg.zip"
+    assert coordinator.snapshot.path == "https://example.com"
+
+
+@pytest.mark.asyncio
+async def test_candidate_cancel_reuses_unchanged_private_signed_url(monkeypatch):
+    coordinator = library_skill_import_controller.LibrarySkillImportCoordinator(
+        SimpleNamespace(skills_scope_service=SimpleNamespace())
+    )
+    inspected: list[str] = []
+
+    async def inspect_url(url, **kwargs):
+        inspected.append(url)
+        return _multi_package()
+
+    monkeypatch.setattr(
+        library_skill_import_controller, "inspect_skill_from_url", inspect_url
+    )
+    raw = "https://example.com/PATH-SECRET.zip?token=QUERY-SECRET"
+    coordinator.open_draft()
+    assert coordinator.claim(raw)
+    await coordinator.run(
+        raw, runtime_app=SimpleNamespace(screen=SimpleNamespace())
+    )
+    safe_receipt = repr(coordinator.snapshot)
+    assert "PATH-SECRET" not in safe_receipt
+    assert "QUERY-SECRET" not in safe_receipt
+    assert coordinator.cancel_choice()
+
+    unchanged_display = coordinator.snapshot.path
+    assert unchanged_display == "https://example.com"
+    assert coordinator.claim(unchanged_display)
+    await coordinator.run(
+        unchanged_display, runtime_app=SimpleNamespace(screen=SimpleNamespace())
+    )
+
+    assert inspected == [raw, raw]
+
+
+@pytest.mark.asyncio
+async def test_edit_after_candidate_cancel_replaces_private_signed_url(monkeypatch):
+    coordinator = library_skill_import_controller.LibrarySkillImportCoordinator(
+        SimpleNamespace(skills_scope_service=SimpleNamespace())
+    )
+    inspected: list[str] = []
+
+    async def inspect_url(url, **kwargs):
+        inspected.append(url)
+        return _multi_package()
+
+    monkeypatch.setattr(
+        library_skill_import_controller, "inspect_skill_from_url", inspect_url
+    )
+    original = "https://example.com/old.zip?token=OLD-SECRET"
+    edited = "https://example.net/new.zip?token=NEW-SECRET"
+    coordinator.open_draft()
+    assert coordinator.claim(original)
+    await coordinator.run(
+        original, runtime_app=SimpleNamespace(screen=SimpleNamespace())
+    )
+    assert coordinator.cancel_choice()
+
+    assert coordinator.update_draft_path(edited)
+    assert coordinator.claim(edited)
+    await coordinator.run(
+        edited, runtime_app=SimpleNamespace(screen=SimpleNamespace())
+    )
+
+    assert inspected == [original, edited]
 
 
 @pytest.mark.asyncio
@@ -465,6 +534,64 @@ async def test_local_multi_skill_folder_requires_choice_and_imports_only_selecte
         )
     ]
     assert coordinator.snapshot.review_name == "a"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "swap_kind", ("candidate_symlink", "body_symlink", "body_replacement")
+)
+async def test_local_candidate_rejects_post_inspection_swap(tmp_path, swap_kind):
+    source = tmp_path / "repository"
+    candidate = source / "skills" / "a"
+    other = source / "skills" / "b"
+    for skill_dir in (candidate, other):
+        skill_dir.mkdir(parents=True)
+        (skill_dir / "SKILL.md").write_text("inside", encoding="utf-8")
+    outside = tmp_path / "outside"
+    outside.mkdir()
+    outside_body = outside / "SKILL.md"
+    outside_body.write_text("outside", encoding="utf-8")
+    calls: list[Path] = []
+
+    async def import_directory(path, **kwargs):
+        calls.append(Path(path))
+        return {"name": "a"}
+
+    service = SimpleNamespace(
+        import_skill_directory=import_directory,
+        import_skill_file=lambda *args, **kwargs: None,
+    )
+    coordinator = library_skill_import_controller.LibrarySkillImportCoordinator(
+        SimpleNamespace(skills_scope_service=service)
+    )
+    coordinator.open_draft()
+    assert coordinator.claim(str(source))
+    await coordinator.run(
+        str(source), runtime_app=SimpleNamespace(screen=SimpleNamespace())
+    )
+    assert coordinator.snapshot.candidates == ("skills/a", "skills/b")
+
+    body = candidate / "SKILL.md"
+    body.unlink()
+    try:
+        if swap_kind == "candidate_symlink":
+            candidate.rmdir()
+            os.symlink(outside, candidate, target_is_directory=True)
+        elif swap_kind == "body_symlink":
+            os.symlink(outside_body, body)
+        else:
+            body.write_text("replacement", encoding="utf-8")
+    except (OSError, NotImplementedError):
+        pytest.skip("symlinks unavailable")
+
+    assert coordinator.claim_candidate("skills/a")
+    await coordinator.run_candidate(
+        "skills/a", runtime_app=SimpleNamespace(screen=SimpleNamespace())
+    )
+
+    assert calls == []
+    assert coordinator.snapshot.review_name == ""
+    assert coordinator.snapshot.in_flight is False
 
 
 @pytest.mark.asyncio
@@ -524,6 +651,99 @@ async def test_mounted_library_multi_skill_choice_imports_one_to_trust_review(tm
 
 
 @pytest.mark.asyncio
+async def test_candidate_modal_replays_when_inspection_finishes_while_away(
+    tmp_path, monkeypatch
+):
+    _local, service = _real_skills_scope_service_with_trust(tmp_path / "store")
+    app = _build_test_app(configured_default="library")
+    _wire_empty_non_skill_services(app)
+    app.skills_scope_service = service
+    host = LibraryHarness(app)
+    started = threading.Event()
+    release = threading.Event()
+
+    async def inspect_url(*args, **kwargs):
+        started.set()
+        await asyncio.to_thread(release.wait)
+        return _multi_package()
+
+    monkeypatch.setattr(
+        library_skill_import_controller, "inspect_skill_from_url", inspect_url
+    )
+    try:
+        async with host.run_test(size=LIBRARY_TEST_SIZE) as pilot:
+            screen = _active_library_screen(host)
+            await _wait_for_library_shell(screen, pilot)
+            await _open_skills_import_row(screen, pilot)
+            screen.query_one("#library-skills-import-path", Input).value = (
+                "https://github.com/o/repo"
+            )
+            await pilot.pause()
+            screen.query_one("#library-skills-import-run", Button).press()
+            assert await asyncio.to_thread(started.wait, 5)
+
+            screen.query_one("#library-row-browse-media", Button).press()
+            await _wait_for_selector(screen, pilot, "#library-media-canvas")
+            release.set()
+            for _ in range(250):
+                if app.library_skill_import_coordinator.snapshot.candidates:
+                    break
+                await pilot.pause(0.02)
+            assert app.library_skill_import_coordinator.snapshot.candidates
+            assert host.screen is screen
+
+            screen.query_one("#library-row-browse-skills", Button).press()
+            await _wait_for_selector(screen, pilot, "#library-skills-import-path")
+            for _ in range(10):
+                if isinstance(host.screen, SkillImportChoiceModal):
+                    break
+                await pilot.pause()
+            assert isinstance(host.screen, SkillImportChoiceModal)
+    finally:
+        release.set()
+
+
+@pytest.mark.asyncio
+async def test_replacement_library_hydrates_pending_candidate_modal(tmp_path):
+    _local, service = _real_skills_scope_service_with_trust(tmp_path / "store")
+    app = _build_test_app(configured_default="library")
+    _wire_empty_non_skill_services(app)
+    app.skills_scope_service = service
+    host = LibraryHarness(app)
+
+    async with host.run_test(size=LIBRARY_TEST_SIZE) as pilot:
+        original = _active_library_screen(host)
+        await _wait_for_library_shell(original, pilot)
+        coordinator = library_skill_import_controller.ensure_library_skill_import_coordinator(
+            app
+        )
+        package = _multi_package()
+        coordinator._pending_package = package
+        coordinator.update(
+            row_open=True,
+            path="https://example.com",
+            status="Choose one skill to import.",
+            in_flight=True,
+            candidates=package.inspection.candidates,
+            package_kind=SkillPackageKind.MULTI_SKILL_REPOSITORY.value,
+            generation=7,
+        )
+
+        await host.switch_screen(Screen())
+        replacement = LibraryScreen(app)
+        replacement._library_selected_row_id = LIBRARY_ROW_BROWSE_SKILLS
+        await host.switch_screen(replacement)
+        await _wait_for_library_shell(replacement, pilot)
+        for _ in range(10):
+            if isinstance(host.screen, SkillImportChoiceModal):
+                break
+            await pilot.pause()
+
+        assert isinstance(host.screen, SkillImportChoiceModal)
+        assert coordinator.snapshot.in_flight is True
+
+
+@pytest.mark.asyncio
 @pytest.mark.parametrize("size", ((120, 36), (72, 22)))
 async def test_framework_recovery_and_failed_retry_render_at_supported_sizes(size):
     recovery = (
@@ -559,6 +779,87 @@ async def test_framework_recovery_and_failed_retry_render_at_supported_sizes(siz
     )
     async with failed.run_test(size=size):
         assert failed.query_one("#library-skills-import-retry", Button)
+
+
+@pytest.mark.asyncio
+async def test_import_exception_text_and_traceback_are_not_logged(monkeypatch):
+    source = _multi_package()
+    package = RemoteSkillPackage(
+        inspection=SkillPackageInspection(SkillPackageKind.ROOT_SKILL, ("",)),
+        archive_bytes=source.archive_bytes,
+        archive_sha256=source.archive_sha256,
+        suggested_name="safe-name",
+    )
+
+    async def inspect_url(*args, **kwargs):
+        return package
+
+    async def fail_import(*args, **kwargs):
+        raise RuntimeError("TOKEN-SECRET raw failure body")
+
+    monkeypatch.setattr(
+        library_skill_import_controller, "inspect_skill_from_url", inspect_url
+    )
+    monkeypatch.setattr(
+        library_skill_import_controller, "import_inspected_skill", fail_import
+    )
+    coordinator = library_skill_import_controller.LibrarySkillImportCoordinator(
+        SimpleNamespace(skills_scope_service=SimpleNamespace())
+    )
+    messages: list[str] = []
+    sink = logger.add(messages.append, format="{message} | {exception}")
+    try:
+        coordinator.open_draft()
+        raw = "https://example.com/safe-name.zip"
+        assert coordinator.claim(raw)
+        await coordinator.run(
+            raw, runtime_app=SimpleNamespace(screen=SimpleNamespace())
+        )
+    finally:
+        logger.remove(sink)
+
+    rendered = "".join(messages)
+    assert "TOKEN-SECRET" not in rendered
+    assert "Traceback" not in rendered
+
+
+@pytest.mark.asyncio
+async def test_duplicate_collision_copy_never_requires_stringifying_other_errors(
+    monkeypatch,
+):
+    source = _multi_package()
+    package = RemoteSkillPackage(
+        inspection=SkillPackageInspection(SkillPackageKind.ROOT_SKILL, ("",)),
+        archive_bytes=source.archive_bytes,
+        archive_sha256=source.archive_sha256,
+        suggested_name="safe-name",
+    )
+
+    async def inspect_url(*args, **kwargs):
+        return package
+
+    async def duplicate(*args, **kwargs):
+        raise ValueError("local_skill_exists:safe-name")
+
+    monkeypatch.setattr(
+        library_skill_import_controller, "inspect_skill_from_url", inspect_url
+    )
+    monkeypatch.setattr(
+        library_skill_import_controller, "import_inspected_skill", duplicate
+    )
+    coordinator = library_skill_import_controller.LibrarySkillImportCoordinator(
+        SimpleNamespace(skills_scope_service=SimpleNamespace())
+    )
+    coordinator.open_draft()
+    assert coordinator.claim("https://example.com/safe-name.zip")
+    await coordinator.run(
+        "https://example.com/safe-name.zip",
+        runtime_app=SimpleNamespace(screen=SimpleNamespace()),
+    )
+
+    assert coordinator.snapshot.status == (
+        'Skipped — a skill named "safe-name" already exists.'
+    )
 
 
 def test_stale_candidate_modal_callback_cannot_target_a_new_package(monkeypatch):
@@ -1763,7 +2064,7 @@ async def test_import_row_url_generic_failure_uses_classified_name_guess(
         return _root_package("brainstorm")
 
     async def _fake_import_inspected_skill(*args, **kwargs):
-        raise ValueError("local_skill_exists: brainstorm")
+        raise ValueError("local_skill_exists:brainstorm")
 
     monkeypatch.setattr(
         library_skill_import_controller,

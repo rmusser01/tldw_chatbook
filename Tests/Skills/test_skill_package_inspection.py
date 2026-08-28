@@ -16,6 +16,10 @@ from tldw_chatbook.Skills_Interop.skill_package_inspection import (
     inspect_skill_directory,
     inspect_skill_zip,
 )
+from tldw_chatbook.tldw_api.skills_schemas import (
+    MAX_SUPPORTING_FILE_BYTES,
+    MAX_SUPPORTING_FILES_TOTAL_BYTES,
+)
 
 
 def _zip(entries: list[tuple[str, str]], *, wrapper: str = "repo-1/") -> bytes:
@@ -107,4 +111,40 @@ def test_symlinked_directory_skill_is_not_accepted(tmp_path):
         pytest.skip("symlinks unavailable")
 
     result = inspect_skill_directory(tmp_path)
+    assert result.kind is SkillPackageKind.MALFORMED_OR_UNSUPPORTED
+
+
+def test_more_than_display_cap_remains_multi_skill_with_bounded_candidates():
+    result = inspect_skill_zip(
+        _zip(
+            [
+                (f"skills/s{index:02d}/SKILL.md", "body")
+                for index in range(21)
+            ]
+        ),
+        repository_source=True,
+    )
+
+    assert result.kind is SkillPackageKind.MULTI_SKILL_REPOSITORY
+    assert result.candidates == tuple(
+        f"skills/s{index:02d}" for index in range(20)
+    )
+
+
+@pytest.mark.parametrize(
+    "entries",
+    [
+        [
+            ("SKILL.md", "body"),
+            ("huge.bin", b"x" * (MAX_SUPPORTING_FILE_BYTES + 1)),
+        ],
+        [
+            ("SKILL.md", "body"),
+            ("one.bin", b"x" * (MAX_SUPPORTING_FILES_TOTAL_BYTES // 2 + 1)),
+            ("two.bin", b"x" * (MAX_SUPPORTING_FILES_TOTAL_BYTES // 2 + 1)),
+        ],
+    ],
+)
+def test_archive_declared_size_caps_reject_misleading_root(entries):
+    result = inspect_skill_zip(_zip(entries), repository_source=True)
     assert result.kind is SkillPackageKind.MALFORMED_OR_UNSUPPORTED

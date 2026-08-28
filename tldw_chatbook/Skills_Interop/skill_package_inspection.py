@@ -10,7 +10,9 @@ from io import BytesIO
 from pathlib import Path, PurePosixPath
 
 from ..tldw_api.skills_schemas import (
+    MAX_SUPPORTING_FILE_BYTES,
     MAX_SUPPORTING_FILES_COUNT,
+    MAX_SUPPORTING_FILES_TOTAL_BYTES,
     MAX_SUPPORTING_FILE_PATH_DEPTH,
     MAX_SUPPORTING_FILE_PATH_LEN,
 )
@@ -50,21 +52,31 @@ _CANDIDATE_SCAN_DEPTH = 3
 _CANDIDATE_LIMIT = 20
 
 
-def _outcome(candidates: set[str], *, repository_source: bool, nonempty: bool) -> SkillPackageInspection:
+def _outcome(
+    candidates: set[str],
+    *,
+    repository_source: bool,
+    nonempty: bool,
+    requested_candidate: str | None = None,
+) -> SkillPackageInspection:
     ordered = tuple(sorted(candidates))
-    if "" in candidates:
-        return SkillPackageInspection(SkillPackageKind.ROOT_SKILL, ("",))
-    if len(ordered) > _CANDIDATE_LIMIT:
+    if requested_candidate is not None:
+        if requested_candidate in candidates:
+            return SkillPackageInspection(
+                SkillPackageKind.ROOT_SKILL, (requested_candidate,)
+            )
         return SkillPackageInspection(
             SkillPackageKind.MALFORMED_OR_UNSUPPORTED,
-            message=_MALFORMED_MESSAGE,
+            message="No installable skill was found at that subdirectory.",
         )
+    if "" in candidates:
+        return SkillPackageInspection(SkillPackageKind.ROOT_SKILL, ("",))
     if len(ordered) == 1:
         return SkillPackageInspection(SkillPackageKind.ROOT_SKILL, ordered)
     if ordered:
         return SkillPackageInspection(
             SkillPackageKind.MULTI_SKILL_REPOSITORY,
-            ordered,
+            ordered[:_CANDIDATE_LIMIT],
             "Choose one installable skill.",
         )
     if repository_source and nonempty:
@@ -132,7 +144,10 @@ def _safe_archive_path(name: str) -> PurePosixPath | None:
 
 
 def inspect_skill_zip(
-    data: bytes, *, repository_source: bool
+    data: bytes,
+    *,
+    repository_source: bool,
+    requested_candidate: str | None = None,
 ) -> SkillPackageInspection:
     """Classify one bounded archive from central-directory metadata."""
     try:
@@ -145,9 +160,15 @@ def inspect_skill_zip(
         if not members or len(members) > MAX_SUPPORTING_FILES_COUNT + 1:
             return _outcome(set(), repository_source=False, nonempty=False)
         paths: list[PurePosixPath] = []
+        declared_total = 0
         for member in members:
             path = _safe_archive_path(member.filename)
             if path is None:
+                return _outcome(set(), repository_source=False, nonempty=False)
+            if member.file_size > MAX_SUPPORTING_FILE_BYTES:
+                return _outcome(set(), repository_source=False, nonempty=False)
+            declared_total += member.file_size
+            if declared_total > MAX_SUPPORTING_FILES_TOTAL_BYTES:
                 return _outcome(set(), repository_source=False, nonempty=False)
             mode = (member.external_attr >> 16) & 0xFFFF
             if path.name == "SKILL.md" and stat.S_ISLNK(mode):
@@ -163,4 +184,9 @@ def inspect_skill_zip(
         candidate = _candidate_for_skill_path(relative)
         if candidate is not None:
             candidates.add(candidate)
-    return _outcome(candidates, repository_source=repository_source, nonempty=True)
+    return _outcome(
+        candidates,
+        repository_source=repository_source,
+        nonempty=True,
+        requested_candidate=requested_candidate,
+    )

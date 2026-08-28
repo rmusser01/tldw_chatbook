@@ -54,6 +54,10 @@ class DirectZipSource:
 class RemoteSkillError(ValueError):
     """User-presentable remote-install failure."""
 
+    def __init__(self, message: str, *, category: str = "") -> None:
+        super().__init__(message)
+        self.category = category
+
 
 @dataclass(frozen=True, repr=False)
 class RemoteSkillPackage:
@@ -63,6 +67,7 @@ class RemoteSkillPackage:
     archive_bytes: bytes | None = None
     archive_sha256: str = ""
     suggested_name: str = ""
+    failure_category: str = ""
 
     def __repr__(self) -> str:
         return (
@@ -495,7 +500,8 @@ async def _download_skill_archive(
                     raise RemoteSkillError(
                         f"{exc} If the branch name contains a slash, GitHub "
                         "URLs are ambiguous — try installing from the plain "
-                        "repository URL instead (without the /tree/ path)."
+                        "repository URL instead (without the /tree/ path).",
+                        category="ambiguous_github_tree",
                     ) from exc
                 raise
         else:
@@ -524,7 +530,7 @@ async def inspect_skill_from_url(
             transport=transport,
             resolver=resolver,
         )
-    except RemoteSkillError:
+    except RemoteSkillError as exc:
         try:
             classify_skill_source_url(url)
         except RemoteSkillError:
@@ -533,23 +539,16 @@ async def inspect_skill_from_url(
         else:
             kind = SkillPackageKind.FETCH_OR_AUTH_FAILURE
             message = "Could not fetch that skill package. Retry when access is available."
-        return RemoteSkillPackage(SkillPackageInspection(kind, message=message))
+        return RemoteSkillPackage(
+            SkillPackageInspection(kind, message=message),
+            failure_category=exc.category,
+        )
 
     inspection = inspect_skill_zip(
         zip_bytes,
         repository_source=isinstance(source, GitHubZipSource),
+        requested_candidate=requested_subdir or None,
     )
-    if requested_subdir:
-        if requested_subdir in inspection.candidates:
-            inspection = SkillPackageInspection(
-                SkillPackageKind.ROOT_SKILL,
-                (requested_subdir,),
-            )
-        else:
-            inspection = SkillPackageInspection(
-                SkillPackageKind.MALFORMED_OR_UNSUPPORTED,
-                message="No installable skill was found at that subdirectory.",
-            )
     return RemoteSkillPackage(
         inspection=inspection,
         archive_bytes=zip_bytes,
@@ -599,22 +598,26 @@ async def install_skill_from_url(
     transport: httpx.AsyncBaseTransport | None = None,
     resolver: Callable[[str], list[str]] | None = None,
 ) -> dict:
-    """Install a single skill pasted as a GitHub/zip URL."""
-    source, zip_bytes, subdir = await _download_skill_archive(
+    """Inspect once, then install one root or explicitly addressed skill."""
+    package = await inspect_skill_from_url(
         url,
         scope_service=scope_service,
         transport=transport,
         resolver=resolver,
     )
-
-    final_bytes, final_name = re_root_skill_zip(
-        zip_bytes, subdir=subdir, suggested_name=source.suggested_name
-    )
-    return await scope_service.import_skill_file(
-        final_bytes,
-        mode="local",
-        filename=f"{final_name}.zip",
-        content_type="application/zip",
+    inspection = package.inspection
+    if inspection.kind is not SkillPackageKind.ROOT_SKILL:
+        if package.failure_category == "ambiguous_github_tree":
+            raise RemoteSkillError(
+                "If the branch name contains a slash, GitHub URLs are "
+                "ambiguous — try installing from the plain repository URL "
+                "instead (without the /tree/ path)."
+            )
+        raise RemoteSkillError(
+            inspection.message or "Choose one installable skill first."
+        )
+    return await import_inspected_skill(
+        package,
+        scope_service=scope_service,
         overwrite=overwrite,
-        trust_approved=False,
     )

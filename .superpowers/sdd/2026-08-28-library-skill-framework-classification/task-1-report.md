@@ -111,3 +111,54 @@ ADR-069's copy-import posture, and TASK-613's coordinator remain authoritative.
 - `Docs/User_Guide/library/skills.md`
 - `backlog/docs/lessons-testing-evidence.md`
 - `backlog/tasks/task-22867 - Classify-framework-repositories-during-Library-skill-import.md`
+
+## Independent review round 1 remediation
+
+Round 1 was not approved and identified six Important boundaries. All six were
+reproduced before the fixes. The independent review probe started at **9 failed**;
+the expanded committed selection started at **11 failed, 3 passed, 91 deselected**.
+
+- Candidate choice is replayed through the same generation-fenced modal whenever
+  Browse Skills is entered or re-entered, including a replacement Library screen
+  hydrating an app-owned pending choice. The mounted delayed-navigation and routed
+  replacement cases pass **2/2**.
+- Raw signed URLs remain private across Cancel and unchanged resubmission. Snapshot
+  presentation is limited to scheme plus host/port, and any deliberate draft edit
+  clears and replaces the private authority. The focused privacy cases pass **3/3**.
+- Local multi-skill choice freezes no-follow directory/body identities and, directly
+  before import, re-resolves containment, rejects symlinked candidate components or
+  exact `SKILL.md`, and refuses changed bodies. Directory symlink, body symlink, and
+  regular-body replacement cases import nothing and pass **4/4**.
+- Public/Console URL install now consumes the retained classifier result and the
+  exact inspected bytes. Generic framework classification, explicit subdirectories
+  beyond the first 20 displayed candidates, one-request behavior, and
+  `trust_approved=False` pass **2/2**; a private bounded failure category preserves
+  the established safe slash-branch recovery hint without exposing raw fetch data
+  to Library state.
+- Expected failures now log only a fixed operation plus exception type. Collision
+  handling matches the exact typed LocalSkillsService error tuple and never
+  stringifies arbitrary exceptions. The focused logging/collision cases pass
+  **2/2**.
+- More than 20 valid candidates remain a multi-skill repository with a stable first
+  20 display, while an exact requested subdirectory remains selectable. Central
+  directory metadata now applies the existing per-file and aggregate declared-size
+  caps. The focused classifier boundary cases pass **3/3**.
+
+Round-1 verification after the fixes:
+
+- Classifier, remote seam, and coordinator regression files: **105 passed**, one
+  inherited Requests dependency warning.
+- Exact task-plan target: **135 passed**, one inherited Requests dependency warning,
+  in 68.81s.
+- Unchanged independent review probes: **9 passed**, one inherited warning.
+- Production-shaped Skills canvas compatibility: **9 passed, 136 deselected**, one
+  inherited warning.
+- Console agent install boundary: **5 passed, 249 deselected**, one inherited
+  warning.
+- Ruff, Python compilation, and `git diff --check`: passed. The Impeccable detector
+  returned empty output with exit 0 after the final UI change. The scoped
+  framework/vendor/threat-hunting scan returned no matches.
+
+No full suite, live network, live user skill store, push, or merge was used. The task
+remains **In Progress** and every acceptance criterion remains unchecked pending
+independent review round 2.

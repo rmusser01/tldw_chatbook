@@ -16,7 +16,10 @@ import httpx
 import pytest
 
 from tldw_chatbook.Agents.agent_runtime import FENCE_OPEN
-from tldw_chatbook.Skills_Interop.skill_package_inspection import SkillPackageKind
+from tldw_chatbook.Skills_Interop.skill_package_inspection import (
+    FRAMEWORK_MESSAGE,
+    SkillPackageKind,
+)
 from tldw_chatbook.Skills_Interop.skill_remote_fetch import (
     REMOTE_FETCH_MAX_BYTES,
     DirectZipSource,
@@ -24,6 +27,7 @@ from tldw_chatbook.Skills_Interop.skill_remote_fetch import (
     RemoteSkillError,
     classify_skill_source_url,
     fetch_zip_bytes,
+    install_skill_from_url,
     re_root_skill_zip,
     resolve_ref_and_subdir,
 )
@@ -407,6 +411,60 @@ async def test_inspected_package_repr_never_exposes_url_derived_name_or_bytes():
     assert "PATH-SECRET" not in rendered
     assert "QUERY-SECRET" not in rendered
     assert package.archive_bytes not in rendered.encode()
+
+
+@pytest.mark.asyncio
+async def test_public_install_uses_generic_framework_classification():
+    payload = _zipball([("README.md", "framework")])
+    scope = _RecordingScopeService()
+
+    with pytest.raises(RemoteSkillError, match=FRAMEWORK_MESSAGE):
+        await install_skill_from_url(
+            "https://github.com/o/framework",
+            scope_service=scope,
+            transport=_transport(
+                lambda request: httpx.Response(200, content=payload)
+            ),
+            resolver=_PUB,
+        )
+
+    assert scope.calls == ["enforce"]
+
+
+@pytest.mark.asyncio
+async def test_public_install_exact_subdir_beyond_display_cap_stays_selectable(
+    monkeypatch,
+):
+    from tldw_chatbook.Utils.github_api_client import GitHubAPIClient
+
+    async def branches(self, owner, repo):
+        return ["main"]
+
+    monkeypatch.setattr(GitHubAPIClient, "get_branches", branches)
+    payload = _zipball(
+        [
+            (f"skills/s{index:02d}/SKILL.md", "body")
+            for index in range(21)
+        ]
+    )
+    scope = _RecordingScopeService()
+    requests = 0
+
+    def handler(request):
+        nonlocal requests
+        requests += 1
+        return httpx.Response(200, content=payload)
+
+    result = await install_skill_from_url(
+        "https://github.com/o/many/tree/main/skills/s20",
+        scope_service=scope,
+        transport=_transport(handler),
+        resolver=_PUB,
+    )
+
+    assert requests == 1
+    assert result["name"] == "s20"
+    assert scope.import_kwargs["trust_approved"] is False
 
 
 def test_reroot_subdir_install():

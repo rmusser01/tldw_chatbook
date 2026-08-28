@@ -69,3 +69,11 @@ Reason: This adds truthful classification and recovery states while preserving A
   `.superpowers/sdd/2026-08-28-library-skill-framework-classification/task-1-report.md`.
 - Status remains In Progress and the acceptance criteria remain unchecked pending
   independent review.
+- Independent review round 1 remediation replays pending choice on every Skills
+  entry/hydration, keeps signed URL authority private behind a host-only draft,
+  revalidates local candidate identity/containment immediately before import, routes
+  the public Console seam through the same retained classifier result, removes raw
+  exception logging, and separates the 20-item display bound from package validity
+  while applying declared archive-size caps. Exact plan verification is 135 passed;
+  round-1 probes are 9 passed. Status and acceptance criteria remain unchanged for
+  round 2.
