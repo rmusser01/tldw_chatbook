@@ -514,6 +514,29 @@ def default_console_session_settings(
     )
 
 
+def build_target_default_console_session_settings(
+    app_config: Mapping[str, object],
+    provider: str,
+    model: str | None,
+) -> ConsoleSessionSettings:
+    """Return fresh effective defaults for one provider and literal model ID.
+
+    This is the provider/model rebase entry point. It deliberately delegates to
+    :func:`default_console_session_settings` so exact-model profiles keep the
+    established precedence and provider endpoint normalization.
+
+    Args:
+        app_config: The live application configuration snapshot.
+        provider: Provider selected by the settings transaction.
+        model: Literal model ID selected by the settings transaction.
+
+    Returns:
+        A fresh settings value resolved for the exact target.
+    """
+
+    return replace(default_console_session_settings(app_config, provider, model))
+
+
 def resolve_effective_chat_configuration(
     app_config: Mapping[str, object],
     *,

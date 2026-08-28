@@ -166,9 +166,24 @@ from tldw_chatbook.Chat.console_visual_transcript import (
     resolve_effective_compaction_representation,
 )
 from tldw_chatbook.Chat.console_session_settings import (
+    CONSOLE_SETTINGS_EXECUTION_PROVIDER_KEYS,
     ConsoleSessionSettings,
     build_default_console_session_settings,
+    build_target_default_console_session_settings,
     normalize_llamacpp_base_url,
+    normalize_console_model_value,
+)
+from tldw_chatbook.Chat.console_provider_support import (
+    build_local_thinking_payload_fields,
+    resolve_console_provider_identity,
+)
+from tldw_chatbook.Chat.console_settings_apply import (
+    FULL_MODEL_DEFAULT_FIELDS,
+    QUICK_MODEL_DEFAULT_FIELDS,
+    ConsoleEndpointDraft,
+    ConsoleSettingsDraftState,
+    ConsoleSettingsFieldDraft,
+    ConsoleSettingsFieldProvenance,
 )
 from tldw_chatbook.Chat.console_provider_endpoints import first_configured_endpoint
 from tldw_chatbook.Chat.console_project_instructions import (
@@ -259,9 +274,11 @@ from tldw_chatbook.config import (
     DEFAULT_CONSOLE_PROJECT_INSTRUCTIONS_MAX_BYTES,
     MAX_CONSOLE_PROJECT_INSTRUCTIONS_MAX_BYTES,
     MIN_CONSOLE_PROJECT_INSTRUCTIONS_MAX_BYTES,
+    ProviderSettingsError,
     coerce_bool_setting,
     coerce_int_setting,
     get_cli_setting,
+    provider_settings_for_key,
 )
 from tldw_chatbook.Library.library_tool_contract import LIBRARY_TOOL_DESCRIPTORS
 from tldw_chatbook.Library.library_rag_service import (
@@ -294,7 +311,9 @@ from tldw_chatbook.Chat.provider_readiness import provider_config_key
 from tldw_chatbook.Chat.provider_usage import ProviderUsage
 from tldw_chatbook.model_capabilities import (
     is_vision_capable,
+    moonshot_model_supports_reasoning_effort,
     moonshot_model_returns_reasoning_content,
+    zai_model_supports_reasoning_effort,
 )
 
 if TYPE_CHECKING:
@@ -437,6 +456,98 @@ def build_console_provider_selection_from_settings(
         system_prompt=settings.system_prompt,
         workspace_context=workspace_context,
     )
+
+
+_CONSOLE_SETTINGS_FIELD_ORDER = (
+    "temperature",
+    "top_p",
+    "min_p",
+    "top_k",
+    "max_tokens",
+    "seed",
+    "presence_penalty",
+    "frequency_penalty",
+    "reasoning_effort",
+    "reasoning_summary",
+    "verbosity",
+    "thinking_effort",
+    "thinking_budget_tokens",
+    "streaming",
+)
+_CONSOLE_PROVIDER_SPECIFIC_SETTINGS_FIELDS = frozenset(
+    {
+        "reasoning_effort",
+        "reasoning_summary",
+        "verbosity",
+        "thinking_effort",
+        "thinking_budget_tokens",
+    }
+)
+_CONSOLE_OPENAI_REASONING_PROVIDER_KEYS = frozenset({"openai"})
+_CONSOLE_ANTHROPIC_THINKING_PROVIDER_KEYS = frozenset({"anthropic"})
+_CONSOLE_LOCAL_THINKING_BUDGET_EXECUTION_KEYS = frozenset(
+    {
+        "llama_cpp",
+        "local_llamacpp",
+        "local_llamafile",
+        "local-llm",
+    }
+)
+
+
+def _supported_console_settings_fields(
+    provider: str,
+    model: str | None,
+) -> frozenset[str]:
+    """Return generation fields supported by one provider/model target."""
+
+    provider_key = provider_config_key(provider)
+    supported = set(
+        FULL_MODEL_DEFAULT_FIELDS - _CONSOLE_PROVIDER_SPECIFIC_SETTINGS_FIELDS
+    )
+    if provider_key == "moonshot" and moonshot_model_supports_reasoning_effort(model):
+        supported.add("reasoning_effort")
+    if provider_key == "zai" and zai_model_supports_reasoning_effort(model):
+        supported.add("reasoning_effort")
+    if provider_key in _CONSOLE_OPENAI_REASONING_PROVIDER_KEYS:
+        supported.update({"reasoning_effort", "reasoning_summary", "verbosity"})
+    if provider_key in _CONSOLE_ANTHROPIC_THINKING_PROVIDER_KEYS:
+        supported.update({"thinking_effort", "thinking_budget_tokens"})
+
+    identity = resolve_console_provider_identity(
+        provider_key,
+        handler_keys=CONSOLE_SETTINGS_EXECUTION_PROVIDER_KEYS,
+    )
+    if build_local_thinking_payload_fields(identity.execution_key, "low", None):
+        supported.add("reasoning_effort")
+    if identity.execution_key in _CONSOLE_LOCAL_THINKING_BUDGET_EXECUTION_KEYS:
+        supported.add("thinking_budget_tokens")
+    return frozenset(supported)
+
+
+def _console_model_profile(
+    app_config: Mapping[str, object],
+    *,
+    provider: str,
+    model: str | None,
+) -> Mapping[str, object]:
+    """Return the exact literal-model profile without resolving precedence."""
+
+    model_id = normalize_console_model_value(model)
+    if model_id is None:
+        return {}
+    api_settings = app_config.get("api_settings", {})
+    if not isinstance(api_settings, Mapping):
+        return {}
+    try:
+        provider_settings = provider_settings_for_key(api_settings, provider)
+    except ProviderSettingsError:
+        return {}
+    model_defaults = provider_settings.get("model_defaults", {})
+    if not isinstance(model_defaults, Mapping):
+        return {}
+    profile = model_defaults.get(model_id, {})
+    return profile if isinstance(profile, Mapping) else {}
 
 
 #: Fallback used when no `mcp_approval_timeout_seconds` seam is injected --
@@ -6839,6 +6950,154 @@ class ConsoleChatController:
             # Active-session UI path: clears whatever the user is currently
             # looking at (parallel-agents spec §2).
             self._clear_terminal_run_state()
+
+    def rebase_console_settings_draft(
+        self,
+        state: ConsoleSettingsDraftState,
+        *,
+        provider: str,
+        model: str | None,
+        app_config: Mapping[str, object],
+        exposed_fields: frozenset[str],
+    ) -> ConsoleSettingsDraftState:
+        """Rebase one settings draft onto an exact provider/model target.
+
+        Untouched values always come from the target's established default chain.
+        Only dirty fields exposed by the calling surface and supported by the
+        target survive a switch. A remembered exact target draft takes precedence
+        over carried values from the provider/model being left.
+        """
+
+        target_defaults = build_target_default_console_session_settings(
+            app_config,
+            provider,
+            model,
+        )
+        target_provider = provider_config_key(target_defaults.provider)
+        target_model = normalize_console_model_value(target_defaults.model)
+        target_key = (target_provider, target_model)
+        current_key = (
+            provider_config_key(state.settings.provider),
+            normalize_console_model_value(state.settings.model),
+        )
+        remembered_target = next(
+            (
+                draft
+                for draft in state.model_drafts
+                if (draft.provider, draft.model) == target_key
+            ),
+            None,
+        )
+        source_fields = (
+            state.field_drafts
+            if current_key == target_key or remembered_target is None
+            else remembered_target.field_drafts
+        )
+        source_endpoint = (
+            state.endpoint_draft
+            if current_key == target_key or remembered_target is None
+            else remembered_target.endpoint_draft
+        )
+
+        supported_fields = _supported_console_settings_fields(
+            target_provider,
+            target_model,
+        )
+        exposed_supported_fields = exposed_fields & supported_fields
+        profile = _console_model_profile(
+            app_config,
+            provider=target_provider,
+            model=target_model,
+        )
+        quick_surface = exposed_fields == QUICK_MODEL_DEFAULT_FIELDS
+        rebased_fields: dict[str, ConsoleSettingsFieldDraft] = {}
+        for name in _CONSOLE_SETTINGS_FIELD_ORDER:
+            if name not in exposed_supported_fields:
+                continue
+            effective_value = getattr(target_defaults, name)
+            has_profile_override = name in profile
+            rebased_fields[name] = ConsoleSettingsFieldDraft(
+                name=name,
+                effective_value=effective_value,
+                profile_override=(
+                    effective_value
+                    if quick_surface
+                    else profile.get(name)
+                    if has_profile_override
+                    else None
+                ),
+                provenance=(
+                    ConsoleSettingsFieldProvenance.EXPLICIT
+                    if has_profile_override
+                    else ConsoleSettingsFieldProvenance.INHERITED
+                ),
+                dirty=False,
+            )
+
+        dirty_values: dict[str, object | None] = {}
+        changed_target = current_key != target_key
+        for field in source_fields:
+            if not field.dirty or field.name not in exposed_supported_fields:
+                continue
+            if quick_surface and field.effective_value is None:
+                continue
+            dirty_values[field.name] = field.effective_value
+            rebased_fields[field.name] = replace(
+                field,
+                profile_override=(
+                    field.effective_value
+                    if quick_surface
+                    else field.profile_override
+                ),
+                provenance=(
+                    ConsoleSettingsFieldProvenance.CARRIED
+                    if changed_target
+                    else field.provenance
+                ),
+                dirty=True,
+            )
+
+        unsupported_provider_fields = FULL_MODEL_DEFAULT_FIELDS - supported_fields
+        settings_changes: dict[str, object | None] = {
+            "provider": target_provider,
+            "model": target_model,
+            "character_label": state.settings.character_label,
+            "system_prompt": state.settings.system_prompt,
+            "source": state.settings.source,
+            "pinned_prefill": state.settings.pinned_prefill,
+            **{name: None for name in unsupported_provider_fields},
+            **dirty_values,
+        }
+
+        endpoint_draft: ConsoleEndpointDraft | None = None
+        target_base_url = target_defaults.base_url
+        if (
+            exposed_fields == FULL_MODEL_DEFAULT_FIELDS
+            and source_endpoint is not None
+            and source_endpoint.dirty
+            and source_endpoint.bound_provider_config_key == target_provider
+        ):
+            endpoint_draft = source_endpoint
+            target_base_url = source_endpoint.value or None
+        elif target_base_url is not None:
+            endpoint_draft = ConsoleEndpointDraft(
+                value=target_base_url,
+                bound_provider_config_key=target_provider,
+                dirty=False,
+                checked=False,
+            )
+        settings_changes["base_url"] = target_base_url
+
+        return replace(
+            state,
+            settings=replace(target_defaults, **settings_changes),
+            field_drafts=tuple(
+                rebased_fields[name]
+                for name in _CONSOLE_SETTINGS_FIELD_ORDER
+                if name in rebased_fields
+            ),
+            endpoint_draft=endpoint_draft,
+        )
 
     def update_agent_runtime(
         self, *, enabled: bool, bridge: "ConsoleAgentBridge | None"

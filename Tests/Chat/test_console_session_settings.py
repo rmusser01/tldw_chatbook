@@ -22,6 +22,7 @@ from tldw_chatbook.Chat.console_session_settings import (
     build_console_settings_summary_state,
     build_console_settings_readiness,
     build_default_console_session_settings,
+    build_target_default_console_session_settings,
     build_console_model_options,
     build_console_provider_options,
     console_settings_warnings,
@@ -134,6 +135,52 @@ def test_default_settings_prefers_chat_defaults_and_provider_config() -> None:
     assert settings.min_p == 0.05
     assert settings.top_k == 40
     assert settings.max_tokens == 2048
+
+
+def test_default_profile_target_builder_uses_exact_model_precedence_and_is_fresh() -> (
+    None
+):
+    config = {
+        "chat_defaults": {
+            "temperature": 0.2,
+            "top_p": 0.3,
+            "streaming": True,
+        },
+        "console": {
+            "provider_defaults": {"openai": {"temperature": 0.4, "top_p": 0.5}}
+        },
+        "api_settings": {
+            "openai": {
+                "api_url": "https://api.example.test/v1",
+                "temperature": 0.1,
+                "top_p": 0.1,
+                "streaming": False,
+                "model_defaults": {
+                    "vendor/model:v1": {"temperature": 0.6},
+                    "vendor": {"temperature": 1.9, "top_p": 1.0},
+                },
+            }
+        },
+    }
+
+    first = build_target_default_console_session_settings(
+        config,
+        "OpenAI",
+        "vendor/model:v1",
+    )
+    second = build_target_default_console_session_settings(
+        config,
+        "OpenAI",
+        "vendor/model:v1",
+    )
+
+    assert first is not second
+    assert first.provider == "openai"
+    assert first.model == "vendor/model:v1"
+    assert first.base_url == "https://api.example.test/v1"
+    assert first.temperature == 0.6
+    assert first.top_p == 0.5
+    assert first.streaming is True
 
 
 def test_chat_defaults_model_outranks_provider_fallback() -> None:
