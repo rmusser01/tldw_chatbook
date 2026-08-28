@@ -21,6 +21,7 @@ from ..config import get_cli_setting
 # Import the registration system and load all effects
 from ..Utils.Splash_Screens import load_all_effects, get_effect_class
 from ..Utils.Splash_Screens.card_definitions import get_all_card_definitions
+from tldw_chatbook.Widgets.pausable_progress import PausableProgressBar
 
 
 class SplashScreen(Container):
@@ -288,7 +289,7 @@ class SplashScreen(Container):
 
         # Progress bar (if enabled)
         if self.show_progress:
-            yield ProgressBar(
+            yield PausableProgressBar(
                 total=100,
                 show_eta=False,
                 show_percentage=True,

@@ -4,145 +4,51 @@ import asyncio
 
 from typing import Any
 
-from rich.text import Span, Text
 from textual.app import ComposeResult
-from textual.containers import Horizontal, Vertical, VerticalScroll
+from textual.containers import (
+    Container,
+    Horizontal,
+    ScrollableContainer,
+    Vertical,
+)
 from textual.widgets import Button, Input, Markdown, Static
 
+from tldw_chatbook.Library.library_media_viewer_state import find_content_matches
 from tldw_chatbook.Utils.markdown_parsing import front_matter_parser_factory
-
-#: Style carried by every highlighted match…
-MATCH_STYLE = "reverse"
-#: …and by the one match the Prev/Next navigation currently sits on.
-ACTIVE_MATCH_STYLE = "reverse bold"
-
-
-class RawContentHighlightPlan:
-    """The single O(document) highlight pass for one (content, query) pair.
-
-    task-22209: match navigation used to rebuild this entire Rich ``Text``
-    per Prev/Next click -- a full ``find_content_matches`` scan plus up to
-    three ``Text.append`` calls for every line of the WHOLE document --
-    only to move one line's highlight from ``reverse`` to ``reverse bold``.
-    The highlight spans are positional and their offsets do NOT move
-    between clicks (the characters are identical; that is the same fact
-    task-21134's ``layout=False`` rests on), so the plan keeps the built
-    ``Text`` and a click rewrites only the one or two ``Span`` entries
-    whose style actually changed.
-
-    Spans are appended in ascending line order alongside ``matches``, so
-    ``text.spans[i]`` is the highlight for ``matches[i]`` -- the plan owns
-    both, derived in the same pass, which is why the renderable no longer
-    needs a ``find_content_matches`` scan of its own.
-
-    Attributes:
-        matches: Ascending source-line indexes of the highlighted lines.
-    """
-
-    __slots__ = ("matches", "_text", "_active_slot")
-
-    def __init__(self, text: Text, matches: tuple[int, ...]) -> None:
-        self.matches = matches
-        self._text = text
-        self._active_slot: int | None = None
-
-    def renderable(self, match_index: int) -> Text:
-        """Return the shared highlighted text with ``match_index`` active.
-
-        Args:
-            match_index: Zero-based index of the active match; wrapped
-                modulo the match count, exactly as the status line wraps it.
-
-        Returns:
-            The plan's ``Text``. This is the SAME object across calls -- it
-            is handed back to ``Static.update`` so the widget re-visualizes
-            it, but nothing is rebuilt.
-        """
-        slot = match_index % len(self.matches)
-        if slot == self._active_slot:
-            return self._text
-        spans = self._text.spans
-        if self._active_slot is not None:
-            stale = spans[self._active_slot]
-            spans[self._active_slot] = Span(stale.start, stale.end, MATCH_STYLE)
-        active = spans[slot]
-        spans[slot] = Span(active.start, active.end, ACTIVE_MATCH_STYLE)
-        self._active_slot = slot
-        return self._text
+from tldw_chatbook.Widgets.Library.library_media_raw_view import (
+    EMPTY_CONTENT_MESSAGE,
+    VirtualizedRawContent,
+)
 
 
-def build_raw_content_highlight_plan(
-    content: str, query: str
-) -> RawContentHighlightPlan | str:
-    """Build the reusable highlight plan for one document and query.
+def build_raw_content_match_lines(content: str, query: str) -> tuple[int, ...]:
+    """Return the SOURCE line indexes whose text contains ``query``.
 
-    This is the one document pass: the loop derives the matching line
-    indexes AND their highlight spans together, so the plan's match list
-    is aligned with its spans by construction (a separate
-    ``find_content_matches`` scan could only re-derive the same answer).
-    Matching is case-insensitive on the stripped query, identical to
-    ``find_content_matches``: ``needle in line.lower()`` and
-    ``line.lower().find(needle) >= 0`` are the same predicate.
+    task-22500: the virtualized view styles matches per rendered row, so
+    the whole-document ``Text`` this used to build (an O(document) pass on
+    every query change) is gone. Only the line list survives -- which is
+    all navigation and the "N of M" status ever consumed.
+
+    FINDING 5 fix: this is a thin wrapper over
+    ``library_media_viewer_state.find_content_matches`` -- the screen's own
+    match-navigation scan -- rather than a second, independently maintained
+    copy of the same predicate. The two used to be duplicated verbatim with
+    nothing pinning them to agree; delegating makes drift between "which
+    lines the status count/Prev/Next see" and "which lines the Raw view
+    highlights" structurally impossible instead of merely tested-against.
 
     Args:
-        content: Source text to display.
-        query: Case-insensitive search text to highlight.
+        content: Source text to search.
+        query: Case-insensitive search text to match.
 
     Returns:
-        A plan when the query matches at least one line; otherwise the
-        plain display string to render as-is (no query, no content, or no
-        matches).
+        Ascending source-line indexes whose text contains ``query``,
+        case-insensitively; empty when the query or content is blank.
     """
-    display_content = content or "No stored content."
-    normalized_query = query.strip()
-    if not normalized_query or not content:
-        return display_content
-    needle = normalized_query.lower()
-    needle_length = len(needle)
-    text = Text()
-    matches: list[int] = []
-    for line_index, line in enumerate(display_content.split("\n")):
-        if line_index:
-            text.append("\n")
-        hit = line.lower().find(needle)
-        if hit < 0:
-            text.append(line)
-            continue
-        matches.append(line_index)
-        text.append(line[:hit])
-        text.append(line[hit : hit + needle_length], style=MATCH_STYLE)
-        text.append(line[hit + needle_length :])
-    if not matches:
-        return display_content
-    return RawContentHighlightPlan(text, tuple(matches))
+    return find_content_matches(content, query)
 
 
-def build_raw_content_renderable(
-    content: str, query: str, match_index: int
-) -> Text | str:
-    """Build raw text content with matching source lines highlighted.
-
-    A one-shot wrapper over ``build_raw_content_highlight_plan``: callers
-    that navigate between matches should hold the plan instead (see
-    ``LibraryMediaContentBody``), because rebuilding it per click is what
-    task-22209 removed.
-
-    Args:
-        content: Source text to display.
-        query: Case-insensitive search text to highlight.
-        match_index: Zero-based index of the active matching line.
-
-    Returns:
-        Highlighted Rich text when a match is active; otherwise, the source
-        text or its empty-state message.
-    """
-    plan = build_raw_content_highlight_plan(content, query)
-    if isinstance(plan, str):
-        return plan
-    return plan.renderable(match_index)
-
-
-class LibraryMediaContentBody(VerticalScroll):
+class LibraryMediaContentBody(Container):
     """Lazily mount and retain the Raw and Rendered media content views."""
 
     _VALID_MODES = frozenset({"raw", "rendered"})
@@ -160,32 +66,109 @@ class LibraryMediaContentBody(VerticalScroll):
         super().__init__(**kwargs)
         self.content = content
         self.is_markdown = is_markdown
-        self._raw_widget: Static | None = None
+        self._raw_widget: VirtualizedRawContent | None = None
         self._markdown_widget: Markdown | None = None
         self._desired_mode = self._normalize_mode(mode)
         self._mount_lock = asyncio.Lock()
         self._query = query
         self._match_index = match_index
-        # task-22209: the highlight plan for the CURRENTLY displayed
-        # (content, query) pair, plus the pair it was built from. Keyed on
-        # the content OBJECT (``is``) and the stripped query: strings are
-        # immutable, so an identity hit can never be stale, and a miss only
-        # costs the rebuild it would have paid anyway. ``self.content`` is
-        # assigned once per widget instance (a content change recomposes
-        # the viewer and builds a new body), so the identity check holds for
-        # the whole navigable lifetime of one document.
-        self._highlight_source: str | None = None
-        self._highlight_query: str | None = None
-        self._highlight_plan: RawContentHighlightPlan | str | None = None
+        # task-22500 FIX 1: the match-LINE memo for the CURRENTLY displayed
+        # (content, query) pair, plus the pair it was built from. Mirrors
+        # task-22209's memo shape exactly -- keyed on the content OBJECT
+        # (``is``) and the stripped query: strings are immutable, so an
+        # identity hit can never be stale, and a miss only costs the scan it
+        # would have paid anyway. ``self.content`` is assigned once per
+        # widget instance (a content change recomposes the viewer and builds
+        # a new body), so the identity check holds for the whole navigable
+        # lifetime of one document -- without this, every Prev/Next click
+        # (same document, same query) re-scanned the document, reopening the
+        # exact per-click cost class task-22209 shipped to close.
+        self._match_lines_source: str | None = None
+        self._match_lines_query: str | None = None
+        self._match_lines: tuple[int, ...] = ()
+
+    @property
+    def raw_view(self) -> VirtualizedRawContent | None:
+        """The mounted virtualized Raw view.
+
+        This is a LIFETIME accessor, not a mode check: once Raw mode has
+        been mounted once, it stays mounted (and this stays non-``None``)
+        for the rest of the body's life, even while Rendered is the
+        currently displayed mode. Use :attr:`active_mode` to ask which
+        mode is actually showing right now.
+
+        Returns:
+            The mounted ``VirtualizedRawContent``, or ``None`` if Raw mode
+            has never been mounted yet.
+        """
+        return self._raw_widget
+
+    @property
+    def active_mode(self) -> str:
+        """The content mode this body is CURRENTLY displaying.
+
+        FINDING 2 fix: ``raw_view is not None`` was being used by callers
+        as a stand-in for "Raw mode is active", but it is a lifetime
+        accessor (see :attr:`raw_view`) -- once Raw had been shown once, a
+        subsequent Rendered<->Raw round-trip left it permanently
+        non-``None``, so that check kept treating Rendered mode as if Raw
+        were still on screen. This reflects the mode most recently passed
+        to :meth:`sync_mode` (or the constructor), which is the actually
+        visible one.
+
+        Returns:
+            ``"raw"`` or ``"rendered"``.
+        """
+        return self._desired_mode
+
+    @property
+    def scroller(self) -> ScrollableContainer | Container:
+        """The scroller for the CURRENT mode.
+
+        Callers used to query this container as a VerticalScroll inside
+        try/except; when the type stopped matching they silently no-opped
+        and the reader quietly lost scroll restoration.
+
+        Returns:
+            The Raw view when Raw is the active, mounted mode; the
+            Rendered scroller when it is mounted; otherwise this container
+            itself -- a plain ``Container``, not a ``ScrollableContainer``
+            -- before either mode has mounted.
+        """
+        if self._desired_mode == "raw" and self._raw_widget is not None:
+            return self._raw_widget
+        # Rendered mode scrolls in THIS container (see _apply_mode_overflow):
+        # the Markdown is a direct child, exactly as it was when this body
+        # still was a VerticalScroll.
+        return self
 
     def compose(self) -> ComposeResult:
         """Construct only the selected initial content view."""
+        self._apply_mode_overflow(self._desired_mode)
         if self._desired_mode == "rendered":
             self._markdown_widget = self._build_markdown_widget()
+            # Yielded DIRECTLY, with no scroller of its own. A child passed
+            # to (or composed inside) a nested container attaches one message
+            # cycle after that container, and on a 1 MB document that cycle
+            # is the entire markdown parse -- the screen reported the
+            # document loaded with no Markdown in the DOM yet, which made
+            # TASK-22207's gate fail about half the time. Raw mode brings its
+            # own ScrollView; rendered mode scrolls in this container.
             yield self._markdown_widget
             return
         self._raw_widget = self._build_raw_widget()
         yield self._raw_widget
+
+    def _apply_mode_overflow(self, mode: str) -> None:
+        """Scroll in this container for Rendered; let Raw scroll itself.
+
+        Args:
+            mode: The mode about to be displayed.
+
+        Returns:
+            None.
+        """
+        self.styles.overflow_y = "hidden" if mode == "raw" else "auto"
 
     async def sync_mode(self, mode: str) -> None:
         """Show the requested view while mounting each view at most once.
@@ -201,16 +184,27 @@ class LibraryMediaContentBody(VerticalScroll):
         """
         self._desired_mode = self._normalize_mode(mode)
         async with self._mount_lock:
-            await self._ensure_mode_mounted(self._desired_mode)
             desired = self._desired_mode
             await self._ensure_mode_mounted(desired)
+            self._apply_mode_overflow(desired)
             if self._raw_widget is not None:
                 self._raw_widget.display = desired == "raw"
             if self._markdown_widget is not None:
                 self._markdown_widget.display = desired == "rendered"
 
     def sync_search(self, query: str, match_index: int) -> None:
-        """Refresh mounted Raw content while retaining the rendered view.
+        """Forward a search update to the mounted virtualized Raw view.
+
+        task-22500: the whole-document highlight ``Text`` this used to
+        rebuild is gone -- ``VirtualizedRawContent`` restyles each row it
+        paints from ``query``/``match_index`` directly, so there is nothing
+        document-sized left to build or cache here. The match-LINE list the
+        Raw view needs (to know WHICH occurrence is the active one) is
+        memoized by ``_matched_lines`` (FIX 1): a Prev/Next click passes the
+        SAME query as the previous call, so it reuses the cached list
+        instead of re-scanning the document -- ``set_match_lines`` is called
+        first so the active/plain distinction is correct on the very next
+        repaint ``sync_search`` triggers.
 
         Args:
             query: Case-insensitive search text to highlight.
@@ -222,48 +216,43 @@ class LibraryMediaContentBody(VerticalScroll):
         self._query = query
         self._match_index = match_index
         if self._raw_widget is not None:
-            # TASK-21134: ``layout=False`` -- a search refresh restyles the
-            # SAME characters (the highlight plan only moves the active
-            # span's style; it never adds, removes or rewraps a line), so
-            # the widget's size cannot change and the layout pass
-            # Static.update() arms by default was pure waste on every
-            # match-nav click and every keystroke in the search box.
-            self._raw_widget.update(
-                self._raw_content_renderable(query, match_index),
-                layout=False,
-            )
+            self._raw_widget.set_match_lines(self._matched_lines(query))
+            self._raw_widget.sync_search(query, match_index)
 
-    def _raw_content_renderable(self, query: str, match_index: int) -> Text | str:
-        """Return the highlighted document, reusing the cached plan.
+    def _matched_lines(self, query: str) -> tuple[int, ...]:
+        """Return the memoized match-line list for ``query`` against ``self.content``.
 
-        task-22209: only a new document or a new query rebuilds the plan
-        (one O(document) pass); moving between the matches of the SAME
-        (document, query) pair repaints from the plan the widget already
-        holds.
+        task-22500 FIX 1: mirrors task-22209's memo shape -- keyed on the
+        content OBJECT (``is``) and the stripped query, since strings are
+        immutable so an identity hit can never be stale. Since ``self.content``
+        is assigned once per widget instance, the identity half of the key
+        only ever misses on the FIRST call for this instance; the query half
+        is what actually changes across calls -- never on a Prev/Next click
+        (same query), always on a newly submitted query. A blank query
+        short-circuits without even calling the scanner, since there is
+        nothing to find and nothing worth memoizing.
 
         Args:
-            query: Case-insensitive search text to highlight.
-            match_index: Zero-based index of the active matching line.
+            query: Case-insensitive search text (not yet stripped).
 
         Returns:
-            The plan's shared ``Text``, or the plain display string when
-            the query is blank or matches nothing.
+            Ascending source-line indexes matching ``query``; empty when the
+            stripped query is blank.
         """
         normalized_query = query.strip()
+        if not normalized_query:
+            self._match_lines_source = self.content
+            self._match_lines_query = ""
+            self._match_lines = ()
+            return self._match_lines
         if (
-            self._highlight_plan is None
-            or self._highlight_source is not self.content
-            or self._highlight_query != normalized_query
+            self._match_lines_source is not self.content
+            or self._match_lines_query != normalized_query
         ):
-            self._highlight_source = self.content
-            self._highlight_query = normalized_query
-            self._highlight_plan = build_raw_content_highlight_plan(
-                self.content, normalized_query
-            )
-        plan = self._highlight_plan
-        if isinstance(plan, str):
-            return plan
-        return plan.renderable(match_index)
+            self._match_lines_source = self.content
+            self._match_lines_query = normalized_query
+            self._match_lines = build_raw_content_match_lines(self.content, query)
+        return self._match_lines
 
     async def _ensure_mode_mounted(self, mode: str) -> None:
         """Mount the requested view only when it has not been constructed."""
@@ -274,6 +263,8 @@ class LibraryMediaContentBody(VerticalScroll):
             return
         if self._markdown_widget is None:
             self._markdown_widget = self._build_markdown_widget()
+            # Awaited directly, so the Markdown is guaranteed to be in the
+            # DOM the moment this returns.
             await self.mount(self._markdown_widget)
 
     def _normalize_mode(self, mode: str) -> str:
@@ -282,16 +273,32 @@ class LibraryMediaContentBody(VerticalScroll):
             raise ValueError(f"Unsupported Library media content mode: {mode!r}")
         return mode if self.is_markdown else "raw"
 
-    def _build_raw_widget(self) -> Static:
-        return Static(
-            self._raw_content_renderable(self._query, self._match_index),
+    def _build_raw_widget(self) -> VirtualizedRawContent:
+        """Construct the virtualized Raw content view for the current state.
+
+        task-22500 FIX 2: also seeds ``set_match_lines`` from the memoized
+        match list for the body's current query. Without this, a body that
+        (re)mounts with an already-active query -- e.g. a recompose during a
+        live search, or the Rendered<->Raw toggle -- painted every match
+        PLAIN (never bold) until the next ``sync_search`` call, because
+        nothing had populated the Raw view's ``_match_lines`` yet.
+
+        Returns:
+            A ``VirtualizedRawContent`` seeded with the body's current
+            content, search query, active match index, and match-line list.
+        """
+        widget = VirtualizedRawContent(
+            content=self.content,
+            query=self._query,
+            match_index=self._match_index,
             id="library-media-viewer-content-text",
-            markup=False,
         )
+        widget.set_match_lines(self._matched_lines(self._query))
+        return widget
 
     def _build_markdown_widget(self) -> Markdown:
         return Markdown(
-            self.content or "No stored content.",
+            self.content or EMPTY_CONTENT_MESSAGE,
             id="library-media-viewer-content-markdown",
             parser_factory=front_matter_parser_factory(),
         )

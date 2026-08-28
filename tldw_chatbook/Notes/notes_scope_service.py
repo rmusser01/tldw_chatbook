@@ -1150,6 +1150,43 @@ class NotesScopeService:
             raise RuntimeError("note_missing")
         return dict(record)
 
+    async def get_note_version_states_for_sync(
+        self,
+        *,
+        scope: ScopeType | str,
+        note_ids: Sequence[Any],
+        user_id: str | None = None,
+    ) -> Mapping[str, Mapping[str, Any]]:
+        """Read only (version, deleted) per note id through the sync seam.
+
+        TASK-23027: one narrow bulk read that lets the lasting-sync observer
+        decide which bound notes changed without re-selecting every full row.
+        Same scope and policy gate as :meth:`get_note_for_sync`. A backing
+        service without the bulk projection is served per-note through
+        ``get_note_by_id`` (identical answers, original cost).
+        """
+
+        normalized_scope = self._normalize_scope(scope)
+        if normalized_scope is not ScopeType.LOCAL_NOTE:
+            raise RuntimeError("server_contract_missing")
+        self._enforce_policy(self._note_action_id(normalized_scope, "detail"))
+        local_user_id = self._require_user_id(user_id)
+        bulk_read = getattr(self.local_notes_service, "get_note_version_states", None)
+        if callable(bulk_read):
+            states = bulk_read(local_user_id, [str(n) for n in note_ids])
+            return {str(key): dict(value) for key, value in states.items()}
+        result: dict[str, Mapping[str, Any]] = {}
+        for note_id in note_ids:
+            record = self.local_notes_service.get_note_by_id(
+                local_user_id, str(note_id)
+            )
+            if isinstance(record, Mapping) and "version" in record:
+                result[str(note_id)] = {
+                    "version": record["version"],
+                    "deleted": bool(record.get("deleted", False)),
+                }
+        return result
+
     async def replace_note_for_sync(
         self,
         *,

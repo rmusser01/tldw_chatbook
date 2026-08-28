@@ -6,12 +6,13 @@ import asyncio
 import base64
 import hashlib
 import json
+import threading
 import time
-from collections.abc import Awaitable, Callable
+from collections.abc import Awaitable, Callable, Coroutine
 from dataclasses import dataclass, replace
 from enum import StrEnum
 from pathlib import Path
-from typing import Protocol, cast
+from typing import Any, Protocol, TypeVar, cast
 
 from tldw_chatbook.Notes.notes_device_state_store import (
     NotesDeviceStateError,
@@ -81,6 +82,43 @@ _RESOLUTION_JOURNAL_ACTIONS = {
     "resolve_keep_note": NotesSyncActionKind.UPDATE_FILE,
     "resolve_keep_both": NotesSyncActionKind.UPDATE_NOTE,
 }
+
+
+_T = TypeVar("_T")
+
+_WORKER_LOOPS = threading.local()
+
+
+def run_worker_coroutine(coro: Coroutine[Any, Any, _T]) -> _T:
+    """Run one authority coroutine to completion on this worker thread.
+
+    Drop-in replacement for the retired per-call ``asyncio.run(...)`` inside
+    the executor's thread-offloaded seams (TASK-23027). The authority seam is
+    async-shaped but its work is synchronous (or already thread-offloaded), so
+    these coroutines must be finished on the worker thread that was handed
+    them. ``asyncio.run`` did that by building and tearing down a full event
+    loop per call -- ~684 microseconds each, nine calls per synced note -- and,
+    whenever the coroutine itself used ``asyncio.to_thread`` (the folder
+    repository seam), a throwaway default-executor thread whose thread-local
+    SQLite connection was abandoned with it: ~1 leaked connection per synced
+    note at N=1000.
+
+    This keeps ONE event loop alive per worker thread instead. The coroutine
+    still runs exactly where and how it always did: on this thread, to
+    completion, unreachable by cancellation of the awaiting task (the same
+    property ``asyncio.run`` provided). Only the per-call loop construction,
+    executor churn, and connection churn disappear. The kept loops are bounded
+    by the width of the thread pools that host these calls
+    (``asyncio.to_thread`` reuses pooled threads); each loop is reclaimed with
+    its thread.
+    """
+
+    loop = getattr(_WORKER_LOOPS, "loop", None)
+    if loop is None or loop.is_closed():
+        loop = asyncio.new_event_loop()
+        asyncio.set_event_loop(loop)
+        _WORKER_LOOPS.loop = loop
+    return loop.run_until_complete(coro)
 
 
 def _resolution_override_required(
@@ -1168,7 +1206,7 @@ class NotesSyncExecutor:
             ) or (not override_required and direction_override is not None):
                 raise RuntimeError("recovery_authority_changed")
         current_note = await asyncio.to_thread(
-            lambda: asyncio.run(self._notes.observe(note_id))
+            lambda: run_worker_coroutine(self._notes.observe(note_id))
         )
         current_file = await self._observe_reconstructed_file(
             relative_path,
@@ -1823,7 +1861,7 @@ class NotesSyncExecutor:
                 else:
                     await self._require_undo_post_authority(request, metadata)
                     _, cancelled = await self._joined_thread_call(
-                        lambda: asyncio.run(
+                        lambda: run_worker_coroutine(
                             self._restore_undo_authority_anchored(
                                 request, payload, source_metadata
                             )
@@ -1923,7 +1961,7 @@ class NotesSyncExecutor:
                 if stage == "binding_updated":
                     if metadata.get("source_kind") == "resolve_keep_both":
                         _, cancelled = await self._joined_thread_call(
-                            lambda: asyncio.run(
+                            lambda: run_worker_coroutine(
                                 self._cleanup_undo_copy_anchored(
                                     request.operation_id, source_metadata, payload
                                 )
@@ -2613,7 +2651,7 @@ class NotesSyncExecutor:
             self._require_new_candidate_owner(request)
             desired = await self._desired_managed_memberships(request)
             _, cancelled = await self._joined_thread_call(
-                lambda: asyncio.run(
+                lambda: run_worker_coroutine(
                     self._notes.reconcile_managed_memberships(
                         owner_id=request.root_id,
                         desired=desired,
@@ -2698,7 +2736,7 @@ class NotesSyncExecutor:
             note, file = await self._require_new_desired(request)
             if request.action_kind is NotesSyncActionKind.CREATE_NOTE:
                 _, cancelled = await self._joined_thread_call(
-                    lambda: asyncio.run(self._notes.delete(note))
+                    lambda: run_worker_coroutine(self._notes.delete(note))
                 )
             else:
                 assert type(file) is NotesSyncFileSnapshot
@@ -2721,7 +2759,7 @@ class NotesSyncExecutor:
         )
         desired = await self._desired_managed_memberships(request)
         _, cancelled = await self._joined_thread_call(
-            lambda: asyncio.run(
+            lambda: run_worker_coroutine(
                 self._notes.reconcile_managed_memberships(
                     owner_id=request.root_id,
                     desired=desired,
@@ -3279,7 +3317,7 @@ class NotesSyncExecutor:
                 if request.action_kind is not NotesSyncActionKind.MOVE_FILE:
                     desired.append((request.logical_folder_id, note.note_id))
                 _, cancelled = await self._joined_thread_call(
-                    lambda: asyncio.run(
+                    lambda: run_worker_coroutine(
                         self._notes.reconcile_managed_memberships(
                             owner_id=request.root_id,
                             desired=tuple(sorted(set(desired))),
@@ -3351,7 +3389,7 @@ class NotesSyncExecutor:
             assert request.file is not None
             await self._require_note_missing(self._request_note_id(request))
             _, cancelled = await self._joined_thread_call(
-                lambda: asyncio.run(
+                lambda: run_worker_coroutine(
                     self._notes.create(
                         note_id=self._request_note_id(request),
                         title=request.desired_title,
@@ -3434,7 +3472,7 @@ class NotesSyncExecutor:
 
     async def _observe_note(self, note_id: str) -> NotesSyncNoteSnapshot:
         return await asyncio.to_thread(
-            lambda: asyncio.run(self._notes.observe(note_id))
+            lambda: run_worker_coroutine(self._notes.observe(note_id))
         )
 
     async def _observe_file_path(self, relative_path: str) -> _FileSnapshot:
@@ -3912,7 +3950,7 @@ class NotesSyncExecutor:
                     self._require_reviewed_owner(request)
                     if request.action_kind is NotesSyncActionKind.UPDATE_NOTE:
                         _, cancelled = await self._joined_thread_call(
-                            lambda: asyncio.run(
+                            lambda: run_worker_coroutine(
                                 self._notes.replace(
                                     request.note,
                                     title=request.desired_title,
@@ -3949,7 +3987,7 @@ class NotesSyncExecutor:
                 desired = await self._desired_managed_memberships(request)
                 self._require_reviewed_owner(request)
                 _, cancelled = await self._joined_thread_call(
-                    lambda: asyncio.run(
+                    lambda: run_worker_coroutine(
                         self._notes.reconcile_managed_memberships(
                             owner_id=request.root_id,
                             desired=desired,
@@ -4016,43 +4054,43 @@ class NotesSyncExecutor:
             cancelled = False
             if stage == "recovery_admitted":
                 _, cancelled = await self._joined_thread_call(
-                    lambda: asyncio.run(
+                    lambda: run_worker_coroutine(
                         self._establish_conflict_folders(request, checkpoint=True)
                     )
                 )
             elif stage == "folders_established":
                 _, cancelled = await self._joined_thread_call(
-                    lambda: asyncio.run(
+                    lambda: run_worker_coroutine(
                         self._create_conflict_copy(request, checkpoint=True)
                     )
                 )
             elif stage == "copy_created":
                 _, cancelled = await self._joined_thread_call(
-                    lambda: asyncio.run(
+                    lambda: run_worker_coroutine(
                         self._create_conflict_placement(request, checkpoint=True)
                     )
                 )
             elif stage == "placement_created":
                 _, cancelled = await self._joined_thread_call(
-                    lambda: asyncio.run(
+                    lambda: run_worker_coroutine(
                         self._verify_conflict_copy_pair(request, checkpoint=True)
                     )
                 )
             elif stage == "copy_verified":
                 _, cancelled = await self._joined_thread_call(
-                    lambda: asyncio.run(self._update_bound_note(request))
+                    lambda: run_worker_coroutine(self._update_bound_note(request))
                 )
             elif stage == "bound_note_updated":
                 _, cancelled = await self._joined_thread_call(
-                    lambda: asyncio.run(self._reverify_keep_both_file(request))
+                    lambda: run_worker_coroutine(self._reverify_keep_both_file(request))
                 )
             elif stage == "file_reverified":
                 _, cancelled = await self._joined_thread_call(
-                    lambda: asyncio.run(self._commit_keep_both_binding(request))
+                    lambda: run_worker_coroutine(self._commit_keep_both_binding(request))
                 )
             elif stage == "binding_updated":
                 _, cancelled = await self._joined_thread_call(
-                    lambda: asyncio.run(self._final_verify_keep_both(request))
+                    lambda: run_worker_coroutine(self._final_verify_keep_both(request))
                 )
             elif stage == "verified":
                 await self._verify_conflict_copy_pair(request, checkpoint=False)
@@ -4917,7 +4955,7 @@ class NotesSyncExecutor:
             self._require_restore_owner(request, note, file)
             if request.action_kind is NotesSyncActionKind.UPDATE_NOTE:
                 _, cancelled = await self._joined_thread_call(
-                    lambda: asyncio.run(
+                    lambda: run_worker_coroutine(
                         self._notes.replace(
                             note,
                             title=request.note.title,
@@ -5092,7 +5130,7 @@ class NotesSyncExecutor:
             request, exclude_binding_id=request.binding_id
         )
         _, cancelled = await self._joined_thread_call(
-            lambda: asyncio.run(
+            lambda: run_worker_coroutine(
                 self._notes.reconcile_managed_memberships(
                     owner_id=request.root_id,
                     desired=desired,
@@ -5211,7 +5249,7 @@ class NotesSyncExecutor:
         request: NotesSyncExecutionRequest,
     ) -> tuple[NotesSyncNoteSnapshot, _FileSnapshot]:
         note = await asyncio.to_thread(
-            lambda: asyncio.run(self._notes.observe(request.note.note_id))
+            lambda: run_worker_coroutine(self._notes.observe(request.note.note_id))
         )
         if type(request.file) is WindowsNotesSyncObservation:
             candidates = await asyncio.to_thread(self._filesystem.observe)

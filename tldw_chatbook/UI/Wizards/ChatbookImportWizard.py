@@ -61,6 +61,7 @@ from ..server_chatbook_service_lease import (
     server_chatbook_service_lease,
 )
 from ...Widgets.enhanced_file_picker import EnhancedFileOpen
+from tldw_chatbook.Widgets.pausable_progress import PausableProgressBar
 
 if TYPE_CHECKING:
     pass
@@ -815,7 +816,7 @@ class ImportProgressStep(WizardStep):
             )
 
             # Progress bar
-            yield ProgressBar(
+            yield PausableProgressBar(
                 total=100, show_percentage=True, show_eta=False, id="import-progress"
             )
 

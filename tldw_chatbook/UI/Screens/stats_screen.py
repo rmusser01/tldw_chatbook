@@ -7,7 +7,7 @@ import logging
 from typing import TYPE_CHECKING, Dict, Any, Optional
 
 from textual.app import ComposeResult
-from textual.widgets import Label, LoadingIndicator, Button
+from textual.widgets import Label, Button
 from textual.containers import VerticalScroll, Horizontal, Container, Grid
 from textual.reactive import reactive
 from textual import work
@@ -17,6 +17,7 @@ from tldw_chatbook.Stats.user_statistics import UserStatistics
 from ..Navigation.base_app_screen import BaseAppScreen
 from ..Workbench.workbench_state import WorkbenchHeaderState, WorkbenchStatus
 from ..Workbench.workbench_widgets import DestinationHeader
+from tldw_chatbook.Widgets.pausable_progress import PausableLoadingIndicator
 
 if TYPE_CHECKING:
     from tldw_chatbook.app import TldwCli
@@ -216,7 +217,7 @@ class StatsScreen(BaseAppScreen):
                 Container(
                     # Initial content - will be replaced by refresh_stats_display
                     Container(
-                        LoadingIndicator(),
+                        PausableLoadingIndicator(),
                         Label("Initializing statistics...", classes="loading-text"),
                         classes="loading-container",
                     ),
@@ -262,7 +263,7 @@ class StatsScreen(BaseAppScreen):
                 logger.debug("Showing loading state")
                 content.mount(
                     Container(
-                        LoadingIndicator(),
+                        PausableLoadingIndicator(),
                         Label("Loading your statistics...", classes="loading-text"),
                         classes="loading-container",
                     )

@@ -17,6 +17,10 @@ from textual.message import Message
 from textual import work
 from datetime import datetime
 from loguru import logger
+from tldw_chatbook.Widgets.pausable_progress import (
+    PausableLoadingIndicator,
+    PausableProgressBar,
+)
 
 
 class LoadingState(Container):
@@ -57,10 +61,10 @@ class LoadingState(Container):
         with Container(classes="loading-state-container"):
             # Loading view
             with Container(classes="loading-view", id="loading-view"):
-                yield LoadingIndicator()
+                yield PausableLoadingIndicator()
                 yield Static(self.placeholder_text, classes="loading-text")
                 if self.show_progress:
-                    yield ProgressBar(total=100, id="loading-progress")
+                    yield PausableProgressBar(total=100, id="loading-progress")
 
             # Error view
             with Container(classes="error-view hidden", id="error-view"):
