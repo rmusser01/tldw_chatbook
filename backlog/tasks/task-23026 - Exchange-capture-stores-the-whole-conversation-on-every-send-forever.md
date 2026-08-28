@@ -2,7 +2,7 @@
 id: TASK-23026
 title: >-
   Exchange capture stores the whole conversation on every send, forever
-status: In Progress
+status: Done
 assignee:
   - '@claude'
 created_date: '2026-08-27'
@@ -84,83 +84,105 @@ Reason: the task changes durable capture retention, privacy semantics, and the C
 
 ## Implementation Notes
 
-**Approach.** Bounded excerpt + per-row references, applied at the one pure seam every
-capture flows through (`build_request_capture`), plus a one-time automatic trim of
-already-stored blobs in the schema migration chain.
+**Approach.** Implemented to the approved design (ADR-096 /
+`Docs/superpowers/specs/2026-08-27-console-safe-capture-retention-design.md`): a bounded
+diagnostic excerpt plus ONE content-free aggregate marker, applied at the one pure seam
+every capture flows through (`build_request_capture`), plus a one-time automatic
+compaction of already-stored blobs in the schema migration chain. A first
+implementation used per-row sha256 fingerprints; the owner converged it to ADR-096,
+which forbids retaining any digest of elided text (a digest is a guess-verification
+oracle for omitted private content) — the fingerprints were removed entirely.
 
-- **Safe (the default) is now bounded.** `elide_safe_history_rows` in
-  `Chat/console_exchange_capture.py`: the newest `CAPTURE_SAFE_HISTORY_TAIL_ROWS = 8`
-  `messages_payload` rows (this turn's delta plus immediate context) persist verbatim;
-  every older row is replaced IN PLACE by a content-free fingerprint row — `role` and
-  `__tldw_ephemeral_origin` tag preserved, `capture_elided: True`, content replaced by
-  `[conversation history elided by capture policy -- N chars, sha256:<16 hex>]`. The
-  digest is sha256 over the row's canonical sanitized JSON — exactly the form the earlier
-  capture whose tail the row was new in retained — so row identity is verifiable across
-  turns and against the transcript without re-storing bodies. Idempotent (structural
-  `capture_elided` key, never content matching), because `console_exchange_export.py`
-  re-runs the builder over stored requests. The llama.cpp wire-literal branch
-  (`capture_wire_payload` in `console_provider_gateway.py`) bounds its `messages` list
-  identically, path-prefixed `wire_payload.messages`. **Full is untouched**: it is the
-  explicit, consent-gated, purgeable verbatim mode (ADR-092), and the existing
-  user-invoked purge already covers it.
-- **What Safe still answers** (AC 3): "what did this call hand the provider adapter" —
-  full system prompt, tools, sampling/routing params, response, usage, per-call status,
-  the complete payload shape (row count/order/roles/sizes stay truthful in the
-  Inspector's Messages section), the turn's NEW content verbatim, and a verifiable
-  fingerprint for each elided history row. Elided bodies remain recoverable from the
-  transcript, from the earlier capture where the row was in the tail (hash-checkable), or
-  by opting a conversation into Full for a debugging session.
-- **Reclaim** (AC 2): ChaChaNotes v52→v53 (`_migrate_from_v52_to_v53`) walks
-  `message_exchanges WHERE capture_detail='safe'` and rewrites each blob through the pure
-  `trim_safe_capture_blob` (returns `None` when nothing changes; never touches Full;
-  per-row undecodable blobs are skipped, so one corrupt row cannot brick the DB).
-  DML-only Python step — no DDL, no `.sql`, no `VALID_TABLES`/index-census entries.
-  Correctness evidence in `Tests/DB/test_chachanotes_v53_safe_capture_trim.py`: value
-  identity for everything not deliberately trimmed, `PRAGMA integrity_check` clean,
-  re-entry fixed-point, in-process failure mid-walk rewinds blobs AND version stamp
-  together, and a real-SIGKILL child (v47-backfill technique) rolls back to v52 and then
-  converges byte-identically with an uninterrupted control run. Schema v53 swept against
-  all 808 refs and every worktree — no collision (this programme has collided four
-  times).
-- **omitted_keys stance** (AC 5, recorded beside the allowlist in the module): capture
-  exists to answer "what was sent", so conversation content is the subject and is
-  retained BY DESIGN — governed by the user-controllable Safe/Full detail policy, not
-  the allowlist. Credentials never persist at any level; project-instruction bodies
-  never persist under Safe; and every withholding — dropped kwarg, redacted instruction
-  body, elided history range (`messages_payload[0..N].content (conversation history
-  elided)`) — is named in `omitted_keys`, which the Inspector already renders verbatim.
+- **Safe (the default) is now bounded** (`compact_safe_history_rows` in
+  `Chat/console_exchange_capture.py`): the retained set is first-`system` row ∪
+  last-`user` row ∪ final eight physical rows (deduplicated, original order, values
+  untouched; non-mapping rows eligible only via the tail). Everything else is
+  represented by one versioned marker at the first omitted position carrying ONLY:
+  kind/version discriminator, original row count, omitted row count, normalized
+  omitted-role counts (system/user/assistant/tool/other — unknown/missing/non-string
+  roles count toward `other` and their raw values never reach the marker), and the
+  retained rows' original positions. No content, snippets, per-row lengths, hashes,
+  IDs, or timestamps. Idempotent by strict structural marker recognition (exact key
+  set + types): re-projection through the export path is a fixed point, an input
+  marker never disables compaction of surrounding rows, malformed lookalikes are
+  ordinary rows. Ordering per ADR-096: allowlist → endpoint identity → instruction
+  redaction → credential/binary sanitization → compaction → shared budget. The
+  llama.cpp wire-literal branch (streaming AND its stream→complete fallback) compacts
+  its `messages` list through the same helper. **Full is untouched** (explicit,
+  consent-gated, purgeable verbatim mode — ADR-092).
+- **What Safe still answers** (AC 3, per the design): what initial system framing was
+  in effect, what current user request drove the call, and what immediate
+  assistant/tool loop surrounded it — plus full system prompt, tools, sampling
+  params, response, usage, status, and honest counts of what was elided. It is no
+  longer an exact historical record; users who need that choose Full before the send.
+- **Elision visibility** (AC 5): the stable paths `messages_payload.history` /
+  `wire_payload.messages.history` fold into `omitted_keys` (rendered on the
+  Inspector's existing "Omitted by capture policy" line; stable so repeated
+  projection cannot create duplicate or ever-changing strings), and the Exchange
+  tab's Messages title now reads "Messages (N sent; M elided by capture policy)"
+  from the marker — the compacted physical count alone would under-state the send.
+  omitted_keys stance recorded beside the allowlist: conversation content is the
+  capture's subject, retained by design under the Safe/Full policy; credentials
+  never persist; instruction bodies never persist under Safe; every withholding is
+  named.
+- **Reclaim** (AC 2): ChaChaNotes v52→v53 (`_migrate_from_v52_to_v53`) keyset-pages
+  Safe `message_exchanges` rows in bounded batches (100 rows), rewrites only blobs
+  the pure `trim_safe_capture_blob` changed, inside the migration chain's outer
+  immediate transaction. Only the `CaptureUnavailableError`/`CaptureCorruptError`
+  family is a per-row skip (unreadable rows stay byte-identical and are counted;
+  the version may still advance); any unexpected error aborts and rolls back blobs
+  AND version stamp together. Diagnostics are aggregate-only (examined/compacted/
+  skipped + exception class), never content. Full, small, and already-compacted
+  blobs stay byte-identical. Evidence
+  (`Tests/DB/test_chachanotes_v53_safe_capture_trim.py`): value-identity for
+  everything not deliberately compacted, `PRAGMA integrity_check` clean, re-entry
+  fixed point, in-process mid-walk failure rolls back to a working v52, and a
+  real-SIGKILL child (v47-backfill technique) rolls back then converges
+  byte-identically with an uninterrupted control run. Migration probe on a
+  200-turn/21.25 MB historical fixture: open+migrate **537.9 ms**, Python peak
+  allocation 21.4 MB (bounded by the batch), blob bytes 21.25 MB → **0.99 MB**.
+  The db FILE size is unchanged until SQLite reuses the freed pages — logical
+  reclaim only; no VACUUM, and no forensic-erasure claim (ADR-096).
 - **Growth re-measured** (AC 4), real production path (`stream_chat` →
-  `_chat_api_kwargs_from_prepared` → `build_request_capture` → `capture_to_blob`), same
-  inputs both arms: turn-1 blob 0.9 KB → 0.9 KB; turn-200 blob **217.1 KB → 10.1 KB**;
-  200-turn total **21.33 MB → 1.48 MB** (14.4x). Residual growth is the ~25 B/row
-  compressed fingerprint index plus the bounded verbatim tail.
-- **Readers audited**: Inspector (`console_conversation_inspector.py` — renders rows as
-  collapsibles + JSON; fingerprint rows render as ordinary rows, counts stay truthful),
-  export projections (`console_exchange_export.py` — idempotency pinned), store/flush
-  (`console_chat_store.py` — opaque blob pass-through), loader (`chat_screen.py` —
-  `capture_from_storage`, unchanged). Capture failure still never blocks a send
-  (existing gateway pin `test_never_break_send_when_build_request_capture_raises` covers
-  the new code path).
-- **Mutation results** (all reverted): M1 disable elision → 6 tests red (and exposed a
-  non-discriminating growth guard whose "lorem" filler compressed ~100x — filler made
-  semi-incompressible, guard proven red-capable); M2 re-fingerprint elided rows → red;
-  M3 redaction re-measures fingerprints → red; M4 migration trim no-op → 3 migration
-  tests red; M6 digest not over row body → red; M7 wire elision dropped → red; M8 trim
-  touches Full → red.
-- **Tests**: +23 new (13 pure, 5 gateway, 4 migration, 1 updated version pin);
-  touched-surface total 567 green (169 core + 398 gateway/inspector). Full
-  `Tests/DB/ + Tests/ChaChaNotesDB/`: 1931 passed; 7 pre-existing dev reds
-  (A/B-identical failure sets on pristine base c4e52794e2: 1x v27 character-authority
-  column pin broken by v52's `thinking_history_policy`, 3x sync_log_retention, 2x v47
-  fts backfill, 1x provider_continuation) — not adopted.
+  `_chat_api_kwargs_from_prepared` → `build_request_capture` → `capture_to_blob`),
+  same inputs all arms: per-turn blob 0.9 KB at turn 1, then **plateaus flat at
+  5.2 KB** (marker + 8-row tail) from turn 50 through turn 200 — cumulative growth
+  is linear. 200-turn totals: **21.33 MB before → 1.01 MB after** (the interim
+  fingerprint design measured 1.48 MB and still grew per-row; the aggregate marker
+  is O(1)).
+- **Readers audited**: Inspector (renders the marker row naturally; Messages title
+  now surfaces sent/elided counts — pinned in
+  `Tests/UI/test_console_conversation_inspector.py`), export projections
+  (`console_exchange_export.py` — fixed-point pinned; Safe export cannot
+  reconstruct omitted rows), store/flush and loader (opaque blob pass-through,
+  unchanged). Capture failure still never blocks a send (existing gateway pin
+  covers the new path).
+- **Mutation results** (all reverted, each killed by a named test): N1 compaction
+  disabled → 17 red across pure/gateway/migration/inspector; N2 marker recognition
+  removed → fixed-point + input-marker tests red; **N3 digest reintroduced
+  "silently" (sha256 key added AND the frozen key set extended in the same edit) →
+  killed by `test_marker_shape_guard_a_digest_cannot_be_reintroduced_silently`**
+  (only-string-is-the-kind-discriminator + no-"sha256"-anywhere assertions); N5
+  input marker disables compaction → red; N6 last-user retention rule removed →
+  red; N7 stored-blob compaction no-op → 3 migration tests red; N9 marker
+  validator accepts key supersets → malformed-lookalike test red. Earlier
+  fingerprint-round mutations also exposed a non-discriminating growth guard
+  ("lorem" filler compressed ~100x) — all history fixtures now use
+  semi-incompressible hex-word filler.
+- **Tests**: 15 pure-contract tests, 5 gateway-path tests, 4 migration tests, 1
+  Inspector title pin, 1 updated schema-version pin. Touched-surface totals: 170
+  (capture/export/store/controller/policy/exchanges/thinking/atomicity) + 398
+  (gateway + inspector suites) green. Known pre-existing dev reds (A/B-identical
+  on pristine base): 7 in Tests/DB//Tests/ChaChaNotesDB (v27 authority pin broken
+  by v52's `thinking_history_policy`, 3x sync_log_retention, 2x v47 fts backfill,
+  1x provider_continuation) — not adopted.
 - **Modified**: `Chat/console_exchange_capture.py`, `Chat/console_provider_gateway.py`,
-  `DB/ChaChaNotes_DB.py` (v53), `Docs/User_Guide/console/context-and-rag.md` (Safe/Full
-  retention paragraph now matches the code — the shipped text already promised "bounded"
-  Safe retention the code did not honor), tests as above.
-- **Diagnostic inventory**: +2 `logger.info` rows in `ChaChaNotes_DB.py` reviewed via
-  `check_persistent_diagnostic_inventory.py --statements --since 5d9b4bec5a` before
-  `--write`: both are the migration chain's established start/finish pattern,
-  interpolating only `db_path_str` and two integer counters — no capture content, user
-  text, or secrets (capture blobs are deliberately never logged, even on the
-  corrupt-row skip path).
-
+  `DB/ChaChaNotes_DB.py` (v53), `Widgets/Console/console_conversation_inspector.py`
+  (honest Messages title), `Docs/User_Guide/console/context-and-rag.md`, tests as
+  above. Schema v53 swept against all remote refs and every worktree at bump time
+  and re-swept before each commit — no collision.
+- **Diagnostic inventory**: the migration's `logger.info` rows reviewed via
+  `check_persistent_diagnostic_inventory.py --statements` before `--write`: the
+  established start/finish pattern, interpolating only `db_path_str` and integer
+  counters — no capture content, user text, or secrets; the failure wrap logs the
+  exception CLASS only (ADR-096: exception values may contain decoded content).

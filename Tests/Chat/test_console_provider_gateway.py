@@ -52,11 +52,11 @@ from tldw_chatbook.Chat.provider_continuation import (
 )
 from tldw_chatbook.Chat.console_history_budget import ProviderContinuationSidecar
 from tldw_chatbook.Chat.console_exchange_capture import (
-    CAPTURE_ELIDED_ROW_KEY,
     CAPTURE_SAFE_HISTORY_TAIL_ROWS,
     CaptureBudget,
     CaptureDetail,
     build_request_capture,
+    history_elision_marker,
 )
 from tldw_chatbook.Chat.console_thinking_history import ProviderThinkingSidecar
 from tldw_chatbook.Chat.thinking_blocks import (
@@ -8271,10 +8271,11 @@ class TestLlamaCppExchangeCapture:
 
 
 class TestSafeHistoryElisionThroughGateway:
-    """task-23026: the gateway's OWN captures bound the per-turn history
-    copy under Safe. Measured before the bound, through this exact path:
-    turn-200 blob 217.1 KB, 21.33 MB total for one 200-turn conversation,
-    default-on, with no retention path."""
+    """task-23026 / ADR-096: the gateway's OWN captures bound the per-turn
+    history copy under Safe (first-system + last-user + final-eight rows,
+    one content-free aggregate marker). Measured before the bound, through
+    this exact path: turn-200 blob 217.1 KB, 21.33 MB total for one
+    200-turn conversation, default-on, with no retention path."""
 
     @staticmethod
     def _generic_resolution() -> ConsoleProviderResolution:
@@ -8303,7 +8304,7 @@ class TestSafeHistoryElisionThroughGateway:
         return [chunk async for chunk in gen]
 
     @pytest.mark.asyncio
-    async def test_generic_safe_capture_elides_history_and_names_the_range(self):
+    async def test_generic_safe_capture_compacts_history_and_names_the_path(self):
         def fake_chat_api_call(**kwargs):
             return {"choices": [{"message": {"content": "pong"}}]}
 
@@ -8318,15 +8319,18 @@ class TestSafeHistoryElisionThroughGateway:
         (capture,) = signals.exchange_captures()
         payload = capture.request["messages_payload"]
         # The leading system row is extracted into system_message by the
-        # kwargs builder, so the payload is exactly the history rows.
-        assert len(payload) == history_rows
-        assert payload[-1]["content"].startswith(f"GATEWAY-HISTORY-{history_rows - 1:03d}")
-        assert payload[0][CAPTURE_ELIDED_ROW_KEY] is True
-        assert "GATEWAY-HISTORY-000" not in json.dumps(payload)
-        assert any(
-            "conversation history elided" in entry for entry in capture.omitted_keys
+        # kwargs builder, so the payload is the 18 history rows — compacted
+        # to one marker + the retained set.
+        marker = history_elision_marker(payload)
+        assert marker is not None
+        assert marker["original_rows"] == history_rows
+        kept = [row for row in payload if not history_elision_marker([row])]
+        assert kept[-1]["content"].startswith(
+            f"GATEWAY-HISTORY-{history_rows - 1:03d}"
         )
-        # The provider call itself is untouched: elision is capture-only.
+        assert "GATEWAY-HISTORY-000" not in json.dumps(payload)
+        assert "messages_payload.history" in capture.omitted_keys
+        # The provider call itself is untouched: compaction is capture-only.
         assert capture.response["content"] == "pong"
 
     @pytest.mark.asyncio
@@ -8348,12 +8352,10 @@ class TestSafeHistoryElisionThroughGateway:
         assert "GATEWAY-HISTORY-000" in json.dumps(
             capture.request["messages_payload"]
         )
-        assert not any(
-            "conversation history elided" in entry for entry in capture.omitted_keys
-        )
+        assert "messages_payload.history" not in capture.omitted_keys
 
     @pytest.mark.asyncio
-    async def test_generic_elision_leaves_transcript_output_byte_identical(self):
+    async def test_generic_compaction_leaves_transcript_output_byte_identical(self):
         def fake_chat_api_call(**kwargs):
             return {"choices": [{"message": {"content": "exact bytes"}}]}
 
@@ -8386,7 +8388,7 @@ class TestSafeHistoryElisionThroughGateway:
         )
 
     @pytest.mark.asyncio
-    async def test_llamacpp_safe_wire_capture_elides_history(self, monkeypatch):
+    async def test_llamacpp_safe_wire_capture_compacts_history(self, monkeypatch):
         async def fake_stream(self, **kwargs):
             yield "ok"
 
@@ -8403,15 +8405,16 @@ class TestSafeHistoryElisionThroughGateway:
 
         (capture,) = signals.exchange_captures()
         wire_messages = capture.request["wire_payload"]["messages"]
-        assert wire_messages[-1]["content"].startswith(
+        marker = history_elision_marker(wire_messages)
+        assert marker is not None
+        kept = [row for row in wire_messages if not history_elision_marker([row])]
+        # The wire list keeps its system framing row and the newest tail.
+        assert kept[0]["role"] == "system"
+        assert kept[-1]["content"].startswith(
             f"GATEWAY-HISTORY-{history_rows - 1:03d}"
         )
-        assert wire_messages[0][CAPTURE_ELIDED_ROW_KEY] is True
         assert "GATEWAY-HISTORY-000" not in json.dumps(wire_messages)
-        assert any(
-            entry.startswith("wire_payload.messages[0..")
-            for entry in capture.omitted_keys
-        )
+        assert "wire_payload.messages.history" in capture.omitted_keys
 
     @pytest.mark.asyncio
     async def test_llamacpp_full_wire_capture_keeps_history_verbatim(
@@ -8438,7 +8441,4 @@ class TestSafeHistoryElisionThroughGateway:
         assert "GATEWAY-HISTORY-000" in json.dumps(
             capture.request["wire_payload"]["messages"]
         )
-        assert not any(
-            entry.startswith("wire_payload.messages[0..")
-            for entry in capture.omitted_keys
-        )
+        assert "wire_payload.messages.history" not in capture.omitted_keys

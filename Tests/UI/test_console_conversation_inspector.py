@@ -47,6 +47,8 @@ from tldw_chatbook.Chat.console_exchange_capture import (
     CaptureDetail,
     ExchangeCapture,
     build_request_capture,
+    compact_safe_history_rows,
+    history_elision_marker,
     CapturePolicyResolution,
     CapturePolicySource,
 )
@@ -1737,3 +1739,36 @@ async def test_revision_change_during_first_async_call_mount_discards_all_calls(
         assert mount_calls.value == 1
         assert modal._exchange_capture_by_call_key == {}
         assert not turn.query(".console-inspector-exchange-call")
+
+
+def test_messages_section_title_states_original_and_elided_counts() -> None:
+    """task-23026 / ADR-096: a Safe capture's stored list is COMPACTED, so
+    the physical row count alone would under-state what the call actually
+    sent. When the aggregate history-elision marker is present, the
+    Messages title must surface its original/omitted counts; without a
+    marker the plain physical count remains."""
+    rows = [{"role": "system", "content": "sys"}] + [
+        {"role": "user" if i % 2 == 0 else "assistant", "content": f"row {i}"}
+        for i in range(17)
+    ]
+    compacted, _ = compact_safe_history_rows(rows, CaptureDetail.SAFE)
+    assert history_elision_marker(compacted) is not None  # sanity
+
+    inspector = object.__new__(ConsoleConversationInspector)
+    compacted_capture = _capture(
+        "run-1", 0, "t", "m", request={"messages_payload": compacted}
+    )
+    title = str(
+        inspector._build_messages_section(compacted_capture, "k").title
+    )
+    assert f"{len(rows)} sent" in title
+    marker = history_elision_marker(compacted)
+    assert f"{marker['omitted_rows']} elided by capture policy" in title
+
+    plain_capture = _capture(
+        "run-1", 0, "t", "m", request={"messages_payload": rows[-3:]}
+    )
+    plain_title = str(
+        inspector._build_messages_section(plain_capture, "k").title
+    )
+    assert plain_title == "Messages (3)"

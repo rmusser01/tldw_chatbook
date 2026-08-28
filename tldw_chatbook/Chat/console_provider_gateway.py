@@ -36,7 +36,7 @@ from tldw_chatbook.Chat.console_exchange_capture import (
     CaptureDetail,
     ExchangeCapture,
     build_request_capture,
-    elide_safe_history_rows,
+    compact_safe_history_rows,
     sanitize_capture_value,
 )
 from tldw_chatbook.Chat.console_project_instructions import (
@@ -3161,13 +3161,13 @@ class ConsoleProviderGateway:
                                 )
                     sanitized = sanitize_capture_value(captured)
                     if isinstance(sanitized, dict):
-                        elided_rows, elided_paths = elide_safe_history_rows(
+                        compacted_rows, elided_paths = compact_safe_history_rows(
                             sanitized.get("messages"),
                             detail,
                             path="wire_payload.messages",
                         )
                         if elided_paths:
-                            sanitized["messages"] = elided_rows
+                            sanitized["messages"] = compacted_rows
                         return sanitized, elided_paths
                     return sanitized, ()
 

@@ -28,13 +28,13 @@ import pytest
 from Tests.ChaChaNotesDB.historical_bootstrap import chachanotes_db_at_version
 from tldw_chatbook.DB.ChaChaNotes_DB import CharactersRAGDB, SchemaError
 from tldw_chatbook.Chat.console_exchange_capture import (
-    CAPTURE_ELIDED_ROW_KEY,
     CAPTURE_SAFE_HISTORY_TAIL_ROWS,
     CaptureDetail,
     ExchangeCapture,
     build_request_capture,
     capture_from_storage,
     capture_to_blob,
+    history_elision_marker,
     trim_safe_capture_blob,
 )
 
@@ -201,8 +201,11 @@ def test_v53_trims_safe_blobs_and_leaves_everything_else_value_identical(
         restored = capture_from_storage(after["oversized-safe"], "safe")
         original = capture_from_storage(before["oversized-safe"], "safe")
         payload = restored.request["messages_payload"]
-        assert payload[-_TAIL:] == original.request["messages_payload"][-_TAIL:]
-        assert payload[0][CAPTURE_ELIDED_ROW_KEY] is True
+        marker = history_elision_marker(payload)
+        assert marker is not None
+        assert marker["original_rows"] == _TAIL + 12
+        kept = [row for row in payload if not history_elision_marker([row])]
+        assert kept == original.request["messages_payload"][-_TAIL:]
         assert "MIGRATION-HISTORY-000 " not in json.dumps(payload)
         # Value-identical content for everything not deliberately trimmed.
         assert restored.response == original.response
@@ -215,14 +218,15 @@ def test_v53_trims_safe_blobs_and_leaves_everything_else_value_identical(
             k: v for k, v in original.request.items() if k != "messages_payload"
         }
         assert set(original.omitted_keys).issubset(set(restored.omitted_keys))
-        assert any("history elided" in e for e in restored.omitted_keys)
+        assert "messages_payload.history" in restored.omitted_keys
 
         # 2. The llama.cpp wire-literal Safe blob was trimmed the same way.
         wire_restored = capture_from_storage(after["wire-safe"], "safe")
         wire = wire_restored.request["wire_payload"]
-        assert wire["messages"][0][CAPTURE_ELIDED_ROW_KEY] is True
+        assert history_elision_marker(wire["messages"]) is not None
         assert "MIGRATION-HISTORY-000 " not in json.dumps(wire)
         assert wire["stream"] is True
+        assert "wire_payload.messages.history" in wire_restored.omitted_keys
 
         # 3. A short Safe blob, a Full blob, and an undecodable blob are
         #    byte-untouched — Full is the deliberate verbatim mode, and one

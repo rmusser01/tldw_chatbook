@@ -43,22 +43,23 @@ CAPTURE_REQUEST_ALLOWLIST: frozenset[str] = frozenset({
 # "api_key_resolved" (credential-adjacent marker) — they surface in
 # omitted_keys instead.
 #
-# Privacy stance for what IS on the list (task-23026): capture exists to
-# answer "what did we actually hand the provider adapter on this call", so
-# the conversation content is the subject, not an accident — it is retained
-# by design, under the user-controllable Safe/Full detail policy rather
-# than the allowlist. Under Safe (the default) retention is BOUNDED: the
-# newest ``CAPTURE_SAFE_HISTORY_TAIL_ROWS`` payload rows (this turn's delta
-# plus immediate context) persist verbatim, and every older history row is
-# replaced in place by a content-free fingerprint (role, origin tag, char
-# count, sha256 prefix) — the bodies of those rows are already durably
-# stored once in the ``messages`` table and once in the earlier capture
-# whose tail they were new in, so a per-turn re-copy stored nothing new
-# and grew O(n²) (measured 21.33 MB for one 200-turn conversation).
-# Full — explicit, consent-gated, purgeable (ADR-092) — retains the whole
-# payload verbatim. Credentials never persist at any detail level, and
-# every withholding (dropped key, redacted instruction body, elided
-# history range) is named in ``omitted_keys`` so the Inspector shows it.
+# Privacy stance for what IS on the list (task-23026, ADR-096): capture
+# exists to answer "what did we actually hand the provider adapter on this
+# call", so the conversation content is the subject, not an accident — it
+# is retained by design, under the user-controllable Safe/Full detail
+# policy rather than the allowlist. Under Safe (the default) retention is
+# BOUNDED per ADR-096's contract: the first system row, the latest user
+# row, and the final eight physical payload rows persist verbatim; every
+# other row is represented by ONE content-free aggregate marker (counts
+# and retained positions only — no content, snippets, per-row lengths,
+# hashes, IDs, or timestamps; a digest of omitted text is explicitly
+# forbidden because it would let anyone with DB access confirm guesses
+# about private content). Storing the whole history per turn grew O(n²) —
+# measured 21.33 MB for one 200-turn conversation. Full — explicit,
+# consent-gated, purgeable (ADR-092) — retains the whole payload verbatim.
+# Credentials never persist at any detail level, and every withholding
+# (dropped key, redacted instruction body, elided history) is named in
+# ``omitted_keys`` so the Inspector shows it.
 
 #: Strings at/above this length are candidates for base64 stubbing.
 _STUB_MIN_CHARS = 4096
@@ -73,18 +74,32 @@ _SEMANTIC_JSON_STRING_KEYS = frozenset({"arguments", "input", "result", "output"
 EXCHANGE_BLOB_MAX_BYTES = 16 * 1024 * 1024
 CAPTURE_JSON_MAX_BYTES = 64 * 1024 * 1024
 
-#: How many trailing ``messages_payload`` rows a Safe capture keeps verbatim.
-#: The tail always covers the turn's NEW rows (one user row on the direct
-#: path; assistant tool_calls + tool results on an agent-loop call) plus a
-#: few rows of immediate context; everything older is fingerprinted in
-#: place (task-23026).
+#: How many trailing physical payload rows a Safe capture keeps verbatim
+#: (ADR-096). The tail always covers the turn's NEW rows (one user row on
+#: the direct path; assistant tool_calls + tool results on an agent-loop
+#: call) plus a few rows of immediate context.
 CAPTURE_SAFE_HISTORY_TAIL_ROWS = 8
 
-#: Structural marker on a fingerprint row produced by
-#: :func:`elide_safe_history_rows`. Keyed structurally (never by content
-#: prefix) so re-running the builder over a stored request — the export
-#: projection path — passes already-elided rows through untouched.
-CAPTURE_ELIDED_ROW_KEY = "capture_elided"
+#: Versioned kind discriminator of the ONE aggregate history-elision
+#: marker :func:`compact_safe_history_rows` inserts (ADR-096). Recognition
+#: is structural and strict (`_is_valid_history_elision_marker`); a
+#: malformed lookalike is an ordinary row.
+CAPTURE_HISTORY_ELISION_KIND = "tldw.exchange_capture.safe_history_elision"
+CAPTURE_HISTORY_ELISION_VERSION = 1
+
+#: The marker's EXACT key set. ADR-096 forbids the marker carrying
+#: anything beyond these — in particular content, snippets, per-row
+#: lengths, hashes/digests, IDs, or timestamps. The shape-guard test pins
+#: this frozen set so a digest cannot be reintroduced silently.
+CAPTURE_HISTORY_MARKER_KEYS = frozenset({
+    "kind", "version", "original_rows", "omitted_rows",
+    "omitted_roles", "retained_positions",
+})
+
+#: Normalized role buckets the marker counts omitted rows into. Unknown,
+#: missing, or non-string roles count only toward ``other`` — their raw
+#: values are never retained in the marker.
+CAPTURE_HISTORY_MARKER_ROLES = ("system", "user", "assistant", "tool", "other")
 
 
 class CaptureDetail(str, Enum):
@@ -338,12 +353,6 @@ def _redact_project_instruction_rows(
         if capture_detail is CaptureDetail.FULL or not (
             isinstance(row, Mapping)
             and row.get(EPHEMERAL_ORIGIN_KEY) == _PROJECT_INSTRUCTION_ORIGIN
-            # task-23026: a fingerprint row from `elide_safe_history_rows`
-            # is already content-free — re-marking it would replace the
-            # fingerprint with a marker measuring the MARKER's length, so
-            # the export path's re-run of this builder over a stored
-            # request must pass it through untouched.
-            and not row.get(CAPTURE_ELIDED_ROW_KEY)
         ):
             rows.append(row)
             continue
@@ -410,97 +419,161 @@ def _retain_with_budget(
     return {"truncated": True}
 
 
-def _canonical_row_json(row: Any) -> str:
-    return json.dumps(
-        row, ensure_ascii=False, sort_keys=True, separators=(",", ":"), default=str
-    )
+def _is_valid_history_elision_marker(row: Any) -> bool:
+    """Strict structural recognition of the capture's own marker (ADR-096).
 
-
-def _fingerprint_row(row: Any) -> dict[str, Any]:
-    """Replace one history row with a content-free, verifiable fingerprint.
-
-    The sha256 prefix is computed over the row's canonical sanitized JSON,
-    which is exactly the form an earlier capture retained when this row was
-    in its verbatim tail — so a viewer can confirm identity across turns
-    (and against the transcript) without the body, the same contract the
-    binary stubs already make.
+    Recognition is by exact versioned shape, never by content prefix: the
+    key set must equal ``CAPTURE_HISTORY_MARKER_KEYS`` exactly, the kind
+    and version must match, counts must be real non-negative ints (bools
+    rejected), ``omitted_roles`` must carry exactly the five normalized
+    buckets with int values, and ``retained_positions`` must be a list of
+    ints. A malformed lookalike is an ordinary row and remains subject to
+    the normal bounded selection.
     """
-    digest = hashlib.sha256(
-        _canonical_row_json(row).encode("utf-8", errors="replace")
-    ).hexdigest()[:16]
-    role = row.get("role") if isinstance(row, Mapping) else None
-    content = row.get("content") if isinstance(row, Mapping) else row
-    if isinstance(content, str):
-        chars = len(content)
-    elif content is None:
-        chars = 0
-    else:
-        chars = len(_canonical_row_json(content))
-    out: dict[str, Any] = {
-        "role": str(role) if role is not None else "?",
-        CAPTURE_ELIDED_ROW_KEY: True,
-        "content": (
-            f"[conversation history elided by capture policy -- "
-            f"{chars} chars, sha256:{digest}]"
-        ),
-    }
-    if isinstance(row, Mapping) and EPHEMERAL_ORIGIN_KEY in row:
-        out[EPHEMERAL_ORIGIN_KEY] = row[EPHEMERAL_ORIGIN_KEY]
-    return out
+    if not isinstance(row, Mapping):
+        return False
+    if set(row.keys()) != CAPTURE_HISTORY_MARKER_KEYS:
+        return False
+    if row.get("kind") != CAPTURE_HISTORY_ELISION_KIND:
+        return False
+    version = row.get("version")
+    if type(version) is not int or version != CAPTURE_HISTORY_ELISION_VERSION:
+        return False
+    for key in ("original_rows", "omitted_rows"):
+        value = row.get(key)
+        if type(value) is not int or value < 0:
+            return False
+    roles = row.get("omitted_roles")
+    if not isinstance(roles, Mapping):
+        return False
+    if set(roles.keys()) != set(CAPTURE_HISTORY_MARKER_ROLES):
+        return False
+    if any(type(value) is not int or value < 0 for value in roles.values()):
+        return False
+    positions = row.get("retained_positions")
+    if not isinstance(positions, list):
+        return False
+    return all(type(position) is int for position in positions)
 
 
-def elide_safe_history_rows(
+def history_elision_marker(rows: Any) -> Mapping[str, Any] | None:
+    """Return the list's valid history-elision marker, if any.
+
+    Public reader for the Inspector: lets the Messages section title state
+    the original row count honestly when the stored list is compacted.
+    """
+    if not isinstance(rows, (list, tuple)):
+        return None
+    for row in rows:
+        if _is_valid_history_elision_marker(row):
+            return row
+    return None
+
+
+def _normalized_omitted_role(row: Any) -> str:
+    if isinstance(row, Mapping):
+        role = row.get("role")
+        if isinstance(role, str) and role in ("system", "user", "assistant", "tool"):
+            return role
+    return "other"
+
+
+def compact_safe_history_rows(
     rows: Any,
     capture_detail: CaptureDetail,
     *,
     path: str = "messages_payload",
 ) -> tuple[Any, tuple[str, ...]]:
-    """Bound a Safe capture's per-turn conversation-history copy (task-23026).
+    """Bound a Safe capture's per-turn conversation-history copy (ADR-096).
 
     Every send's payload carries the whole conversation so far, so
     persisting it verbatim per turn re-stored the entire history O(n²)
     (21.33 MB measured for one 200-turn conversation). Under Safe — the
-    default — only the newest ``CAPTURE_SAFE_HISTORY_TAIL_ROWS`` rows (the
-    turn's new rows plus immediate context) stay verbatim; each older row
-    is replaced IN PLACE by a fingerprint row (role + origin tag + char
-    count + sha256 prefix), so the payload's exact shape, order, and
-    per-row identity remain inspectable and the count the Inspector shows
-    stays truthful. Idempotent: rows already carrying
-    ``CAPTURE_ELIDED_ROW_KEY`` pass through unchanged, so the export
-    projection's re-run over a stored request is a fixed point.
+    default — the retained set is the union of: the first mapping row
+    whose ``role`` is exactly ``system``, the last mapping row whose
+    ``role`` is exactly ``user``, and the final
+    ``CAPTURE_SAFE_HISTORY_TAIL_ROWS`` physical rows — deduplicated, in
+    original relative order, values untouched. Non-mapping rows are
+    eligible only through the tail. Every other row is represented by ONE
+    content-free aggregate marker inserted at the position of the first
+    omitted row (counts and retained positions only — never content,
+    snippets, per-row lengths, digests, IDs, or timestamps: a digest would
+    let anyone with database access confirm guesses about omitted private
+    text).
+
+    Idempotent by marker recognition: a recognized valid marker is
+    transparent to selection and preserved when nothing else is omitted,
+    so re-projecting a stored Safe request (the export path re-runs this
+    builder) is a fixed point. An input marker never disables compaction
+    of surrounding rows — when new rows must be omitted, stale markers are
+    dropped and exactly one fresh marker describes this pass.
 
     Args:
         rows: The sanitized ``messages_payload`` (or wire ``messages``)
             list; any non-list shape passes through untouched.
-        capture_detail: Full skips elision entirely — Full is the explicit,
-            consent-gated, purgeable verbatim mode (ADR-092).
-        path: Inventory path prefix for the returned omission entry.
+        capture_detail: Full skips compaction entirely — Full is the
+            explicit, consent-gated, purgeable verbatim mode (ADR-092).
+        path: Stable omission-inventory prefix; the entry is
+            ``f"{path}.history"`` so repeated projection cannot create
+            duplicate or ever-changing strings.
 
     Returns:
-        The (possibly new) row list and a 0- or 1-entry inventory tuple
-        naming the elided range, rendered by the Inspector's existing
-        "Omitted by capture policy" line.
+        The (possibly new) row list and a 0- or 1-entry inventory tuple,
+        rendered by the Inspector's existing "Omitted by capture policy"
+        line.
     """
     if capture_detail is CaptureDetail.FULL or not isinstance(rows, list):
         return rows, ()
-    if len(rows) <= CAPTURE_SAFE_HISTORY_TAIL_ROWS:
+    real = [
+        (position, row)
+        for position, row in enumerate(rows)
+        if not _is_valid_history_elision_marker(row)
+    ]
+    if not real:
         return rows, ()
-    cut = len(rows) - CAPTURE_SAFE_HISTORY_TAIL_ROWS
-    out: list[Any] = []
-    elided_any = False
-    for index, row in enumerate(rows):
-        if index >= cut or (
-            isinstance(row, Mapping) and row.get(CAPTURE_ELIDED_ROW_KEY)
-        ):
-            out.append(row)
-            continue
-        out.append(_fingerprint_row(row))
-        elided_any = True
-    if not elided_any:
-        return rows, ()
-    return out, (
-        f"{path}[0..{cut - 1}].content (conversation history elided)",
+    retained: set[int] = set()
+    for position, row in real:
+        if isinstance(row, Mapping) and row.get("role") == "system":
+            retained.add(position)
+            break
+    for position, row in reversed(real):
+        if isinstance(row, Mapping) and row.get("role") == "user":
+            retained.add(position)
+            break
+    tail_start = max(0, len(rows) - CAPTURE_SAFE_HISTORY_TAIL_ROWS)
+    retained.update(
+        position for position, _row in real if position >= tail_start
     )
+    omitted = [
+        (position, row) for position, row in real if position not in retained
+    ]
+    if not omitted:
+        # Fixed point: nothing new to omit — the list (including any
+        # already-present marker) is returned unchanged.
+        return rows, ()
+    role_counts = {role: 0 for role in CAPTURE_HISTORY_MARKER_ROLES}
+    for _position, row in omitted:
+        role_counts[_normalized_omitted_role(row)] += 1
+    marker: dict[str, Any] = {
+        "kind": CAPTURE_HISTORY_ELISION_KIND,
+        "version": CAPTURE_HISTORY_ELISION_VERSION,
+        "original_rows": len(real),
+        "omitted_rows": len(omitted),
+        "omitted_roles": role_counts,
+        "retained_positions": sorted(retained),
+    }
+    first_omitted = omitted[0][0]
+    out: list[Any] = []
+    for position, row in enumerate(rows):
+        if position == first_omitted:
+            out.append(marker)
+        if _is_valid_history_elision_marker(row):
+            # Stale metadata from a previous compaction of a DIFFERENT row
+            # set — exactly one fresh marker describes this pass.
+            continue
+        if position in retained:
+            out.append(row)
+    return out, (f"{path}.history",)
 
 
 def build_request_capture(
@@ -543,10 +616,10 @@ def build_request_capture(
                     value = "[invalid endpoint]"
             value = sanitize_capture_value(value)
             if key == "messages_payload":
-                # task-23026: after sanitization (so fingerprints hash the
-                # exact form an earlier capture's tail retained), bound the
-                # per-turn history copy under Safe.
-                value, elided_paths = elide_safe_history_rows(
+                # ADR-096 ordering: compaction runs AFTER redaction and
+                # sanitization (so the marker can never describe raw
+                # secret/binary values) and BEFORE the shared budget.
+                value, elided_paths = compact_safe_history_rows(
                     value, capture_detail
                 )
                 omitted.extend(elided_paths)
@@ -695,23 +768,23 @@ def capture_from_storage(blob: bytes, declared_detail: object) -> ExchangeCaptur
 
 
 def trim_safe_capture_blob(blob: bytes) -> bytes | None:
-    """Apply Safe history elision to one STORED capture blob (task-23026).
+    """Apply ADR-096 Safe history compaction to one STORED capture blob.
 
     Pure helper for the ChaChaNotes v52→v53 migration: captures persisted
-    before elision existed carry the whole conversation per turn. This
-    decodes the blob, bounds ``request.messages_payload`` (and the
+    before compaction existed carry the whole conversation per turn. This
+    decodes the blob, compacts ``request.messages_payload`` (and the
     llama.cpp branch's ``request.wire_payload.messages``) exactly the way
-    :func:`build_request_capture` now does at capture time, folds the
-    elided range into ``omitted_keys``, and re-encodes. Everything else —
-    response, usage, status, provenance, the retained tail — is preserved
-    value-identical.
+    :func:`build_request_capture` now does at capture time, merges the
+    stable history-elision paths into ``omitted_keys``, and re-encodes.
+    Everything else — response, usage, status, provenance, the retained
+    rows — is preserved value-identical.
 
     Args:
         blob: One ``message_exchanges.capture_blob`` value.
 
     Returns:
-        The trimmed replacement blob, or ``None`` when nothing changed
-        (already trimmed, short payload, or a Full capture — Full is the
+        The compacted replacement blob, or ``None`` when nothing changed
+        (already compacted, small payload, or a Full capture — Full is the
         deliberate verbatim mode and is never rewritten here).
 
     Raises:
@@ -726,20 +799,20 @@ def trim_safe_capture_blob(blob: bytes) -> bytes | None:
     new_request = dict(capture.request)
     new_paths: list[str] = []
     rows = new_request.get("messages_payload")
-    trimmed_rows, elided = elide_safe_history_rows(rows, CaptureDetail.SAFE)
+    compacted_rows, elided = compact_safe_history_rows(rows, CaptureDetail.SAFE)
     if elided:
-        new_request["messages_payload"] = trimmed_rows
+        new_request["messages_payload"] = compacted_rows
         new_paths.extend(elided)
     wire = new_request.get("wire_payload")
     if isinstance(wire, Mapping):
-        trimmed_wire_rows, wire_elided = elide_safe_history_rows(
+        compacted_wire_rows, wire_elided = compact_safe_history_rows(
             wire.get("messages"),
             CaptureDetail.SAFE,
             path="wire_payload.messages",
         )
         if wire_elided:
             new_wire = dict(wire)
-            new_wire["messages"] = trimmed_wire_rows
+            new_wire["messages"] = compacted_wire_rows
             new_request["wire_payload"] = new_wire
             new_paths.extend(wire_elided)
     if not new_paths:
