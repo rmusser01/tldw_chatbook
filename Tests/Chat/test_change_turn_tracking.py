@@ -8,23 +8,44 @@ side effect the feature exists to catch.
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import json
+import os
 import sqlite3
 import threading
 import time
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 
 from Tests.Agents.test_agent_service import SUBAGENT_PROMPT_PREFIX
+from Tests.Chat.test_console_agent_bridge import _FakeBuiltinGateForRegistry
+from tldw_chatbook.Agents.agent_models import (
+    STEP_TOOL_CALL,
+    STEP_TOOL_RESULT,
+    TOOL_OUTCOME_SUCCESS,
+)
 from tldw_chatbook.Agents.agent_runtime import FENCE_OPEN
-from tldw_chatbook.Chat.console_agent_bridge import ConsoleAgentBridge
+import tldw_chatbook.Chat.console_agent_bridge as console_agent_bridge_module
+import tldw_chatbook.Workspaces.change_tracking as change_tracking_module
+from tldw_chatbook.Chat.console_agent_bridge import (
+    ConsoleAgentBridge,
+    _ChildChangeState,
+    _PostTurnChangeWindow,
+)
 from tldw_chatbook.Chat.console_chat_models import ConsoleMessageRole
 from tldw_chatbook.Chat.console_chat_store import ConsoleChatStore
 from tldw_chatbook.Chat.console_provider_gateway import ConsoleProviderResolution
 from tldw_chatbook.DB.AgentRuns_DB import AgentRunsDB
-from tldw_chatbook.Workspaces.change_tracking import ShadowRepoService
-from tldw_chatbook.Workspaces.change_turn_tracker import ChangeTurnTracker
+from tldw_chatbook.Workspaces.change_tracking import (
+    ChangeTrackingError,
+    ShadowRepoService,
+)
+from tldw_chatbook.Workspaces.change_turn_tracker import (
+    ChangeTurnTracker,
+    TurnChangeRecord,
+)
 
 # Harness apps load the consolidated widget CSS the real app loads
 # (TASK-15450); without it the widgets under test mount unstyled.
@@ -70,6 +91,624 @@ def test_a_clean_turn_yields_no_records(tracker, root):
     handle.await_baseline()
     records = tracker.end_turn(handle)
     assert records == []
+
+
+def test_begin_turn_force_adds_an_ignored_path_into_the_baseline(tracker, root):
+    target = root / "ignored-agent-output.txt"
+    expected = b"present before the baseline\n"
+    (root / ".gitignore").write_text(f"{target.name}\n")
+    target.write_bytes(expected)
+
+    handle = tracker.begin_turn([root], touched_paths=[str(target)])
+    handle.await_baseline()
+
+    baseline = handle.baselines[str(root.resolve())]
+    repo = tracker.service.repo_for_root(root)
+    assert repo.file_bytes(baseline, target.name) == expected
+
+
+def test_snapshot_preserves_a_new_ordinary_symlink(tracker, root):
+    repo = tracker.service.repo_for_root(root)
+    baseline = repo.snapshot("baseline")
+    link = root / "seed-link"
+    link.symlink_to("seed.txt")
+
+    end = repo.snapshot("new symlink")
+
+    assert end != baseline
+    assert repo.file_bytes(end, link.name) == b"seed.txt"
+    mode = str(repo._run("ls-tree", end, "--", link.name).stdout).split()[0]
+    assert mode == "120000"
+    assert repo.last_nested_repos == ()
+    assert repo.last_oversize_excluded == ()
+
+
+def test_snapshot_drops_a_gitlink_that_appears_after_scan(
+    tracker, root, monkeypatch
+):
+    import subprocess as _sp
+
+    handle = tracker.begin_turn([root])
+    handle.await_baseline()
+    repo = tracker.service.repo_for_root(root)
+    prepared = root.parent / "prepared-child"
+    prepared.mkdir()
+    _sp.run(["git", "init", "--quiet", str(prepared)], check=True)
+    (prepared / "inner.txt").write_text("child content\n")
+    _sp.run(["git", "-C", str(prepared), "add", "inner.txt"], check=True)
+    _sp.run(
+        [
+            "git",
+            "-C",
+            str(prepared),
+            "-c",
+            "user.name=change tracking test",
+            "-c",
+            "user.email=test@example.invalid",
+            "commit",
+            "--quiet",
+            "-m",
+            "child seed",
+        ],
+        check=True,
+    )
+    child = root / "late-child"
+    original_run = type(repo)._run
+    appeared = threading.Event()
+
+    def install_child_before_add(self, *args, **kwargs):
+        if (
+            self.root == root.resolve()
+            and not appeared.is_set()
+            and args[:2] == ("add", "-A")
+        ):
+            prepared.rename(child)
+            appeared.set()
+        return original_run(self, *args, **kwargs)
+
+    monkeypatch.setattr(type(repo), "_run", install_child_before_add)
+    records = tracker.end_turn(handle)
+
+    assert appeared.is_set()
+    assert len(records) == 1
+    record = records[0]
+    assert record.tracking_error == ""
+    assert record.baseline_sha == record.end_sha
+    assert record.files_changed == 0
+    assert record.nested_repos == (child.name,)
+    assert str(repo._run("ls-files", "--stage", "--", child.name).stdout) == ""
+    assert str(repo._run("ls-tree", record.end_sha, "--", child.name).stdout) == ""
+
+
+def test_snapshot_drops_a_gitlink_replacing_a_tip_regular_file_after_scan(
+    tracker, root, monkeypatch
+):
+    import subprocess as _sp
+
+    child = root / "tracked-child"
+    child.write_text("ordinary parent file\n")
+    handle = tracker.begin_turn([root])
+    handle.await_baseline()
+    repo = tracker.service.repo_for_root(root)
+    baseline = handle.baselines[str(root.resolve())]
+    baseline_entry = str(repo._run("ls-tree", baseline, "--", child.name).stdout)
+    assert baseline_entry.split()[0] == "100644"
+
+    prepared = root.parent / "prepared-replacement-child"
+    prepared.mkdir()
+    _sp.run(["git", "init", "--quiet", str(prepared)], check=True)
+    (prepared / "inner.txt").write_text("child content\n")
+    _sp.run(["git", "-C", str(prepared), "add", "inner.txt"], check=True)
+    _sp.run(
+        [
+            "git",
+            "-C",
+            str(prepared),
+            "-c",
+            "user.name=change tracking test",
+            "-c",
+            "user.email=test@example.invalid",
+            "commit",
+            "--quiet",
+            "-m",
+            "child seed",
+        ],
+        check=True,
+    )
+    original_run = type(repo)._run
+    appeared = threading.Event()
+
+    def install_child_before_add(self, *args, **kwargs):
+        if (
+            self.root == root.resolve()
+            and not appeared.is_set()
+            and args[:2] == ("add", "-A")
+        ):
+            child.unlink()
+            prepared.rename(child)
+            appeared.set()
+        return original_run(self, *args, **kwargs)
+
+    monkeypatch.setattr(type(repo), "_run", install_child_before_add)
+    records = tracker.end_turn(handle)
+
+    assert appeared.is_set()
+    assert len(records) == 1
+    record = records[0]
+    assert record.tracking_error == ""
+    assert str(repo._run("ls-tree", record.end_sha, "--", child.name).stdout) == ""
+    changed = repo.changed_files(record.baseline_sha, record.end_sha)
+    assert [(change.path, change.status) for change in changed] == [(child.name, "D")]
+    assert record.nested_repos == (child.name,)
+    assert str(repo._run("ls-files", "--stage", "--", child.name).stdout) == ""
+
+
+def test_snapshot_removes_tip_entries_when_directory_becomes_nested_repo(
+    tracker, root
+):
+    import subprocess as _sp
+
+    child = root / "child"
+    child.mkdir()
+    target = child / "file.txt"
+    target.write_text("parent version\n")
+    link = child / "file-link"
+    link.symlink_to(target.name)
+    target_rel = target.relative_to(root).as_posix()
+    link_rel = link.relative_to(root).as_posix()
+
+    handle = tracker.begin_turn([root])
+    handle.await_baseline()
+    repo = tracker.service.repo_for_root(root)
+    baseline = handle.baselines[str(root.resolve())]
+    assert repo.file_bytes(baseline, target_rel) == b"parent version\n"
+    link_entry = str(repo._run("ls-tree", baseline, "--", link_rel).stdout)
+    assert link_entry.split()[0] == "120000"
+
+    _sp.run(["git", "init", "--quiet", str(child)], check=True)
+    target.write_text("nested version\n")
+    records = tracker.end_turn(handle)
+
+    assert len(records) == 1
+    record = records[0]
+    assert record.tracking_error == ""
+    assert repo.file_bytes(record.end_sha, target_rel) is None
+    assert repo.file_bytes(record.end_sha, link_rel) is None
+    changed = repo.changed_files(record.baseline_sha, record.end_sha)
+    assert [(change.path, change.status) for change in changed] == [
+        (link_rel, "D"),
+        (target_rel, "D"),
+    ]
+    assert record.nested_repos == (child.name,)
+    assert str(repo._run("ls-files", "--", child.name).stdout).strip() == ""
+
+
+def test_final_index_validation_uses_nul_delimited_force_removals(
+    tracker, root, monkeypatch
+):
+    repo = tracker.service.repo_for_root(root)
+    ordinary_paths = tuple(
+        f"nested/dir-{index:05d}/{'x' * 180}-{index:05d}.txt"
+        for index in range(20_000)
+    )
+    overlong = f"nested/{'y' * 5_000}"
+    paths = (*ordinary_paths[:10_000], overlong, *ordinary_paths[10_000:])
+    object_id = "a" * 40
+    stage_entries = tuple(
+        f"100644 {object_id} 0\t{path}" for path in paths
+    )
+    calls: list[tuple[tuple[str, ...], dict]] = []
+
+    def fake_z_tokens(*args):
+        if args[:4] == ("ls-tree", "-r", "-z", "--name-only"):
+            return list(paths)
+        if args == ("ls-files", "--stage", "-z"):
+            return list(stage_entries)
+        raise AssertionError(f"unexpected git token request: {args!r}")
+
+    def record_run(*args, **kwargs):
+        calls.append((args, kwargs))
+
+    monkeypatch.setattr(repo, "tip", lambda: "tip")
+    monkeypatch.setattr(repo, "_z_tokens", fake_z_tokens)
+    monkeypatch.setattr(repo, "_nested_owner", lambda _path: "nested")
+    monkeypatch.setattr(repo, "_run", record_run)
+
+    repo._validate_new_index_paths()
+
+    assert len(calls) == 1
+    args, kwargs = calls[0]
+    assert args == ("update-index", "--force-remove", "-z", "--stdin")
+    assert kwargs == {
+        "binary": True,
+        "input_data": b"".join(os.fsencode(path) + b"\0" for path in paths),
+    }
+
+
+@pytest.mark.parametrize(
+    ("operation", "staging_rounds"),
+    (("snapshot", 2), ("force_add", 1)),
+)
+def test_exact_force_add_paths_use_nul_delimited_stdin(
+    tracker, root, monkeypatch, operation, staging_rounds
+):
+    import subprocess as _sp
+
+    repo = tracker.service.repo_for_root(root)
+    repo.snapshot("initial")
+    ordinary_paths = tuple(
+        f"ignored/dir-{index:05d}/{'x' * 180}-{index:05d}.txt"
+        for index in range(2_000)
+    )
+    overlong = f"ignored/{'y' * 5_000}"
+    paths = (*ordinary_paths[:1_000], overlong, *ordinary_paths[1_000:])
+    calls: list[tuple[tuple[str, ...], dict]] = []
+    original_run = repo._run
+
+    def record_exact_add(*args, **kwargs):
+        if args[:2] == ("update-index", "--add"):
+            calls.append((args, kwargs))
+            return _sp.CompletedProcess(args, 0, stdout="", stderr="")
+        return original_run(*args, **kwargs)
+
+    monkeypatch.setattr(repo, "_exact_force_paths", lambda _paths: list(paths))
+    monkeypatch.setattr(repo, "_validate_new_index_paths", lambda: ((), ()))
+    monkeypatch.setattr(repo, "_run", record_exact_add)
+
+    if operation == "snapshot":
+        repo.snapshot("chunked exact add", force_paths=paths)
+    else:
+        repo.force_add(paths)
+
+    assert len(calls) == staging_rounds
+    expected_input = b"".join(os.fsencode(path) + b"\0" for path in paths)
+    assert all(
+        args == ("update-index", "--add", "-z", "--stdin")
+        and kwargs == {"binary": True, "input_data": expected_input}
+        for args, kwargs in calls
+    )
+
+
+def test_force_add_rejects_root_and_directory_paths(tracker, root, monkeypatch):
+    monkeypatch.setenv("TLDW_CHANGE_REVIEW_MAX_FILE_BYTES", "100")
+    ignored = root / "ignored"
+    ignored.mkdir()
+    (root / ".gitignore").write_text("ignored/\n")
+    (ignored / "small.txt").write_text("small\n")
+    oversized = ignored / "oversized.bin"
+    oversized.write_bytes(b"x" * 101)
+
+    repo = tracker.service.repo_for_root(root)
+    sha = repo.snapshot("unsafe force paths", force_paths=[".", "ignored"])
+
+    assert repo.file_bytes(sha, "ignored/small.txt") is None
+    assert repo.file_bytes(sha, "ignored/oversized.bin") is None
+
+
+def test_force_add_treats_pathspec_magic_as_a_literal_filename(tracker, root):
+    target = root / "[ab]"
+    expected = b"only this ignored file\n"
+    sibling = root / "a"
+    (root / ".gitignore").write_text("*\n!/.gitignore\n!/seed.txt\n")
+    target.write_bytes(expected)
+    sibling.write_text("must stay ignored\n")
+
+    repo = tracker.service.repo_for_root(root)
+    sha = repo.snapshot("literal force path", force_paths=[target.name])
+
+    assert repo.file_bytes(sha, target.name) == expected
+    assert repo.file_bytes(sha, sibling.name) is None
+
+
+def test_force_add_refreshes_ignored_executable_bytes_and_mode(tracker, root):
+    target = root / "ignored-tool.sh"
+    (root / ".gitignore").write_text(f"{target.name}\n")
+    target.write_bytes(b"#!/bin/sh\nexit 1\n")
+    target.chmod(0o755)
+    repo = tracker.service.repo_for_root(root)
+    first = repo.snapshot("first executable", force_paths=[target.name])
+    first_mode = str(
+        repo._run("ls-tree", first, "--", target.name).stdout
+    ).split()[0]
+    if first_mode != "100755":
+        pytest.skip("filesystem does not expose executable bits to Git")
+
+    expected = b"#!/bin/sh\nexit 0\n"
+    target.write_bytes(expected)
+    target.chmod(0o644)
+    repo.force_add([target.name])
+
+    assert repo._run("show", f":{target.name}", binary=True).stdout == expected
+    staged_mode = str(
+        repo._run("ls-files", "--stage", "--", target.name).stdout
+    ).split()[0]
+    assert staged_mode == "100644"
+    second = repo.snapshot("updated non-executable")
+    assert repo.file_bytes(second, target.name) == expected
+    committed_mode = str(
+        repo._run("ls-tree", second, "--", target.name).stdout
+    ).split()[0]
+    assert committed_mode == "100644"
+
+
+def test_snapshot_force_path_drops_new_blob_that_grows_over_cap_before_index(
+    tracker, root, monkeypatch
+):
+    monkeypatch.setenv("TLDW_CHANGE_REVIEW_MAX_FILE_BYTES", "32")
+    target = root / "ignored-race.bin"
+    (root / ".gitignore").write_text(f"{target.name}\n")
+    repo = tracker.service.repo_for_root(root)
+    baseline = repo.snapshot("baseline")
+    target.write_bytes(b"small")
+    (root / "seed.txt").write_text("changed\n")
+    original_run = repo._run
+    grew = False
+
+    def grow_before_index(*args, **kwargs):
+        nonlocal grew
+        if not grew and args and args[0] == "update-index" and "--add" in args:
+            target.write_bytes(b"x" * 33)
+            grew = True
+        return original_run(*args, **kwargs)
+
+    repo._run = grow_before_index  # type: ignore[method-assign]
+    try:
+        end = repo.snapshot("raced snapshot", force_paths=[target.name])
+    finally:
+        repo._run = original_run  # type: ignore[method-assign]
+
+    assert grew
+    assert end != baseline
+    assert repo.file_bytes(end, target.name) is None
+    assert str(repo._run("ls-files", "--", target.name).stdout).strip() == ""
+    assert repo.last_oversize_excluded == (target.name,)
+
+
+def test_snapshot_final_restage_captures_force_path_that_shrinks_after_drop(
+    tracker, root, monkeypatch
+):
+    monkeypatch.setenv("TLDW_CHANGE_REVIEW_MAX_FILE_BYTES", "32")
+    target = root / "ignored-race.bin"
+    expected = b"small at final boundary"
+    (root / ".gitignore").write_text(f"{target.name}\n")
+    repo = tracker.service.repo_for_root(root)
+    repo.snapshot("baseline")
+    target.write_bytes(b"small")
+    original_run = repo._run
+    grew = False
+    shrank = False
+
+    def race_provisional_stage(*args, **kwargs):
+        nonlocal grew, shrank
+        if not grew and args[:2] == ("update-index", "--add"):
+            target.write_bytes(b"x" * 33)
+            grew = True
+        result = original_run(*args, **kwargs)
+        if grew and not shrank and args[:2] == ("add", "-A"):
+            target.write_bytes(expected)
+            shrank = True
+        return result
+
+    repo._run = race_provisional_stage  # type: ignore[method-assign]
+    try:
+        end = repo.snapshot("raced snapshot", force_paths=[target.name])
+    finally:
+        repo._run = original_run  # type: ignore[method-assign]
+
+    assert grew and shrank
+    assert repo.file_bytes(end, target.name) == expected
+    assert repo.last_oversize_excluded == ()
+
+
+def test_force_path_final_restage_discloses_blob_still_over_cap(
+    tracker, root, monkeypatch
+):
+    monkeypatch.setenv("TLDW_CHANGE_REVIEW_MAX_FILE_BYTES", "32")
+    target = root / "ignored-race.bin"
+    (root / ".gitignore").write_text(f"{target.name}\n")
+    handle = tracker.begin_turn([root])
+    handle.await_baseline()
+    target.write_bytes(b"small")
+    repo = tracker.service.repo_for_root(root)
+    original_run = type(repo)._run
+    grew_provisionally = False
+    shrank_for_scan = False
+    grew_at_final_boundary = False
+
+    def race_both_stages(self, *args, **kwargs):
+        nonlocal grew_provisionally, shrank_for_scan, grew_at_final_boundary
+        in_root = self.root == root.resolve()
+        if in_root and not grew_provisionally and args[:2] == ("update-index", "--add"):
+            target.write_bytes(b"x" * 33)
+            grew_provisionally = True
+        result = original_run(self, *args, **kwargs)
+        if (
+            in_root
+            and grew_provisionally
+            and not shrank_for_scan
+            and args[:2] == ("update-index", "--add")
+        ):
+            target.write_bytes(b"small")
+            shrank_for_scan = True
+        if (
+            in_root
+            and shrank_for_scan
+            and not grew_at_final_boundary
+            and args[:2] == ("add", "-A")
+        ):
+            target.write_bytes(b"y" * 33)
+            grew_at_final_boundary = True
+        return result
+
+    monkeypatch.setattr(type(repo), "_run", race_both_stages)
+    records = tracker.end_turn(handle, touched_paths=[str(target)])
+
+    assert grew_provisionally and shrank_for_scan and grew_at_final_boundary
+    assert len(records) == 1
+    record = records[0]
+    assert record.files_changed == 0
+    assert record.untracked_oversize == 1
+    assert repo.file_bytes(record.end_sha, target.name) is None
+
+
+def test_snapshot_force_path_keeps_committed_file_that_grows_over_cap(
+    tracker, root, monkeypatch
+):
+    monkeypatch.setenv("TLDW_CHANGE_REVIEW_MAX_FILE_BYTES", "32")
+    target = root / "ignored-tracked.bin"
+    (root / ".gitignore").write_text(f"{target.name}\n")
+    target.write_bytes(b"small")
+    repo = tracker.service.repo_for_root(root)
+    first = repo.snapshot("small tracked file", force_paths=[target.name])
+
+    expected = b"x" * 33
+    target.write_bytes(expected)
+    second = repo.snapshot("tracked file grew", force_paths=[target.name])
+
+    assert second != first
+    assert repo.file_bytes(second, target.name) == expected
+    assert repo.last_oversize_excluded == (target.name,)
+
+
+def test_force_path_growth_after_scan_is_disclosed_when_post_add_drops_it(
+    tracker, root, monkeypatch
+):
+    from tldw_chatbook.Workspaces import change_bounds
+
+    monkeypatch.setenv("TLDW_CHANGE_REVIEW_MAX_FILE_BYTES", "32")
+    target = root / "ignored-race.bin"
+    (root / ".gitignore").write_text(f"{target.name}\n")
+    handle = tracker.begin_turn([root])
+    handle.await_baseline()
+    target.write_bytes(b"small")
+    original_scan = change_bounds.scan_root
+    grew = False
+
+    def grow_after_scan(*args, **kwargs):
+        nonlocal grew
+        scan = original_scan(*args, **kwargs)
+        if not grew and Path(args[0]).resolve() == root.resolve():
+            assert scan.oversized == ()
+            target.write_bytes(b"x" * 33)
+            grew = True
+        return scan
+
+    monkeypatch.setattr(change_bounds, "scan_root", grow_after_scan)
+    records = tracker.end_turn(handle, touched_paths=[str(target)])
+
+    assert grew
+    assert len(records) == 1
+    record = records[0]
+    assert record.files_changed == 0
+    assert record.untracked_oversize == 1
+    repo = tracker.service.repo_for_root(root)
+    assert repo.file_bytes(record.end_sha, target.name) is None
+
+
+def test_snapshot_force_path_file_to_directory_swap_never_stages_descendants(
+    tracker, root
+):
+    target = root / "race-target"
+    child_rel = "race-target/ignored-child.txt"
+    replacement = root.parent / "snapshot-replacement"
+    replacement.mkdir()
+    (replacement / "ignored-child.txt").write_text("must not be staged\n")
+    (root / ".gitignore").write_text(f"{target.name}\n")
+    repo = tracker.service.repo_for_root(root)
+    baseline = repo.snapshot("baseline")
+    target.write_text("validated file\n")
+    original_run = repo._run
+    swapped = False
+
+    def swap_before_index(*args, **kwargs):
+        nonlocal swapped
+        if not swapped and args and args[0] in {"add", "update-index"}:
+            target.unlink()
+            replacement.replace(target)
+            swapped = True
+        return original_run(*args, **kwargs)
+
+    repo._run = swap_before_index  # type: ignore[method-assign]
+    try:
+        repo.snapshot("raced snapshot", force_paths=[target.name])
+    except ChangeTrackingError:
+        pass
+
+    assert swapped
+    assert str(repo._run("ls-files", "--", child_rel).stdout).strip() == ""
+    tip = repo.tip()
+    assert tip == baseline or repo.file_bytes(tip, child_rel) is None
+
+
+def test_force_add_file_to_directory_swap_never_stages_descendants(
+    tracker, root
+):
+    target = root / "race-target"
+    child_rel = "race-target/ignored-child.txt"
+    replacement = root.parent / "force-add-replacement"
+    replacement.mkdir()
+    (replacement / "ignored-child.txt").write_text("must not be staged\n")
+    (root / ".gitignore").write_text(f"{target.name}\n")
+    repo = tracker.service.repo_for_root(root)
+    baseline = repo.snapshot("baseline")
+    target.write_text("validated file\n")
+    original_run = repo._run
+    swapped = False
+
+    def swap_before_index(*args, **kwargs):
+        nonlocal swapped
+        if not swapped and args and args[0] in {"add", "update-index"}:
+            target.unlink()
+            replacement.replace(target)
+            swapped = True
+        return original_run(*args, **kwargs)
+
+    repo._run = swap_before_index  # type: ignore[method-assign]
+    try:
+        repo.force_add([target.name])
+    except ChangeTrackingError:
+        pass
+
+    assert swapped
+    assert str(repo._run("ls-files", "--", child_rel).stdout).strip() == ""
+    assert repo.tip() == baseline
+
+
+def test_force_add_rejects_escapes_through_the_shared_path_validator(
+    tracker, root, tmp_path, monkeypatch
+):
+    ignored = root / "ignored"
+    ignored.mkdir()
+    (ignored / "inside.txt").write_text("ignored\n")
+    outside = tmp_path / "outside.txt"
+    outside.write_text("outside\n")
+    link = root / "outside-link"
+    try:
+        link.symlink_to(outside)
+    except OSError:
+        pytest.skip("symlinks unsupported on this platform/permission level")
+    (root / ".gitignore").write_text("ignored/\noutside-link\n")
+
+    real_validate = change_tracking_module.validate_path
+    validated_inputs: list[str] = []
+
+    def record_validation(user_path, base_directory, **kwargs):
+        validated_inputs.append(str(user_path))
+        return real_validate(user_path, base_directory, **kwargs)
+
+    monkeypatch.setattr(change_tracking_module, "validate_path", record_validation)
+
+    repo = tracker.service.repo_for_root(root)
+    sha = repo.snapshot(
+        "unsafe force paths",
+        force_paths=["", "../outside.txt", str(outside), link.name],
+    )
+
+    assert "../outside.txt" in validated_inputs
+    assert str(outside) in validated_inputs
+    assert link.name in validated_inputs
+    assert repo.file_bytes(sha, "ignored/inside.txt") is None
+    assert repo.file_bytes(sha, link.name) is None
 
 
 def test_begin_is_nonblocking_and_await_gates(tmp_path, root):
@@ -130,6 +769,486 @@ def test_force_add_carveout_for_tool_touched_ignored_paths(tracker, root):
     assert not any("side_effect" in p for p in paths), (
         "script writes into ignored dirs are OUT of scope by design"
     )
+
+
+def test_snapshot_force_path_drops_file_when_nested_marker_appears_during_final_restage(
+    tracker, root, monkeypatch
+):
+    child = root / "late-child"
+    child.mkdir()
+    target = child / "ignored-write.txt"
+    target_rel = target.relative_to(root).as_posix()
+    (root / ".gitignore").write_text(f"/{target_rel}\n")
+
+    handle = tracker.begin_turn([root])
+    handle.await_baseline()
+    target.write_text("must stay child-owned\n")
+    repo = tracker.service.repo_for_root(root)
+    original_run = type(repo)._run
+    marker_created = threading.Event()
+    exact_stages = 0
+
+    def create_marker_before_index(self, *args, **kwargs):
+        nonlocal exact_stages
+        if (
+            self.root == root.resolve()
+            and args[:2] == ("update-index", "--add")
+        ):
+            exact_stages += 1
+            if exact_stages == 2:
+                (child / ".git").mkdir()
+                marker_created.set()
+        return original_run(self, *args, **kwargs)
+
+    monkeypatch.setattr(type(repo), "_run", create_marker_before_index)
+    records = tracker.end_turn(handle, touched_paths=[str(target)])
+
+    assert marker_created.is_set()
+    assert exact_stages == 2
+    assert len(records) == 1
+    record = records[0]
+    assert record.files_changed == 0
+    assert record.nested_repos == (child.name,)
+    assert str(repo._run("ls-files", "--", target_rel).stdout).strip() == ""
+    assert repo.file_bytes(record.end_sha, target_rel) is None
+
+
+def test_force_path_under_auto_registered_nested_repo_is_owned_only_by_child(
+    tracker, root
+):
+    import subprocess as _sp
+
+    child = root / "childrepo"
+    child.mkdir()
+    _sp.run(["git", "init", "--quiet", str(child)], check=True)
+    (child / ".gitignore").write_text("ignored-write.txt\n")
+    (child / "seed.txt").write_text("child seed\n")
+    target = child / "ignored-write.txt"
+    expected = b"child-owned ignored write\n"
+
+    handle = tracker.begin_turn([root])
+    handle.await_baseline()
+    target.write_bytes(expected)
+    records = tracker.end_turn(handle, touched_paths=[str(target)])
+
+    by_root = {record.root: record for record in records}
+    parent_key = str(root.resolve())
+    child_key = str(child.resolve())
+    assert parent_key not in by_root
+    assert set(by_root) == {child_key}
+    child_record = by_root[child_key]
+    child_repo = tracker.service.repo_for_root(child)
+    assert child_repo.file_bytes(child_record.end_sha, target.name) == expected
+    parent_repo = tracker.service.repo_for_root(root)
+    parent_rel = target.relative_to(root).as_posix()
+    assert str(parent_repo._run("ls-files", "--", parent_rel).stdout).strip() == ""
+    assert parent_repo.file_bytes(parent_repo.tip(), parent_rel) is None
+
+
+def test_supplied_successor_sha_defers_a_late_ignored_path_to_successor_e(
+    tracker, root
+):
+    target = root / "ignored-agent-output.txt"
+    expected = b"created after successor baseline\n"
+    (root / ".gitignore").write_text(f"{target.name}\n")
+
+    parent = tracker.begin_turn([root])
+    parent.await_baseline()
+    assert tracker.end_turn(parent) == []
+    continuation = tracker.continuation(parent)
+    assert continuation is not None
+
+    successor = tracker.begin_turn([root])
+    successor.await_baseline()
+    key = str(root.resolve())
+    supplied = successor.baselines[key]
+    target.write_bytes(expected)
+
+    continuation_records = tracker.end_turn(
+        continuation,
+        touched_paths=[str(target)],
+        end_shas=successor.baselines,
+        successor_handle=successor,
+    )
+    assert continuation_records == []
+    assert continuation.end_shas[key] == supplied
+
+    successor_records = tracker.end_turn(successor)
+    assert len(successor_records) == 1
+    assert successor_records[0].baseline_sha == supplied
+    repo = tracker.service.repo_for_root(root)
+    assert repo.file_bytes(successor_records[0].end_sha, target.name) == expected
+
+
+def test_supplied_boundary_does_not_leak_force_paths_to_another_conversation(
+    tracker, root
+):
+    target = root / "ignored-agent-output.txt"
+    expected = b"owned by the claimed successor\n"
+    (root / ".gitignore").write_text(f"{target.name}\n")
+
+    parent = tracker.begin_turn([root])
+    parent.await_baseline()
+    assert tracker.end_turn(parent) == []
+    continuation = tracker.continuation(parent)
+    assert continuation is not None
+
+    successor = tracker.begin_turn([root])
+    successor.await_baseline()
+    unrelated = tracker.begin_turn([root])
+    unrelated.await_baseline()
+    target.write_bytes(expected)
+
+    assert tracker.end_turn(
+        continuation,
+        touched_paths=[str(target)],
+        end_shas=successor.baselines,
+        successor_handle=successor,
+    ) == []
+
+    assert tracker.end_turn(unrelated) == []
+    successor_records = tracker.end_turn(successor)
+
+    assert len(successor_records) == 1
+    repo = tracker.service.repo_for_root(root)
+    record = successor_records[0]
+    assert repo.file_bytes(record.end_sha, target.name) == expected
+
+
+def test_supplied_sha_deferred_file_growing_before_successor_e_is_disclosed(
+    tracker, root, monkeypatch
+):
+    monkeypatch.setenv("TLDW_CHANGE_REVIEW_MAX_FILE_BYTES", "8")
+    target = root / "x"
+    (root / ".gitignore").write_text(f"{target.name}\n")
+
+    parent = tracker.begin_turn([root])
+    parent.await_baseline()
+    assert tracker.end_turn(parent) == []
+    continuation = tracker.continuation(parent)
+    assert continuation is not None
+
+    successor = tracker.begin_turn([root])
+    successor.await_baseline()
+    key = str(root.resolve())
+    supplied = successor.baselines[key]
+    target.write_bytes(b"small")
+
+    assert tracker.end_turn(
+        continuation,
+        touched_paths=[str(target)],
+        end_shas=successor.baselines,
+        successor_handle=successor,
+    ) == []
+    assert continuation.end_shas[key] == supplied
+    repo = tracker.service.repo_for_root(root)
+    assert str(repo._run("ls-files", "--", target.name).stdout).strip() == ""
+
+    target.write_bytes(b"x" * 9)
+    records = tracker.end_turn(successor)
+
+    assert len(records) == 1
+    record = records[0]
+    assert record.baseline_sha == supplied
+    assert record.end_sha == supplied
+    assert record.files_changed == 0
+    assert record.untracked_oversize == 1
+    assert repo.file_bytes(record.end_sha, target.name) is None
+    assert str(repo._run("ls-files", "--", target.name).stdout).strip() == ""
+
+
+def test_supplied_sha_deferred_path_becoming_nested_before_successor_e_is_disclosed(
+    tracker, root
+):
+    child = root / "late-child"
+    child.mkdir()
+    target = child / "ignored-write.txt"
+    target_rel = target.relative_to(root).as_posix()
+    (root / ".gitignore").write_text(f"/{target_rel}\n")
+
+    parent = tracker.begin_turn([root])
+    parent.await_baseline()
+    assert tracker.end_turn(parent) == []
+    continuation = tracker.continuation(parent)
+    assert continuation is not None
+
+    successor = tracker.begin_turn([root])
+    successor.await_baseline()
+    key = str(root.resolve())
+    supplied = successor.baselines[key]
+    target.write_text("must stay child-owned\n")
+
+    assert tracker.end_turn(
+        continuation,
+        touched_paths=[str(target)],
+        end_shas=successor.baselines,
+        successor_handle=successor,
+    ) == []
+    assert continuation.end_shas[key] == supplied
+    repo = tracker.service.repo_for_root(root)
+    assert str(repo._run("ls-files", "--", target_rel).stdout).strip() == ""
+
+    (child / ".git").mkdir()
+    records = tracker.end_turn(successor)
+
+    assert len(records) == 1
+    record = records[0]
+    assert record.baseline_sha == supplied
+    assert record.end_sha == supplied
+    assert record.files_changed == 0
+    assert record.nested_repos == (child.name,)
+    assert repo.file_bytes(record.end_sha, target_rel) is None
+    assert str(repo._run("ls-files", "--", target_rel).stdout).strip() == ""
+
+
+def test_supplied_sha_deferred_path_treats_pathspec_magic_as_a_literal_filename(
+    tracker, root
+):
+    target = root / "[ab]"
+    expected = b"literal target\n"
+    sibling = root / "a"
+    (root / ".gitignore").write_text("*\n!/.gitignore\n!/seed.txt\n")
+
+    parent = tracker.begin_turn([root])
+    parent.await_baseline()
+    assert tracker.end_turn(parent) == []
+    continuation = tracker.continuation(parent)
+    assert continuation is not None
+
+    successor = tracker.begin_turn([root])
+    successor.await_baseline()
+    key = str(root.resolve())
+    supplied = successor.baselines[key]
+    target.write_bytes(expected)
+    sibling.write_text("must stay ignored\n")
+
+    assert tracker.end_turn(
+        continuation,
+        touched_paths=[str(target)],
+        end_shas=successor.baselines,
+        successor_handle=successor,
+    ) == []
+    successor_records = tracker.end_turn(successor)
+
+    assert len(successor_records) == 1
+    assert successor_records[0].baseline_sha == supplied
+    repo = tracker.service.repo_for_root(root)
+    assert repo.file_bytes(successor_records[0].end_sha, target.name) == expected
+    assert repo.file_bytes(successor_records[0].end_sha, sibling.name) is None
+
+
+def test_deferred_supplied_path_growing_over_cap_is_disclosed_by_successor(
+    tracker, root, monkeypatch
+):
+    monkeypatch.setenv("TLDW_CHANGE_REVIEW_MAX_FILE_BYTES", "32")
+    target = root / "ignored-race.bin"
+    (root / ".gitignore").write_text(f"{target.name}\n")
+
+    parent = tracker.begin_turn([root])
+    parent.await_baseline()
+    assert tracker.end_turn(parent) == []
+    continuation = tracker.continuation(parent)
+    assert continuation is not None
+
+    (root / "boundary.txt").write_text("at supplied boundary\n")
+    successor = tracker.begin_turn([root])
+    successor.await_baseline()
+    key = str(root.resolve())
+    supplied = successor.baselines[key]
+    assert supplied != continuation.baselines[key]
+    target.write_bytes(b"small")
+    repo = tracker.service.repo_for_root(root)
+    original_run = type(repo)._run
+    grew = False
+
+    def grow_before_index(self, *args, **kwargs):
+        nonlocal grew
+        if (
+            not grew
+            and self.root == root.resolve()
+            and args
+            and args[0] == "update-index"
+            and "--add" in args
+        ):
+            target.write_bytes(b"x" * 33)
+            grew = True
+        return original_run(self, *args, **kwargs)
+
+    monkeypatch.setattr(type(repo), "_run", grow_before_index)
+    continuation_records = tracker.end_turn(
+        continuation,
+        touched_paths=[str(target)],
+        end_shas=successor.baselines,
+        successor_handle=successor,
+    )
+    records = tracker.end_turn(successor)
+
+    assert grew
+    assert continuation.end_shas[key] == supplied
+    assert len(continuation_records) == 1
+    assert len(records) == 1
+    record = records[0]
+    assert record.baseline_sha == supplied
+    assert record.end_sha == supplied
+    assert record.tracking_error == ""
+    assert record.untracked_oversize == 1
+    assert str(repo._run("ls-files", "--", target.name).stdout).strip() == ""
+
+
+def test_deferred_supplied_path_becoming_nested_is_disclosed_by_successor(
+    tracker, root, monkeypatch
+):
+    child = root / "late-child"
+    child.mkdir()
+    target = child / "ignored-write.txt"
+    target_rel = target.relative_to(root).as_posix()
+    (root / ".gitignore").write_text(f"/{target_rel}\n")
+
+    parent = tracker.begin_turn([root])
+    parent.await_baseline()
+    assert tracker.end_turn(parent) == []
+    continuation = tracker.continuation(parent)
+    assert continuation is not None
+
+    (root / "boundary.txt").write_text("at supplied boundary\n")
+    successor = tracker.begin_turn([root])
+    successor.await_baseline()
+    key = str(root.resolve())
+    supplied = successor.baselines[key]
+    assert supplied != continuation.baselines[key]
+    target.write_text("must stay child-owned\n")
+    repo = tracker.service.repo_for_root(root)
+    original_run = type(repo)._run
+    marker_created = threading.Event()
+
+    def create_marker_before_index(self, *args, **kwargs):
+        if (
+            self.root == root.resolve()
+            and not marker_created.is_set()
+            and args[:2] == ("update-index", "--add")
+        ):
+            (child / ".git").mkdir()
+            marker_created.set()
+        return original_run(self, *args, **kwargs)
+
+    monkeypatch.setattr(type(repo), "_run", create_marker_before_index)
+    continuation_records = tracker.end_turn(
+        continuation,
+        touched_paths=[str(target)],
+        end_shas=successor.baselines,
+        successor_handle=successor,
+    )
+    records = tracker.end_turn(successor)
+
+    assert marker_created.is_set()
+    assert continuation.end_shas[key] == supplied
+    assert len(continuation_records) == 1
+    assert len(records) == 1
+    record = records[0]
+    assert record.baseline_sha == supplied
+    assert record.end_sha == supplied
+    assert record.tracking_error == ""
+    assert record.nested_repos == (child.name,)
+    assert str(repo._run("ls-files", "--", target_rel).stdout).strip() == ""
+    assert repo.file_bytes(supplied, target_rel) is None
+
+
+def test_deferred_force_path_snapshot_failure_is_disclosed_by_successor(
+    tracker, root, monkeypatch
+):
+    target = root / "ignored-agent-output.txt"
+    (root / ".gitignore").write_text(f"{target.name}\n")
+    handle = tracker.begin_turn([root])
+    handle.await_baseline()
+    key = str(root.resolve())
+    baseline = handle.baselines[key]
+
+    (root / "boundary.txt").write_text("at supplied boundary\n")
+    successor = tracker.begin_turn([root])
+    successor.await_baseline()
+    supplied = successor.baselines[key]
+    assert supplied != baseline
+    target.write_text("late ignored write\n")
+    repo = tracker.service.repo_for_root(root)
+    original_snapshot = type(repo).snapshot
+
+    def fail_deferred_snapshot(self, message, *, force_paths=()):
+        if force_paths:
+            raise RuntimeError("injected deferred snapshot failure")
+        return original_snapshot(self, message, force_paths=force_paths)
+
+    monkeypatch.setattr(type(repo), "snapshot", fail_deferred_snapshot)
+    records = tracker.end_turn(
+        handle,
+        touched_paths=[str(target)],
+        end_shas={key: supplied},
+        successor_handle=successor,
+    )
+    successor_records = tracker.end_turn(successor)
+
+    assert handle.end_shas.get(key) == supplied
+    assert len(records) == 1
+    assert records[0].baseline_sha == baseline
+    assert records[0].end_sha == supplied
+    assert records[0].tracking_error == ""
+    assert len(successor_records) == 1
+    assert (
+        successor_records[0].tracking_error
+        == "injected deferred snapshot failure"
+    )
+
+
+def test_invalid_supplied_sha_does_not_defer_or_stage_the_path(tracker, root):
+    target = root / "ignored-agent-output.txt"
+    (root / ".gitignore").write_text(f"{target.name}\n")
+    handle = tracker.begin_turn([root])
+    handle.await_baseline()
+    key = str(root.resolve())
+    baseline = handle.baselines[key]
+    target.write_text("must not be staged\n")
+    invalid = "f" * 40
+    repo = tracker.service.repo_for_root(root)
+    records = tracker.end_turn(
+        handle,
+        touched_paths=[str(target)],
+        end_shas={key: invalid},
+    )
+
+    assert handle.end_shas[key] == invalid
+    assert len(records) == 1
+    record = records[0]
+    assert record.baseline_sha == baseline
+    assert record.end_sha == invalid
+    assert record.tracking_error
+    assert str(repo._run("ls-files", "--", target.name).stdout).strip() == ""
+
+
+def test_supplied_sha_preserves_nonempty_continuation_range_statistics(
+    tracker, root
+):
+    parent = tracker.begin_turn([root])
+    parent.await_baseline()
+    assert tracker.end_turn(parent) == []
+    continuation = tracker.continuation(parent)
+    assert continuation is not None
+    key = str(root.resolve())
+    baseline = continuation.baselines[key]
+
+    (root / "between-boundaries.txt").write_text("one\ntwo\n")
+    successor = tracker.begin_turn([root])
+    successor.await_baseline()
+    supplied = successor.baselines[key]
+    assert supplied != baseline
+
+    records = tracker.end_turn(continuation, end_shas=successor.baselines)
+
+    assert continuation.end_shas[key] == supplied
+    assert len(records) == 1
+    assert records[0].baseline_sha == baseline
+    assert records[0].end_sha == supplied
+    assert records[0].files_changed == 1
+    assert records[0].adds == 2
+    assert records[0].dels == 0
 
 
 def test_tracking_failure_yields_error_records_never_raises(tmp_path, root):
@@ -946,6 +2065,7 @@ class _FleetSurvivorGateway:
         self.parent_calls = 0
         self.child_calls = 0
         self.child_started = threading.Event()
+        self.child_second_started = threading.Event()
 
     async def stream_chat(self, resolution, messages, tools=None, **kwargs):
         system = str(messages[0].get("content", "")) if messages else ""
@@ -967,6 +2087,7 @@ class _FleetSurvivorGateway:
                     )
                     side_effect()
             elif self._second_gate is not None:
+                self.child_second_started.set()
                 # The child keeps RUNNING after its write -- how a test
                 # pins a window that must be closed by the next turn
                 # rather than by the child finishing.
@@ -998,6 +2119,19 @@ def _spawn_fence(task: str) -> str:
     )
 
 
+def _write_fence(path: Path, content: str) -> str:
+    return (
+        f"{FENCE_OPEN}\n"
+        + json.dumps(
+            {
+                "name": "write_file",
+                "arguments": {"file_path": str(path), "content": content},
+            }
+        )
+        + "\n```"
+    )
+
+
 def _join_fleet_threads(timeout: float = 5.0) -> None:
     """Block until every live fleet child thread has fully finished.
 
@@ -1017,6 +2151,701 @@ def _next_turn(store, session):
     return store.append_message(
         session.id, role=ConsoleMessageRole.ASSISTANT, content=""
     ).id
+
+
+class _WaitRecordingEvent(threading.Event):
+    """Event whose waiter-entry is itself a deterministic test barrier."""
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.wait_started = threading.Event()
+
+    def wait(self, timeout=None):
+        self.wait_started.set()
+        return super().wait(timeout)
+
+
+class _BlockingParentGateway:
+    """Keep one primary reply inside the provider until its test releases it."""
+
+    def __init__(self) -> None:
+        self.entered = threading.Event()
+        self.release = threading.Event()
+
+    async def stream_chat(self, resolution, messages, tools=None, **kwargs):
+        self.entered.set()
+        loop = asyncio.get_running_loop()
+        await loop.run_in_executor(None, self.release.wait)
+        yield "successor done"
+
+
+def test_post_turn_real_write_file_surfaces_a_new_ignored_path(
+    tmp_path, root, tracker, monkeypatch
+):
+    import tldw_chatbook.config as config_module
+
+    monkeypatch.setattr(
+        config_module,
+        "get_cli_setting",
+        lambda section, key=None, default=None: (
+            True if section == "tools" and key == "write_file_enabled" else default
+        ),
+    )
+
+    target = root / "ignored-agent-output.txt"
+    sentinel = "written by the surviving child\n"
+    (root / ".gitignore").write_text(f"{target.name}\n")
+    assert not target.exists()
+
+    gate = threading.Event()
+    gateway = _FleetSurvivorGateway(
+        parent_scripts=[[_spawn_fence("write ignored output")], ["parent done"]],
+        gate=gate,
+        child_scripts=[[_write_fence(target, sentinel)], ["child done"]],
+    )
+    bridge, db, store, session, aid = _bridge_with(tmp_path, gateway, tracker)
+    try:
+        run_id, outcome = _run(
+            bridge,
+            session,
+            aid,
+            root,
+            builtin_gate=_FakeBuiltinGateForRegistry(refuse=False),
+            scratch_root=root,
+            scratch_lease=lambda: contextlib.nullcontext(root),
+        )
+        assert outcome.status == "done"
+        assert gateway.child_started.wait(5), "the child never started"
+        assert not target.exists(), "the child wrote before its parent returned"
+    finally:
+        gate.set()
+        _join_fleet_threads()
+
+    child_runs = [
+        row for row in db.list_runs("conv-1") if row["agent_kind"] == "subagent"
+    ]
+    assert len(child_runs) == 1, child_runs
+    assert child_runs[0]["status"] == "done"
+    successful_writes = [
+        step
+        for step in child_runs[0]["steps"]
+        if step["kind"] == STEP_TOOL_RESULT
+        and step.get("tool_name") == "write_file"
+        and step.get("tool_outcome") == TOOL_OUTCOME_SUCCESS
+    ]
+    assert len(successful_writes) == 1, child_runs[0]["steps"]
+    assert target.read_text() == sentinel
+
+    repo = tracker.service.repo_for_root(root)
+    rows = db.change_snapshots_for_run(run_id)
+    rows_listing_target = [
+        row
+        for row in rows
+        if row["kind"] == "subagent_post_turn"
+        and target.name
+        in [
+            changed.path
+            for changed in repo.changed_files(row["baseline_sha"], row["end_sha"])
+        ]
+    ]
+    assert len(rows_listing_target) == 1, rows
+    assert (
+        repo.file_bytes(rows_listing_target[0]["end_sha"], target.name)
+        == sentinel.encode()
+    )
+
+
+def test_pending_child_before_scope_entry_keeps_ignored_write_reviewable(
+    tmp_path, root, tracker, monkeypatch
+):
+    import tldw_chatbook.config as config_module
+
+    monkeypatch.setattr(
+        config_module,
+        "get_cli_setting",
+        lambda section, key=None, default=None: (
+            True if section == "tools" and key == "write_file_enabled" else default
+        ),
+    )
+
+    target = root / "pending-child-output.txt"
+    sentinel = "written after delayed child scope entry\n"
+    (root / ".gitignore").write_text(f"{target.name}\n")
+    child_write_gate = threading.Event()
+    scope_waiting = threading.Event()
+    enter_scope = threading.Event()
+    gateway = _FleetSurvivorGateway(
+        parent_scripts=[[_spawn_fence("write delayed output")], ["parent done"]],
+        gate=child_write_gate,
+        # Relative tool input exercises scratch-root normalization before
+        # the path crosses parent E.
+        child_scripts=[[_write_fence(Path(target.name), sentinel)], ["child done"]],
+    )
+    bridge, db, store, session, aid = _bridge_with(tmp_path, gateway, tracker)
+    original_scope = bridge._child_run_scope
+
+    @contextlib.contextmanager
+    def delayed_scope(*args, **kwargs):
+        scope_waiting.set()
+        assert enter_scope.wait(5), "test barrier timed out before child scope entry"
+        with original_scope(*args, **kwargs):
+            yield
+
+    monkeypatch.setattr(bridge, "_child_run_scope", delayed_scope)
+    try:
+        run_id, outcome = _run(
+            bridge,
+            session,
+            aid,
+            root,
+            builtin_gate=_FakeBuiltinGateForRegistry(refuse=False),
+            scratch_root=root,
+            scratch_lease=lambda: contextlib.nullcontext(root),
+        )
+        assert outcome.status == "done"
+        assert scope_waiting.wait(5), "child never reached the pre-scope barrier"
+        assert not target.exists(), "child wrote before its parent returned"
+        enter_scope.set()
+        assert gateway.child_started.wait(5), "child never entered its real scope"
+        child_write_gate.set()
+        _join_fleet_threads()
+    finally:
+        enter_scope.set()
+        child_write_gate.set()
+        _join_fleet_threads()
+
+    assert target.read_text() == sentinel
+    assert bridge._child_change_states == {}
+    child_runs = [
+        row for row in db.list_runs("conv-1") if row["agent_kind"] == "subagent"
+    ]
+    assert len(child_runs) == 1, child_runs
+    successful_writes = [
+        step
+        for step in child_runs[0]["steps"]
+        if step["kind"] == STEP_TOOL_RESULT
+        and step.get("tool_name") == "write_file"
+        and step.get("tool_outcome") == TOOL_OUTCOME_SUCCESS
+    ]
+    assert len(successful_writes) == 1, child_runs[0]["steps"]
+
+    repo = tracker.service.repo_for_root(root)
+    rows = db.change_snapshots_for_run(run_id)
+    survivor_rows = [row for row in rows if row["kind"] == "subagent_post_turn"]
+    assert len(survivor_rows) == 1, (
+        "the pending child's ignored WRITE path was omitted from survivor close: "
+        f"{rows}"
+    )
+    changed = repo.changed_files(
+        survivor_rows[0]["baseline_sha"], survivor_rows[0]["end_sha"]
+    )
+    assert [item.path for item in changed] == [target.name], changed
+    assert (
+        repo.file_bytes(survivor_rows[0]["end_sha"], target.name)
+        == sentinel.encode()
+    )
+
+
+def test_pending_inherited_child_at_successor_b_marks_concurrent_turn(
+    tmp_path, root, tracker, monkeypatch
+):
+    import tldw_chatbook.config as config_module
+
+    monkeypatch.setattr(
+        config_module,
+        "get_cli_setting",
+        lambda section, key=None, default=None: (
+            True if section == "tools" and key == "write_file_enabled" else default
+        ),
+    )
+
+    target = root / "pending-successor-output.txt"
+    sentinel = "written by a child that was pending at successor B\n"
+    (root / ".gitignore").write_text(f"{target.name}\n")
+    child_write_gate = threading.Event()
+    scope_waiting = threading.Event()
+    enter_scope = threading.Event()
+
+    def release_child_during_successor() -> None:
+        enter_scope.set()
+        child_write_gate.set()
+        _join_fleet_threads()
+
+    gateway = _FleetSurvivorGateway(
+        parent_scripts=[
+            [_spawn_fence("write during successor")],
+            ["parent one done"],
+            [_calc_fence()],
+            ["parent two done"],
+        ],
+        gate=child_write_gate,
+        parent_side_effect=release_child_during_successor,
+        parent_side_effect_on_call=4,
+        child_scripts=[[_write_fence(Path(target.name), sentinel)], ["child done"]],
+    )
+    bridge, db, store, session, aid = _bridge_with(tmp_path, gateway, tracker)
+    original_scope = bridge._child_run_scope
+
+    @contextlib.contextmanager
+    def delayed_scope(*args, **kwargs):
+        scope_waiting.set()
+        assert enter_scope.wait(5), "test barrier timed out before child scope entry"
+        with original_scope(*args, **kwargs):
+            yield
+
+    monkeypatch.setattr(bridge, "_child_run_scope", delayed_scope)
+    try:
+        _run(
+            bridge,
+            session,
+            aid,
+            root,
+            builtin_gate=_FakeBuiltinGateForRegistry(refuse=False),
+            scratch_root=root,
+            scratch_lease=lambda: contextlib.nullcontext(root),
+        )
+        assert scope_waiting.wait(5), "child never reached the pre-scope barrier"
+        assert bridge._live_child_count("conv-1") == 0
+        assert not target.exists()
+
+        run_2, outcome_2 = _run(
+            bridge,
+            session,
+            _next_turn(store, session),
+            root,
+            builtin_gate=_FakeBuiltinGateForRegistry(refuse=False),
+            scratch_root=root,
+            scratch_lease=lambda: contextlib.nullcontext(root),
+        )
+        assert outcome_2.status == "done"
+    finally:
+        enter_scope.set()
+        child_write_gate.set()
+        _join_fleet_threads()
+
+    repo = tracker.service.repo_for_root(root)
+    rows = db.change_snapshots_for_run(run_2)
+    rows_listing_target = [
+        row
+        for row in rows
+        if target.name
+        in [
+            changed.path
+            for changed in repo.changed_files(row["baseline_sha"], row["end_sha"])
+        ]
+    ]
+    assert len(rows_listing_target) == 1, rows
+    assert rows_listing_target[0]["kind"] == "turn_concurrent_subagent"
+    assert any(
+        "earlier turn" in message.content and "sub-agent" in message.content
+        for message in _tool_rows(store, session)
+    )
+
+
+def test_child_write_during_blocked_parent_e_is_retried_by_immediate_close(
+    tmp_path, root, tracker, monkeypatch
+):
+    import tldw_chatbook.config as config_module
+
+    monkeypatch.setattr(
+        config_module,
+        "get_cli_setting",
+        lambda section, key=None, default=None: (
+            True if section == "tools" and key == "write_file_enabled" else default
+        ),
+    )
+
+    target = root / "blocked-parent-e-output.txt"
+    sentinel = "written while parent E was blocked\n"
+    (root / ".gitignore").write_text(f"{target.name}\n")
+    child_write_gate = threading.Event()
+    scope_waiting = threading.Event()
+    enter_scope = threading.Event()
+    end_started = threading.Event()
+    release_end = threading.Event()
+    scope_exited = threading.Event()
+    allow_settle = threading.Event()
+    gateway = _FleetSurvivorGateway(
+        parent_scripts=[[_spawn_fence("write during parent E")], ["parent done"]],
+        gate=child_write_gate,
+        child_scripts=[[_write_fence(target, sentinel)], ["child done"]],
+    )
+    bridge, db, store, session, aid = _bridge_with(tmp_path, gateway, tracker)
+    original_scope = bridge._child_run_scope
+    repo = tracker.service.repo_for_root(root)
+    original_snapshot = repo.snapshot
+    original_repo_for_root = tracker.service.repo_for_root
+
+    @contextlib.contextmanager
+    def pause_after_real_scope(*args, **kwargs):
+        scope_waiting.set()
+        assert enter_scope.wait(5), "test barrier timed out before child scope entry"
+        with original_scope(*args, **kwargs):
+            yield
+        scope_exited.set()
+        assert allow_settle.wait(5), "test barrier timed out before child settle"
+
+    def instrumented_repo_for_root(candidate):
+        if Path(candidate).expanduser().resolve() == root.resolve():
+            return repo
+        return original_repo_for_root(candidate)
+
+    def blocked_snapshot(message, *args, **kwargs):
+        if message == "turn end":
+            end_started.set()
+            assert release_end.wait(5), "test barrier timed out inside parent E"
+        return original_snapshot(message, *args, **kwargs)
+
+    monkeypatch.setattr(bridge, "_child_run_scope", pause_after_real_scope)
+    monkeypatch.setattr(tracker.service, "repo_for_root", instrumented_repo_for_root)
+    monkeypatch.setattr(repo, "snapshot", blocked_snapshot)
+    result: dict[str, object] = {}
+
+    def run_parent() -> None:
+        try:
+            result["value"] = _run(
+                bridge,
+                session,
+                aid,
+                root,
+                builtin_gate=_FakeBuiltinGateForRegistry(refuse=False),
+                scratch_root=root,
+                scratch_lease=lambda: contextlib.nullcontext(root),
+            )
+        except BaseException as exc:  # noqa: BLE001 -- re-raised on test thread
+            result["error"] = exc
+
+    parent = threading.Thread(target=run_parent, name="blocked-parent-e")
+    parent.start()
+    try:
+        assert scope_waiting.wait(5), "child never reached the pre-scope barrier"
+        assert end_started.wait(5), "parent never reached its E snapshot"
+        assert not target.exists(), "child wrote before parent E capture"
+        enter_scope.set()
+        assert gateway.child_started.wait(5), "child never reached its WRITE gate"
+        child_write_gate.set()
+        assert scope_exited.wait(5), "real child scope never exited"
+        assert bridge._live_child_count("conv-1") == 0
+        assert target.read_text() == sentinel
+        assert parent.is_alive(), "parent E was not held by the test barrier"
+        assert bridge._child_change_states.get("conv-1"), (
+            "child settle crossed the test barrier and removed live state"
+        )
+        release_end.set()
+        parent.join(10)
+        assert not parent.is_alive(), "parent did not leave E after barrier release"
+
+        if "error" in result:
+            raise result["error"]  # type: ignore[misc]
+        run_id, outcome = result["value"]  # type: ignore[misc]
+        assert outcome.status == "done"
+        assert bridge._post_turn_change_windows.get("conv-1") is None, (
+            "a pre-scope child that exited during E stranded its window"
+        )
+
+        rows = db.change_snapshots_for_run(run_id)
+        survivor_rows = [
+            row for row in rows if row["kind"] == "subagent_post_turn"
+        ]
+        assert len(survivor_rows) == 1, (
+            "the pre-scope child's ignored WRITE path published during E was "
+            f"omitted from immediate survivor close: {rows}"
+        )
+        changed = repo.changed_files(
+            survivor_rows[0]["baseline_sha"], survivor_rows[0]["end_sha"]
+        )
+        assert [item.path for item in changed] == [target.name], changed
+        assert (
+            repo.file_bytes(survivor_rows[0]["end_sha"], target.name)
+            == sentinel.encode()
+        )
+    finally:
+        enter_scope.set()
+        child_write_gate.set()
+        release_end.set()
+        allow_settle.set()
+        parent.join(10)
+        _join_fleet_threads()
+
+    assert bridge._child_change_states == {}
+
+
+def test_settled_child_before_parent_e_keeps_ignored_write_reviewable(
+    tmp_path, root, tracker, monkeypatch
+):
+    import tldw_chatbook.config as config_module
+
+    monkeypatch.setattr(
+        config_module,
+        "get_cli_setting",
+        lambda section, key=None, default=None: (
+            True if section == "tools" and key == "write_file_enabled" else default
+        ),
+    )
+
+    target = root / "settled-child-output.txt"
+    sentinel = "written by child before parent E\n"
+    (root / ".gitignore").write_text(f"{target.name}\n")
+    child_write_gate = threading.Event()
+    child_settled = threading.Event()
+
+    def settle_child_before_parent_final() -> None:
+        assert gateway.child_started.wait(5), "child never reached its WRITE gate"
+        child_write_gate.set()
+        _join_fleet_threads()
+        child_settled.set()
+
+    gateway = _FleetSurvivorGateway(
+        parent_scripts=[
+            [_spawn_fence("write before parent E")],
+            ["parent done"],
+        ],
+        gate=child_write_gate,
+        child_scripts=[[_write_fence(target, sentinel)], ["child done"]],
+        parent_side_effect=settle_child_before_parent_final,
+        parent_side_effect_on_call=2,
+    )
+    bridge, db, store, session, aid = _bridge_with(tmp_path, gateway, tracker)
+    try:
+        run_id, outcome = _run(
+            bridge,
+            session,
+            aid,
+            root,
+            builtin_gate=_FakeBuiltinGateForRegistry(refuse=False),
+            scratch_root=root,
+            scratch_lease=lambda: contextlib.nullcontext(root),
+        )
+    finally:
+        child_write_gate.set()
+        _join_fleet_threads()
+
+    assert outcome.status == "done"
+    assert child_settled.is_set(), "child did not fully settle before parent E"
+    assert bridge._child_change_states == {}
+    assert target.read_text() == sentinel
+
+    child_runs = [
+        row for row in db.list_runs("conv-1") if row["agent_kind"] == "subagent"
+    ]
+    assert len(child_runs) == 1, child_runs
+    assert any(
+        step["kind"] == STEP_TOOL_RESULT
+        and step.get("tool_name") == "write_file"
+        and step.get("tool_outcome") == TOOL_OUTCOME_SUCCESS
+        for step in child_runs[0]["steps"]
+    ), child_runs[0]["steps"]
+
+    rows = db.change_snapshots_for_run(run_id)
+    turn_rows = [row for row in rows if row["kind"] == "turn"]
+    assert len(turn_rows) == 1, (
+        "the settled child's local WRITE state was omitted from parent E: "
+        f"{rows}"
+    )
+    assert not [row for row in rows if row["kind"] == "subagent_post_turn"], rows
+    assert bridge._post_turn_change_windows.get("conv-1") is None
+    repo = tracker.service.repo_for_root(root)
+    changed = repo.changed_files(
+        turn_rows[0]["baseline_sha"], turn_rows[0]["end_sha"]
+    )
+    assert [item.path for item in changed] == [target.name], changed
+    assert repo.file_bytes(turn_rows[0]["end_sha"], target.name) == sentinel.encode()
+
+
+def test_child_write_path_normalization_failure_is_best_effort(
+    tmp_path, root, tracker, monkeypatch
+):
+    import tldw_chatbook.config as config_module
+
+    monkeypatch.setattr(
+        config_module,
+        "get_cli_setting",
+        lambda section, key=None, default=None: (
+            True if section == "tools" and key == "write_file_enabled" else default
+        ),
+    )
+
+    target = root / "bad-normalization.txt"
+    sibling = root / "good-sibling.txt"
+    sentinel = "the child still completed its WRITE\n"
+    child_write_gate = threading.Event()
+    child_settled = threading.Event()
+    normalization_failed = threading.Event()
+
+    def settle_child_before_parent_final() -> None:
+        assert gateway.child_started.wait(5), "child never reached its WRITE gate"
+        child_write_gate.set()
+        _join_fleet_threads()
+        child_settled.set()
+
+    gateway = _FleetSurvivorGateway(
+        parent_scripts=[
+            [_spawn_fence("write despite tracking failure")],
+            ["parent done"],
+        ],
+        gate=child_write_gate,
+        child_scripts=[
+            [_write_fence(Path(target.name), sentinel)],
+            ["child done"],
+        ],
+        parent_side_effect=settle_child_before_parent_final,
+        parent_side_effect_on_call=2,
+    )
+    bridge, db, store, session, aid = _bridge_with(tmp_path, gateway, tracker)
+    child_states: list[_ChildChangeState] = []
+    original_scope = bridge._child_run_scope
+    original_touched_paths = ChangeTurnTracker.tool_touched_paths
+    original_resolve = Path.resolve
+
+    @contextlib.contextmanager
+    def capture_child_state(conversation_id, adapter, child_change_state):
+        child_states.append(child_change_state)
+        with original_scope(conversation_id, adapter, child_change_state):
+            yield
+
+    def touched_paths_with_sibling(steps):
+        steps = tuple(steps)
+        if (
+            len(steps) == 1
+            and steps[0].kind == STEP_TOOL_CALL
+            and steps[0].tool_name == "write_file"
+            and steps[0].args == {
+                "file_path": target.name,
+                "content": sentinel,
+            }
+        ):
+            return [target.name, sibling.name]
+        return original_touched_paths(steps)
+
+    def fail_target_once(path, *args, **kwargs):
+        if path == target and not normalization_failed.is_set():
+            normalization_failed.set()
+            raise OSError("synthetic path normalization failure")
+        return original_resolve(path, *args, **kwargs)
+
+    monkeypatch.setattr(bridge, "_child_run_scope", capture_child_state)
+    monkeypatch.setattr(
+        ChangeTurnTracker,
+        "tool_touched_paths",
+        staticmethod(touched_paths_with_sibling),
+    )
+    monkeypatch.setattr(Path, "resolve", fail_target_once)
+    try:
+        _, outcome = _run(
+            bridge,
+            session,
+            aid,
+            root,
+            builtin_gate=_FakeBuiltinGateForRegistry(refuse=False),
+            scratch_root=root,
+            scratch_lease=lambda: contextlib.nullcontext(root),
+        )
+    finally:
+        child_write_gate.set()
+        _join_fleet_threads()
+
+    assert normalization_failed.is_set(), "the normalization failure did not fire"
+    assert outcome.status == "done"
+    assert child_settled.is_set(), "child did not fully settle before parent E"
+    assert target.read_text() == sentinel
+    child_runs = [
+        row for row in db.list_runs("conv-1") if row["agent_kind"] == "subagent"
+    ]
+    assert len(child_runs) == 1, child_runs
+    assert child_runs[0]["status"] == "done"
+    assert any(
+        step["kind"] == STEP_TOOL_RESULT
+        and step.get("tool_name") == "write_file"
+        and step.get("tool_outcome") == TOOL_OUTCOME_SUCCESS
+        for step in child_runs[0]["steps"]
+    ), child_runs[0]["steps"]
+    assert len(child_states) == 1
+    assert child_states[0].touched_paths == {str(sibling)}
+
+
+def test_scratch_root_normalization_failure_keeps_child_step_processing(
+    tmp_path, root, tracker, monkeypatch
+):
+    import tldw_chatbook.config as config_module
+
+    monkeypatch.setattr(
+        config_module,
+        "get_cli_setting",
+        lambda section, key=None, default=None: (
+            True if section == "tools" and key == "write_file_enabled" else default
+        ),
+    )
+
+    target = root / "raw-relative-output.txt"
+    sentinel = "the scratch authority still handled this WRITE\n"
+    child_write_gate = threading.Event()
+    child_settled = threading.Event()
+    normalization_failed = threading.Event()
+
+    class FailingProjectionRoot(type(root)):
+        def resolve(self, *args, **kwargs):
+            if self == root and not normalization_failed.is_set():
+                normalization_failed.set()
+                raise OSError("synthetic scratch-root normalization failure")
+            return super().resolve(*args, **kwargs)
+
+    scratch_root = FailingProjectionRoot(root)
+
+    def settle_child_before_parent_final() -> None:
+        assert gateway.child_started.wait(5), "child never reached its WRITE gate"
+        child_write_gate.set()
+        _join_fleet_threads()
+        child_settled.set()
+
+    gateway = _FleetSurvivorGateway(
+        parent_scripts=[
+            [_spawn_fence("write after scratch projection failure")],
+            ["parent done"],
+        ],
+        gate=child_write_gate,
+        child_scripts=[
+            [_write_fence(Path(target.name), sentinel)],
+            ["child done"],
+        ],
+        parent_side_effect=settle_child_before_parent_final,
+        parent_side_effect_on_call=2,
+    )
+    bridge, db, store, session, aid = _bridge_with(tmp_path, gateway, tracker)
+    child_states: list[_ChildChangeState] = []
+    original_scope = bridge._child_run_scope
+
+    @contextlib.contextmanager
+    def capture_child_state(conversation_id, adapter, child_change_state):
+        child_states.append(child_change_state)
+        with original_scope(conversation_id, adapter, child_change_state):
+            yield
+
+    monkeypatch.setattr(bridge, "_child_run_scope", capture_child_state)
+    try:
+        _, outcome = _run(
+            bridge,
+            session,
+            aid,
+            root,
+            builtin_gate=_FakeBuiltinGateForRegistry(refuse=False),
+            scratch_root=scratch_root,
+            scratch_lease=lambda: contextlib.nullcontext(scratch_root),
+        )
+    finally:
+        child_write_gate.set()
+        _join_fleet_threads()
+
+    assert normalization_failed.is_set(), "the scratch-root failure did not fire"
+    assert outcome.status == "done"
+    assert child_settled.is_set(), "child did not fully settle before parent E"
+    assert target.read_text() == sentinel
+    child_runs = [
+        row for row in db.list_runs("conv-1") if row["agent_kind"] == "subagent"
+    ]
+    assert len(child_runs) == 1, child_runs
+    assert child_runs[0]["status"] == "done"
+    assert len(child_states) == 1
+    assert child_states[0].touched_paths == {target.name}
 
 
 def test_a_survivors_write_after_its_turn_lands_in_a_change_record(
@@ -1582,6 +3411,92 @@ def test_opening_a_window_whose_last_child_already_left_closes_it_at_once(
     assert rows[0]["files_changed"] == 1, rows
 
 
+def test_shared_pending_scope_count_closes_only_after_each_child_enters(
+    tmp_path, monkeypatch
+):
+    bridge = ConsoleAgentBridge(
+        agent_runs_db=AgentRunsDB(tmp_path / "runs.db", client_id="t"),
+        store=None,
+        provider_gateway=None,
+    )
+    state = _ChildChangeState(owner_key="owner", pending_scopes=2)
+    window = _PostTurnChangeWindow(
+        run_id="parent-run",
+        session_id="session",
+        handle=object(),
+        child_states=(state,),
+    )
+    bridge._post_turn_change_windows["conv-1"] = window
+    closes: list[str] = []
+
+    def record_close(conversation_id: str) -> None:
+        with bridge._change_window_lock:
+            removed = bridge._post_turn_change_windows.pop(conversation_id, None)
+        if removed is not None:
+            closes.append(conversation_id)
+
+    monkeypatch.setattr(bridge, "_close_post_turn_change_window", record_close)
+    adapter = SimpleNamespace(child_lifeline=contextlib.nullcontext)
+
+    with bridge._child_run_scope("conv-1", adapter, state):
+        assert state.pending_scopes == 1
+    assert bridge._post_turn_change_windows.get("conv-1") is window
+    assert closes == []
+
+    with bridge._child_run_scope("conv-1", adapter, state):
+        assert state.pending_scopes == 0
+    assert bridge._post_turn_change_windows.get("conv-1") is None
+    assert closes == ["conv-1"]
+
+
+def test_final_settle_cleanup_keeps_window_for_other_pending_state(
+    tmp_path, monkeypatch
+):
+    bridge = ConsoleAgentBridge(
+        agent_runs_db=AgentRunsDB(tmp_path / "runs.db", client_id="t"),
+        store=None,
+        provider_gateway=None,
+    )
+    settling = _ChildChangeState(owner_key="settling", pending_scopes=1)
+    other = _ChildChangeState(owner_key="other", pending_scopes=1)
+    window = _PostTurnChangeWindow(
+        run_id="parent-run",
+        session_id="session",
+        handle=object(),
+        child_states=(settling, other),
+    )
+    bridge._post_turn_change_windows["conv-1"] = window
+    bridge._child_change_states["conv-1"] = {
+        settling.owner_key: settling,
+        other.owner_key: other,
+    }
+    closes: list[str] = []
+
+    def record_close(conversation_id: str) -> None:
+        with bridge._change_window_lock:
+            removed = bridge._post_turn_change_windows.pop(conversation_id, None)
+        if removed is not None:
+            closes.append(conversation_id)
+
+    monkeypatch.setattr(bridge, "_close_post_turn_change_window", record_close)
+
+    with bridge._change_window_lock:
+        settling.pending_scopes = 0
+        bridge._child_change_states["conv-1"].pop(settling.owner_key)
+    bridge._close_post_turn_change_window_if_idle("conv-1")
+
+    assert bridge._post_turn_change_windows.get("conv-1") is window
+    assert closes == []
+
+    with bridge._change_window_lock:
+        other.pending_scopes = 0
+        bridge._child_change_states.pop("conv-1")
+    bridge._close_post_turn_change_window_if_idle("conv-1")
+
+    assert bridge._post_turn_change_windows.get("conv-1") is None
+    assert closes == ["conv-1"]
+
+
 def test_a_survivor_finishing_mid_turn_is_counted_in_exactly_one_window(
     tmp_path, root, tracker
 ):
@@ -1634,3 +3549,1424 @@ def test_a_survivor_finishing_mid_turn_is_counted_in_exactly_one_window(
         "the survivor's single write is on "
         f"{len(holding)} change records: {[r['kind'] for r in holding]}"
     )
+
+
+def test_successor_claim_uses_window_paths_after_live_state_cleanup(
+    tmp_path, root, tracker, monkeypatch
+):
+    target = root / "claimed-window-only.txt"
+    expected = b"present before successor B\n"
+    (root / ".gitignore").write_text(f"{target.name}\n")
+
+    gateway = _SideEffectGateway([["successor done"]])
+    bridge, db, store, session, aid = _bridge_with(tmp_path, gateway, tracker)
+    old_run_id = db.create_run(conversation_id="conv-1", agent_kind="primary")
+    old_turn = tracker.begin_turn([root])
+    old_turn.await_baseline()
+    tracker.end_turn(old_turn)
+    follow_on = tracker.continuation(old_turn)
+    assert follow_on is not None
+
+    target.write_bytes(expected)
+    state = _ChildChangeState(
+        owner_key="old-owner",
+        touched_paths={str(target)},
+    )
+    window = _PostTurnChangeWindow(
+        run_id=old_run_id,
+        session_id=session.id,
+        handle=follow_on,
+        child_states=(state,),
+    )
+    bridge._post_turn_change_windows["conv-1"] = window
+    bridge._child_change_states["conv-1"] = {state.owner_key: state}
+
+    cleanup_ready = threading.Event()
+    release_cleanup = threading.Event()
+    cleanup_done = threading.Event()
+
+    def clean_live_state() -> None:
+        cleanup_ready.set()
+        assert release_cleanup.wait(5), "cleanup barrier was never released"
+        with bridge._change_window_lock:
+            states = bridge._child_change_states.get("conv-1")
+            assert states is not None
+            states.pop(state.owner_key)
+            bridge._child_change_states.pop("conv-1")
+        cleanup_done.set()
+
+    cleanup = threading.Thread(target=clean_live_state, name="state-cleanup")
+    cleanup.start()
+    assert cleanup_ready.wait(5), "cleanup thread never reached its barrier"
+    release_cleanup.set()
+    assert cleanup_done.wait(5), "cleanup thread did not remove live state"
+    cleanup.join(5)
+    assert not cleanup.is_alive()
+    assert bridge._child_change_states == {}
+    assert window.child_states == (state,)
+
+    real_begin = tracker.begin_turn
+    captured: dict[str, object] = {}
+
+    def capture_begin(roots, touched_paths=()):
+        captured["paths"] = tuple(touched_paths)
+        handle = real_begin(roots, touched_paths=touched_paths)
+        captured["handle"] = handle
+        return handle
+
+    monkeypatch.setattr(tracker, "begin_turn", capture_begin)
+    _, outcome = _run(bridge, session, aid, root)
+
+    assert outcome.status == "done"
+    assert str(target) in captured["paths"]
+    successor = captured["handle"]
+    successor.await_baseline()
+    baseline = successor.baselines[str(root.resolve())]
+    repo = tracker.service.repo_for_root(root)
+    assert repo.file_bytes(baseline, target.name) == expected
+
+
+def test_successor_b_waits_for_an_already_started_fresh_close(
+    tmp_path, root, tracker, monkeypatch
+):
+    gateway = _SideEffectGateway([["successor done"]])
+    bridge, db, store, session, aid = _bridge_with(tmp_path, gateway, tracker)
+    old_run_id = db.create_run(conversation_id="conv-1", agent_kind="primary")
+    old_turn = tracker.begin_turn([root])
+    old_turn.await_baseline()
+    tracker.end_turn(old_turn)
+    follow_on = tracker.continuation(old_turn)
+    assert follow_on is not None
+    (root / "fresh-close.txt").write_text("closed before successor B\n")
+
+    close_done = _WaitRecordingEvent()
+    window = _PostTurnChangeWindow(
+        run_id=old_run_id,
+        session_id=session.id,
+        handle=follow_on,
+        close_done=close_done,
+    )
+    bridge._post_turn_change_windows["conv-1"] = window
+    fresh_close_owned = threading.Event()
+    release_close = threading.Event()
+    successor_b_started = threading.Event()
+    successor_handles: list[object] = []
+    real_end = tracker.end_turn
+    real_begin = tracker.begin_turn
+
+    def block_fresh_close(handle, *args, **kwargs):
+        if handle is window.handle:
+            assert kwargs.get("end_shas") is None
+            fresh_close_owned.set()
+            assert release_close.wait(5), "fresh close was never released"
+        return real_end(handle, *args, **kwargs)
+
+    def record_successor_b(roots, touched_paths=()):
+        successor_b_started.set()
+        handle = real_begin(roots, touched_paths=touched_paths)
+        successor_handles.append(handle)
+        return handle
+
+    monkeypatch.setattr(tracker, "end_turn", block_fresh_close)
+    monkeypatch.setattr(tracker, "begin_turn", record_successor_b)
+    errors: list[BaseException] = []
+    results: list[object] = []
+
+    def close_old_window() -> None:
+        try:
+            bridge._close_post_turn_change_window("conv-1")
+        except BaseException as exc:  # noqa: BLE001 -- asserted on test thread
+            errors.append(exc)
+
+    def run_successor() -> None:
+        try:
+            results.append(_run(bridge, session, aid, root))
+        except BaseException as exc:  # noqa: BLE001 -- asserted on test thread
+            errors.append(exc)
+
+    closer = threading.Thread(target=close_old_window, name="fresh-close-owner")
+    successor_thread = threading.Thread(target=run_successor, name="successor-b")
+    closer.start()
+    try:
+        assert fresh_close_owned.wait(5), "fresh close never reached the tracker"
+        successor_thread.start()
+        assert close_done.wait_started.wait(5), (
+            "successor did not wait on the already-owned fresh close"
+        )
+        assert not successor_b_started.is_set(), (
+            "successor B started before the fresh close completed"
+        )
+    finally:
+        release_close.set()
+        closer.join(10)
+        successor_thread.join(10)
+
+    assert not closer.is_alive()
+    assert not successor_thread.is_alive()
+    assert errors == []
+    assert results[0][1].status == "done"
+    assert len(successor_handles) == 1
+    successor = successor_handles[0]
+    successor.await_baseline()
+    old_rows = db.change_snapshots_for_run(old_run_id)
+    assert len(old_rows) == 1, old_rows
+    assert old_rows[0]["end_sha"] == successor.baselines[str(root.resolve())]
+
+
+@pytest.mark.parametrize("close_failure", ["exception", "tracking_error"])
+def test_successor_b_rejects_a_completed_but_failed_fresh_close(
+    tmp_path, root, tracker, monkeypatch, close_failure
+):
+    gateway = _SideEffectGateway([["successor still replies"]])
+    bridge, db, store, session, aid = _bridge_with(tmp_path, gateway, tracker)
+    old_run_id = db.create_run(conversation_id="conv-1", agent_kind="primary")
+    old_turn = tracker.begin_turn([root])
+    old_turn.await_baseline()
+    tracker.end_turn(old_turn)
+    follow_on = tracker.continuation(old_turn)
+    assert follow_on is not None
+
+    close_done = _WaitRecordingEvent()
+    window = _PostTurnChangeWindow(
+        run_id=old_run_id,
+        session_id=session.id,
+        handle=follow_on,
+        close_done=close_done,
+    )
+    bridge._post_turn_change_windows["conv-1"] = window
+    real_begin = tracker.begin_turn
+    real_end = tracker.end_turn
+    close_owned = threading.Event()
+    release_close = threading.Event()
+    successor_b_called = threading.Event()
+    successor_handles: list[object] = []
+
+    def fail_fresh_close(handle, *args, **kwargs):
+        if handle is not window.handle:
+            return real_end(handle, *args, **kwargs)
+        close_owned.set()
+        assert release_close.wait(5), "failed close was never released"
+        if close_failure == "exception":
+            raise RuntimeError("injected fresh-close failure")
+        return [
+            TurnChangeRecord(
+                root=str(root.resolve()),
+                tracking_error="injected fresh-close tracking failure",
+            )
+        ]
+
+    def record_successor_b(roots, touched_paths=()):
+        successor_b_called.set()
+        handle = real_begin(roots, touched_paths=touched_paths)
+        successor_handles.append(handle)
+        return handle
+
+    monkeypatch.setattr(tracker, "end_turn", fail_fresh_close)
+    monkeypatch.setattr(tracker, "begin_turn", record_successor_b)
+    owner_results: list[bool] = []
+    results: list[object] = []
+    failures: list[BaseException] = []
+
+    def close_old_window() -> None:
+        try:
+            owner_results.append(
+                bridge._close_post_turn_change_window("conv-1")
+            )
+        except BaseException as exc:  # noqa: BLE001 -- asserted below
+            failures.append(exc)
+
+    def run_successor() -> None:
+        try:
+            results.append(_run(bridge, session, aid, root))
+        except BaseException as exc:  # noqa: BLE001 -- asserted below
+            failures.append(exc)
+
+    closer = threading.Thread(target=close_old_window, name="failed-fresh-owner")
+    successor = threading.Thread(target=run_successor, name="failed-fresh-b")
+    closer.start()
+    try:
+        assert close_owned.wait(5), "fresh close never reached its failure seam"
+        successor.start()
+        assert close_done.wait_started.wait(5), (
+            "successor B never waited on the closing window"
+        )
+        assert not successor_b_called.is_set(), (
+            "successor B started before close completion"
+        )
+    finally:
+        release_close.set()
+        closer.join(10)
+        successor.join(10)
+
+    assert not closer.is_alive()
+    assert not successor.is_alive()
+    for handle in successor_handles:
+        handle.await_baseline()
+    assert failures == []
+    assert owner_results == [False]
+    assert results[0][1].status == "done"
+    assert close_done.is_set()
+    assert not successor_b_called.is_set()
+    assert successor_handles == []
+    assert getattr(window, "close_succeeded", None) is False
+
+
+def test_successor_b_freezes_paths_atomically_with_older_publication(
+    tmp_path, root, tracker, monkeypatch
+):
+    target = root / "published-at-b-boundary.txt"
+    (root / ".gitignore").write_text(f"{target.name}\n")
+    gateway = _BlockingParentGateway()
+    bridge, db, store, session, aid = _bridge_with(tmp_path, gateway, tracker)
+    old_run_id = db.create_run(conversation_id="conv-1", agent_kind="primary")
+    old_turn = tracker.begin_turn([root])
+    old_turn.await_baseline()
+    tracker.end_turn(old_turn)
+    follow_on = tracker.continuation(old_turn)
+    assert follow_on is not None
+    state = _ChildChangeState(owner_key="older-owner")
+    window = _PostTurnChangeWindow(
+        run_id=old_run_id,
+        session_id=session.id,
+        handle=follow_on,
+        child_states=(state,),
+    )
+    bridge._post_turn_change_windows["conv-1"] = window
+    bridge._child_change_states["conv-1"] = {state.owner_key: state}
+
+    class OwnerRecordingLock:
+        def __init__(self) -> None:
+            self._lock = threading.Lock()
+            self._meta_lock = threading.Lock()
+            self._owner: str | None = None
+            self.publisher_attempted = threading.Event()
+
+        def acquire(self, blocking=True, timeout=-1):
+            if threading.current_thread().name == "older-path-publisher":
+                self.publisher_attempted.set()
+            if timeout == -1:
+                acquired = self._lock.acquire(blocking)
+            else:
+                acquired = self._lock.acquire(blocking, timeout)
+            if acquired:
+                with self._meta_lock:
+                    self._owner = threading.current_thread().name
+            return acquired
+
+        def release(self) -> None:
+            with self._meta_lock:
+                self._owner = None
+            self._lock.release()
+
+        def __enter__(self):
+            self.acquire()
+            return self
+
+        def __exit__(self, exc_type, exc, tb) -> None:
+            self.release()
+
+        @property
+        def owner(self) -> str | None:
+            with self._meta_lock:
+                return self._owner
+
+    boundary_lock = OwnerRecordingLock()
+    bridge._change_window_lock = boundary_lock
+    real_begin = tracker.begin_turn
+    begin_entered = threading.Event()
+    release_begin = threading.Event()
+    publication_done = threading.Event()
+    order_lock = threading.Lock()
+    order: list[str] = []
+    captured: dict[str, object] = {}
+
+    def wedge_successor_b(roots, touched_paths=()):
+        captured["paths"] = tuple(touched_paths)
+        begin_entered.set()
+        assert release_begin.wait(5), "successor B was never released"
+        handle = real_begin(roots, touched_paths=touched_paths)
+        captured["handle"] = handle
+        with order_lock:
+            order.append("begin")
+        return handle
+
+    def publish_older_path() -> None:
+        with bridge._change_window_lock:
+            with order_lock:
+                order.append("publish")
+            target.write_text("older write at successor boundary\n")
+            state.touched_paths.add(str(target))
+        publication_done.set()
+
+    monkeypatch.setattr(tracker, "begin_turn", wedge_successor_b)
+    results: list[object] = []
+    failures: list[BaseException] = []
+
+    def run_successor() -> None:
+        try:
+            results.append(_run(bridge, session, aid, root))
+        except BaseException as exc:  # noqa: BLE001 -- asserted below
+            failures.append(exc)
+
+    successor = threading.Thread(target=run_successor, name="successor-freeze")
+    publisher = threading.Thread(
+        target=publish_older_path,
+        name="older-path-publisher",
+    )
+    successor.start()
+    assert begin_entered.wait(5), "successor never reached B"
+    publisher.start()
+    try:
+        assert boundary_lock.publisher_attempted.wait(5), (
+            "older publisher never attempted the boundary lock"
+        )
+        owner_during_begin = boundary_lock.owner
+        publication_completed_before_kick = publication_done.is_set()
+        if owner_during_begin != "successor-freeze":
+            assert publication_done.wait(5), (
+                "pre-B publisher did not complete across the open gap"
+            )
+            publication_completed_before_kick = True
+    finally:
+        release_begin.set()
+        assert publication_done.wait(5), "older publication never completed"
+        assert gateway.entered.wait(5), "successor never entered its provider"
+        gateway.release.set()
+        publisher.join(10)
+        successor.join(10)
+
+    assert not publisher.is_alive()
+    assert not successor.is_alive()
+    assert failures == []
+    run_id, outcome = results[0]
+    assert outcome.status == "done"
+    assert owner_during_begin == "successor-freeze"
+    assert not publication_completed_before_kick
+    assert order == ["begin", "publish"]
+    assert str(target) not in captured["paths"]
+    successor_handle = captured["handle"]
+    successor_handle.await_baseline()
+    repo = tracker.service.repo_for_root(root)
+    baseline = successor_handle.baselines[str(root.resolve())]
+    assert repo.file_bytes(baseline, target.name) is None
+    old_rows = db.change_snapshots_for_run(old_run_id)
+    assert not any(
+        target.name
+        in [
+            item.path
+            for item in repo.changed_files(row["baseline_sha"], row["end_sha"])
+        ]
+        for row in old_rows
+        if row["baseline_sha"] and row["end_sha"]
+    )
+    successor_rows = db.change_snapshots_for_run(run_id)
+    assert sum(
+        target.name
+        in [
+            item.path
+            for item in repo.changed_files(row["baseline_sha"], row["end_sha"])
+        ]
+        for row in successor_rows
+        if row["baseline_sha"] and row["end_sha"]
+    ) == 1
+    assert window.close_done.is_set()
+
+
+def test_inherited_child_write_waits_for_claimed_successor_baseline(
+    tmp_path, root, tracker, monkeypatch
+):
+    import tldw_chatbook.config as config_module
+    from tldw_chatbook.Tools.file_operation_tools import WriteFileTool
+
+    monkeypatch.setattr(
+        config_module,
+        "get_cli_setting",
+        lambda section, key=None, default=None: (
+            True if section == "tools" and key == "write_file_enabled" else default
+        ),
+    )
+
+    target = root / "inherited-after-successor-b.txt"
+    sentinel = "written by the inherited child after successor B\n"
+    child_release = threading.Event()
+    child_joined = threading.Event()
+
+    def join_child_before_successor_final() -> None:
+        _join_fleet_threads()
+        child_joined.set()
+
+    gateway = _FleetSurvivorGateway(
+        parent_scripts=[
+            [_spawn_fence("write after the next turn starts")],
+            ["first turn done"],
+            [_calc_fence()],
+            ["successor done"],
+        ],
+        gate=child_release,
+        child_scripts=[
+            [_write_fence(Path(target.name), sentinel)],
+            ["child done"],
+        ],
+        parent_side_effect=join_child_before_successor_final,
+        parent_side_effect_on_call=4,
+    )
+    bridge, db, store, session, aid = _bridge_with(tmp_path, gateway, tracker)
+    run_1, outcome_1 = _run(
+        bridge,
+        session,
+        aid,
+        root,
+        builtin_gate=_FakeBuiltinGateForRegistry(refuse=False),
+        scratch_root=root,
+        scratch_lease=lambda: contextlib.nullcontext(root),
+    )
+    assert outcome_1.status == "done"
+    assert gateway.child_started.wait(5), "inherited child never started"
+    assert not target.exists(), "inherited child wrote before its turn returned"
+    with bridge._change_window_lock:
+        old_window = bridge._post_turn_change_windows.get("conv-1")
+    assert old_window is not None
+
+    successor_before_add = threading.Event()
+    release_successor_add = threading.Event()
+    successor_handle_ready = threading.Event()
+    successor_handle: dict[str, object] = {}
+    real_repo_for_root = tracker.service.repo_for_root
+    real_begin = tracker.begin_turn
+
+    def block_successor_baseline_add(requested_root):
+        repo = real_repo_for_root(requested_root)
+        real_run = repo._run
+
+        def run_git(*args, **kwargs):
+            if (
+                threading.current_thread().name == "change-review-baseline"
+                and args[:4] == ("add", "-A", "--", ".")
+                and not successor_before_add.is_set()
+            ):
+                successor_before_add.set()
+                assert release_successor_add.wait(5), (
+                    "successor baseline add was never released"
+                )
+            return real_run(*args, **kwargs)
+
+        repo._run = run_git
+        return repo
+
+    def capture_successor_handle(roots, touched_paths=()):
+        handle = real_begin(roots, touched_paths=touched_paths)
+        successor_handle["value"] = handle
+        successor_handle_ready.set()
+        return handle
+
+    monkeypatch.setattr(
+        tracker.service,
+        "repo_for_root",
+        block_successor_baseline_add,
+    )
+    monkeypatch.setattr(tracker, "begin_turn", capture_successor_handle)
+
+    write_finished = threading.Event()
+    child_claim_wait_started = threading.Event()
+    child_reached_boundary = threading.Event()
+    real_write_execute = WriteFileTool.execute
+
+    async def observe_real_write(tool, **kwargs):
+        result = await real_write_execute(tool, **kwargs)
+        if Path(str(kwargs.get("file_path", ""))).name == target.name:
+            write_finished.set()
+            child_reached_boundary.set()
+        return result
+
+    monkeypatch.setattr(WriteFileTool, "execute", observe_real_write)
+    results: list[object] = []
+    failures: list[BaseException] = []
+
+    def run_successor() -> None:
+        try:
+            results.append(
+                _run(
+                    bridge,
+                    session,
+                    _next_turn(store, session),
+                    root,
+                    builtin_gate=_FakeBuiltinGateForRegistry(refuse=False),
+                    scratch_root=root,
+                    scratch_lease=lambda: contextlib.nullcontext(root),
+                )
+            )
+        except BaseException as exc:  # noqa: BLE001 -- asserted below
+            failures.append(exc)
+
+    successor = threading.Thread(target=run_successor, name="claimed-successor")
+    successor.start()
+    try:
+        assert successor_before_add.wait(5), (
+            "successor B never reached its pre-add barrier"
+        )
+        assert successor_handle_ready.wait(5), "successor handle was not published"
+        handle = successor_handle["value"]
+        real_await_baseline = handle.await_baseline
+
+        def observe_child_claim_wait(*args, **kwargs):
+            if threading.current_thread().name.startswith("fleet-"):
+                child_claim_wait_started.set()
+                child_reached_boundary.set()
+            return real_await_baseline(*args, **kwargs)
+
+        handle.await_baseline = observe_child_claim_wait
+        with bridge._change_window_lock:
+            claim = old_window.successor_claim
+        assert claim is not None
+        assert claim.ready.wait(5), "successor claim attachment did not publish"
+        with bridge._change_window_lock:
+            assert claim.handle is handle
+            assert not claim.failed
+
+        child_release.set()
+        assert child_reached_boundary.wait(5), (
+            "inherited child reached neither its baseline gate nor its WRITE"
+        )
+        wrote_before_b_release = write_finished.is_set()
+        waited_before_write = child_claim_wait_started.is_set()
+        target_existed_before_b_release = target.exists()
+    finally:
+        child_release.set()
+        release_successor_add.set()
+        successor.join(10)
+        _join_fleet_threads()
+
+    assert not successor.is_alive()
+    assert failures == []
+    run_2, outcome_2 = results[0]
+    assert outcome_2.status == "done"
+    assert child_joined.is_set(), "successor E raced the inherited child"
+    assert write_finished.is_set(), "the real WRITE tool never completed"
+    handle.await_baseline()
+    repo = tracker.service.repo_for_root(root)
+    baseline = handle.baselines[str(root.resolve())]
+    assert repo.file_bytes(baseline, target.name) is None, (
+        "the inherited WRITE was absorbed into successor B"
+    )
+    assert waited_before_write
+    assert not wrote_before_b_release
+    assert not target_existed_before_b_release
+    assert target.read_text() == sentinel
+
+    def changed_paths(row):
+        if not row["baseline_sha"] or not row["end_sha"]:
+            return []
+        return [
+            item.path
+            for item in repo.changed_files(row["baseline_sha"], row["end_sha"])
+        ]
+
+    assert not any(
+        target.name in changed_paths(row)
+        for row in db.change_snapshots_for_run(run_1)
+    )
+    successor_rows = [
+        row
+        for row in db.change_snapshots_for_run(run_2)
+        if target.name in changed_paths(row)
+    ]
+    assert len(successor_rows) == 1, db.change_snapshots_for_run(run_2)
+    assert successor_rows[0]["kind"] == "turn_concurrent_subagent"
+    assert any(
+        "earlier turn" in message.content and "sub-agent" in message.content
+        for message in _tool_rows(store, session)
+    )
+    assert old_window.close_done.is_set()
+
+
+def test_successor_e_waits_for_close_time_force_path_handoff(
+    tmp_path, root, tracker, monkeypatch
+):
+    target = root / "late-close-handoff.txt"
+    expected = b"created after successor B\n"
+    (root / ".gitignore").write_text(f"{target.name}\n")
+    gateway = _BlockingParentGateway()
+    bridge, db, store, session, aid = _bridge_with(tmp_path, gateway, tracker)
+    old_run_id = db.create_run(conversation_id="conv-1", agent_kind="primary")
+    old_turn = tracker.begin_turn([root])
+    old_turn.await_baseline()
+    tracker.end_turn(old_turn)
+    follow_on = tracker.continuation(old_turn)
+    assert follow_on is not None
+
+    state = _ChildChangeState(
+        owner_key="old-owner",
+        touched_paths={str(target)},
+    )
+    close_done = _WaitRecordingEvent()
+    window = _PostTurnChangeWindow(
+        run_id=old_run_id,
+        session_id=session.id,
+        handle=follow_on,
+        child_states=(state,),
+        close_done=close_done,
+    )
+    bridge._post_turn_change_windows["conv-1"] = window
+
+    real_begin = tracker.begin_turn
+    real_end = tracker.end_turn
+    successor_b_ready = threading.Event()
+    close_owned = threading.Event()
+    release_close = threading.Event()
+    successor_e_started = threading.Event()
+    successor_handle: dict[str, object] = {}
+
+    def capture_successor_b(roots, touched_paths=()):
+        handle = real_begin(roots, touched_paths=touched_paths)
+        successor_handle["value"] = handle
+        successor_b_ready.set()
+        return handle
+
+    def block_supplied_close(handle, *args, **kwargs):
+        if handle is window.handle:
+            assert kwargs.get("end_shas") is not None
+            close_owned.set()
+            assert release_close.wait(5), "supplied-SHA close was never released"
+        elif handle is successor_handle.get("value"):
+            successor_e_started.set()
+        return real_end(handle, *args, **kwargs)
+
+    monkeypatch.setattr(tracker, "begin_turn", capture_successor_b)
+    monkeypatch.setattr(tracker, "end_turn", block_supplied_close)
+    errors: list[BaseException] = []
+    result: list[object] = []
+
+    def run_successor() -> None:
+        try:
+            result.append(_run(bridge, session, aid, root))
+        except BaseException as exc:  # noqa: BLE001 -- asserted on test thread
+            errors.append(exc)
+
+    def close_old_window() -> None:
+        try:
+            bridge._close_post_turn_change_window("conv-1")
+        except BaseException as exc:  # noqa: BLE001 -- asserted on test thread
+            errors.append(exc)
+
+    successor_thread = threading.Thread(target=run_successor, name="successor-e")
+    closer = threading.Thread(target=close_old_window, name="supplied-close-owner")
+    successor_thread.start()
+    try:
+        assert successor_b_ready.wait(5), "successor B was never started"
+        successor = successor_handle["value"]
+        successor.await_baseline()
+        assert gateway.entered.wait(5), "successor never entered its provider"
+        baseline = successor.baselines[str(root.resolve())]
+        repo = tracker.service.repo_for_root(root)
+        assert repo.file_bytes(baseline, target.name) is None
+        target.write_bytes(expected)
+
+        closer.start()
+        assert close_owned.wait(5), "child closer never owned supplied-SHA close"
+        gateway.release.set()
+        assert close_done.wait_started.wait(5), (
+            "successor E did not wait for close-time force-path handoff"
+        )
+        assert not successor_e_started.is_set(), (
+            "successor E overtook close-time force-path handoff"
+        )
+    finally:
+        release_close.set()
+        gateway.release.set()
+        closer.join(10)
+        successor_thread.join(10)
+
+    assert not closer.is_alive()
+    assert not successor_thread.is_alive()
+    assert errors == []
+    run_id, outcome = result[0]
+    assert outcome.status == "done"
+    successor_rows = db.change_snapshots_for_run(run_id)
+    rows_with_target = [
+        row
+        for row in successor_rows
+        if target.name
+        in [
+            item.path
+            for item in tracker.service.repo_for_root(root).changed_files(
+                row["baseline_sha"], row["end_sha"]
+            )
+        ]
+    ]
+    assert len(rows_with_target) == 1, successor_rows
+    assert rows_with_target[0]["baseline_sha"] == baseline
+    assert (
+        repo.file_bytes(rows_with_target[0]["end_sha"], target.name) == expected
+    )
+    assert not db.change_snapshots_for_run(old_run_id)
+
+
+def test_successor_e_waiter_timeout_disables_turn_tracking(
+    tmp_path, root, tracker, monkeypatch
+):
+    monkeypatch.setattr(
+        console_agent_bridge_module,
+        "_CHANGE_BOUNDARY_WAIT_SECONDS",
+        0.01,
+    )
+    target = root / "timeout-before-handoff.txt"
+    expected = b"created after successor B\n"
+    (root / ".gitignore").write_text(f"{target.name}\n")
+    gateway = _BlockingParentGateway()
+    bridge, db, store, session, aid = _bridge_with(tmp_path, gateway, tracker)
+    old_run_id = db.create_run(conversation_id="conv-1", agent_kind="primary")
+    old_turn = tracker.begin_turn([root])
+    old_turn.await_baseline()
+    tracker.end_turn(old_turn)
+    follow_on = tracker.continuation(old_turn)
+    assert follow_on is not None
+
+    state = _ChildChangeState(
+        owner_key="old-owner",
+        touched_paths={str(target)},
+    )
+    close_done = _WaitRecordingEvent()
+    window = _PostTurnChangeWindow(
+        run_id=old_run_id,
+        session_id=session.id,
+        handle=follow_on,
+        child_states=(state,),
+        close_done=close_done,
+    )
+    bridge._post_turn_change_windows["conv-1"] = window
+
+    real_begin = tracker.begin_turn
+    real_end = tracker.end_turn
+    successor_handle: dict[str, object] = {}
+    close_owned = threading.Event()
+    release_close = threading.Event()
+    successor_e_called = threading.Event()
+
+    def capture_successor_b(roots, touched_paths=()):
+        handle = real_begin(roots, touched_paths=touched_paths)
+        successor_handle["value"] = handle
+        return handle
+
+    def block_close_before_handoff(handle, *args, **kwargs):
+        if handle is window.handle:
+            assert kwargs.get("end_shas") is not None
+            close_owned.set()
+            assert release_close.wait(5), "first-owner close was never released"
+        elif handle is successor_handle.get("value"):
+            successor_e_called.set()
+        return real_end(handle, *args, **kwargs)
+
+    monkeypatch.setattr(tracker, "begin_turn", capture_successor_b)
+    monkeypatch.setattr(tracker, "end_turn", block_close_before_handoff)
+    errors: list[BaseException] = []
+    result: list[object] = []
+
+    def run_successor() -> None:
+        try:
+            result.append(_run(bridge, session, aid, root))
+        except BaseException as exc:  # noqa: BLE001 -- asserted on test thread
+            errors.append(exc)
+
+    def close_old_window() -> None:
+        try:
+            bridge._close_post_turn_change_window("conv-1")
+        except BaseException as exc:  # noqa: BLE001 -- asserted on test thread
+            errors.append(exc)
+
+    successor_thread = threading.Thread(
+        target=run_successor,
+        name="successor-e-timeout",
+    )
+    closer = threading.Thread(
+        target=close_old_window,
+        name="blocked-close-owner",
+    )
+    successor_thread.start()
+    try:
+        assert gateway.entered.wait(5), "successor never entered its provider"
+        successor = successor_handle["value"]
+        successor.await_baseline()
+        target.write_bytes(expected)
+
+        closer.start()
+        assert close_owned.wait(5), "first-owner close never reached handoff"
+        gateway.release.set()
+        assert close_done.wait_started.wait(5), (
+            "successor E never waited on the first-owner close"
+        )
+        successor_thread.join(5)
+        assert not successor_thread.is_alive(), (
+            "successor reply did not survive the boundary timeout"
+        )
+        assert not successor_e_called.is_set(), (
+            "successor E tracking overtook unfinished close-time handoff"
+        )
+    finally:
+        gateway.release.set()
+        release_close.set()
+        successor_thread.join(10)
+        closer.join(10)
+
+    assert not successor_thread.is_alive()
+    assert not closer.is_alive()
+    assert errors == []
+    run_id, outcome = result[0]
+    assert outcome.status == "done"
+    assert not db.change_snapshots_for_run(run_id)
+    assert close_done.is_set()
+
+
+@pytest.mark.parametrize(
+    "boundary_failure",
+    ["missing", "error", "tracking_error", "exception"],
+)
+def test_untrusted_claimed_successor_boundary_fails_closed(
+    tmp_path, root, tracker, monkeypatch, boundary_failure
+):
+    second_root = tmp_path / "second-root"
+    second_root.mkdir()
+    (second_root / "seed.txt").write_text("seed\n")
+    gateway = _BlockingParentGateway()
+    bridge, db, store, session, aid = _bridge_with(tmp_path, gateway, tracker)
+    old_run_id = db.create_run(conversation_id="conv-1", agent_kind="primary")
+    old_turn = tracker.begin_turn([root, second_root])
+    old_turn.await_baseline()
+    tracker.end_turn(old_turn)
+    follow_on = tracker.continuation(old_turn)
+    assert follow_on is not None
+
+    window = _PostTurnChangeWindow(
+        run_id=old_run_id,
+        session_id=session.id,
+        handle=follow_on,
+    )
+    bridge._post_turn_change_windows["conv-1"] = window
+    baselines = dict(follow_on.baselines)
+    errors: dict[str, str] = {}
+    second_key = str(second_root.resolve())
+    if boundary_failure == "missing":
+        baselines.pop(second_key)
+    elif boundary_failure == "error":
+        errors[second_key] = "injected claimed baseline failure"
+    baseline_awaited = threading.Event()
+    claimed_handle = SimpleNamespace(
+        roots=list(follow_on.roots),
+        baselines=baselines,
+        errors=errors,
+        await_baseline=baseline_awaited.set,
+    )
+    monkeypatch.setattr(tracker, "begin_turn", lambda *args, **kwargs: claimed_handle)
+    real_end = tracker.end_turn
+    old_end_calls: list[dict[str, str] | None] = []
+    successor_e_called = threading.Event()
+
+    def record_boundary_end(handle, *args, **kwargs):
+        if handle is window.handle:
+            old_end_calls.append(kwargs.get("end_shas"))
+            if boundary_failure == "tracking_error":
+                return [
+                    TurnChangeRecord(
+                        root=str(root.resolve()),
+                        tracking_error="injected close-time handoff failure",
+                    )
+                ]
+            if boundary_failure == "exception":
+                raise RuntimeError("injected close-time exception")
+            return []
+        if handle is claimed_handle:
+            successor_e_called.set()
+            return []
+        return real_end(handle, *args, **kwargs)
+
+    monkeypatch.setattr(tracker, "end_turn", record_boundary_end)
+    results: list[object] = []
+    failures: list[BaseException] = []
+    close_results: list[bool] = []
+
+    def run_successor() -> None:
+        try:
+            results.append(
+                _run(
+                    bridge,
+                    session,
+                    aid,
+                    root,
+                    change_roots=[root, second_root],
+                )
+            )
+        except BaseException as exc:  # noqa: BLE001 -- asserted below
+            failures.append(exc)
+
+    successor = threading.Thread(target=run_successor, name="invalid-claim-run")
+    successor.start()
+    try:
+        assert gateway.entered.wait(5), "successor never entered its provider"
+        with bridge._change_window_lock:
+            claim = window.successor_claim
+        assert claim is not None
+        assert claim.ready.is_set()
+        closer = threading.Thread(
+            target=lambda: close_results.append(
+                bridge._close_post_turn_change_window("conv-1")
+            ),
+            name="invalid-claim-closer",
+        )
+        closer.start()
+        closer.join(5)
+        assert not closer.is_alive(), "invalid claim close did not finish"
+    finally:
+        gateway.release.set()
+        successor.join(10)
+
+    assert not successor.is_alive()
+    assert failures == []
+    assert results[0][1].status == "done"
+    assert close_results == [False]
+    assert baseline_awaited.is_set()
+    if boundary_failure in {"missing", "error"}:
+        assert old_end_calls == []
+    else:
+        assert old_end_calls == [baselines]
+    assert not successor_e_called.is_set()
+    with bridge._change_window_lock:
+        assert claim.failed
+    assert claim.ready.is_set()
+    assert window.close_done.is_set()
+
+
+def test_claim_timeout_failure_cannot_be_cleared_by_late_attachment(
+    tmp_path, root, tracker, monkeypatch
+):
+    gateway = _BlockingParentGateway()
+    bridge, db, store, session, aid = _bridge_with(tmp_path, gateway, tracker)
+    old_run_id = db.create_run(conversation_id="conv-1", agent_kind="primary")
+    old_turn = tracker.begin_turn([root])
+    old_turn.await_baseline()
+    tracker.end_turn(old_turn)
+    follow_on = tracker.continuation(old_turn)
+    assert follow_on is not None
+    window = _PostTurnChangeWindow(
+        run_id=old_run_id,
+        session_id=session.id,
+        handle=follow_on,
+    )
+    bridge._post_turn_change_windows["conv-1"] = window
+
+    class ForcedTimeoutEvent(threading.Event):
+        def __init__(self) -> None:
+            super().__init__()
+            self.wait_started = threading.Event()
+            self.release_timeout = threading.Event()
+
+        def wait(self, timeout=None):
+            self.wait_started.set()
+            assert self.release_timeout.wait(5), "forced timeout was not released"
+            return False
+
+    class InstrumentedClaim:
+        def __init__(self) -> None:
+            self.ready = ForcedTimeoutEvent()
+            self.handle = None
+            self._failed = False
+            self.attachment_read = threading.Event()
+            self.failure_written = threading.Event()
+            self._instrumented = False
+
+        @property
+        def failed(self):
+            observed = self._failed
+            if (
+                threading.current_thread().name == "late-claim-attachment"
+                and not self._instrumented
+            ):
+                self._instrumented = True
+                lock_was_free = bridge._change_window_lock.acquire(blocking=False)
+                if lock_was_free:
+                    bridge._change_window_lock.release()
+                self.attachment_read.set()
+                if lock_was_free:
+                    assert self.failure_written.wait(5), (
+                        "closer never published its failure"
+                    )
+            return observed
+
+        @failed.setter
+        def failed(self, value):
+            self._failed = value
+            if value:
+                self.failure_written.set()
+
+    monkeypatch.setattr(
+        console_agent_bridge_module,
+        "_SuccessorBoundaryClaim",
+        InstrumentedClaim,
+    )
+    real_begin = tracker.begin_turn
+    real_end = tracker.end_turn
+    begin_returned = threading.Event()
+    release_begin = threading.Event()
+    successor_handle: dict[str, object] = {}
+    successor_e_called = threading.Event()
+
+    def block_after_begin(roots, touched_paths=()):
+        handle = real_begin(roots, touched_paths=touched_paths)
+        successor_handle["value"] = handle
+        begin_returned.set()
+        assert release_begin.wait(5), "successor begin was never released"
+        return handle
+
+    def record_successor_e(handle, *args, **kwargs):
+        if handle is successor_handle.get("value"):
+            successor_e_called.set()
+        return real_end(handle, *args, **kwargs)
+
+    monkeypatch.setattr(tracker, "begin_turn", block_after_begin)
+    monkeypatch.setattr(tracker, "end_turn", record_successor_e)
+    results: list[object] = []
+    failures: list[BaseException] = []
+    close_results: list[bool] = []
+
+    def run_successor() -> None:
+        try:
+            results.append(_run(bridge, session, aid, root))
+        except BaseException as exc:  # noqa: BLE001 -- asserted below
+            failures.append(exc)
+
+    successor = threading.Thread(
+        target=run_successor,
+        name="late-claim-attachment",
+    )
+    successor.start()
+    assert begin_returned.wait(5), "successor begin did not return"
+    with bridge._change_window_lock:
+        claim = window.successor_claim
+    assert isinstance(claim, InstrumentedClaim)
+    closer = threading.Thread(
+        target=lambda: close_results.append(
+            bridge._close_post_turn_change_window("conv-1")
+        ),
+        name="claim-timeout-closer",
+    )
+    closer.start()
+    try:
+        assert claim.ready.wait_started.wait(5), "closer never waited on claim"
+        release_begin.set()
+        assert claim.attachment_read.wait(5), "attachment never read claim state"
+        claim.ready.release_timeout.set()
+        closer.join(5)
+        assert not closer.is_alive(), "claim timeout closer did not finish"
+    finally:
+        release_begin.set()
+        gateway.release.set()
+        successor.join(10)
+        closer.join(10)
+
+    assert not successor.is_alive()
+    assert not closer.is_alive()
+    successor_handle["value"].await_baseline()
+    assert failures == []
+    assert results[0][1].status == "done"
+    assert close_results == [False]
+    with bridge._change_window_lock:
+        assert claim.failed
+    assert claim.failure_written.is_set()
+    assert claim.ready.is_set()
+    assert window.close_done.is_set()
+    assert not successor_e_called.is_set()
+
+
+def test_claim_and_close_failures_release_waiters_without_breaking_runs(
+    tmp_path, root, tracker, monkeypatch
+):
+    monkeypatch.setattr(
+        console_agent_bridge_module,
+        "_CHANGE_BOUNDARY_WAIT_SECONDS",
+        1.0,
+    )
+    gateway = _SideEffectGateway([["successor still replies"]])
+    bridge, db, store, session, aid = _bridge_with(tmp_path, gateway, tracker)
+    real_begin = tracker.begin_turn
+    real_end = tracker.end_turn
+
+    old_run_id = db.create_run(conversation_id="conv-1", agent_kind="primary")
+    old_turn = real_begin([root])
+    old_turn.await_baseline()
+    real_end(old_turn)
+    follow_on = tracker.continuation(old_turn)
+    assert follow_on is not None
+    claim_close_done = _WaitRecordingEvent()
+    claim_window = _PostTurnChangeWindow(
+        run_id=old_run_id,
+        session_id=session.id,
+        handle=follow_on,
+        close_done=claim_close_done,
+    )
+    bridge._post_turn_change_windows["conv-1"] = claim_window
+
+    begin_entered = threading.Event()
+    release_begin_failure = threading.Event()
+
+    def fail_successor_begin(roots, touched_paths=()):
+        begin_entered.set()
+        assert release_begin_failure.wait(5), "claim failure was never released"
+        raise RuntimeError("injected successor claim attachment failure")
+
+    monkeypatch.setattr(tracker, "begin_turn", fail_successor_begin)
+    errors: list[BaseException] = []
+    results: list[object] = []
+
+    def run_successor() -> None:
+        try:
+            results.append(_run(bridge, session, aid, root))
+        except BaseException as exc:  # noqa: BLE001 -- asserted on test thread
+            errors.append(exc)
+
+    def close_claimed_window() -> None:
+        claim_close_started.set()
+        try:
+            claim_close_results.append(
+                bridge._close_post_turn_change_window("conv-1")
+            )
+        except BaseException as exc:  # noqa: BLE001 -- asserted on test thread
+            errors.append(exc)
+        finally:
+            claim_close_finished.set()
+
+    successor_thread = threading.Thread(target=run_successor, name="failed-claim")
+    claim_closer = threading.Thread(target=close_claimed_window, name="claim-waiter")
+    claim_close_started = threading.Event()
+    claim_close_finished = threading.Event()
+    claim_close_results: list[bool] = []
+    successor_thread.start()
+    try:
+        assert begin_entered.wait(5), "successor never reached injected failure"
+        claim = claim_window.successor_claim
+        assert claim is not None, "successor did not install its pre-B claim"
+        claim_ready = _WaitRecordingEvent()
+        claim.ready = claim_ready
+        claim_closer.start()
+        assert claim_close_started.wait(5), "window closer never started"
+        assert not claim_close_finished.is_set(), (
+            "window closer crossed the atomic claim attachment"
+        )
+    finally:
+        release_begin_failure.set()
+        successor_thread.join(10)
+        claim_closer.join(10)
+
+    assert not successor_thread.is_alive()
+    assert not claim_closer.is_alive()
+    assert errors == []
+    assert results[0][1].status == "done"
+    assert claim_close_results == [False]
+    assert claim.failed
+    assert claim_ready.is_set()
+    assert claim_close_done.is_set()
+
+    second_run_id = db.create_run(conversation_id="conv-2", agent_kind="primary")
+    second_turn = real_begin([root])
+    second_turn.await_baseline()
+    real_end(second_turn)
+    second_follow_on = tracker.continuation(second_turn)
+    assert second_follow_on is not None
+    second_state = _ChildChangeState(owner_key="second-owner")
+    close_done = _WaitRecordingEvent()
+    failing_window = _PostTurnChangeWindow(
+        run_id=second_run_id,
+        session_id=session.id,
+        handle=second_follow_on,
+        child_states=(second_state,),
+        close_done=close_done,
+    )
+    bridge._post_turn_change_windows["conv-2"] = failing_window
+    close_started = threading.Event()
+    release_close_failure = threading.Event()
+
+    def fail_close(handle, *args, **kwargs):
+        if handle is failing_window.handle:
+            close_started.set()
+            assert release_close_failure.wait(5), "close failure was never released"
+            raise RuntimeError("injected close-time tracker failure")
+        return real_end(handle, *args, **kwargs)
+
+    monkeypatch.setattr(tracker, "end_turn", fail_close)
+    adapter = SimpleNamespace(child_lifeline=contextlib.nullcontext)
+
+    def finish_child_scope() -> None:
+        try:
+            with bridge._child_run_scope("conv-2", adapter, second_state):
+                pass
+        except BaseException as exc:  # noqa: BLE001 -- asserted on test thread
+            errors.append(exc)
+
+    owner = threading.Thread(target=finish_child_scope, name="failed-close-owner")
+    waiter = threading.Thread(
+        target=lambda: bridge._close_post_turn_change_window("conv-2"),
+        name="failed-close-waiter",
+    )
+    owner.start()
+    try:
+        assert close_started.wait(5), "child teardown never entered tracker close"
+        waiter.start()
+        assert close_done.wait_started.wait(5), (
+            "competing closer never waited for the close owner"
+        )
+    finally:
+        release_close_failure.set()
+        owner.join(10)
+        waiter.join(10)
+
+    assert not owner.is_alive()
+    assert not waiter.is_alive()
+    assert errors == []
+    assert close_done.is_set()
+    assert bridge._post_turn_change_windows.get("conv-2") is None
+
+
+def test_inherited_child_state_crosses_successor_e_and_second_window_without_backward_leakage(
+    tmp_path, root, tracker, monkeypatch
+):
+    import tldw_chatbook.config as config_module
+
+    monkeypatch.setattr(
+        config_module,
+        "get_cli_setting",
+        lambda section, key=None, default=None: (
+            True if section == "tools" and key == "write_file_enabled" else default
+        ),
+    )
+    older_before_b = root / "older-before-b.txt"
+    older_during_successor = root / "older-during-successor.txt"
+    older_after_e = root / "older-after-e.txt"
+    newer_child = root / "newer-child.txt"
+    names = (
+        older_before_b.name,
+        older_during_successor.name,
+        older_after_e.name,
+        newer_child.name,
+    )
+    (root / ".gitignore").write_text("".join(f"{name}\n" for name in names))
+    child_gate = threading.Event()
+    keep_child_running = threading.Event()
+    inherited_state = _ChildChangeState(
+        owner_key="inherited-owner",
+        pending_scopes=1,
+    )
+
+    def publish_inherited_path_and_release_child() -> None:
+        older_during_successor.write_text("older child during successor\n")
+        with bridge._change_window_lock:
+            inherited_state.touched_paths.add(str(older_during_successor))
+        child_gate.set()
+        assert gateway.child_second_started.wait(5), (
+            "successor child never completed its WRITE tool"
+        )
+
+    gateway = _FleetSurvivorGateway(
+        parent_scripts=[
+            [_spawn_fence("write from successor child")],
+            ["successor final"],
+        ],
+        gate=child_gate,
+        child_scripts=[
+            [_write_fence(newer_child, "newer child write\n")],
+            ["newer child final"],
+        ],
+        second_gate=keep_child_running,
+        parent_side_effect=publish_inherited_path_and_release_child,
+        parent_side_effect_on_call=2,
+    )
+    bridge, db, store, session, aid = _bridge_with(tmp_path, gateway, tracker)
+    old_run_id = db.create_run(conversation_id="conv-1", agent_kind="primary")
+    old_turn = tracker.begin_turn([root])
+    old_turn.await_baseline()
+    tracker.end_turn(old_turn)
+    follow_on = tracker.continuation(old_turn)
+    assert follow_on is not None
+
+    older_before_b.write_text("older child before B\n")
+    inherited_state.touched_paths.add(str(older_before_b))
+    old_window = _PostTurnChangeWindow(
+        run_id=old_run_id,
+        session_id=session.id,
+        handle=follow_on,
+        child_states=(inherited_state,),
+    )
+    bridge._post_turn_change_windows["conv-1"] = old_window
+    bridge._child_change_states["conv-1"] = {
+        inherited_state.owner_key: inherited_state
+    }
+
+    try:
+        successor_run_id, outcome = _run(
+            bridge,
+            session,
+            aid,
+            root,
+            builtin_gate=_FakeBuiltinGateForRegistry(refuse=False),
+            scratch_root=root,
+            scratch_lease=lambda: contextlib.nullcontext(root),
+        )
+        assert outcome.status == "done"
+        assert gateway.child_second_started.is_set()
+        assert newer_child.read_text() == "newer child write\n"
+
+        repo = tracker.service.repo_for_root(root)
+        old_rows = db.change_snapshots_for_run(old_run_id)
+        assert len(old_rows) == 1, old_rows
+        old_paths = [
+            item.path
+            for item in repo.changed_files(
+                old_rows[0]["baseline_sha"], old_rows[0]["end_sha"]
+            )
+        ]
+        assert old_paths == [older_before_b.name]
+        assert newer_child.name not in old_paths
+
+        successor_turn_rows = [
+            row
+            for row in db.change_snapshots_for_run(successor_run_id)
+            if row["kind"] != "subagent_post_turn"
+        ]
+        assert len(successor_turn_rows) == 1, successor_turn_rows
+        successor_paths = {
+            item.path
+            for item in repo.changed_files(
+                successor_turn_rows[0]["baseline_sha"],
+                successor_turn_rows[0]["end_sha"],
+            )
+        }
+        assert successor_paths == {
+            older_during_successor.name,
+            newer_child.name,
+        }
+
+        second_window = bridge._post_turn_change_windows.get("conv-1")
+        assert second_window is not None
+        assert inherited_state in second_window.child_states
+        assert len(second_window.child_states) == 2
+
+        older_after_e.write_text("older child after successor E\n")
+        with bridge._change_window_lock:
+            inherited_state.touched_paths.add(str(older_after_e))
+        bridge._close_post_turn_change_window("conv-1")
+
+        post_turn_rows = [
+            row
+            for row in db.change_snapshots_for_run(successor_run_id)
+            if row["kind"] == "subagent_post_turn"
+        ]
+        assert len(post_turn_rows) == 1, post_turn_rows
+        post_turn_paths = [
+            item.path
+            for item in repo.changed_files(
+                post_turn_rows[0]["baseline_sha"], post_turn_rows[0]["end_sha"]
+            )
+        ]
+        assert post_turn_paths == [older_after_e.name]
+    finally:
+        child_gate.set()
+        keep_child_running.set()
+        _join_fleet_threads()
+        with bridge._change_window_lock:
+            bridge._child_change_states.pop("conv-1", None)

@@ -41,14 +41,12 @@ from typing import Any, Iterable, Sequence
 
 from loguru import logger
 
+from tldw_chatbook.Utils.path_validation import validate_path
 from tldw_chatbook.Workspaces.change_bounds import (
     DEFAULT_MAX_FILE_BYTES,
     change_review_setting,
 )
-from tldw_chatbook.Workspaces.change_tracking import (
-    ChangeTrackingError,
-    ShadowRepoService,
-)
+from tldw_chatbook.Workspaces.change_tracking import ShadowRepoService
 
 #: Tools whose path arguments are force-added at E time (the .gitignore
 #: carve-out). WRITE tools only — see the module docstring for why reads
@@ -112,7 +110,26 @@ class TurnHandle:
         #: from (see :meth:`ChangeTurnTracker.continuation`), so a write
         #: made after this turn's E cannot fall between two windows.
         self.end_shas: dict[str, str] = {}
+        #: Root-relative ignored paths owned by this handle but learned only
+        #: after its baseline. They are staged atomically with this handle's
+        #: E snapshot, never left in the root-shared shadow index.
+        self._deferred_force_paths: dict[str, set[str]] = {}
+        self._deferred_force_paths_lock = threading.Lock()
         self._thread: threading.Thread | None = None
+
+    def defer_force_paths(self, root: Path | str, paths: Iterable[str]) -> None:
+        """Bind eligible ignored paths to this handle's future E snapshot."""
+        if not paths:
+            return
+        key = str(root)
+        with self._deferred_force_paths_lock:
+            self._deferred_force_paths.setdefault(key, set()).update(paths)
+
+    def force_paths_for_root(self, root: Path | str) -> tuple[str, ...]:
+        """Return a stable copy of deferred paths for one root."""
+        key = str(root)
+        with self._deferred_force_paths_lock:
+            return tuple(sorted(self._deferred_force_paths.get(key, ())))
 
     def await_baseline(self, timeout: float = _BASELINE_TIMEOUT_SECONDS) -> None:
         """Block until every root's B snapshot settled (or errored).
@@ -155,7 +172,11 @@ class ChangeTurnTracker:
 
     # -- turn lifecycle ----------------------------------------------------
 
-    def begin_turn(self, roots: Sequence[Path | str]) -> TurnHandle:
+    def begin_turn(
+        self,
+        roots: Sequence[Path | str],
+        touched_paths: Sequence[str] = (),
+    ) -> TurnHandle:
         """Kick baseline snapshots for ``roots`` in the background.
 
         Returns immediately; never raises. Non-directory roots are recorded
@@ -163,6 +184,8 @@ class ChangeTurnTracker:
 
         Args:
             roots: The run's workspace folder roots.
+            touched_paths: Paths eligible for the WRITE-tool ignore carve-out
+                at the baseline snapshot.
 
         Returns:
             A handle for :meth:`TurnHandle.await_baseline` / :meth:`end_turn`.
@@ -174,6 +197,7 @@ class ChangeTurnTracker:
         handle = TurnHandle(
             [Path(r).expanduser().resolve() for r in roots]
         )
+        frozen_touched_paths = tuple(touched_paths)
 
         def _baseline() -> None:
             from tldw_chatbook.Workspaces.change_bounds import (
@@ -229,7 +253,16 @@ class ChangeTurnTracker:
                         if rel not in registered
                     )
                     repo = self.service.repo_for_root(root)
-                    handle.baselines[key] = repo.snapshot("turn baseline")
+                    eligible = self._eligible_touched_paths(
+                        root, frozen_touched_paths
+                    )
+                    if eligible:
+                        baseline = repo.snapshot(
+                            "turn baseline", force_paths=eligible
+                        )
+                    else:
+                        baseline = repo.snapshot("turn baseline")
+                    handle.baselines[key] = baseline
                     handle.baseline_oversize[key] = repo.last_oversize_excluded
                 except Exception as exc:  # noqa: BLE001 -- disclosed, never raised
                     handle.errors[key] = str(exc)[:400]
@@ -282,6 +315,7 @@ class ChangeTurnTracker:
         touched_paths: Sequence[str] = (),
         *,
         end_shas: "dict[str, str] | None" = None,
+        successor_handle: "TurnHandle | None" = None,
     ) -> list[TurnChangeRecord]:
         """Take E snapshots and return one record per root that changed.
 
@@ -303,6 +337,10 @@ class ChangeTurnTracker:
                 those measurements belong to whoever took that snapshot,
                 and re-deriving them here would report the state of a tree
                 this window never observed.
+            successor_handle: The claimed turn whose baseline supplied
+                ``end_shas``. Eligible ignored paths learned after that
+                baseline are bound to this handle and staged atomically at
+                its E snapshot instead of leaking through the shared index.
 
         Returns:
             Records for roots with changes or tracking errors.
@@ -333,45 +371,46 @@ class ChangeTurnTracker:
                     )
                 )
                 continue
+            provided = (end_shas or {}).get(key)
+            if provided:
+                handle.end_shas[key] = provided
             try:
                 repo = self.service.repo_for_root(root)
-                provided = (end_shas or {}).get(key)
+                eligible = self._eligible_touched_paths(root, touched_paths)
                 if provided:
-                    # No force-add and no oversize/nested disclosure on
-                    # this path: both describe a snapshot, and this window
-                    # ends at one somebody else took.
+                    # The supplied snapshot stays immutable. Late ignored
+                    # paths belong to the claimed successor and must not be
+                    # left staged in the root-shared shadow index where an
+                    # unrelated conversation could consume them.
                     end = provided
-                    handle.end_shas[key] = end
                     if end == baseline:
+                        self._defer_to_successor(
+                            successor_handle, key, provided, eligible
+                        )
                         continue
                     changed = repo.changed_files(baseline, end)
-                    records.append(
-                        TurnChangeRecord(
-                            root=key,
-                            baseline_sha=baseline,
-                            end_sha=end,
-                            files_changed=len(changed),
-                            adds=sum(c.adds for c in changed),
-                            dels=sum(c.dels for c in changed),
-                        )
+                    record = TurnChangeRecord(
+                        root=key,
+                        baseline_sha=baseline,
+                        end_sha=end,
+                        files_changed=len(changed),
+                        adds=sum(c.adds for c in changed),
+                        dels=sum(c.dels for c in changed),
                     )
+                    self._defer_to_successor(
+                        successor_handle, key, provided, eligible
+                    )
+                    records.append(record)
                     continue
-                in_root = self._paths_within(root, touched_paths)
-                if in_root:
-                    # TASK-1975: force-add exists to defeat IGNORE rules,
-                    # not the size cap -- a tool-written oversized file is
-                    # disclosed, never committed.
-                    cap = change_review_setting(
-                        "max_file_bytes", DEFAULT_MAX_FILE_BYTES
+                force_paths = list(
+                    dict.fromkeys(
+                        (*eligible, *handle.force_paths_for_root(key))
                     )
-                    in_root = [
-                        rel
-                        for rel in in_root
-                        if not self._over_cap(root, rel, cap)
-                    ]
-                if in_root:
-                    repo.force_add(in_root)
-                end = repo.snapshot("turn end")
+                )
+                if force_paths:
+                    end = repo.snapshot("turn end", force_paths=force_paths)
+                else:
+                    end = repo.snapshot("turn end")
                 handle.end_shas[key] = end
                 oversize = repo.last_oversize_excluded
                 # TASK-1977: a TRACKED sub-root is not an untracked hole —
@@ -424,12 +463,46 @@ class ChangeTurnTracker:
                     TurnChangeRecord(
                         root=key,
                         baseline_sha=baseline,
+                        end_sha=provided or "",
                         tracking_error=str(exc)[:400],
                     )
                 )
         return records
 
     # -- helpers -----------------------------------------------------------
+
+    @staticmethod
+    def _defer_to_successor(
+        successor_handle: TurnHandle | None,
+        root_key: str,
+        boundary_sha: str,
+        paths: Sequence[str],
+    ) -> None:
+        """Attach supplied-boundary paths to their exact successor handle."""
+        if not paths:
+            return
+        if (
+            successor_handle is None
+            or successor_handle.baselines.get(root_key) != boundary_sha
+        ):
+            raise ValueError(
+                "ignored paths have no matching claimed successor boundary"
+            )
+        successor_handle.defer_force_paths(root_key, paths)
+
+    def _eligible_touched_paths(
+        self, root: Path, touched_paths: Iterable[str]
+    ) -> list[str]:
+        """Return root-relative touched paths allowed into a snapshot."""
+        in_root = self._paths_within(root, touched_paths)
+        if not in_root:
+            return []
+        # TASK-1975: force-add exists to defeat IGNORE rules, not the size
+        # cap -- a tool-written oversized file is disclosed, never committed.
+        cap = change_review_setting("max_file_bytes", DEFAULT_MAX_FILE_BYTES)
+        return [
+            rel for rel in in_root if not self._over_cap(root, rel, cap)
+        ]
 
     @staticmethod
     def _over_cap(root: Path, rel: str, cap: int) -> bool:
@@ -445,8 +518,14 @@ class ChangeTurnTracker:
         out: list[str] = []
         for raw in paths:
             try:
-                rel = Path(raw).expanduser().resolve().relative_to(root)
-            except (ValueError, OSError):
+                validated = validate_path(
+                    Path(raw).expanduser(),
+                    root,
+                    redact_paths=True,
+                    allow_hidden=True,
+                )
+                rel = validated.relative_to(root)
+            except ValueError:
                 continue
             out.append(str(rel))
         return out
