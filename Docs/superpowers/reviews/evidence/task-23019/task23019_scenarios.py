@@ -279,6 +279,49 @@ async def _wait_for_matching_row(
     return matched
 
 
+async def _press_visible_button(
+    screen,
+    pilot,
+    selector: str,
+    *,
+    message: Any | None = None,
+) -> Button:
+    """Press the current visible button after any recompose has replaced it."""
+    button = None
+    last_seen = None
+
+    def button_is_ready() -> bool:
+        nonlocal button, last_seen
+        candidates = list(screen.query(selector))
+        last_seen = candidates[0] if candidates else None
+        button = next(
+            (
+                candidate
+                for candidate in candidates
+                if candidate.is_mounted
+                and candidate.display
+                and candidate.region.area > 0
+                and not candidate.disabled
+            ),
+            None,
+        )
+        return button is not None
+
+    def failure_message() -> str:
+        prefix = message() if callable(message) else message
+        prefix = prefix or f"Visible button did not settle: {selector}"
+        return (
+            f"{prefix}; display={getattr(last_seen, 'display', None)}; "
+            f"region={getattr(last_seen, 'region', None)}"
+        )
+
+    await _wait_for_condition(pilot, button_is_ready, message=failure_message)
+    assert button is not None
+    button.focus()
+    button.press()
+    return button
+
+
 async def _exercise_modes(screen, pilot, destination: str) -> tuple[str, ...]:
     async def visible_button(selector: str) -> Button:
         await _wait_for_condition(
@@ -1710,11 +1753,10 @@ async def run_skills_capability() -> dict[str, Any]:
             items_id, work_id = id(shell.items), id(shell.work)
 
             async def press_visible(selector: str) -> Button:
-                button = screen.query_one(selector, Button)
-                button.focus()
-                await _wait_for_condition(
+                return await _press_visible_button(
+                    screen,
                     pilot,
-                    lambda: button.region.area > 0 and not button.disabled,
+                    selector,
                     message=lambda: (
                         f"Skills control did not become visible: {selector}; "
                         f"mode={screen._library_skill_reader_mode}; "
@@ -1722,13 +1764,10 @@ async def run_skills_capability() -> dict[str, Any]:
                         f"dirty={screen._library_skill_dirty}; "
                         f"mutation={screen._library_skill_mutation_in_flight}; "
                         f"more={screen._library_skill_more_actions_open}; "
-                        f"display={button.display}; region={button.region}; "
                         "workers="
                         f"{[(str(worker.group), worker.state.name) for worker in screen.workers if not worker.is_finished]}"
                     ),
                 )
-                button.press()
-                return button
 
             await press_visible("#library-skill-mode-edit")
             await _wait_for_condition(

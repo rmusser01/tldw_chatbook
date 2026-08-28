@@ -2904,6 +2904,55 @@ async def test_capability_facts_restore_settled_work_focus(monkeypatch):
 
 
 @pytest.mark.asyncio
+async def test_visible_button_wait_reacquires_control_after_recompose(monkeypatch):
+    module = _load_scenarios()
+
+    class Region:
+        def __init__(self, area):
+            self.area = area
+
+    class Control:
+        disabled = False
+
+        def __init__(self, *, mounted, displayed, area):
+            self.is_mounted = mounted
+            self.display = displayed
+            self.region = Region(area)
+            self.focused = False
+            self.pressed = False
+
+        def focus(self):
+            self.focused = True
+
+        def press(self):
+            self.pressed = True
+
+    stale = Control(mounted=False, displayed=False, area=0)
+    fresh = Control(mounted=True, displayed=True, area=1)
+
+    class Screen:
+        calls = 0
+
+        def query(self, selector):
+            assert selector == "#action"
+            self.calls += 1
+            return [stale] if self.calls == 1 else [fresh]
+
+    async def fake_wait(pilot, condition, *, message):
+        assert pilot == "pilot"
+        assert not condition()
+        assert condition()
+
+    monkeypatch.setattr(module, "_wait_for_condition", fake_wait)
+
+    pressed = await module._press_visible_button(Screen(), "pilot", "#action")
+
+    assert pressed is fresh
+    assert fresh.focused and fresh.pressed
+    assert not stale.focused and not stale.pressed
+
+
+@pytest.mark.asyncio
 async def test_work_focus_target_uses_visible_notes_preview_when_editor_hidden(
     monkeypatch,
 ):
@@ -4419,6 +4468,10 @@ def test_generated_readme_is_the_canonical_closeout_runbook(tmp_path):
         "raw TemporaryDirectory exited before repository promotion",
     ):
         assert literal in readme
+    assert (
+        f"- `{kwargs['subject'].commit[:10]}`: frozen subject including current "
+        "visible-control remount settling"
+    ) in readme
 
 
 def _write_source_bootstrap(destination: Path, sources: dict[str, bytes]) -> None:
