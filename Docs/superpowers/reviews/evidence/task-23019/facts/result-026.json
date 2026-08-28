@@ -1,5 +1,0 @@
-{
-  "kind": "automated",
-  "result_name": "Tests/UI/test_library_conversation_reader.py::test_open_console_requires_final_complete_error_free_match",
-  "status": "PASS"
-}

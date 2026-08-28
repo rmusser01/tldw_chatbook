@@ -1,5 +1,0 @@
-{
-  "kind": "automated",
-  "result_name": "Tests/UI/test_library_media_reader_flow.py::test_progress_restores_after_loaded_content_mounts",
-  "status": "PASS"
-}
