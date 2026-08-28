@@ -16,7 +16,14 @@ Library RAG evidence handoff (manual or auto-retrieve) both resolve it
 and route accordingly — a `Plain keyword` profile searches keyword-only,
 `Hybrid` blends keyword and vector search, and `Semantic` runs vector
 search — see [Library Search/RAG](../library/search-and-rag.md#retrieval-mode-follows-your-rag-profile)
-and [Console: Context & RAG](../console/context-and-rag.md#auto-retrieve-on-send).
+and [Console: Context & RAG](../console/context-and-rag.md#automatic-retrieval-details).
+
+This screen tunes retrieval quality and selects the assistant's Direct/RAG
+tool mode; it **does not grant automatic retrieval or assistant Library
+access**. Those are independent, device-local **per-conversation Library
+controls** on Console's Library chip. Changing a profile or the tool-mode
+selector does not alter any conversation's Never/Automatic or Blocked/Allowed
+choice.
 
 ## Getting there
 

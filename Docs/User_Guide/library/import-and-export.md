@@ -175,6 +175,16 @@ not include this private field. Invalid, unknown-version, contradictory, or
 oversized private data is dropped while usable visible messages still import,
 and the warning never quotes the rejected data.
 
+Library access authority is intentionally less portable. The **device-local
+Library policy**, authorization checkpoints, activity summaries, and
+preparation receipts are not synced or exported. The conversation's validated
+**assistant generation state** and an exactly owned provider continuation can
+travel so a branch remains coherent, but importing or syncing never starts
+tools: **unresolved imported or remote state remains inert**. When a valid
+continuation is resumed, the exclusive continuation handoff removes its
+checkpoint before any tool is allowed to run, as required by
+[ADR-063](../../../backlog/decisions/063-hosted-provider-wire-and-durable-tool-continuation.md).
+
 | Import control | What it does |
 |---|---|
 | "Browse…" | Opens the "Import media" file picker (remembers your last folder). The listing shows Name / Size / Modified column headers, human-readable sizes ("512 B", "2.4 MB", never a bare byte count), no size on folder rows (including ".."), and a labeled "File name:" input at the bottom. Folders and URLs are typed or pasted into the path field instead. |

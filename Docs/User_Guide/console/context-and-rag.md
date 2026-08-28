@@ -34,8 +34,9 @@ Where this page's controls live:
   retrieval-scope row beneath it, the "Prefill" rows when one is armed, the
   "Live work sources" card, and the "Chat Dictionaries" / "World Books"
   blocks at the bottom.
-- **The status chips** above the composer — "RAG: on/off", "Sources: N
-  staged", and the "Scope: N" chip once retrieval is narrowed.
+- **The status chips** above the composer — "Library · Auto off/on · Agent
+  blocked/allowed", "Sources: N staged", and the "Scope: N" chip once
+  retrieval is narrowed.
 - **The staged-evidence strip** — at the top of the control deck, above
   the status chips; shown only while something is staged (or right after
   a send that used it).
@@ -432,6 +433,30 @@ outside are suffixed "— outside workspace scope", and the effective scope
 is the intersection (chip tooltip: "Only searching: conversation scope (2
 items) and workspace scope (5 items) — 2 in both.").
 
+### Per-conversation Library controls
+
+Console has three separate ways to use Library evidence. **Manual Search
+Library is always available** and runs only when you ask. The Library status
+chip opens two independent, text-valued controls for the active conversation:
+
+- **Auto: Never / Automatic** — whether an ordinary text send first retrieves
+  from the fixed automatic categories: **Notes, Media, and Conversations**.
+- **Assistant: Blocked / Allowed** — whether the model may initiate a built-in
+  Library tool call. Blocked means no Library tool is advertised or dispatched.
+
+New conversations ship as **Never** and **Blocked**. The choices are stored
+only on this device and are not synced or exported. A recovered remote or
+imported conversation whose local policy cannot be resolved therefore remains
+inert until you explicitly save a local policy.
+
+When Assistant is Allowed, **Direct / RAG is a selector**, not a third
+permission. Direct advertises the bounded direct Library tools; RAG advertises
+only `search_library_rag`. The selector comes from Settings and is shown in the
+access modal for clarity. RAG scope can narrow Notes and Media items and can
+exclude Conversations, but it never broadens the three fixed automatic
+categories. The modal also names the resolved provider destination so you can
+see whether retrieved content will stay local or leave the device.
+
 ### Staged sources & Library search
 
 The Inspector's **Sources** tray lists context staged for the run, one
@@ -457,13 +482,13 @@ your Library and stages what it finds.
 
 Which *kinds* of sources it searches is shown on that card's **Sources:**
 line — by default "Sources: Notes, Media, Conversations (Prompts off)" —
-and is editable: the **Library search** chip (or **Search Library** with
-nothing typed) opens the **Library search** settings modal, which carries
+and is editable: **Search Library** with nothing typed opens the manual
+**Library search** modal, which carries
 the query box plus a toggle per source kind (**✓ Notes**, **○ Media**,
-**✓ Conversations**, **○ Prompts**) and the **Auto-retrieve on send**
-switch described below. Running keeps the edited query/source-kind
+**✓ Conversations**, **○ Prompts**). Running keeps the edited query/source-kind
 selection (it also survives leaving and returning to Console); **Cancel**
-discards it. Run stays disabled until there is both a query and at least
+discards it. The separate **Library** status chip opens the per-conversation
+access modal described above. Run stays disabled until there is both a query and at least
 one source kind. Note this is a different setting from **RAG scope**
 above: "Sources" picks the source *kinds*, "Scope" picks the *items*.
 
@@ -472,10 +497,10 @@ the depth your **active RAG profile** specifies (`Settings ▸ RAG`'s
 **Default results** field) rather than a fixed count, so manual and
 automatic retrieval can't disagree about how many results come back.
 
-### Auto-retrieve on send
+### Automatic retrieval details
 
-The **Library search** settings modal also carries an **Auto-retrieve on
-send** switch, default **OFF**. Turn it on and every plain text send —
+Set the active conversation's Auto control to **Automatic** and every plain
+text send —
 never a slash command, a `$skill` invocation, a tool approval, or a
 regenerate — first runs a Library search using your draft as the
 query and stages whatever it finds into the staged-evidence strip before
@@ -484,9 +509,8 @@ the send goes out: the same visible, consume-on-send pipeline a manual
 skipped automatically when evidence is already staged (a manual run or a
 Library "Use in Console" handoff), so a send can't double-retrieve.
 
-The switch persists the instant you flip it, unlike the query and
-source-kind edits in the same modal — closing with **Escape** or a
-backdrop click still keeps the change. If your resolved RAG scope comes
+The access modal requires an explicit **Save** and detects concurrent edits;
+Escape does not silently commit a dirty choice. If your resolved RAG scope comes
 back **empty**, auto-retrieve short-circuits with the same shared notice
 the manual path shows, rather than searching everything.
 
@@ -582,10 +606,10 @@ Inspector shows what's in play:
    click the two items, press **Save**. The strip shows **Scope: 2**.
 6. **Open a citation's source in Library** — click **Sources (N)** under
    the reply, select an `[S1]` row, press **Open in Library**.
-7. **Have every send ground itself automatically** — click the **RAG**
-   chip (or **Run Library RAG**) to open **Library RAG** settings, turn on
-   **Auto-retrieve on send**, close the modal. It stays on across sends
-   until you flip it off; it's off by default.
+7. **Have ordinary sends ground themselves automatically** — click the
+   **Library** chip, choose **Automatic** under Auto, and press **Save**.
+   This changes only the active conversation; new conversations default to
+   **Never**.
 
 ## Keyboard & commands
 
@@ -663,9 +687,8 @@ imported Trace**; it has no `c` action.
   processing settings; covered in
   [Library ▸ Search & RAG](../library/search-and-rag.md), including how
   the active RAG profile now drives retrieval mode.
-- `config.toml` `[chat_defaults] rag_auto_retrieve_on_send` — the
-  persisted **Auto-retrieve on send** value (default `false`); the modal
-  is the supported way to change it.
+- The active conversation's Library policy is stored in the local conversation
+  database. It is deliberately absent from synced/exported conversation state.
 - `config.toml` `[console] exchange_capture` — the Conversation Inspector's
   capture kill-switch (default `true`); set `false` to stop recording
   per-call request/response detail for the Exchange tab.
@@ -701,7 +724,7 @@ imported Trace**; it has no `c` action.
 - **Turns before this feature (or with capture off) show "No capture
   recorded"** on the Exchange tab rather than any reconstructed guess at
   what was sent.
-- **Auto-retrieve fires on every plain-text send while it's on**,
+- **Automatic retrieval fires on every plain-text send while selected**,
   including repeated sends in the same conversation — there's no
   once-per-conversation memory yet, so an empty resolved scope re-shows
   its notice on each send until you clear or edit the scope.
