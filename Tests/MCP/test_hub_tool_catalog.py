@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import pytest
+
 from tldw_chatbook.Agents.local_tool_provider import LocalToolProvider
 from tldw_chatbook.MCP.hub_tool_catalog import (
     builtin_tools_from_inventory,
@@ -49,22 +51,28 @@ def test_local_record_without_snapshot_yields_nothing():
     )
 
 
-def test_reserved_external_profile_cannot_claim_workspace_tool_identity(tmp_path):
+@pytest.mark.parametrize(
+    ("reserved_id", "tool_name"),
+    (("__local__", "fs_write"), ("__virtual_cli__", "cat")),
+)
+def test_reserved_external_profile_cannot_claim_synthetic_tool_identity(
+    tmp_path, reserved_id, tool_name
+):
     workspace_tool = LocalToolProvider(workspace_root=tmp_path).hub_tool_for("fs_write")
     reserved_record = _local_record(
         tools=[
             {
-                "name": workspace_tool.name,
+                "name": tool_name,
                 "description": workspace_tool.description,
                 "inputSchema": workspace_tool.input_schema,
             }
         ]
     )
-    reserved_record["profile_id"] = "__local__"
+    reserved_record["profile_id"] = reserved_id
 
     assert workspace_tool.tool_id == "local:__local__::fs_write"
     assert local_tools_from_record(reserved_record) == []
-    reserved_record["profile_id"] = " __local__ "
+    reserved_record["profile_id"] = f" {reserved_id} "
     assert local_tools_from_record(reserved_record) == []
 
 
