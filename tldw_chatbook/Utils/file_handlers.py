@@ -19,6 +19,8 @@ from pathlib import Path
 from typing import List, Optional, Literal, Union, TYPE_CHECKING
 from loguru import logger
 
+from tldw_chatbook.Utils.log_sanitizer import content_fingerprint
+
 if TYPE_CHECKING:
     pass
 
@@ -63,9 +65,7 @@ async def _extract_local_ingest_text(file_path: Path, *, kind_label: str) -> str
     payload = await asyncio.to_thread(parse_local_file_for_ingest, str(file_path), {})
     content = (payload.get("content") or "").strip()
     if not content:
-        return (
-            f"[No extractable text found in {kind_label} file: {file_path.name}]"
-        )
+        return f"[No extractable text found in {kind_label} file: {file_path.name}]"
     return (
         f"--- Contents of {file_path.name} ---\n{content}\n"
         f"--- End of {file_path.name} ---"
@@ -131,8 +131,13 @@ class ImageFileHandler(FileHandler):
                 insert_mode="attachment",
                 file_type="image",
             )
-        except Exception as e:
-            logger.error(f"Failed to process image {file_path}: {e}")
+        except Exception as exc:
+            logger.error(
+                f"Failed to process image "
+                f"path_sha256={content_fingerprint(str(file_path))} "
+                f"suffix={file_path.suffix.lower()} handler={type(self).__name__} "
+                f"exception_type={type(exc).__name__}"
+            )
             raise
 
 
@@ -169,8 +174,13 @@ class TextFileHandler(FileHandler):
                 insert_mode="inline",
                 file_type="text",
             )
-        except Exception as e:
-            logger.error(f"Failed to read text file {file_path}: {e}")
+        except Exception as exc:
+            logger.error(
+                f"Failed to read text file "
+                f"path_sha256={content_fingerprint(str(file_path))} "
+                f"suffix={file_path.suffix.lower()} handler={type(self).__name__} "
+                f"exception_type={type(exc).__name__}"
+            )
             return ProcessedFile(
                 content=f"[Error reading file: {file_path.name}]",
                 display_name=file_path.name,
@@ -255,8 +265,13 @@ class CodeFileHandler(FileHandler):
                 insert_mode="inline",
                 file_type="code",
             )
-        except Exception as e:
-            logger.error(f"Failed to read code file {file_path}: {e}")
+        except Exception as exc:
+            logger.error(
+                f"Failed to read code file "
+                f"path_sha256={content_fingerprint(str(file_path))} "
+                f"suffix={file_path.suffix.lower()} handler={type(self).__name__} "
+                f"exception_type={type(exc).__name__}"
+            )
             return ProcessedFile(
                 content=f"[Error reading code file: {file_path.name}]",
                 display_name=file_path.name,
@@ -306,8 +321,13 @@ class DataFileHandler(FileHandler):
                 insert_mode="inline",
                 file_type="data",
             )
-        except Exception as e:
-            logger.error(f"Failed to process data file {file_path}: {e}")
+        except Exception as exc:
+            logger.error(
+                f"Failed to process data file "
+                f"path_sha256={content_fingerprint(str(file_path))} "
+                f"suffix={file_path.suffix.lower()} handler={type(self).__name__} "
+                f"exception_type={type(exc).__name__}"
+            )
             return ProcessedFile(
                 content=f"[Error processing data file: {file_path.name}]",
                 display_name=file_path.name,
@@ -376,9 +396,16 @@ class PDFFileHandler(FileHandler):
         """
         try:
             content = await _extract_local_ingest_text(file_path, kind_label="PDF")
-        except Exception as e:
-            logger.error(f"Failed to extract PDF text from {file_path}: {e}")
-            content = f"[Could not extract text from PDF file: {file_path.name} ({e})]"
+        except Exception as exc:
+            logger.error(
+                f"Failed to extract PDF text "
+                f"path_sha256={content_fingerprint(str(file_path))} "
+                f"suffix={file_path.suffix.lower()} handler={type(self).__name__} "
+                f"exception_type={type(exc).__name__}"
+            )
+            content = (
+                f"[Could not extract text from PDF file: {file_path.name} ({exc})]"
+            )
         return ProcessedFile(
             content=content,
             display_name=file_path.name,
@@ -403,14 +430,16 @@ class DocumentFileHandler(FileHandler):
         docstring.
         """
         try:
-            content = await _extract_local_ingest_text(
-                file_path, kind_label="document"
+            content = await _extract_local_ingest_text(file_path, kind_label="document")
+        except Exception as exc:
+            logger.error(
+                f"Failed to extract document text "
+                f"path_sha256={content_fingerprint(str(file_path))} "
+                f"suffix={file_path.suffix.lower()} handler={type(self).__name__} "
+                f"exception_type={type(exc).__name__}"
             )
-        except Exception as e:
-            logger.error(f"Failed to extract document text from {file_path}: {e}")
             content = (
-                f"[Could not extract text from document file: "
-                f"{file_path.name} ({e})]"
+                f"[Could not extract text from document file: {file_path.name} ({exc})]"
             )
         return ProcessedFile(
             content=content,
@@ -437,10 +466,15 @@ class EbookFileHandler(FileHandler):
         """
         try:
             content = await _extract_local_ingest_text(file_path, kind_label="ebook")
-        except Exception as e:
-            logger.error(f"Failed to extract ebook text from {file_path}: {e}")
+        except Exception as exc:
+            logger.error(
+                f"Failed to extract ebook text "
+                f"path_sha256={content_fingerprint(str(file_path))} "
+                f"suffix={file_path.suffix.lower()} handler={type(self).__name__} "
+                f"exception_type={type(exc).__name__}"
+            )
             content = (
-                f"[Could not extract text from ebook file: {file_path.name} ({e})]"
+                f"[Could not extract text from ebook file: {file_path.name} ({exc})]"
             )
         return ProcessedFile(
             content=content,
@@ -498,8 +532,13 @@ class PlaintextDatabaseHandler(FileHandler):
                 insert_mode="inline",
                 file_type="text",
             )
-        except Exception as e:
-            logger.error(f"Failed to check text file {file_path}: {e}")
+        except Exception as exc:
+            logger.error(
+                f"Failed to check text file "
+                f"path_sha256={content_fingerprint(str(file_path))} "
+                f"suffix={file_path.suffix.lower()} handler={type(self).__name__} "
+                f"exception_type={type(exc).__name__}"
+            )
             return ProcessedFile(
                 content=f"[Error checking text file: {file_path.name}]",
                 display_name=file_path.name,
@@ -594,7 +633,10 @@ class FileHandlerRegistry:
             file_path = Path(file_path)
 
         if not file_path.exists():
-            logger.error(f"File not found: {file_path}")
+            logger.error(
+                f"File not found path_sha256={content_fingerprint(str(file_path))} "
+                f"suffix={file_path.suffix.lower()} handler={type(self).__name__}"
+            )
             return ProcessedFile(
                 content=f"[File not found: {file_path.name}]",
                 display_name=file_path.name,
@@ -605,11 +647,19 @@ class FileHandlerRegistry:
         # Find the first handler that can process this file
         for handler in self.handlers:
             if handler.can_handle(file_path):
-                logger.debug(f"Using {handler.__class__.__name__} for {file_path.name}")
+                logger.debug(
+                    f"Using file handler "
+                    f"path_sha256={content_fingerprint(str(file_path))} "
+                    f"suffix={file_path.suffix.lower()} "
+                    f"handler={type(handler).__name__}"
+                )
                 return await handler.process(file_path)
 
         # This should never happen since DefaultFileHandler handles everything
-        logger.error(f"No handler found for {file_path}")
+        logger.error(
+            f"No handler found path_sha256={content_fingerprint(str(file_path))} "
+            f"suffix={file_path.suffix.lower()} handler={type(self).__name__}"
+        )
         return ProcessedFile(
             content=f"[No handler for: {file_path.name}]",
             display_name=file_path.name,
