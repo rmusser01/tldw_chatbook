@@ -161,8 +161,7 @@ async def test_console_failed_regenerate_auto_restores_previous_answer():
         await _wait_until(
             pilot,
             lambda: any(
-                message.startswith("Provider stream failed:")
-                and severity == "error"
+                message.startswith("Provider stream failed:") and severity == "error"
                 for message, severity in notifications
             ),
             "visible provider-failure feedback",
@@ -174,15 +173,12 @@ async def test_console_failed_regenerate_auto_restores_previous_answer():
         )
         await _wait_until(
             pilot,
-            lambda: run_worker.state
-            not in {WorkerState.PENDING, WorkerState.RUNNING},
+            lambda: run_worker.state not in {WorkerState.PENDING, WorkerState.RUNNING},
             f"{run_group} worker completion",
         )
         assert run_worker.state is WorkerState.SUCCESS
 
-        transcript = console.query_one(
-            "#console-native-transcript", ConsoleTranscript
-        )
+        transcript = console.query_one("#console-native-transcript", ConsoleTranscript)
         transcript.query_one(f"#console-message-{source.id}")
         assert "seed" in _message_row_plain_text(console, source.id)
 
