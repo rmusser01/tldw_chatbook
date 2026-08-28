@@ -6,6 +6,7 @@ import argparse
 import ctypes
 import errno
 import hashlib
+import html
 import json
 import os
 import re
@@ -492,8 +493,16 @@ _CREDENTIAL_ASSIGNMENT = re.compile(
     r"\s*[:=]\s*[^\s,;]+"
 )
 _HOST_PATH = re.compile(
-    r"(?<![A-Za-z0-9:.<>/])(?:[A-Za-z]:[\\/]|\\\\[^\\\s]+\\|/(?!/)[^\s\"'<>]+)"
+    r"(?<![A-Za-z0-9:.</])(?<!<checkout>)(?<!<runtime>)(?<!<scratch>)"
+    r"(?:[A-Za-z]:[\\/]|\\\\[^\\/\s]+[\\/]|"
+    r"/{2,}[^\s\"'<>]+|"
+    r"/(?!/|(?i:&#(?:160|xa0);)[^/\s\"'<>]*(?:<|$))[^\s\"'<>]+)"
 )
+_WHITESPACE_HOST_PATH = re.compile(
+    r"(?<![A-Za-z0-9:.</])(?<!<checkout>)(?<!<runtime>)(?<!<scratch>)"
+    r"/[^\S\r\n]+[^\"'<\r\n]*[\\/]"
+)
+_ANCHORED_WHITESPACE_HOST_PATH = re.compile(r"\A/\s+[^\s\"'<>]")
 _HOST_URI = re.compile(
     r"(?i)\b(?:file|vscode-file|filesystem|local-file):(?://)?[^\s\"']*"
 )
@@ -975,12 +984,87 @@ def _json_contains_credential_key(value: object) -> bool:
     return False
 
 
+def _decoded_text_candidates(value: str) -> list[str]:
+    inspected = [value]
+    for _ in range(MAX_URI_DECODE_PASSES):
+        changed = False
+        decoded = urllib.parse.unquote(inspected[-1])
+        if decoded != inspected[-1]:
+            inspected.append(decoded)
+            changed = True
+        decoded = html.unescape(inspected[-1])
+        if decoded != inspected[-1]:
+            inspected.append(decoded)
+            changed = True
+        if not changed:
+            return inspected
+    raise CloseoutError("host_path_present")
+
+
+def _reject_duplicate_json_keys(
+    pairs: list[tuple[str, object]],
+) -> dict[str, object]:
+    result: dict[str, object] = {}
+    for key, child in pairs:
+        if key in result:
+            raise CloseoutError("artifact_json_invalid")
+        result[key] = child
+    return result
+
+
+def _strict_json_loads(payload: str | bytes) -> object:
+    return json.loads(payload, object_pairs_hook=_reject_duplicate_json_keys)
+
+
+def _validate_json_text_values(
+    value: object,
+    *,
+    replacements: Collection[tuple[str, str]],
+    credential_values: Collection[str],
+) -> None:
+    pending = [(value, 0, False)]
+    while pending:
+        current, depth, is_key = pending.pop()
+        if depth > MAX_JSON_DEPTH:
+            raise CloseoutError("artifact_json_invalid")
+        if isinstance(current, str):
+            for candidate in _decoded_text_candidates(current):
+                if is_key and _is_json_credential_key(candidate):
+                    raise CloseoutError("credential_material")
+                if any(secret and secret in candidate for secret in credential_values):
+                    raise CloseoutError("credential_material")
+                if _CREDENTIAL_ASSIGNMENT.search(candidate):
+                    raise CloseoutError("credential_material")
+                if any(
+                    re.search(
+                        re.escape(host_root) + r"(?=$|[\\/\s\"'?,#])",
+                        candidate,
+                    )
+                    for host_root, _replacement in replacements
+                ):
+                    raise CloseoutError("host_path_present")
+                if (
+                    _HOST_URI.search(candidate)
+                    or _HOST_PATH.search(candidate)
+                    or _WHITESPACE_HOST_PATH.search(candidate)
+                    or _ANCHORED_WHITESPACE_HOST_PATH.search(candidate)
+                ):
+                    raise CloseoutError("host_path_present")
+        elif isinstance(current, dict):
+            for key, child in current.items():
+                if not isinstance(key, str):
+                    raise CloseoutError("artifact_json_invalid")
+                pending.extend(((key, depth + 1, True), (child, depth + 1, False)))
+        elif isinstance(current, list):
+            pending.extend((child, depth + 1, False) for child in current)
+
+
 def _validate_json_artifacts(artifacts: Mapping[str, bytes]) -> None:
     for relative, payload in artifacts.items():
         if not relative.endswith(".json"):
             continue
         try:
-            parsed = json.loads(payload)
+            parsed = _strict_json_loads(payload)
         except (UnicodeError, json.JSONDecodeError, RecursionError):
             raise CloseoutError("artifact_json_invalid") from None
         if not isinstance(parsed, (dict, list)):
@@ -999,14 +1083,7 @@ def _normalize_text_payload(
         text = payload.decode("utf-8")
     except UnicodeError:
         raise CloseoutError("artifact_encoding_invalid") from None
-    inspected = [text]
-    for _ in range(MAX_URI_DECODE_PASSES):
-        decoded = urllib.parse.unquote(inspected[-1])
-        if decoded == inspected[-1]:
-            break
-        inspected.append(decoded)
-    else:
-        raise CloseoutError("host_path_present")
+    inspected = _decoded_text_candidates(text)
     for candidate in inspected:
         if any(value and value in candidate for value in credential_values):
             raise CloseoutError("credential_material")
@@ -1020,16 +1097,6 @@ def _normalize_text_payload(
             raise CloseoutError("host_path_present")
         if _CREDENTIAL_ASSIGNMENT.search(candidate):
             raise CloseoutError("credential_material")
-        try:
-            decoded_json = json.loads(candidate)
-        except (UnicodeError, json.JSONDecodeError):
-            decoded_json = None
-        except RecursionError:
-            raise CloseoutError("artifact_json_invalid") from None
-        if isinstance(decoded_json, (dict, list)) and _json_contains_credential_key(
-            decoded_json
-        ):
-            raise CloseoutError("credential_material")
         inspected_normalized = candidate
         for host_root, replacement in replacements:
             inspected_normalized = re.sub(
@@ -1037,8 +1104,24 @@ def _normalize_text_payload(
                 replacement,
                 inspected_normalized,
             )
-        if _HOST_URI.search(inspected_normalized) or _HOST_PATH.search(
-            inspected_normalized
+        try:
+            decoded_json = _strict_json_loads(inspected_normalized)
+        except (UnicodeError, json.JSONDecodeError):
+            decoded_json = None
+        except RecursionError:
+            raise CloseoutError("artifact_json_invalid") from None
+        decoded_json_container = isinstance(decoded_json, (dict, list))
+        if decoded_json_container:
+            _validate_json_text_values(
+                decoded_json,
+                replacements=replacements,
+                credential_values=credential_values,
+            )
+        if not decoded_json_container and (
+            _HOST_URI.search(inspected_normalized)
+            or _HOST_PATH.search(inspected_normalized)
+            or _WHITESPACE_HOST_PATH.search(inspected_normalized)
+            or _ANCHORED_WHITESPACE_HOST_PATH.search(inspected_normalized)
         ):
             raise CloseoutError("host_path_present")
     normalized = text
@@ -1052,7 +1135,25 @@ def _normalize_text_payload(
         raise CloseoutError("credential_material")
     if _CREDENTIAL_ASSIGNMENT.search(normalized):
         raise CloseoutError("credential_material")
-    if _HOST_URI.search(normalized) or _HOST_PATH.search(normalized):
+    try:
+        normalized_json = _strict_json_loads(normalized)
+    except (UnicodeError, json.JSONDecodeError):
+        normalized_json = None
+    except RecursionError:
+        raise CloseoutError("artifact_json_invalid") from None
+    normalized_json_container = isinstance(normalized_json, (dict, list))
+    if normalized_json_container:
+        _validate_json_text_values(
+            normalized_json,
+            replacements=replacements,
+            credential_values=credential_values,
+        )
+    if not normalized_json_container and (
+        _HOST_URI.search(normalized)
+        or _HOST_PATH.search(normalized)
+        or _WHITESPACE_HOST_PATH.search(normalized)
+        or _ANCHORED_WHITESPACE_HOST_PATH.search(normalized)
+    ):
         raise CloseoutError("host_path_present")
     return normalized.encode("utf-8")
 

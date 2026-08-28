@@ -5540,6 +5540,550 @@ def test_uri_inspection_preserves_safe_encoded_bytes_and_rejects_double_encoding
 
 
 @pytest.mark.parametrize(
+    "ui_copy",
+    (
+        "Search /&#160;RAG",
+        "Import /&#160;Export",
+        "Search /&#xA0;RAG",
+        "Search /&#xa0;RAG",
+    ),
+)
+def test_svg_ui_copy_with_numeric_nbsp_after_slash_is_not_a_host_path(
+    tmp_path, ui_copy
+):
+    module = _load_runner()
+    roots = {name: tmp_path / name for name in ("checkout", "runtime", "scratch")}
+    payload = f"<svg><text>{ui_copy}</text></svg>".encode()
+
+    normalized = module.normalize_artifacts(
+        {"captures/frame.svg": payload}, roots=roots
+    )
+
+    assert normalized["captures/frame.svg"] == payload
+
+
+@pytest.mark.parametrize(
+    "ui_copy", ("Search /\N{NO-BREAK SPACE}RAG", "Import /\N{NO-BREAK SPACE}Export")
+)
+def test_svg_ui_copy_with_literal_nbsp_after_slash_is_not_a_host_path(
+    tmp_path, ui_copy
+):
+    module = _load_runner()
+    roots = {name: tmp_path / name for name in ("checkout", "runtime", "scratch")}
+    payload = f"<svg><text>{ui_copy}</text></svg>".encode()
+
+    normalized = module.normalize_artifacts(
+        {"captures/frame.svg": payload}, roots=roots
+    )
+
+    assert normalized["captures/frame.svg"] == payload
+
+
+def test_decoded_whitespace_path_under_declared_root_is_normalized(tmp_path):
+    module = _load_runner()
+    roots = {name: tmp_path / name for name in ("checkout", "runtime", "scratch")}
+    payload = json.dumps(
+        {"path": f"{roots['checkout']}/\N{NO-BREAK SPACE}Users/alice"},
+        ensure_ascii=False,
+    ).encode()
+
+    normalized = module.normalize_artifacts({"summary.json": payload}, roots=roots)
+
+    assert json.loads(normalized["summary.json"])["path"] == (
+        "<checkout>/\N{NO-BREAK SPACE}Users/alice"
+    )
+
+
+def test_decoded_whitespace_ui_copy_does_not_scan_across_json_fields(tmp_path):
+    module = _load_runner()
+    roots = {name: tmp_path / name for name in ("checkout", "runtime", "scratch")}
+    payload = '{"label":"Search /\N{NO-BREAK SPACE}RAG","other":"A/B"}'.encode()
+
+    normalized = module.normalize_artifacts({"summary.json": payload}, roots=roots)
+
+    assert normalized["summary.json"] == payload
+
+
+def test_decoded_whitespace_json_scans_values_not_serialized_escape_bytes(tmp_path):
+    module = _load_runner()
+    roots = {name: tmp_path / name for name in ("checkout", "runtime", "scratch")}
+    payload = json.dumps(
+        {"label": "Search / focus filter | F1 help · Ctrl+P palette │"}
+    ).encode()
+
+    normalized = module.normalize_artifacts({"summary.json": payload}, roots=roots)
+
+    assert normalized["summary.json"] == payload
+
+
+def test_decoded_whitespace_json_value_with_later_separator_is_rejected(tmp_path):
+    module = _load_runner()
+    roots = {name: tmp_path / name for name in ("checkout", "runtime", "scratch")}
+
+    with pytest.raises(module.CloseoutError) as error:
+        module.normalize_artifacts(
+            {
+                "summary.json": json.dumps(
+                    {"path": "/ Users Alice/private.txt"}
+                ).encode()
+            },
+            roots=roots,
+        )
+
+    assert error.value.category == "host_path_present"
+
+
+@pytest.mark.parametrize(
+    ("value", "category"),
+    (
+        ("/Users/alice/private.txt", "host_path_present"),
+        ("file:///Users/alice/private.txt", "host_path_present"),
+        (r"C:\Users\alice\private.txt", "host_path_present"),
+        (r"\\server\share\private.txt", "host_path_present"),
+        ("API_KEY=opaque", "credential_material"),
+    ),
+)
+def test_fully_json_unicode_escaped_values_are_rejected(tmp_path, value, category):
+    module = _load_runner()
+    roots = {name: tmp_path / name for name in ("checkout", "runtime", "scratch")}
+    escaped = "".join(f"\\u{ord(character):04x}" for character in value)
+    payload = f'{{"value":"{escaped}"}}'.encode()
+
+    with pytest.raises(module.CloseoutError) as error:
+        module.normalize_artifacts({"summary.json": payload}, roots=roots)
+
+    assert error.value.category == category
+
+
+@pytest.mark.parametrize(
+    ("key", "category"),
+    (
+        ("/Users/alice/private.txt", "host_path_present"),
+        ("api_key", "credential_material"),
+        ("API_KEY=opaque", "credential_material"),
+    ),
+)
+def test_fully_json_unicode_escaped_keys_are_rejected(tmp_path, key, category):
+    module = _load_runner()
+    roots = {name: tmp_path / name for name in ("checkout", "runtime", "scratch")}
+    escaped = "".join(f"\\u{ord(character):04x}" for character in key)
+    payload = f'{{"{escaped}":"opaque"}}'.encode()
+
+    with pytest.raises(module.CloseoutError) as error:
+        module.normalize_artifacts({"summary.json": payload}, roots=roots)
+
+    assert error.value.category == category
+
+
+def test_json_unicode_escaped_declared_root_is_rejected(tmp_path):
+    module = _load_runner()
+    roots = {name: tmp_path / name for name in ("checkout", "runtime", "scratch")}
+    escaped = "".join(
+        f"\\u{ord(character):04x}" for character in str(roots["checkout"])
+    )
+    payload = f'{{"path":"{escaped}"}}'.encode()
+
+    with pytest.raises(module.CloseoutError) as error:
+        module.normalize_artifacts({"summary.json": payload}, roots=roots)
+
+    assert error.value.category == "host_path_present"
+
+
+def test_json_unicode_escaped_declared_credential_value_is_rejected(tmp_path):
+    module = _load_runner()
+    roots = {name: tmp_path / name for name in ("checkout", "runtime", "scratch")}
+    credential = "declared-closeout-secret"
+    escaped = "".join(f"\\u{ord(character):04x}" for character in credential)
+    payload = f'{{"value":"{escaped}"}}'.encode()
+
+    with pytest.raises(module.CloseoutError) as error:
+        module.normalize_artifacts(
+            {"summary.json": payload},
+            roots=roots,
+            credential_values=(credential,),
+        )
+
+    assert error.value.category == "credential_material"
+
+
+def test_safe_json_unicode_escapes_preserve_original_bytes(tmp_path):
+    module = _load_runner()
+    roots = {name: tmp_path / name for name in ("checkout", "runtime", "scratch")}
+    payload = (
+        rb'{"label":"Search \u002f RAG","url":"https\u003a\u002f\u002fexample.com'
+        rb'\u002fhome\u002fdocs","token\u005fcount":3,"ratio":"A\u002fB"}'
+    )
+
+    normalized = module.normalize_artifacts({"summary.json": payload}, roots=roots)
+
+    assert normalized["summary.json"] == payload
+
+
+@pytest.mark.parametrize("whitespace", ("\N{NO-BREAK SPACE}", "\N{EM SPACE}"))
+def test_json_escaped_whitespace_ui_copy_preserves_original_bytes(tmp_path, whitespace):
+    module = _load_runner()
+    roots = {name: tmp_path / name for name in ("checkout", "runtime", "scratch")}
+    payload = json.dumps({"label": f"Search /{whitespace}RAG"}).encode()
+
+    normalized = module.normalize_artifacts({"summary.json": payload}, roots=roots)
+
+    assert b"\\u" in payload
+    assert normalized["summary.json"] == payload
+
+
+@pytest.mark.parametrize(
+    ("encoded_kind", "category"),
+    (
+        ("percent_path", "host_path_present"),
+        ("entity_path", "host_path_present"),
+        ("percent_credential", "credential_material"),
+        ("entity_credential", "credential_material"),
+        ("percent_root", "host_path_present"),
+        ("entity_root", "host_path_present"),
+    ),
+)
+def test_fully_json_unicode_escaped_intermediate_encodings_are_rejected(
+    tmp_path, encoded_kind, category
+):
+    module = _load_runner()
+    roots = {name: tmp_path / name for name in ("checkout", "runtime", "scratch")}
+    encoded_values = {
+        "percent_path": "%2FUsers%2Falice%2Fprivate.txt",
+        "entity_path": "&#47;Users&#47;alice&#47;private.txt",
+        "percent_credential": "API_KEY%3Dopaque",
+        "entity_credential": "API_KEY&#61;opaque",
+        "percent_root": urllib.parse.quote(str(roots["checkout"]), safe=""),
+        "entity_root": "".join(
+            f"&#{ord(character)};" for character in str(roots["checkout"])
+        ),
+    }
+    escaped = "".join(
+        f"\\u{ord(character):04x}" for character in encoded_values[encoded_kind]
+    )
+    payload = f'{{"value":"{escaped}"}}'.encode()
+
+    with pytest.raises(module.CloseoutError) as error:
+        module.normalize_artifacts({"summary.json": payload}, roots=roots)
+
+    assert error.value.category == category
+
+
+def test_fully_json_unicode_escaped_nested_entity_decoding_fails_closed(tmp_path):
+    module = _load_runner()
+    roots = {name: tmp_path / name for name in ("checkout", "runtime", "scratch")}
+    encoded = "&#47;Users&#47;alice&#47;private.txt"
+    for _ in range(module.MAX_URI_DECODE_PASSES + 1):
+        encoded = encoded.replace("&", "&amp;")
+    escaped = "".join(f"\\u{ord(character):04x}" for character in encoded)
+    payload = f'{{"value":"{escaped}"}}'.encode()
+
+    with pytest.raises(module.CloseoutError) as error:
+        module.normalize_artifacts({"summary.json": payload}, roots=roots)
+
+    assert error.value.category == "host_path_present"
+
+
+@pytest.mark.parametrize(
+    "leak", ("//server/share/private.txt", "///Users/alice/private.txt")
+)
+@pytest.mark.parametrize("as_json", (False, True))
+def test_forward_slash_unc_and_multislash_host_paths_are_rejected(
+    tmp_path, leak, as_json
+):
+    module = _load_runner()
+    roots = {name: tmp_path / name for name in ("checkout", "runtime", "scratch")}
+    payload = json.dumps({"path": leak}).encode() if as_json else leak.encode()
+    relative = "summary.json" if as_json else "captures/frame.txt"
+
+    with pytest.raises(module.CloseoutError) as error:
+        module.normalize_artifacts({relative: payload}, roots=roots)
+
+    assert error.value.category == "host_path_present"
+
+
+@pytest.mark.parametrize(
+    "url", ("http://example.test/docs", "https://example.test/docs")
+)
+@pytest.mark.parametrize("as_json", (False, True))
+def test_http_urls_with_double_slashes_preserve_original_bytes(tmp_path, url, as_json):
+    module = _load_runner()
+    roots = {name: tmp_path / name for name in ("checkout", "runtime", "scratch")}
+    payload = json.dumps({"url": url}).encode() if as_json else url.encode()
+    relative = "summary.json" if as_json else "captures/frame.txt"
+
+    normalized = module.normalize_artifacts({relative: payload}, roots=roots)
+
+    assert normalized[relative] == payload
+
+
+@pytest.mark.parametrize(
+    "payload",
+    (
+        b'{"value":"safe","value":"also-safe"}',
+        rb'{"value":"\u002fUsers\u002falice\u002fprivate.txt","value":"safe"}',
+        rb'{"value":1,"\u0076alue":2}',
+        b'{"outer":{"value":1,"value":2}}',
+    ),
+)
+def test_normalization_rejects_duplicate_json_keys(tmp_path, payload):
+    module = _load_runner()
+    roots = {name: tmp_path / name for name in ("checkout", "runtime", "scratch")}
+
+    with pytest.raises(module.CloseoutError) as error:
+        module.normalize_artifacts({"summary.json": payload}, roots=roots)
+
+    assert error.value.category == "artifact_json_invalid"
+
+
+def test_artifact_validation_rejects_duplicate_json_keys():
+    module = _load_runner()
+
+    with pytest.raises(module.CloseoutError) as error:
+        module._validate_json_artifacts(
+            {"summary.json": b'{"value":"first","value":"second"}'}
+        )
+
+    assert error.value.category == "artifact_json_invalid"
+
+
+@pytest.mark.parametrize(
+    "leak",
+    (
+        r"\\server/share/private.txt",
+        r"\\server/share\private.txt",
+        r"//server\share\private.txt",
+    ),
+)
+@pytest.mark.parametrize("representation", ("raw", "json", "unicode_json"))
+def test_mixed_separator_unc_host_paths_are_rejected(tmp_path, leak, representation):
+    module = _load_runner()
+    roots = {name: tmp_path / name for name in ("checkout", "runtime", "scratch")}
+    if representation == "raw":
+        relative = "captures/frame.txt"
+        payload = leak.encode()
+    elif representation == "json":
+        relative = "summary.json"
+        payload = json.dumps({"path": leak}).encode()
+    else:
+        relative = "summary.json"
+        escaped = "".join(f"\\u{ord(character):04x}" for character in leak)
+        payload = f'{{"path":"{escaped}"}}'.encode()
+
+    with pytest.raises(module.CloseoutError) as error:
+        module.normalize_artifacts({relative: payload}, roots=roots)
+
+    assert error.value.category == "host_path_present"
+
+
+@pytest.mark.parametrize("leak", ("/ Users", "/\nUsers/alice/private.txt"))
+@pytest.mark.parametrize(
+    "representation", ("raw", "json", "unicode_json", "percent_json", "entity_json")
+)
+def test_anchored_whitespace_absolute_paths_are_rejected(
+    tmp_path, leak, representation
+):
+    module = _load_runner()
+    roots = {name: tmp_path / name for name in ("checkout", "runtime", "scratch")}
+    relative = "captures/frame.txt" if representation == "raw" else "summary.json"
+    if representation == "raw":
+        payload = leak.encode()
+    elif representation == "json":
+        payload = json.dumps({"path": leak}).encode()
+    elif representation == "unicode_json":
+        escaped = "".join(f"\\u{ord(character):04x}" for character in leak)
+        payload = f'{{"path":"{escaped}"}}'.encode()
+    elif representation == "percent_json":
+        payload = json.dumps({"path": urllib.parse.quote(leak, safe="")}).encode()
+    else:
+        encoded = "".join(f"&#{ord(character)};" for character in leak)
+        payload = json.dumps({"path": encoded}).encode()
+
+    with pytest.raises(module.CloseoutError) as error:
+        module.normalize_artifacts({relative: payload}, roots=roots)
+
+    assert error.value.category == "host_path_present"
+
+
+def test_xml_text_boundary_whitespace_ui_copy_preserves_original_bytes(tmp_path):
+    module = _load_runner()
+    roots = {name: tmp_path / name for name in ("checkout", "runtime", "scratch")}
+    payload = b"<svg><text>/ Users</text></svg>"
+
+    normalized = module.normalize_artifacts(
+        {"captures/frame.svg": payload}, roots=roots
+    )
+
+    assert normalized["captures/frame.svg"] == payload
+
+
+@pytest.mark.parametrize(
+    ("relative", "payload"),
+    (
+        ("captures/frame.txt", b"Search / RAG"),
+        ("captures/frame.svg", b"<svg><text>Search / RAG</text></svg>"),
+        ("captures/frame.svg", b"<svg><text>Search /&#160;RAG</text></svg>"),
+        (
+            "captures/frame.svg",
+            b"<svg><text>/&#160;focus&#160;filter&#160;|&#160;F1&#160;help</text></svg>",
+        ),
+    ),
+)
+def test_embedded_whitespace_ui_copy_preserves_original_bytes(
+    tmp_path, relative, payload
+):
+    module = _load_runner()
+    roots = {name: tmp_path / name for name in ("checkout", "runtime", "scratch")}
+
+    normalized = module.normalize_artifacts({relative: payload}, roots=roots)
+
+    assert normalized[relative] == payload
+
+
+@pytest.mark.parametrize(
+    "ui_copy",
+    (
+        "Search / RAG",
+        "Import /\tExport",
+        "Search /\N{NO-BREAK SPACE}RAG",
+        "Import /\N{EM SPACE}Export",
+    ),
+)
+def test_terminal_decoded_whitespace_ui_copy_is_not_a_host_path(tmp_path, ui_copy):
+    module = _load_runner()
+    roots = {name: tmp_path / name for name in ("checkout", "runtime", "scratch")}
+    payload = f"<svg><text>{ui_copy}</text></svg>".encode()
+
+    normalized = module.normalize_artifacts(
+        {"captures/frame.svg": payload}, roots=roots
+    )
+
+    assert normalized["captures/frame.svg"] == payload
+
+
+@pytest.mark.parametrize(
+    "encoded",
+    (
+        "/ Users Alice/private.txt",
+        "&#47;&#32;Users&#32;Alice&#47;private.txt",
+        "/&#160;Users&#32;Alice&#92;private.txt",
+        "&#47;&#9;Users&#9;&#9;Alice&#47;private.txt",
+        "&#47;&#8195;Users&#8195;Alice&#92;private.txt",
+        "&#47;&#32;Users&#47;alice&#47;private.txt",
+        "&#47;&#9;Users&#92;alice&#92;private.txt",
+        "%2F%20Users%2Falice%2Fprivate.txt",
+        "%2F%09Users%5Calice%5Cprivate.txt",
+        "&#47;&nbsp;Users&#47;alice&#47;private.txt",
+        "&#47;&#8195;Users&#47;alice&#47;private.txt",
+        "&#47;&#32;Users&#62;private&#47;data.txt",
+        "&amp;#47;&amp;#32;Users&amp;#47;alice",
+        "%26%2347%3B%26%2332%3BUsers%26%2392%3Balice",
+        "%2526%252347%253B%2526%25239%253BUsers%2526%252347%253Balice",
+    ),
+)
+def test_encoded_whitespace_host_paths_are_rejected(tmp_path, encoded):
+    module = _load_runner()
+    roots = {name: tmp_path / name for name in ("checkout", "runtime", "scratch")}
+
+    with pytest.raises(module.CloseoutError) as error:
+        module.normalize_artifacts(
+            {"captures/frame.svg": f"<svg><text>{encoded}</text></svg>".encode()},
+            roots=roots,
+        )
+
+    assert error.value.category == "host_path_present"
+
+
+@pytest.mark.parametrize(
+    "encoded",
+    (
+        "/&#160;Users&#47;alice&#47;private.txt",
+        "/&#xA0;Users&#92;alice&#92;private.txt",
+        "&#47;&nbsp;Users&#47;alice&#47;private.txt",
+        "%2F%26%23160%3BUsers%26%2347%3Balice%26%2347%3Bprivate.txt",
+        "&amp;#47;&amp;#160;Users&amp;#47;alice&amp;#47;private.txt",
+        "&amp;#47;&amp;#xA0;Users&amp;#92;alice&amp;#92;private.txt",
+        "%26%2347%3B%26amp%3B%23160%3BUsers%26amp%3B%2347%3Balice",
+        "%2526%252347%253B%2526%2523160%253BUsers%2526%252392%253Balice",
+    ),
+)
+def test_svg_cross_encoded_nbsp_host_paths_are_rejected(tmp_path, encoded):
+    module = _load_runner()
+    roots = {name: tmp_path / name for name in ("checkout", "runtime", "scratch")}
+
+    with pytest.raises(module.CloseoutError) as error:
+        module.normalize_artifacts(
+            {"captures/frame.svg": f"<svg><text>{encoded}</text></svg>".encode()},
+            roots=roots,
+        )
+
+    assert error.value.category == "host_path_present"
+
+
+@pytest.mark.parametrize(
+    "leak",
+    (
+        "/Users/alice/private.txt",
+        "/&#160;Users/alice/private.txt",
+        r"C:\Users\alice\private.txt",
+        r"\\server\share\private.txt",
+        "file:///Users/alice/private.txt",
+    ),
+)
+def test_svg_real_host_paths_remain_rejected(tmp_path, leak):
+    module = _load_runner()
+    roots = {name: tmp_path / name for name in ("checkout", "runtime", "scratch")}
+
+    with pytest.raises(module.CloseoutError) as error:
+        module.normalize_artifacts(
+            {"captures/frame.svg": f"<svg><text>{leak}</text></svg>".encode()},
+            roots=roots,
+        )
+
+    assert error.value.category == "host_path_present"
+
+
+@pytest.mark.parametrize(
+    "encoded",
+    (
+        "&#47;Users&#47;alice&#47;private.txt",
+        "file&#58;&#47;&#47;&#47;Users&#47;alice&#47;private.txt",
+        "C&#58;&#92;Users&#92;alice&#92;private.txt",
+        "&#92;&#92;server&#92;share&#92;private.txt",
+        "&amp;#47;Users&amp;#47;alice&amp;#47;private.txt",
+        "%26%2347%3BUsers%26%2347%3Balice%26%2347%3Bprivate.txt",
+        "&#37;26&#37;2347&#37;3BUsers%26%2347%3Balice%26%2347%3Bprivate.txt",
+    ),
+)
+def test_svg_encoded_host_paths_remain_rejected(tmp_path, encoded):
+    module = _load_runner()
+    roots = {name: tmp_path / name for name in ("checkout", "runtime", "scratch")}
+
+    with pytest.raises(module.CloseoutError) as error:
+        module.normalize_artifacts(
+            {"captures/frame.svg": f"<svg><text>{encoded}</text></svg>".encode()},
+            roots=roots,
+        )
+
+    assert error.value.category == "host_path_present"
+
+
+def test_excessively_nested_entity_decoding_fails_closed(tmp_path):
+    module = _load_runner()
+    roots = {name: tmp_path / name for name in ("checkout", "runtime", "scratch")}
+    encoded = "&#47;Users&#47;alice&#47;private.txt"
+    for _ in range(module.MAX_URI_DECODE_PASSES + 1):
+        encoded = encoded.replace("&", "&amp;")
+
+    with pytest.raises(module.CloseoutError) as error:
+        module.normalize_artifacts(
+            {"captures/frame.svg": f"<svg><text>{encoded}</text></svg>".encode()},
+            roots=roots,
+        )
+
+    assert error.value.category == "host_path_present"
+
+
+@pytest.mark.parametrize(
     "credential_key",
     ("primary_api_key", "myAccessToken", "vendor-client-secret", "backupPrivateKey"),
 )
