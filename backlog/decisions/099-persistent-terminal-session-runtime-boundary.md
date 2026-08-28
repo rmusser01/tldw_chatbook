@@ -22,9 +22,9 @@ export, or model-context projection.
 One app-global `TerminalSessionManager` owns at most four process-memory session
 records across all conversations and screens. Widgets are projections only;
 navigation, recomposition, and remounting cannot restart, duplicate, or close a
-session. Lifecycle, terminal reason, exit code, and output completeness are
-separate fields. Session state is not persisted or reconnectable across app
-restarts.
+session. Lifecycle, terminal reason, exit code, stream closure, and output
+completeness are separate fields. Session state is not persisted or
+reconnectable across app restarts.
 
 POSIX sessions use an admission-gated controlling PTY. A launcher establishes a
 new session and reports identity before parent admission; only after admission
@@ -79,13 +79,16 @@ app-owned workers/helpers, and IPC, excluding user shell/program RSS.
 Closing uses bounded hangup, terminate, and force-kill stages plus platform
 identity validation. Exact shell exit is followed by bounded output draining
 and descendant settlement. `exited` proves the root reaped and zero owned
-processes; output completeness is reported separately and requires EOF. Cleanup
-uncertainty is retained visibly, keeps its cleanup authority where possible,
-continues occupying a session slot, and remains actionable while locked or
-unarmed. App failure relies on ordinary PTY-master closure on POSIX and final
-Job Object handle closure on Windows. These are operational cleanup mechanisms,
-not a sandbox or universal guarantee against deliberately detached
-host-authority processes.
+processes. Stream closure requires EOF; output completeness additionally
+requires every admitted byte to pass the healthy parser path. After process
+death, a failed parser uses a bounded raw drain that discards content without
+projection or persistence so EOF can still be proven while output remains
+incomplete. Cleanup uncertainty is retained visibly, keeps its cleanup authority
+where possible, continues occupying a session slot, and remains actionable
+while locked or unarmed. App failure relies on ordinary PTY-master closure on
+POSIX and final Job Object handle closure on Windows. These are operational
+cleanup mechanisms, not a sandbox or universal guarantee against deliberately
+detached host-authority processes.
 
 ## Context
 
@@ -165,10 +168,9 @@ license notices.
   requires a new ADR.
 - Any terminal model tool or automatic model-context projection requires
   TASK-23113's separate design and ADR.
-- Replacing pyte after qualification failure requires a new decision rather
-  than a silent dependency swap.
-- Changing the pywinpty version or low-level ConPTY API requires rerunning the
-  named qualification artifact and reviewing this ADR before lockfile change.
+- Changing the pinned pyte or pywinpty version or their parser/low-level ConPTY
+  API boundary requires rerunning the named qualification artifact and a new or
+  superseding ADR decision before lockfile change.
 - Nested-program mouse reporting requires TASK-23114's ADR check and real-
   terminal event evidence.
 - Arbitrary launch commands, caller-provided environment overrides, or a claim

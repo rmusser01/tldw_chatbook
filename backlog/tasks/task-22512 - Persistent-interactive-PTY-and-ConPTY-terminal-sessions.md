@@ -43,7 +43,7 @@ Add a deliberately separate, user-controlled interactive terminal experience for
 ## Implementation Plan
 
 <!-- SECTION:PLAN:BEGIN -->
-1. Finalize and independently review the approved persistent-terminal design and ADR before code work.
+1. Finalize and independently review the persistent-terminal design and proposed ADR before code work.
 2. Qualify pyte and Windows pywinpty against the required shell, terminal-protocol, packaging, and real-platform matrices; record results in `Docs/superpowers/reviews/evidence/task-22512/dependency-qualification.md` and stop to revisit ADR-099 if a mandatory row fails.
 3. Implement the app-global session contracts, authorization states, resource limits, and terminal screen model through focused test-driven slices.
 4. Add the admission-gated POSIX PTY and Windows ConPTY backends with one authoritative reaper, bounded control channels, and platform-native cleanup evidence.

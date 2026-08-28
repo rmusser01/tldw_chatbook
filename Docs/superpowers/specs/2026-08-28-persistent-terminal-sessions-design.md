@@ -184,7 +184,8 @@ Each record contains only process-memory state:
 
 - random opaque session ID;
 - user-visible name, shell identity, and starting directory;
-- lifecycle state, terminal reason, output-complete flag, and timestamps;
+- lifecycle state, terminal reason, stream-closed flag, output-complete flag,
+  and timestamps;
 - backend owner and process/session identity needed for safe cleanup;
 - last applied rows/columns;
 - terminal model, scrollback accounting, and live-bottom position;
@@ -208,12 +209,15 @@ cleanup_unproven -> closing -> closed | cleanup_unproven (Retry cleanup)
 Admission reserves a slot atomically before any launch. Pre-launch failure
 releases it. Running, exited, closing, and cleanup-unproven records retain it.
 Closed records are removed. `exited` proves the exact shell was reaped and no
-owned process remains; it does not by itself claim complete output. The separate
-`output_complete` flag is true only after PTY/ConPTY EOF. On Windows, where Job
-and process handles can prove death independently of ConPTY EOF, a bounded drain
-that ends without EOF closes the backend and leaves an `exited` record with
-reason `output_incomplete`. POSIX proof still requires PTY EOF. A nonzero shell
-exit is an ordinary exit code, not infrastructure failure.
+owned process remains; it does not by itself claim stream closure or complete
+output. `stream_closed` is true only after PTY/ConPTY EOF, not merely because a
+parent handle was forced closed. `output_complete` additionally requires that
+all admitted bytes through EOF passed the healthy decoder/parser path without a
+cleanup-only discard; bounded scrollback eviction does not change that flag. On
+Windows, where Job and process handles can prove death independently of ConPTY
+EOF, a bounded drain that ends without EOF closes the backend and leaves an
+`exited` record with reason `output_incomplete`. POSIX proof still requires PTY
+EOF. A nonzero shell exit is an ordinary exit code, not infrastructure failure.
 
 ### 5.3 POSIX backend
 
@@ -537,9 +541,14 @@ ConPTY stream handles are closed. Retry cleanup can terminate, wait, and query
 that same admitted generation again. On POSIX the receipt retains the immutable
 root/session identity, validated descendant birth identities, and PTY master so
 Retry can still observe EOF. New input and repaint stop; bounded output parsing
-may continue when healthy, while a failed parser pauses reads and relies on OS
-backpressure. Retry re-enumerates and revalidates before signalling. Receipt
-actions remain available while locked or unarmed.
+may continue when healthy. While owned processes remain, a failed parser pauses
+reads and relies on OS backpressure. After process death is otherwise proven, a
+cleanup-only raw drain reads at most 64 KiB per call, yields under the parser-
+turn budget, and discards bytes without decoding, rendering, logging,
+persisting, or model exposure. Observed EOF sets `stream_closed=true` while
+`output_complete` remains false. Missing EOF by the deadline remains
+`cleanup_unproven`. Retry re-enumerates and revalidates before signalling.
+Receipt actions remain available while locked or unarmed.
 
 All sessions clean up concurrently during disarm/shutdown, with a five-second
 overall app deadline rather than five seconds multiplied by session count. At
@@ -554,11 +563,13 @@ descendant may retain the slave/ConPTY stream. Shell exit disables further user
 input and enters `draining`. The owner performs a bounded final drain and
 validates ordinary descendants. Remaining owned processes enter `closing` and
 the cleanup ladder. When process death is proven, the record becomes `exited`;
-`output_complete` is true only if EOF was observed. On Windows, Job Object and
-waitable-process proof may establish zero owned processes even when ConPTY fails
-to report EOF; that produces the visible, content-free `output_incomplete`
-reason rather than claiming all trailing output was captured. On POSIX, missing
-PTY EOF prevents the stronger death proof and produces `cleanup_unproven`.
+`stream_closed` is true only after EOF, and `output_complete` also requires the
+healthy parser path to have consumed all admitted bytes. On Windows, Job Object
+and waitable-process proof may establish zero owned processes even when ConPTY
+fails to report EOF; that produces the visible, content-free
+`output_incomplete` reason rather than claiming all trailing output was
+captured. On POSIX, missing PTY EOF prevents the stronger death proof and
+produces `cleanup_unproven`.
 
 ### 8.3 App failure
 
@@ -586,7 +597,7 @@ Stable terminal-reason categories are:
 
 `reserved`, `creating`, `admitting`, `running`, `draining`, `exited`, `closing`,
 and `closed` are lifecycle values rather than error categories. Exit code,
-terminal reason, and output completeness remain independent.
+terminal reason, stream closure, and output completeness remain independent.
 
 Backend or parser failure never falls back to ordinary pipes, one-shot raw CLI,
 or a model tool. User-facing errors use stable safe copy and may show a user-
@@ -628,6 +639,8 @@ or parser from shipping.
 - name, shell, directory, environment, and argv validation;
 - lifecycle/reason/output-complete transition matrix, cleanup retry cycles, and
   idempotent priority cleanup;
+- stream-closed versus output-complete semantics, including parser-failure raw
+  cleanup drain with zero content projection or persistence;
 - input, paste, reply, output, viewport, scrollback, and memory bounds;
 - incremental UTF-8, wide/combining characters, malformed bytes, and hostile
   control sequences;
@@ -725,8 +738,9 @@ Update:
   TASK-23113's separate design and ADR.
 - Nested-program mouse reporting belongs to TASK-23114 and requires an ADR check
   plus real-terminal event evidence.
-- Replacing pyte after the qualification gate requires ADR-099 to be amended by
-  a new decision rather than silently swapping the parser boundary.
+- Changing the pinned pyte or pywinpty version or their parser/low-level ConPTY
+  API boundary requires rerunning the named qualification artifact and a new or
+  superseding ADR decision before lockfile change.
 - Arbitrary launch commands, non-shell programs, custom environment overrides,
   or login-shell modes require a scoped design amendment.
 - Any claim of sandboxing or workspace confinement requires real enforcement and
