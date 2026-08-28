@@ -61,9 +61,14 @@ supplies that text.
    native parent map. Import conversion may already have removed empty rows and
    reparented their children, so this is intentionally not defined as the raw
    database column. Later legacy native re-parenting does not invalidate a target.
-   The operation returns `True` when no durable write is needed or it succeeds;
-   on a persisted-row write failure it keeps the in-memory rewind and returns
-   `False` so the UI can warn that restart durability was not saved.
+   The operation calls the atomic two-column cursor writer directly. It returns
+   `True` for a temporary conversation, where restart durability does not apply,
+   or for a successful durable write. For a persisted conversation whose target
+   lacks a durable message ID, whose cursor seam is unavailable, whose row is
+   missing, or whose write fails, it keeps the in-memory rewind and returns
+   `False` so the UI can warn that restart durability was not saved. The legacy
+   scalar active-leaf setter keeps its `None` return contract, delegates to the
+   atomic writer, and discards that boolean.
 5. On resume, a non-null active-leaf pointer takes precedence. If it resolves,
    any contradictory before-message marker is cleared. If it dangles, resume
    uses the existing newest-leaf fallback and repairs both columns.
@@ -98,7 +103,9 @@ supplies that text.
 - Ordinary composer drafts remain non-durable. This decision creates no general
   draft persistence, autosave, conflict, sync, or privacy surface.
 - Composer reconstruction is text-only, matching existing `/rewind`; prompt
-  attachments are not re-staged.
+  attachments are not re-staged. An attachment-only prompt therefore restores an
+  empty draft and does not set `has_user_work=True`, matching the current draft
+  setter's non-empty-text semantics.
 - Explicit-before-first state is device-local and restart-durable, but not
   portable through exports or conversation-copy formats.
 - While the active path is empty, the current `/rewind` and swipe controls have no

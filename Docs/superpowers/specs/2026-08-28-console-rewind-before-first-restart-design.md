@@ -84,13 +84,15 @@ set_conversation_active_cursor(
 The writer returns whether the requested durable row was updated. No cursor
 dataclass or enum is introduced.
 
-The existing active-leaf setter remains source-compatible and delegates to the
-atomic writer with `before_message_id=None`. The existing scalar
-`get_conversation_active_leaf()` contract also remains source-compatible; the
-conversation hydration path opts into a new two-component cursor reader. A
-dedicated before-message writer sets the leaf to `NULL` and the prompt ID in the
-same transaction. Existing best-effort scalar-setter callers may ignore the
-writer result.
+The store's dedicated before-message operation calls
+`set_conversation_active_cursor(...)` directly with a null active leaf and the
+target prompt ID. The existing
+`set_conversation_active_leaf(conversation_id, message_id) -> None` remains
+source-compatible, delegates to the same atomic writer with
+`before_message_id=None`, and deliberately discards its boolean result. The
+existing scalar `get_conversation_active_leaf() -> str | None` contract also
+remains source-compatible; only cursor-aware conversation hydration opts into the
+new two-component reader.
 
 The existing-conversation acceptance transaction in
 `ConsoleDispatchRepository.insert_with_messages` is also a cursor writer. Its
@@ -127,15 +129,17 @@ reparent their children. A node is not rejected merely because the legacy
 compatibility repair subsequently gives it a native parent. The screen also
 requires that the chosen prompt is index zero in the current active path.
 
-A temporary session or message with no durable identity keeps the existing
-in-memory first-prompt rewind behavior: validate its in-memory root-user shape,
-clear the active path, and refill the draft, but skip the companion write because
-there is no restartable cursor yet. Persisted-root validation applies once both the
-conversation and target message have durable IDs. The operation returns `True`
-when no durable write is required or when that write succeeds. For a persisted
-conversation it returns `False` if the persistence seam is unavailable, the row
-is missing, or the write fails; the in-memory rewind is deliberately not rolled
-back, and the failure is logged.
+A temporary conversation keeps the existing in-memory first-prompt rewind
+behavior: validate its in-memory root-user shape, clear the active path, refill
+the draft, skip the companion write, and return `True` because restart durability
+does not apply. A persisted conversation requires both a durable conversation ID
+and a durable target-message ID. If its chosen target has not been persisted yet,
+the operation still applies the in-memory rewind but returns `False` and warns
+because the requested restart position was not saved. Persisted-root validation
+applies once both IDs exist. For a persisted conversation the operation likewise
+returns `False` if the persistence seam is unavailable, the row is missing, or
+the write fails; the in-memory rewind is deliberately not rolled back, and the
+failure is logged. It returns `True` only when the durable cursor write succeeds.
 
 Conversation hydration reads both cursor components and passes both persisted IDs
 to `restore_persisted_session`. Full-tree ingestion maps them to the new store's
@@ -188,7 +192,10 @@ the store. No second UI-only pending handoff or draft database is introduced.
   genuinely unset; this is required to prove acceptance criterion 2.
 - Restoring the referenced durable prompt text uses `set_session_draft()`,
   preserving `has_user_work` safeguards against later hydration overwriting the
-  composer.
+  composer when that text is non-empty. For an attachment-only prompt whose text
+  is empty, `set_session_draft("")` intentionally leaves `has_user_work=False`;
+  the text-only scope means an empty composer with no re-staged attachments is the
+  expected restored state.
 
 ## Portability boundary
 
@@ -218,7 +225,8 @@ Tests will be written before implementation and cover:
    including clearing a non-null marker for an empty tree.
 8. Screen routing: first prompt uses before-message; mid-path rewind remains unchanged.
 9. A failed durable before-message write leaves the in-memory rewind intact and
-   produces the restart-durability warning.
+   produces the restart-durability warning, including a persisted conversation
+   whose selected target does not yet have a durable message ID.
 10. End-to-end persist/drop/resume: empty active path, the target row's current
     durable prompt text, old tree retained, edited resend creates a root sibling,
     and a following restart selects the new branch with no stale marker.
@@ -227,6 +235,8 @@ Tests will be written before implementation and cover:
     new branch-navigation shape.
 12. Temporary/unpersisted sessions still rewind before their first prompt in memory
     without attempting to persist a companion ID.
+13. An attachment-only prompt restores an empty text draft without re-staging its
+    attachments and does not assert `has_user_work=True` for that empty draft.
 
 The current `dev` baseline has one reproducible test-harness failure in
 `Tests/integration/test_console_rewind_e2e.py`: its raw store/session fixture does
