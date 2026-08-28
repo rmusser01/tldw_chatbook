@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from dataclasses import dataclass
 from datetime import datetime, timezone
 from typing import Any
 
@@ -18,6 +19,31 @@ from tldw_chatbook.Scheduling.services.server_client import (
 
 _REMINDER_PRIMITIVE = "reminder_task"
 _EPOCH = datetime(1970, 1, 1, tzinfo=timezone.utc)
+
+
+@dataclass(frozen=True)
+class SyncOutcome:
+    """What a sync attempt actually did (task-23105 review F3).
+
+    The engine swallows server errors internally (it records them as
+    persisted sync errors), so callers previously could not distinguish
+    a FAILED sync from a no-op and reported both as success. Statuses:
+
+    - ``ok``: the attempt ran to completion. ``pulled`` is the number of
+      reminder items the server listed (its full set for this owner, not
+      only changed rows); ``pushed`` counts the local mutations and
+      tombstones pushed.
+    - ``not_applicable``: sync cannot run in this configuration (no
+      server client, or a runtime-mode policy refusal). Nothing was
+      pulled or pushed; not an error.
+    - ``error``: the attempt failed. ``error`` carries the message that
+      was also recorded as a persisted sync error.
+    """
+
+    status: str
+    pulled: int = 0
+    pushed: int = 0
+    error: str | None = None
 
 
 def now_utc_iso() -> str:
@@ -110,10 +136,10 @@ class SyncEngine:
             logger.exception(f"Sync pull transaction failed for {target_owner}: {exc}")
             self._record_sync_error(str(exc), target_owner)
 
-    async def sync_now(self, owner_id: str | None = None) -> None:
+    async def sync_now(self, owner_id: str | None = None) -> SyncOutcome:
         target_owner = owner_id if owner_id is not None else self.owner_id
         if self.server_client is None:
-            return
+            return SyncOutcome("not_applicable")
 
         try:
             (
@@ -128,14 +154,14 @@ class SyncEngine:
             # Same rule as `pull`: a runtime-mode refusal is "not applicable",
             # never a persisted sync error (task-2722).
             logger.info(f"Sync not applicable for {target_owner}: {exc}")
-            return
+            return SyncOutcome("not_applicable")
         except ServerClientError as exc:
             self._record_sync_error(str(exc), target_owner)
-            return
+            return SyncOutcome("error", error=str(exc))
         except Exception as exc:  # noqa: BLE001
             logger.exception(f"Sync network phase failed for {target_owner}: {exc}")
             self._record_sync_error(str(exc), target_owner)
-            return
+            return SyncOutcome("error", error=str(exc))
 
         try:
             with self.db.transaction() as conn:
@@ -205,6 +231,14 @@ class SyncEngine:
         except Exception as exc:  # noqa: BLE001
             logger.exception(f"Sync transaction failed for {target_owner}: {exc}")
             self._record_sync_error(str(exc), target_owner)
+            return SyncOutcome("error", error=str(exc))
+        # staged_outcomes already includes the tombstone outcomes (see
+        # _network_phase), so it IS the pushed count.
+        return SyncOutcome(
+            "ok",
+            pulled=len(pulled_items),
+            pushed=len(staged_outcomes),
+        )
 
     async def _network_phase(
         self, owner_id: str

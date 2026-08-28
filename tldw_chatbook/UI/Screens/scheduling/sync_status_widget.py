@@ -98,7 +98,14 @@ class SyncStatusWidget(Horizontal):
         self.query_one("#scheduling-clear-error", Button).display = False
 
     def _apply_collapse(self) -> None:
-        """Collapse server plumbing to one line for local-only setups."""
+        """Collapse server plumbing to one line for local-only setups.
+
+        Deliberately NOT collapsed (task-23105 review F11): the error
+        Static and the Clear button. Honesty beats compactness -- a
+        persisted sync error from a since-removed server must stay
+        visible and clearable on a now-local-only profile, so collapsed
+        mode shows local note + error + Clear whenever an error exists.
+        """
         collapsed = self.current_owner == "local" and not self.server_available
         for selector in (
             "#scheduling-owner-local",
