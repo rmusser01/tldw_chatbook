@@ -47,6 +47,25 @@ def test_create_form_source_types_routes_to_normalized_backend(
     assert scope.calls == [("create_form_source_types", expected_backend)]
 
 
+@pytest.mark.parametrize(
+    ("runtime_backend", "expected_types"),
+    [
+        ("local", ("rss", "atom", "url")),
+        ("server", ("rss", "site", "forum")),
+    ],
+)
+def test_create_form_source_types_degrades_when_capability_is_absent(
+    runtime_backend, expected_types
+):
+    ctrl = WatchlistsBackendController(
+        app_instance=None,
+        scope_service=object(),
+        server_service=None,
+    )
+
+    assert ctrl.create_form_source_types(runtime_backend=runtime_backend) == expected_types
+
+
 def test_controller_normalizes_backend():
     ctrl = WatchlistsBackendController(app_instance=None, scope_service=FakeScopeService(), server_service=None)
     assert ctrl._normalize_backend("server") == "server"

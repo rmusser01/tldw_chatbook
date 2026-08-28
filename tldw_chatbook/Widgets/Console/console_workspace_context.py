@@ -1237,6 +1237,8 @@ class ConsoleWorkspaceContextTray(RecomposeCaptureGuard, Vertical):
                 compact=True,
                 disabled=not self.state.change_workspace_enabled,
             )
+            switch_button.styles.min_width = 5
+            switch_button.styles.width = "auto"
             # TASK-2154.3 (LY-06): the block reason used to render as an
             # always-on Static under the buttons, so "Add another workspace
             # before switching." read as an error before the user had
@@ -1251,15 +1253,16 @@ class ConsoleWorkspaceContextTray(RecomposeCaptureGuard, Vertical):
             ):
                 switch_button.tooltip = self.state.change_workspace_recovery
             yield self._record_composed_node(switch_button)
-            yield self._record_composed_node(
-                Button(
-                    "New",
-                    id="console-new-workspace",
-                    classes="console-workspace-action",
-                    compact=True,
-                    disabled=not self.state.new_workspace_enabled,
-                )
+            new_button = Button(
+                "New",
+                id="console-new-workspace",
+                classes="console-workspace-action",
+                compact=True,
+                disabled=not self.state.new_workspace_enabled,
             )
+            new_button.styles.min_width = 5
+            new_button.styles.width = "auto"
+            yield self._record_composed_node(new_button)
             scope_button = Button(
                 "RAG",
                 id="console-workspace-rag-scope-open",
@@ -1267,6 +1270,8 @@ class ConsoleWorkspaceContextTray(RecomposeCaptureGuard, Vertical):
                 compact=True,
                 disabled=not self.state.rag_scope_enabled,
             )
+            scope_button.styles.min_width = 5
+            scope_button.styles.width = "auto"
             scope_button.tooltip = "RAG Scope: narrow retrieval to this workspace"
             yield self._record_composed_node(scope_button)
         context_data = self._workspace_tree_context_data

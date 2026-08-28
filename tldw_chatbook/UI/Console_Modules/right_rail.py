@@ -55,6 +55,7 @@ from collections.abc import Callable
 from dataclasses import dataclass
 import os
 
+from textual import on
 from textual.app import ComposeResult
 from textual.containers import Horizontal, Vertical, VerticalScroll
 from textual.css.query import NoMatches, QueryError
@@ -71,6 +72,11 @@ from ...Chat.console_display_state import (
 )
 from ...Chat.console_session_settings import ConsoleSettingsSummaryState
 from ...Chat.console_live_work import PENDING_LAUNCH_CARD_ID
+from ...Constants import (
+    LIBRARY_NAV_CONTEXT_OPEN_SOURCE_ID,
+    LIBRARY_NAV_CONTEXT_OPEN_SOURCE_TYPE,
+)
+from ..Navigation.main_navigation import NavigateToScreen
 from ...Widgets.Console import (
     ConsoleBoundedSection,
     InspectorOwnershipPolicy,
@@ -80,6 +86,7 @@ from ...Widgets.Console import (
     ConsoleSendAuthoritySummary,
     ConsoleSettingsSummary,
     ConsoleStagedContextTray,
+    ConsoleStagedSourceOpenRequested,
 )
 from ...Widgets.Console.console_retrieval_scope_row import (
     ROW_ID as CONSOLE_RETRIEVAL_SCOPE_ROW_ID,
@@ -99,7 +106,7 @@ class _FocusRecoveryIncident:
 
     target_id: str | None
     target_index: int | None
-    remaining_reconcile_passes: int = 2
+    remaining_reconcile_passes: int = 8
 
 
 class _InspectorOuterBody(VerticalScroll):
@@ -305,6 +312,20 @@ class ConsoleInspectorRail(Vertical):
         """Discard pending generations when the Inspector leaves the DOM."""
 
         self._clear_outer_reconcile_state()
+
+    @on(ConsoleStagedSourceOpenRequested)
+    def open_staged_source(self, event: ConsoleStagedSourceOpenRequested) -> None:
+        """Navigate from a staged-source detail action into Library."""
+        event.stop()
+        self.app.post_message(
+            NavigateToScreen(
+                "library",
+                {
+                    LIBRARY_NAV_CONTEXT_OPEN_SOURCE_TYPE: event.source_type,
+                    LIBRARY_NAV_CONTEXT_OPEN_SOURCE_ID: event.source_id,
+                },
+            )
+        )
 
     def request_outer_reconcile(self) -> None:
         """Coalesce Inspector owner invalidation behind local section demand."""

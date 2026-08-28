@@ -239,6 +239,7 @@ async def test_prompt_and_skill_row_handlers_route_to_their_canvas() -> None:
         _clear_library_prompt_selection=Mock(),
         _reset_library_prompt_editor_state=Mock(),
         _refresh_library_prompt_detail=Mock(return_value=object()),
+        _library_prompt_detail=None,
         _selected_prompt_id=None,
         _library_prompt_select_mode=False,
         _library_selected_row_id="",

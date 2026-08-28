@@ -3265,6 +3265,12 @@ with stray left-edge border fragments), and padding 0 1 so the full
     text-wrap: nowrap;
 }
 
+/* The policy label has two independent axes (or an explicit unavailable
+   state), so it needs more room than ordinary metadata chips. */
+#console-library-chip {
+    max-width: 48;
+}
+
 .console-chip-dim {
     color: $ds-text-muted;
 }
@@ -5865,19 +5871,83 @@ ChatScreen.-focus #console-workbench-header {
 
 #console-staged-context-title {
     width: 1fr;
+    height: 1;
+    min-height: 1;
     text-style: bold;
 }
 
 #console-staged-context-count {
     width: auto;
+    height: 1;
+    min-height: 1;
     text-align: right;
     color: $ds-text-muted;
 }
 
 .console-staged-source-row {
     height: auto;
-    min-height: 2;
-    margin: 1 0 0 0;
+    min-height: 1;
+    margin: 0;
+}
+
+.console-staged-source-primary {
+    width: 100%;
+    min-width: 0;
+    height: 1;
+    min-height: 1;
+    max-height: 1;
+    border: none;
+    padding: 0;
+    text-align: left;
+    background: transparent;
+    color: $ds-text-primary;
+}
+
+.console-staged-source-primary:hover,
+.console-staged-source-primary:focus {
+    border: none;
+    background: $ds-action-focus 18%;
+    text-style: bold;
+}
+
+.console-staged-source-primary-ready { color: $ds-status-ready; }
+.console-staged-source-primary-warning { color: $ds-status-warning; }
+.console-staged-source-primary-blocked { color: $ds-status-blocked; }
+
+.console-staged-source-detail {
+    width: 100%;
+    min-width: 0;
+    height: auto;
+    padding: 0 1;
+    color: $ds-text-muted;
+}
+
+.console-staged-source-detail Static {
+    width: 100%;
+    min-width: 0;
+    height: auto;
+}
+
+.console-staged-source-snippet {
+    color: $ds-text-primary;
+}
+
+.console-staged-source-authority,
+.console-staged-source-freshness,
+.console-staged-source-action-copy {
+    color: $ds-text-muted;
+}
+
+.console-staged-source-action {
+    width: auto;
+    min-width: 0;
+    height: 1;
+    min-height: 1;
+    max-height: 1;
+    border: none;
+    padding: 0;
+    background: transparent;
+    color: $ds-action-focus;
 }
 
 .console-staged-source-name {
@@ -5896,6 +5966,8 @@ ChatScreen.-focus #console-workbench-header {
 .console-staged-source-status.blocked { color: $ds-status-blocked; }
 
 #console-staged-context-empty {
+    height: auto;
+    min-height: 1;
     color: $ds-text-muted;
 }
 
@@ -9768,6 +9840,82 @@ LibraryIngestCanvas #library-ingest-latest-batch {
 }
 
 /* Governed Console exchange capture surfaces (ADR-089). */
+#console-library-access {
+    width: 76;
+    max-width: 96%;
+    height: 34;
+    max-height: 96%;
+    min-width: 0;
+}
+
+#console-library-access-body {
+    height: 1fr;
+    min-height: 0;
+    max-height: 24;
+    scrollbar-gutter: stable;
+}
+
+.console-library-access-actions {
+    height: 1;
+    min-height: 1;
+    max-height: 1;
+}
+
+#console-library-access .console-library-access-actions Button {
+    width: auto;
+    min-width: 0;
+    height: 1;
+    min-height: 1;
+    max-height: 1;
+    border: none;
+    padding: 0;
+    margin-right: 1;
+}
+
+#console-rag-settings {
+    width: 64;
+    max-width: 96%;
+    height: 20;
+    max-height: 96%;
+    min-width: 0;
+}
+
+#console-rag-settings-body {
+    height: 1fr;
+    min-height: 0;
+    scrollbar-gutter: stable;
+}
+
+.console-rag-settings-item-scope {
+    height: auto;
+    color: $text-muted;
+    margin-bottom: 1;
+}
+
+.console-rag-settings-sources {
+    grid-size: 2 2;
+    grid-columns: 1fr 1fr;
+    grid-rows: 1 1;
+    height: 2;
+}
+
+.console-rag-settings-actions {
+    height: 1;
+    min-height: 1;
+    max-height: 1;
+}
+
+#console-rag-settings .console-rag-settings-actions Button {
+    width: auto;
+    min-width: 0;
+    height: 1;
+    min-height: 1;
+    max-height: 1;
+    border: none;
+    padding: 0;
+    margin-right: 1;
+}
+
 #console-inspector-policy-status {
     height: auto;
     color: $text-muted;

@@ -3625,16 +3625,15 @@ async def _wait_for_selector(screen, pilot, selector, *, attempts=120, timeout=3
     while True:
         matches = list(screen.query(selector))
         # Adaptive surface swaps can briefly leave the retired allocation in
-        # the query set with a zero-sized region. `query_one()` returns that
-        # first node too, so declaring success on mere DOM membership sends
-        # the next press to a detached surface. Wait until the first match—the
-        # one callers will subsequently retrieve—is mounted and laid out.
+        # the query set. `query_one()` returns that first node too, so wait
+        # until the node callers will retrieve is mounted. Do not require
+        # display or geometry: stable-composition status controls may be
+        # intentionally hidden, and controls below a scroll viewport retain
+        # a zero region until focused or scrolled to.
         first = matches[0] if matches else None
         if (
             first is not None
             and first.is_mounted
-            and first.display
-            and first.region.area
         ):
             await pilot.pause()
             return first
@@ -4281,10 +4280,10 @@ async def test_library_ordinary_emergency_retains_bar_and_route_host() -> None:
         assert rail.display is True
         assert canvas.display is False
 
-        screen.query_one(f"#library-row-{LIBRARY_ROW_BROWSE_PROMPTS}").press()
-        await _wait_for_selector(screen, pilot, "#library-prompts-canvas")
+        screen.query_one(f"#library-row-{LIBRARY_ROW_BROWSE_SEARCH}").press()
+        await _wait_for_selector(screen, pilot, "#library-search-rag-panel")
         assert screen.query_one("#library-emergency-return") is bar
-        assert screen._library_entry_canvas_owner().id == "library-prompts-canvas"
+        assert screen._library_entry_canvas_owner().id == "library-search-rag-panel"
         assert bar.display is True
         assert rail.display is False
         assert canvas.display is True
@@ -4293,8 +4292,8 @@ async def test_library_ordinary_emergency_retains_bar_and_route_host() -> None:
             == screen.query_one("#library-shell-grid").content_region.width
         )
 
-        screen.query_one(f"#library-row-{LIBRARY_ROW_BROWSE_SKILLS}").press()
-        await _wait_for_selector(screen, pilot, "#library-skills-canvas")
+        screen.query_one(f"#library-row-{LIBRARY_ROW_BROWSE_COLLECTIONS}").press()
+        await _wait_for_selector(screen, pilot, "#library-collections-panel")
         assert screen.query_one("#library-emergency-return") is bar
         assert tuple(canvas.children) == (bar, route_host)
 
@@ -4323,7 +4322,6 @@ async def test_library_ordinary_emergency_route_matrix_focus_and_return() -> Non
     host = LibraryProductionCSSHarness(app)
 
     ordinary_rows = (
-        LIBRARY_ROW_BROWSE_SKILLS,
         LIBRARY_ROW_BROWSE_COLLECTIONS,
         LIBRARY_ROW_BROWSE_SEARCH,
         LIBRARY_ROW_INGEST_MEDIA,
@@ -4506,7 +4504,7 @@ async def test_adaptive_routes_never_receive_ordinary_emergency_geometry(
         assert ("width", "13fr") not in writes
         assert ("min_width", "40") not in writes
 
-        await screen._select_library_rail_row(LIBRARY_ROW_BROWSE_SKILLS)
+        await screen._select_library_rail_row(LIBRARY_ROW_BROWSE_SEARCH)
         await _wait_for_condition(
             pilot,
             lambda: screen._library_emergency_stage == "canvas-only",
@@ -5729,18 +5727,18 @@ def test_library_production_width_matrix_normalizes_persisted_custom_widths(
     app.app_config.setdefault("library", {})["reader"] = reader
     screen = LibraryScreen(app)
 
-    shared, media, conversations, notes, prompts = (
+    shared, media, conversations, notes, prompts, skills = (
         screen._load_library_reader_preference_snapshot()
     )
 
     assert shared.library_width == expected_width
     assert {
         preferences.library_width
-        for preferences in (media, conversations, notes, prompts)
+        for preferences in (media, conversations, notes, prompts, skills)
     } == {expected_width}
     assert all(
         preferences.custom_widths_enabled
-        for preferences in (shared, media, conversations, notes, prompts)
+        for preferences in (shared, media, conversations, notes, prompts, skills)
     )
 
 
@@ -5793,14 +5791,14 @@ async def test_library_production_width_matrix_custom_preferences(
         assert screen._library_reader_shared_preferences.library_width == saved_width
         rail = screen.query_one("#library-rail", LibraryRail)
         canvas = screen.query_one("#library-canvas")
-        expected_library_open, _ = neutral_open
+        expected_library_open, expected_items_open = neutral_open
         if expected_content_width < 64:
             assert not rail.display
             assert canvas.display
             assert canvas.region.width == expected_content_width
         elif not expected_library_open:
             assert not rail.display
-            assert canvas.display
+            assert canvas.display is expected_items_open
             assert canvas.region.width == neutral_items_width
         else:
             expected = max(24, min(saved_width, expected_content_width - 40))
@@ -23269,9 +23267,9 @@ async def _enter_task8_editor_state(screen, pilot, state: str) -> None:
         (
             "context",
             {
-                "#library-note-heading": 1,
+                "#library-note-heading": 2,
                 "#library-note-context-status": 1,
-                "#library-note-context-region": 10,
+                "#library-note-context-region": 9,
             },
             "#library-note-context-keywords",
         ),

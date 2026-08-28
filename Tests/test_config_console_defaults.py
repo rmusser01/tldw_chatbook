@@ -89,22 +89,24 @@ def test_console_assistant_library_access_default_is_false():
     )
 
 
-def test_legacy_console_rag_auto_retrieve_is_not_a_standing_template_default():
-    """The obsolete setting is read only from an existing migration input."""
+def test_console_rag_auto_retrieve_future_default_is_false():
+    """Fresh Console chats default automatic retrieval to Never."""
     template = tomllib.loads(config_module.CONFIG_TOML_CONTENT)
 
-    assert "rag_auto_retrieve_on_send" not in template["chat_defaults"]
+    assert template["chat_defaults"]["rag_auto_retrieve_on_send"] is False
     assert (
-        "rag_auto_retrieve_on_send"
-        not in config_module.DEFAULT_CONFIG_FROM_TOML["chat_defaults"]
+        config_module.DEFAULT_CONFIG_FROM_TOML["chat_defaults"][
+            "rag_auto_retrieve_on_send"
+        ]
+        is False
     )
 
 
 @pytest.mark.parametrize("value", [True, False])
-def test_legacy_console_rag_auto_retrieve_round_trips_as_a_strict_bool(
+def test_console_rag_auto_retrieve_future_default_round_trips_as_a_strict_bool(
     tmp_path, monkeypatch, value
 ):
-    """A valid saved boolean must be available unchanged to the migration seed."""
+    """A valid saved boolean remains available to policy-default readers."""
     config_path = tmp_path / "config.toml"
     monkeypatch.setenv("TLDW_CONFIG_PATH", str(config_path))
 

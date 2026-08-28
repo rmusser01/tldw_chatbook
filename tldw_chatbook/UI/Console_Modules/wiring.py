@@ -74,6 +74,7 @@ from .dictation import ConsoleDictationController
 from .fleet import ConsoleFleetLifecycleController
 from .hands_free import ConsoleHandsFreeController
 from .image import ConsoleImageController
+from .library_policy import ConsoleLibraryPolicyController
 from .message import ConsoleMessageController
 from .prompt_queue import (
     ConsolePromptQueueUIController,
@@ -91,11 +92,13 @@ from .retrieval import ConsoleRetrievalController
 from .send_price import ConsoleSendPriceController
 from .session import ConsoleSessionController
 from .skill import ConsoleSkillController
+from .transcript import ConsoleChangeReviewProjection
 from .video import ConsoleVideoController
 from .workspace import (
     ConsoleWorkspaceController,
     persist_console_workspace_tree_expansion_preferences,
 )
+from ..Screens.settings_library_rag_defaults import load_direct_library_tools
 
 if TYPE_CHECKING:  # pragma: no cover - typing only
     from ..Screens.chat_screen import ChatScreen
@@ -307,6 +310,10 @@ def build_console_controllers(
     Returns:
         None. The controllers are reachable as attributes of `screen`.
     """
+    screen._change_review_projection = ConsoleChangeReviewProjection(
+        runtime_accessor=lambda: screen._console_runtime(),
+        conversation_id_accessor=lambda: screen._current_console_conversation_id(),
+    )
     screen._image = ConsoleImageController(
         screen,
         app_instance=screen.app_instance,
@@ -399,6 +406,11 @@ def build_console_controllers(
         run_library_rag_action=(
             lambda: screen._run_console_library_rag_from_visible_action()
         ),
+        composer_draft=lambda: _displayed_console_composer_draft(screen),
+        library_rag_query=lambda: screen._console_library_rag_query,
+        push_screen=lambda modal, callback: screen.app.push_screen(
+            modal, callback=callback
+        ),
         library_rag_source_scope=rag_source_types_accessor,
         library_rag_top_k=rag_top_k_accessor,
         pending_launch=lambda: screen._pending_console_launch_context,
@@ -418,6 +430,17 @@ def build_console_controllers(
         ),
         refresh_screen=lambda: screen.refresh(recompose=True),
         has_staged_evidence=lambda: screen._has_staged_console_evidence(),
+    )
+
+    screen._library_policy = ConsoleLibraryPolicyController(
+        app_instance=screen.app_instance,
+        active_session=lambda: screen._session._active_native_console_session(),
+        ensure_store=lambda: screen._ensure_console_chat_store(),
+        direct_library_tools=lambda: load_direct_library_tools(
+            getattr(screen.app_instance, "app_config", None)
+        ),
+        push_screen=lambda modal: screen.app.push_screen(modal),
+        request_control_bar_sync=lambda: screen._request_console_control_bar_sync(),
     )
 
     screen._skill = ConsoleSkillController(
@@ -1500,7 +1523,7 @@ def build_console_controllers(
                 )
             )
         ),
-        native_messages_accessor=lambda: screen._native_console_messages(),
+        native_messages_accessor=lambda: screen._message._native_console_messages(),
         run_worker=lambda *args, **kwargs: screen.run_worker(*args, **kwargs),
         show_feedback_comment=(
             lambda action, quote: _show_console_feedback_comment(screen, action, quote)

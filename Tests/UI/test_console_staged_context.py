@@ -3,8 +3,10 @@
 from __future__ import annotations
 
 import pytest
+from unittest.mock import Mock
+
 from textual.app import App
-from textual.widgets import Static
+from textual.widgets import Button, Static
 
 from tldw_chatbook.Chat.citation_evidence_models import (
     EvidenceBundle,
@@ -15,21 +17,20 @@ from tldw_chatbook.Chat.console_display_state import (
     ConsoleStagedContextState,
 )
 from tldw_chatbook.Chat.console_live_work import ConsoleLiveWorkLaunch
+from tldw_chatbook.Constants import (
+    LIBRARY_NAV_CONTEXT_OPEN_SOURCE_ID,
+    LIBRARY_NAV_CONTEXT_OPEN_SOURCE_TYPE,
+)
+from tldw_chatbook.UI.Console_Modules.right_rail import ConsoleInspectorRail
+from tldw_chatbook.UI.Navigation.main_navigation import NavigateToScreen
 from tldw_chatbook.Widgets.Console.console_staged_context import (
     ConsoleStagedContextTray,
+    ConsoleStagedSourceOpenRequested,
 )
 
 
 def _five_reference_launch() -> ConsoleLiveWorkLaunch:
-    """A real 5-reference bundle, staged the way Library RAG actually stages one.
-
-    Each reference explodes into 3-4 provenance rows (Evidence source /
-    Evidence authority / Evidence status / optional Snippet) inside
-    ``ConsoleStagedContextState.from_live_work``, so 5 references yield
-    17-22 display rows -- the exact gap that let the tray render
-    "Sources 18" (D1a): the OLD code rendered ``len(rows)`` instead of the
-    true staged-source count.
-    """
+    """A real five-reference bundle staged the way Library RAG stages one."""
     bundle = EvidenceBundle(
         bundle_id="bundle-5",
         query="What changed?",
@@ -53,6 +54,97 @@ def _five_reference_launch() -> ConsoleLiveWorkLaunch:
         payload={"query": "What changed?", "evidence_bundle": bundle.to_payload()},
         status="staged",
     )
+
+
+def _single_reference_launch(source_type: str) -> ConsoleLiveWorkLaunch:
+    bundle = EvidenceBundle(
+        bundle_id=f"bundle-{source_type}",
+        query="Open it",
+        references=(
+            EvidenceReference(
+                evidence_id="S1",
+                source_id="source-1",
+                source_type=source_type,
+                title="Openable source",
+                snippet="Body",
+                authority_label="local",
+                status="available",
+                source_owner="local",
+            ),
+        ),
+    )
+    return ConsoleLiveWorkLaunch.from_values(
+        source="Library Search/RAG",
+        title="Library Search/RAG retrieval",
+        payload={"query": "Open it", "evidence_bundle": bundle.to_payload()},
+        status="staged",
+    )
+
+
+@pytest.mark.parametrize(
+    ("raw_source_type", "canonical_source_type"),
+    (
+        ("note", "notes"),
+        ("notes", "notes"),
+        ("media_chunk", "media"),
+        ("conversation", "conversations"),
+        ("prompt", "prompt"),
+        ("prompts", "prompt"),
+    ),
+)
+def test_staged_context_canonicalizes_openable_library_source_types(
+    raw_source_type: str,
+    canonical_source_type: str,
+) -> None:
+    state = ConsoleStagedContextState.from_live_work(
+        _single_reference_launch(raw_source_type)
+    )
+
+    row = state.source_rows[0]
+    assert row.source_type == canonical_source_type
+    assert row.action_label == "Open in Library"
+
+
+@pytest.mark.asyncio
+async def test_staged_context_posts_canonical_source_navigation() -> None:
+    state = ConsoleStagedContextState.from_live_work(_single_reference_launch("note"))
+
+    class TestApp(App):
+        def __init__(self) -> None:
+            super().__init__()
+            self.open_request: tuple[str, str] | None = None
+
+        def compose(self):
+            yield ConsoleStagedContextTray(state)
+
+        def on_console_staged_source_open_requested(
+            self, event: ConsoleStagedSourceOpenRequested
+        ) -> None:
+            self.open_request = (event.source_type, event.source_id)
+
+    app = TestApp()
+    async with app.run_test() as pilot:
+        await pilot.click("#console-staged-source-primary-0")
+        await pilot.click("#console-staged-source-action-0")
+        await pilot.pause()
+
+        assert app.open_request == ("notes", "source-1")
+
+
+def test_inspector_rail_routes_staged_source_request_to_library() -> None:
+    rail = Mock()
+    event = Mock(source_type="prompt", source_id="prompt-1")
+
+    ConsoleInspectorRail.open_staged_source(rail, event)
+
+    event.stop.assert_called_once_with()
+    message = rail.app.post_message.call_args.args[0]
+    assert isinstance(message, NavigateToScreen)
+    assert message.screen_name == "library"
+    assert message.screen_context == {
+        LIBRARY_NAV_CONTEXT_OPEN_SOURCE_TYPE: "prompt",
+        LIBRARY_NAV_CONTEXT_OPEN_SOURCE_ID: "prompt-1",
+    }
 
 
 @pytest.mark.asyncio
@@ -142,17 +234,10 @@ async def test_staged_context_row_renders_name_and_normalized_status() -> None:
 
 @pytest.mark.asyncio
 async def test_staged_context_tray_counts_sources_not_display_rows() -> None:
-    """D1a: a 5-reference bundle must render '5', not the exploded row count.
-
-    Built via the REAL ``from_live_work`` (not a hand-built 1-row state --
-    that shape is exactly what let "Sources 18" ship, since a 1-reference
-    launch's row count and source count coincide).
-    """
+    """Five references produce five compact, activatable primary rows."""
     launch = _five_reference_launch()
     state = ConsoleStagedContextState.from_live_work(launch)
-    # Sanity: this bundle really does explode past the source count --
-    # otherwise this test could not distinguish the fix from the bug.
-    assert len(state.rows) > 5
+    assert len(state.source_rows) == 5
     assert state.source_count == 5
 
     class TestApp(App):
@@ -160,10 +245,29 @@ async def test_staged_context_tray_counts_sources_not_display_rows() -> None:
             yield ConsoleStagedContextTray(state)
 
     app = TestApp()
-    async with app.run_test():
+    async with app.run_test() as pilot:
         tray = app.query_one(ConsoleStagedContextTray)
         count = tray.query_one("#console-staged-context-count", Static)
         assert str(count.renderable) == "5"
+        primary_rows = list(tray.query(".console-staged-source-primary"))
+        assert len(primary_rows) == 5
+        first = tray.query_one("#console-staged-source-primary-0", Button)
+        assert "Ready · Source 1 · media" == first.label.plain
+        detail = tray.query_one("#console-staged-source-detail-0")
+        assert detail.display is False
+
+        await pilot.click("#console-staged-source-primary-0")
+
+        assert detail.display is True
+        detail_text = " ".join(
+            str(item.renderable) for item in detail.query(Static)
+        )
+        assert "Body 1" in detail_text
+        assert "Authority: local" in detail_text
+        assert "Freshness: Current" in detail_text
+        assert "Open in Library" in str(
+            detail.query_one("#console-staged-source-action-0", Button).label
+        )
 
 
 @pytest.mark.asyncio
@@ -249,3 +353,24 @@ async def test_staged_context_summary_normalizes_launch_text() -> None:
     assert "&amp;" in state.summary
     assert "&lt;notes&gt;" in state.summary
     assert "<notes>" not in state.summary
+
+
+@pytest.mark.asyncio
+async def test_staged_context_recovery_renders_markup_hostile_text_literally() -> None:
+    hostile_recovery = "Retry [/] then inspect [bold]details"
+    state = ConsoleStagedContextState(
+        heading="Context",
+        summary="",
+        rows=(),
+        recovery=hostile_recovery,
+    )
+
+    class TestApp(App):
+        def compose(self):
+            yield ConsoleStagedContextTray(state)
+
+    app = TestApp()
+    async with app.run_test():
+        recovery = app.query_one("#console-staged-context-recovery", Static)
+        assert recovery._render_markup is False
+        assert str(recovery.renderable) == hostile_recovery

@@ -44,7 +44,6 @@ from tldw_chatbook.Library.library_rechunk_service import (
     BACKFILL_SLOT,
     acquire_bulk_rag_slot,
     bulk_rag_slot_in_flight,
-    release_bulk_rag_slot,
     reset_bulk_rag_slots_for_tests,
 )
 from tldw_chatbook.RAG_Search.config_profiles import reset_profile_manager_cache
@@ -90,6 +89,45 @@ class _FakeApp:
         callback immediately (same idiom as test_console_mcp_approval.py),
         since these sync-constructed tests never span a real thread."""
         return fn(*args, **kwargs)
+
+
+@pytest.mark.asyncio
+async def test_library_rag_renders_future_console_policy_defaults_separately(
+    monkeypatch, tmp_path
+):
+    """The canonical F9 surface keeps both policy axes distinct from mode."""
+    _wire_rag_profile_adapter(monkeypatch, tmp_path)
+    app = _build_test_app()
+    host = DestinationHarness(app, "settings")
+
+    async with host.run_test(size=(190, 55)) as pilot:
+        await _open_settings_category(pilot, "#settings-category-library-rag")
+        screen = _active_destination_screen(host)
+
+        auto = screen.query_one(
+            "#settings-library-rag-auto-retrieve-default", Select
+        )
+        access = screen.query_one(
+            "#settings-library-rag-assistant-access-default", Select
+        )
+        direct = screen.query_one(
+            "#settings-library-rag-direct-library-tools", Checkbox
+        )
+
+        assert auto.value == "never"
+        assert access.value == "blocked"
+        assert auto.parent.parent.id == "settings-library-rag-console-defaults-card"
+        assert access.parent.parent.id == "settings-library-rag-console-defaults-card"
+        assert direct.parent.id == "settings-library-rag-provider-mode-card"
+        defaults_card = screen.query_one("#settings-library-rag-console-defaults-card")
+        assert defaults_card.border_title == "New Console conversations"
+        assert "Existing conversations keep their own local policy" in " ".join(
+            str(item.renderable) for item in defaults_card.query(Static)
+        )
+        provider_card = screen.query_one("#settings-library-rag-provider-mode-card")
+        assert "does not grant access" in " ".join(
+            str(item.renderable) for item in provider_card.query(Static)
+        )
 
 
 @pytest.fixture

@@ -40,10 +40,15 @@ from ...Library.library_rag_service import (
     scope_empty_recovery_state,
 )
 from ...Library.library_rag_state import library_rag_source_scope_summary
-from ...Utils.input_validation import sanitize_string, validate_text_input
-from ...Widgets.Console.console_rag_settings_modal import (
+from ...Widgets.Console.console_library_search_modal import (
+    CONSOLE_LIBRARY_SEARCH_QUERY_MAX_CHARS,
     CONSOLE_RAG_SOURCE_SUMMARY_PREFIX,
-    ConsoleRagSettingsResult,
+    ConsoleLibrarySearchModal,
+    ConsoleLibrarySearchResult,
+    sanitize_console_library_rag_query,
+)
+from ...Widgets.Console.console_retrieval_scope_row import (
+    console_retrieval_scope_label,
 )
 from ..Views.RAGSearch.search_handoff import (
     build_library_rag_console_live_work_payload,
@@ -53,32 +58,12 @@ from ..Views.RAGSearch.search_handoff import (
 logger = logger.bind(module="ConsoleRetrievalController")
 
 CONSOLE_LIBRARY_RAG_RECOVERY_COPY = "Review citations before sending."
-AUTO_RAG_QUERY_MAX_CHARS = 2_000
+AUTO_RAG_QUERY_MAX_CHARS = CONSOLE_LIBRARY_SEARCH_QUERY_MAX_CHARS
 
 
 def source_mentions_rag(source: Any) -> bool:
     """Return whether a source label contains a standalone RAG token."""
     return "rag" in re.split(r"[^a-z0-9]+", str(source or "").lower())
-
-
-def sanitize_console_library_rag_query(value: Any) -> str:
-    """Return a centralized-validation-safe Console Library query.
-
-    Args:
-        value: Raw query value to normalize and validate.
-
-    Returns:
-        The normalized query, or an empty string when validation fails.
-    """
-    sanitized = sanitize_string(str(value or ""), max_length=AUTO_RAG_QUERY_MAX_CHARS)
-    query = " ".join(sanitized.strip().split())
-    if not query:
-        return ""
-    if not validate_text_input(
-        query, max_length=AUTO_RAG_QUERY_MAX_CHARS, allow_html=False
-    ):
-        return ""
-    return query
 
 
 def launch_has_rag_source_payload(launch: ConsoleLiveWorkLaunch) -> bool:
@@ -129,6 +114,7 @@ class ConsoleRetrievalController:
         set_library_rag_source_scope: Callable[[Any], None],
         set_library_rag_query: Callable[[str], None],
         run_library_rag_action: Callable[[], None],
+        push_screen: Callable[..., Any],
         library_rag_source_scope: Callable[[], tuple[str, ...]],
         library_rag_top_k: Callable[[], int],
         pending_launch: Callable[[], ConsoleLiveWorkLaunch | None],
@@ -138,6 +124,8 @@ class ConsoleRetrievalController:
         sync_pending_launch_surfaces: Callable[[], bool],
         refresh_screen: Callable[[], None],
         has_staged_evidence: Callable[[], bool],
+        composer_draft: Callable[[], str | None] | None = None,
+        library_rag_query: Callable[[], str] | None = None,
     ) -> None:
         """Bind explicit late-bound screen edges and initialize owned state."""
         self.app_instance = app_instance
@@ -154,6 +142,9 @@ class ConsoleRetrievalController:
         self._set_library_rag_source_scope = set_library_rag_source_scope
         self._set_library_rag_query = set_library_rag_query
         self._run_library_rag_action = run_library_rag_action
+        self._composer_draft = composer_draft or (lambda: None)
+        self._library_rag_query = library_rag_query or (lambda: "")
+        self._push_screen = push_screen
         self._library_rag_source_scope = library_rag_source_scope
         self._library_rag_top_k = library_rag_top_k
         self._pending_launch = pending_launch
@@ -385,16 +376,36 @@ class ConsoleRetrievalController:
             session.rag_scope_holder.set(scope)
         await self._refresh_console_effective_scope_and_sync(session)
 
-    def _apply_console_rag_settings_choice(
-        self, result: ConsoleRagSettingsResult | None
+    def _apply_console_library_search_choice(
+        self, result: ConsoleLibrarySearchResult | None
     ) -> None:
-        """Store modal query/source values and optionally run retrieval."""
+        """Store one-shot search values and optionally run retrieval."""
         if result is None:
             return
         self._set_library_rag_source_scope(result.source_types)
         self._set_library_rag_query(sanitize_console_library_rag_query(result.query))
         if result.run:
             self._run_library_rag_action()
+
+    def open_library_search(self) -> None:
+        """Open one-shot Library search from the current Console state."""
+        prefill = self._composer_draft()
+        self._push_screen(
+            ConsoleLibrarySearchModal(
+                query=prefill if prefill is not None else self._library_rag_query(),
+                source_types=self._library_rag_source_scope(),
+                item_scope_summary=console_retrieval_scope_label(
+                    self._build_console_retrieval_scope_state()
+                ),
+            ),
+            callback=self._apply_console_library_search_choice,
+        )
+
+    def _apply_console_rag_settings_choice(
+        self, result: ConsoleLibrarySearchResult | None
+    ) -> None:
+        """Compatibility entry point for callers using the former name."""
+        self._apply_console_library_search_choice(result)
 
     def _console_rag_source_status(
         self,

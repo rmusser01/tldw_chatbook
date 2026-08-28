@@ -99,19 +99,27 @@ async def test_items_status_filter_paints_every_status_option():
     async with host.run_test(size=UAT_SIZE) as pilot:
         screen = _active_destination_screen(host)
         screen.active_section = "items"
-        await pilot.pause()
         await _wait_for_selector(screen, pilot, "#items-status-select", timeout=5.0)
+        for _ in range(120):
+            await pilot.pause()
+            if (
+                screen._rendered_section == "items"
+                and not screen._surface_refresh_draining
+            ):
+                break
 
         select = screen.query_one("#items-status-select", Select)
         select.expanded = True
-        await pilot.pause()
-        await pilot.pause()
+        expected = [label for label, _value in ArticleListPane._FILTER_OPTIONS]
+        for _ in range(120):
+            await pilot.pause()
+            if _painted_option_labels(screen, select) == expected:
+                break
 
         assert select.query_one(SelectOverlay).option_count == len(
             ArticleListPane._FILTER_OPTIONS
         )
         painted = _painted_option_labels(screen, select)
-        expected = [label for label, _value in ArticleListPane._FILTER_OPTIONS]
         assert painted == expected, (
             "every status option must reach the screen intact; the overlay "
             f"painted {painted!r}"

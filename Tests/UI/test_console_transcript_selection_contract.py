@@ -128,17 +128,17 @@ def test_citation_row_is_focusable_and_immediately_follows_owning_message() -> N
     assistant_turn = next(
         row for row in rows if row.key == "assistant-turn:assistant-native-id"
     )
-    citation_row = next(
-        row
-        for row in assistant_turn.nested_rows
-        if row.key == "citations:assistant-native-id"
-    )
+    assert [row.key for row in assistant_turn.nested_rows] == [
+        "message:assistant-native-id",
+        "citations:assistant-native-id",
+    ]
+    citation_row = assistant_turn.nested_rows[1]
     button = transcript._build_row_widget(citation_row, track=False)
 
     assert citation_row.kind == "citations"
     assert citation_row.key == "citations:assistant-native-id"
     assert isinstance(button, Button)
-    assert button.label.plain == "Sources (2)"
+    assert button.label.plain == "Cited sources (2)"
     assert button.id == "console-citation-sources-assistant-native-id"
     assert button.has_class("console-transcript-citation-sources")
     assert button.native_message_id == "assistant-native-id"
@@ -195,9 +195,9 @@ async def test_count_only_change_reconciles_footer_without_rebuilding_messages()
             "#console-citation-sources-assistant-native-id", Button
         )
 
-    assert button.label.plain == "Sources (3)"
-    assert after["citations:assistant-native-id"] > before[
-        "citations:assistant-native-id"
+    assert button.label.plain == "Cited sources (3)"
+    assert after["assistant-turn:assistant-native-id"] == before[
+        "assistant-turn:assistant-native-id"
     ]
-    for message in _transcript_messages():
-        assert after[f"message:{message.id}"] == before[f"message:{message.id}"]
+    for row_key, build_count in before.items():
+        assert after[row_key] == build_count

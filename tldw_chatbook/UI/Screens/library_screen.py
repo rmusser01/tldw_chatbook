@@ -10674,6 +10674,7 @@ class LibraryScreen(BaseAppScreen):
         # through the central whole-screen seam -- the same rule
         # ``_replace_library_browse_canvas`` enforces. Every other
         # transition keeps the targeted path.
+        destination_shell: LibraryShellState | None = None
         try:
             destination_shell = build_library_shell_state(
                 self._build_library_shell_input(),
@@ -10686,10 +10687,29 @@ class LibraryScreen(BaseAppScreen):
         except Exception:
             logger.debug("Library open-surface strip probe failed.", exc_info=True)
             strip_mounted, strip_needed = False, True
-        if strip_mounted != strip_needed:
-            self.refresh(recompose=True)
+        adaptive_shell_selectors = {
+            LIBRARY_CANVAS_KIND_NOTES: "#library-notes-reader-shell",
+            LIBRARY_CANVAS_KIND_NOTES_CREATE: "#library-notes-reader-shell",
+            "prompts": "#library-prompts-reader-shell",
+            "skills": "#library-skills-reader-shell",
+            "conversations": "#library-conversations-reader-shell",
+            "media": "#library-media-reader-shell",
+        }
+        destination_reader = adaptive_shell_selectors.get(
+            destination_shell.canvas_kind if destination_shell is not None else ""
+        )
+        mounted_reader = next(
+            (
+                selector
+                for selector in set(adaptive_shell_selectors.values())
+                if self.query(selector)
+            ),
+            None,
+        )
+        if strip_mounted != strip_needed or mounted_reader != destination_reader:
+            await self.recompose()
             if then is not None:
-                then()
+                self.call_after_refresh(then)
             return
         try:
             widget = build()
@@ -25148,6 +25168,8 @@ class LibraryScreen(BaseAppScreen):
             "library_rag_result_card_open",
         ):
             return self._focused_library_rag_result_card_index() is not None
+        if action == "focus_previous_workbench_pane":
+            return bool(self._library_selected_row_id)
         return True
 
     def action_show_workbench_help(self) -> None:

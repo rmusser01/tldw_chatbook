@@ -90,6 +90,7 @@ from __future__ import annotations
 
 from collections.abc import Callable
 from dataclasses import dataclass
+from typing import Any
 
 from textual.app import ComposeResult
 from textual.containers import Vertical
@@ -98,6 +99,45 @@ from textual.widget import Widget
 
 from ...Widgets.Console import ConsoleTranscript
 from .frame import frame_console_region
+
+
+class ConsoleChangeReviewProjection:
+    """Cache durable Change Review markers for transcript-only projection."""
+
+    def __init__(
+        self,
+        *,
+        runtime_accessor: Callable[[], Any],
+        conversation_id_accessor: Callable[[], str | None],
+    ) -> None:
+        self._runtime_accessor = runtime_accessor
+        self._conversation_id_accessor = conversation_id_accessor
+        self._key: tuple[str | None, int] | None = None
+        self._marker_blocks: list[Any] = []
+
+    def project(self, messages: list[Any]) -> list[Any]:
+        """Return messages with the current durable review markers injected."""
+        runtime = self._runtime_accessor()
+        coordinator = runtime.change_review_coordinator
+        if coordinator is None:
+            return messages
+        conversation_id = self._conversation_id_accessor()
+        key = (conversation_id, coordinator.publication_signal.snapshot().revision)
+        if key != self._key:
+            bridge = runtime.agent_bridge
+            self._marker_blocks = (
+                [
+                    block
+                    for block in bridge.change_review_marker_messages(conversation_id)
+                    if block[0] is not None
+                ]
+                if bridge is not None and conversation_id is not None
+                else []
+            )
+            self._key = key
+        from ...Chat.console_agent_bridge import inject_resume_agent_markers
+
+        return inject_resume_agent_markers(messages, self._marker_blocks)
 
 
 @dataclass(frozen=True)

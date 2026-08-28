@@ -1,9 +1,8 @@
 import dataclasses
 
 import pytest
-from tldw_chatbook.RAG_Search.config_profiles import ConfigProfileManager, ProfileConfig
+from tldw_chatbook.RAG_Search.config_profiles import ConfigProfileManager
 from tldw_chatbook.RAG_Search.reranker import RerankingConfig
-from tldw_chatbook.RAG_Search.simplified.config import RAGConfig, SearchConfig, VectorStoreConfig
 
 
 @pytest.fixture
@@ -83,7 +82,7 @@ def test_active_profile_info_includes_a_cloned_profiles_description(wired):
     builtins."""
     from tldw_chatbook.UI.Screens.settings_rag_profile_adapter import active_profile_info
     mgr, state = wired
-    user = _user_profile(mgr, state)
+    _user_profile(mgr, state)
 
     info = active_profile_info()
 
@@ -467,6 +466,9 @@ def test_rerank_toggle_reaches_the_real_service_enable_reranking_flag(
 
     import tldw_chatbook.RAG_Search.config_profiles as config_profiles
     import tldw_chatbook.RAG_Search.simplified.rag_factory as rag_factory
+
+    # ``create_rag_service`` deliberately imports this seam lazily so optional
+    # RAG startup does not load profile storage until it is needed.
     monkeypatch.setattr(config_profiles, "get_profile_manager", lambda: mgr)
 
     from tldw_chatbook.RAG_Search.simplified.config import create_config_for_testing
@@ -497,6 +499,7 @@ def test_rerank_toggle_off_reaches_the_real_service_enable_reranking_flag(
 
     import tldw_chatbook.RAG_Search.config_profiles as config_profiles
     import tldw_chatbook.RAG_Search.simplified.rag_factory as rag_factory
+
     monkeypatch.setattr(config_profiles, "get_profile_manager", lambda: mgr)
 
     from tldw_chatbook.RAG_Search.simplified.config import create_config_for_testing

@@ -738,6 +738,7 @@ def _sync_stub(activity: str, effective: str | None = None):
     transcript = SimpleNamespace(
         pending_selection_id=None,
         set_presentation_context=Mock(),
+        set_model_thinking_visible=Mock(),
         set_change_review_provider_factory=Mock(),
         set_messages=Mock(),
         apply_turn_activity=Mock(

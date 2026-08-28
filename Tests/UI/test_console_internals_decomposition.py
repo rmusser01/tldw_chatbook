@@ -59,8 +59,8 @@ from tldw_chatbook.Widgets.Console import (
     ConsoleSetupModal,
     ConsoleStagedContextTray,
 )
-from tldw_chatbook.Widgets.Console.console_rag_settings_modal import (
-    ConsoleRagSettingsModal,
+from tldw_chatbook.Widgets.Console.console_library_search_modal import (
+    ConsoleLibrarySearchModal,
 )
 from tldw_chatbook.Widgets.compact_model_bar import CompactModelBar
 
@@ -195,6 +195,18 @@ async def _wait_for_console_library_rag_button_state(
         "Timed out waiting for Console Library RAG run button "
         f"disabled={disabled!r} tooltip={tooltip_contains!r}"
     )
+
+
+async def _run_manual_library_search(console, pilot, query: str) -> None:
+    """Run the one-shot Library search through the user-visible modal."""
+    console.query_one("#console-run-library-rag", Button).press()
+    await pilot.pause()
+    modal = console.app.screen
+    assert isinstance(modal, ConsoleLibrarySearchModal)
+    modal.query_one("#console-rag-settings-query", Input).value = query
+    await pilot.pause()
+    modal.query_one("#console-rag-settings-run", Button).press()
+    await pilot.pause()
 
 
 async def _wait_for_production_chat_screen(
@@ -2885,7 +2897,7 @@ async def test_console_inspector_live_work_sources_stay_near_top():
         assert live_work_root.parent is body
         assert body.children.index(live_work_root) == body.children.index(inspector) + 1
         assert source_readiness.region.y >= inspector.region.y
-        assert source_readiness.region.height <= 20
+        assert live_work_viewport.region.height <= 20
 
 
 @pytest.mark.asyncio
@@ -2902,7 +2914,7 @@ async def test_console_inspector_source_readiness_rows_fit_without_tooltip_overl
         scope = console.query_one("#console-library-rag-scope", Static)
         rows = list(console.query(".console-live-work-source-row"))
 
-        assert run_rag.disabled is True
+        assert run_rag.disabled is False
         assert str(run_rag.tooltip or "") == ""
         # RAG-44: the source line now carries Library's summary grammar
         # ("Sources: Notes, Media, Conversations (Prompts off)"), which is
@@ -3139,9 +3151,8 @@ async def test_console_empty_regions_do_not_stack_nested_terminal_frames():
         assert workspace_context_border.left[0] in {"", "none"}
 
         composer_border = console.query_one("#console-native-composer").styles.border
-        # task-17651: no inline frame at all (this harness sees no CSS; the
-        # dense-form left edge is a stylesheet rule pinned elsewhere).
-        assert composer_border.left[0] in {"", "none"}
+        # task-17651: the dense composer owns only its semantic left edge.
+        assert composer_border.left[0] == "solid"
         assert composer_border.top[0] in {"", "none"}
         assert composer_border.right[0] in {"", "none"}
         assert composer_border.bottom[0] in {"", "none"}
@@ -3208,14 +3219,11 @@ async def test_console_workbench_panes_have_visible_terminal_frames():
         assert rail_border.bottom[0] in {"", "none"}
         assert rail_border.left[0] in {"", "none"}
 
-        # This harness loads no app CSS, so only INLINE styles are visible
-        # here: the meaningful pin is that frame.py no longer frames the
-        # composer at all. Its CSS dense-form left edge is pinned by the
-        # bundled-harness tests in test_console_composer_collapse.py.
+        # The composer owns one semantic dense-form edge, not a shell box.
         composer = console.query_one("#console-native-composer")
         assert not composer.has_class("console-frame-solid")
         composer_border = composer.styles.border
-        assert composer_border.left[0] in {"", "none"}
+        assert composer_border.left[0] == "solid"
         assert composer_border.top[0] in {"", "none"}
         assert composer_border.right[0] in {"", "none"}
         assert composer_border.bottom[0] in {"", "none"}
@@ -3372,7 +3380,7 @@ async def test_console_control_bar_renders_readable_summary_line():
         assert "Provider:" in plain
         assert " | Model:" in plain
         assert " | Assistant:" in plain
-        assert " | Library search:" in plain
+        assert " | Library · Auto " in plain
         assert " | Sources:" in plain
 
 
@@ -3441,7 +3449,7 @@ async def test_console_native_control_bar_and_staged_context_reflect_pending_han
         assert "Provider:" in text
         assert "Model:" in text
         assert "Assistant: General" in text
-        assert "Library search: on" in text
+        assert "Library · Auto off · Agent blocked" in text
         assert "Sources: 1" in text
         assert "Transformer notes" in text
         assert "ready" in text
@@ -3524,8 +3532,8 @@ def test_console_control_state_tolerates_missing_config_and_precise_rag_source()
         ConsoleLiveWorkLaunch(source="Library Search/RAG", title="RAG result"),
     )
 
-    assert non_rag_state.rag_label == "Library search: off"
-    assert rag_state.rag_label == "Library search: on"
+    assert non_rag_state.rag_label == "Library · Auto off · Agent blocked"
+    assert rag_state.rag_label == non_rag_state.rag_label
 
 
 def test_console_control_state_tolerates_missing_launch_source():
@@ -3536,7 +3544,7 @@ def test_console_control_state_tolerates_missing_launch_source():
         ConsoleLiveWorkLaunch(source=None, title="Unknown source"),
     )
 
-    assert state.rag_label == "Library search: off"
+    assert state.rag_label == "Library · Auto off · Agent blocked"
 
 
 def test_console_control_and_inspector_share_effective_provider_model_sources():
@@ -3984,13 +3992,7 @@ async def test_console_rag_action_requests_library_retrieval_and_stages_result(
             "Sources: Notes, Media, Conversations (Prompts off)"
             in _visible_text(console)
         )
-        query_input = console.query_one("#console-library-rag-query-input", Input)
-        query_input.value = query
-        await pilot.pause(0.1)
-
-        run_button = console.query_one("#console-run-library-rag", Button)
-        assert run_button.disabled is False
-        run_button.press()
+        await _run_manual_library_search(console, pilot, query)
         await _wait_for_selector(console, pilot, "#console-live-work-payload-source-id")
 
         assert service.calls == [
@@ -4054,13 +4056,7 @@ async def test_console_rag_action_inherits_active_profile_top_k(monkeypatch):
         await _open_console_inspector(console, pilot)
         await _wait_for_selector(console, pilot, "#console-run-library-rag")
 
-        query_input = console.query_one("#console-library-rag-query-input", Input)
-        query_input.value = query
-        await pilot.pause(0.1)
-
-        run_button = console.query_one("#console-run-library-rag", Button)
-        assert run_button.disabled is False
-        run_button.press()
+        await _run_manual_library_search(console, pilot, query)
         await _wait_for_selector(console, pilot, "#console-live-work-payload-source-id")
 
         assert service.calls == [
@@ -4125,13 +4121,7 @@ async def test_console_rag_action_falls_back_to_default_top_k_when_profile_unava
         await _open_console_inspector(console, pilot)
         await _wait_for_selector(console, pilot, "#console-run-library-rag")
 
-        query_input = console.query_one("#console-library-rag-query-input", Input)
-        query_input.value = query
-        await pilot.pause(0.1)
-
-        run_button = console.query_one("#console-run-library-rag", Button)
-        assert run_button.disabled is False
-        run_button.press()
+        await _run_manual_library_search(console, pilot, query)
         await _wait_for_selector(console, pilot, "#console-live-work-payload-source-id")
 
         assert service.calls == [
@@ -4256,15 +4246,9 @@ async def test_console_rag_staging_shows_evidence_summary_authority_and_snippet(
         await _open_console_inspector(console, pilot)
         await _wait_for_selector(console, pilot, "#console-run-library-rag")
 
-        console.query_one(
-            "#console-library-rag-query-input", Input
-        ).value = "Why did the incident happen?"
-        await _wait_for_console_library_rag_button_state(
-            console,
-            pilot,
-            disabled=False,
+        await _run_manual_library_search(
+            console, pilot, "Why did the incident happen?"
         )
-        console.query_one("#console-run-library-rag", Button).press()
         await _wait_for_selector(console, pilot, "#console-live-work-payload-source-id")
         await _open_console_inspector(console, pilot)
         await _wait_for_selector(console, pilot, "#console-inspector-evidence")
@@ -4314,15 +4298,7 @@ async def test_console_rag_send_blocks_when_staged_evidence_is_not_context_eligi
         await _open_console_inspector(console, pilot)
         await _wait_for_selector(console, pilot, "#console-run-library-rag")
 
-        console.query_one(
-            "#console-library-rag-query-input", Input
-        ).value = "Summarize this source"
-        await _wait_for_console_library_rag_button_state(
-            console,
-            pilot,
-            disabled=False,
-        )
-        console.query_one("#console-run-library-rag", Button).press()
+        await _run_manual_library_search(console, pilot, "Summarize this source")
         await _wait_for_selector(console, pilot, "#console-live-work-payload-source-id")
         await _open_console_inspector(console, pilot)
         await _wait_for_selector(console, pilot, "#console-inspector-evidence")
@@ -4358,21 +4334,20 @@ async def test_console_rag_query_validation_blocks_unsafe_markup():
         await _open_console_inspector(console, pilot)
         await _wait_for_selector(console, pilot, "#console-run-library-rag")
 
-        console.query_one(
-            "#console-library-rag-query-input", Input
+        console.query_one("#console-run-library-rag", Button).press()
+        await pilot.pause()
+        modal = console.app.screen
+        assert isinstance(modal, ConsoleLibrarySearchModal)
+        modal.query_one(
+            "#console-rag-settings-query", Input
         ).value = "<script>alert('bad')</script>"
-        await _wait_for_console_library_rag_button_state(
-            console,
-            pilot,
-            disabled=True,
-        )
-        assert (
-            str(console.query_one("#console-run-library-rag", Button).tooltip or "")
-            == ""
-        )
+        await pilot.pause()
+        assert modal.query_one("#console-rag-settings-run", Button).disabled is True
 
         assert console._console_library_rag_query == ""
         assert service.calls == []
+        modal.query_one("#console-rag-settings-cancel", Button).press()
+        await pilot.pause()
 
 
 @pytest.mark.asyncio
@@ -4399,15 +4374,7 @@ async def test_console_rag_action_without_service_stages_recoverable_blocker(
         await _open_console_inspector(console, pilot)
         await _wait_for_selector(console, pilot, "#console-run-library-rag")
 
-        console.query_one(
-            "#console-library-rag-query-input", Input
-        ).value = "What changed?"
-        await _wait_for_console_library_rag_button_state(
-            console,
-            pilot,
-            disabled=False,
-        )
-        console.query_one("#console-run-library-rag", Button).press()
+        await _run_manual_library_search(console, pilot, "What changed?")
         await _wait_for_visible_text(console, pilot, "Status: blocked")
 
         text = _visible_text(console)
@@ -4443,7 +4410,7 @@ async def test_console_control_bar_run_library_rag_opens_settings_modal_when_bla
         await pilot.pause()
 
         modal = host.screen
-        assert isinstance(modal, ConsoleRagSettingsModal)
+        assert isinstance(modal, ConsoleLibrarySearchModal)
         console.app_instance.notify.assert_not_called()
         assert service.calls == []
 
@@ -4459,19 +4426,8 @@ async def test_console_control_bar_run_library_rag_opens_settings_modal_when_bla
 
 
 @pytest.mark.asyncio
-async def test_console_control_bar_run_library_rag_guards_a_path_shaped_draft():
-    """RAG-43 end to end: the mock-level guard tests in
-    `test_console_rag_settings_modal.py` pin `_console_draft_looks_like_rag_query`
-    against a `Mock()` screen, never a real composer or a real control-bar
-    click -- so a wiring mistake at either call site (e.g. reading the wrong
-    composer, or the control-bar action not routing through the guarded
-    fallback at all) would pass every mock-level test while still leaking a
-    path straight into retrieval live. This drives the real thing: a real
-    `ConsoleComposerBar` holding a path-shaped draft, a real control-bar
-    click, and confirms both halves of the guard hold together -- no query
-    gets stored anywhere AND the settings modal (not a toast, not silent
-    retrieval) is what actually opens, exactly like the blank-draft case
-    above."""
+async def test_console_control_bar_run_library_search_preserves_path_shaped_draft():
+    """The one-shot search modal preserves the exact composer draft as its query."""
     app = _build_test_app()
     service = StaticConsoleLibraryRagSearchService({"results": []})
     app.library_rag_search_service = service
@@ -4492,13 +4448,12 @@ async def test_console_control_bar_run_library_rag_guards_a_path_shaped_draft():
         await pilot.pause()
 
         modal = host.screen
-        assert isinstance(modal, ConsoleRagSettingsModal)
-        assert modal._query == ""
+        assert isinstance(modal, ConsoleLibrarySearchModal)
+        assert modal._query == "/Users/x/notes.md"
         assert console._console_library_rag_query == ""
         console.app_instance.notify.assert_not_called()
         assert service.calls == []
-        # The guarded draft is left exactly where the user typed it -- the
-        # guard drops the prefill, it does not touch the composer.
+        # Opening the modal does not mutate the composer.
         assert composer.draft_text() == "/Users/x/notes.md"
 
 
@@ -4531,13 +4486,13 @@ async def test_console_rag_modal_source_toggle_narrows_the_retrieval_request(
         console.query_one("#console-control-run-library-rag", Button).press()
         await pilot.pause()
         modal = host.screen
-        assert isinstance(modal, ConsoleRagSettingsModal)
+        assert isinstance(modal, ConsoleLibrarySearchModal)
 
         modal.query_one("#console-rag-settings-query", Input).value = "why did it fail"
         await pilot.pause()
-        await pilot.click("#console-rag-settings-source-media")
+        modal.query_one("#console-rag-settings-source-media", Button).press()
         await pilot.pause()
-        await pilot.click("#console-rag-settings-run")
+        modal.query_one("#console-rag-settings-run", Button).press()
         for _ in range(10):
             await pilot.pause()
 
@@ -4561,13 +4516,8 @@ async def test_console_rag_modal_source_toggle_narrows_the_retrieval_request(
 
 
 @pytest.mark.asyncio
-async def test_console_inspector_run_library_rag_gating_unaffected_by_modal_seam():
-    """The Inspector's own Run button stays disabled while its query input
-    is blank -- unaffected by the control-bar action now opening the
-    settings modal instead of toasting (this task changes the empty-query
-    path of the SAME `_run_console_library_rag_from_visible_action` method
-    the control-bar and Inspector button both call, so the two entry
-    points' gating must not cross-contaminate)."""
+async def test_console_inspector_search_library_opens_modal_when_query_is_blank():
+    """Inspector Search remains reachable without a previously stored query."""
     app = _build_test_app()
     host = ConsoleHarness(app)
 
@@ -4577,16 +4527,16 @@ async def test_console_inspector_run_library_rag_gating_unaffected_by_modal_seam
         await _wait_for_selector(console, pilot, "#console-run-library-rag")
 
         run_rag = console.query_one("#console-run-library-rag", Button)
-        assert run_rag.disabled is True
+        assert run_rag.disabled is False
 
-        await pilot.click("#console-control-run-library-rag")
+        run_rag.press()
         await pilot.pause()
-        assert isinstance(host.screen, ConsoleRagSettingsModal)
-        await pilot.click("#console-rag-settings-cancel")
+        assert isinstance(host.screen, ConsoleLibrarySearchModal)
+        host.screen.query_one("#console-rag-settings-cancel", Button).press()
         await pilot.pause()
 
         run_rag = console.query_one("#console-run-library-rag", Button)
-        assert run_rag.disabled is True
+        assert run_rag.disabled is False
 
 
 @pytest.mark.asyncio

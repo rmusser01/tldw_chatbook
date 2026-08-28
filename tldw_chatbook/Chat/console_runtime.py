@@ -155,8 +155,17 @@ def _current_library_policy_defaults(app: Any) -> ConsoleLibraryPolicyDefaults:
     console = config.get("console", {})
     if not isinstance(console, Mapping):
         console = {}
+    chat_defaults = config.get("chat_defaults", {})
+    if not isinstance(chat_defaults, Mapping):
+        chat_defaults = {}
     return ConsoleLibraryPolicyDefaults(
-        auto_retrieve=ConsoleAutoRetrieve.NEVER,
+        auto_retrieve=(
+            ConsoleAutoRetrieve.AUTOMATIC
+            if coerce_bool_setting(
+                chat_defaults.get("rag_auto_retrieve_on_send", False), False
+            )
+            else ConsoleAutoRetrieve.NEVER
+        ),
         assistant_access=(
             ConsoleAssistantLibraryAccess.ALLOWED
             if coerce_bool_setting(

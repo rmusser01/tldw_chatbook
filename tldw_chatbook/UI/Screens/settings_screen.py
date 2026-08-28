@@ -1554,7 +1554,6 @@ _LIBRARY_RAG_READ_LOCK_FIELD_KEYS: tuple[str, ...] = (
 _LIBRARY_RAG_READ_LOCK_CHECKBOX_SELECTORS: tuple[str, ...] = (
     "#settings-library-rag-include-citations",
     "#settings-library-rag-enable-reranking",
-    "#settings-library-rag-direct-library-tools",
 )
 
 # Collapsible id -> the same group keys. `@on(Collapsible.Toggled)` uses this
@@ -7172,6 +7171,20 @@ class SettingsScreen(BaseAppScreen):
                 self.query_one(
                     "#settings-library-rag-direct-library-tools", Checkbox
                 ).value = bool(values["direct_library_tools"])
+                self.query_one(
+                    "#settings-library-rag-auto-retrieve-default", Select
+                ).value = (
+                    "automatic"
+                    if bool(values["rag_auto_retrieve_on_send"])
+                    else "never"
+                )
+                self.query_one(
+                    "#settings-library-rag-assistant-access-default", Select
+                ).value = (
+                    "allowed"
+                    if bool(values["assistant_library_access_default"])
+                    else "blocked"
+                )
                 for selector, key in (
                     ("#settings-library-rag-default-top-k", "default_top_k"),
                     ("#settings-library-rag-fts-top-k", "fts_top_k"),
@@ -14713,6 +14726,67 @@ class SettingsScreen(BaseAppScreen):
 
         yield Static("RAG", classes="destination-section settings-column-title")
         with Vertical(id="settings-library-rag-card", classes="settings-focus-card"):
+            console_defaults_card = Vertical(
+                id="settings-library-rag-console-defaults-card",
+                classes="settings-secondary-card",
+            )
+            console_defaults_card.border_title = "New Console conversations"
+            with console_defaults_card:
+                yield Static(
+                    "Defaults apply only to chats created after you save. "
+                    "Existing conversations keep their own local policy.",
+                    classes="settings-detail-row",
+                )
+                with Horizontal(classes="settings-input-row settings-select-row"):
+                    yield Static("Automatic retrieval", classes="settings-input-label")
+                    yield Select(
+                        [("Never", "never"), ("Automatic", "automatic")],
+                        value=(
+                            "automatic"
+                            if bool(values["rag_auto_retrieve_on_send"])
+                            else "never"
+                        ),
+                        id="settings-library-rag-auto-retrieve-default",
+                        classes="settings-compact-select",
+                        allow_blank=False,
+                        compact=True,
+                    )
+                with Horizontal(classes="settings-input-row settings-select-row"):
+                    yield Static("Assistant Library access", classes="settings-input-label")
+                    yield Select(
+                        [("Blocked", "blocked"), ("Allowed", "allowed")],
+                        value=(
+                            "allowed"
+                            if bool(values["assistant_library_access_default"])
+                            else "blocked"
+                        ),
+                        id="settings-library-rag-assistant-access-default",
+                        classes="settings-compact-select",
+                        allow_blank=False,
+                        compact=True,
+                    )
+
+            provider_mode_card = Vertical(
+                id="settings-library-rag-provider-mode-card",
+                classes="settings-secondary-card",
+            )
+            provider_mode_card.border_title = "Allowed Library access"
+            with provider_mode_card:
+                yield Checkbox(
+                    "Use direct Library tools instead of Library RAG",
+                    value=bool(values["direct_library_tools"]),
+                    id="settings-library-rag-direct-library-tools",
+                )
+                yield Static(
+                    "Direct/RAG chooses what Allowed exposes; it does not grant access.",
+                    classes="settings-detail-row",
+                )
+                yield Static(
+                    CONSOLE_DIRECT_LIBRARY_TOOLS_COPY,
+                    id="settings-library-rag-direct-library-tools-copy",
+                    classes="settings-status-row",
+                )
+
             # Task 4 (541 v2 UX AC1): manage-vs-edit split -- the picker
             # (browse/Set active/Clone/Rename/Delete) and the editor
             # (Search/Embedding/Chunking/Vector store/Reranking fields) each
@@ -14922,21 +14996,6 @@ class SettingsScreen(BaseAppScreen):
                     restrict=r"^[0-9]*$",
                     disabled=field_disabled,
                 )
-            # task-1337 (spec section 8): global Console retrieval-mode
-            # toggle. The full privacy/scope copy renders below the switch as
-            # plain text -- never in a tooltip.
-            yield Static("Console agent retrieval", classes="destination-section")
-            yield Checkbox(
-                "Use direct Library tools",
-                value=bool(values["direct_library_tools"]),
-                id="settings-library-rag-direct-library-tools",
-                disabled=field_disabled,
-            )
-            yield Static(
-                CONSOLE_DIRECT_LIBRARY_TOOLS_COPY,
-                id="settings-library-rag-direct-library-tools-copy",
-                classes="settings-status-row",
-            )
         with Collapsible(
             title="Embedding",
             collapsed=True,
@@ -20123,9 +20182,35 @@ class SettingsScreen(BaseAppScreen):
         self, event: Checkbox.Changed
     ) -> None:
         event.stop()
-        if self._library_rag_edits_suppressed():
+        if self._syncing_library_rag_defaults:
             return
         self._stage_library_rag_value("direct_library_tools", bool(event.value))
+        self._mark_library_rag_settings_staged()
+
+    @on(Select.Changed, "#settings-library-rag-auto-retrieve-default")
+    def handle_library_rag_auto_retrieve_default_changed(
+        self, event: Select.Changed
+    ) -> None:
+        """Stage the future-conversation automatic-retrieval default."""
+        event.stop()
+        if self._syncing_library_rag_defaults:
+            return
+        self._stage_library_rag_value(
+            "rag_auto_retrieve_on_send", event.value == "automatic"
+        )
+        self._mark_library_rag_settings_staged()
+
+    @on(Select.Changed, "#settings-library-rag-assistant-access-default")
+    def handle_library_rag_assistant_access_default_changed(
+        self, event: Select.Changed
+    ) -> None:
+        """Stage the future-conversation assistant Library-access default."""
+        event.stop()
+        if self._syncing_library_rag_defaults:
+            return
+        self._stage_library_rag_value(
+            "assistant_library_access_default", event.value == "allowed"
+        )
         self._mark_library_rag_settings_staged()
 
     @on(Select.Changed, "#settings-library-rag-citation-style")

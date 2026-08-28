@@ -2219,12 +2219,6 @@ async def test_library_screen_manager_create_search_rename_and_explicit_all(tmp_
         )
         assert created_page["total"] == 1
         collection_id = created_page["collections"][0]["collection_id"]
-        await service.replace_prompt_collection_memberships(
-            mode="local",
-            prompt_id=prompt_id,
-            collection_ids=[collection_id],
-        )
-
         host.screen.query_one(
             "#prompt-collection-manager-new-name", Input
         ).value = created_name.swapcase()

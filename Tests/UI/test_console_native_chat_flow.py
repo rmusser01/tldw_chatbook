@@ -3855,8 +3855,9 @@ async def test_console_tab_switch_aligns_active_workspace_context():
         assert store.active_session_id == second.id
         assert service.get_active_workspace().workspace_id == "ws-b"
 
-        await pilot.click(f"#console-session-tab-{first.id}")
+        console.query_one(f"#console-session-tab-{first.id}", Button).press()
 
+        await _wait_for_active_session(store, pilot, first.id)
         assert store.active_session_id == first.id
         assert service.get_active_workspace().workspace_id == "ws-a"
         await _wait_for_text(console, pilot, "Workspace A")

@@ -38,6 +38,7 @@ def _controller() -> tuple[ConsoleRetrievalController, SimpleNamespace]:
         set_library_rag_source_scope=lambda _scope: None,
         set_library_rag_query=lambda _query: None,
         run_library_rag_action=lambda: None,
+        push_screen=lambda *_args, **_kwargs: None,
         library_rag_source_scope=lambda: ("notes", "media", "conversations"),
         library_rag_top_k=lambda: 5,
         pending_launch=lambda: state.pending,
