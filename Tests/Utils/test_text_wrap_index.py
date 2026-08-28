@@ -189,3 +189,44 @@ def test_segment_start_matches_a_running_sum():
             running += len(segment)
     # Out-of-range indices clamp rather than raise.
     assert index.segment_start(0, 10_000) == index.segment_start(0, len(index.segments(0)) - 1)
+
+
+def test_short_ascii_lines_never_reach_rich(monkeypatch):
+    """The index build runs on the UI thread, so it must stay far below the
+    repo's 100 ms worker threshold.
+
+    A short pure-ASCII line cannot wrap, so it must not pay a Rich
+    ``divide_line`` call. Asserted by CALL COUNT, not wall clock (the 15457
+    probe rule): the measured effect is a 2.5 MB document building in 2.5 ms
+    instead of 140 ms.
+    """
+    import tldw_chatbook.Utils.text_wrap_index as wrap_module
+
+    calls = {"n": 0}
+    real = wrap_module._rich_divide_line
+
+    def counting(line, width):
+        calls["n"] += 1
+        return real(line, width)
+
+    monkeypatch.setattr(wrap_module, "_rich_divide_line", counting)
+
+    ascii_doc = [f"line {i} of ordinary short ascii text" for i in range(5000)]
+    index = WrapIndex.build(ascii_doc, width=80)
+    assert index.virtual_height == 5000
+    assert calls["n"] == 0, f"short ASCII lines cost {calls['n']} divide_line calls"
+
+    # Anything that CAN wrap still goes through Rich: a long line, and a
+    # short line whose glyphs may be wider than one cell each.
+    calls["n"] = 0
+    WrapIndex.build(["x" * 500, "日本語のテキスト"], width=80)
+    assert calls["n"] == 2
+
+
+def test_wide_glyph_lines_still_wrap_by_cell_width():
+    """The fast path must not swallow a line that is short in CHARACTERS but
+    too wide in CELLS -- CJK glyphs are 2 cells each."""
+    line = "日本語" * 20  # 60 characters, 120 cells
+    index = WrapIndex.build([line], width=40)
+    assert index.virtual_height > 1, "wide-glyph line must still wrap"
+    assert "".join(index.segments(0)) == line
