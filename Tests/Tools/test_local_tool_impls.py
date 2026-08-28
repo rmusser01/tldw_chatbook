@@ -2,6 +2,7 @@ from pathlib import Path
 
 import pytest
 
+from tldw_chatbook.Tools import local_tool_impls
 from tldw_chatbook.Tools.local_tool_impls import (
     MAX_READ_CHARS,
     LocalToolError,
@@ -19,6 +20,45 @@ def test_resolve_workspace_path_confines(tmp_path):
     assert resolve_workspace_path("a/b", tmp_path) == (tmp_path / "a/b").resolve()
     with pytest.raises(LocalToolError, match="outside the workspace root"):
         resolve_workspace_path("../x", tmp_path)
+
+
+def test_stat_path_returns_only_allowlisted_workspace_metadata(tmp_path):
+    ws = tmp_path / "ws"
+    ws.mkdir()
+    target = ws / "note.txt"
+    target.write_text("hello", encoding="utf-8")
+
+    fields = dict(
+        line.split(": ", 1)
+        for line in local_tool_impls.stat_path(
+            "note.txt", workspace_root=ws
+        ).splitlines()
+    )
+
+    assert fields.keys() == {"path", "type", "size", "modified_ns", "mode"}
+    assert fields["path"] == "note.txt"
+    assert fields["type"] == "file"
+    assert fields["size"] == "5"
+    assert fields["modified_ns"].isdigit()
+    assert len(fields["mode"]) == 4
+
+
+def test_stat_path_uses_the_shared_confinement_and_sensitive_path_choke_point(
+    tmp_path, monkeypatch
+):
+    ws = tmp_path / "ws"
+    ws.mkdir()
+    (ws / "safe.txt").write_text("safe", encoding="utf-8")
+
+    with pytest.raises(LocalToolError, match="outside the workspace root"):
+        local_tool_impls.stat_path("../outside.txt", workspace_root=ws)
+
+    monkeypatch.setattr(
+        "tldw_chatbook.Tools.local_tool_impls.is_sensitive_path",
+        lambda path, **_kwargs: Path(path).name == "safe.txt",
+    )
+    with pytest.raises(LocalToolError, match="protected path"):
+        local_tool_impls.stat_path("safe.txt", workspace_root=ws)
 
 
 def test_list_directory_shows_dirs_first_then_files(tmp_path):
