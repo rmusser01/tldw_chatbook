@@ -60,53 +60,6 @@ defaults:
     shell: bash
 
 jobs:
-  changes:
-    # TASK-22250: the concurrency ceiling is ~12 concurrent ubuntu jobs, and one
-    # `Tests` run fans out to 25 of them (~11.5 job-hours: the UI suite alone is
-    # 41.5 min x 12 shards). With several branches live, short REQUIRED checks
-    # from other workflows -- `Derived artifacts` runs in ~4.5 min -- sit behind
-    # that queue for hours; PR #2129 waited ~4 hours on one.
-    #
-    # The cheapest saving loses no coverage at all: documentation- and
-    # backlog-only PRs currently pay the full 25 jobs for zero code change.
-    # Measured: #2130 and #2162 each changed ONE markdown file and each
-    # triggered a complete run.
-    #
-    # Gated per-JOB rather than by workflow-level `paths-ignore` on purpose: a
-    # skipped workflow never reports its checks, so if any of these are ever made
-    # required, `paths-ignore` would block merges permanently. Skipped JOBS still
-    # let the workflow report.
-    name: Detect code changes
-    runs-on: ubuntu-latest
-    outputs:
-      code: ${{ steps.filter.outputs.code }}
-    steps:
-      - id: filter
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: |
-          set -euo pipefail
-          if [ "${{ github.event_name }}" != "pull_request" ]; then
-            echo "Not a pull_request (${{ github.event_name }}) -- running everything."
-            echo "code=true" >> "$GITHUB_OUTPUT"
-            exit 0
-          fi
-          # `|| true`: a transient API error must fall through to the
-          # empty-list branch below (which runs the full suite), never abort
-          # this step. An aborted detector would skip every gated job.
-          CHANGED=$(gh api \
-            "repos/${{ github.repository }}/pulls/${{ github.event.pull_request.number }}/files" \
-            --paginate --jq '.[].filename' || true)
-          echo "Changed files:"; echo "$CHANGED"
-          # Anything outside docs/backlog counts as code. Fail OPEN: if the list
-          # comes back empty for any reason, run the suite rather than skip it.
-          if [ -z "$CHANGED" ] || echo "$CHANGED" | grep -qvE '^(backlog/|Docs/|\.impeccable/|[^/]*\.md$)'; then
-            echo "code=true" >> "$GITHUB_OUTPUT"
-          else
-            echo "Docs/backlog only -- skipping the test matrix."
-            echo "code=false" >> "$GITHUB_OUTPUT"
-          fi
-
   core-tests:
     # task-1465: full coverage on every PR replaces `-m unit` (which selected
     # 27 of ~950 files while ~590 files ran in no PR-triggered job). The UI
@@ -126,8 +79,6 @@ jobs:
     # pool by six would cost more in queueing than it buys in coverage. macOS
     # breadth already lives in nightly-deep, which is where it belongs.
     name: Core Tests (all but UI) - shard ${{ matrix.shard }}/${{ strategy.job-total }}
-    needs: changes
-    if: needs.changes.outputs.code == 'true'
     runs-on: ubuntu-latest
     # Kept at 120 as headroom: the per-shard estimate is ~32 min, so this is
     # ~4x margin rather than a target. A shard that approaches it is a signal
@@ -189,16 +140,17 @@ jobs:
 
   artifact-lease-spike:
     name: Artifact leases - Python ${{ matrix.python-version }} - ${{ matrix.os }}
-    needs: changes
-    if: needs.changes.outputs.code == 'true'
     runs-on: ${{ matrix.os }}
     strategy:
       fail-fast: false
       matrix:
         # TASK-22250: the full OS matrix runs on MERGE (push to dev/main) and
-        # nightly; a pull_request gets ubuntu only. Cross-OS breakage in this
-        # spike has always been an OS-specific file-locking question, which the
-        # merge run and nightly-deep both still cover.
+        # nightly; a pull_request gets ubuntu only. Measured cause: ~12
+        # concurrent ubuntu slots against a 25-job fan-out per Tests run, which
+        # leaves short REQUIRED checks from other workflows queued for hours
+        # (PR #2129 waited ~4h on a 4.5-minute check). This spike's cross-OS
+        # question is file-locking behaviour, which the merge run and
+        # nightly-deep both still cover.
         os: ${{ fromJSON(github.event_name == 'pull_request' && '["ubuntu-latest"]' || '["ubuntu-latest","macos-latest","windows-latest"]') }}
         python-version: ["3.11"]
 
@@ -225,8 +177,6 @@ jobs:
 
   artifact-lease-shape:
     name: Artifact lease workflow shape
-    needs: changes
-    if: needs.changes.outputs.code == 'true'
     runs-on: ubuntu-latest
 
     steps:
@@ -248,23 +198,12 @@ jobs:
   artifact-lease-gate:
     name: Artifact Lease Gate
     runs-on: ubuntu-latest
-    needs: [changes, artifact-lease-spike, artifact-lease-shape]
+    needs: [artifact-lease-spike, artifact-lease-shape]
     if: always()
 
     steps:
     - name: Require successful native lease matrix and CI shape
       run: |
-        # TASK-22250: on a docs/backlog-only PR the two upstream jobs are
-        # deliberately skipped, and a skipped job reports `skipped`, not
-        # `success`. Without this, "nothing to test" would come back RED.
-        if [ "${{ needs.changes.result }}" != "success" ]; then
-          echo "::error::Change detector did not succeed (${{ needs.changes.result }})."
-          exit 1
-        fi
-        if [ "${{ needs.changes.outputs.code }}" != "true" ]; then
-          echo "No code changed -- lease matrix intentionally not run."
-          exit 0
-        fi
         if [ "${{ needs.artifact-lease-spike.result }}" != "success" ] || [ "${{ needs.artifact-lease-shape.result }}" != "success" ]; then
           echo "Artifact lease matrix result: ${{ needs.artifact-lease-spike.result }}"
           echo "Artifact lease shape result: ${{ needs.artifact-lease-shape.result }}"
@@ -279,8 +218,6 @@ jobs:
     # the collected list): each shard runs ~30 min inside the same 45-min
     # budget, with xdist parallelism retained WITHIN each shard.
     name: UI Tests (shard ${{ matrix.shard }}/${{ strategy.job-total }})
-    needs: changes
-    if: needs.changes.outputs.code == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 45
     strategy:
@@ -331,8 +268,6 @@ jobs:
 
   textual-minimum:
     name: MCP - Minimum Textual 8.2.8
-    needs: changes
-    if: needs.changes.outputs.code == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 10
 
@@ -504,42 +439,30 @@ jobs:
   test-summary:
     name: Test Summary
     runs-on: ubuntu-latest
-    needs: [changes, core-tests, ui-tests, textual-minimum, artifact-lease-gate]
+    needs: [core-tests, ui-tests, textual-minimum, artifact-lease-gate]
     if: always()
     
     steps:
     - uses: actions/checkout@v4
     
-    # TASK-22250: every step that consumes shard OUTPUT is gated on the
-    # detector. On a docs/backlog-only PR the shards never ran, so there are no
-    # artifacts -- and `download-artifact@v4` ERRORS when its pattern matches
-    # nothing, which would turn "nothing to test" into a red summary. The
-    # verdict step below is deliberately NOT gated: it still has to report.
     - name: Download all test results
-      if: needs.changes.outputs.code == 'true'
       uses: actions/download-artifact@v4
       with:
         pattern: '*-test-results*'
         merge-multiple: true
     
     - name: Set up Python
-      if: needs.changes.outputs.code == 'true'
       uses: actions/setup-python@v5
       with:
         python-version: "3.12"
     
     - name: Generate test summary
-      if: needs.changes.outputs.code == 'true'
       run: |
         pip install pytest-json-report
         python .github/scripts/generate_test_summary.py
     
-    - name: Note skipped suite
-      if: needs.changes.outputs.code != 'true'
-      run: echo "Docs/backlog-only change -- no test shards ran, nothing to summarise."
-    
     - name: Comment PR with results
-      if: github.event_name == 'pull_request' && needs.changes.outputs.code == 'true'
+      if: github.event_name == 'pull_request'
       continue-on-error: true
       uses: actions/github-script@v7
       with:
@@ -564,18 +487,12 @@ jobs:
     # verdict is the LAST step, after the comment is posted above,
     # so a red suite still leaves a readable PR comment behind.
     - name: Require every gated job to have succeeded
-      # The `needs.changes.outputs.code == 'true'` conjunct keeps the verdict a
-      # real gate while letting a docs/backlog-only PR -- whose gated jobs are
-      # all `skipped` -- report green instead of red (TASK-22250).
       if: >-
-        needs.changes.result != 'success' ||
-        needs.changes.outputs.code == 'true' && (
         needs.core-tests.result != 'success' ||
         needs.ui-tests.result != 'success' ||
         needs.textual-minimum.result != 'success' ||
-        needs.artifact-lease-gate.result != 'success' )
+        needs.artifact-lease-gate.result != 'success'
       run: |
-        echo "changes (detector):  ${{ needs.changes.result }}"
         echo "core-tests:          ${{ needs.core-tests.result }}"
         echo "ui-tests:            ${{ needs.ui-tests.result }}"
         echo "textual-minimum:     ${{ needs.textual-minimum.result }}"

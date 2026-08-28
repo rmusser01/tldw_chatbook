@@ -212,3 +212,32 @@ and it affects every contributor's CI, so it is an owner decision.
 - [ ] A PR's test workflows can run to completion without being swept
 - [ ] `Tests` produces a verdict on at least one PR
 - [ ] Owner picks among the three fan-out/ceiling options above
+
+### Why the docs-only skip was withdrawn (Qodo review, 2026-08-28)
+
+The obvious saving — skip the suite when a PR touches only `backlog/` and
+`Docs/` — was implemented, reviewed, and **reverted**, because the premise is
+false in this repository. Qodo flagged that `Docs/fixtures/console-block-prompts`
+holds JSON consumed by core tests. Checking the rest of the tree made it worse:
+
+- **126 test files reference `Docs/`**, including
+  `Tests/MCP/test_mcp_documentation_contract.py`, which asserts on specific
+  markdown files (`Docs/User_Guide/mcp.md` and others).
+- **78 references to `backlog/tasks`**, and tests read named task files.
+- Decisively, tests **glob** the directory:
+  `test_post_release_ux_hci_validation_plan.py:150` and
+  `test_product_maturity_phase1_harness.py:81` both walk
+  `backlog/tasks/*.md`. **Adding a task file is itself an input to those
+  tests** — which is exactly what a "docs-only" PR does.
+
+So no path heuristic can decide safely here: docs and backlog are load-bearing
+test inputs, and a glob means even a brand-new file participates. A skip would
+have been silent, and the failure mode is tests that never run.
+
+**What remains, then:** the only safe levers are the ones that do not guess.
+The OS-matrix narrowing landed (PRs get ubuntu; merge and nightly get all
+three). Beyond that, the dominant cost is unchanged and unavoidable without a
+deliberate coverage decision: the UI suite is **41.5 min x 12 shards ~= 8.3
+job-hours**, and per-job setup is only ~8% (3.6 min of 45), so re-sharding
+moves the number very little. Reducing what runs per PR reverses task-1465;
+raising the ceiling costs money. Both are owner calls, unchanged by this work.
