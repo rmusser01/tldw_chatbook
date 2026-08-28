@@ -227,8 +227,8 @@ detail-recovery captures with structured facts and a reproducible isolated drive
 ## TASK-23019 programme closeout
 
 The cross-destination closeout passed against subject
-`30de39ffd3f92d486b7acf7bdeb9824301591110` (tree
-`08ecf9874a8924c7d605712aa15ac52abd9ac286`). The retained bundle contains 60 automated
+`64279f4a42b7a41ab46c60430ae630a26856fc80` (tree
+`152ee9e1e4d342a8936bffdf6303a4e1104cef6f`). The retained bundle contains 60 automated
 results, 32 live results, 92 structured facts, and 16 captures (eight text and eight SVG). It
 covers Media, Conversations, Notes, Prompts, and Skills through production-shaped walkthroughs
 at 160x50, 120x35, 100x30, and 80x24.
