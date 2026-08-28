@@ -808,3 +808,56 @@ async def test_wide_glyph_rows_declare_their_true_cell_length():
             real = Segment.get_line_length(strip._segments)
             assert strip.cell_length == real, f"row {y} declares {strip.cell_length}, is {real}"
             assert real == width, f"row {y} is {real} cells in a {width}-cell widget"
+
+
+# --- Wide-glyph selection parity (TASK-22500, Qodo review) ------------------
+#
+# Textual hands a selection its columns in CELLS, while the raw line is
+# indexed in CHARACTERS, and a CJK glyph is 2 cells wide but 1 character
+# long. These drive real mouse drags over wide-glyph documents and require
+# byte-identical output to the Static this widget replaces -- Static resolves
+# the same coordinates through the compositor, so matching it is the whole
+# contract. The text-only fidelity test above cannot see this: it never
+# performs a selection.
+
+
+@pytest.mark.asyncio
+async def test_drag_over_wide_glyphs_matches_static():
+    """A drag across CJK text must copy exactly what Static copies."""
+    content = "日本語のテキストです and some ascii"
+    static_selected = await _drag_and_get_selected_text(
+        _StaticHarness, content, (0, 0), (20, 0), "#old", Static
+    )
+    raw_selected = await _drag_and_get_selected_text(
+        _Harness, content, (0, 0), (20, 0), "#raw", VirtualizedRawContent
+    )
+    assert raw_selected == static_selected
+
+
+@pytest.mark.asyncio
+async def test_partial_drag_landing_inside_a_wide_glyph_matches_static():
+    """Releasing on the SECOND cell of a 2-cell glyph is the ambiguous case:
+    whatever Static resolves it to, this widget must resolve identically."""
+    content = "ab日本語cd"
+    for release_col in (3, 4, 5, 6):
+        static_selected = await _drag_and_get_selected_text(
+            _StaticHarness, content, (0, 0), (release_col, 0), "#old", Static
+        )
+        raw_selected = await _drag_and_get_selected_text(
+            _Harness, content, (0, 0), (release_col, 0), "#raw", VirtualizedRawContent
+        )
+        assert raw_selected == static_selected, (
+            f"release at cell {release_col}: {raw_selected!r} != {static_selected!r}"
+        )
+
+
+@pytest.mark.asyncio
+async def test_select_all_over_wide_glyphs_matches_static():
+    """SELECT_ALL must return the document verbatim, wide glyphs included."""
+    content = "日本語 wide\nsecond 行 line\nplain ascii"
+    app = _Harness(content)
+    async with app.run_test(size=(40, 12)) as pilot:
+        widget = app.query_one("#raw", VirtualizedRawContent)
+        await pilot.pause()
+        selected, _ = widget.get_selection(Selection(None, None))
+        assert selected == content
