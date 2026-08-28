@@ -29,6 +29,7 @@ from typing import (
     TypedDict,
 )
 from uuid import uuid4
+import weakref
 
 from loguru import logger
 from rich.markup import escape as escape_markup
@@ -273,7 +274,11 @@ from tldw_chatbook.Agents.session_todo_store import (
     TodoChangeCallback,
 )
 from tldw_chatbook.Agents.tool_catalog import BuiltinToolProvider
-from tldw_chatbook.Agents.raw_shell_tool_provider import RawShellToolProvider
+from tldw_chatbook.Agents.raw_shell_tool_provider import (
+    RAW_SHELL_SERVER_KEY,
+    RAW_SHELL_TOOL_NAME,
+    RawShellToolProvider,
+)
 from tldw_chatbook.Agents.virtual_cli_provider import VirtualCliProvider
 from tldw_chatbook.config import (
     ConfigMutationResult,
@@ -1617,6 +1622,7 @@ def build_raw_shell_review_hook(
     """Gate model-authored host-shell calls independently by native call id."""
 
     def review_tool_calls(calls: list["ToolCall"], run_id: str) -> dict[str, str]:
+        authority_generation = provider.authority_generation
         provider.apply_batch_decisions(run_id, {})
         pending = [
             row
@@ -1626,7 +1632,12 @@ def build_raw_shell_review_hook(
         if not pending:
             return {}
         decisions = request_approvals(pending)
-        provider.apply_batch_decisions(run_id, decisions, pending)
+        provider.apply_batch_decisions(
+            run_id,
+            decisions,
+            pending,
+            authority_generation=authority_generation,
+        )
         verdicts: dict[str, str] = {}
         for row in pending:
             key = row.call_id or row.llm_name
@@ -2714,6 +2725,9 @@ class ConsoleChatController:
         #: whose id was stamped onto the card the user actually decided --
         #: never "whichever session happens to be active right now".
         self._pending_approval_rounds: dict[str, dict[str, Any]] = {}
+        self._raw_shell_providers: weakref.WeakSet[RawShellToolProvider] = (
+            weakref.WeakSet()
+        )
         #: PR0: retained payload per ROUND (was per session), keyed by
         #: `round_id`. `switch_session` and every teardown re-derive the
         #: mounted card from this map's FIFO head for the session, so a
@@ -8723,6 +8737,9 @@ class ConsoleChatController:
             # The verdict keys this round must answer for -- what `revoke_
             # approval_rounds_for_run` fills with "deny".
             "names": tuple(unique_keys),
+            # Provider-homogeneous rows retained for narrowly scoped
+            # authority revocation without disturbing sibling rounds.
+            "calls": tuple(pending),
             # Flipped by revocation. Re-read after the wait below so a
             # decision that lands in `decisions` AFTER the revoke (the
             # `ApprovalDecided` message is async, and `resolve_pending_
@@ -9785,6 +9802,12 @@ class ConsoleChatController:
             local_tools_enabled=lambda: local_enabled,
             kill_switch=kill_switch,
         )
+        providers = getattr(self, "_raw_shell_providers", None)
+        if providers is None:
+            providers = weakref.WeakSet()
+            self._raw_shell_providers = providers
+        providers.add(provider)
+        runtime.set_model_authority_revoker(self.revoke_raw_shell_authority)
         if not provider.catalog_enabled():
             return None, None
         return provider, build_raw_shell_review_hook(provider, bound_request)
@@ -10032,6 +10055,50 @@ class ConsoleChatController:
         if total:
             logger.info("Revoked pending approval rounds for cancelled run")
         return total
+
+    def revoke_raw_shell_authority(self) -> int:
+        """Fail closed only raw-shell stamps and approval rounds on disarm."""
+        providers = getattr(self, "_raw_shell_providers", ())
+        for provider in tuple(providers):
+            provider.revoke_approval_stamps()
+
+        revoked: list[tuple[str, str | None]] = []
+        with self._approval_state_lock:
+            for round_id, state in list(self._pending_approval_rounds.items()):
+                calls = tuple(state.get("calls") or ())
+                if not calls or not all(
+                    call.server_key == RAW_SHELL_SERVER_KEY
+                    and call.tool_name == RAW_SHELL_TOOL_NAME
+                    for call in calls
+                ):
+                    continue
+                state["revoked"] = True
+                decisions = state.get("decisions")
+                if isinstance(decisions, dict):
+                    for name in state.get("names") or ():
+                        decisions[name] = "deny"
+                self._pending_approval_rounds.pop(round_id, None)
+                session_id = state.get("session_id") or None
+                revoked.append((round_id, session_id))
+                event = state.get("event")
+                if event is not None:
+                    event.set()
+
+        for round_id, session_id in revoked:
+            self._unpark_round_payload(self._parked_approval_payloads, round_id)
+            if session_id is not None:
+                self.discard_pending_round(session_id, round_id)
+            try:
+                self._remount_head(
+                    self._parked_approval_payloads,
+                    self.set_pending_approval,
+                    session_id,
+                )
+            except Exception:  # noqa: BLE001 -- revocation must continue
+                logger.debug("Failed to remount after raw shell revocation")
+        if revoked:
+            logger.info("Revoked pending raw shell approval rounds on disarm")
+        return len(revoked)
 
     def _revoke_tool_approval_rounds(self, run_id: str) -> list[tuple[str, str | None]]:
         """Fail this run's tool-approval rounds closed. Registry work only.

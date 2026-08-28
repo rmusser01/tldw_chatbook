@@ -102,6 +102,10 @@ class _RawCliRuntime(Protocol):
 
     def model_session_granted(self, console_session_id: str) -> bool: ...
 
+    def set_model_authority_revoker(
+        self, callback: Callable[[], None] | None
+    ) -> None: ...
+
 
 def resolve_raw_shell_state(
     effective: EffectiveToolState,
@@ -143,6 +147,7 @@ class RawShellToolProvider:
         self._kill_switch = kill_switch
         self._stamps: dict[tuple[str, str], str] = {}
         self._stamps_lock = threading.Lock()
+        self._authority_generation = 0
 
     def catalog_enabled(self) -> bool:
         """Return whether all live gates currently permit schema discovery."""
@@ -281,13 +286,20 @@ class RawShellToolProvider:
         run_id: str,
         decisions: dict[str, str],
         pending: Sequence[MCPPendingCall] = (),
+        *,
+        authority_generation: int | None = None,
     ) -> None:
         """Replace this run's per-call approval stamps and apply session grants."""
-        grant_session = False
         with self._stamps_lock:
+            if (
+                authority_generation is not None
+                and authority_generation != self._authority_generation
+            ):
+                return
             self._stamps = {
                 key: value for key, value in self._stamps.items() if key[0] != run_id
             }
+            grant_session = False
             for row in pending:
                 key = row.call_id or row.llm_name
                 decision = decisions.get(key)
@@ -296,14 +308,33 @@ class RawShellToolProvider:
                 self._stamps[(run_id, key)] = decision
                 if decision == "approve_session":
                     grant_session = True
-        if not grant_session:
-            return
-        try:
-            state = resolve_raw_shell_state(self._resolve_state(self.hub_tool()))
-            if self.catalog_enabled() and state == "ask":
-                self._runtime.grant_model_session(self.console_session_id)
-        except Exception:
-            return
+            if not grant_session:
+                return
+            try:
+                state = resolve_raw_shell_state(self._resolve_state(self.hub_tool()))
+                if self.catalog_enabled() and state == "ask":
+                    # Keep the provider lock through the runtime write. Disarm
+                    # closes the runtime first and then waits on this same lock
+                    # to advance the generation, so an old approval can land
+                    # either wholly before disarm or wholly before revocation,
+                    # never after a completed disarm/re-arm cycle.
+                    self._runtime.grant_model_session(self.console_session_id)
+            except Exception:
+                return
+
+    @property
+    def authority_generation(self) -> int:
+        """Return the generation that approval round trips must still match."""
+        with self._stamps_lock:
+            return self._authority_generation
+
+    def revoke_approval_stamps(self) -> int:
+        """Invalidate every pending stamp, including hidden scope snapshots."""
+        with self._stamps_lock:
+            revoked = len(self._stamps)
+            self._stamps.clear()
+            self._authority_generation += 1
+            return revoked
 
     def _pop_stamp(self, run_id: str, fallback: str) -> str | None:
         key = current_tool_call_id() or fallback
@@ -314,6 +345,7 @@ class RawShellToolProvider:
     def stamp_scope(self, run_id: str) -> Iterator[None]:
         """Hide and restore this run's approvals around a nested child run."""
         with self._stamps_lock:
+            authority_generation = self._authority_generation
             saved = {
                 key: value for key, value in self._stamps.items() if key[0] == run_id
             }
@@ -329,7 +361,8 @@ class RawShellToolProvider:
                     for key, value in self._stamps.items()
                     if key[0] != run_id
                 }
-                self._stamps.update(saved)
+                if authority_generation == self._authority_generation:
+                    self._stamps.update(saved)
 
     def invoke(self, tool_id: str, args: dict) -> ToolResult:
         name = tool_id.split(":", 1)[-1]

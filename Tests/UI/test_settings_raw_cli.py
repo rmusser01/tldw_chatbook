@@ -399,6 +399,10 @@ async def test_raw_cli_unlock_uses_ordinary_settings_revert():
 async def test_raw_cli_disarm_is_immediate_and_saved_lock_starts_cleanup(monkeypatch):
     app = _build_test_app(config_overrides={"console": {"raw_cli_permitted": True}})
     assert app.raw_cli_runtime.arm().armed is True
+    authority_revocations: list[str] = []
+    app.raw_cli_runtime.set_model_authority_revoker(
+        lambda: authority_revocations.append("revoked")
+    )
     host = StyledSettingsDestinationHarness(app, "settings")
 
     async with host.run_test(size=(120, 35)) as pilot:
@@ -418,6 +422,7 @@ async def test_raw_cli_disarm_is_immediate_and_saved_lock_starts_cleanup(monkeyp
         await pilot.pause()
 
         assert app.raw_cli_runtime.armed is False
+        assert authority_revocations == ["revoked"]
         assert screen._settings_drafts[SettingsCategoryId.PRIVACY_SECURITY] is draft
         assert draft.values == {"console.raw_cli_permitted": False}
         assert app.app_config["console"]["raw_cli_permitted"] is True
@@ -441,6 +446,7 @@ async def test_raw_cli_disarm_is_immediate_and_saved_lock_starts_cleanup(monkeyp
 
         assert disarm_calls == [()]
         assert app.raw_cli_runtime.armed is False
+        assert authority_revocations == ["revoked", "revoked"]
         assert type(app.app_config["console"]["raw_cli_permitted"]) is bool
         assert app.app_config["console"]["raw_cli_permitted"] is False
         assert SettingsCategoryId.PRIVACY_SECURITY not in screen._settings_drafts

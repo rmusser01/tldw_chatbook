@@ -36,12 +36,16 @@ class _Runtime:
         self.stderr = ""
         self.truncated = False
         self.cleanup_proven = True
+        self.model_authority_revoker = None
 
     def grant_model_session(self, console_session_id: str) -> None:
         self.grants.add(console_session_id)
 
     def model_session_granted(self, console_session_id: str) -> bool:
         return console_session_id in self.grants
+
+    def set_model_authority_revoker(self, callback) -> None:
+        self.model_authority_revoker = callback
 
     def execute(self, request: RawCliRequest, on_event, **_kwargs) -> RawCliResult:
         self.execute_calls.append(request)
