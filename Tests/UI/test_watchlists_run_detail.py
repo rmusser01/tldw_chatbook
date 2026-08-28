@@ -2216,3 +2216,66 @@ async def test_newer_tick_supersedes_an_older_explicit_refresh():
         assert pane.run_items[0]["title"] == "Newer tick item"
         assert "newer tick publication" in _logs_text(pane)
         assert "older explicit refresh" not in _logs_text(pane)
+
+
+@pytest.mark.asyncio
+async def test_selection_aba_supersedes_an_older_cancellation_resistant_tick():
+    app = _build_test_app()
+    app.watchlist_scope_service = StaticWatchlistsScopeService([])
+    host = _visual_destination_harness(app, "watchlists_collections")
+    async with host.run_test(size=(235, 52)) as pilot:
+        screen, pane = await _refresh_test_pane(pilot, host)
+        await _seed_refresh_snapshot(screen, pane, pilot)
+        tick_started = asyncio.Event()
+        release_tick = asyncio.Event()
+        stale_a = dict(
+            RUNS[1],
+            found_count=99,
+            processed_count=99,
+            log_text="stale pre-selection-ABA tick",
+        )
+
+        async def get_run(**_kwargs):
+            tick_started.set()
+            while not release_tick.is_set():
+                try:
+                    await release_tick.wait()
+                except asyncio.CancelledError:
+                    continue
+            return stale_a
+
+        screen._controller.get_run = get_run
+        selection_generation = screen._run_selection_generation
+        screen.post_message(RunProgressTick(RUNS[1]["id"]))
+        await asyncio.wait_for(tick_started.wait(), timeout=2)
+
+        pane.select_run_by_id(str(RUNS[0]["id"]))
+        b_mirrored = await _pump_until(
+            pilot,
+            lambda: screen.selected_run is not None
+            and screen.selected_run.get("id") == RUNS[0]["id"],
+        )
+        b_detail_settled = await _wait_worker_group_idle(
+            pilot, screen, "wc_run_detail"
+        )
+        pane.select_run_by_id(str(RUNS[1]["id"]))
+        a_mirrored = await _pump_until(
+            pilot,
+            lambda: screen.selected_run is not None
+            and screen.selected_run.get("id") == RUNS[1]["id"],
+        )
+        a_detail_settled = await _wait_worker_group_idle(
+            pilot, screen, "wc_run_detail"
+        )
+        epoch_advanced = screen._run_selection_generation == selection_generation + 2
+        settled_a_snapshot = _mounted_run_snapshot(screen, pane)
+
+        release_tick.set()
+        assert await _wait_worker_group_idle(pilot, screen, "wc_run_tick")
+        assert await _wait_worker_group_idle(pilot, screen, "wc_run_detail")
+
+        assert b_mirrored and b_detail_settled
+        assert a_mirrored and a_detail_settled
+        assert epoch_advanced
+        assert _mounted_run_snapshot(screen, pane) == settled_a_snapshot
+        assert "stale pre-selection-ABA tick" not in _logs_text(pane)

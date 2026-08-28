@@ -5924,6 +5924,7 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
         )
         if selected is None or selected_identity != requested_identity:
             return
+        selection_generation = self._run_selection_generation
         self._runs_refresh_generation += 1
         publication_generation = self._runs_refresh_generation
         self.run_worker(
@@ -5931,6 +5932,7 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
                 event.run_id,
                 backend=backend,
                 publication_generation=publication_generation,
+                selection_generation=selection_generation,
                 selected=dict(selected),
                 selected_identity=selected_identity,
             ),
@@ -5963,6 +5965,7 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
         *,
         backend: str,
         publication_generation: int,
+        selection_generation: int,
         selected: dict[str, Any],
         selected_identity: tuple[str, str],
     ) -> None:
@@ -5988,16 +5991,16 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
             run_id: The namespaced id the poll is watching.
             backend: Backend captured when the tick was accepted.
             publication_generation: Shared Runs publication owner.
+            selection_generation: Selection epoch captured with the tick.
             selected: Selected run snapshot captured with the tick.
             selected_identity: Canonical identity captured with the tick.
         """
-        if (
-            publication_generation != self._runs_refresh_generation
-            or not self._run_selection_is_current(
-                backend=backend,
-                selected_identity=selected_identity,
-                selected_was_present=True,
-            )
+        if not self._runs_refresh_is_current(
+            backend=backend,
+            generation=publication_generation,
+            selection_generation=selection_generation,
+            selected_identity=selected_identity,
+            selected_was_present=True,
         ):
             return
         try:
@@ -6014,13 +6017,12 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
                 f"{type(exc).__name__}"
             )
             return
-        if (
-            publication_generation != self._runs_refresh_generation
-            or not self._run_selection_is_current(
-                backend=backend,
-                selected_identity=selected_identity,
-                selected_was_present=True,
-            )
+        if not self._runs_refresh_is_current(
+            backend=backend,
+            generation=publication_generation,
+            selection_generation=selection_generation,
+            selected_identity=selected_identity,
+            selected_was_present=True,
         ):
             return
         if not isinstance(record, Mapping) or not record:
