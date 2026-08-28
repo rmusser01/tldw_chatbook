@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import random
 
 import pytest
@@ -411,33 +412,22 @@ async def test_setup_backdrop_seeded_rng_renders_flake_glyphs():
 
 
 @pytest.mark.asyncio
-async def test_setup_backdrop_tick_advances_positions_and_repaints():
+async def test_setup_backdrop_field_is_still_between_resizes():
+    """TASK-23021: the snow is a still frame -- positions and rendered text
+    must not change while the widget merely sits mounted."""
     app = _SnowBackdropApp(random.Random(42))
     async with app.run_test(size=(40, 10)):
         backdrop = app.query_one("#backdrop-under-test", ConsoleSetupBackdrop)
         positions_before = [(flake.x, flake.y) for flake in backdrop._flakes]
         text_before = str(backdrop.renderable)
 
-        backdrop._tick()
+        # Longer than several of the retired animation's 0.4 s intervals.
+        await asyncio.sleep(1.0)
 
         positions_after = [(flake.x, flake.y) for flake in backdrop._flakes]
         text_after = str(backdrop.renderable)
-        assert positions_after != positions_before
-        assert text_after != text_before
-
-
-@pytest.mark.asyncio
-async def test_setup_backdrop_tick_wraps_flake_past_bottom_to_top():
-    app = _SnowBackdropApp(random.Random(42))
-    async with app.run_test(size=(40, 10)):
-        backdrop = app.query_one("#backdrop-under-test", ConsoleSetupBackdrop)
-        flake = backdrop._flakes[0]
-        flake.y = backdrop._field_height - 0.05
-        flake.speed = 1.0
-
-        backdrop._tick()
-
-        assert flake.y == 0.0
+        assert positions_after == positions_before
+        assert text_after == text_before
 
 
 @pytest.mark.asyncio
@@ -448,22 +438,23 @@ async def test_setup_backdrop_resize_safe_at_tiny_size():
         await pilot.resize_terminal(1, 1)
         await pilot.pause()
         assert backdrop.flake_count >= 1
-        # Must not raise even at the smallest possible field.
-        backdrop._tick()
         await pilot.resize_terminal(40, 10)
         await pilot.pause()
         assert backdrop.flake_count == 10
 
 
 @pytest.mark.asyncio
-async def test_setup_modal_snow_timer_paused_until_blocking():
+async def test_setup_modal_backdrop_never_arms_a_timer_in_any_block_state():
+    """TASK-23021 retired the snow tick outright: blocking, unblocked, and
+    re-blocked states must all leave the backdrop with zero timers (the old
+    contract paused/resumed a real interval timer across these transitions)."""
     app = _SetupModalApp(_card_state())
     async with app.run_test(size=(100, 30)) as pilot:
         backdrop = app.query_one(
             f"#{CONSOLE_SETUP_MODAL_BACKDROP_ID}", ConsoleSetupBackdrop
         )
         # _SetupModalApp.on_mount() immediately syncs card-mode (blocking).
-        assert backdrop.timer_paused is False
+        assert len(backdrop._timers) == 0
 
         modal = app.query_one("#console-setup-modal", ConsoleSetupModal)
         modal.sync_card_state(
@@ -474,7 +465,7 @@ async def test_setup_modal_snow_timer_paused_until_blocking():
             action_tooltip="Pick a model.",
         )
         await pilot.pause()
-        assert backdrop.timer_paused is True
+        assert len(backdrop._timers) == 0
 
         modal.sync_card_state(
             _card_state(),
@@ -482,43 +473,7 @@ async def test_setup_modal_snow_timer_paused_until_blocking():
             action_tooltip="Open provider settings.",
         )
         await pilot.pause()
-        assert backdrop.timer_paused is False
-
-
-@pytest.mark.asyncio
-async def test_setup_backdrop_resume_before_mount_starts_timer_running():
-    # Regression: resume_snow() called before on_mount() creates the interval
-    # timer used to be a lost intent -- on_mount() unconditionally created the
-    # timer paused, so a resume() issued against the not-yet-existing timer
-    # never took effect. The widget must remember the intent and apply it once
-    # the timer exists.
-    backdrop = ConsoleSetupBackdrop(rng=random.Random(42))
-    backdrop.resume_snow()
-
-    class _ResumeBeforeMountApp(ConsolidatedCSSApp):
-        def compose(self):
-            yield backdrop
-
-    app = _ResumeBeforeMountApp()
-    async with app.run_test(size=(40, 10)):
-        assert backdrop._snow_timer is not None
-        assert backdrop._snow_timer._active.is_set() is True
-        assert backdrop.timer_paused is False
-
-
-@pytest.mark.asyncio
-async def test_setup_backdrop_no_resume_intent_stays_paused_after_mount():
-    backdrop = ConsoleSetupBackdrop(rng=random.Random(42))
-
-    class _NoResumeApp(ConsolidatedCSSApp):
-        def compose(self):
-            yield backdrop
-
-    app = _NoResumeApp()
-    async with app.run_test(size=(40, 10)):
-        assert backdrop._snow_timer is not None
-        assert backdrop._snow_timer._active.is_set() is False
-        assert backdrop.timer_paused is True
+        assert len(backdrop._timers) == 0
 
 
 # ---------------------------------------------------------------------------
