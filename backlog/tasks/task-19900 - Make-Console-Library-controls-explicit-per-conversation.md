@@ -1,10 +1,11 @@
 ---
 id: TASK-19900
 title: Make Console Library controls explicit per conversation
-status: In Progress
+status: Done
 assignee:
   - '@codex'
 created_date: '2026-08-22'
+updated_date: '2026-08-28 14:43'
 labels:
   - console
   - rag
@@ -13,17 +14,18 @@ labels:
   - ux
 dependencies:
   - task-3170
-priority: high
 references:
-  - https://github.com/rmusser01/tldw_chatbook/pull/1933
+  - 'https://github.com/rmusser01/tldw_chatbook/pull/1933'
 documentation:
   - Docs/superpowers/specs/2026-08-22-console-library-controls-design.md
   - Docs/superpowers/plans/2026-08-22-console-library-controls.md
   - backlog/decisions/079-console-library-conversation-authority.md
+priority: high
 ---
 
 ## Description
 
+<!-- SECTION:DESCRIPTION:BEGIN -->
 Console currently combines three different ways of consulting the Library:
 user-initiated search, automatic pre-send retrieval, and model-initiated
 Library tools. Their global or implicit controls make it difficult for a user
@@ -34,31 +36,32 @@ staged/cited evidence and assistant Library activity.
 
 This task supersedes the narrower zero-result notice proposal in TASK-3504;
 TASK-19900.3 owns the replacement persistent sent-turn disclosure.
+<!-- SECTION:DESCRIPTION:END -->
 
 ## Acceptance Criteria
-
-- [ ] Each Console conversation exposes two independent, locally persisted
+<!-- AC:BEGIN -->
+- [x] #1 Each Console conversation exposes two independent, locally persisted
       controls: automatic pre-send Library retrieval is Never or Automatic,
       and assistant-initiated Library access is Blocked or Allowed. Manual
       Search Library remains available in every combination.
-- [ ] Shipped defaults for newly created local sessions are Never and Blocked;
+- [x] #2 Shipped defaults for newly created local sessions are Never and Blocked;
       global defaults seed only newly created local sessions, existing
       conversations receive their prior effective behavior inside one
       sanitized-seed migration transaction, and a synced/imported conversation
       with no device-local policy fails closed to Never and Blocked.
-- [ ] When assistant access is Blocked, no built-in Library provider is
+- [x] #3 When assistant access is Blocked, no built-in Library provider is
       available to the primary agent or subagents. All 18 direct Library names
       plus `search_library_rag` remain reserved against Skill and MCP
       collisions in every policy/mode combination.
-- [ ] When assistant access is Allowed, the existing global
+- [x] #4 When assistant access is Allowed, the existing global
       `direct_library_tools` setting selects Direct or RAG for the turn; it is
       not interpreted as an enable/disable control. Direct retains all six
       Library categories and RAG retains Notes, Media, and Conversations.
-- [ ] Automatic retrieval uses the draft at actual turn execution, searches
+- [x] #5 Automatic retrieval uses the draft at actual turn execution, searches
       the fixed Notes/Media/Conversations categories, honors the current item
       scope, and skips when explicit evidence is already staged. It never
       inherits a prior manual search's source-type filters.
-- [ ] Automatic retrieval visibly prepares before provider dispatch. Failure
+- [x] #6 Automatic retrieval visibly prepares before provider dispatch. Failure
       or timeout pauses with Retry, Send once without Library, and Cancel;
       zero matches proceeds only with a persistent disclosure that the turn
       was sent without Library evidence. A store-owned exactly-once state
@@ -72,22 +75,22 @@ TASK-19900.3 owns the replacement persistent sent-turn disclosure.
       until settled. A synced closed assistant-generation state makes unresolved
       remote/imported owners inert and truthful, and an atomic handoff leaves
       ADR-063 as the sole owner before any durable tool continuation executes.
-- [ ] Durable policy is re-read at actual execution, then combined with a
+- [x] #7 Durable policy is re-read at actual execution, then combined with a
       gateway-resolved conservative destination record into one immutable turn
       context governing queued turns and every subagent. Policy/destination
       changes after capture affect only later executed turns.
-- [ ] Assistant-initiated Library reads produce bounded, content-minimized,
+- [x] #8 Assistant-initiated Library reads produce bounded, content-minimized,
       device-local `library_activity` records attributed to the durable turn,
       run, and actor. Activity never enters staged evidence, Sources, prompts,
       model context, sync, or ordinary logs, and default trajectory export
       redacts its query/source details.
-- [ ] The Console presents one fixed-order two-axis status chip, separate
+- [x] #9 The Console presents one fixed-order two-axis status chip, separate
       Library Access and Search Library modals, one-row-per-source evidence,
       and a Selected turn Inspector group that distinguishes Cited sources
       from Library activity. Canonical Settings owns future-session defaults;
       missing-row, Save, conflict, unavailable, narrow-viewport, keyboard,
       focus, and dirty-dismiss states are explicit and truthful.
-- [ ] Migration, policy lifecycle, CAS conflicts, first persistence,
+- [x] #10 Migration, policy lifecycle, CAS conflicts, first persistence,
       repository-level hard-purge cascade, ephemeral execution/promotion
       rollback, four policy combinations, Direct/RAG selection, name
       reservation, queued/subagent snapshots, destination classification,
@@ -95,9 +98,11 @@ TASK-19900.3 owns the replacement persistent sent-turn disclosure.
       real Textual composition are covered by targeted automated tests; the
       live Console walkthrough covers only actions the Console exposes,
       including soft delete/restore rather than hard purge.
+<!-- AC:END -->
 
 ## Implementation Plan
 
+<!-- SECTION:PLAN:BEGIN -->
 ADR required: yes
 
 ADR path: `backlog/decisions/079-console-library-conversation-authority.md`
@@ -121,7 +126,36 @@ the long-lived Console review model.
    verification and notes satisfy the repository Definition of Done.
 5. Re-check identifiers and cross-task integration at closeout. Do not run the
    full suite unless the owner separately opts in.
+<!-- SECTION:PLAN:END -->
 
 ## Implementation Notes
 
-<!-- Added after implementation. -->
+<!-- SECTION:NOTES:BEGIN -->
+Delivered the complete ADR-079 work stream through six independently reviewed
+children. Device-local policy and recovery storage preserve upgrades and fail
+closed; execution-time authority gates Direct/RAG providers and reserved names;
+automatic retrieval is an explicit pre-dispatch state machine with durable,
+content-minimized recovery; the Console separates policy, manual search,
+sources, and assistant activity into truthful responsive surfaces; and bounded
+Library activity remains outside evidence, model context, sync, and ordinary
+logs.
+
+The final qualification reconciled all governed documentation and joined the
+migration, policy, runtime, send, recovery, queue, continuation, activity,
+sync/export, Settings, and Textual paths. Exact post-rebase Delivery 6
+verification passed 1,760 tests in 345.66 seconds, the focused new contract
+passed 41 tests, and 23 exact counterfactual node IDs expanded to 29 passing
+cases across nine security/correctness guard families; TASK-19900.6 records the
+full list. Ruff, compileall, CSS bundle sync, screen-size ratchet, production
+diagnostic inventory, backlog-ID, and diff checks passed. An explicitly
+isolated real-app walkthrough proved Direct/RAG disclosure, all four policy
+states, exact manual-search draft preservation, atomic first persistence,
+restart hydration, and soft-delete/restore; repository coverage proves hard
+purge cascades all device-local sidecars.
+
+TASK-19900.1 through TASK-19900.6 are Done with checked acceptance criteria.
+The owner approved the integrated targeted scope and chose not to run the full
+repository suite. ADR-079 remains authoritative, ADR-063 exclusively owns
+durable continuation after handoff, and no new ADR or lesson entry was needed
+at closeout.
+<!-- SECTION:NOTES:END -->

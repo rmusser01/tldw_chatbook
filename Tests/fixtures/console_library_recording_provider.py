@@ -139,12 +139,19 @@ class RecordingConsoleProvider:
         retrieval_scripts: list[RetrievalScript] | None = None,
         stream_scripts: list[StreamScript] | None = None,
         model_scripts: list[ToolBatchScript | StreamScript] | None = None,
+        stream_gates: list[asyncio.Event] | None = None,
+        fixed_provider: str | None = None,
+        fixed_model: str | None = None,
     ) -> None:
         self.ready = ready
         self.egress = egress
         self.retrieval_scripts = deque(retrieval_scripts or [])
         self.stream_scripts = deque(stream_scripts or [])
         self.model_scripts = deque(model_scripts or [])
+        self.stream_gates = tuple(stream_gates or ())
+        self.stream_started = tuple(asyncio.Event() for _ in self.stream_gates)
+        self.fixed_provider = fixed_provider
+        self.fixed_model = fixed_model
         self.calls: list[RecordedProviderCall] = []
         self.activity_events: list[Any] = []
 
@@ -159,9 +166,13 @@ class RecordingConsoleProvider:
 
     async def resolve_for_send(self, selection: Any) -> ConsoleProviderResolution:
         """Return scripted readiness and record only routing metadata."""
-        provider = str(getattr(selection, "provider", None) or "llama_cpp")
+        provider = self.fixed_provider or str(
+            getattr(selection, "provider", None) or "llama_cpp"
+        )
         model = str(
-            getattr(selection, "explicit_model", None) or "qualification-model"
+            self.fixed_model
+            or getattr(selection, "explicit_model", None)
+            or "qualification-model"
         )
         endpoint = (
             "http://127.0.0.1:9099"
@@ -214,6 +225,7 @@ class RecordingConsoleProvider:
             if resolution.resolved_destination is not None
             else "unresolved"
         )
+        stream_index = len(self.calls_of("stream"))
         self._record(
             "stream",
             destination,
@@ -221,6 +233,9 @@ class RecordingConsoleProvider:
             roles=tuple(str(message.get("role", "")) for message in messages),
             tool_names=tool_names,
         )
+        if stream_index < len(self.stream_gates):
+            self.stream_started[stream_index].set()
+            await self.stream_gates[stream_index].wait()
         script = (
             self.stream_scripts.popleft()
             if self.stream_scripts

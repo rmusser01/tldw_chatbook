@@ -515,13 +515,18 @@ back **empty**, auto-retrieve short-circuits with the same shared notice
 the manual path shows, rather than searching everything.
 
 While a send is retrieving, the staged-evidence strip briefly shows a
-"Retrieving…" state; the search is capped at a **5-second timeout**, and
-a send is never blocked on it. If retrieval times out, fails, or the RAG
-service is still starting up (a first-use embedding-model load can take a
-while), the send goes out without evidence and a quiet notice names which
-of the two happened — "still initializing" vs. "failed" — rather than
-staying silent. A zero-result outcome currently clears the in-flight
-placeholder with no further notice.
+"Retrieving…" state and the search is capped at a **5-second timeout**.
+Successful evidence is staged and then consumed by that send. **Zero results**
+is a completed retrieval, so the send continues without evidence and keeps a
+visible zero-results disclosure on the turn.
+
+Failure, timeout, or a RAG service that is still starting pauses the prepared
+send before provider dispatch. The recovery card keeps the exact draft and
+frozen conversation authority visible and offers **Retry**, **Send once**, and
+**Cancel**. Retry makes one fresh retrieval attempt; Send once bypasses
+automatic retrieval for only this prepared send; Cancel restores the draft and
+does not contact the model provider. Nothing is silently downgraded to an
+ungrounded send.
 
 The Inspector tray is not the only place staged evidence shows up: a
 **staged-evidence strip** sits on the main surface itself, at the top of
@@ -745,17 +750,11 @@ is verified at the code level, not live). Verified against e2c706303 —
 2026-08-06 (PR-T2, docs pass against shipped code/tests, live check
 pending Task 9): staged evidence now counts toward the context estimate
 and the cost chip (as an estimated `~` row) instead of reporting zero.
-Verified against d6b6a738f — 2026-08-07 (RAG-port P0 live walkthrough, real
-Anthropic provider): flipping **Auto-retrieve on send** in the RAG chip
-modal writes `[chat_defaults] rag_auto_retrieve_on_send = true` at
-toggle time — before Esc, and Esc leaves it set. A plain-text send then
-showed "Auto-retrieving Library evidence for this message." with the chip
-reading `RAG: on · Sources: 1 staged` about a second in, then "Evidence
-sent with this message · 15 sources", and the model's own reply named the
-injected block back ("the evidence sections [S1] through [S15] …") — the
-end-to-end proof that retrieved evidence reaches the provider. A send
-beginning with a slash command fired no retrieval at all: no placeholder,
-no chip flip, no evidence line.*
+The 2026-08-07 global auto-toggle walkthrough is superseded by ADR-079. The
+current access modal saves only when **Save** is pressed; Escape discards dirty
+choices. Automatic retrieval is conversation-local and uses the recoverable
+pre-dispatch gate described above. Slash commands, `$skill` invocations, tool
+approvals, and regenerates still do not trigger automatic retrieval.*
 
 *Chip and strip positions re-verified against dev @ b6036515e — 2026-08-18
 (task-17662, after the bottom-stack programme moved the status chips above

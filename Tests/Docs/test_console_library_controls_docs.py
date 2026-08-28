@@ -29,10 +29,18 @@ DOC_CONTRACT: dict[str, tuple[str, ...]] = {
         "Assistant: Blocked / Allowed",
         "Direct / RAG is a selector",
         "Notes, Media, and Conversations",
+        "Retry",
+        "Send once",
+        "Cancel",
+        "Zero results",
     ),
     "Docs/User_Guide/settings/rag.md": (
         "does not grant automatic retrieval or assistant Library access",
         "per-conversation Library controls",
+        "Conversation defaults",
+        "Automatic retrieval",
+        "Assistant access",
+        "Allowed Library access",
     ),
     "Docs/User_Guide/library/search-and-rag.md": (
         "user-initiated Library search",
@@ -63,6 +71,13 @@ DOC_CONTRACT: dict[str, tuple[str, ...]] = {
     ),
 }
 MARKDOWN_LINK_RE = re.compile(r"!?\[[^\]]*\]\(([^)]+)\)")
+FORBIDDEN_CONTEXT_AND_RAG_CLAIMS = (
+    "a send is never blocked on it",
+    "the send goes out without evidence",
+    "zero-result outcome currently clears the in-flight placeholder with no further notice",
+    "writes [chat_defaults] rag_auto_retrieve_on_send = true at toggle time",
+    "before Esc, and Esc leaves it set",
+)
 
 
 @pytest.mark.parametrize(("relative_path", "required_text"), DOC_CONTRACT.items())
@@ -101,3 +116,15 @@ def test_console_library_control_docs_have_valid_local_links(relative_path: str)
             missing.append(target)
 
     assert not missing, f"{relative_path} has missing local links: {missing}"
+
+
+def test_context_and_rag_has_no_superseded_automatic_retrieval_claims() -> None:
+    """The current guide cannot retain behavior contradicted by ADR-079."""
+    text = (
+        REPO_ROOT / "Docs/User_Guide/console/context-and-rag.md"
+    ).read_text(encoding="utf-8")
+    normalized = " ".join(text.split())
+
+    stale = [claim for claim in FORBIDDEN_CONTEXT_AND_RAG_CLAIMS if claim in normalized]
+
+    assert not stale, f"context-and-rag.md retains superseded claims: {stale}"

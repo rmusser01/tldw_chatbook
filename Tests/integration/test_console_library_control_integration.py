@@ -2,10 +2,12 @@
 
 from __future__ import annotations
 
+import asyncio
 from types import SimpleNamespace
 
 import pytest
 
+import tldw_chatbook.Chat.console_chat_controller as controller_module
 from Tests.fixtures.console_library_recording_provider import (
     RecordingConsoleProvider,
     RetrievalScript,
@@ -21,6 +23,7 @@ from Tests.Chat.test_console_dispatch_recovery import (
     _database,
     _insert,
     _reconcile,
+    _restored_store,
     _start,
 )
 from tldw_chatbook.Agents.library_rag_tool_provider import (
@@ -31,6 +34,7 @@ from tldw_chatbook.Agents.library_tool_provider import LibraryToolProvider
 from tldw_chatbook.Chat.console_agent_bridge import (
     _compose_run_registry_and_allowed,
 )
+from tldw_chatbook.Chat.chat_persistence_service import ChatPersistenceService
 from tldw_chatbook.Chat.console_chat_controller import ConsoleChatController
 from tldw_chatbook.Chat.console_chat_models import ConsoleProviderSelection
 from tldw_chatbook.Chat.console_chat_models import ConsoleDispatchRecoveryKind
@@ -51,8 +55,10 @@ from tldw_chatbook.Chat.console_library_policy import (
     AUTOMATIC_LIBRARY_SOURCE_TYPES,
     ConsoleAssistantLibraryAccess,
     ConsoleAutoRetrieve,
+    ConsoleLibraryPolicyCandidate,
     ConsoleLibraryPolicySnapshot,
 )
+from tldw_chatbook.Chat.console_prompt_queue import PromptQueueMode
 from tldw_chatbook.Chat.console_turn_context import (
     ConsoleTurnConfigurationSnapshot,
     ConsoleTurnExecutionContext,
@@ -64,6 +70,7 @@ from tldw_chatbook.Chat.console_turn_preparation import (
     initial_preparation_state,
 )
 from tldw_chatbook.Library.library_tool_contract import LIBRARY_TOOL_DESCRIPTORS
+from tldw_chatbook.DB.ChaChaNotes_DB import CharactersRAGDB
 
 
 def _context(
@@ -228,7 +235,9 @@ async def test_automatic_preparation_uses_fixed_categories_and_scripted_outcomes
     retrieval = recorder.calls_of("retrieval")
     assert len(retrieval) == 1
     assert retrieval[0].metadata["source_types"] == AUTOMATIC_LIBRARY_SOURCE_TYPES
-    assert "body" not in repr(retrieval[0])
+    assert "PRIVATE USER BODY" not in repr(recorder.calls)
+    assert "PRIVATE LIBRARY BODY" not in repr(recorder.calls)
+    assert "PRIVATE LIBRARY BODY" not in repr(recorder.activity_events)
 
 
 @pytest.mark.asyncio
@@ -257,35 +266,170 @@ async def test_recording_provider_covers_stream_tool_continuation_and_redacts_bo
     assert recorder.calls_of("readiness")[0].destination == "on_device"
 
 
-def test_restart_recovery_is_inert_for_accepted_and_dispatch_started(tmp_path) -> None:
-    recorder = RecordingConsoleProvider()
-    accepted_db, accepted_id, accepted_repository = _database(
-        tmp_path / "accepted.sqlite"
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("started", "action"),
+    ((False, "retry"), (True, "discard")),
+    ids=("accepted-retry", "dispatch-started-discard"),
+)
+async def test_restart_recovery_requires_explicit_production_action(
+    tmp_path,
+    monkeypatch: pytest.MonkeyPatch,
+    started: bool,
+    action: str,
+) -> None:
+    real_get_cli_setting = controller_module.get_cli_setting
+    monkeypatch.setattr(
+        controller_module,
+        "get_cli_setting",
+        lambda section, key, default=None: (
+            False
+            if (section, key) == ("console", "direct_library_tools")
+            else real_get_cli_setting(section, key, default)
+        ),
     )
-    _insert(accepted_db, accepted_repository, _acceptance(accepted_id))
-
-    started_db, started_id, started_repository = _database(
-        tmp_path / "started.sqlite"
+    db, conversation_id, repository = _database(
+        tmp_path / f"recovery-{action}.sqlite"
     )
-    _start(
-        started_repository,
-        _insert(started_db, started_repository, _acceptance(started_id)),
+    checkpoint = _insert(db, repository, _acceptance(conversation_id))
+    if started:
+        _start(repository, checkpoint)
+    store, session_id = _restored_store(db, conversation_id)
+    recorder = RecordingConsoleProvider(
+        stream_scripts=[StreamScript.tokens("recovered")],
+        fixed_provider="llama_cpp",
+        fixed_model="test-model",
+    )
+    controller = ConsoleChatController(
+        store=store,
+        provider_gateway=recorder,
+        provider="llama_cpp",
+        model="test-model",
+        base_url="http://127.0.0.1:9099",
+        agent_runtime_enabled=False,
     )
 
-    accepted = _reconcile(accepted_repository, accepted_id)
-    started = _reconcile(started_repository, started_id)
+    await asyncio.sleep(0)
 
-    assert accepted.kind is ConsoleDispatchRecoveryKind.ACCEPTED
-    assert started.kind is ConsoleDispatchRecoveryKind.DISPATCH_STARTED
-    assert [action.action_id.value for action in accepted.actions] == [
-        "retry_response",
-        "discard",
-    ]
-    assert [action.action_id.value for action in started.actions] == [
-        "retry_anyway",
-        "discard",
-    ]
+    recovery = store.dispatch_recovery_for_session(session_id)
+    assert recovery is not None
+    assert recovery.kind is (
+        ConsoleDispatchRecoveryKind.DISPATCH_STARTED
+        if started
+        else ConsoleDispatchRecoveryKind.ACCEPTED
+    )
     assert recorder.calls == []
+
+    if action == "retry":
+        result = await controller.retry_dispatch_recovery(session_id)
+        assert result.accepted is True
+        assert [call.kind for call in recorder.calls] == ["readiness", "stream"]
+    else:
+        result = await controller.discard_dispatch_recovery(session_id)
+        assert result.accepted is True
+        assert recorder.calls == []
+
+    assert store.dispatch_recovery_for_session(session_id) is None
+
+
+@pytest.mark.asyncio
+async def test_prompt_queue_drains_through_controller_and_recording_gateway() -> None:
+    release = [asyncio.Event(), asyncio.Event()]
+    recorder = RecordingConsoleProvider(
+        stream_scripts=[
+            StreamScript.tokens("first reply"),
+            StreamScript.tokens("second reply"),
+        ],
+        stream_gates=release,
+    )
+    store = ConsoleChatStore()
+    session = store.create_session(title="Queue qualification", ephemeral=True)
+    controller = ConsoleChatController(store=store, provider_gateway=recorder)
+
+    chain = asyncio.create_task(
+        controller.run_prompt_chain("first prompt", session_id=session.id)
+    )
+    await asyncio.wait_for(recorder.stream_started[0].wait(), timeout=1)
+    snapshot = controller.prompt_queue_registry.snapshot(session.id)
+    queued = controller.queue_prompt(
+        session.id,
+        text="second prompt",
+        expected_revision=snapshot.revision,
+    )
+    assert queued.applied is True
+
+    release[0].set()
+    await asyncio.wait_for(recorder.stream_started[1].wait(), timeout=1)
+    assert controller.prompt_queue_registry.snapshot(session.id).total_count == 0
+    release[1].set()
+    result = await asyncio.wait_for(chain, timeout=1)
+
+    assert result.accepted is True
+    assert controller.prompt_queue_registry.snapshot(session.id).mode is (
+        PromptQueueMode.DRAINING
+    )
+    assert [call.kind for call in recorder.calls] == [
+        "readiness",
+        "stream",
+        "readiness",
+        "stream",
+    ]
+    assert "first prompt" not in repr(recorder.calls)
+    assert "second prompt" not in repr(recorder.calls)
+
+
+@pytest.mark.asyncio
+async def test_on_device_to_public_change_discloses_during_production_send(
+    tmp_path,
+) -> None:
+    release = [asyncio.Event(), asyncio.Event()]
+    recorder = RecordingConsoleProvider(
+        stream_scripts=[
+            StreamScript.tokens("local reply"),
+            StreamScript.tokens("public reply"),
+        ],
+        stream_gates=release,
+    )
+    db = CharactersRAGDB(tmp_path / "destination.sqlite", "qualification")
+    store = ConsoleChatStore(persistence=ChatPersistenceService(db))
+    session = store.create_session(
+        title="Destination qualification",
+    )
+    store.stage_session_library_policy(
+        session.id,
+        ConsoleLibraryPolicyCandidate(
+            auto_retrieve=ConsoleAutoRetrieve.NEVER,
+            assistant_access=ConsoleAssistantLibraryAccess.ALLOWED,
+        ),
+    )
+    controller = ConsoleChatController(store=store, provider_gateway=recorder)
+
+    local_send = asyncio.create_task(
+        controller.submit_draft("local turn", session_id=session.id)
+    )
+    await asyncio.wait_for(recorder.stream_started[0].wait(), timeout=1)
+    release[0].set()
+    assert (await asyncio.wait_for(local_send, timeout=1)).accepted is True
+
+    recorder.egress = ConsoleEgressClass.PUBLIC_NETWORK
+    public_send = asyncio.create_task(
+        controller.submit_draft("public turn", session_id=session.id)
+    )
+    await asyncio.wait_for(recorder.stream_started[1].wait(), timeout=1)
+    disclosure = session.library_destination_runtime.disclosure
+
+    assert disclosure is not None
+    assert disclosure.previous_resolved_identity[3] is ConsoleEgressClass.ON_DEVICE
+    assert disclosure.resolved_destination.egress_class is (
+        ConsoleEgressClass.PUBLIC_NETWORK
+    )
+    assert [call.destination for call in recorder.calls_of("readiness")] == [
+        "on_device",
+        "public_network",
+    ]
+    release[1].set()
+    assert (await asyncio.wait_for(public_send, timeout=1)).accepted is True
+    assert session.library_destination_runtime.disclosure is None
 
 
 def test_permanent_conversation_purge_cascades_every_library_sidecar(tmp_path) -> None:
@@ -333,7 +477,6 @@ def test_permanent_conversation_purge_cascades_every_library_sidecar(tmp_path) -
 def test_continuation_handoff_deletes_dispatch_owner_before_any_provider_call(
     tmp_path,
 ) -> None:
-    recorder = RecordingConsoleProvider()
     db, conversation_id, repository = _database(tmp_path / "handoff.sqlite")
     started = _start(
         repository,
@@ -363,4 +506,3 @@ def test_continuation_handoff_deletes_dispatch_owner_before_any_provider_call(
             (conversation_id,),
         )
         assert cursor.fetchone()[0] == 0
-    assert recorder.calls == []
