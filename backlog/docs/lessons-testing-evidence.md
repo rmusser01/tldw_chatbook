@@ -3205,7 +3205,7 @@ queue"), and that commit's own diff to a SIBLING test file
 (`Tests/UI/test_console_send_disabled_state.py`) rewrote the same assertions to the new
 contract and renamed a test from `..._while_run_blocked_still_shows_feedback` to
 `..._queues_draft_behind_accepted_run`. The author changed the contract deliberately
-(ADR-046: "once accepted, the normal `Send` action becomes `Queue`") and updated one test
+(ADR-098: "once accepted, the normal `Send` action becomes `Queue`") and updated one test
 file, not two.
 
 **What to do.** On a post-merge test failure that looks cosmetic, `git log -S` the assertion's
@@ -8496,7 +8496,7 @@ you only ever see the outermost one.
 5. **A red test may be the only honest thing in the file.** Two of the 26 stayed red after
    the harness was correct, and a live run of the real app confirmed why: Send really is
    disabled for the whole of every Console run, showing a greyed-out button labelled "Queue"
-   whose tooltip says to wait. Two shipped contracts disagree (ADR-046 vs the durable-owner
+   whose tooltip says to wait. Two shipped contracts disagree (ADR-098 vs the durable-owner
    submission block, each with its own test asserting the opposite). That is an owner
    decision, not a test edit — filed as TASK-22000 and left red.
 ## A held-connection map keyed by thread does nothing until `check_same_thread=False` — and the test that should have caught it passed for the wrong reason (TASK-21131, 2026-08-24)

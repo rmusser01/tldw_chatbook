@@ -3199,7 +3199,7 @@ async def test_console_composer_stop_is_subdued_when_idle():
         # TASK-2154.6: a blocked Send is now genuinely disabled, not just
         # class-subdued.
         # TASK-15121 (contract change, not a rename): since TASK-14808 /
-        # ADR-046 an ACCEPTED live turn no longer blocks Send -- it re-labels
+        # ADR-098 an ACCEPTED live turn no longer blocks Send -- it re-labels
         # it to "Queue" and admits the draft as a FIFO follow-up turn. So
         # `console-send-blocked` is no longer reachable here; it now covers
         # only the states that genuinely refuse a draft (Preparing before
@@ -3248,7 +3248,7 @@ async def test_console_duplicate_send_during_stream_does_not_break_stop_control(
         # TASK-2154.6: genuinely disabled while the run blocks sends; the
         # direct handler dispatch below (not `press()`, which no-ops on a
         # disabled control) is exactly how the Enter hotkey still reaches it.
-        # TASK-15121: superseded by TASK-14808 / ADR-046 -- "once accepted,
+        # TASK-15121: superseded by TASK-14808 / ADR-098 -- "once accepted,
         # the normal Send action becomes Queue; Enter and the button both
         # enqueue the exact canonical text draft". A second draft mid-stream
         # is therefore no longer REFUSED, so the disabled/`console-send-blocked`

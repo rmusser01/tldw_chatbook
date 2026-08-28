@@ -9,7 +9,7 @@ labels:
 - architecture
 priority: high
 references:
-- backlog/decisions/046-visible-bounded-console-prompt-queue.md
+- backlog/decisions/098-visible-bounded-console-prompt-queue.md
 documentation:
 - Docs/superpowers/specs/2026-08-09-console-prompt-queue-design.md
 - Docs/superpowers/plans/2026-08-09-console-prompt-queue.md
@@ -37,18 +37,18 @@ Provide a deterministic process-memory owner for per-session queued prompt state
 ## Implementation Plan
 
 <!-- SECTION:PLAN:BEGIN -->
-1. Add red pure tests for immutable IDs, FIFO/session isolation, capacity including claimed work, lifecycle transitions, revision checks, thread confinement, redacted previews/snapshots, and atomic final-empty admission routing. 2. Implement frozen queue models and a synchronous per-session ConsolePromptQueueRegistry with injected ID/clock producers, fixed-cell safe preview generation, revisioned body-free snapshots, context baseline, reservation, close/shutdown, and cleanup transitions. 3. Mutation-check the capacity and stale-revision guards; run focused, import-boundary, compile, and Ruff checks. 4. Self-review, document evidence, check all ACs, and mark Done. ADR required: yes. ADR path: backlog/decisions/046-visible-bounded-console-prompt-queue.md. Reason: ADR-046 already governs transient queue ownership and transition semantics; this task implements it without introducing a new decision.
+1. Add red pure tests for immutable IDs, FIFO/session isolation, capacity including claimed work, lifecycle transitions, revision checks, thread confinement, redacted previews/snapshots, and atomic final-empty admission routing. 2. Implement frozen queue models and a synchronous per-session ConsolePromptQueueRegistry with injected ID/clock producers, fixed-cell safe preview generation, revisioned body-free snapshots, context baseline, reservation, close/shutdown, and cleanup transitions. 3. Mutation-check the capacity and stale-revision guards; run focused, import-boundary, compile, and Ruff checks. 4. Self-review, document evidence, check all ACs, and mark Done. ADR required: yes. ADR path: backlog/decisions/098-visible-bounded-console-prompt-queue.md. Reason: ADR-098 already governs transient queue ownership and transition semantics; this task implements it without introducing a new decision.
 <!-- SECTION:PLAN:END -->
 
 ## Implementation Notes
 
 <!-- SECTION:IMPLEMENTATION_NOTES:BEGIN -->
-Implemented a synchronous owner-thread-confined ConsolePromptQueueRegistry with immutable redacted entries and claims, per-session FIFO state, ten-entry waiting-plus-claimed capacity, revision-checked lifecycle transitions, context baselines, reservations, closing/shutdown cleanup, exact final-empty/admission rerouting, selected-entry text reads, and cached body-free snapshots. Added fixed-cell ANSI/control/Rich-safe preview generation and 34 pure tests covering lifecycle, isolation, locks, all pause reasons, race orderings, thread confinement, redaction, Unicode previews, dependency boundaries, and non-traversal of prompt bodies. Mutation checks: raising the cap to 11 failed test_capacity_counts_waiting_plus_claimed; bypassing admission revision checking failed both stale-intent tests. Verification: focused 34 passed; Ruff check and format check passed; py_compile passed. Broader Chat fail-fast reached 208 passed/1 skipped before the unrelated absent pytest-mock mocker fixture; full collection found 35,811 tests and only two existing Confluence collection errors from absent optional Playwright. ADR required: yes; implemented existing ADR-046, with no new ADR. No persistent format, database, prompt-history, diagnostic, logging, provider, Textual, or screen dependency was added.
+Implemented a synchronous owner-thread-confined ConsolePromptQueueRegistry with immutable redacted entries and claims, per-session FIFO state, ten-entry waiting-plus-claimed capacity, revision-checked lifecycle transitions, context baselines, reservations, closing/shutdown cleanup, exact final-empty/admission rerouting, selected-entry text reads, and cached body-free snapshots. Added fixed-cell ANSI/control/Rich-safe preview generation and 34 pure tests covering lifecycle, isolation, locks, all pause reasons, race orderings, thread confinement, redaction, Unicode previews, dependency boundaries, and non-traversal of prompt bodies. Mutation checks: raising the cap to 11 failed test_capacity_counts_waiting_plus_claimed; bypassing admission revision checking failed both stale-intent tests. Verification: focused 34 passed; Ruff check and format check passed; py_compile passed. Broader Chat fail-fast reached 208 passed/1 skipped before the unrelated absent pytest-mock mocker fixture; full collection found 35,811 tests and only two existing Confluence collection errors from absent optional Playwright. ADR required: yes; implemented existing ADR-098, with no new ADR. No persistent format, database, prompt-history, diagnostic, logging, provider, Textual, or screen dependency was added.
 <!-- SECTION:IMPLEMENTATION_NOTES:END -->
 ## Final Summary
 
 <!-- SECTION:FINAL_SUMMARY:BEGIN -->
-Added the pure process-memory queue state machine required by ADR-046. It now provides the deterministic, privacy-bounded foundation for TASK-14805's coordinator without making the queue visible or persistent.
+Added the pure process-memory queue state machine required by ADR-098. It now provides the deterministic, privacy-bounded foundation for TASK-14805's coordinator without making the queue visible or persistent.
 <!-- SECTION:FINAL_SUMMARY:END -->
 
 ## Definition of Done
@@ -57,7 +57,7 @@ Added the pure process-memory queue state machine required by ADR-046. It now pr
 - [x] Automated pure-state coverage added and both required guards mutation-checked.
 - [x] Ruff, Ruff format, and Python compilation checks pass for changed Python files.
 - [x] Broader regression and full collection blockers are documented as missing optional test dependencies, not change-attributable failures.
-- [x] ADR-046 reviewed and linked; no new ADR is required.
+- [x] ADR-098 reviewed and linked; no new ADR is required.
 - [x] Self-review completed, including exact queue-empty/admission race handling and selected-entry-only body reads.
 - [x] No new generalized lesson was needed; the task followed the existing mutation, collection, and backlog-hygiene lessons.
 <!-- DOD:END -->

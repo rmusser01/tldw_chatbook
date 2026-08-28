@@ -1,9 +1,12 @@
-# ADR-046: Visible bounded Console prompt queue
+# ADR-098: Visible bounded Console prompt queue
 
 Status: Accepted
 Date: 2026-08-09
 Related Spec: [Console Prompt Queue Design](../../Docs/superpowers/specs/2026-08-09-console-prompt-queue-design.md)
 Supersedes: N/A
+
+Identifier note: Renumbered from the conflicting ADR-046 identifier to ADR-098 on
+2026-08-28. The accepted decision content is unchanged.
 
 ## Decision
 

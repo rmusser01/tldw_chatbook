@@ -7,7 +7,7 @@ status: Done
 assignee:
   - '@codex'
 created_date: '2026-08-23'
-updated_date: '2026-08-28 21:55'
+updated_date: '2026-08-28 22:42'
 labels:
   - testing
   - dev-red
@@ -36,6 +36,7 @@ a single-line control fails the same way — so it is not shift+enter specific.
 - [x] #3 If the harness is stale, the harness is repaired so the tests exercise the real send path again — not deleted, and not relaxed until they pass
 - [x] #4 `Tests/UI/test_console_native_chat_flow.py` is green on dev — **304 passed on current dev; TASK-22000 repaired the final 2 queue-contract failures**
 - [x] #5 The fix is verified by mutation: breaking send makes these tests fail again
+- [x] #6 The accepted Console prompt-queue decision has one unambiguous canonical ADR number, index entry, and repository-wide queue-specific references
 
 ## Evidence (verified first-hand on dev 33ff5b754, 2026-08-23)
 
@@ -54,10 +55,10 @@ cause. Independently reproduced here before filing.
 <!-- SECTION:PLAN:BEGIN -->
 ADR required: no
 
-ADR path: `backlog/decisions/046-visible-bounded-console-prompt-queue.md`
+ADR path: `backlog/decisions/098-visible-bounded-console-prompt-queue.md`
 
 Reason: this is a verification and backlog-closeout pass for the already accepted
-ADR-046 behavior and TASK-22000 repair; it introduces no storage, ownership,
+ADR-098 behavior and TASK-22000 repair; it introduces no storage, ownership,
 runtime-boundary, or long-lived UX decision.
 
 1. Trace one representative failure through the real send path (button press -> screen
@@ -72,6 +73,9 @@ runtime-boundary, or long-lived UX decision.
    factory app is missing, do not delete/xfail/relax any test.
 5. Mutation-check every repaired test: break the production gate and confirm each goes red.
 6. Re-run the file and the related composer suite; run `./scripts/preflight.sh`.
+7. Resolve review feedback by assigning the queue decision the next unused ADR number, updating
+   its canonical index entry and every queue-specific reference, then run reference and backlog
+   guards before completing the task again.
 <!-- SECTION:PLAN:END -->
 
 ## Implementation Notes
@@ -119,7 +123,7 @@ the agent loop (which a file-backed DB does, since `[console] agent_runtime` def
 ### The 2 tests left red are correct, and pin a real regression (TASK-22000)
 
 `test_console_composer_stop_is_subdued_when_idle` and
-`test_console_duplicate_send_during_stream_does_not_break_stop_control` assert ADR-046 /
+`test_console_duplicate_send_during_stream_does_not_break_stop_control` assert ADR-098 /
 TASK-14808 / TASK-15121: an accepted live turn re-labels Send to "Queue" and admits a FIFO
 follow-up rather than blocking. Verified live on the real app mid-run: `send.label = 'Queue'`,
 `send.disabled = True`, `console-send-blocked` set, tooltip "Wait for the active Console run to
@@ -153,7 +157,7 @@ and reverted by hand; `git diff -- tldw_chatbook/` is empty.
 * `Tests/UI/app_factory.py` — new `attach_chachanotes_db`
 * `Tests/UI/test_console_native_chat_flow.py` — `_build_console_send_test_app`, 26 call sites, `_ReadyResolutionGateway` destination, `WorkspaceLinkingPersistence` removed
 * `Tests/UI/test_console_composer_cursor.py` — the one send-driving test in that module
-* `backlog/tasks/task-22000 - ...` — the ADR-046 queue conflict
+* `backlog/tasks/task-22000 - ...` — the ADR-098 queue conflict
 * `backlog/docs/lessons-testing-evidence.md` — the fail-closed-double lesson
 
 No production code changed.
@@ -216,7 +220,45 @@ metadata with the merged behavior. The repository derived-artifact preflight als
 guards (CSS bundles, profile-owned paths, production diagnostics, backlog IDs, schema allowlist,
 and index-plan pins).
 
-ADR required: no. ADR-046 remains authoritative, and this verification introduced no new
+ADR required: no. ADR-098 remains authoritative, and this verification introduced no new
 architecture decision. The closeout surfaced no new incident-backed lesson beyond the testing
 evidence already recorded above.
+
+## Qodo remediation and latest-dev rebase (2026-08-28)
+
+Rebased the PR onto `origin/dev` at `8db03c25bc`. Qodo correctly identified that the queue
+decision and the indexed roleplay decision both used ADR-046. The accepted queue decision is now
+ADR-098: its file/header and canonical index entry are unique, its content is unchanged, and all
+queue-specific references in source comments, tests, specs, plans, lessons, and completed task
+records point to ADR-098. TASK-22000's descriptive filename/title moved with that reference;
+TASK-22000 itself was not renumbered.
+
+The ADR-098 claim was checked against every refreshed `origin/*` branch and every open PR file
+list; neither had a competing claim. Remaining ADR-046 references are roleplay-specific, the
+historical reservation note, or ADR-098's explicit renumbering provenance. The existing
+ADR-collision incident in `backlog/docs/lessons-backlog-hygiene.md` already documents this exact
+class of failure, so no duplicate lesson was added.
+
+Fresh post-rebase verification: Console native flow **304 passed** in 373.22 seconds; adjacent
+composer/queue/recovery **54 passed** in 45.29 seconds; screen-size ratchet **3 passed**; Ruff,
+`py_compile`, all six derived-artifact preflight checks, and `git diff --check` passed. Pytest's
+post-success cleanup emitted the pre-existing permission warnings for unrelated stale
+`task-20010` temporary promotion directories; all three pytest commands exited successfully.
+
+Latest-dev refresh: rebased again onto `origin/dev` at `99248ccad7`, incorporating PRs #2172
+and #2175 without conflicts. Fresh verification on the rebased head passed the 304-test Console
+native-flow file, a broader 63-test composer/queue/recovery slice, the 3-test screen-size ratchet,
+Ruff, `py_compile`, the six-check derived-artifact preflight, explicit ADR-reference validation,
+the backlog-ID guard, and `git diff --check`. ADR-098 remains unique across refreshed remote
+branches and open PR file lists; the same unrelated `task-20010` pytest cleanup warnings remain.
+
+Force-merge refresh: rebased onto `origin/dev` at `909cf6f37e` without conflicts. On that exact
+tree, the Console native-flow file passed **304 tests**, the adjacent composer/queue/recovery slice
+passed **63 tests**, and the screen-size ratchet passed **3 tests**. Ruff, `py_compile`, all six
+preflight guards, explicit ADR-reference validation, the backlog-ID guard, and `git diff --check`
+also passed. Immediately before merge, successive final rebases onto current `origin/dev` were
+conflict-free and retained the same production diff, including after the scheduling, boot-ratchet,
+focus-ownership, and backlog-only merges that landed during the merge window. The only pytest
+cleanup output remained the unrelated pre-existing `task-20010` temporary-directory permission
+warnings.
 <!-- SECTION:NOTES:END -->
