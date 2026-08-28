@@ -221,6 +221,91 @@ def test_symlink_replaced_root_excluded_from_allowed_roots(
     assert roots == (sandbox,)
 
 
+def test_all_consumers_share_validation_and_write_prefilters(
+    tmp_path, monkeypatch
+) -> None:
+    registry = _registry(tmp_path)
+    ro_root = tmp_path / "ro"
+    rw_root = tmp_path / "rw"
+    ro_root.mkdir()
+    rw_root.mkdir()
+    ro_binding = registry.add_folder_binding("ws-a", ro_root)
+    rw_binding = registry.add_folder_binding("ws-a", rw_root, allow_write=True)
+    monkeypatch.setattr(wfr, "_registry_factory", lambda: registry)
+    monkeypatch.setenv("TLDW_CHANGE_REVIEW_ENABLED", "1")
+    seen: list[tuple[str, ...]] = []
+
+    def accept_all(bindings):
+        materialized = tuple(bindings)
+        seen.append(tuple(binding.binding_id for binding in materialized))
+        for binding in materialized:
+            yield binding, Path(binding.locator)
+
+    monkeypatch.setattr(
+        wfr, "_iter_valid_folder_bindings", accept_all, raising=False
+    )
+    sandbox = tmp_path / "sandbox"
+    sandbox.mkdir()
+
+    with wfr.run_workspace("ws-a"):
+        assert wfr.allowed_file_roots(write=True, sandbox_root=sandbox) == (
+            sandbox,
+            rw_root,
+        )
+    assert set(wfr.folder_binding_roots("ws-a")) == {ro_root, rw_root}
+    note = wfr.workspace_context_note("ws-a", launch_cwd=tmp_path, registry=registry)
+    assert "ro" in note and "rw" in note
+    assert seen == [
+        (rw_binding.binding_id,),
+        (ro_binding.binding_id, rw_binding.binding_id),
+        (ro_binding.binding_id, rw_binding.binding_id),
+    ]
+
+
+def test_change_review_gates_precede_binding_validation(tmp_path, monkeypatch) -> None:
+    registry = _registry(tmp_path)
+    root = tmp_path / "root"
+    root.mkdir()
+    registry.add_folder_binding("ws-a", root)
+    monkeypatch.setattr(wfr, "_registry_factory", lambda: registry)
+    monkeypatch.setenv("TLDW_CHANGE_REVIEW_ENABLED", "1")
+    calls = 0
+
+    def accept_all(bindings):
+        nonlocal calls
+        calls += 1
+        for binding in bindings:
+            yield binding, Path(binding.locator)
+
+    monkeypatch.setattr(
+        wfr, "_iter_valid_folder_bindings", accept_all, raising=False
+    )
+    assert wfr.folder_binding_roots("ws-a") == (root,)
+    assert calls == 1
+
+    monkeypatch.setenv("TLDW_CHANGE_REVIEW_ENABLED", "0")
+    monkeypatch.setattr(
+        wfr,
+        "_registry_factory",
+        lambda: (_ for _ in ()).throw(AssertionError("registry touched")),
+    )
+    assert wfr.folder_binding_roots("ws-a") == ()
+    assert calls == 1
+
+    monkeypatch.setenv("TLDW_CHANGE_REVIEW_ENABLED", "1")
+    registry.set_change_review_enabled("ws-a", False)
+    monkeypatch.setattr(wfr, "_registry_factory", lambda: registry)
+    monkeypatch.setattr(
+        registry,
+        "list_folder_bindings",
+        lambda _workspace_id: (_ for _ in ()).throw(
+            AssertionError("bindings listed")
+        ),
+    )
+    assert wfr.folder_binding_roots("ws-a") == ()
+    assert calls == 1
+
+
 # --- Launched-location accessor (feat/workspace-agent-context-note) ---
 
 
