@@ -4,9 +4,9 @@ from __future__ import annotations
 
 import re
 import threading
-from contextlib import nullcontext
+from contextlib import contextmanager, nullcontext
 from pathlib import Path
-from typing import Callable, ContextManager, Mapping, Sequence
+from typing import Callable, ContextManager, Iterator, Mapping, Sequence
 
 from loguru import logger
 
@@ -159,7 +159,10 @@ class VirtualCliProvider:
             server_label=VIRTUAL_CLI_SERVER_LABEL,
             source="local",
             name=command,
-            description=f"Read-only virtual command: {usage}. No host shell is invoked.",
+            description=(
+                f"Read-only virtual command: {usage}. No host shell is invoked. "
+                "Permission is independent from equivalent filesystem and Git tools."
+            ),
             input_schema={
                 "type": "object",
                 "properties": {
@@ -242,6 +245,27 @@ class VirtualCliProvider:
         key = current_tool_call_id() or command
         with self._stamps_lock:
             return self._stamps.pop((run_id, key), None)
+
+    @contextmanager
+    def stamp_scope(self, run_id: str) -> Iterator[None]:
+        """Hide and restore this run's pending verdicts around a child run."""
+        with self._stamps_lock:
+            saved = {
+                key: value for key, value in self._stamps.items() if key[0] == run_id
+            }
+            self._stamps = {
+                key: value for key, value in self._stamps.items() if key[0] != run_id
+            }
+        try:
+            yield
+        finally:
+            with self._stamps_lock:
+                self._stamps = {
+                    key: value
+                    for key, value in self._stamps.items()
+                    if key[0] != run_id
+                }
+                self._stamps.update(saved)
 
     def invoke(self, tool_id: str, args: dict) -> ToolResult:
         name = tool_id.split(":", 1)[-1]
