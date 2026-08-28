@@ -1,11 +1,11 @@
 ---
 id: TASK-22865
 title: Classify Watchlists feed failures and recovery
-status: In Progress
+status: Done
 assignee:
   - '@codex'
 created_date: '2026-08-27 04:14'
-updated_date: '2026-08-28 13:57'
+updated_date: '2026-08-28 15:35'
 labels:
   - watchlists
   - feeds
@@ -28,12 +28,12 @@ Classify common transport and feed failures into stable, actionable, redacted ou
 
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
-- [ ] #1 Feed/source-check receipts classify access denied, authentication required, rate limited, invalid feed, connection failure, temporary server error, and policy-blocked outcomes with stable machine categories.
-- [ ] #2 Each category carries a bounded safe next action and relevant status/retry metadata without response bodies, auth/custom headers, signed queries, database paths, or unsanitized exception text.
-- [ ] #3 Existing redirect, SSRF, authentication, custom-header, and cross-origin credential-stripping policies remain unchanged.
-- [ ] #4 The already-shipped product User-Agent remains present for feed, URL-family, and API requests unless a validated safe source override applies.
-- [ ] #5 A local regression fixture reproduces an endpoint that rejects absent/default client identity and proves the product User-Agent path succeeds without any site-specific exception.
-- [ ] #6 Monitoring, local service, operation-receipt, redaction, and user-facing recovery tests cover all categories.
+- [x] #1 Feed/source-check receipts classify access denied, authentication required, rate limited, invalid feed, connection failure, temporary server error, and policy-blocked outcomes with stable machine categories.
+- [x] #2 Each category carries a bounded safe next action and relevant status/retry metadata without response bodies, auth/custom headers, signed queries, database paths, or unsanitized exception text.
+- [x] #3 Existing redirect, SSRF, authentication, custom-header, and cross-origin credential-stripping policies remain unchanged.
+- [x] #4 The already-shipped product User-Agent remains present for feed, URL-family, and API requests unless a validated safe source override applies.
+- [x] #5 A local regression fixture reproduces an endpoint that rejects absent/default client identity and proves the product User-Agent path succeeds without any site-specific exception.
+- [x] #6 Monitoring, local service, operation-receipt, redaction, and user-facing recovery tests cover all categories.
 <!-- AC:END -->
 
 ## Implementation Plan
@@ -91,4 +91,8 @@ scheduler-write traceback leakage plus forged structured-failure copy, then appr
 the resulting category-only boundaries. Updated targeted evidence is 384 task-path
 tests and 47 Runs/toast/egress-preservation tests passing; Ruff and diff checks remain
 clean.
+
+Final controller verification after independent approval: 384 task-path tests and 79
+focused Runs/toast/redirect/SSRF/private-origin/auth/header tests passed; Ruff and
+`git diff --check` passed. Implementation commits: `7548c9946` and `aee308eb1`.
 <!-- SECTION:NOTES:END -->

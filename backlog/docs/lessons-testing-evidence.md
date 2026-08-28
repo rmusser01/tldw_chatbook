@@ -9753,3 +9753,23 @@ against a real temporary config file, the live runtime owner, rendered recovery
 copy, and the next user action. When durable and live state diverge, either base
 the action on one authoritative live state or lock it behind the stated restart
 recovery; never infer “unchanged” from a lossy boolean wrapper.
+
+---
+
+## Safe exception copy must be reconstructed at every accepting boundary (TASK-22865, 2026-08-28)
+
+The first Watchlists failure-classification implementation had fixed presentation
+copy and a broad canary suite, but independent review found two ways around it. The
+classifier granted semantics to unrelated exceptions solely because their class names
+matched `AuthenticationError`, `RateLimitError`, or `FetchBlockedError`; a caller
+could also construct the public `WatchlistFailure` dataclass with a valid category and
+forged message/action fields, which the recorder persisted to `last_error`. A separate
+scheduled fallback then leaked both the original and fallback exception chains through
+the scheduler's final `logger.exception` owner.
+
+For persisted or user-facing exception handling, concrete owned types and validated
+machine fields are the authority; exception class names and preassembled presentation
+objects are not. Reconstruct fixed copy from the validated category at each accepting
+boundary, and test spoof types, forged structured objects, original-plus-fallback
+failure chains, and the final logging owner. A green classifier helper does not prove
+redaction if callers or outer fallback owners can bypass it.
