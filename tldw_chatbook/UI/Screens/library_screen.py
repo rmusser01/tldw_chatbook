@@ -31,6 +31,7 @@ from textual.binding import Binding
 from textual.containers import Horizontal, Vertical, VerticalScroll
 from textual.events import DescendantFocus, Key
 from textual.css.query import NoMatches, QueryError
+from textual.dom import DOMNode
 from textual.errors import NoWidget
 from textual.geometry import Region
 from textual.timer import Timer
@@ -109,6 +110,7 @@ from ...Utils.adaptive_reader_state import (
 from ...Utils.library_rail_width import (
     LIBRARY_EMERGENCY_WIDTH,
     OrdinaryRailPresentation,
+    OrdinaryRailStyleContract,
     ordinary_emergency_required,
     resolve_ordinary_rail_contract,
 )
@@ -782,6 +784,16 @@ LIBRARY_MEDIA_HANDOFF_EXCERPT_CHARS = 500
 LIBRARY_RAG_RESULTS_STATIC_WIDGET_IDS = frozenset({"library-rag-results-heading"})
 LIBRARY_NOTES_COMPACT_BREAKPOINT = 120
 LIBRARY_INGEST_RAIL_COLLAPSE_BREAKPOINT = 100
+# TASK-23025: the five adaptive reader shells, all constructed exclusively in
+# ``compose_content`` -- the basis for the one-probe-per-recompose negative
+# cache in ``_library_adaptive_reader_shell_active``.
+_LIBRARY_READER_SHELL_SELECTOR = (
+    "#library-media-reader-shell, "
+    "#library-conversations-reader-shell, "
+    "#library-notes-reader-shell, "
+    "#library-prompts-reader-shell, "
+    "#library-skills-reader-shell"
+)
 LIBRARY_NOTES_SOURCE_DATABASE = "database"
 LIBRARY_NOTES_SOURCE_FILES = "files"
 LIBRARY_CANVAS_KIND_NOTES = "notes"
@@ -3887,6 +3899,25 @@ class LibraryScreen(BaseAppScreen):
         self._library_rail_collapsed: bool = False
         self._library_ingest_auto_collapsed_rail: bool = False
         self._library_notes_stage: Literal["rail", "notes"] = "rail"
+        # TASK-23025: cheap-state gates for the per-frame resize/focus paths.
+        # ``_library_layout_ref_cache`` holds positive widget references for
+        # the invariant shell chrome (validated by the O(1) ``is_mounted``
+        # flag and cleared at compose_content, the one choke point every
+        # whole-screen recompose passes through), so steady-state resize
+        # frames and focus changes read attributes instead of walking the
+        # DOM. ``_library_resize_applied_signature`` records the bucket/flag
+        # signature the resize legs last applied; a frame whose signature is
+        # unchanged returns before any query work. The reader-shell probe is
+        # the one NEGATIVE cache: reader shells only (un)mount via
+        # compose_content (all five ``*-reader-shell`` ids are constructed
+        # there and nowhere else), so one probe per compose generation is
+        # exact.
+        self._library_layout_ref_cache: dict[str, Widget] = {}
+        self._library_compose_ref_cache: dict[str, Widget | None] = {}
+        self._library_resize_applied_signature: tuple[Any, ...] | None = None
+        self._library_compose_generation = 0
+        self._library_reader_shell_ref: Widget | None = None
+        self._library_reader_shell_probe_generation = -1
         self._library_emergency_stage: Literal["rail-only", "canvas-only"] | None = None
         self._library_stage_interaction_generation = 0
         self._library_emergency_restore_receipt: (
@@ -4767,18 +4798,20 @@ class LibraryScreen(BaseAppScreen):
         """Map a live focused widget to the portable Library stage."""
         if focused is None:
             return self._library_notes_stage
-        try:
-            rail = self.query_one("#library-rail", Widget)
-            canvas = self.query_one("#library-canvas", Widget)
-        except (NoMatches, QueryError):
+        # TASK-23025: this runs several times per focus change; resolve the
+        # invariant rail/canvas hosts through the ref cache instead of two
+        # fresh DOM walks per call.
+        rail = self._library_layout_ref("#library-rail")
+        canvas = self._library_layout_ref("#library-canvas")
+        if rail is None or canvas is None:
             return self._library_notes_stage
         if self._library_notes_widget_is_within(focused, rail):
             return "rail"
         if self._library_notes_widget_is_within(focused, canvas):
             return "notes"
-        work_panes = self.query("#library-note-work-pane")
-        if work_panes and self._library_notes_widget_is_within(
-            focused, work_panes.first(Widget)
+        work_pane = self._library_compose_scoped_ref("#library-note-work-pane")
+        if work_pane is not None and self._library_notes_widget_is_within(
+            focused, work_pane
         ):
             return "notes"
         return self._library_notes_stage
@@ -4878,9 +4911,8 @@ class LibraryScreen(BaseAppScreen):
         """Return the stable id of a focused returning-landing action."""
         if focused is None or not focused.id:
             return ""
-        try:
-            landing = self.query_one("#library-landing-canvas", Widget)
-        except (NoMatches, QueryError):
+        landing = self._library_layout_ref("#library-landing-canvas")
+        if landing is None:
             return ""
         if not self._library_notes_widget_is_within(focused, landing):
             return ""
@@ -4935,10 +4967,10 @@ class LibraryScreen(BaseAppScreen):
         }.get(region)
         if selector is None:
             return None
-        try:
-            return self.query_one(selector, Widget)
-        except (NoMatches, QueryError):
-            return None
+        # TASK-23025: positive ref cache -- a mounted owner is one attribute
+        # read; absence still costs one walk, so callers should not probe
+        # regions their route cannot mount (see the observer installer).
+        return self._library_layout_ref(selector)
 
     def _capture_library_notes_focus_identity(
         self, *, stage_from_focus: bool = True
@@ -7086,18 +7118,28 @@ class LibraryScreen(BaseAppScreen):
             self._library_notes_interaction_focus = current
 
     def _install_library_notes_scroll_observers(self) -> None:
-        """Watch current named scroll owners only while their mounted tree lives."""
+        """Watch current named scroll owners only while their mounted tree lives.
+
+        TASK-23025: probe only regions the current route can mount. Every
+        non-rail region here is a Notes-workflow surface (Database Notes or
+        File Notes canvases); outside those routes each probe was a
+        guaranteed-failing whole-tree ``query_one`` walk, seven of them per
+        focus change on the landing/list routes.
+        """
+        regions: tuple[str, ...] = ("rail",)
+        if self._library_notes_compact_workflow_active():
+            regions = (
+                "rail",
+                "navigator",
+                "editor",
+                "preview",
+                "context",
+                "create",
+                "lasting_add",
+                "lasting_roots",
+            )
         owners: dict[int, Widget] = {}
-        for region in (
-            "rail",
-            "navigator",
-            "editor",
-            "preview",
-            "context",
-            "create",
-            "lasting_add",
-            "lasting_roots",
-        ):
+        for region in regions:
             owner = self._library_notes_scroll_owner(region)
             if owner is not None:
                 owners[id(owner)] = owner
@@ -7246,6 +7288,164 @@ class LibraryScreen(BaseAppScreen):
         identity = self._remember_library_notes_responsive_focus(identity)
         self._transition_library_notes_presentation(compact, identity)
 
+    def _library_ref_is_live(self, widget: Widget) -> bool:
+        """Return whether a cached reference is still this screen's live node.
+
+        TASK-23025: ``is_mounted`` alone is NOT a validity check --
+        ``_is_mounted`` lags detachment, and ``App._prune`` marks the doomed
+        subtree ``_pruning`` synchronously while the detach happens later
+        (the task-2200 lesson: ``is_mounted`` != in-the-DOM; a targeted
+        canvas sync's replaced notes list measured exactly this, the scroll
+        restore landing on the pruned corpse). Walking the ``_parent`` chain
+        back to this screen is a handful of attribute hops -- still far
+        cheaper than a DOM walk -- and matches what ``query_one`` would
+        resolve.
+        """
+        if getattr(widget, "_pruning", False) or not widget.is_mounted:
+            return False
+        node: DOMNode | None = widget
+        while node is not None:
+            if node is self:
+                return True
+            node = node._parent
+        return False
+
+    def _library_layout_ref(self, selector: str) -> Widget | None:
+        """Resolve one invariant shell-chrome widget through the ref cache.
+
+        TASK-23025: positive references only, validated by
+        ``_library_ref_is_live`` and cleared in ``compose_content`` (the
+        choke point every whole-screen recompose passes through), so hot
+        per-frame paths read attributes instead of re-walking the DOM. A
+        miss falls back to one id-selector ``query_one`` and re-caches;
+        absence is never cached, so a widget that mounts later is still
+        found.
+        """
+        cached = self._library_layout_ref_cache.get(selector)
+        if cached is not None and self._library_ref_is_live(cached):
+            return cached
+        try:
+            widget = self.query_one(selector, Widget)
+        except (NoMatches, QueryError):
+            self._library_layout_ref_cache.pop(selector, None)
+            return None
+        self._library_layout_ref_cache[selector] = widget
+        return widget
+
+    def _library_compose_scoped_ref(self, selector: str) -> Widget | None:
+        """Positive AND negative ref cache for compose_content-exclusive ids.
+
+        TASK-23025: only valid for ids constructed exclusively inside
+        ``compose_content`` (e.g. the note work pane) -- cached absence
+        would otherwise go stale when a widget mounts through another seam.
+        The cache, including cached absence, is cleared in
+        ``compose_content``.
+        """
+        if selector in self._library_compose_ref_cache:
+            cached = self._library_compose_ref_cache[selector]
+            if cached is None:
+                return None
+            if self._library_ref_is_live(cached):
+                return cached
+        try:
+            widget: Widget | None = self.query_one(selector, Widget)
+        except (NoMatches, QueryError):
+            widget = None
+        self._library_compose_ref_cache[selector] = widget
+        return widget
+
+    def _library_adaptive_reader_shell_active(self) -> bool:
+        """Report adaptive reader-shell presence without a per-frame walk.
+
+        All five ``*-reader-shell`` ids are constructed exclusively in
+        ``compose_content``, so shells (un)mount only across a compose
+        generation -- one failed probe per recompose is exact, and a
+        mounted shell is revalidated by its own ``is_mounted`` flag.
+        """
+        cached = self._library_reader_shell_ref
+        if cached is not None and self._library_ref_is_live(cached):
+            return True
+        if (
+            self._library_reader_shell_probe_generation
+            == self._library_compose_generation
+        ):
+            return False
+        self._library_reader_shell_probe_generation = self._library_compose_generation
+        shells = self.query(_LIBRARY_READER_SHELL_SELECTOR)
+        self._library_reader_shell_ref = shells.first(Widget) if shells else None
+        return self._library_reader_shell_ref is not None
+
+    def _library_resize_layout_signature(self) -> tuple[Any, ...] | None:
+        """Signature of every width-derived decision the resize legs make.
+
+        TASK-23025 (AC: gate before query work): built from cached widget
+        references and cheap flags only -- ``region``/``content_region``
+        attribute reads, never a DOM walk. Mirrors, in order, the inputs of
+        ``_sync_library_ingest_rail_for_width`` (ingest collapse bucket),
+        ``_sync_library_ordinary_rail_width_contract`` (the resolved
+        contract itself, so the custom-width clamp band stays exact),
+        ``_apply_library_notes_stage_visibility`` (its route/stage flags
+        plus ``_apply_library_emergency_geometry``'s bucket), and the
+        compact-crossing check. Returns ``None`` when it cannot be decided
+        cheaply; callers then run the full legs, exactly as before.
+        """
+        shell = self._library_layout_ref("#library-shell-grid")
+        rail = self._library_layout_ref("#library-rail")
+        canvas = self._library_layout_ref("#library-canvas")
+        if shell is None or rail is None or canvas is None:
+            return None
+        width = shell.region.width
+        if width <= 0:
+            return None
+        viewport = self.size.width if self.is_mounted else 0
+        effective = min(width, viewport) if viewport > 0 else width
+        content_width = shell.content_region.width
+        emergency_width = min(width, viewport)
+        reader_active = self._library_adaptive_reader_shell_active()
+        contract: OrdinaryRailStyleContract | None = None
+        if not reader_active and content_width >= LIBRARY_EMERGENCY_WIDTH:
+            if not rail.display:
+                presentation = OrdinaryRailPresentation.HIDDEN
+            elif not canvas.display:
+                presentation = OrdinaryRailPresentation.RAIL_ONLY
+            else:
+                presentation = OrdinaryRailPresentation.ALONGSIDE
+            shared = self._library_reader_shared_preferences
+            contract = resolve_ordinary_rail_contract(
+                content_width,
+                presentation,
+                shared.custom_widths_enabled,
+                shared.library_width,
+            )
+        return (
+            self._library_compose_generation,
+            shell,
+            rail,
+            canvas,
+            self._library_selected_row_id,
+            self._library_notes_source,
+            self._library_notes_view,
+            self._library_notes_stage,
+            self._library_notes_compact,
+            self._library_rail_collapsed,
+            self._library_ingest_auto_collapsed_rail,
+            self._library_emergency_stage,
+            self._file_notes_active(),
+            rail.display,
+            canvas.display,
+            reader_active,
+            self._library_reader_shared_preferences,
+            width < LIBRARY_NOTES_COMPACT_BREAKPOINT,
+            effective < LIBRARY_INGEST_RAIL_COLLAPSE_BREAKPOINT,
+            (
+                ordinary_emergency_required(emergency_width)
+                if emergency_width > 0
+                else None
+            ),
+            content_width < LIBRARY_EMERGENCY_WIDTH,
+            contract,
+        )
+
     def on_resize(self, event: events.Resize) -> None:
         """Capture only a crossing, decided by the measured invariant grid."""
         del event
@@ -7274,6 +7474,19 @@ class LibraryScreen(BaseAppScreen):
                 self._sync_library_media_reader_layout_from_shell,
                 focus_intent=focus_intent,
             )
+        # TASK-23025: decide from cheap state -- cached references and
+        # width-bucket arithmetic -- whether this frame can change anything
+        # the legs below derive, BEFORE any of their query work. The
+        # signature is recorded pre-legs, so a frame whose legs mutate flags
+        # simply runs once more on the next event and then settles; a skip
+        # can never hide a crossing because every bucket the legs compare is
+        # part of the signature.
+        signature = self._library_resize_layout_signature()
+        if signature is not None:
+            if signature == self._library_resize_applied_signature:
+                self._library_notes_pre_resize_focus = None
+                return
+            self._library_resize_applied_signature = signature
         try:
             width = self.query_one("#library-shell-grid").region.width
         except (NoMatches, QueryError):
@@ -7477,15 +7690,18 @@ class LibraryScreen(BaseAppScreen):
             and self._library_notes_stage == "notes"
             and self._library_notes_workflow_active()
         )
+        # TASK-23025: this method runs on EVERY screen refresh (see the
+        # ``refresh`` override), several times per resize frame and focus
+        # change -- resolve the stable footer chrome through the ref cache
+        # and skip the no-op display writes.
         for selector in (
             "#footer-word-count",
             "#footer-token-count",
             "#internal-db-size-indicator",
         ):
-            try:
-                self.query_one(selector, Widget).display = not hide_ancillary
-            except (NoMatches, QueryError):
-                continue
+            indicator = self._library_layout_ref(selector)
+            if indicator is not None and indicator.display == hide_ancillary:
+                indicator.display = not hide_ancillary
 
     def _rehydrate_library_notes_after_recompose(
         self, restore: _LibraryNotesRecomposeCapture
@@ -12815,6 +13031,16 @@ class LibraryScreen(BaseAppScreen):
         return widgets
 
     def compose_content(self) -> ComposeResult:
+        # TASK-23025: every whole-screen recompose passes through here (the
+        # task-2856 choke-point guarantee below), so this is the one place
+        # the layout ref cache and the resize gate's applied signature must
+        # be invalidated -- the widgets they point at are about to be
+        # replaced.
+        self._library_compose_generation += 1
+        self._library_layout_ref_cache.clear()
+        self._library_compose_ref_cache.clear()
+        self._library_reader_shell_ref = None
+        self._library_resize_applied_signature = None
         shell_input = self._build_library_shell_input()
         shell = build_library_shell_state(
             shell_input, selected_row_id=self._library_selected_row_id
@@ -12878,20 +13104,21 @@ class LibraryScreen(BaseAppScreen):
         )
         lifecycle_status.display = bool(lifecycle_status_copy)
         yield lifecycle_status
-        install_progress = ModelInstallProgress(
-            self._parakeet_v2_install_progress,
-            id="library-model-install-progress",
-        )
-        install_progress.display = self._parakeet_v2_install_progress is not None
-        install_label = Static(
-            self._library_model_install_progress_label,
-            id="library-model-install-progress-label",
-            classes="library-ingest-quiet-line",
-            markup=False,
-        )
-        install_label.display = install_progress.display
-        yield install_label
-        yield install_progress
+        # TASK-23025: the install label+bar pair (a ModelInstallProgress with
+        # its PausableProgressBar machinery) was mounted display=False on
+        # every visit for a state most users never enter. Grow on demand
+        # instead (the TASK-23024 slot-pool pattern): compose it only while
+        # an install is retained; the InstallProgressed handlers mount it on
+        # first use via ``_mount_library_model_install_progress``.
+        if (
+            self._parakeet_v2_install_progress is not None
+            or self._library_model_install_progress_label
+        ):
+            install_label, install_progress = (
+                self._build_library_model_install_progress_widgets()
+            )
+            yield install_label
+            yield install_progress
         if shell.canvas_kind in LIBRARY_NOTES_SOURCE_STRIP_CANVAS_KINDS:
             adaptive_database_notes = (
                 shell.canvas_kind
@@ -32170,6 +32397,48 @@ class LibraryScreen(BaseAppScreen):
                 retry(retry_job_id)
         self.refresh(recompose=True)
 
+    def _build_library_model_install_progress_widgets(
+        self,
+    ) -> tuple[Static, ModelInstallProgress]:
+        """Construct the deferred install label+bar pair from retained state.
+
+        TASK-23025: shared by ``compose_content`` (recompose while an
+        install is retained) and the grow-on-demand mount below, so both
+        paths build the identical pair.
+        """
+        install_progress = ModelInstallProgress(
+            self._parakeet_v2_install_progress,
+            id="library-model-install-progress",
+        )
+        install_progress.display = self._parakeet_v2_install_progress is not None
+        install_label = Static(
+            self._library_model_install_progress_label,
+            id="library-model-install-progress-label",
+            classes="library-ingest-quiet-line",
+            markup=False,
+        )
+        install_label.display = install_progress.display
+        return install_label, install_progress
+
+    def _mount_library_model_install_progress(self) -> bool:
+        """Mount the deferred install pair on first use.
+
+        Returns:
+            True when a fresh pair was mounted. The fresh
+            ``ModelInstallProgress`` renders the retained event from its own
+            ``on_mount``, and its children are still composing -- the caller
+            must NOT also call ``update_progress`` on it synchronously.
+        """
+        if self.query("#library-model-install-progress"):
+            return False
+        anchor = self._library_layout_ref("#library-lifecycle-status")
+        parent = anchor.parent if anchor is not None else None
+        if not isinstance(parent, Widget):
+            return False
+        label, progress = self._build_library_model_install_progress_widgets()
+        parent.mount(label, progress, after=anchor)
+        return True
+
     @on(InstallProgressed)
     def handle_model_install_progressed(self, event: InstallProgressed) -> None:
         """Retain and render progress after the consent modal is dismissed."""
@@ -32181,6 +32450,10 @@ class LibraryScreen(BaseAppScreen):
                 "#library-model-install-progress", ModelInstallProgress
             )
         except NoMatches:
+            # TASK-23025: the pair is deferred off the idle compose; the
+            # first event grows it (its on_mount renders the retained
+            # progress, so no update call is needed here).
+            self._mount_library_model_install_progress()
             return
         label.update(self._library_model_install_progress_label)
         label.display = True
@@ -33378,6 +33651,10 @@ class LibraryScreen(BaseAppScreen):
                 "#library-model-install-progress", ModelInstallProgress
             )
         except (NoMatches, QueryError):
+            # TASK-23025: the pair is deferred off the idle compose; the
+            # first event grows it (its on_mount renders the retained
+            # progress, so no update call is needed here).
+            self._mount_library_model_install_progress()
             return
         label.update("Silero VAD dependency")
         label.display = True

@@ -125,6 +125,10 @@ class ResearchWorkspaceScreen(BaseAppScreen):
         self.pane_preferences = ResearchPanePreferences()
         self.active_pane: ResearchPaneName = "chat"
         self._pane_layout: ResearchPaneLayout | None = None
+        # TASK-23025: the height bucket last applied by _apply_pane_layout,
+        # so a resize frame that changes neither the derived layout nor this
+        # bucket returns before any query work.
+        self._pane_layout_height_compact: bool | None = None
         self._overlay_revision = 0
         self._overlay_ref: QualifiedWorkspaceRef | None = None
         self._pane_preferences_ref: QualifiedWorkspaceRef | None = None
@@ -366,13 +370,32 @@ class ResearchWorkspaceScreen(BaseAppScreen):
         layout = derive_research_pane_layout(
             width, self.pane_preferences, active_pane=self.active_pane
         )
+        height_compact = self.size.height < 30
+        # TASK-23025 (AC: gate before query work): the derived layout is a
+        # pure width-band function and everything below is a projection of
+        # (layout, height bucket). When neither changed -- and no hidden
+        # pane holds focus that a relocate pass would move -- this frame
+        # cannot change anything, so return before the ~11 query_one calls.
+        # ``_pane_for_widget`` walks ancestors of the focused widget only;
+        # it performs no DOM queries.
+        if (
+            layout == self._pane_layout
+            and height_compact == self._pane_layout_height_compact
+            and (
+                not relocate_hidden_focus
+                or focused_pane is None
+                or focused_pane in layout.visible_panes
+            )
+        ):
+            return
         self._pane_layout = layout
+        self._pane_layout_height_compact = height_compact
 
         grid = self.query_one("#research-workspace-grid")
         for mode in ("wide", "medium", "narrow"):
             grid.set_class(layout.mode == mode, f"layout-{mode}")
         shell = self.query_one("#research-workspace-shell")
-        shell.set_class(self.size.height < 30, "height-compact")
+        shell.set_class(height_compact, "height-compact")
 
         for pane in ("sources", "chat", "studio"):
             self.query_one(f"#research-{pane}-pane").display = (
