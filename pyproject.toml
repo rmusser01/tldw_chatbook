@@ -71,7 +71,7 @@ dependencies = [
     "aiofiles",
     "croniter>=1.4.0",
     "textual-image",
-    "tiktoken",      # engine tokens strategy (Q2: hard-required, shim-enforced)
+    "tiktoken==0.14.0",  # exact pin: reviewed offline encoding bundle/runtime seam
     "defusedxml",    # engine xml security parsing (Q9: core)
 ]
 
@@ -484,12 +484,21 @@ exclude = [
 ]
 
 [tool.setuptools.package-data]
-# Bundle only the reviewed Samira character and Visual Identity pack inventory.
+# Bundle only the reviewed Samira and tiktoken runtime inventories.
 "tldw_chatbook" = [
     "assets/characters/samira/*.json",
     "assets/characters/samira/*.png",
     "assets/characters/samira/*.md",
     "assets/characters/samira/expressions/*.webp",
+    "assets/tiktoken_cache/0ea1e91bbb3a60f729a8dc8f777fd2fc07cd8df4",
+    "assets/tiktoken_cache/6c7ea1a7e38e3a7f062df639a5b80947f075ffe6",
+    "assets/tiktoken_cache/6d1cbeee0f20b3d9449abfede4726ed8212e3aee",
+    "assets/tiktoken_cache/9b5ad71b2ce5302211f9c61530b329a4922fc6a4",
+    "assets/tiktoken_cache/ec7223a39ce59f226a68acc30dc1af2788490e15",
+    "assets/tiktoken_cache/fb374d419588a4632f3f557e76b4b70aebbca790",
+    "assets/tiktoken_cache/LICENSE.txt",
+    "assets/tiktoken_cache/NOTICE.txt",
+    "assets/tiktoken_cache/manifest.json",
 ]
 # Include all .tcss files in css directory and subdirectories
 "tldw_chatbook.css" = ["*.tcss", "**/*.tcss"]

@@ -84,6 +84,7 @@ ADRs explain why significant architectural decisions were made. Backlog tasks, S
 | [ADR-090](090-console-thinking-block-ownership-and-replay.md) | Accepted | Store actual displayable model thinking separately from private continuation, with variant-correct ownership, optional provider-resolved replay, honest proprietary evidence, and answer-only human-readable surfaces. |
 | [ADR-091](091-bounded-epub-archive-admission.md) | Accepted | Isolate ebook parsing in one-worker pool generations and reject EPUB ZIP structures whose expanded resource cost exceeds fixed safety bounds. |
 | [ADR-092](092-console-full-semantic-capture-policy.md) | Accepted | Keep Safe as the default while allowing scoped Full semantic exchange capture with frozen run policy, invariant credential/binary protections, distinct export profiles, and conversation-scoped erasure. |
+| [ADR-093](093-offline-tiktoken-runtime-assets.md) | Accepted | Ship a closed immutable tiktoken table inventory for offline estimates and chunking while preserving explicit cache authority. |
 
 ## Historical Decision Material
 

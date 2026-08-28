@@ -115,25 +115,6 @@ def _hf_downloads_allowed() -> bool:
 
 if not _hf_downloads_allowed():
     os.environ["HF_HUB_OFFLINE"] = "1"
-# TASK-21968: tiktoken fetches its BPE table on first use and caches it outside
-# anything this sandbox controls, so it is warm on any machine that has run the
-# suite before and cold on every CI run. `Utils/token_counter` wraps the lookup
-# in a broad `except` and returns None, so the refusal is swallowed -- the only
-# reason it is visible at all is that the egress guard records the attempt, and
-# the test then fails at teardown pointing at a network address rather than at
-# token counting. One core shard recorded 1,156 such attempts.
-#
-# The table is vendored under `Tests/fixtures/tiktoken_cache/` and pointed at
-# here, so the encoding is read from disk and no test needs the network for it.
-# The filename is tiktoken's own cache key, `sha1(<blob url>)` -- not a name we
-# chose -- which is why the directory looks opaque. See that directory's README.
-#
-# Only the tests are pointed here. Production keeps its normal download-and-
-# cache behaviour, which is correct for a real user and is not this file's
-# business.
-_VENDORED_TIKTOKEN_CACHE = Path(__file__).resolve().parent / "fixtures" / "tiktoken_cache"
-if _VENDORED_TIKTOKEN_CACHE.is_dir():
-    os.environ["TIKTOKEN_CACHE_DIR"] = str(_VENDORED_TIKTOKEN_CACHE)
 
 import pytest  # noqa: E402
 import pytest_asyncio  # noqa: E402

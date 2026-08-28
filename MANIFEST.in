@@ -15,6 +15,15 @@ recursive-include tldw_chatbook/Image_Generation/workflows *.json
 recursive-include tldw_chatbook/Video_Generation/workflows *.json
 recursive-include tldw_chatbook/css *.tcss *.css
 include tldw_chatbook/TTS/audio_cpp_artifact_manifest.json
+include tldw_chatbook/assets/tiktoken_cache/0ea1e91bbb3a60f729a8dc8f777fd2fc07cd8df4
+include tldw_chatbook/assets/tiktoken_cache/6c7ea1a7e38e3a7f062df639a5b80947f075ffe6
+include tldw_chatbook/assets/tiktoken_cache/6d1cbeee0f20b3d9449abfede4726ed8212e3aee
+include tldw_chatbook/assets/tiktoken_cache/9b5ad71b2ce5302211f9c61530b329a4922fc6a4
+include tldw_chatbook/assets/tiktoken_cache/ec7223a39ce59f226a68acc30dc1af2788490e15
+include tldw_chatbook/assets/tiktoken_cache/fb374d419588a4632f3f557e76b4b70aebbca790
+include tldw_chatbook/assets/tiktoken_cache/LICENSE.txt
+include tldw_chatbook/assets/tiktoken_cache/NOTICE.txt
+include tldw_chatbook/assets/tiktoken_cache/manifest.json
 # Every migration script, matched -- never enumerated (task-19860). The
 # hand-written list this replaced named 11 of 32; the sdist is the input to
 # every rebuild, so a migration missing here is a migration that can never

@@ -13,6 +13,10 @@ and advanced RAG (Retrieval-Augmented Generation) capabilities.
 import os
 import sys
 
+from .Utils.tiktoken_runtime import install_tiktoken_runtime as _install_tiktoken_runtime
+
+_install_tiktoken_runtime()
+
 os.environ["HF_HUB_DISABLE_PROGRESS_BARS"] = "1"
 os.environ["TQDM_DISABLE"] = "1"
 os.environ["TRANSFORMERS_VERBOSITY"] = "error"

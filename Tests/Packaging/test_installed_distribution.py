@@ -4,6 +4,7 @@ import configparser
 from contextlib import contextmanager
 from email.parser import Parser
 import hashlib
+from io import BytesIO
 from importlib import metadata
 import json
 import os
@@ -147,6 +148,22 @@ SAMIRA_RESOURCE_PATHS = {
     f"{SAMIRA_RESOURCE_ROOT}/expressions/{label}.webp"
     for label in SAMIRA_REACTION_LABELS
 }
+TIKTOKEN_CACHE_PREFIX = "tldw_chatbook/assets/tiktoken_cache/"
+TIKTOKEN_RESOURCE_PATHS = frozenset(
+    f"{TIKTOKEN_CACHE_PREFIX}{name}"
+    for name in (
+        "0ea1e91bbb3a60f729a8dc8f777fd2fc07cd8df4",
+        "6c7ea1a7e38e3a7f062df639a5b80947f075ffe6",
+        "6d1cbeee0f20b3d9449abfede4726ed8212e3aee",
+        "9b5ad71b2ce5302211f9c61530b329a4922fc6a4",
+        "ec7223a39ce59f226a68acc30dc1af2788490e15",
+        "fb374d419588a4632f3f557e76b4b70aebbca790",
+        "LICENSE.txt",
+        "NOTICE.txt",
+        "manifest.json",
+    )
+)
+TIKTOKEN_REQUIREMENT = "tiktoken==0.14.0"
 AUDIO_CPP_ARTIFACT_MANIFEST_PATH = "tldw_chatbook/TTS/audio_cpp_artifact_manifest.json"
 AUDIO_CPP_ARTIFACT_REPOSITORY = "audio-cpp/audio.cpp-gguf"
 AUDIO_CPP_ARTIFACT_COMMIT = "597048d9a920592808d7d4e2acd7b9c4596a143a"
@@ -202,6 +219,130 @@ for module_name in ("build", "setuptools", "wheel", "packaging", "pyproject_hook
 assert importlib.util.find_spec("PIL") is None
 assert importlib.util.find_spec("tldw_chatbook") is None
 print("curated-build-tools-ok")
+"""
+INSTALLED_TIKTOKEN_PROBE = r"""
+from pathlib import Path
+import os
+
+assert "TIKTOKEN_CACHE_DIR" not in os.environ
+assert "DATA_GYM_CACHE_DIR" not in os.environ
+route = os.environ["TIKTOKEN_IMPORT_ROUTE"]
+if route == "package-first":
+    import tldw_chatbook
+elif route == "direct-engine-first":
+    from tldw_chatbook.Chunking.engine.strategies.tokens import TiktokenTokenizer
+else:
+    raise AssertionError(route)
+
+import tiktoken
+import tiktoken.load
+import tiktoken.registry
+import tldw_chatbook
+from tldw_chatbook.Utils import tiktoken_runtime
+
+expected_target = Path(os.environ["EXPECTED_TARGET"]).resolve(strict=True)
+package_root = Path(tldw_chatbook.__file__).resolve(strict=True).parent
+assert package_root.is_relative_to(expected_target), (package_root, expected_target)
+cache_dir = Path(os.environ["TIKTOKEN_CACHE_DIR"]).resolve(strict=True)
+assert cache_dir == package_root / "assets" / "tiktoken_cache"
+assert tiktoken.load.read_file_cached is tiktoken_runtime._read_bundled_file
+
+def fail_network(*_args, **_kwargs):
+    raise AssertionError("installed tiktoken probe attempted an upstream read")
+
+tiktoken.load.read_file = fail_network
+tiktoken.registry.ENCODINGS.clear()
+for encoding_name in (
+    "gpt2",
+    "r50k_base",
+    "p50k_base",
+    "cl100k_base",
+    "o200k_base",
+):
+    assert tiktoken.get_encoding(encoding_name).encode("installed offline probe")
+if route == "direct-engine-first":
+    assert TiktokenTokenizer("gpt2").encode("direct engine probe")
+print(f"installed-tiktoken-{route}-ok")
+"""
+INSTALLED_TIKTOKEN_FAILURE_PROBE = r"""
+from pathlib import Path
+import builtins
+import os
+
+assert "TIKTOKEN_CACHE_DIR" not in os.environ
+assert "DATA_GYM_CACHE_DIR" not in os.environ
+import tldw_chatbook
+import tiktoken.load
+import tiktoken.registry
+from loguru import logger
+from tldw_chatbook.Utils import tiktoken_runtime
+
+expected_target = Path(os.environ["EXPECTED_TARGET"]).resolve(strict=True)
+package_root = Path(tldw_chatbook.__file__).resolve(strict=True).parent
+assert package_root.is_relative_to(expected_target), (package_root, expected_target)
+assert Path(os.environ["TIKTOKEN_CACHE_DIR"]).resolve(strict=True) == (
+    package_root / "assets" / "tiktoken_cache"
+)
+assert tiktoken.load.read_file_cached is tiktoken_runtime._read_bundled_file
+
+def fail_network(*_args, **_kwargs):
+    raise AssertionError("failed installed bundle attempted an upstream read")
+
+tiktoken.load.read_file = fail_network
+url = "https://openaipublic.blob.core.windows.net/encodings/cl100k_base.tiktoken"
+expected_hash = "223921b76ee99bde995b7ff738513eef100fb51d18c93597a113bcffe865b2a7"
+model = "gpt-3.5-turbo"
+try:
+    tiktoken_runtime._read_bundled_file(url, expected_hash)
+except tiktoken_runtime.BundledTiktokenAssetError:
+    pass
+else:
+    raise AssertionError("direct bundled read accepted missing/corrupt data")
+
+from tldw_chatbook.Utils import token_counter
+
+tiktoken.registry.ENCODINGS.clear()
+token_counter.clear_estimate_cache()
+token_counter.CUSTOM_TOKENIZERS_AVAILABLE = False
+messages = []
+sink = logger.add(messages.append, format="{message}", level="ERROR")
+try:
+    text = "界界"
+    estimate = token_counter.estimate_tokens(text, model=model, provider="openai")
+finally:
+    logger.remove(sink)
+    token_counter.clear_estimate_cache()
+assert estimate == token_counter._chars_estimate(text, "openai")
+assert any("Error getting tiktoken encoding" in str(message) for message in messages)
+
+real_import = builtins.__import__
+def block_transformers(name, *args, **kwargs):
+    if name == "transformers" or name.startswith("transformers."):
+        raise ImportError("transformers disabled by installed failure probe")
+    return real_import(name, *args, **kwargs)
+
+builtins.__import__ = block_transformers
+from tldw_chatbook.Chunking import Chunk_Lib
+from tldw_chatbook.Chunking.engine.strategies.tokens import TokenChunkingStrategy
+
+tiktoken.registry.ENCODINGS.clear()
+TokenChunkingStrategy._failed_tokenizers.discard(model)
+try:
+    Chunk_Lib.improved_chunking_process(
+        "one two three four five",
+        {
+            "method": "tokens",
+            "max_size": 4,
+            "overlap": 0,
+            "tokenizer_name_or_path": model,
+        },
+        tokenizer_name_or_path=model,
+    )
+except Chunk_Lib.ChunkingError as error:
+    assert "tiktoken" in str(error)
+else:
+    raise AssertionError("tokens chunking returned a word approximation")
+print("installed-tiktoken-failure-routes-ok")
 """
 INSTALLED_PROBE = r"""
 from pathlib import Path
@@ -1239,6 +1380,16 @@ def _wheel_member_text(path: Path, member: str) -> str:
         return archive.read(member).decode("utf-8")
 
 
+def _weaken_tiktoken_requirement(metadata_text: str) -> bytes:
+    weakened, replacements = re.subn(
+        r"(?m)^Requires-Dist: tiktoken[^\r\n]*$",
+        "Requires-Dist: tiktoken>=0.14.0",
+        metadata_text,
+    )
+    assert replacements == 1
+    return weakened.encode("utf-8")
+
+
 def _link_or_copy(source: Path, destination: Path) -> None:
     """Hard link an unmodified archive, falling back to a copy across devices."""
     try:
@@ -1587,7 +1738,7 @@ def test_built_artifacts_match_distribution_contract(
         "tldw_chatbook/Third_Party/textual_fspicker/LICENSE",
         *APACHE_SUBTREE_LICENSE_PATHS,
         AUDIO_CPP_ARTIFACT_MANIFEST_PATH,
-    } | SAMIRA_RESOURCE_PATHS
+    } | SAMIRA_RESOURCE_PATHS | TIKTOKEN_RESOURCE_PATHS
     required_wheel = {
         "tldw_chatbook/css/tldw_cli_modular.tcss",
         "tldw_chatbook/Config_Files/rag_pipelines.toml",
@@ -1596,13 +1747,16 @@ def test_built_artifacts_match_distribution_contract(
         "tldw_chatbook/Third_Party/textual_fspicker/LICENSE",
         *APACHE_SUBTREE_LICENSE_PATHS,
         AUDIO_CPP_ARTIFACT_MANIFEST_PATH,
-    } | SAMIRA_RESOURCE_PATHS
+    } | SAMIRA_RESOURCE_PATHS | TIKTOKEN_RESOURCE_PATHS
     assert not required_sdist - sdist_members
     assert not required_wheel - wheel_members
     for members in (sdist_members, wheel_members):
         assert {
             name for name in members if name.startswith(f"{SAMIRA_RESOURCE_ROOT}/")
         } == SAMIRA_RESOURCE_PATHS
+        assert {
+            name for name in members if name.startswith(TIKTOKEN_CACHE_PREFIX)
+        } == TIKTOKEN_RESOURCE_PATHS
 
     retired_modules = {
         "tldw_chatbook/Audio/transcription_history.py",
@@ -1669,6 +1823,12 @@ def test_built_artifacts_match_distribution_contract(
     assert sdist_metadata["Metadata-Version"] == "2.4"
     assert sdist_metadata["License-Expression"] == "AGPL-3.0-or-later"
     assert "LICENSE" in (sdist_metadata.get_all("License-File") or [])
+    for artifact_metadata in (metadata, sdist_metadata):
+        assert [
+            requirement
+            for requirement in artifact_metadata.get_all("Requires-Dist") or []
+            if requirement.casefold().startswith("tiktoken")
+        ] == [TIKTOKEN_REQUIREMENT]
     assert any(name.endswith(".dist-info/licenses/LICENSE") for name in wheel_members)
     assert dict(entry_points["console_scripts"]) == {
         "tldw-cli": "tldw_chatbook.cli:main_cli_runner",
@@ -1873,6 +2033,721 @@ def test_release_checker_rejects_missing_samira_reaction(
 
     assert result.returncode == 1
     assert missing in result.stdout + result.stderr
+
+
+@pytest.mark.parametrize("archive_kind", ["wheel", "sdist"])
+@pytest.mark.parametrize("missing", sorted(TIKTOKEN_RESOURCE_PATHS))
+def test_release_checker_rejects_missing_tiktoken_asset(
+    built_distributions: BuiltDistributions,
+    tmp_path: Path,
+    archive_kind: str,
+    missing: str,
+) -> None:
+    dist_dir = _dist_dir_without(
+        built_distributions,
+        tmp_path,
+        drop_from_wheel=[missing] if archive_kind == "wheel" else (),
+        drop_from_sdist=[missing] if archive_kind == "sdist" else (),
+    )
+
+    result = _run_manifest_checker(built_distributions, dist_dir, tmp_path)
+
+    assert result.returncode == 1
+    assert missing in result.stdout + result.stderr
+
+
+@pytest.mark.parametrize("archive_kind", ["wheel", "sdist"])
+def test_release_checker_rejects_unexpected_tiktoken_asset(
+    built_distributions: BuiltDistributions,
+    tmp_path: Path,
+    archive_kind: str,
+) -> None:
+    dist_dir = tmp_path / "dist"
+    shutil.copytree(built_distributions.dist_dir, dist_dir)
+    unexpected = f"{TIKTOKEN_CACHE_PREFIX}unexpected"
+    if archive_kind == "wheel":
+        with zipfile.ZipFile(next(dist_dir.glob("*.whl")), "a") as archive:
+            archive.writestr(unexpected, b"unexpected")
+    else:
+        sdist = next(dist_dir.glob("*.tar.gz"))
+        rewritten = sdist.with_name(f"{sdist.name}.rewritten")
+        with (
+            tarfile.open(sdist, "r:gz") as source,
+            tarfile.open(rewritten, "w:gz") as destination,
+        ):
+            members = source.getmembers()
+            for member in members:
+                stream = source.extractfile(member) if member.isfile() else None
+                destination.addfile(member, stream)
+            root = members[0].name.split("/", 1)[0]
+            added = tarfile.TarInfo(f"{root}/{unexpected}")
+            payload = b"unexpected"
+            added.size = len(payload)
+            destination.addfile(added, BytesIO(payload))
+        rewritten.replace(sdist)
+
+    result = _run_manifest_checker(built_distributions, dist_dir, tmp_path)
+
+    assert result.returncode == 1
+    assert unexpected in result.stdout + result.stderr
+
+
+@pytest.mark.parametrize("archive_kind", ["wheel", "sdist"])
+def test_release_checker_rejects_unexpected_tiktoken_symlink(
+    built_distributions: BuiltDistributions,
+    tmp_path: Path,
+    archive_kind: str,
+) -> None:
+    dist_dir = tmp_path / "dist"
+    shutil.copytree(built_distributions.dist_dir, dist_dir)
+    unexpected = f"{TIKTOKEN_CACHE_PREFIX}unexpected-link"
+    if archive_kind == "wheel":
+        added = zipfile.ZipInfo(unexpected)
+        added.create_system = 3
+        added.external_attr = (stat.S_IFLNK | 0o777) << 16
+        with zipfile.ZipFile(next(dist_dir.glob("*.whl")), "a") as archive:
+            archive.writestr(added, "manifest.json")
+    else:
+        sdist = next(dist_dir.glob("*.tar.gz"))
+        rewritten = sdist.with_name(f"{sdist.name}.rewritten")
+        with (
+            tarfile.open(sdist, "r:gz") as source,
+            tarfile.open(rewritten, "w:gz") as destination,
+        ):
+            members = source.getmembers()
+            for member in members:
+                stream = source.extractfile(member) if member.isfile() else None
+                destination.addfile(member, stream)
+            root = members[0].name.split("/", 1)[0]
+            added = tarfile.TarInfo(f"{root}/{unexpected}")
+            added.type = tarfile.SYMTYPE
+            added.linkname = "manifest.json"
+            destination.addfile(added)
+        rewritten.replace(sdist)
+
+    result = _run_manifest_checker(built_distributions, dist_dir, tmp_path)
+
+    assert result.returncode == 1
+    assert unexpected in result.stdout + result.stderr
+
+
+def test_release_checker_rejects_expected_tiktoken_symlink_in_wheel(
+    built_distributions: BuiltDistributions,
+    tmp_path: Path,
+) -> None:
+    dist_dir = tmp_path / "dist"
+    shutil.copytree(built_distributions.dist_dir, dist_dir)
+    wheel = next(dist_dir.glob("*.whl"))
+    rewritten = wheel.with_suffix(".rewritten")
+    expected = f"{TIKTOKEN_CACHE_PREFIX}manifest.json"
+    with (
+        zipfile.ZipFile(wheel) as source,
+        zipfile.ZipFile(rewritten, "w") as destination,
+    ):
+        for member in source.infolist():
+            if member.filename != expected:
+                destination.writestr(member, source.read(member.filename))
+        added = zipfile.ZipInfo(expected)
+        added.create_system = 3
+        added.external_attr = (stat.S_IFLNK | 0o777) << 16
+        destination.writestr(added, "NOTICE.txt")
+    rewritten.replace(wheel)
+
+    result = _run_manifest_checker(built_distributions, dist_dir, tmp_path)
+
+    assert result.returncode == 1
+    assert expected in result.stdout + result.stderr
+
+
+@pytest.mark.parametrize("archive_kind", ["wheel", "sdist"])
+def test_release_checker_rejects_nonexact_tiktoken_requirement(
+    built_distributions: BuiltDistributions,
+    tmp_path: Path,
+    archive_kind: str,
+) -> None:
+    dist_dir = tmp_path / "dist"
+    shutil.copytree(built_distributions.dist_dir, dist_dir)
+
+    if archive_kind == "wheel":
+        wheel = next(dist_dir.glob("*.whl"))
+        rewritten = wheel.with_suffix(".rewritten")
+        with (
+            zipfile.ZipFile(wheel) as source,
+            zipfile.ZipFile(rewritten, "w") as destination,
+        ):
+            for member in source.infolist():
+                payload = source.read(member.filename)
+                if member.filename.endswith(".dist-info/METADATA"):
+                    payload = _weaken_tiktoken_requirement(payload.decode("utf-8"))
+                destination.writestr(member, payload)
+        rewritten.replace(wheel)
+    else:
+        sdist = next(dist_dir.glob("*.tar.gz"))
+        rewritten = sdist.with_name(f"{sdist.name}.rewritten")
+        with (
+            tarfile.open(sdist, "r:gz") as source,
+            tarfile.open(rewritten, "w:gz") as destination,
+        ):
+            for member in source.getmembers():
+                stream = source.extractfile(member) if member.isfile() else None
+                payload = stream.read() if stream is not None else None
+                if member.isfile() and member.name.endswith("/PKG-INFO"):
+                    assert payload is not None
+                    payload = _weaken_tiktoken_requirement(payload.decode("utf-8"))
+                    member.size = len(payload)
+                destination.addfile(
+                    member,
+                    BytesIO(payload) if payload is not None else None,
+                )
+        rewritten.replace(sdist)
+
+    result = _run_manifest_checker(built_distributions, dist_dir, tmp_path)
+
+    assert result.returncode == 1
+    assert TIKTOKEN_REQUIREMENT in result.stdout + result.stderr
+
+
+def test_release_checker_reads_root_pkg_info_not_nested_decoy(
+    built_distributions: BuiltDistributions,
+    tmp_path: Path,
+) -> None:
+    dist_dir = tmp_path / "dist"
+    shutil.copytree(built_distributions.dist_dir, dist_dir)
+    sdist = next(dist_dir.glob("*.tar.gz"))
+    rewritten = sdist.with_name(f"{sdist.name}.rewritten")
+    with (
+        tarfile.open(sdist, "r:gz") as source,
+        tarfile.open(rewritten, "w:gz") as destination,
+    ):
+        members = source.getmembers()
+        root = members[0].name.split("/", 1)[0]
+        root_pkg_info = next(
+            member
+            for member in members
+            if member.isfile() and member.name.split("/", 1)[-1] == "PKG-INFO"
+        )
+        root_stream = source.extractfile(root_pkg_info)
+        assert root_stream is not None
+        decoy_payload = root_stream.read()
+        decoy = tarfile.TarInfo(f"{root}/nested/PKG-INFO")
+        decoy.size = len(decoy_payload)
+        destination.addfile(decoy, BytesIO(decoy_payload))
+
+        for member in members:
+            stream = source.extractfile(member) if member.isfile() else None
+            payload = stream.read() if stream is not None else None
+            if member is root_pkg_info:
+                assert payload is not None
+                payload = _weaken_tiktoken_requirement(payload.decode("utf-8"))
+                member.size = len(payload)
+            destination.addfile(
+                member,
+                BytesIO(payload) if payload is not None else None,
+            )
+    rewritten.replace(sdist)
+
+    result = _run_manifest_checker(built_distributions, dist_dir, tmp_path)
+
+    assert result.returncode == 1
+    assert TIKTOKEN_REQUIREMENT in result.stdout + result.stderr
+
+
+def test_release_checker_rejects_duplicate_sdist_member_names(
+    built_distributions: BuiltDistributions,
+    tmp_path: Path,
+) -> None:
+    dist_dir = tmp_path / "dist"
+    shutil.copytree(built_distributions.dist_dir, dist_dir)
+    sdist = next(dist_dir.glob("*.tar.gz"))
+    rewritten = sdist.with_name(f"{sdist.name}.rewritten")
+    with (
+        tarfile.open(sdist, "r:gz") as source,
+        tarfile.open(rewritten, "w:gz") as destination,
+    ):
+        for member in source.getmembers():
+            stream = source.extractfile(member) if member.isfile() else None
+            payload = stream.read() if stream is not None else None
+            destination.addfile(
+                member,
+                BytesIO(payload) if payload is not None else None,
+            )
+            if member.isfile() and member.name.split("/", 1)[-1] == "PKG-INFO":
+                assert payload is not None
+                weakened = _weaken_tiktoken_requirement(payload.decode("utf-8"))
+                duplicate = tarfile.TarInfo(member.name)
+                duplicate.size = len(weakened)
+                destination.addfile(duplicate, BytesIO(weakened))
+    rewritten.replace(sdist)
+
+    result = _run_manifest_checker(built_distributions, dist_dir, tmp_path)
+    output = result.stdout + result.stderr
+
+    assert result.returncode == 1
+    assert "duplicate" in output.lower()
+    assert "PKG-INFO" in output
+
+
+@pytest.mark.parametrize("member_kind", ["metadata", "tiktoken-cache"])
+def test_release_checker_rejects_duplicate_wheel_member_names(
+    built_distributions: BuiltDistributions,
+    tmp_path: Path,
+    member_kind: str,
+) -> None:
+    dist_dir = tmp_path / "dist"
+    shutil.copytree(built_distributions.dist_dir, dist_dir)
+    wheel = next(dist_dir.glob("*.whl"))
+    with zipfile.ZipFile(wheel, "a") as archive:
+        if member_kind == "metadata":
+            target = next(
+                name
+                for name in archive.namelist()
+                if name.endswith(".dist-info/METADATA")
+            )
+            payload = archive.read(target)
+        else:
+            target = f"{TIKTOKEN_CACHE_PREFIX}manifest.json"
+            payload = b"corrupt duplicate"
+        with pytest.warns(UserWarning, match="Duplicate name"):
+            archive.writestr(target, payload)
+
+    result = _run_manifest_checker(built_distributions, dist_dir, tmp_path)
+    output = result.stdout + result.stderr
+
+    assert result.returncode == 1
+    assert "duplicate" in output.lower()
+    assert target in output
+
+
+@pytest.mark.parametrize("archive_kind", ["sdist", "wheel"])
+def test_release_checker_rejects_dot_segment_metadata_alias(
+    built_distributions: BuiltDistributions,
+    tmp_path: Path,
+    archive_kind: str,
+) -> None:
+    dist_dir = tmp_path / "dist"
+    shutil.copytree(built_distributions.dist_dir, dist_dir)
+    if archive_kind == "sdist":
+        sdist = next(dist_dir.glob("*.tar.gz"))
+        rewritten = sdist.with_name(f"{sdist.name}.rewritten")
+        with (
+            tarfile.open(sdist, "r:gz") as source,
+            tarfile.open(rewritten, "w:gz") as destination,
+        ):
+            members = source.getmembers()
+            root_pkg_info = next(
+                member
+                for member in members
+                if member.isfile() and member.name.split("/", 1)[-1] == "PKG-INFO"
+            )
+            for member in members:
+                stream = source.extractfile(member) if member.isfile() else None
+                destination.addfile(member, stream)
+            stream = source.extractfile(root_pkg_info)
+            assert stream is not None
+            payload = _weaken_tiktoken_requirement(stream.read().decode("utf-8"))
+            root = root_pkg_info.name.split("/", 1)[0]
+            alias = f"{root}/./PKG-INFO"
+            added = tarfile.TarInfo(alias)
+            added.size = len(payload)
+            destination.addfile(added, BytesIO(payload))
+        rewritten.replace(sdist)
+    else:
+        wheel = next(dist_dir.glob("*.whl"))
+        with zipfile.ZipFile(wheel, "a") as archive:
+            canonical = next(
+                name
+                for name in archive.namelist()
+                if name.endswith(".dist-info/METADATA")
+            )
+            payload = _weaken_tiktoken_requirement(
+                archive.read(canonical).decode("utf-8")
+            )
+            parent, name = canonical.rsplit("/", 1)
+            alias = f"{parent}/./{name}"
+            archive.writestr(alias, payload)
+
+    result = _run_manifest_checker(built_distributions, dist_dir, tmp_path)
+    output = result.stdout + result.stderr
+
+    assert result.returncode == 1
+    assert "non-canonical archive path" in output
+    assert alias in output
+
+
+def test_release_checker_rejects_dot_segment_cache_alias(
+    built_distributions: BuiltDistributions,
+    tmp_path: Path,
+) -> None:
+    dist_dir = tmp_path / "dist"
+    shutil.copytree(built_distributions.dist_dir, dist_dir)
+    alias = f"{TIKTOKEN_CACHE_PREFIX}./manifest.json"
+    with zipfile.ZipFile(next(dist_dir.glob("*.whl")), "a") as archive:
+        archive.writestr(alias, b"corrupt alias")
+
+    result = _run_manifest_checker(built_distributions, dist_dir, tmp_path)
+    output = result.stdout + result.stderr
+
+    assert result.returncode == 1
+    assert "non-canonical archive path" in output
+    assert alias in output
+
+
+def test_release_checker_rejects_unsafe_wheel_member_paths(
+    built_distributions: BuiltDistributions,
+    tmp_path: Path,
+) -> None:
+    dist_dir = tmp_path / "dist"
+    shutil.copytree(built_distributions.dist_dir, dist_dir)
+    unsafe = (
+        "extra//repeated.txt",
+        "extra/../parent.txt",
+        r"extra\backslash.txt",
+        "/absolute.txt",
+    )
+    with zipfile.ZipFile(next(dist_dir.glob("*.whl")), "a") as archive:
+        for name in unsafe:
+            archive.writestr(name, b"unsafe")
+
+    result = _run_manifest_checker(built_distributions, dist_dir, tmp_path)
+    output = result.stdout + result.stderr
+
+    assert result.returncode == 1
+    for name in unsafe:
+        assert name in output
+
+
+@pytest.mark.parametrize("archive_kind", ["sdist", "wheel"])
+def test_release_checker_rejects_trailing_slash_file_alias(
+    built_distributions: BuiltDistributions,
+    tmp_path: Path,
+    archive_kind: str,
+) -> None:
+    dist_dir = tmp_path / "dist"
+    shutil.copytree(built_distributions.dist_dir, dist_dir)
+    if archive_kind == "sdist":
+        sdist = next(dist_dir.glob("*.tar.gz"))
+        rewritten = sdist.with_name(f"{sdist.name}.rewritten")
+        with (
+            tarfile.open(sdist, "r:gz") as source,
+            tarfile.open(rewritten, "w:gz") as destination,
+        ):
+            members = source.getmembers()
+            target = next(
+                member.name
+                for member in members
+                if member.isfile() and member.name.split("/", 1)[-1] == "PKG-INFO"
+            )
+            for member in members:
+                stream = source.extractfile(member) if member.isfile() else None
+                destination.addfile(member, stream)
+            alias = f"{target}/"
+            added = tarfile.TarInfo(alias)
+            added.size = len(b"alias")
+            destination.addfile(added, BytesIO(b"alias"))
+        rewritten.replace(sdist)
+    else:
+        wheel = next(dist_dir.glob("*.whl"))
+        with zipfile.ZipFile(wheel, "a") as archive:
+            target = next(
+                name
+                for name in archive.namelist()
+                if name.endswith(".dist-info/METADATA")
+            )
+            alias = f"{target}/"
+            archive.writestr(alias, b"")
+
+    result = _run_manifest_checker(built_distributions, dist_dir, tmp_path)
+    output = result.stdout + result.stderr
+
+    assert result.returncode == 1
+    assert "duplicate archive path" in output
+    assert alias in output
+
+
+@pytest.mark.parametrize("archive_kind", ["sdist", "wheel"])
+def test_release_checker_rejects_drive_qualified_member_path(
+    built_distributions: BuiltDistributions,
+    tmp_path: Path,
+    archive_kind: str,
+) -> None:
+    dist_dir = tmp_path / "dist"
+    shutil.copytree(built_distributions.dist_dir, dist_dir)
+    unsafe = "C:/unsafe.txt"
+    if archive_kind == "sdist":
+        sdist = next(dist_dir.glob("*.tar.gz"))
+        rewritten = sdist.with_name(f"{sdist.name}.rewritten")
+        with (
+            tarfile.open(sdist, "r:gz") as source,
+            tarfile.open(rewritten, "w:gz") as destination,
+        ):
+            for member in source.getmembers():
+                stream = source.extractfile(member) if member.isfile() else None
+                destination.addfile(member, stream)
+            added = tarfile.TarInfo(unsafe)
+            added.size = len(b"unsafe")
+            destination.addfile(added, BytesIO(b"unsafe"))
+        rewritten.replace(sdist)
+    else:
+        with zipfile.ZipFile(next(dist_dir.glob("*.whl")), "a") as archive:
+            archive.writestr(unsafe, b"unsafe")
+
+    result = _run_manifest_checker(built_distributions, dist_dir, tmp_path)
+    output = result.stdout + result.stderr
+
+    assert result.returncode == 1
+    assert "non-canonical archive path" in output
+    assert unsafe in output
+
+
+@pytest.mark.parametrize("archive_kind", ["sdist", "wheel"])
+@pytest.mark.parametrize("target_kind", ["metadata", "tiktoken-cache"])
+def test_release_checker_rejects_casefolded_archive_path_alias(
+    built_distributions: BuiltDistributions,
+    tmp_path: Path,
+    archive_kind: str,
+    target_kind: str,
+) -> None:
+    dist_dir = tmp_path / "dist"
+    shutil.copytree(built_distributions.dist_dir, dist_dir)
+    if archive_kind == "sdist":
+        sdist = next(dist_dir.glob("*.tar.gz"))
+        rewritten = sdist.with_name(f"{sdist.name}.rewritten")
+        with (
+            tarfile.open(sdist, "r:gz") as source,
+            tarfile.open(rewritten, "w:gz") as destination,
+        ):
+            members = source.getmembers()
+            root = members[0].name.split("/", 1)[0]
+            if target_kind == "metadata":
+                target = f"{root}/PKG-INFO"
+                alias = f"{root}/pkg-info"
+            else:
+                target = f"{root}/{TIKTOKEN_CACHE_PREFIX}manifest.json"
+                alias = target.replace("/tiktoken_cache/", "/TIKTOKEN_CACHE/")
+            source_member = next(member for member in members if member.name == target)
+            source_stream = source.extractfile(source_member)
+            assert source_stream is not None
+            payload = source_stream.read()
+            for member in members:
+                stream = source.extractfile(member) if member.isfile() else None
+                destination.addfile(member, stream)
+            added = tarfile.TarInfo(alias)
+            added.size = len(payload)
+            destination.addfile(added, BytesIO(payload))
+        rewritten.replace(sdist)
+    else:
+        wheel = next(dist_dir.glob("*.whl"))
+        with zipfile.ZipFile(wheel, "a") as archive:
+            if target_kind == "metadata":
+                target = next(
+                    name
+                    for name in archive.namelist()
+                    if name.endswith(".dist-info/METADATA")
+                )
+                alias = target.removesuffix("METADATA") + "metadata"
+            else:
+                target = f"{TIKTOKEN_CACHE_PREFIX}manifest.json"
+                alias = target.replace("/tiktoken_cache/", "/TIKTOKEN_CACHE/")
+            archive.writestr(alias, archive.read(target))
+
+    result = _run_manifest_checker(built_distributions, dist_dir, tmp_path)
+    output = result.stdout + result.stderr
+
+    assert result.returncode == 1
+    assert "duplicate archive path" in output
+    assert alias in output
+
+
+@pytest.mark.parametrize(
+    "link_type",
+    [tarfile.SYMTYPE, tarfile.LNKTYPE],
+    ids=["symlink-redirect", "hardlink"],
+)
+def test_release_checker_rejects_sdist_links_globally(
+    built_distributions: BuiltDistributions,
+    tmp_path: Path,
+    link_type: bytes,
+) -> None:
+    dist_dir = tmp_path / "dist"
+    shutil.copytree(built_distributions.dist_dir, dist_dir)
+    sdist = next(dist_dir.glob("*.tar.gz"))
+    rewritten = sdist.with_name(f"{sdist.name}.rewritten")
+    with (
+        tarfile.open(sdist, "r:gz") as source,
+        tarfile.open(rewritten, "w:gz") as destination,
+    ):
+        members = source.getmembers()
+        for member in members:
+            stream = source.extractfile(member) if member.isfile() else None
+            destination.addfile(member, stream)
+        root = members[0].name.split("/", 1)[0]
+        link = f"{root}/tldw_chatbook/assets/cache-link"
+        added = tarfile.TarInfo(link)
+        added.type = link_type
+        if link_type == tarfile.SYMTYPE:
+            added.linkname = "tiktoken_cache"
+        else:
+            added.linkname = f"{root}/{TIKTOKEN_CACHE_PREFIX}manifest.json"
+        destination.addfile(added)
+        if link_type == tarfile.SYMTYPE:
+            redirected = tarfile.TarInfo(f"{link}/manifest.json")
+            redirected.size = len(b"corrupt redirect")
+            destination.addfile(redirected, BytesIO(b"corrupt redirect"))
+    rewritten.replace(sdist)
+
+    result = _run_manifest_checker(built_distributions, dist_dir, tmp_path)
+    output = result.stdout + result.stderr
+
+    assert result.returncode == 1
+    assert "not a regular file or directory" in output
+    assert link in output
+
+
+@pytest.mark.parametrize("archive_kind", ["sdist", "wheel"])
+@pytest.mark.parametrize("suffix", [".", " "])
+def test_release_checker_rejects_metadata_trailing_dot_or_space_alias(
+    built_distributions: BuiltDistributions,
+    tmp_path: Path,
+    archive_kind: str,
+    suffix: str,
+) -> None:
+    dist_dir = tmp_path / "dist"
+    shutil.copytree(built_distributions.dist_dir, dist_dir)
+    if archive_kind == "sdist":
+        sdist = next(dist_dir.glob("*.tar.gz"))
+        rewritten = sdist.with_name(f"{sdist.name}.rewritten")
+        with (
+            tarfile.open(sdist, "r:gz") as source,
+            tarfile.open(rewritten, "w:gz") as destination,
+        ):
+            members = source.getmembers()
+            target = next(
+                member
+                for member in members
+                if member.isfile() and member.name.split("/", 1)[-1] == "PKG-INFO"
+            )
+            target_stream = source.extractfile(target)
+            assert target_stream is not None
+            payload = _weaken_tiktoken_requirement(
+                target_stream.read().decode("utf-8")
+            )
+            for member in members:
+                stream = source.extractfile(member) if member.isfile() else None
+                destination.addfile(member, stream)
+            alias = f"{target.name}{suffix}"
+            added = tarfile.TarInfo(alias)
+            added.size = len(payload)
+            destination.addfile(added, BytesIO(payload))
+        rewritten.replace(sdist)
+    else:
+        wheel = next(dist_dir.glob("*.whl"))
+        with zipfile.ZipFile(wheel, "a") as archive:
+            target = next(
+                name
+                for name in archive.namelist()
+                if name.endswith(".dist-info/METADATA")
+            )
+            payload = _weaken_tiktoken_requirement(
+                archive.read(target).decode("utf-8")
+            )
+            alias = f"{target}{suffix}"
+            archive.writestr(alias, payload)
+
+    result = _run_manifest_checker(built_distributions, dist_dir, tmp_path)
+    output = result.stdout + result.stderr
+
+    assert result.returncode == 1
+    assert "non-portable archive path" in output
+    assert alias in output
+
+
+@pytest.mark.parametrize("archive_kind", ["sdist", "wheel"])
+def test_release_checker_enforces_portable_archive_components(
+    built_distributions: BuiltDistributions,
+    tmp_path: Path,
+    archive_kind: str,
+) -> None:
+    dist_dir = tmp_path / "dist"
+    shutil.copytree(built_distributions.dist_dir, dist_dir)
+    unsafe = (
+        "extra/invalid?.txt",
+        "extra/control\x01.txt",
+        "extra/CON.txt",
+        f"{TIKTOKEN_CACHE_PREFIX}manifest.json.",
+    )
+    if archive_kind == "sdist":
+        sdist = next(dist_dir.glob("*.tar.gz"))
+        rewritten = sdist.with_name(f"{sdist.name}.rewritten")
+        with (
+            tarfile.open(sdist, "r:gz") as source,
+            tarfile.open(rewritten, "w:gz") as destination,
+        ):
+            members = source.getmembers()
+            for member in members:
+                stream = source.extractfile(member) if member.isfile() else None
+                destination.addfile(member, stream)
+            root = members[0].name.split("/", 1)[0]
+            unsafe = tuple(f"{root}/{name}" for name in unsafe)
+            for name in unsafe:
+                added = tarfile.TarInfo(name)
+                added.size = len(b"unsafe")
+                destination.addfile(added, BytesIO(b"unsafe"))
+        rewritten.replace(sdist)
+    else:
+        with zipfile.ZipFile(next(dist_dir.glob("*.whl")), "a") as archive:
+            for name in unsafe:
+                archive.writestr(name, b"unsafe")
+
+    result = _run_manifest_checker(built_distributions, dist_dir, tmp_path)
+    output = result.stdout + result.stderr
+
+    assert result.returncode == 1
+    assert "non-portable archive path" in output
+    for name in unsafe:
+        assert name in output
+
+
+@pytest.mark.parametrize("archive_kind", ["sdist", "wheel"])
+@pytest.mark.parametrize(
+    "device_name",
+    ["COM¹.txt", "COM²", "COM³", "LPT¹.log", "LPT²", "LPT³"],
+)
+def test_release_checker_rejects_superscript_windows_device_names(
+    built_distributions: BuiltDistributions,
+    tmp_path: Path,
+    archive_kind: str,
+    device_name: str,
+) -> None:
+    dist_dir = tmp_path / "dist"
+    shutil.copytree(built_distributions.dist_dir, dist_dir)
+    unsafe = f"extra/{device_name}"
+    if archive_kind == "sdist":
+        sdist = next(dist_dir.glob("*.tar.gz"))
+        rewritten = sdist.with_name(f"{sdist.name}.rewritten")
+        with (
+            tarfile.open(sdist, "r:gz") as source,
+            tarfile.open(rewritten, "w:gz") as destination,
+        ):
+            members = source.getmembers()
+            for member in members:
+                stream = source.extractfile(member) if member.isfile() else None
+                destination.addfile(member, stream)
+            root = members[0].name.split("/", 1)[0]
+            unsafe = f"{root}/{unsafe}"
+            added = tarfile.TarInfo(unsafe)
+            added.size = len(b"unsafe")
+            destination.addfile(added, BytesIO(b"unsafe"))
+        rewritten.replace(sdist)
+    else:
+        with zipfile.ZipFile(next(dist_dir.glob("*.whl")), "a") as archive:
+            archive.writestr(unsafe, b"unsafe")
+
+    result = _run_manifest_checker(built_distributions, dist_dir, tmp_path)
+    output = result.stdout + result.stderr
+
+    assert result.returncode == 1
+    assert "non-portable archive path" in output
+    assert unsafe in output
 
 
 def test_migration_expectations_are_derived_not_enumerated() -> None:
@@ -2095,6 +2970,90 @@ def test_installed_wheel_loaders_entry_points_and_assets_are_immutable(
         "Error handling CSS file",
     ):
         assert forbidden not in observed_text
+
+
+@pytest.mark.parametrize("wheel_source", ["source", "sdist"])
+@pytest.mark.parametrize(
+    "import_route",
+    ["package-first", "direct-engine-first"],
+)
+def test_installed_tiktoken_bundle_is_offline_and_immutable(
+    built_distributions: BuiltDistributions,
+    sdist_wheel: SdistWheel,
+    tmp_path: Path,
+    wheel_source: str,
+    import_route: str,
+) -> None:
+    wheel, build_source_root = (
+        (built_distributions.wheel, built_distributions.source_root)
+        if wheel_source == "source"
+        else (sdist_wheel.wheel, sdist_wheel.source_root)
+    )
+    target = tmp_path / "target"
+    state_root = tmp_path / "state"
+    run_root = tmp_path / "run"
+    state_root.mkdir(mode=0o700)
+    run_root.mkdir()
+    _install_wheel_path(wheel, target)
+    env = _private_child_env(state_root, target, build_source_root)
+    assert "TIKTOKEN_CACHE_DIR" not in env
+    assert "DATA_GYM_CACHE_DIR" not in env
+    env["TIKTOKEN_IMPORT_ROUTE"] = import_route
+
+    with _read_only_installed_tree(target):
+        result = _run_child(
+            [sys.executable, "-c", INSTALLED_TIKTOKEN_PROBE],
+            run_root,
+            env,
+        )
+
+    assert f"installed-tiktoken-{import_route}-ok" in result.stdout
+
+
+@pytest.mark.parametrize("wheel_source", ["source", "sdist"])
+@pytest.mark.parametrize("mutation", ["missing", "corrupt"])
+def test_installed_tiktoken_bundle_missing_or_corrupt_falls_back_without_writes(
+    built_distributions: BuiltDistributions,
+    sdist_wheel: SdistWheel,
+    tmp_path: Path,
+    wheel_source: str,
+    mutation: str,
+) -> None:
+    wheel, build_source_root = (
+        (built_distributions.wheel, built_distributions.source_root)
+        if wheel_source == "source"
+        else (sdist_wheel.wheel, sdist_wheel.source_root)
+    )
+    target = tmp_path / "target"
+    state_root = tmp_path / "state"
+    run_root = tmp_path / "run"
+    state_root.mkdir(mode=0o700)
+    run_root.mkdir()
+    _install_wheel_path(wheel, target)
+    asset = (
+        target
+        / "tldw_chatbook"
+        / "assets"
+        / "tiktoken_cache"
+        / "9b5ad71b2ce5302211f9c61530b329a4922fc6a4"
+    )
+    assert asset.is_file(), "the installed wheel did not contain the reviewed cl100k table"
+    if mutation == "missing":
+        asset.unlink()
+    else:
+        asset.write_bytes(b"corrupt installed tiktoken table")
+
+    env = _private_child_env(state_root, target, build_source_root)
+    assert "TIKTOKEN_CACHE_DIR" not in env
+    assert "DATA_GYM_CACHE_DIR" not in env
+    with _read_only_installed_tree(target):
+        result = _run_child(
+            [sys.executable, "-c", INSTALLED_TIKTOKEN_FAILURE_PROBE],
+            run_root,
+            env,
+        )
+
+    assert "installed-tiktoken-failure-routes-ok" in result.stdout
 
 
 @pytest.mark.skipif(
