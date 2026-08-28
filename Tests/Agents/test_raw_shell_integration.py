@@ -247,12 +247,22 @@ class _ScriptedChat:
 
     def __call__(self, **kwargs):
         self.calls.append(kwargs)
-        return {"choices": [{"message": {"content": self.replies.pop(0)}}]}
+        reply = self.replies.pop(0)
+        message = reply if isinstance(reply, dict) else {"content": reply}
+        return {"choices": [{"message": message}]}
 
 
 def _fence(name: str, arguments: dict[str, object]) -> str:
     payload = json.dumps({"name": name, "arguments": arguments})
     return f"```tool_call\n{payload}\n```"
+
+
+def _native_call(name: str, arguments: dict[str, object], call_id: str) -> dict:
+    return {
+        "id": call_id,
+        "type": "function",
+        "function": {"name": name, "arguments": json.dumps(arguments)},
+    }
 
 
 def test_agent_service_executes_raw_shell_as_an_ordinary_tool_result(
@@ -314,3 +324,189 @@ def test_agent_service_executes_raw_shell_as_an_ordinary_tool_result(
     rows = db.list_runs("raw-shell-e2e", include_superseded=True)
     assert rows
     assert all(row["agent_kind"] != "local_command" for row in rows)
+
+
+def test_duplicate_native_call_ids_keep_raw_shell_approvals_independent(
+    tmp_path: Path,
+) -> None:
+    provider, runtime, _gates = _provider(tmp_path)
+    registry = ToolCatalogRegistry()
+    registry.register_provider(provider)
+    approval_rows = []
+
+    def approve_only_second(rows):
+        approval_rows.extend(rows)
+        assert [(row.call_id, row.full_command) for row in rows] == [
+            ("shared", "printf denied"),
+            ("shared#1", "printf approved"),
+        ]
+        return {"shared": "deny", "shared#1": "approve_once"}
+
+    chat = _ScriptedChat(
+        [
+            {
+                "content": None,
+                "tool_calls": [
+                    _native_call(
+                        "shell_exec", {"command": "printf denied"}, "shared"
+                    ),
+                    _native_call(
+                        "shell_exec", {"command": "printf approved"}, "shared"
+                    ),
+                ],
+            },
+            "The approved command completed.",
+        ]
+    )
+    db = AgentRunsDB(tmp_path / "duplicate-runs.db", client_id="test")
+    service = AgentService(
+        db=db,
+        registry=registry,
+        chat_call=chat,
+        review_tool_calls=build_raw_shell_review_hook(provider, approve_only_second),
+        review_state_scope=provider.stamp_scope,
+    )
+
+    _run_id, outcome = service.run_turn(
+        conversation_id="raw-shell-duplicate-call-ids",
+        messages=[{"role": "user", "content": "run the approved command"}],
+        config=AgentConfig(
+            model="test-model",
+            system_prompt="You are helpful.",
+            allowed_tools=("shell_exec",),
+            native_tools=True,
+        ),
+        api_endpoint="openai",
+        should_cancel=lambda: False,
+    )
+
+    assert outcome.status == RUN_DONE
+    assert [request.command for request in runtime.execute_calls] == [
+        "printf approved"
+    ]
+    assert runtime.execute_calls[0].invocation_id == "shared#1"
+    assert len(approval_rows) == 2
+
+
+def test_duplicate_native_ids_cannot_collide_with_model_supplied_suffixes(
+    tmp_path: Path,
+) -> None:
+    provider, runtime, _gates = _provider(tmp_path)
+    registry = ToolCatalogRegistry()
+    registry.register_provider(provider)
+
+    def approve_only_third(rows):
+        assert [(row.call_id, row.full_command) for row in rows] == [
+            ("shared", "printf first"),
+            ("shared#1", "printf supplied-suffix"),
+            ("shared#2", "printf approved"),
+        ]
+        return {
+            "shared": "deny",
+            "shared#1": "deny",
+            "shared#2": "approve_once",
+        }
+
+    chat = _ScriptedChat(
+        [
+            {
+                "content": None,
+                "tool_calls": [
+                    _native_call("shell_exec", {"command": "printf first"}, "shared"),
+                    _native_call(
+                        "shell_exec",
+                        {"command": "printf supplied-suffix"},
+                        "shared#1",
+                    ),
+                    _native_call(
+                        "shell_exec", {"command": "printf approved"}, "shared"
+                    ),
+                ],
+            },
+            "The approved command completed.",
+        ]
+    )
+    service = AgentService(
+        db=AgentRunsDB(tmp_path / "suffix-runs.db", client_id="test"),
+        registry=registry,
+        chat_call=chat,
+        review_tool_calls=build_raw_shell_review_hook(provider, approve_only_third),
+        review_state_scope=provider.stamp_scope,
+    )
+
+    _run_id, outcome = service.run_turn(
+        conversation_id="raw-shell-model-supplied-suffix",
+        messages=[{"role": "user", "content": "run only the approved command"}],
+        config=AgentConfig(
+            model="test-model",
+            system_prompt="You are helpful.",
+            allowed_tools=("shell_exec",),
+            native_tools=True,
+        ),
+        api_endpoint="openai",
+        should_cancel=lambda: False,
+    )
+
+    assert outcome.status == RUN_DONE
+    assert [request.command for request in runtime.execute_calls] == [
+        "printf approved"
+    ]
+    assert runtime.execute_calls[0].invocation_id == "shared#2"
+
+
+def test_provider_generated_native_id_cannot_collide_with_model_supplied_id(
+    tmp_path: Path,
+) -> None:
+    provider, runtime, _gates = _provider(tmp_path)
+    registry = ToolCatalogRegistry()
+    registry.register_provider(provider)
+
+    def approve_only_idless(rows):
+        assert [(row.call_id, row.full_command) for row in rows] == [
+            ("call_1", "printf denied"),
+            ("call_1#1", "printf approved"),
+        ]
+        return {"call_1": "deny", "call_1#1": "approve_once"}
+
+    chat = _ScriptedChat(
+        [
+            {
+                "content": None,
+                "tool_calls": [
+                    _native_call(
+                        "shell_exec", {"command": "printf denied"}, "call_1"
+                    ),
+                    _native_call(
+                        "shell_exec", {"command": "printf approved"}, ""
+                    ),
+                ],
+            },
+            "The approved command completed.",
+        ]
+    )
+    service = AgentService(
+        db=AgentRunsDB(tmp_path / "idless-runs.db", client_id="test"),
+        registry=registry,
+        chat_call=chat,
+        review_tool_calls=build_raw_shell_review_hook(provider, approve_only_idless),
+        review_state_scope=provider.stamp_scope,
+    )
+
+    _run_id, outcome = service.run_turn(
+        conversation_id="raw-shell-idless-call",
+        messages=[{"role": "user", "content": "run only the approved command"}],
+        config=AgentConfig(
+            model="test-model",
+            system_prompt="You are helpful.",
+            allowed_tools=("shell_exec",),
+            native_tools=True,
+        ),
+        api_endpoint="openai",
+        should_cancel=lambda: False,
+    )
+
+    assert outcome.status == RUN_DONE
+    assert [request.command for request in runtime.execute_calls] == [
+        "printf approved"
+    ]
+    assert runtime.execute_calls[0].invocation_id == "call_1#1"

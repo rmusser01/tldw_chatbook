@@ -75,6 +75,22 @@ helper without changing its validation seam, adds a fresh-interpreter import
 regression, and records the incident in
 `backlog/docs/lessons-live-verification.md`.
 
+PR review follow-up moved model shell arguments into a strict shared Pydantic
+boundary while retaining the raw executor validators as defense in depth,
+completed the provider's public API docstrings and typing, and normalized
+duplicate native call IDs through review and provider dispatch so each command
+keeps an independent approval identity. Security review then found that a naive
+suffix could still collide with a model-supplied ID (`x`, `x#1`, `x`). The final
+allocator reserves the whole model-controlled ID namespace, assigns idless and
+provider-generated calls independent internal correlations, and has adversarial
+regressions proving that only the separately approved command executes.
+
+PR review verification: 734 changed-module tests passed; Ruff and
+`git diff --check` passed. Final Codex Security delta scan
+`9b60794a-363e-4789-aab5-2629b2341016` covered all eight changed code/test
+files with no confirmed findings. Its snapshot warning reflects only the task
+and lessons documentation updates made after the code snapshot.
+
 ADR required: yes.
 ADR path: `backlog/decisions/094-raw-and-virtual-cli-execution-boundaries.md`.
 Reason: ADR-094 is the governing execution and authorization boundary; no new

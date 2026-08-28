@@ -4777,7 +4777,7 @@ class AgentService:
                     ),
                 )
             dispatch_call = call
-            if not call.call_id and dispatch_call_id:
+            if dispatch_call_id and call.call_id != dispatch_call_id:
                 dispatch_call = ToolCall(
                     name=call.name,
                     args=call.args,

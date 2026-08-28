@@ -9,6 +9,24 @@ decays into folklore, and folklore is ignored. If you add one, bring the inciden
 
 ---
 
+## Collision normalization must reserve the whole untrusted namespace
+
+**TASK-22510 review follow-up, 2026-08-28.** A regression proved that two native
+tool calls carrying the same provider ID were independently displayed and
+authorized by suffixing the later ID (`x`, `x` became `x`, `x#1`). A security
+review then supplied the adversarial batch `x`, `x#1`, `x`: the model-controlled
+middle ID already occupied the generated suffix, so the first and third commands
+again shared one approval identity. Provider-generated IDs could create the same
+shape. The ordinary duplicate test was green while the authorization boundary
+remained bypassable.
+
+**What to do.** When an untrusted identifier is normalized into an authorization,
+deduplication, cache, or routing key, reserve every untrusted identifier in the
+whole batch before generating replacements, then reject/skip both reserved and
+already-generated candidates. Cover adversarial pre-suffixed IDs, processing-order
+permutations, provider-generated fallbacks, and genuinely missing IDs; testing only
+two identical values does not prove namespace separation.
+
 ## Persist test configuration through the same durable seam production reloads
 
 **TASK-22988 (renumbered from TASK-22507), 2026-08-26.** The joined Roleplay-resume gate exposed seven

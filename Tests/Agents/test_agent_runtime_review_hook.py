@@ -137,6 +137,40 @@ def test_hook_receives_full_batch_before_any_invoke():
     assert invoked == ["calculator", "echo"]
 
 
+def test_idless_call_gets_unique_review_identity_away_from_tool_name():
+    calls = [
+        ToolCall(name="calculator", args={"v": 1}, call_id="calculator"),
+        ToolCall(name="calculator", args={"v": 2}, call_id=""),
+    ]
+    invoked = []
+
+    def review(batch):
+        assert [call.call_id for call in batch] == [
+            "calculator",
+            "turn-1-call-1",
+        ]
+        return {
+            "calculator": "Blocked: first call denied",
+            "turn-1-call-1": "proceed",
+        }
+
+    turns = [_native_turn(calls), ModelTurn(text="done")]
+    out = run_agent_loop(
+        CFG,
+        [{"role": "user", "content": "go"}],
+        [CALC],
+        make_deps(
+            turns,
+            invoke=lambda call: invoked.append(call.args["v"])
+            or ToolResult(ok=True, content="ok"),
+            review=review,
+        ),
+    )
+
+    assert out.status == RUN_DONE
+    assert invoked == [2]
+
+
 def test_hook_not_called_when_turn_has_no_tool_calls():
     seen = []
 

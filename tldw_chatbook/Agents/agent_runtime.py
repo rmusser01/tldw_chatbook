@@ -1408,16 +1408,19 @@ def run_agent_loop(
         # "proceed" -- the exact same dispatch path as before this hook
         # existed, so absent-hook behavior stays byte-identical.
         call_trace: dict[int, dict[str, AgentStep | str]] = {}
-        correlation_counts: dict[str, int] = {}
+        reserved_correlations = {call.call_id for call in calls if call.call_id}
+        used_correlations: set[str] = set()
+        review_calls: list[ToolCall] = []
         for position, call in enumerate(calls):
             base_correlation = call.call_id or f"turn-{model_turns}-call-{position}"
-            duplicate = correlation_counts.get(base_correlation, 0)
-            correlation_counts[base_correlation] = duplicate + 1
-            correlation = (
-                base_correlation
-                if duplicate == 0
-                else f"{base_correlation}#{duplicate}"
-            )
+            correlation = base_correlation
+            suffix = 1
+            while correlation in used_correlations or (
+                correlation in reserved_correlations and correlation != call.call_id
+            ):
+                correlation = f"{base_correlation}#{suffix}"
+                suffix += 1
+            used_correlations.add(correlation)
             proposal_step = trace(
                 STEP_TOOL_PROPOSED,
                 summary=f"{call.name} proposed",
@@ -1431,6 +1434,16 @@ def run_agent_loop(
                 "correlation": correlation,
                 "proposal": proposal_step,
             }
+            review_calls.append(
+                ToolCall(
+                    name=call.name,
+                    args=call.args,
+                    call_id=correlation,
+                    raw_arguments=call.raw_arguments,
+                )
+                if correlation != call.call_id
+                else call
+            )
 
         verdicts: dict[str, str] = {}
         if deps.review_tool_calls is not None and calls:
@@ -1450,7 +1463,7 @@ def run_agent_loop(
                 )
                 trace_state["request"] = request_step
             try:
-                verdicts = deps.review_tool_calls(list(calls)) or {}
+                verdicts = deps.review_tool_calls(review_calls) or {}
             except Exception:  # noqa: BLE001 — policy differs by lifecycle
                 if continuation_checkpoint is not None:
                     return continuation_error()
@@ -1470,9 +1483,10 @@ def run_agent_loop(
                 request_step = trace_state["request"]
                 assert isinstance(proposal_step, AgentStep)
                 assert isinstance(request_step, AgentStep)
-                verdict = (
-                    verdicts.get(call.call_id) if call.call_id else None
-                ) or verdicts.get(call.name, "proceed")
+                review_call_id = str(trace_state["correlation"])
+                verdict = verdicts.get(review_call_id) or verdicts.get(
+                    call.name, "proceed"
+                )
                 decision_step = trace(
                     STEP_APPROVAL_APPROVED
                     if verdict == "proceed"
@@ -1495,7 +1509,7 @@ def run_agent_loop(
         for call in calls:
             current_call_correlation = str(call_trace[id(call)]["correlation"])
             verdict = (
-                (verdicts.get(call.call_id) if call.call_id else None)
+                verdicts.get(current_call_correlation)
                 or verdicts.get(call.name, "proceed")
             )
             # F5 (Qodo #5, PR #1066 review): emit the tool_call record BEFORE

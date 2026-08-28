@@ -6,8 +6,10 @@ from collections.abc import Callable, Iterator, Mapping, Sequence
 from contextlib import contextmanager
 from pathlib import Path
 import threading
-from typing import Any, Literal, Protocol, cast
+from typing import Any, Literal, Protocol
 from uuid import uuid4
+
+from pydantic import ValidationError as PydanticValidationError
 
 from tldw_chatbook.MCP.hub_tool_catalog import HubTool
 from tldw_chatbook.MCP.permission_store import EffectiveToolState
@@ -19,6 +21,7 @@ from tldw_chatbook.Tools.raw_cli_executor import (
     RawCliStreamEvent,
     validate_raw_cli_request,
 )
+from tldw_chatbook.Utils.input_validation import RawShellExecInput
 
 from .agent_models import ToolCall, ToolCatalogEntry, ToolResult, ToolSchema
 from .mcp_tool_provider import MCPPendingCall
@@ -48,9 +51,6 @@ RawShellProgressSink = Callable[
     [str, str, RawCliStreamEvent | RawCliResult], None
 ]
 
-_ALLOWED_ARGUMENTS = frozenset(
-    {"command", "shell", "initial_directory", "timeout_seconds"}
-)
 _SHELLS = ("auto", "bash", "powershell", "cmd")
 
 _MODEL_SCHEMA = {
@@ -118,6 +118,12 @@ def resolve_raw_shell_state(
     The permission store uses ``deny`` internally; canonical UI renderers label
     that state ``Off``. In particular, a stored or hand-edited ``allow`` never
     becomes silent model authority for a host shell.
+
+    Args:
+        effective: Resolved permission-store state for the raw-shell tool.
+
+    Returns:
+        ``"deny"`` only for Off; otherwise ``"ask"``.
     """
 
     return "deny" if effective.state == "deny" else "ask"
@@ -137,6 +143,21 @@ class RawShellToolProvider:
         kill_switch: Callable[[], bool] = lambda: False,
         progress_sink: RawShellProgressSink | None = None,
     ) -> None:
+        """Initialize one Console-session raw-shell provider.
+
+        Args:
+            runtime: Existing app-owned raw CLI runtime.
+            console_session_id: Nonblank Console session identity.
+            initial_directory: Resolver for the default execution directory.
+            resolve_state: Resolver for the effective Ask/Off policy.
+            local_tools_enabled: Live local-tools gate probe.
+            kill_switch: Live global tool kill-switch probe.
+            progress_sink: Optional bounded progress observer.
+
+        Raises:
+            ValueError: If ``console_session_id`` is blank.
+            TypeError: If ``initial_directory`` is not callable.
+        """
         if not isinstance(console_session_id, str) or not console_session_id.strip():
             raise ValueError("console_session_id must be a nonblank string")
         if not callable(initial_directory):
@@ -155,7 +176,11 @@ class RawShellToolProvider:
         self._authority_generation = 0
 
     def catalog_enabled(self) -> bool:
-        """Return whether all live gates currently permit schema discovery."""
+        """Return whether all live gates currently permit schema discovery.
+
+        Returns:
+            ``True`` only while every raw-shell catalog gate is open.
+        """
 
         try:
             return bool(
@@ -168,6 +193,11 @@ class RawShellToolProvider:
             return False
 
     def list_catalog(self) -> list[ToolCatalogEntry]:
+        """List the raw-shell catalog row when every live gate is open.
+
+        Returns:
+            A one-entry catalog while available, otherwise an empty list.
+        """
         if not self.catalog_enabled():
             return []
         return [
@@ -182,6 +212,17 @@ class RawShellToolProvider:
         ]
 
     def load_schema(self, tool_id: str) -> ToolSchema:
+        """Load the conditional raw-shell tool schema.
+
+        Args:
+            tool_id: Catalog id or tool name to load.
+
+        Returns:
+            The structured ``shell_exec`` schema.
+
+        Raises:
+            KeyError: If the id is unknown or a live gate has closed.
+        """
         name = tool_id.split(":", 1)[-1]
         if name != RAW_SHELL_TOOL_NAME or not self.catalog_enabled():
             raise KeyError(f"Raw shell tool is unavailable: {tool_id}")
@@ -198,7 +239,11 @@ class RawShellToolProvider:
 
     @staticmethod
     def hub_tool() -> HubTool:
-        """Return the stable Ask/Off policy identity shown in Tools."""
+        """Return the stable Ask/Off policy identity shown in Tools.
+
+        Returns:
+            The always-projectable raw-shell Hub tool row.
+        """
 
         return HubTool(
             server_key=RAW_SHELL_SERVER_KEY,
@@ -223,36 +268,36 @@ class RawShellToolProvider:
     ) -> RawCliRequest:
         if not isinstance(args, Mapping):
             raise ValueError("arguments must be an object")
-        unexpected = set(args) - _ALLOWED_ARGUMENTS
-        if unexpected:
-            raise ValueError("unexpected shell_exec arguments")
-        command = args.get("command")
-        if not isinstance(command, str):
-            raise ValueError("command must be a string")
-        shell = args.get("shell", "auto")
-        if not isinstance(shell, str) or shell not in _SHELLS:
-            raise ValueError("shell must be auto, bash, powershell, or cmd")
-        timeout = args.get("timeout_seconds", MAX_RAW_TIMEOUT_SECONDS)
-        if "initial_directory" in args:
-            raw_directory = args["initial_directory"]
-            if not isinstance(raw_directory, str):
-                raise ValueError("initial_directory must be a string")
-            directory = Path(raw_directory)
-        else:
-            directory = Path(self._initial_directory())
+        try:
+            validated = RawShellExecInput.model_validate(dict(args))
+        except PydanticValidationError as exc:
+            raise ValueError("arguments do not match the shell_exec schema") from exc
+        directory = (
+            Path(validated.initial_directory)
+            if validated.initial_directory is not None
+            else Path(self._initial_directory())
+        )
         request = RawCliRequest(
             invocation_id=invocation_id,
             caller="model",
-            command=command,
-            shell=cast(Any, shell),
+            command=validated.command,
+            shell=validated.shell,
             initial_directory=directory,
-            timeout_seconds=cast(Any, timeout),
+            timeout_seconds=validated.timeout_seconds,
             console_session_id=self.console_session_id,
         )
         return validate_raw_cli_request(request)
 
     def pending_gate_for(self, call: ToolCall) -> MCPPendingCall | None:
-        """Build one complete, independently addressable raw approval row."""
+        """Build one complete, independently addressable raw approval row.
+
+        Args:
+            call: Proposed model tool call.
+
+        Returns:
+            A command-visible approval row, or ``None`` when no review is
+            required or the call is invalid or unavailable.
+        """
         if call.name != RAW_SHELL_TOOL_NAME or not self.catalog_enabled():
             return None
         try:
@@ -295,7 +340,14 @@ class RawShellToolProvider:
         *,
         authority_generation: int | None = None,
     ) -> None:
-        """Replace this run's per-call approval stamps and apply session grants."""
+        """Replace this run's stamps and apply any session-wide grant.
+
+        Args:
+            run_id: Agent run that will consume the decisions.
+            decisions: Approval decision keyed by normalized call id.
+            pending: Approval rows shown to the user.
+            authority_generation: Optional generation captured before review.
+        """
         with self._stamps_lock:
             if (
                 authority_generation is not None
@@ -330,12 +382,20 @@ class RawShellToolProvider:
 
     @property
     def authority_generation(self) -> int:
-        """Return the generation that approval round trips must still match."""
+        """Return the generation that approval round trips must still match.
+
+        Returns:
+            Current raw-shell authority generation.
+        """
         with self._stamps_lock:
             return self._authority_generation
 
     def revoke_approval_stamps(self) -> int:
-        """Invalidate every pending stamp, including hidden scope snapshots."""
+        """Invalidate every pending stamp, including hidden scope snapshots.
+
+        Returns:
+            Number of approval stamps removed.
+        """
         with self._stamps_lock:
             revoked = len(self._stamps)
             self._stamps.clear()
@@ -352,7 +412,14 @@ class RawShellToolProvider:
 
     @contextmanager
     def stamp_scope(self, run_id: str) -> Iterator[None]:
-        """Hide and restore this run's approvals around a nested child run."""
+        """Hide and restore this run's approvals around a nested child run.
+
+        Args:
+            run_id: Parent run whose stamps must be isolated.
+
+        Yields:
+            Control while the parent run's stamps are hidden.
+        """
         with self._stamps_lock:
             authority_generation = self._authority_generation
             saved = {
@@ -373,7 +440,16 @@ class RawShellToolProvider:
                 if authority_generation == self._authority_generation:
                     self._stamps.update(saved)
 
-    def invoke(self, tool_id: str, args: dict) -> ToolResult:
+    def invoke(self, tool_id: str, args: Mapping[str, object]) -> ToolResult:
+        """Validate, authorize, and execute one model raw-shell call.
+
+        Args:
+            tool_id: Catalog id or tool name being invoked.
+            args: Untrusted model arguments for ``shell_exec``.
+
+        Returns:
+            A bounded ordinary tool result or a fail-closed refusal.
+        """
         name = tool_id.split(":", 1)[-1]
         if name != RAW_SHELL_TOOL_NAME:
             return ToolResult(ok=False, error=f"Unknown raw shell tool: {name}")

@@ -24,6 +24,7 @@ from typing import Any, BinaryIO, Literal, TypeAlias
 from tldw_chatbook.Agents.run_log import configured_max_record_bytes
 from tldw_chatbook.Utils.input_validation import (
     RAW_CLI_COMMAND_MAX_BYTES,
+    RAW_CLI_TIMEOUT_MAX_SECONDS,
     validate_raw_cli_command,
 )
 from tldw_chatbook.Utils.path_validation import (
@@ -36,7 +37,7 @@ from tldw_chatbook.STT.executor_process_tree import (
 )
 
 MAX_RAW_COMMAND_BYTES = RAW_CLI_COMMAND_MAX_BYTES
-MAX_RAW_TIMEOUT_SECONDS = 300.0
+MAX_RAW_TIMEOUT_SECONDS = RAW_CLI_TIMEOUT_MAX_SECONDS
 MAX_RAW_PREVIEW_BYTES = 32 * 1024
 
 RawCliCaller: TypeAlias = Literal["user", "model"]

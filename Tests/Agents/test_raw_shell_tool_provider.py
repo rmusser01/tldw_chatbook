@@ -3,6 +3,7 @@ from __future__ import annotations
 from pathlib import Path
 
 import pytest
+from pydantic import ValidationError as PydanticValidationError
 
 from tldw_chatbook.Agents.raw_shell_tool_provider import (
     RAW_SHELL_SERVER_KEY,
@@ -11,6 +12,7 @@ from tldw_chatbook.Agents.raw_shell_tool_provider import (
 )
 from tldw_chatbook.MCP.permission_store import EffectiveToolState
 from tldw_chatbook.Tools.raw_cli_executor import MAX_RAW_COMMAND_BYTES
+from tldw_chatbook.Utils.input_validation import RawShellExecInput
 
 
 class _RuntimeProbe:
@@ -61,6 +63,32 @@ def test_provider_exposes_one_conditional_structured_schema(tmp_path: Path) -> N
     assert properties["shell"]["default"] == "auto"
     assert properties["initial_directory"]["type"] == "string"
     assert properties["timeout_seconds"]["maximum"] == 300
+
+
+def test_shared_raw_shell_input_model_is_strict_and_bounded() -> None:
+    validated = RawShellExecInput.model_validate(
+        {
+            "command": "printf hello",
+            "shell": "bash",
+            "initial_directory": "/tmp",
+            "timeout_seconds": 17,
+        }
+    )
+    assert validated.command == "printf hello"
+    assert validated.shell == "bash"
+    assert validated.initial_directory == "/tmp"
+    assert validated.timeout_seconds == 17.0
+
+    invalid_payloads = (
+        {"command": 7},
+        {"command": "pwd", "shell": "zsh"},
+        {"command": "pwd", "initial_directory": None},
+        {"command": "pwd", "timeout_seconds": True},
+        {"command": "pwd", "unexpected": "value"},
+    )
+    for payload in invalid_payloads:
+        with pytest.raises(PydanticValidationError):
+            RawShellExecInput.model_validate(payload)
 
 
 @pytest.mark.parametrize(
@@ -187,4 +215,3 @@ def test_schema_load_fails_closed_after_catalog_gate_changes(tmp_path: Path) -> 
 
     with pytest.raises(KeyError):
         provider.load_schema("raw_shell:shell_exec")
-
