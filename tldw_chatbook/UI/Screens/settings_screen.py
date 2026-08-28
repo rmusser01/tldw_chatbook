@@ -6155,14 +6155,18 @@ class SettingsScreen(BaseAppScreen):
         # task-1715: field labels -- typing a setting's visible name
         # ("threshold") surfaces its category with an Enter-focuses-field
         # promise (see _top_field_match / _submit_category_search).
-        # TASK-23109: two field tiers -- a label that STARTS with the query
-        # ("Threshold (chars)") outranks a mid-label hit ("VAD threshold"),
-        # so completing the index cannot re-route an established landing.
-        field = self._top_field_match(query, summary.category)
-        if field is not None:
-            if field[1].lower().startswith(query):
-                return 3
-            return 4
+        # TASK-23109: two field tiers -- a category with a label that STARTS
+        # with the query ("Threshold (chars)") outranks one with only a
+        # mid-label hit ("VAD threshold"), so completing the index cannot
+        # re-route an established CROSS-category landing. The tier scans all
+        # of the category's labels; WHICH field wins within the category
+        # stays order-stable (_top_field_match), preserving pre-existing
+        # intra-category landings (review finding 13: "/token" must keep
+        # landing on "Conversation max tokens", not the swept-in
+        # "Token budget (per run)").
+        tier = self._field_match_rank_tier(query, summary.category)
+        if tier is not None:
+            return tier
         # task-1564: last tier -- the category's owned config keys. The Scope
         # Inspector already publishes them; indexing them lets "/" find the
         # category that OWNS a setting instead of forcing a 23-item scan.
@@ -6176,8 +6180,31 @@ class SettingsScreen(BaseAppScreen):
             return 5
         return None
 
-    #: Ranks produced by the field-label tiers of ``_category_search_rank``.
-    FIELD_MATCH_RANKS = frozenset({3, 4})
+    #: Ranks meaning the query matched the category's own name -- Enter on
+    #: these opens the category plainly, never a coincidental field
+    #: (review finding 2: description-tier matches such as "context window"
+    #: on Providers & Models DO land on their matching field).
+    TITLE_MATCH_RANKS = frozenset({0, 1})
+
+    @staticmethod
+    def _field_match_rank_tier(
+        query_text: str, category: SettingsCategoryId
+    ) -> int | None:
+        """Field-tier rank for a category: 3 (label-prefix), 4 (contains).
+
+        Scans every indexed label so the CATEGORY ranking can prefer a
+        prefix hit anywhere in the category, independent of which field
+        ``_top_field_match`` (order-stable) actually lands on.
+        """
+        query = query_text.strip().lower()
+        if not query:
+            return None
+        entries = FIELD_SEARCH_INDEX.get(category, ())
+        if any(label.lower().startswith(query) for _fid, label in entries):
+            return 3
+        if any(query in label.lower() for _fid, label in entries):
+            return 4
+        return None
 
     @staticmethod
     def _top_field_match(
@@ -6195,13 +6222,12 @@ class SettingsScreen(BaseAppScreen):
         query = query_text.strip().lower()
         if not query:
             return None
-        entries = FIELD_SEARCH_INDEX.get(category, ())
-        # TASK-23109: a label that starts with the query wins over a
-        # mid-label hit, mirroring the rank tiers in _category_search_rank.
-        for field_id, label in entries:
-            if label.lower().startswith(query):
-                return (field_id, label)
-        for field_id, label in entries:
+        # Order-stable single pass (review finding 13): the first containment
+        # hit in index order wins WITHIN a category, so completing the index
+        # (rows are appended) cannot re-route established landings. Prefix
+        # quality only affects CROSS-category ranking -- see
+        # _field_match_rank_tier.
+        for field_id, label in FIELD_SEARCH_INDEX.get(category, ()):
             if query in label.lower():
                 return (field_id, label)
         return None
@@ -6253,11 +6279,12 @@ class SettingsScreen(BaseAppScreen):
         Args:
             query: The active filter text.
             summary: The matched category.
-            field_landing: Whether Enter would land ON the matched field.
-                For the top match this is True only when the match CAME from
-                the field tier (typing a category's own title must open the
-                category plainly, not steal focus into its first field);
-                runner-up lines always name a matching field as information.
+            field_landing: Whether Enter would land ON the matched field
+                if this match were opened -- compute it with
+                ``_search_match_is_field_landing`` so the echo line and the
+                Enter behavior state the same contract (typing a category's
+                own title opens the category plainly, every other tier with
+                a matching field lands on it).
         """
         target = summary.title
         # task-1715: when the hit is (or contains) a matching field, promise
@@ -6271,8 +6298,31 @@ class SettingsScreen(BaseAppScreen):
     def _search_match_is_field_landing(
         self, query: str, summary: SettingsCategorySummary
     ) -> bool:
-        """Whether Enter on this top match lands focus on a matched field."""
-        return self._category_search_rank(summary, query) in self.FIELD_MATCH_RANKS
+        """Whether Enter on this top match lands focus on a matched field.
+
+        Review finding 2: only own-TITLE matches suppress the landing --
+        a description-tier match ("context window" on Providers & Models)
+        with a matching field still lands on that field, as task-1715 did.
+        """
+        rank = self._category_search_rank(summary, query)
+        if rank is None or rank in self.TITLE_MATCH_RANKS:
+            return False
+        return self._top_field_match(query, summary.category) is not None
+
+    #: Below this screen height the "| Next:" disambiguation segment is
+    #: dropped: in the 30-col rail the full scoped line wraps to ~5 rows,
+    #: which on a 24-row terminal pushed most matched category rows below
+    #: the fold mid-search (review finding 15, verified at 110x24 with a
+    #: 16-match query leaving 6 rail rows visible).
+    SEARCH_STATUS_NEXT_MIN_HEIGHT = 30
+
+    def _suppress_search_next_segment(self) -> bool:
+        """Whether the rail is too short to spend rows on '| Next:'."""
+        try:
+            height = int(self.size.height)
+        except Exception:
+            height = 0
+        return 0 < height < self.SEARCH_STATUS_NEXT_MIN_HEIGHT
 
     def _category_search_status_text(self, query_text: str | None = None) -> str:
         query = self._category_search_text(query_text)
@@ -6289,11 +6339,18 @@ class SettingsScreen(BaseAppScreen):
             status = (
                 f"Filter: {query} | {len(matches)} {match_label} | Enter opens {target}"
             )
-            if len(matches) > 1:
+            if len(matches) > 1 and not self._suppress_search_next_segment():
+                # Review finding 10: the Next segment states the SAME
+                # landing contract Enter would honour if this match were
+                # first -- never advertise a field landing the gate refuses.
                 status += (
                     " | Next: "
                     + self._search_match_scope_text(
-                        query, matches[1], field_landing=True
+                        query,
+                        matches[1],
+                        field_landing=self._search_match_is_field_landing(
+                            query, matches[1]
+                        ),
                     )
                 )
             return status
@@ -6411,13 +6468,10 @@ class SettingsScreen(BaseAppScreen):
                 else None
             )
             if field is not None:
-                field_id = field[0]
+                field_id, field_label = field
 
                 def _focus_matched_field() -> None:
-                    try:
-                        self.query_one(f"#{field_id}").focus()
-                    except QueryError:
-                        pass
+                    self._land_search_focus_on_field(field_id, field_label)
 
                 self._after_category_panes(_focus_matched_field)
             # task-1712: the filter has done its job -- clear it so the
@@ -6430,6 +6484,53 @@ class SettingsScreen(BaseAppScreen):
             except QueryError:
                 pass
             self._apply_category_search_filter()
+
+    def _land_search_focus_on_field(self, field_id: str, field_label: str) -> None:
+        """Land Enter's field promise on a real, usable control.
+
+        Review finding 3 (TASK-23109): a blind ``.focus()`` put focus on
+        zero-region widgets inside collapsed ``Collapsible``s (keystrokes
+        went into an off-screen Input) and silently no-opped on disabled
+        widgets. Expand the enclosing Collapsibles and scroll the target
+        into view first; if the target is disabled, keep the category open
+        and say why in the search status line instead of doing nothing.
+
+        Args:
+            field_id: The matched control's widget id.
+            field_label: Its indexed label, for the disabled explanation.
+        """
+        try:
+            widget = self.query_one(f"#{field_id}")
+        except QueryError:
+            return
+        if widget.disabled or any(
+            getattr(node, "disabled", False) for node in widget.ancestors
+        ):
+            self._set_static_text(
+                "#settings-category-search-status",
+                f"'{field_label}' is disabled right now — its category is "
+                "open; enable the option that controls it first.",
+            )
+            return
+        expanded = False
+        for node in widget.ancestors:
+            if isinstance(node, Collapsible) and node.collapsed:
+                node.collapsed = False
+                expanded = True
+
+        def _focus_now() -> None:
+            try:
+                widget.scroll_visible(animate=False)
+            except Exception:
+                logger.debug("Search landing could not scroll to the field.")
+            widget.focus()
+
+        if expanded:
+            # Let the expansion lay out before focusing, or the target still
+            # has a zero region when focus arrives.
+            self.call_after_refresh(_focus_now)
+        else:
+            _focus_now()
 
     def _category_state_banner_text(self, category: SettingsCategoryId) -> str:
         if (

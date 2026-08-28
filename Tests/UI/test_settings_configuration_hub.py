@@ -10529,6 +10529,120 @@ async def test_search_enter_focuses_reduce_motion():
 
 
 @pytest.mark.asyncio
+async def test_search_description_tier_match_still_lands_on_the_field():
+    """Review finding 2 (TASK-23109): a description-tier category match with
+    a matching field keeps task-1715's field landing -- only own-TITLE
+    matches open the category plainly."""
+    app = _build_test_app()
+    host = DestinationHarness(app, "settings")
+    async with host.run_test(size=(190, 55)) as pilot:
+        await _settle_settings_mount_storm(pilot)
+        screen = _active_destination_screen(host)
+        screen._submit_category_search("context window")
+        for _ in range(10):
+            await pilot.pause()
+        assert screen.active_category == SettingsCategoryId.PROVIDERS_MODELS.value
+        focused = host.focused
+        assert focused is not None and focused.id == (
+            "settings-model-context-window"
+        ), f"focused={focused!r}"
+
+
+@pytest.mark.asyncio
+async def test_search_token_keeps_its_pre_existing_intra_category_landing():
+    """Review finding 13 (TASK-23109): completing the index appends rows, so
+    the intra-category winner must stay order-stable -- '/token' lands on
+    'Conversation max tokens', not the swept-in 'Token budget (per run)'."""
+    app = _build_test_app()
+    host = DestinationHarness(app, "settings")
+    async with host.run_test(size=(190, 55)) as pilot:
+        await _settle_settings_mount_storm(pilot)
+        screen = _active_destination_screen(host)
+        screen._submit_category_search("token")
+        for _ in range(10):
+            await pilot.pause()
+        assert screen.active_category == SettingsCategoryId.CONSOLE_BEHAVIOR.value
+        focused = host.focused
+        assert focused is not None and focused.id == (
+            "settings-console-context-budget-tokens"
+        ), f"focused={focused!r}"
+
+
+@pytest.mark.asyncio
+async def test_search_landing_expands_enclosing_collapsibles():
+    """Review finding 3a (TASK-23109): a field inside Collapsible(collapsed)
+    must be expanded and focused, not given focus at zero region."""
+    from textual.widgets import Collapsible
+
+    app = _build_test_app()
+    host = DestinationHarness(app, "settings")
+    async with host.run_test(size=(190, 55)) as pilot:
+        await _settle_settings_mount_storm(pilot)
+        screen = _active_destination_screen(host)
+        screen._submit_category_search("temperature")
+        for _ in range(12):
+            await pilot.pause()
+        assert screen.active_category == SettingsCategoryId.PROVIDERS_MODELS.value
+        focused = host.focused
+        assert focused is not None and focused.id == (
+            "settings-model-profile-temperature"
+        ), f"focused={focused!r}"
+        for node in focused.ancestors:
+            if isinstance(node, Collapsible):
+                assert node.collapsed is False, "landing left the fold closed"
+        assert focused.region.height > 0, "focused field has zero region"
+
+
+@pytest.mark.asyncio
+async def test_search_next_segment_is_dropped_on_short_terminals():
+    """Review finding 15 (TASK-23109): at 24 rows the fully scoped status
+    line wrapped to ~5 rail rows, pushing matches below the fold -- the
+    '| Next:' segment is dropped below the height threshold and kept on
+    full-size terminals."""
+    app = _build_test_app()
+    host = DestinationHarness(app, "settings")
+    async with host.run_test(size=(110, 24)) as pilot:
+        await _settle_settings_mount_storm(pilot)
+        screen = _active_destination_screen(host)
+        short = screen._category_search_status_text("theme")
+        assert "Enter opens Theme (Interface)" in short
+        assert "Next:" not in short, short
+
+    host_tall = DestinationHarness(_build_test_app(), "settings")
+    async with host_tall.run_test(size=(190, 55)) as pilot:
+        await _settle_settings_mount_storm(pilot)
+        screen = _active_destination_screen(host_tall)
+        tall = screen._category_search_status_text("theme")
+        assert "Next: Appearance › Theme (Interface)" in tall, tall
+
+
+@pytest.mark.asyncio
+async def test_search_landing_on_disabled_field_explains_instead_of_no_op():
+    """Review finding 3b (TASK-23109): .focus() is a silent no-op on a
+    disabled widget -- the landing must open the category and say why in
+    the status line instead."""
+    app = _build_test_app()
+    host = DestinationHarness(app, "settings")
+    async with host.run_test(size=(190, 55)) as pilot:
+        await _settle_settings_mount_storm(pilot)
+        screen = _active_destination_screen(host)
+        target_label = "Preferred Library rail width"
+        screen._submit_category_search(target_label)
+        for _ in range(10):
+            await pilot.pause()
+        assert screen.active_category == SettingsCategoryId.APPEARANCE.value
+        target = screen.query_one("#settings-appearance-library-media-library-width")
+        assert target.disabled, "precondition: width input disabled by default"
+        focused = host.focused
+        assert focused is None or focused.id != target.id
+        status = str(
+            screen.query_one("#settings-category-search-status", Static).renderable
+        )
+        assert "disabled right now" in status, status
+        assert target_label in status, status
+
+
+@pytest.mark.asyncio
 async def test_state_banner_is_pinned_outside_detail_scroll():
     """The State banner is pinned outside the detail scroll body.
 
