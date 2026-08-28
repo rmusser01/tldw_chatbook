@@ -2,7 +2,7 @@
 
 **Date:** 2026-08-28
 
-**Status:** Revised after code-grounded review; pending independent re-review
+**Status:** Reviewer-approved; awaiting user written-spec approval
 
 **Task:** TASK-574
 
@@ -100,6 +100,12 @@ before `_chain_legacy_flat_roots` repairs ambiguous legacy trees in memory. A
 message re-parented only by that compatibility repair cannot become a valid durable
 before-message target.
 
+A temporary session or message with no durable identity keeps the existing
+in-memory first-prompt rewind behavior: validate its in-memory root-user shape,
+clear the active path, and refill the draft, but skip the companion write because
+there is no restartable cursor yet. Persisted-root validation applies once both the
+conversation and target message have durable IDs.
+
 Conversation hydration reads both cursor components and passes both persisted IDs
 to `restore_persisted_session`. Full-tree ingestion maps them to the new store's
 native IDs after rebuilding every node:
@@ -176,6 +182,8 @@ Tests will be written before implementation and cover:
 9. End-to-end persist/drop/resume: empty active path, original prompt draft, old tree
    retained, edited resend creates a root sibling, and a following restart selects
    the new branch with no stale marker.
+10. Temporary/unpersisted sessions still rewind before their first prompt in memory
+    without attempting to persist a companion ID.
 
 The current `dev` baseline has one reproducible test-harness failure in
 `Tests/integration/test_console_rewind_e2e.py`: its raw store/session fixture does
