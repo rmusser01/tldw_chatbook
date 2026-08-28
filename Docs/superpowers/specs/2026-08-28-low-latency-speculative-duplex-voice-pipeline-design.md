@@ -2,8 +2,8 @@
 
 **Date:** 2026-08-28
 
-**Status:** Approved during brainstorming; three-pass spec review completed with the
-final orphan-accounting correction approved by the user; pending final user file review
+**Status:** Approved; three-pass spec review completed with the final
+orphan-accounting correction approved by the user
 
 **Decision:** [ADR-098](../../../backlog/decisions/098-low-latency-speculative-duplex-voice-pipeline.md)
 
