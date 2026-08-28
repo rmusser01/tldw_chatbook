@@ -26,7 +26,7 @@ Registry failures continue to be handled by each caller because their fallback b
 
 ## Verification
 
-Add a red-first routing regression that substitutes the private iterator and proves all three consumers use it. Keep the existing behavior tests unchanged and run the complete `Tests/Tools/test_workspace_file_roots.py` module. Run scoped Ruff, Python compilation, the persistent-diagnostic inventory check if the warning statement changes the generated inventory, and `git diff --check`.
+Add a red-first routing regression that substitutes the private iterator and proves all three consumers use it. Keep the existing behavior tests unchanged and run the complete `Tests/Tools/test_workspace_file_roots.py` module. Regenerate the persistent-diagnostic inventory for the consolidated warning, then run its focused architecture check, scoped Ruff, Python compilation, and `git diff --check`.
 
 ## Governance
 
