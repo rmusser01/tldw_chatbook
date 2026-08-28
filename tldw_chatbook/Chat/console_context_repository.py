@@ -44,6 +44,22 @@ class ContextPolicyReadResult:
     error: str | None = None
 
 
+class ContextPolicyWriteStatus(str, Enum):
+    """Outcome of a context-policy owned-revision compare-and-set."""
+
+    WRITTEN = "written"
+    CONFLICT = "conflict"
+    MISSING = "missing"
+
+
+@dataclass(frozen=True, slots=True)
+class ContextPolicyWriteResult:
+    """Result of writing one complete sparse context-policy snapshot."""
+
+    status: ContextPolicyWriteStatus
+    revision: int | None
+
+
 @dataclass(frozen=True)
 class AuxiliaryPricingProvenance:
     """Content-free pricing identity captured with an auxiliary call."""
@@ -271,6 +287,140 @@ class ConsoleContextRepository:
                 (conversation_id,),
             ).fetchone()
         return _positive_revision(row[0] if row is not None else None)
+
+    def save_policy_if_revision(
+        self,
+        conversation_id: str,
+        overrides: ConsoleContextPolicyOverrides,
+        *,
+        expected_revision: int | None,
+    ) -> ContextPolicyWriteResult:
+        """Write one complete policy only while its owned revision matches.
+
+        ``None`` represents an absent policy row. An empty policy therefore
+        performs a revision-guarded delete and publishes ``None`` as the new
+        durable revision.
+        """
+        if not isinstance(conversation_id, str) or not conversation_id:
+            raise ValueError("conversation_id must be a non-empty string")
+        if not isinstance(overrides, ConsoleContextPolicyOverrides):
+            raise TypeError("overrides must be ConsoleContextPolicyOverrides")
+        if expected_revision is not None and (
+            type(expected_revision) is not int or expected_revision < 1
+        ):
+            raise ValueError("expected_revision must be positive or None")
+
+        values = overrides.to_dict()
+        with self.db.transaction(immediate=True) as cursor:
+            conversation = cursor.execute(
+                "SELECT 1 FROM conversations WHERE id = ? AND deleted = 0",
+                (conversation_id,),
+            ).fetchone()
+            if conversation is None:
+                return ContextPolicyWriteResult(
+                    ContextPolicyWriteStatus.MISSING,
+                    None,
+                )
+            row = cursor.execute(
+                "SELECT policy_revision FROM console_conversation_context_policy "
+                "WHERE conversation_id = ?",
+                (conversation_id,),
+            ).fetchone()
+            current_revision = _positive_revision(
+                row["policy_revision"] if row is not None else None
+            )
+            if current_revision != expected_revision:
+                return ContextPolicyWriteResult(
+                    ContextPolicyWriteStatus.CONFLICT,
+                    current_revision,
+                )
+            if overrides.is_empty:
+                if current_revision is not None:
+                    cursor.execute(
+                        "DELETE FROM console_conversation_context_policy "
+                        "WHERE conversation_id = ? AND policy_revision = ?",
+                        (conversation_id, current_revision),
+                    )
+                    if cursor.rowcount != 1:
+                        latest = cursor.execute(
+                            "SELECT policy_revision FROM "
+                            "console_conversation_context_policy "
+                            "WHERE conversation_id = ?",
+                            (conversation_id,),
+                        ).fetchone()
+                        return ContextPolicyWriteResult(
+                            ContextPolicyWriteStatus.CONFLICT,
+                            _positive_revision(
+                                latest["policy_revision"]
+                                if latest is not None
+                                else None
+                            ),
+                        )
+                return ContextPolicyWriteResult(
+                    ContextPolicyWriteStatus.WRITTEN,
+                    None,
+                )
+
+            policy_values = (
+                values.get("budget_mode"),
+                values.get("custom_budget_tokens"),
+                values.get("compaction_mode"),
+                values.get("compaction_representation"),
+                values.get("trigger_ratio"),
+                values.get("target_ratio"),
+                values.get("summary_max_tokens"),
+                values.get("failure_behavior"),
+                values.get("carry_forward_mode"),
+            )
+            if current_revision is None:
+                cursor.execute(
+                    """
+                    INSERT INTO console_conversation_context_policy(
+                        conversation_id, budget_mode, custom_budget_tokens,
+                        compaction_mode, compaction_representation,
+                        trigger_ratio, target_ratio, summary_max_tokens,
+                        failure_behavior, carry_forward_mode, policy_revision,
+                        updated_at
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, CURRENT_TIMESTAMP)
+                    """,
+                    (conversation_id, *policy_values),
+                )
+                return ContextPolicyWriteResult(
+                    ContextPolicyWriteStatus.WRITTEN,
+                    1,
+                )
+
+            new_revision = current_revision + 1
+            cursor.execute(
+                """
+                UPDATE console_conversation_context_policy
+                   SET budget_mode = ?, custom_budget_tokens = ?,
+                       compaction_mode = ?, compaction_representation = ?,
+                       trigger_ratio = ?, target_ratio = ?,
+                       summary_max_tokens = ?, failure_behavior = ?,
+                       carry_forward_mode = ?, policy_revision = ?,
+                       updated_at = CURRENT_TIMESTAMP
+                 WHERE conversation_id = ? AND policy_revision = ?
+                """,
+                (*policy_values, new_revision, conversation_id, current_revision),
+            )
+            if cursor.rowcount != 1:
+                latest = cursor.execute(
+                    "SELECT policy_revision FROM "
+                    "console_conversation_context_policy "
+                    "WHERE conversation_id = ?",
+                    (conversation_id,),
+                ).fetchone()
+                return ContextPolicyWriteResult(
+                    ContextPolicyWriteStatus.CONFLICT,
+                    _positive_revision(
+                        latest["policy_revision"] if latest is not None else None
+                    ),
+                )
+            return ContextPolicyWriteResult(
+                ContextPolicyWriteStatus.WRITTEN,
+                new_revision,
+            )
 
     def insert_memory(self, record: ConsoleMemoryRecord) -> None:
         """Insert one immutable generated-memory revision."""

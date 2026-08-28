@@ -14,6 +14,7 @@ from tldw_chatbook.Chat.console_context_policy import ConsoleContextPolicyOverri
 from tldw_chatbook.Chat.console_context_repository import (
     ConsoleContextRepository,
     ContextPolicyReadResult,
+    ContextPolicyWriteResult,
 )
 from tldw_chatbook.Chat.console_dispatch_repository import ConsoleDispatchRepository
 from tldw_chatbook.Chat.console_dispatch_checkpoint import (
@@ -62,6 +63,7 @@ from tldw_chatbook.DB.ChaChaNotes_DB import (
 
 logger = _logger.bind(module="ChatPersistenceService")
 _ASSISTANT_AUTHORITY_UNSET = cast(Optional[str], object())
+_CONTEXT_POLICY_EXPECTED_REVISION_UNSET = object()
 
 
 def _initial_metadata_object(metadata: object) -> dict[str, object]:
@@ -288,8 +290,22 @@ class ChatPersistenceService:
         *,
         conversation_id: str,
         overrides: ConsoleContextPolicyOverrides,
-    ) -> int | None:
-        """Persist local sparse context-policy overrides without sync writes."""
+        expected_revision: int | None | object = (
+            _CONTEXT_POLICY_EXPECTED_REVISION_UNSET
+        ),
+    ) -> int | None | ContextPolicyWriteResult:
+        """Persist context policy, optionally guarding its owned revision.
+
+        Omitting ``expected_revision`` preserves the established unconditional
+        caller contract. Settings Apply passes an explicit revision, including
+        ``None`` for an absent row, and receives the typed CAS result.
+        """
+        if expected_revision is not _CONTEXT_POLICY_EXPECTED_REVISION_UNSET:
+            return self.context_repository.save_policy_if_revision(
+                conversation_id,
+                overrides,
+                expected_revision=expected_revision,  # type: ignore[arg-type]
+            )
         return self.context_repository.save_policy(conversation_id, overrides)
 
     @staticmethod

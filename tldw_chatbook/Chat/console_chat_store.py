@@ -62,6 +62,10 @@ from tldw_chatbook.Chat.console_chat_models import (
     console_dispatch_recovery_from_checkpoint,
 )
 from tldw_chatbook.Chat.console_context_policy import ConsoleContextPolicyOverrides
+from tldw_chatbook.Chat.console_context_repository import (
+    ContextPolicyWriteResult,
+    ContextPolicyWriteStatus,
+)
 from tldw_chatbook.Chat.console_dispatch_checkpoint import (
     ConsoleAssistantSettlement,
     ConsoleContinuationHandoff,
@@ -115,7 +119,21 @@ from tldw_chatbook.Chat.console_roleplay_metadata import (
     merge_console_roleplay_context,
 )
 from tldw_chatbook.Chat.console_prefill import PINNED_PREFILL_METADATA_KEY
+from tldw_chatbook.Chat.console_generation_settings_metadata import (
+    ConsoleGenerationSettingsReadStatus,
+    ConsoleGenerationSettingsSnapshot,
+    ConsoleGenerationSettingsWriteResult,
+    ConsoleGenerationSettingsWriteStatus,
+    merge_console_generation_settings,
+    snapshot_from_session_settings,
+)
 from tldw_chatbook.Chat.console_session_settings import ConsoleSessionSettings
+from tldw_chatbook.Chat.console_settings_apply import (
+    ConsoleSettingsLiveCommit,
+    ConsoleSettingsOrigin,
+    ConsoleSettingsSubmission,
+    validate_console_settings_origin,
+)
 from tldw_chatbook.Chat.console_project_instructions import (
     ProjectInstructionControlState,
     decode_project_context_json,
@@ -681,6 +699,46 @@ class ContinuationDurabilityResult:
     reason: str
 
 
+class ConsoleSettingsComponent(str, Enum):
+    """Independently durable parts of one Console settings Apply."""
+
+    GENERATION_SETTINGS = "generation_settings"
+    CONTEXT_POLICY = "context_policy"
+
+
+@dataclass(frozen=True, slots=True)
+class ConsoleSettingsPersistenceFailure:
+    """Safe exact value required to retry one current component revision."""
+
+    component: ConsoleSettingsComponent
+    revision: int
+    persisted_conversation_id: str
+    conversation_binding_revision: int
+    generation_snapshot: ConsoleGenerationSettingsSnapshot | None = None
+    context_policy_overrides: ConsoleContextPolicyOverrides | None = None
+
+    def __post_init__(self) -> None:
+        generation = self.generation_snapshot is not None
+        context = self.context_policy_overrides is not None
+        if generation == context:
+            raise ValueError("A persistence failure must carry exactly one value.")
+        if generation != (
+            self.component is ConsoleSettingsComponent.GENERATION_SETTINGS
+        ):
+            raise ValueError("Failure value does not match its component.")
+
+
+@dataclass(frozen=True, slots=True)
+class ConsoleSettingsPersistenceOutcome:
+    """Per-component result of one serialized durability attempt."""
+
+    session_id: str
+    written_components: frozenset[ConsoleSettingsComponent] = frozenset()
+    failed_components: frozenset[ConsoleSettingsComponent] = frozenset()
+    stale_components: frozenset[ConsoleSettingsComponent] = frozenset()
+    staged: bool = False
+
+
 def _utc_now_iso() -> str:
     return datetime.now(timezone.utc).isoformat()
 
@@ -702,7 +760,25 @@ class ConsoleChatSession:
     workspace_id: str = CONSOLE_GLOBAL_WORKSPACE_ID
     id: str = field(default_factory=lambda: str(uuid4()))
     persisted_conversation_id: str | None = None
+    #: Advances whenever this live slot is rebound or repurposed. Ordinary
+    #: first persistence is the sole None -> id transition that preserves it.
+    conversation_binding_revision: int = 0
     settings: ConsoleSessionSettings | None = None
+    generation_settings_revision: int = 0
+    context_policy_revision: int = 0
+    generation_durable_snapshot: ConsoleGenerationSettingsSnapshot | None = None
+    context_policy_durable_revision: int | None = None
+    new_chat_default_generation: int = 0
+    settings_persistence_failures: dict[
+        ConsoleSettingsComponent, ConsoleSettingsPersistenceFailure
+    ] = field(default_factory=dict)
+    applied_settings_submission_ids: deque[str] = field(
+        default_factory=lambda: deque(maxlen=32)
+    )
+    generation_metadata_status: ConsoleGenerationSettingsReadStatus = (
+        ConsoleGenerationSettingsReadStatus.ABSENT
+    )
+    generation_metadata_warning_shown: bool = False
     #: Exact canonical defaults from which an untouched initial session was
     #: created. ``None`` means the settings have no proven default provenance.
     canonical_settings_baseline: ConsoleSessionSettings | None = field(
@@ -942,6 +1018,7 @@ class ConsoleChatStore:
         self._active_session_epoch = 0
         self._speech_preference_epoch_sequence = 0
         self._sessions: dict[str, ConsoleChatSession] = {}
+        self._settings_persistence_locks: dict[str, asyncio.Lock] = {}
         # Task 13: one app-lifetime, process-memory preparation owner per
         # session.  This state deliberately belongs to the store rather than
         # a mounted Console screen so navigation cannot lose or duplicate a
@@ -1408,6 +1485,8 @@ class ConsoleChatStore:
         proposed_updated_at = _utc_now_iso()
         proposed_identity_revision = session.identity_revision + 1
         proposed_payload_revision = self._payload_revisions.get(session_id, 0) + 1
+        proposed_generation_revision = session.generation_settings_revision + 1
+        proposed_binding_revision = session.conversation_binding_revision + 1
         if not self.is_pristine_session(
             session_id,
             expected_settings=canonical_settings,
@@ -1429,6 +1508,12 @@ class ConsoleChatStore:
         session.character_name = character_name
         session.updated_at = proposed_updated_at
         session.identity_revision = proposed_identity_revision
+        session.generation_settings_revision = proposed_generation_revision
+        session.conversation_binding_revision = proposed_binding_revision
+        session.settings_persistence_failures.pop(
+            ConsoleSettingsComponent.GENERATION_SETTINGS,
+            None,
+        )
         self._payload_revisions[session_id] = proposed_payload_revision
         return session
 
@@ -1471,6 +1556,11 @@ class ConsoleChatStore:
         # dataclass assignments with no property setters, so the bounded commit
         # cannot raise application-level exceptions and preserves held references.
         session.settings = current_canonical_settings
+        session.generation_settings_revision += 1
+        session.settings_persistence_failures.pop(
+            ConsoleSettingsComponent.GENERATION_SETTINGS,
+            None,
+        )
         session.canonical_settings_baseline = current_canonical_settings
         session.updated_at = proposed_updated_at
         return session
@@ -1498,6 +1588,11 @@ class ConsoleChatStore:
         ):
             return False
         session.settings = prior_settings
+        session.generation_settings_revision += 1
+        session.settings_persistence_failures.pop(
+            ConsoleSettingsComponent.GENERATION_SETTINGS,
+            None,
+        )
         session.canonical_settings_baseline = prior_canonical_settings
         session.updated_at = prior_updated_at
         return True
@@ -1532,6 +1627,7 @@ class ConsoleChatStore:
         self._pending_workspace_projections.pop(session_id, None)
         if self.library_policy_coordinator is not None:
             self.library_policy_coordinator.unregister_holder(session_id)
+        self._settings_persistence_locks.pop(session_id, None)
         self._sessions.pop(session_id, None)
         if self.active_session_id == session_id:
             self._activate_session(
@@ -1550,6 +1646,10 @@ class ConsoleChatStore:
         all_nodes: Iterable[ConsoleChatMessage],
         active_leaf_persisted_id: str | None = None,
         settings: ConsoleSessionSettings | None = None,
+        generation_durable_snapshot: ConsoleGenerationSettingsSnapshot | None = None,
+        generation_metadata_status: ConsoleGenerationSettingsReadStatus = (
+            ConsoleGenerationSettingsReadStatus.ABSENT
+        ),
         runtime_backend: str = "local",
         assistant_kind: str | None = "generic",
         assistant_id: str | None = "console",
@@ -1635,7 +1735,12 @@ class ConsoleChatStore:
             project_instruction_state=project_instruction_state,
             activate=activate,
         )
-        session.persisted_conversation_id = str(persisted_conversation_id)
+        self.rebind_persisted_conversation(
+            session.id,
+            str(persisted_conversation_id),
+        )
+        session.generation_durable_snapshot = generation_durable_snapshot
+        session.generation_metadata_status = generation_metadata_status
         self._hydrate_dispatch_recovery(
             session.id,
             str(persisted_conversation_id),
@@ -2783,6 +2888,7 @@ class ConsoleChatStore:
         self._pending_workspace_projections.pop(session_id, None)
         if self.library_policy_coordinator is not None:
             self.library_policy_coordinator.unregister_holder(session_id)
+        self._settings_persistence_locks.pop(session_id, None)
         self._sessions.pop(session_id, None)
         with self._preparation_lock:
             preparation = self._preparations_by_session.get(session_id)
@@ -2915,7 +3021,10 @@ class ConsoleChatStore:
                 if current.origin == "manual":
                     session.draft = current.executed_draft
                 session.title = current.pre_send_title
-                session.persisted_conversation_id = current.pre_send_conversation_id
+                self.rebind_persisted_conversation(
+                    session.id,
+                    current.pre_send_conversation_id,
+                )
             transient_id = current.transient_user_message_id
             if (
                 transient_id is not None
@@ -4025,8 +4134,43 @@ class ConsoleChatStore:
         if not isinstance(identity, ConsoleStagedConversationIdentity):
             raise TypeError("identity must be ConsoleStagedConversationIdentity")
         session = self._session_or_raise(session_id)
-        session.persisted_conversation_id = identity.conversation_id
+        self.publish_first_persisted_conversation(
+            session_id,
+            identity.conversation_id,
+        )
         session.title = identity.title
+
+    def publish_first_persisted_conversation(
+        self,
+        session_id: str,
+        conversation_id: str,
+    ) -> ConsoleChatSession:
+        """Publish ordinary first persistence without rebinding the live slot."""
+        if type(conversation_id) is not str or not conversation_id:
+            raise ValueError("conversation_id must be non-empty text")
+        session = self._session_or_raise(session_id)
+        current = session.persisted_conversation_id
+        if current is not None and current != conversation_id:
+            raise RuntimeError("A persisted Console session cannot be rebound.")
+        session.persisted_conversation_id = conversation_id
+        return session
+
+    def rebind_persisted_conversation(
+        self,
+        session_id: str,
+        conversation_id: str | None,
+    ) -> ConsoleChatSession:
+        """Explicitly bind one live slot to a different durable identity."""
+        if conversation_id is not None and (
+            type(conversation_id) is not str or not conversation_id
+        ):
+            raise ValueError("conversation_id must be non-empty text or None")
+        session = self._session_or_raise(session_id)
+        if session.persisted_conversation_id != conversation_id:
+            session.conversation_binding_revision += 1
+            session.persisted_conversation_id = conversation_id
+            session.settings_persistence_failures.clear()
+        return session
 
     def session_settings(self, session_id: str) -> ConsoleSessionSettings | None:
         """Return in-memory settings for a native Console session."""
@@ -4037,6 +4181,98 @@ class ConsoleChatStore:
     ) -> ConsoleContextPolicyOverrides:
         """Return sparse conversation-owned context-policy overrides."""
         return self._session_or_raise(session_id).context_policy_overrides
+
+    def capture_console_settings_origin(
+        self,
+        session_id: str,
+    ) -> ConsoleSettingsOrigin:
+        """Capture the exact live/durable binding before a settings surface opens."""
+        session = self._session_or_raise(session_id)
+        return ConsoleSettingsOrigin(
+            session_id=session.id,
+            persisted_conversation_id=session.persisted_conversation_id,
+            conversation_binding_revision=session.conversation_binding_revision,
+        )
+
+    def session_user_display_name_override(self, session_id: str) -> str | None:
+        """Return one exact session's conversation-owned user display name."""
+        return self._session_or_raise(session_id).user_display_name_override
+
+    def commit_console_settings_live(
+        self,
+        submission: ConsoleSettingsSubmission,
+    ) -> ConsoleSettingsLiveCommit:
+        """Commit both settings components to their exact live origin only."""
+        if not isinstance(submission, ConsoleSettingsSubmission):
+            raise TypeError("submission must be ConsoleSettingsSubmission")
+        session = self._sessions.get(submission.origin.session_id)
+        if session is None or not validate_console_settings_origin(
+            submission.origin,
+            live_session_id=session.id if session is not None else None,
+            live_persisted_conversation_id=(
+                session.persisted_conversation_id if session is not None else None
+            ),
+            live_conversation_binding_revision=(
+                session.conversation_binding_revision if session is not None else -1
+            ),
+        ):
+            raise ValueError("Chat closed; nothing applied.")
+        if submission.submission_id in session.applied_settings_submission_ids:
+            raise ValueError("Console settings submission was already applied.")
+        if not isinstance(submission.draft.settings, ConsoleSessionSettings):
+            raise TypeError("submission settings must be ConsoleSessionSettings")
+        if not isinstance(
+            submission.draft.context_policy_overrides,
+            ConsoleContextPolicyOverrides,
+        ):
+            raise TypeError(
+                "submission context policy must be ConsoleContextPolicyOverrides"
+            )
+
+        current_settings = session.settings
+        settings = replace(
+            submission.draft.settings,
+            source="user",
+            system_prompt=(
+                current_settings.system_prompt if current_settings is not None else None
+            ),
+            pinned_prefill=(
+                current_settings.pinned_prefill if current_settings is not None else None
+            ),
+        )
+        session.applied_settings_submission_ids.append(submission.submission_id)
+        self.replace_session_settings(session.id, settings)
+        self._replace_session_context_policy_live(
+            session,
+            submission.draft.context_policy_overrides,
+        )
+        return ConsoleSettingsLiveCommit(
+            submission_id=submission.submission_id,
+            session_id=session.id,
+            persisted_conversation_id=session.persisted_conversation_id,
+            conversation_binding_revision=session.conversation_binding_revision,
+            generation_revision=session.generation_settings_revision,
+            context_policy_revision=session.context_policy_revision,
+            settings=settings,
+            context_policy_overrides=session.context_policy_overrides,
+        )
+
+    def _replace_session_context_policy_live(
+        self,
+        session: ConsoleChatSession,
+        overrides: ConsoleContextPolicyOverrides,
+    ) -> None:
+        """Replace only live policy state and supersede an older retry."""
+        if not isinstance(overrides, ConsoleContextPolicyOverrides):
+            raise TypeError("overrides must be ConsoleContextPolicyOverrides")
+        session.context_policy_overrides = overrides
+        session.context_policy_error = None
+        session.context_policy_revision += 1
+        session.settings_persistence_failures.pop(
+            ConsoleSettingsComponent.CONTEXT_POLICY,
+            None,
+        )
+        self._bump_payload_revision(session.id)
 
     def set_session_context_policy_overrides(
         self,
@@ -4052,18 +4288,18 @@ class ConsoleChatStore:
         if not isinstance(overrides, ConsoleContextPolicyOverrides):
             raise TypeError("overrides must be ConsoleContextPolicyOverrides")
         session = self._session_or_raise(session_id)
-        session.context_policy_overrides = overrides
-        session.context_policy_error = None
-        self._bump_payload_revision(session_id)
+        expected_revision = session.context_policy_durable_revision
+        self._replace_session_context_policy_live(session, overrides)
         if session.persisted_conversation_id is None or self.persistence is None:
             return session, True
         writer = getattr(self.persistence, "update_conversation_context_policy", None)
         if not callable(writer):
             return session, False
         try:
-            writer(
+            result = writer(
                 conversation_id=session.persisted_conversation_id,
                 overrides=overrides,
+                expected_revision=expected_revision,
             )
         except Exception:
             logger.error(
@@ -4071,7 +4307,309 @@ class ConsoleChatStore:
                 "keeps the applied value."
             )
             return session, False
+        if isinstance(result, ContextPolicyWriteResult):
+            if result.status is not ContextPolicyWriteStatus.WRITTEN:
+                return session, False
+            session.context_policy_durable_revision = result.revision
+        elif type(result) is int or result is None:
+            session.context_policy_durable_revision = result
+        else:
+            return session, False
         return session, True
+
+    async def persist_console_settings_commit_serialized(
+        self,
+        commit: ConsoleSettingsLiveCommit,
+    ) -> ConsoleSettingsPersistenceOutcome:
+        """Persist one live commit through the session's shared serializer."""
+        if not isinstance(commit, ConsoleSettingsLiveCommit):
+            raise TypeError("commit must be ConsoleSettingsLiveCommit")
+        lock = self._settings_persistence_locks.setdefault(
+            commit.session_id,
+            asyncio.Lock(),
+        )
+        async with lock:
+            return await self._persist_console_settings_components_locked(
+                session_id=commit.session_id,
+                persisted_conversation_id=commit.persisted_conversation_id,
+                conversation_binding_revision=commit.conversation_binding_revision,
+                generation_revision=commit.generation_revision,
+                context_policy_revision=commit.context_policy_revision,
+                generation_snapshot=snapshot_from_session_settings(commit.settings),
+                context_policy_overrides=commit.context_policy_overrides,
+                components=frozenset(ConsoleSettingsComponent),
+            )
+
+    async def retry_console_settings_persistence(
+        self,
+        *,
+        session_id: str,
+        component: ConsoleSettingsComponent,
+        revision: int,
+    ) -> bool:
+        """Retry one still-current failed component without advancing revisions."""
+        if not isinstance(component, ConsoleSettingsComponent):
+            raise TypeError("component must be ConsoleSettingsComponent")
+        lock = self._settings_persistence_locks.setdefault(
+            session_id,
+            asyncio.Lock(),
+        )
+        async with lock:
+            session = self._sessions.get(session_id)
+            failure = (
+                session.settings_persistence_failures.get(component)
+                if session is not None
+                else None
+            )
+            current_revision = (
+                session.generation_settings_revision
+                if session is not None
+                and component is ConsoleSettingsComponent.GENERATION_SETTINGS
+                else session.context_policy_revision
+                if session is not None
+                else None
+            )
+            if (
+                session is None
+                or failure is None
+                or failure.revision != revision
+                or current_revision != revision
+            ):
+                return False
+            outcome = await self._persist_console_settings_components_locked(
+                session_id=session_id,
+                persisted_conversation_id=failure.persisted_conversation_id,
+                conversation_binding_revision=(
+                    failure.conversation_binding_revision
+                ),
+                generation_revision=(
+                    revision
+                    if component is ConsoleSettingsComponent.GENERATION_SETTINGS
+                    else session.generation_settings_revision
+                ),
+                context_policy_revision=(
+                    revision
+                    if component is ConsoleSettingsComponent.CONTEXT_POLICY
+                    else session.context_policy_revision
+                ),
+                generation_snapshot=failure.generation_snapshot,
+                context_policy_overrides=failure.context_policy_overrides,
+                components=frozenset({component}),
+            )
+            return component in outcome.written_components
+
+    async def _persist_console_settings_components_locked(
+        self,
+        *,
+        session_id: str,
+        persisted_conversation_id: str | None,
+        conversation_binding_revision: int,
+        generation_revision: int,
+        context_policy_revision: int,
+        generation_snapshot: ConsoleGenerationSettingsSnapshot | None,
+        context_policy_overrides: ConsoleContextPolicyOverrides | None,
+        components: frozenset[ConsoleSettingsComponent],
+    ) -> ConsoleSettingsPersistenceOutcome:
+        """Perform selected component writes while the session lock is held."""
+        written: set[ConsoleSettingsComponent] = set()
+        failed: set[ConsoleSettingsComponent] = set()
+        stale: set[ConsoleSettingsComponent] = set()
+        session = self._sessions.get(session_id)
+        if not self._console_settings_identity_matches(
+            session,
+            persisted_conversation_id=persisted_conversation_id,
+            conversation_binding_revision=conversation_binding_revision,
+        ):
+            return ConsoleSettingsPersistenceOutcome(
+                session_id=session_id,
+                stale_components=components,
+            )
+        assert session is not None
+        if session.ephemeral or persisted_conversation_id is None:
+            return ConsoleSettingsPersistenceOutcome(
+                session_id=session_id,
+                staged=True,
+            )
+
+        if ConsoleSettingsComponent.GENERATION_SETTINGS in components:
+            component = ConsoleSettingsComponent.GENERATION_SETTINGS
+            if (
+                session.generation_settings_revision != generation_revision
+                or generation_snapshot is None
+            ):
+                stale.add(component)
+            else:
+                writer = getattr(
+                    self.persistence,
+                    "update_conversation_generation_settings",
+                    None,
+                )
+                base = session.generation_durable_snapshot
+                try:
+                    result = (
+                        await asyncio.to_thread(
+                            writer,
+                            conversation_id=persisted_conversation_id,
+                            snapshot=generation_snapshot,
+                            expected_snapshot=base,
+                        )
+                        if callable(writer)
+                        else object()
+                    )
+                except Exception:
+                    result = None
+                current = self._sessions.get(session_id)
+                identity_matches = self._console_settings_identity_matches(
+                    current,
+                    persisted_conversation_id=persisted_conversation_id,
+                    conversation_binding_revision=conversation_binding_revision,
+                )
+                if (
+                    isinstance(result, ConsoleGenerationSettingsWriteResult)
+                    and result.status
+                    is ConsoleGenerationSettingsWriteStatus.WRITTEN
+                    and identity_matches
+                ):
+                    assert current is not None
+                    current.generation_durable_snapshot = result.snapshot
+                    if current.generation_settings_revision == generation_revision:
+                        current.settings_persistence_failures.pop(component, None)
+                        written.add(component)
+                    else:
+                        stale.add(component)
+                elif (
+                    identity_matches
+                    and current is not None
+                    and current.generation_settings_revision == generation_revision
+                ):
+                    self._record_console_settings_failure(
+                        current,
+                        component=component,
+                        revision=generation_revision,
+                        generation_snapshot=generation_snapshot,
+                    )
+                    failed.add(component)
+                else:
+                    stale.add(component)
+
+        if ConsoleSettingsComponent.CONTEXT_POLICY in components:
+            component = ConsoleSettingsComponent.CONTEXT_POLICY
+            current = self._sessions.get(session_id)
+            if (
+                not self._console_settings_identity_matches(
+                    current,
+                    persisted_conversation_id=persisted_conversation_id,
+                    conversation_binding_revision=conversation_binding_revision,
+                )
+                or current is None
+                or current.context_policy_revision != context_policy_revision
+                or context_policy_overrides is None
+            ):
+                stale.add(component)
+            else:
+                writer = getattr(
+                    self.persistence,
+                    "update_conversation_context_policy",
+                    None,
+                )
+                base_revision = current.context_policy_durable_revision
+                try:
+                    result = (
+                        await asyncio.to_thread(
+                            writer,
+                            conversation_id=persisted_conversation_id,
+                            overrides=context_policy_overrides,
+                            expected_revision=base_revision,
+                        )
+                        if callable(writer)
+                        else object()
+                    )
+                except Exception:
+                    result = object()
+                current = self._sessions.get(session_id)
+                identity_matches = self._console_settings_identity_matches(
+                    current,
+                    persisted_conversation_id=persisted_conversation_id,
+                    conversation_binding_revision=conversation_binding_revision,
+                )
+                context_written, durable_revision = self._context_write_result(result)
+                if context_written and identity_matches:
+                    assert current is not None
+                    current.context_policy_durable_revision = durable_revision
+                    if current.context_policy_revision == context_policy_revision:
+                        current.settings_persistence_failures.pop(component, None)
+                        written.add(component)
+                    else:
+                        stale.add(component)
+                elif (
+                    identity_matches
+                    and current is not None
+                    and current.context_policy_revision == context_policy_revision
+                ):
+                    self._record_console_settings_failure(
+                        current,
+                        component=component,
+                        revision=context_policy_revision,
+                        context_policy_overrides=context_policy_overrides,
+                    )
+                    failed.add(component)
+                else:
+                    stale.add(component)
+
+        return ConsoleSettingsPersistenceOutcome(
+            session_id=session_id,
+            written_components=frozenset(written),
+            failed_components=frozenset(failed),
+            stale_components=frozenset(stale),
+        )
+
+    @staticmethod
+    def _context_write_result(result: object) -> tuple[bool, int | None]:
+        if isinstance(result, ContextPolicyWriteResult):
+            return (
+                result.status is ContextPolicyWriteStatus.WRITTEN,
+                result.revision,
+            )
+        if type(result) is int or result is None:
+            return True, result
+        return False, None
+
+    @staticmethod
+    def _console_settings_identity_matches(
+        session: ConsoleChatSession | None,
+        *,
+        persisted_conversation_id: str | None,
+        conversation_binding_revision: int,
+    ) -> bool:
+        return bool(
+            session is not None
+            and session.persisted_conversation_id == persisted_conversation_id
+            and session.conversation_binding_revision
+            == conversation_binding_revision
+        )
+
+    @staticmethod
+    def _record_console_settings_failure(
+        session: ConsoleChatSession,
+        *,
+        component: ConsoleSettingsComponent,
+        revision: int,
+        generation_snapshot: ConsoleGenerationSettingsSnapshot | None = None,
+        context_policy_overrides: ConsoleContextPolicyOverrides | None = None,
+    ) -> None:
+        conversation_id = session.persisted_conversation_id
+        if conversation_id is None:
+            return
+        session.settings_persistence_failures[component] = (
+            ConsoleSettingsPersistenceFailure(
+                component=component,
+                revision=revision,
+                persisted_conversation_id=conversation_id,
+                conversation_binding_revision=session.conversation_binding_revision,
+                generation_snapshot=generation_snapshot,
+                context_policy_overrides=context_policy_overrides,
+            )
+        )
 
     def set_auto_speak(
         self, session_id: str, enabled: bool
@@ -4214,6 +4752,11 @@ class ConsoleChatStore:
                 )
             session.canonical_settings_baseline = canonical_settings_baseline
         session.settings = settings
+        session.generation_settings_revision += 1
+        session.settings_persistence_failures.pop(
+            ConsoleSettingsComponent.GENERATION_SETTINGS,
+            None,
+        )
         self._bump_payload_revision(session_id)
         return session
 
@@ -8511,6 +9054,17 @@ class ConsoleChatStore:
             else None,
             **identity_kwargs,
         )
+        staged_generation_snapshot = (
+            snapshot_from_session_settings(session.settings)
+            if session.settings is not None
+            and session.generation_settings_revision > 0
+            else None
+        )
+        if staged_generation_snapshot is not None:
+            create_kwargs["metadata"] = merge_console_generation_settings(
+                create_kwargs.get("metadata"),
+                staged_generation_snapshot,
+            )
         if session.speech_preferences != ConsoleSpeechPreferences():
             if not self._persistence_accepts_kwarg(
                 create_conversation,
@@ -8546,6 +9100,8 @@ class ConsoleChatStore:
             )
             committed_policy = None
         self.publish_committed_identity(session_id, committed_identity)
+        if staged_generation_snapshot is not None:
+            session.generation_durable_snapshot = staged_generation_snapshot
         if isinstance(committed_policy, ConsoleLibraryPolicySnapshot):
             session.library_policy_holder.snapshot = committed_policy
             session.library_policy_holder.explicitly_staged = False
@@ -8649,28 +9205,75 @@ class ConsoleChatStore:
 
     def _flush_context_policy_on_first_persist(
         self, session: ConsoleChatSession
-    ) -> None:
-        """Write staged non-empty policy after the conversation row exists."""
+    ) -> ContextPolicyWriteResult | None:
+        """Write one staged policy and publish its durable owned revision."""
         if (
             session.persisted_conversation_id is None
-            or session.context_policy_overrides.is_empty
+            or session.context_policy_revision < 1
             or self.persistence is None
         ):
-            return
+            return None
         writer = getattr(self.persistence, "update_conversation_context_policy", None)
         if not callable(writer):
             logger.warning(
                 "Skipped staged Console context-policy flush: persistence "
                 "adapter exposes no policy write seam."
             )
-            return
+            result = ContextPolicyWriteResult(
+                ContextPolicyWriteStatus.MISSING,
+                session.context_policy_durable_revision,
+            )
+            self._record_console_settings_failure(
+                session,
+                component=ConsoleSettingsComponent.CONTEXT_POLICY,
+                revision=session.context_policy_revision,
+                context_policy_overrides=session.context_policy_overrides,
+            )
+            return result
         try:
-            writer(
+            raw_result = writer(
                 conversation_id=session.persisted_conversation_id,
                 overrides=session.context_policy_overrides,
+                expected_revision=session.context_policy_durable_revision,
             )
         except Exception:
             logger.error("Failed to flush Console context policy on first persist.")
+            result = ContextPolicyWriteResult(
+                ContextPolicyWriteStatus.CONFLICT,
+                session.context_policy_durable_revision,
+            )
+            self._record_console_settings_failure(
+                session,
+                component=ConsoleSettingsComponent.CONTEXT_POLICY,
+                revision=session.context_policy_revision,
+                context_policy_overrides=session.context_policy_overrides,
+            )
+            return result
+        written, revision = self._context_write_result(raw_result)
+        if written:
+            session.context_policy_durable_revision = revision
+            session.settings_persistence_failures.pop(
+                ConsoleSettingsComponent.CONTEXT_POLICY,
+                None,
+            )
+            return ContextPolicyWriteResult(
+                ContextPolicyWriteStatus.WRITTEN,
+                revision,
+            )
+        self._record_console_settings_failure(
+            session,
+            component=ConsoleSettingsComponent.CONTEXT_POLICY,
+            revision=session.context_policy_revision,
+            context_policy_overrides=session.context_policy_overrides,
+        )
+        return (
+            raw_result
+            if isinstance(raw_result, ContextPolicyWriteResult)
+            else ContextPolicyWriteResult(
+                ContextPolicyWriteStatus.CONFLICT,
+                session.context_policy_durable_revision,
+            )
+        )
 
     def _resolve_context_policy_on_resume(self, session_id: str) -> None:
         """Hydrate one persisted session's local policy without app-root state."""
@@ -8688,10 +9291,15 @@ class ConsoleChatStore:
             return
         if isinstance(result, ConsoleContextPolicyOverrides):
             session.context_policy_overrides = result
+            session.context_policy_durable_revision = None
             return
         overrides = getattr(result, "overrides", None)
         if isinstance(overrides, ConsoleContextPolicyOverrides):
             session.context_policy_overrides = overrides
+        revision = getattr(result, "revision", None)
+        session.context_policy_durable_revision = (
+            revision if type(revision) is int and revision > 0 else None
+        )
         error = getattr(result, "error", None)
         session.context_policy_error = error if isinstance(error, str) else None
 
@@ -8834,6 +9442,17 @@ class ConsoleChatStore:
                     ),
                 )
             )
+        staged_generation_snapshot = (
+            snapshot_from_session_settings(session.settings)
+            if session.settings is not None
+            and session.generation_settings_revision > 0
+            else None
+        )
+        if staged_generation_snapshot is not None:
+            metadata = merge_console_generation_settings(
+                metadata,
+                staged_generation_snapshot,
+            )
         local_character_id = session.local_character_id()
         conversation_kwargs: dict[str, object] = {
             "conversation_title": identity.title,
@@ -8883,6 +9502,8 @@ class ConsoleChatStore:
         )
 
         self.publish_committed_identity(session_id, identity)
+        if staged_generation_snapshot is not None:
+            session.generation_durable_snapshot = staged_generation_snapshot
         session.ephemeral = False
         session.library_policy_holder.snapshot = committed_policy
         session.library_policy_holder.explicitly_staged = False
@@ -8910,6 +9531,7 @@ class ConsoleChatStore:
             except Exception:
                 logger.exception("on_scope_flushed callback failed after promotion.")
         self._persist_project_instruction_state(session)
+        self._flush_context_policy_on_first_persist(session)
         return identity.conversation_id
 
     def set_session_system_prompt(
