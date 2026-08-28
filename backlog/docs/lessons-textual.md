@@ -220,6 +220,49 @@ class-level replacement plus framework dispatch that splits in two.
 
 ---
 
+## `display = False` does not stop a widget's timers — and a paused Timer you don't hold is garbage-collected mid-pause
+
+**TASK-23022, 2026-08-27.** Six progress widgets mounted `display: none`
+(`ModelInstallProgress`'s indeterminate bar on four Lab views + Library, the
+Personas CCP overlay's `LoadingIndicator`, plus a seventh found in the audit on
+the Console inspector rail) burned **960 of 1018 timer fires / 15 s changing
+zero pixels — 88% of the Lab screen's idle CPU**. Textual 8.2.8 gates only the
+*repaint* on `is_on_screen` (`dom.py`'s `automatic_refresh`, itself a
+`find_widget` raise/catch per fire); the timers themselves —
+`Bar.watch_percentage`'s 15 Hz `auto_refresh` when `percentage is None`,
+`ProgressBar.on_mount`'s unconditional `set_interval(1, self.update)` (armed
+even with `show_eta=False`), `LoadingIndicator._on_mount`'s 16 Hz — run
+forever regardless of `display`. Three mechanism facts that shaped the fix
+(`Widgets/pausable_progress.py`; guarded by
+`Tests/Architecture/test_progress_widget_clock_guard.py`):
+
+1. **You cannot suppress a base class's `on_mount` by overriding it.**
+   `_get_dispatch_methods` walks the MRO and dispatches every class's own
+   naming-convention handler — subclass and base BOTH run. To govern a clock a
+   base arms, intercept `set_interval` itself (every arm flows through it) or
+   `event.prevent_default()` away the whole chain.
+2. **`Show`/`Hide` events track the LAYOUT map, not the viewport.** The
+   compositor arranges with `visible_only=False`, so `display`-hidden subtrees
+   leave the map (Hide fires, scrolled-out widgets don't), and a widget
+   mounted hidden receives *neither* event — the initial state must be
+   "paused until first Show".
+3. **A paused `Timer` whose reference was discarded is destroyed by cycle GC
+   mid-pause.** Running timers are rooted by the event loop (sleep handle /
+   Event waiter); a *paused* one blocked on its own `Event.wait()` exists only
+   in the task↔timer reference cycle. With weak tracking the paused ETA timer
+   vanished — "Task was destroyed but it is pending!" on stderr, and the clock
+   would silently never resume on Show. Hold paused timers **strongly**.
+   (`Timer._skip` defaults True, so resume fast-forwards without a fire
+   burst, and `Timer.stop()` works from the paused state, so unmount/quit
+   teardown is unaffected — both verified by lifecycle tests and a live
+   Ctrl+Q walk.)
+
+Fires are the evidence currency here: idle CPU % is load-sensitive, but
+fires / 15 s reproduced the review's numbers exactly (1017 vs 1018) across
+every interleaved run.
+
+---
+
 ## Related
 
 - `lessons-testing-evidence.md` — includes the Pilot-harness traps (detached widget

@@ -5,11 +5,13 @@ from functools import wraps
 from contextlib import asynccontextmanager
 from datetime import datetime
 
-from textual.widgets import LoadingIndicator, Static
+from textual.widgets import Static
 from textual.containers import Center
 from textual.reactive import reactive
 from textual import work
 from loguru import logger
+
+from tldw_chatbook.Widgets.pausable_progress import PausableLoadingIndicator
 
 logger = logger.bind(module="CCPLoadingIndicators")
 
@@ -66,9 +68,15 @@ class CCPLoadingWidget(Static):
             self.add_class("inline")
 
     def compose(self):
-        """Compose the loading widget with a LoadingIndicator and text."""
+        """Compose the loading widget with a LoadingIndicator and text.
+
+        TASK-23022: this widget is mounted ``display: none`` on the Personas
+        screen and only shown while an operation runs. A stock
+        LoadingIndicator arms a 16 Hz clock at mount that hiding never stops;
+        the pausable variant is silent until the overlay becomes visible.
+        """
         with Center():
-            yield LoadingIndicator()
+            yield PausableLoadingIndicator()
             yield Static(self.loading_text, classes="loading-text")
 
     def watch_is_loading(self, is_loading: bool) -> None:

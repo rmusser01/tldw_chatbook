@@ -50,6 +50,7 @@ from ...Chatbooks.database_paths import (
     get_private_chatbooks_dir,
 )
 from ...Chatbooks.chatbook_models import ContentType
+from tldw_chatbook.Widgets.pausable_progress import PausableProgressBar
 from ...Chatbooks.server_chatbook_service import (
     build_server_job_record,
     record_server_job,
@@ -702,7 +703,7 @@ class ProgressStep(WizardStep):
             )
 
             # Progress bar
-            yield ProgressBar(
+            yield PausableProgressBar(
                 total=100, show_percentage=True, show_eta=False, id="export-progress"
             )
 

@@ -11,6 +11,7 @@ from textual.widget import Widget
 from textual.widgets import ProgressBar, Static
 
 from tldw_chatbook.UI.Screens.model_browser_state import format_mib
+from tldw_chatbook.Widgets.pausable_progress import PausableProgressBar
 
 if TYPE_CHECKING:
     from tldw_chatbook.Model_Artifacts.acquisition import AcquisitionProgress
@@ -117,7 +118,11 @@ class ModelInstallProgress(Widget):
         """Compose the stable progress display."""
         yield Static("Waiting to install", id="model-install-progress-phase")
         yield Static("", id="model-install-progress-detail", markup=False)
-        bar = ProgressBar(
+        # TASK-23022: this bar is mounted hidden on every screen that embeds
+        # ModelInstallProgress. A stock indeterminate ProgressBar arms a 15 Hz
+        # refresh plus a 1 Hz ETA sampler that `display = False` does not
+        # stop; PausableProgressBar keeps both clocks silent until shown.
+        bar = PausableProgressBar(
             total=None,
             show_eta=False,
             id="model-install-progress-bar",
