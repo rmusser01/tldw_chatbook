@@ -5605,7 +5605,7 @@ class ChatScreen(BaseAppScreen):
                 chat_dictionary_applier=self._console_chat_dictionary_applier,
                 world_info_applier=self._console_world_info_applier,
                 rag_capture_provider=self._retrieval._capture_console_staged_rag,
-                default_session_settings=self._session._default_console_session_settings,
+                default_session_settings=self._session._blank_console_session_settings,
                 library_provider_factory=self._console_library_provider_factory,
                 global_user_display_name=self._global_chat_display_name,
                 turn_context_provider=(
@@ -5672,7 +5672,7 @@ class ChatScreen(BaseAppScreen):
                 retrieval, "_capture_console_staged_rag", None
             ),
             "_default_session_settings": getattr(
-                session, "_default_console_session_settings", None
+                session, "_blank_console_session_settings", None
             ),
             "_library_provider_factory": self._console_library_provider_factory,
             "_global_user_display_name": self._global_chat_display_name,
@@ -16097,10 +16097,8 @@ class ChatScreen(BaseAppScreen):
         """
         action = parse_prefill_args(parse.args)
         store = self._ensure_console_chat_store()
-        session = store.ensure_session(
-            workspace_id=store.workspace_context.active_workspace_id,
-            settings=self._session._default_console_session_settings(),
-        )
+        self._session._ensure_active_console_session_settings()
+        session = store.ensure_session()
         if session.settings is None:
             # `ensure_session` only applies `settings=` when it CREATES the
             # session; one created earlier without settings (e.g. by a bare
@@ -16758,9 +16756,8 @@ class ChatScreen(BaseAppScreen):
                 self.app_instance.notify("No image on the clipboard.")
                 return
             store = self._ensure_console_chat_store()
-            session = store.ensure_session(
-                workspace_id=store.workspace_context.active_workspace_id
-            )
+            self._session._ensure_active_console_session_settings()
+            session = store.ensure_session()
             # Attach sequentially, stopping as soon as the cap is hit, so a
             # capacity-exhausted drop gets ONE truncation toast here instead
             # of one "limit reached" toast per remaining file.
@@ -16797,9 +16794,8 @@ class ChatScreen(BaseAppScreen):
             )
             return
         store = self._ensure_console_chat_store()
-        session = store.ensure_session(
-            workspace_id=store.workspace_context.active_workspace_id
-        )
+        self._session._ensure_active_console_session_settings()
+        session = store.ensure_session()
         if not store.add_pending_attachment(session.id, attachment):
             self.app_instance.notify(
                 "Attachment limit reached (5 per message).", severity="warning"
@@ -16849,9 +16845,8 @@ class ChatScreen(BaseAppScreen):
             )
         else:
             store = self._ensure_console_chat_store()
-            session = store.ensure_session(
-                workspace_id=store.workspace_context.active_workspace_id
-            )
+            self._session._ensure_active_console_session_settings()
+            session = store.ensure_session()
             if not store.add_pending_attachment(session.id, attachment):
                 self.app_instance.notify(
                     "Attachment limit reached (5 per message).", severity="warning"

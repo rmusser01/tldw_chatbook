@@ -38,6 +38,7 @@ Rig notes:
 
 from __future__ import annotations
 
+import asyncio
 import time
 
 import pytest
@@ -866,3 +867,84 @@ async def test_a_launch_hydrates_only_the_conversations_that_are_owed(tmp_path):
             session.generation_metadata_status
             is ConsoleGenerationSettingsReadStatus.VALID
         )
+
+
+@pytest.mark.asyncio
+async def test_launch_wake_rereads_published_default_after_tree_load(
+    monkeypatch,
+) -> None:
+    from types import SimpleNamespace
+
+    from tldw_chatbook.Chat import console_launch_wake
+    from tldw_chatbook.Chat.console_chat_store import ConsoleChatStore
+
+    app = _build_test_app("library")
+    app.app_config["chat_defaults"] = {
+        "provider": "openai",
+        "model": "before-await-model",
+    }
+    app.app_config["api_settings"] = {
+        "openai": {"api_key": "test-key"},
+    }
+    store = ConsoleChatStore()
+
+    class PendingWake:
+        def wire(self, *, app):
+            self.app = app
+
+        def seed_from_marks(self):
+            return 1
+
+        def has_pending(self, _conversation_id):
+            return True
+
+        def retry_soon(self):
+            return None
+
+    controller = SimpleNamespace(store=store, fleet_wake=PendingWake())
+    monkeypatch.setattr(
+        console_launch_wake,
+        "_ensure_launch_runtime",
+        lambda _app: controller,
+    )
+    monkeypatch.setattr(
+        console_launch_wake,
+        "_conversation_exists_locally",
+        lambda _app, _conversation_id: True,
+    )
+
+    async def load_after_publication(_app, conversation_id):
+        await asyncio.sleep(0)
+        app.app_config = {
+            "chat_defaults": {
+                "provider": "llama_cpp",
+                "model": "published-during-await",
+            },
+            "api_settings": {
+                "llama_cpp": {
+                    "api_url": "http://127.0.0.1:9099",
+                    "model": "published-during-await",
+                }
+            },
+        }
+        return {
+            "conversation": {"id": conversation_id, "title": "Wake target"},
+            "root_threads": [],
+        }
+
+    monkeypatch.setattr(
+        console_launch_wake,
+        "load_console_conversation_tree",
+        load_after_publication,
+    )
+
+    hydrated = await console_launch_wake.deliver_launch_wakes(
+        app,
+        ("conversation-published-during-await",),
+    )
+
+    assert hydrated == 1
+    [session] = store.sessions()
+    assert session.settings is not None
+    assert session.settings.provider == "llama_cpp"
+    assert session.settings.model == "published-during-await"

@@ -30,6 +30,7 @@ from Tests.UI.test_product_maturity_gate1_core_loop_screen_adaptation import (
     _visible_text as _screen_visible_text,
 )
 from tldw_chatbook.Chat.console_chat_models import (
+    ConsoleMessageRole,
     ConsoleRunState,
     ConsoleRunStatus,
     ConsoleWorkspaceContext,
@@ -8188,6 +8189,128 @@ def test_console_published_default_generation_fences_already_open_pristine_chat(
 
     assert refreshed is stale
     assert store.session_settings(session.id) is stale
+
+
+def test_console_published_default_generation_fences_bare_pristine_chat() -> None:
+    app = _build_test_app()
+    app.console_new_chat_default_generation = 0
+    app.app_config["chat_defaults"] = {"provider": "openai", "model": "gpt-4o"}
+    app.app_config["api_settings"] = {"openai": {"api_key": ""}}
+    console = ChatScreen(app)
+    store = console._ensure_console_chat_store()
+    session = store.ensure_session()
+    assert session.settings is None
+    assert session.new_chat_default_generation == 0
+
+    app.app_config["chat_defaults"] = {
+        "provider": "llama_cpp",
+        "model": "published-model",
+    }
+    app.app_config["api_settings"]["llama_cpp"] = {
+        "api_url": "http://127.0.0.1:9099",
+        "model": "published-model",
+    }
+    app.console_new_chat_default_generation = 1
+
+    refreshed = console._session._maybe_refresh_stale_default_console_settings(
+        store,
+        session,
+    )
+
+    assert refreshed is None
+    assert store.session_settings(session.id) is None
+
+
+@pytest.mark.asyncio
+async def test_system_message_first_new_chat_captures_settings_and_generation() -> None:
+    app = _build_test_app()
+    app.console_new_chat_default_generation = 15
+    app.app_config["chat_defaults"] = {
+        "provider": "openai",
+        "model": "system-message-model",
+    }
+    app.app_config["api_settings"] = {
+        "openai": {
+            "api_key": "test-key",
+            "model_defaults": {
+                "system-message-model": {
+                    "temperature": 0.27,
+                    "streaming": False,
+                }
+            },
+        }
+    }
+    console = ChatScreen(app)
+
+    async def sync_ui() -> None:
+        return None
+
+    console._sync_native_console_chat_ui = sync_ui
+
+    await console._append_native_console_system_message("First status")
+
+    store = console._ensure_console_chat_store()
+    [session] = store.sessions()
+    assert session.settings is not None
+    assert session.settings.provider == "openai"
+    assert session.settings.model == "system-message-model"
+    assert session.settings.temperature == 0.27
+    assert session.settings.streaming is False
+    assert session.canonical_settings_baseline is session.settings
+    assert session.new_chat_default_generation == 15
+    [message] = store.messages_for_session(session.id)
+    assert message.role is ConsoleMessageRole.SYSTEM
+    assert message.content == "First status"
+
+
+@pytest.mark.asyncio
+async def test_attachment_first_new_chat_captures_settings_and_generation(
+    monkeypatch,
+) -> None:
+    from tldw_chatbook.Chat import attachment_core
+    from tldw_chatbook.Chat.attachment_core import PendingAttachment
+
+    app = _build_test_app()
+    app.console_new_chat_default_generation = 12
+    app.app_config["chat_defaults"] = {
+        "provider": "openai",
+        "model": "attachment-model",
+    }
+    app.app_config["api_settings"] = {
+        "openai": {
+            "api_key": "test-key",
+            "model_defaults": {
+                "attachment-model": {"temperature": 0.19, "streaming": False}
+            },
+        }
+    }
+    console = ChatScreen(app)
+    console._sync_console_control_bar = lambda: None
+
+    async def process_attachment(_file_path: str) -> PendingAttachment:
+        return PendingAttachment(
+            file_path="/tmp/attachment.png",
+            display_name="attachment.png",
+            file_type="image",
+            insert_mode="attachment",
+            data=b"PNG",
+            mime_type="image/png",
+            original_size=3,
+            processed_size=3,
+        )
+
+    monkeypatch.setattr(attachment_core, "process_attachment_path", process_attachment)
+
+    await console._process_console_attachment("/tmp/attachment.png")
+
+    [session] = console._ensure_console_chat_store().sessions()
+    assert session.settings is not None
+    assert session.settings.provider == "openai"
+    assert session.settings.model == "attachment-model"
+    assert session.settings.temperature == 0.19
+    assert session.settings.streaming is False
+    assert session.canonical_settings_baseline is session.settings
+    assert session.new_chat_default_generation == 12
 
 
 def test_console_stale_default_refresh_respects_applied_system_prompt() -> None:

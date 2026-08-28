@@ -2305,7 +2305,7 @@ class ConsoleSessionController:
 
     def _blank_console_session_settings(self) -> ConsoleSessionSettings:
         """Build config-owned defaults for an eligible blank Console chat."""
-        app_config = self._provider_readiness_app_config()
+        app_config = getattr(self.app_instance, "app_config", {})
         if not isinstance(app_config, Mapping):
             app_config = {}
         return blank_console_session_settings(app_config)
@@ -2335,21 +2335,19 @@ class ConsoleSessionController:
             session.new_chat_default_generation = (
                 self._console_new_chat_default_generation()
             )
-        if session.settings is None:
-            store.replace_session_settings(
-                session.id,
-                defaults,
-                mark_user_work=False,
-                canonical_settings_baseline=defaults,
+        resolved = self._maybe_refresh_stale_default_console_settings(store, session)
+        if resolved is None:
+            raise RuntimeError(
+                "Console session predates the published defaults without "
+                "creation-time settings provenance."
             )
-            return defaults
-        return self._maybe_refresh_stale_default_console_settings(store, session)
+        return resolved
 
     def _maybe_refresh_stale_default_console_settings(
         self,
         store: ConsoleChatStore,
         session: ConsoleChatSession,
-    ) -> ConsoleSessionSettings:
+    ) -> ConsoleSessionSettings | None:
         """Re-derive default-sourced settings for blocked, never-used sessions.
 
         First-run sessions snapshot template defaults (e.g. OpenAI without a
@@ -2363,6 +2361,11 @@ class ConsoleSessionController:
         replaced when the re-derived defaults are actually send-capable.
         """
         settings = session.settings
+        if (
+            session.new_chat_default_generation
+            < self._console_new_chat_default_generation()
+        ):
+            return settings
         if settings is None:
             settings = self._blank_console_session_settings()
             store.replace_session_settings(
@@ -2371,11 +2374,6 @@ class ConsoleSessionController:
                 mark_user_work=False,
                 canonical_settings_baseline=settings,
             )
-            return settings
-        if (
-            session.new_chat_default_generation
-            < self._console_new_chat_default_generation()
-        ):
             return settings
         if session.has_user_work or session.canonical_settings_baseline != settings:
             return settings

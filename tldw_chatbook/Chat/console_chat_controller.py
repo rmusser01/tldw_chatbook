@@ -2804,14 +2804,7 @@ class ConsoleChatController:
 
         target_id = session_id or self.store.active_session_id
         if not target_id:
-            session = self.store.ensure_session(
-                workspace_id=self.store.workspace_context.active_workspace_id,
-                settings=(
-                    self._default_session_settings()
-                    if self._default_session_settings is not None
-                    else None
-                ),
-            )
+            session = self._ensure_default_session()
             target_id = session.id
         return await self.prompt_queue_coordinator.run_prompt_chain(
             target_id,
@@ -4765,14 +4758,7 @@ class ConsoleChatController:
             # at all) got `settings=None` while every other creator gave the
             # first session a real snapshot, and whichever creator ran first
             # decided the outcome.
-            session = self.store.ensure_session(
-                workspace_id=self.store.workspace_context.active_workspace_id,
-                settings=(
-                    self._default_session_settings()
-                    if self._default_session_settings is not None
-                    else None
-                ),
-            )
+            session = self._ensure_default_session()
         active_task = asyncio.current_task()
         if active_task is not None:
             self._rebind_submit_task(active_task, session.id)
@@ -6850,6 +6836,30 @@ class ConsoleChatController:
         # had shown (mirrors the approval re-derive immediately above).
         self._remount_parked_skill_install(session.id)
         self._remount_parked_skill_script(session.id)
+        return session
+
+    def _ensure_default_session(self) -> ConsoleChatSession:
+        """Create one provenance-bearing blank session for bootstrap callers."""
+        creating_blank_session = self.store.active_session_id is None
+        settings = (
+            self._default_session_settings()
+            if self._default_session_settings is not None
+            else None
+        )
+        session = self.store.ensure_session(
+            workspace_id=self.store.workspace_context.active_workspace_id,
+            settings=settings,
+            canonical_settings_baseline=settings,
+        )
+        if creating_blank_session:
+            generation = getattr(
+                self.app,
+                "console_new_chat_default_generation",
+                0,
+            )
+            session.new_chat_default_generation = (
+                generation if type(generation) is int and generation >= 0 else 0
+            )
         return session
 
     def _maybe_auto_title_session(

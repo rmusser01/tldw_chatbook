@@ -300,7 +300,6 @@ async def deliver_launch_wakes(app: Any, marked: Sequence[str]) -> int:
     if not wake.seed_from_marks():
         return 0
     store = controller.store
-    app_config = getattr(app, "app_config", {}) or {}
     # `restore_persisted_session` ACTIVATES what it creates, which is right
     # for a launch with nothing open and wrong for one where Console is the
     # startup tab: a wake must never move the user off the tab they landed
@@ -337,7 +336,7 @@ async def deliver_launch_wakes(app: Any, marked: Sequence[str]) -> int:
             conversation = {}
         try:
             hydration = hydrate_console_generation_settings(
-                app_config,
+                getattr(app, "app_config", {}) or {},
                 conversation,
             )
             await hydrate_console_session(

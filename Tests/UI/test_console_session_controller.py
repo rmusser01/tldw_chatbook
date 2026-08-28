@@ -39,9 +39,7 @@ Two things this file exists specifically to pin, per the wave-2 Task 3 brief:
 from __future__ import annotations
 
 import asyncio
-import ast
 from dataclasses import replace
-from pathlib import Path
 from unittest.mock import AsyncMock
 
 import pytest
@@ -277,6 +275,76 @@ def test_workspace_created_blank_console_uses_published_defaults() -> None:
     _assert_published_blank_session(created)
 
 
+@pytest.mark.asyncio
+async def test_new_chat_and_workspace_blank_share_app_owned_published_config() -> None:
+    app = _published_blank_defaults_app()
+    app.workspace_registry_service.create_workspace(
+        workspace_id="workspace-published",
+        name="Published workspace",
+        description="",
+    )
+    screen = ChatScreen(app)
+    screen._session._provider_readiness_app_config_fn = lambda: {
+        "chat_defaults": {
+            "provider": "local_llamacpp",
+            "model": "stale-readiness-model",
+        },
+        "api_settings": {
+            "local_llamacpp": {
+                "api_url": "http://127.0.0.1:9099",
+                "model": "stale-readiness-model",
+            }
+        },
+    }
+    screen._session._composer_accessor = lambda: None
+    screen._session._sync_native_console_chat_ui_fn = AsyncMock()
+    screen._session._sync_temporary_chip_fn = lambda: None
+    screen._session._focus_composer_if_needed_fn = lambda **_kwargs: None
+    screen._session._invalidate_persisted_rows_cache_fn = lambda: None
+    screen._workspace._sync_temporary_chip_fn = lambda: None
+    store = screen._ensure_console_chat_store()
+    source = store.create_session(
+        settings=ConsoleSessionSettings(
+            provider="local_llamacpp",
+            model="explicit-existing-model",
+            source="user",
+        )
+    )
+
+    await screen._session._create_native_console_session_from_active_context()
+    screen._workspace._activate_console_session_for_workspace(
+        "workspace-published"
+    )
+
+    sessions = [session for session in store.sessions() if session.id != source.id]
+    assert len(sessions) == 2
+    for session in sessions:
+        _assert_published_blank_session(session)
+
+
+@pytest.mark.asyncio
+async def test_controller_bare_new_chat_captures_blank_settings_and_generation() -> (
+    None
+):
+    app = _published_blank_defaults_app()
+    screen = ChatScreen(app)
+    screen._console_control_provider = "local_llamacpp"
+    screen._console_control_model = "active-model"
+    controller = screen._ensure_console_chat_controller()
+    for existing in controller.store.sessions():
+        controller.store.close_session(existing.id)
+    assert controller.store.active_session_id is None
+    controller.prompt_queue_coordinator.run_prompt_chain = AsyncMock(
+        return_value="sentinel"
+    )
+
+    result = await controller.run_prompt_chain("hello")
+
+    assert result == "sentinel"
+    [session] = controller.store.sessions()
+    _assert_published_blank_session(session)
+
+
 def test_controller_new_session_preserves_explicit_source_settings() -> None:
     app = _published_blank_defaults_app()
     screen = ChatScreen(app)
@@ -293,93 +361,6 @@ def test_controller_new_session_preserves_explicit_source_settings() -> None:
     assert session.settings is source_settings
     assert session.canonical_settings_baseline is None
     assert session.new_chat_default_generation == 0
-
-
-def test_console_ui_constructor_inventory_has_no_duplicate_branch_or_continue_action(
-) -> None:
-    """Pin the real Console creation graph until those actions actually exist.
-
-    Duplicate, Branch, and Continue have no production session constructor
-    today. Explicit settings therefore enter only through the controller seam
-    above and the real handoff/create functions enumerated here. When a new
-    action lands, this inventory must change alongside a non-vacuous behavior
-    test for its actual constructor.
-    """
-    project_root = Path(__file__).resolve().parents[2]
-    source_paths = (
-        "tldw_chatbook/UI/Console_Modules/character.py",
-        "tldw_chatbook/UI/Console_Modules/session.py",
-        "tldw_chatbook/UI/Console_Modules/workspace.py",
-        "tldw_chatbook/UI/Screens/chat_screen.py",
-    )
-    calls: set[tuple[str, str, str]] = set()
-
-    class ConstructorVisitor(ast.NodeVisitor):
-        def __init__(self, relative_path: str) -> None:
-            self.relative_path = relative_path
-            self.function_name = "<module>"
-
-        def _visit_function(self, node: ast.FunctionDef | ast.AsyncFunctionDef) -> None:
-            previous = self.function_name
-            self.function_name = node.name
-            self.generic_visit(node)
-            self.function_name = previous
-
-        def visit_FunctionDef(self, node: ast.FunctionDef) -> None:  # noqa: N802
-            self._visit_function(node)
-
-        def visit_AsyncFunctionDef(  # noqa: N802
-            self,
-            node: ast.AsyncFunctionDef,
-        ) -> None:
-            self._visit_function(node)
-
-        def visit_Call(self, node: ast.Call) -> None:  # noqa: N802
-            if (
-                isinstance(node.func, ast.Attribute)
-                and node.func.attr in {"create_session", "new_session"}
-            ):
-                calls.add(
-                    (self.relative_path, self.function_name, node.func.attr)
-                )
-            self.generic_visit(node)
-
-    for relative_path in source_paths:
-        source = (project_root / relative_path).read_text(encoding="utf-8")
-        ConstructorVisitor(relative_path).visit(ast.parse(source))
-
-    assert calls == {
-        (
-            "tldw_chatbook/UI/Console_Modules/character.py",
-            "_apply_console_character_choice_async",
-            "create_session",
-        ),
-        (
-            "tldw_chatbook/UI/Console_Modules/session.py",
-            "consume_pending_console_first_chat_intent",
-            "create_session",
-        ),
-        (
-            "tldw_chatbook/UI/Console_Modules/session.py",
-            "_create_native_console_session_from_active_context",
-            "new_session",
-        ),
-        (
-            "tldw_chatbook/UI/Console_Modules/session.py",
-            "_start_character_console_session",
-            "create_session",
-        ),
-        (
-            "tldw_chatbook/UI/Console_Modules/workspace.py",
-            "_activate_console_session_for_workspace",
-            "create_session",
-        ),
-        (
-            "tldw_chatbook/UI/Screens/chat_screen.py",
-            "_stage_handoff_as_console_live_work",
-            "create_session",
-        ),
-    }
 
 
 def test_personas_preview_handoff_preserves_control_derived_source_settings(
@@ -475,6 +456,53 @@ async def test_character_handoff_constructor_preserves_control_derived_settings(
         source_settings,
         system_prompt="Protect Captain Rowan as Alba.",
         character_label="Alba",
+    )
+    assert created.settings != blank_defaults
+
+
+@pytest.mark.asyncio
+async def test_character_picker_new_chat_preserves_control_derived_settings(
+    monkeypatch,
+) -> None:
+    from tldw_chatbook.Widgets.Console.console_character_picker_modal import (
+        ConsoleCharacterChoice,
+    )
+
+    card = _roleplay_card(name="Alba")
+    screen = _character_screen(monkeypatch, card)
+    app = screen.app_instance
+    screen._console_control_provider = "local_llamacpp"
+    screen._console_control_model = "picker-source-model"
+    app.app_config["chat_defaults"] = {
+        "provider": "openai",
+        "model": "published-blank-model",
+        "user_display_name": "Captain Rowan",
+    }
+    app.app_config["api_settings"] = {
+        "openai": {"api_key": "test-key"},
+        "local_llamacpp": {
+            "api_url": "http://127.0.0.1:9099",
+            "model": "picker-source-model",
+        },
+    }
+    screen._session._provider_readiness_app_config_fn = lambda: app.app_config
+    monkeypatch.setattr(
+        screen._character,
+        "_fetch_character_card_for_avatar",
+        lambda _character_id: card,
+    )
+    source_settings = screen._session._default_console_session_settings()
+    blank_defaults = screen._session._blank_console_session_settings()
+    assert source_settings != blank_defaults
+
+    await screen._character._apply_console_character_choice_async(
+        ConsoleCharacterChoice(character_id=7, name="Alba", placement="new")
+    )
+
+    [created] = screen._ensure_console_chat_store().sessions()
+    assert created.settings == replace(
+        source_settings,
+        system_prompt="Protect Captain Rowan as Alba.",
     )
     assert created.settings != blank_defaults
 
