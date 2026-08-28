@@ -19,7 +19,7 @@ priority: medium
 ## Description
 
 <!-- SECTION:DESCRIPTION:BEGIN -->
-Add an optional physical encoding for future token-level Console trace events that packs consecutive compatible stream-delta events into compact storage rows while preserving the canonical logical event sequence exactly. This keeps token-level replay and diagnostics feasible without creating one database row and repeated envelope fields per streamed chunk. The encoding is a persistence optimization only: callers and the trace viewer continue to consume ordinary canonical events. This is follow-up work after the reference-backed semantic trace ledger from TASK-23026; it is not required to close that task.
+Add an optional physical encoding for future token-level Console trace events that packs consecutive compatible stream-delta events into compact storage rows while preserving the canonical logical event sequence exactly. This keeps token-level replay and diagnostics feasible without creating one database row and repeated envelope fields per streamed chunk. The encoding is a persistence optimization only: callers and the trace viewer continue to consume ordinary canonical events. This is follow-up work after the reference-backed semantic trace ledger defined by ADR-097; it is not part of that implementation program.
 <!-- SECTION:DESCRIPTION:END -->
 
 ## Acceptance Criteria

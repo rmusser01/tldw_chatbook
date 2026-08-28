@@ -2,7 +2,7 @@
 
 **Date:** 2026-08-28
 
-**Status:** Design approved; written-spec review pending
+**Status:** Design approved; independent written-spec review approved
 
 **Originating task:** [TASK-23026](../../../backlog/tasks/task-23026%20-%20Exchange-capture-stores-the-whole-conversation-on-every-send-forever.md), completed by the now-superseded bounded-retention implementation
 
@@ -577,7 +577,8 @@ packages suitable for single pull requests:
 5. legacy normalization, garbage collection, physical maintenance, benchmark, and rollout docs.
 
 Exact task IDs must be created before they are referenced from Backlog task files. TASK-23112 stays
-a separate later feature and is not a prerequisite for closing TASK-23026.
+a separate later feature and is not a prerequisite for the forthcoming ADR-097 implementation
+umbrella.
 
 ## Verification contract
 

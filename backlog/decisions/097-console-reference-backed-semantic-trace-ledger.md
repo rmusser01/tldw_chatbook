@@ -148,7 +148,7 @@ project-instruction bodies never enter default durable capture.
 
 18. **Keep token-chunk packing separate.** Raw token-level event capture and lossless
     chunk-row encoding are deferred to [TASK-23112](../tasks/task-23112%20-%20Add-lossless-chunk-row-encoding-for-streamed-trace-events.md)
-    and are not required to close TASK-23026.
+    and are not required by the forthcoming ADR-097 implementation umbrella.
 
 ## Consequences
 
