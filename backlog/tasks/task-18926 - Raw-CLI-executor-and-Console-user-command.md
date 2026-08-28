@@ -85,4 +85,9 @@ ad-hoc resume parsing with strict bounded Pydantic models, sharing the
 shell/CWD display byte limit, and restoring first-interaction command markers
 at transcript start. Focused review verification passed 242 tests with one
 expected native-Windows skip; Ruff and diff hygiene were clean.
+
+The production diagnostic inventory was regenerated after reviewing all six
+new fixed-string diagnostics. None interpolates user content, command text,
+output, secrets, paths, or URLs; persistent-sink topology remains unchanged at
+eight files, and the canonical inventory verification passes.
 <!-- SECTION:NOTES:END -->
