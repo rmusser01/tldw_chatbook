@@ -5,8 +5,9 @@
 Console is the app's chat and agent workbench: you talk to your configured
 provider here, stage Library sources and RAG evidence into the
 conversation, run agents in parallel tabs, and approve or deny the actions
-those runs request. Reach for it to send a message, drive a live run, or
-hand work off between your sources and a model. This page is the
+those runs request. Advanced users can also run an explicitly armed, user-only
+raw host command without involving a model. Reach for it to send a message,
+drive a live run, or hand work off between your sources and a model. This page is the
 orientation tour; the details live on six child pages:
 
 - [Chat basics](console/chat-basics.md) — compose, send, stream, stop, act on messages.
@@ -89,7 +90,10 @@ Top to bottom:
   why. When setup is the blocker, that reason is clickable and opens the
   setup wizard directly.
   You can just start typing from almost anywhere on
-  the screen — printable keys go straight into the draft.
+  the screen — printable keys go straight into the draft. A physically typed
+  `! ` prefix switches to a red raw-host-command state only after the saved
+  unlock and per-launch Arm gates; see
+  [Chat basics](console/chat-basics.md#raw-cli-user-commands--full-host-authority).
 - **Footer** — shortcut hints (F6, Shift+F6, F1, Enter, Ctrl+K, Ctrl+T,
   Ctrl+P), a word count, and database sizes. (Token usage lives in the
   status row's cost chip — e.g. "2.7k tok" — not in the footer.)
@@ -437,7 +441,8 @@ are covered on the child pages, chiefly [Context & RAG](console/context-and-rag.
 ## Related settings & docs
 
 - **Settings ▸ Console Behavior** — parallel-run limit, paste collapse, and
-  other Console preferences.
+  other Console preferences. **Settings ▸ Privacy & Security** owns the saved
+  raw CLI unlock and this launch's Arm/Disarm controls.
 - `config.toml`: `[chat_defaults]` (default provider/model/sampling),
   `[api_settings.*]` (per-provider keys, endpoints, streaming — the modern
   form; an explicit key here now outranks that provider's environment
@@ -445,7 +450,8 @@ are covered on the child pages, chiefly [Context & RAG](console/context-and-rag.
   lowest precedence of the three, normalized once at load into the same
   credential both this screen's readiness check and Library's RAG Answer
   gate use), `[console]` and `[console.background_effects]` (paste
-  collapse, ambience), `[chat.images]` (attachments), `[general]`
+  collapse, ambience, and the false-by-default `raw_cli_permitted` unlock),
+  `[chat.images]` (attachments), `[general]`
   `default_tab` (start here).
 - Child pages: [Chat basics](console/chat-basics.md) · [Sessions, tabs & workspaces](console/sessions-tabs-workspaces.md) · [Branching & rewind](console/branching-and-rewind.md) · [Attachments, images & voice](console/attachments-images-voice.md) · [Agent runs & tools](console/agent-runs-and-tools.md) · [Context & RAG](console/context-and-rag.md) · [Text selection & feedback](console/text-selection-and-feedback.md)
 - Deep dives: [Speech services](../Features/Speech-Services-Guide.md) (Mic dictation backends) · [Chat dictionaries](../Features/ChatDictionaries-Documented.md).

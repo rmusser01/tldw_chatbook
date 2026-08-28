@@ -176,6 +176,53 @@ The collapse behavior is set by `collapse_large_pastes` and
 `paste_collapse_threshold` under `[console]` in config.toml, also editable
 in **Settings > Console Behavior**.
 
+### Raw CLI user commands — full host authority
+
+Raw CLI is an expert-only escape hatch that runs one shell command directly as
+the OS user who launched Chatbook. It is **not a sandbox**, is **not confined to
+the current Chat or Workspace**, and can read, change, or delete any file that
+OS user can reach, use the network and credentialed clients, start processes,
+or exhaust machine resources.
+
+It has two separate gates:
+
+1. In **Settings > Privacy & Security**, enable **Allow raw CLI host access**,
+   accept the danger confirmation, and save. This writes
+   `raw_cli_permitted = true` under `[console]` in `config.toml`; the default is
+   `false`.
+2. Press **Arm host access** and accept the second confirmation. Arming exists
+   only in process memory. Every Chatbook launch starts unarmed even when the
+   saved unlock remains on; locking, disarming, or leaving the app cancels
+   active raw commands with bounded best-effort cleanup.
+
+To run a command, physically type the exact prefix `! ` (exclamation mark,
+space), then type or paste the command body and send. Pasting the prefix cannot
+select raw mode; this prevents a pasted prompt from silently turning into host
+execution. A physically typed prefix may be followed by pasted command text.
+Start with `\! ` to send an ordinary chat message beginning with literal `! `.
+When raw mode is recognized, the composer turns red and identifies host access
+before you send.
+
+Console raw commands use automatic shell selection. The shared executor
+supports **Bash**, **PowerShell**, and **CMD**, invokes them with fixed
+profile-disabled arguments, and never uses shell interpolation around the
+command. Stdin is closed (`DEVNULL`), commands are limited to 16 KiB, and the
+hard timeout is 300 seconds. Stdout and stderr stream separately into one Tool
+row; use that row's **Stop** control for a long command. Stop, timeout, disarm,
+and shutdown try to terminate the owned POSIX process group or Windows Job
+Object, but deliberately detached descendants may survive, so the result says
+whether cleanup was proven.
+
+The child starts from an empty environment populated only with a small set of
+shell-essential variables. That reduces accidental environment-secret
+inheritance; it does **not** remove the command's OS authority or stop it from
+reading credential files, config files, keychains through installed clients,
+or other user data. Command text and bounded output are saved locally in a
+`local_command` run and a private Chatbook run log so the Tool marker can return
+after restart. They are excluded from model/provider history, token and cost
+accounting, agent/fleet state, and model-facing run-log search, slice, and
+statistics tools.
+
 ### Sending, streaming, and stopping
 
 - Enter sends the draft. The reply row appears immediately with a dim
