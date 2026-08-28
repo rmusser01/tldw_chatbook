@@ -15,6 +15,25 @@ panels for the Schedule Queue, Task Detail, and Inspector.
 - Press **Ctrl+7**, click **⌃7 Schedules** in the nav bar, or press
   **Ctrl+P** → "Tab Navigation: Switch to Schedules".
 
+## Creating a scheduled task
+
+Press **c** to open the create form. The form scrolls when the terminal
+is short; the live "Runs: …" preview, validation, and Save/Cancel stay
+pinned at the bottom while you edit.
+
+- **One-time**: type a plain local time like `2026-08-28 09:00` — no
+  offset needed. It is interpreted in your machine's timezone and the
+  preview confirms the interpretation ("Runs: 2026-08-28 09:00 PDT (your
+  local time)") before you save. Full ISO-8601 with an offset is still
+  accepted and kept as written.
+- **Recurring**: pick a frequency preset — *Every day at…*, *Every
+  weekday at…*, *Every Monday at…* (each with an editable 24-hour time of
+  day), or *Every hour* — no cron required. *Custom cron…* reveals a raw
+  5-field cron expression with the same live preview.
+- **Timezone** is a selectable list, not free text: your machine's zone
+  is preselected and listed first, followed by common zones and any zone
+  your existing tasks already use.
+
 ## Ran late — what happens to overdue reminders
 
 Reminders only fire while the app is running (they execute locally, even

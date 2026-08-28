@@ -547,9 +547,21 @@ class SchedulesWorkbench(BaseAppScreen):
             severity="warning",
         )
 
+    def _task_timezones(self) -> list[str]:
+        """Zones already used by tasks, offered in the form's selector."""
+        zones: list[str] = []
+        for task in self._tasks:
+            zone = getattr(task, "timezone", None)
+            if zone and zone not in zones:
+                zones.append(zone)
+        return zones
+
     def action_create_reminder(self) -> None:
         """Open the create-reminder form."""
-        self.app.push_screen(ReminderForm(), callback=self._on_reminder_form_result)
+        self.app.push_screen(
+            ReminderForm(known_timezones=self._task_timezones()),
+            callback=self._on_reminder_form_result,
+        )
 
     def _on_reminder_form_result(
         self, form_data: dict[str, Any] | None, task_id: str | None = None
@@ -597,7 +609,7 @@ class SchedulesWorkbench(BaseAppScreen):
         """Open the reminder form pre-filled for editing."""
         event.stop()
         self.app.push_screen(
-            ReminderForm(event.task),
+            ReminderForm(event.task, known_timezones=self._task_timezones()),
             callback=lambda result: self._on_reminder_form_result(
                 result, event.task.id
             ),

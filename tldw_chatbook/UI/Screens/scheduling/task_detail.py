@@ -156,6 +156,16 @@ def _humanize_cron(cron: str | None, timezone: str | None = None) -> str:
         and _is_digit(hour)
         and _is_wildcard(dom)
         and _is_wildcard(month)
+        and dow == "1-5"
+    ):
+        # The "Every weekday at..." preset (task-23102).
+        return f"Weekdays at {int(hour):02d}:{int(minute):02d}{tz}"
+
+    if (
+        _is_digit(minute)
+        and _is_digit(hour)
+        and _is_wildcard(dom)
+        and _is_wildcard(month)
         and _is_digit(dow)
     ):
         day_index = int(dow)
