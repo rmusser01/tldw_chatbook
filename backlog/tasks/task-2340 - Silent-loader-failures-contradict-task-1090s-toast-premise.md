@@ -5,7 +5,7 @@ status: Done
 assignee:
   - '@codex'
 created_date: '2026-08-04'
-updated_date: '2026-08-28 15:46'
+updated_date: '2026-08-28 15:54'
 labels:
   - watchlists
   - error-recovery
@@ -67,6 +67,8 @@ Reason: bounded error reporting within the existing Watchlists screen; no schema
 
 <!-- SECTION:NOTES:BEGIN -->
 Added fixed markup-disabled error toasts to both live synchronous source loaders while preserving debug diagnostics and empty fallbacks. Added mounted regressions plus an exact handler-level AST contract with documented lifecycle/preference-write exemptions. ADR required: no; ADR path: N/A; reason: bounded screen error-reporting repair with no schema, ownership, service, runtime, dependency, or long-lived UX boundary change. Compatibility verification: 17 passed, 2 warnings. Final combined gate: 43 passed, 2 warnings. Both pytest runs also emitted non-failing post-summary PytestWarning cleanup messages from stale pytest garbage directories. Modified-file Ruff lint and format checks, both diff checks, and the final clean-worktree gate passed.
+
+Modified/added files: tldw_chatbook/UI/Screens/watchlists_collections_screen.py; Tests/UI/test_watchlists_check_now_failure.py; backlog/tasks/task-2340 - Silent-loader-failures-contradict-task-1090s-toast-premise.md; Docs/superpowers/specs/2026-08-28-watchlists-synchronous-loader-failure-toasts-design.md; and Docs/superpowers/plans/2026-08-28-watchlists-synchronous-loader-failure-toasts.md.
 <!-- SECTION:NOTES:END -->
 
 ## References
