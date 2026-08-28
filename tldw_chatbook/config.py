@@ -5582,6 +5582,33 @@ class AtomicConfigSnapshot(NamedTuple):
     values: Dict[str, Any]
 
 
+@dataclass(frozen=True, slots=True)
+class LiteralSettingsMutation:
+    """Exact set/delete operations addressed by literal TOML mapping paths."""
+
+    section_values: Mapping[tuple[str, ...], Mapping[str, object]]
+    delete_keys: Mapping[tuple[str, ...], Collection[str]]
+
+
+@dataclass(frozen=True, slots=True)
+class AtomicLiteralMutationSnapshot:
+    """Authoritative raw and effective config views held under the write lock."""
+
+    generation: int
+    raw_values: Mapping[str, object]
+    effective_values: Mapping[str, object]
+
+
+@dataclass(frozen=True, slots=True)
+class LiteralConfigMutationResult:
+    """Two-phase literal mutation outcome with an optional fresh settings view."""
+
+    file_replaced: bool
+    caches_reloaded: bool
+    settings_view: Mapping[str, object] | None
+    failure_phase: str | None
+
+
 def _atomic_config_values_from_raw(
     config_data: Mapping[str, Any],
 ) -> Dict[str, Any]:
@@ -6051,22 +6078,46 @@ def _delete_config_keys(
     delete_keys: Mapping[str, Collection[str]],
 ) -> bool:
     """Delete exact keys and report whether the config changed."""
+    return _delete_literal_config_keys(
+        config_data,
+        {tuple(section.split(".")): keys for section, keys in delete_keys.items()},
+    )
+
+
+def _literal_config_section(
+    config_data: Dict[str, Any],
+    path: tuple[str, ...],
+    *,
+    create: bool,
+) -> Dict[str, Any] | None:
+    """Resolve one literal mapping path without interpreting punctuation."""
+
+    current_level: Any = config_data
+    for part in path:
+        if not isinstance(current_level, dict):
+            raise TypeError(part)
+        if part not in current_level:
+            if not create:
+                return None
+            current_level[part] = {}
+        current_level = current_level[part]
+    if not isinstance(current_level, dict):
+        raise TypeError(".".join(path))
+    return current_level
+
+
+def _delete_literal_config_keys(
+    config_data: Dict[str, Any],
+    delete_keys: Mapping[tuple[str, ...], Collection[str]],
+) -> bool:
+    """Delete exact keys beneath literal paths and report whether any existed."""
+
     changed = False
     missing = object()
-    for section, keys in delete_keys.items():
-        current_level: Any = config_data
-        section_missing = False
-        for part in section.split("."):
-            if not isinstance(current_level, dict):
-                raise TypeError(part)
-            if part not in current_level:
-                section_missing = True
-                break
-            current_level = current_level[part]
-        if section_missing:
+    for path, keys in delete_keys.items():
+        current_level = _literal_config_section(config_data, path, create=False)
+        if current_level is None:
             continue
-        if not isinstance(current_level, dict):
-            raise TypeError(section)
         for key in keys:
             if current_level.pop(key, missing) is not missing:
                 changed = True
@@ -6116,17 +6167,109 @@ def _validate_config_mutation_targets(
         raise ValueError("Configuration mutation cannot set and delete the same key")
 
 
-def apply_settings_mutation_to_cli_config(
-    section_values: Mapping[str, Mapping[Any, Any]],
+def _validate_literal_config_mutation_targets(
+    mutation: LiteralSettingsMutation,
+) -> None:
+    """Validate literal paths and reject overlapping exact set/delete targets."""
+
+    if not isinstance(mutation, LiteralSettingsMutation):
+        raise TypeError("Literal mutation builder returned an invalid result")
+    if not isinstance(mutation.section_values, Mapping) or not isinstance(
+        mutation.delete_keys,
+        Mapping,
+    ):
+        raise TypeError("Literal configuration mutations must use mappings")
+
+    set_targets: set[tuple[tuple[str, ...], str]] = set()
+    for path, values in mutation.section_values.items():
+        _validate_literal_config_path(path)
+        if not isinstance(values, Mapping):
+            raise TypeError("Literal configuration section values must be mappings")
+        for key in values:
+            if type(key) is not str or not key:
+                raise TypeError("Literal configuration keys must be non-empty strings")
+            set_targets.add((path, key))
+
+    delete_targets: set[tuple[tuple[str, ...], str]] = set()
+    for path, keys in mutation.delete_keys.items():
+        _validate_literal_config_path(path)
+        if isinstance(keys, (str, bytes)) or not isinstance(keys, Collection):
+            raise TypeError("Literal configuration delete keys must be collections")
+        for key in keys:
+            if type(key) is not str or not key:
+                raise TypeError("Literal configuration delete keys must be non-empty strings")
+            delete_targets.add((path, key))
+
+    if set_targets.intersection(delete_targets):
+        raise ValueError("Configuration mutation cannot set and delete the same key")
+
+
+def _validate_literal_config_path(path: object) -> None:
+    """Validate one exact TOML mapping path."""
+
+    if (
+        type(path) is not tuple
+        or not path
+        or any(type(part) is not str or not part for part in path)
+    ):
+        raise TypeError("Literal configuration paths must be non-empty string tuples")
+    if path[0] in _REVISION_OWNED_CONFIG_SECTIONS:
+        raise ValueError("Revision-owned configuration requires its dedicated writer")
+
+
+def _literal_mutation_log_shape(
+    mutation: LiteralSettingsMutation,
+) -> tuple[dict[str, list[str]], dict[str, list[str]]]:
+    """Return value-free path/key shapes suitable for diagnostic logging."""
+
+    sets = {
+        repr(path): list(values.keys())
+        for path, values in mutation.section_values.items()
+    }
+    deletes = {repr(path): list(keys) for path, keys in mutation.delete_keys.items()}
+    return sets, deletes
+
+
+def _current_settings_view() -> Mapping[str, object]:
+    """Return a detached copy of the freshly published normalized settings."""
+
+    return copy.deepcopy(settings)
+
+
+def _apply_literal_mutation_unlocked(
+    config_data: Dict[str, Any],
+    mutation: LiteralSettingsMutation,
+) -> bool:
+    """Apply one validated literal mutation to the authoritative raw mapping."""
+
+    deleted_any = _delete_literal_config_keys(config_data, mutation.delete_keys)
+    set_any = False
+    for path, values in mutation.section_values.items():
+        if not values:
+            continue
+        current_level = _literal_config_section(config_data, path, create=True)
+        assert current_level is not None
+        for key, value in values.items():
+            current_level[key] = _maybe_encrypt_setting_value(config_data, key, value)
+            set_any = True
+    return set_any or deleted_any
+
+
+def _apply_literal_settings_transaction_locked(
+    mutation_builder: Callable[
+        [AtomicLiteralMutationSnapshot], LiteralSettingsMutation
+    ],
     *,
-    delete_keys: Mapping[str, Collection[str]] | None = None,
-    mutation_precondition: Callable[[], bool] | None = None,
+    mutation_precondition: Callable[[], bool] | None,
     locked_snapshot_precondition: Callable[[AtomicConfigSnapshot], bool] | None = None,
-) -> ConfigMutationResult:
-    """Atomically apply exact config sets/deletes, then refresh caches."""
-    global _CONFIG_CACHE, _SETTINGS_CACHE, settings
-    requested_deletes = {} if delete_keys is None else delete_keys
+    publish_noop: bool,
+    validate_literal_targets: bool,
+) -> LiteralConfigMutationResult:
+    """Run one authoritative read/build/replace/publication transaction."""
+
     try:
+        if not callable(mutation_builder):
+            raise TypeError("Literal configuration mutation builder must be callable")
         if mutation_precondition is not None and not callable(mutation_precondition):
             raise TypeError("Configuration mutation precondition must be callable")
         if locked_snapshot_precondition is not None and not callable(
@@ -6140,7 +6283,7 @@ def apply_settings_mutation_to_cli_config(
             "(phase=resolve_path, config_path=unresolved, error_type={}).",
             type(error).__name__,
         )
-        return ConfigMutationResult(False, False, "before_replace")
+        return LiteralConfigMutationResult(False, False, None, "before_replace")
 
     with ExitStack() as locks:
         try:
@@ -6152,122 +6295,96 @@ def apply_settings_mutation_to_cli_config(
                 config_path,
                 type(error).__name__,
             )
-            return ConfigMutationResult(False, False, "before_replace")
+            return LiteralConfigMutationResult(False, False, None, "before_replace")
         try:
-            _validate_config_mutation_targets(section_values, requested_deletes)
-            logged_keys = {
-                section: list(values.keys())
-                for section, values in section_values.items()
-            }
-            logged_deletes = {
-                section: list(keys) for section, keys in requested_deletes.items()
-            }
-            logger.info(
-                "Attempting to apply settings mutation: "
-                f"sets={logged_keys!r}, deletes={logged_deletes!r}"
-            )
             config_data = _read_raw_cli_config_unlocked(config_path)
-        except tomllib.TOMLDecodeError as error:
+        except Exception as error:
             logger.error(
                 "Configuration mutation failed "
                 "(phase=read, config_path={}, error_type={}).",
                 config_path,
                 type(error).__name__,
             )
-            return ConfigMutationResult(False, False, "before_replace")
-        except Exception as error:
-            logger.opt(exception=True).error(
-                "Configuration mutation failed "
-                "(phase=read, config_path={}, error_type={}).",
-                config_path,
-                type(error).__name__,
-            )
-            return ConfigMutationResult(False, False, "before_replace")
+            return LiteralConfigMutationResult(False, False, None, "before_replace")
 
         if mutation_precondition is not None:
             try:
-                is_current = mutation_precondition()
+                if mutation_precondition() is not True:
+                    return LiteralConfigMutationResult(
+                        False, False, None, "identity_changed"
+                    )
             except Exception as error:
                 logger.error(
                     "Configuration mutation failed "
                     "(phase=precondition, error_type={}).",
                     type(error).__name__,
                 )
-                return ConfigMutationResult(False, False, "before_replace")
-            if is_current is not True:
-                return ConfigMutationResult(
-                    False,
-                    False,
-                    None,
-                    conflict=True,
-                    conflict_reason="identity_changed",
+                return LiteralConfigMutationResult(
+                    False, False, None, "before_replace"
                 )
 
-        if locked_snapshot_precondition is not None:
-            try:
-                locked_snapshot = AtomicConfigSnapshot(
+        try:
+            effective_values = _atomic_config_values_from_raw(config_data)
+            if locked_snapshot_precondition is not None:
+                legacy_snapshot = AtomicConfigSnapshot(
                     generation=_CONFIG_GENERATION,
-                    values=_atomic_config_values_from_raw(config_data),
+                    values=copy.deepcopy(effective_values),
                 )
-                is_current = locked_snapshot_precondition(locked_snapshot)
+                if locked_snapshot_precondition(legacy_snapshot) is not True:
+                    return LiteralConfigMutationResult(
+                        False, False, None, "identity_changed"
+                    )
+            snapshot = AtomicLiteralMutationSnapshot(
+                generation=_CONFIG_GENERATION,
+                raw_values=copy.deepcopy(config_data),
+                effective_values=copy.deepcopy(effective_values),
+            )
+            mutation = mutation_builder(snapshot)
+            if validate_literal_targets:
+                _validate_literal_config_mutation_targets(mutation)
+            logged_sets, logged_deletes = _literal_mutation_log_shape(mutation)
+            logger.info(
+                "Attempting to apply literal settings mutation: "
+                "sets={}, deletes={}",
+                logged_sets,
+                logged_deletes,
+            )
+            changed = _apply_literal_mutation_unlocked(config_data, mutation)
+        except Exception as error:
+            logger.error(
+                "Configuration mutation failed "
+                "(phase=before_replace, config_path={}, error_type={}).",
+                config_path,
+                type(error).__name__,
+            )
+            return LiteralConfigMutationResult(False, False, None, "before_replace")
+
+        if not changed and not publish_noop:
+            return LiteralConfigMutationResult(False, False, None, None)
+
+        raw_written: Mapping[str, Any] | None = None
+        if changed:
+            try:
+                persisted = _config_data_for_persistence(config_data)
+                raw_written = _write_raw_cli_config_unlocked(config_path, persisted)
             except Exception as error:
                 logger.error(
                     "Configuration mutation failed "
-                    "(phase=locked_precondition, error_type={}).",
+                    "(phase=before_replace, config_path={}, error_type={}).",
+                    config_path,
                     type(error).__name__,
                 )
-                return ConfigMutationResult(False, False, "before_replace")
-            if is_current is not True:
-                return ConfigMutationResult(
-                    False,
-                    False,
-                    None,
-                    conflict=True,
-                    conflict_reason="identity_changed",
+                return LiteralConfigMutationResult(
+                    False, False, None, "before_replace"
                 )
-
-        try:
-            deleted_any = _delete_config_keys(config_data, requested_deletes)
-            for section, values in section_values.items():
-                if not values:
-                    continue
-                current_level = _target_config_section(config_data, section)
-                for key, value in values.items():
-                    current_level[key] = _maybe_encrypt_setting_value(
-                        config_data, key, value
-                    )
-        except Exception as error:
-            logger.error(
-                "Configuration mutation failed "
-                "(phase=before_replace, config_path={}, error_type={}).",
-                config_path,
-                type(error).__name__,
-            )
-            return ConfigMutationResult(False, False, "before_replace")
-        set_any = any(bool(values) for values in section_values.values())
-        if not set_any and not deleted_any:
-            return ConfigMutationResult(False, False, None)
-
-        try:
-            persisted = _config_data_for_persistence(config_data)
-            raw_written = _write_raw_cli_config_unlocked(
-                config_path,
-                persisted,
-            )
-        except Exception as error:
-            logger.error(
-                "Configuration mutation failed "
-                "(phase=before_replace, config_path={}, error_type={}).",
-                config_path,
-                type(error).__name__,
-            )
-            return ConfigMutationResult(False, False, "before_replace")
-
-        file_replaced = True
-        logger.success(f"Successfully replaced settings file at {config_path}")
+            logger.success(f"Successfully replaced settings file at {config_path}")
+        else:
+            _invalidate_config_caches()
+            raw_written = config_data
 
         try:
             _publish_runtime_config_unlocked(raw_config=raw_written)
+            settings_view = _current_settings_view()
         except Exception as error:
             logger.error(
                 "Configuration mutation failed "
@@ -6275,10 +6392,109 @@ def apply_settings_mutation_to_cli_config(
                 config_path,
                 type(error).__name__,
             )
-            return ConfigMutationResult(file_replaced, False, "cache_reload")
+            return LiteralConfigMutationResult(changed, False, None, "cache_reload")
 
         logger.info("Global configuration caches invalidated and reloaded.")
-        return ConfigMutationResult(file_replaced, True, None)
+        return LiteralConfigMutationResult(changed, True, settings_view, None)
+
+
+def apply_literal_settings_transaction_to_cli_config(
+    mutation_builder: Callable[
+        [AtomicLiteralMutationSnapshot], LiteralSettingsMutation
+    ],
+    *,
+    mutation_precondition: Callable[[], bool] | None = None,
+) -> LiteralConfigMutationResult:
+    """Apply a builder-produced mutation whose tuple paths stay fully literal."""
+
+    return _apply_literal_settings_transaction_locked(
+        mutation_builder,
+        mutation_precondition=mutation_precondition,
+        publish_noop=True,
+        validate_literal_targets=True,
+    )
+
+
+def refresh_runtime_config_from_cli_config() -> LiteralConfigMutationResult:
+    """Republish the existing on-disk config without writing the file."""
+
+    try:
+        config_path = _get_effective_config_path()
+    except Exception as error:
+        logger.error(
+            "Configuration refresh failed (phase=resolve_path, error_type={}).",
+            type(error).__name__,
+        )
+        return LiteralConfigMutationResult(False, False, None, "cache_reload")
+
+    with _config_write_lock(config_path):
+        try:
+            raw = _read_raw_cli_config_unlocked(config_path)
+            _invalidate_config_caches()
+            _publish_runtime_config_unlocked(raw_config=raw)
+            return LiteralConfigMutationResult(
+                False,
+                True,
+                _current_settings_view(),
+                None,
+            )
+        except Exception as error:
+            logger.error(
+                "Configuration refresh failed "
+                "(phase=cache_reload, config_path={}, error_type={}).",
+                config_path,
+                type(error).__name__,
+            )
+            return LiteralConfigMutationResult(False, False, None, "cache_reload")
+
+
+def apply_settings_mutation_to_cli_config(
+    section_values: Mapping[str, Mapping[Any, Any]],
+    *,
+    delete_keys: Mapping[str, Collection[str]] | None = None,
+    mutation_precondition: Callable[[], bool] | None = None,
+    locked_snapshot_precondition: Callable[[AtomicConfigSnapshot], bool] | None = None,
+) -> ConfigMutationResult:
+    """Atomically apply exact config sets/deletes, then refresh caches."""
+    requested_deletes = {} if delete_keys is None else delete_keys
+    try:
+        _validate_config_mutation_targets(section_values, requested_deletes)
+        literal_sections = {
+            tuple(section.split(".")): values
+            for section, values in section_values.items()
+        }
+        literal_deletes = {
+            tuple(section.split(".")): keys
+            for section, keys in requested_deletes.items()
+        }
+    except Exception as error:
+        logger.error(
+            "Configuration mutation failed "
+            "(phase=validation, config_path=unresolved, error_type={}).",
+            type(error).__name__,
+        )
+        return ConfigMutationResult(False, False, "before_replace")
+    literal = LiteralSettingsMutation(literal_sections, literal_deletes)
+    result = _apply_literal_settings_transaction_locked(
+        lambda _snapshot: literal,
+        mutation_precondition=mutation_precondition,
+        locked_snapshot_precondition=locked_snapshot_precondition,
+        publish_noop=False,
+        validate_literal_targets=False,
+    )
+    if result.failure_phase == "identity_changed":
+        return ConfigMutationResult(
+            False,
+            False,
+            None,
+            conflict=True,
+            conflict_reason="identity_changed",
+        )
+    return ConfigMutationResult(
+        result.file_replaced,
+        result.caches_reloaded,
+        result.failure_phase,
+    )
 
 
 def save_settings_to_cli_config(

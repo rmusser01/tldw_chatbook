@@ -1106,3 +1106,180 @@ def test_delete_wrapper_performs_one_atomic_write_for_actual_mutation(
     )
 
     assert write_calls == 1
+
+
+def test_literal_transaction_keeps_punctuated_model_id_as_one_mapping_key(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    config_path = tmp_path / "config.toml"
+    literal_model = "org/model.v2:fast[beta]"
+    _write_config(
+        config_path,
+        {
+            "api_settings": {
+                "OpenAI": {
+                    "api_key": "test-key",
+                    "model_defaults": {"sibling": {"temperature": 0.9}},
+                }
+            }
+        },
+    )
+    monkeypatch.setenv("TLDW_CONFIG_PATH", str(config_path))
+    observed = []
+
+    def build(snapshot):
+        observed.append(snapshot)
+        return config_module.LiteralSettingsMutation(
+            section_values={
+                ("api_settings", "OpenAI", "model_defaults", literal_model): {
+                    "temperature": 0.2,
+                    "streaming": False,
+                }
+            },
+            delete_keys={},
+        )
+
+    result = config_module.apply_literal_settings_transaction_to_cli_config(build)
+
+    assert result.file_replaced is True
+    assert result.caches_reloaded is True
+    assert result.failure_phase is None
+    assert result.settings_view is not None
+    assert len(observed) == 1
+    assert observed[0].raw_values["api_settings"]["OpenAI"]["api_key"] == "test-key"
+    assert observed[0].effective_values["api_settings"]["OpenAI"]["api_key"] == "test-key"
+    saved = tomllib.loads(config_path.read_text(encoding="utf-8"))
+    profiles = saved["api_settings"]["OpenAI"]["model_defaults"]
+    assert profiles == {
+        "sibling": {"temperature": 0.9},
+        literal_model: {"temperature": 0.2, "streaming": False},
+    }
+
+
+def test_literal_transaction_deletes_exact_field_and_preserves_siblings(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    config_path = tmp_path / "config.toml"
+    literal_path = (
+        "api_settings",
+        "openai",
+        "model_defaults",
+        "org/model.v2:fast[beta]",
+    )
+    _write_config(
+        config_path,
+        {
+            "api_settings": {
+                "openai": {
+                    "model_defaults": {
+                        "org/model.v2:fast[beta]": {
+                            "temperature": 0.7,
+                            "top_p": 0.8,
+                        },
+                        "sibling": {"temperature": 0.4},
+                    }
+                }
+            },
+            "unrelated": {"newer": True},
+        },
+    )
+    monkeypatch.setenv("TLDW_CONFIG_PATH", str(config_path))
+
+    result = config_module.apply_literal_settings_transaction_to_cli_config(
+        lambda _snapshot: config_module.LiteralSettingsMutation(
+            section_values={literal_path: {"streaming": True}},
+            delete_keys={literal_path: ("temperature",)},
+        )
+    )
+
+    assert result.file_replaced is True
+    saved = tomllib.loads(config_path.read_text(encoding="utf-8"))
+    assert saved["api_settings"]["openai"]["model_defaults"] == {
+        "org/model.v2:fast[beta]": {"top_p": 0.8, "streaming": True},
+        "sibling": {"temperature": 0.4},
+    }
+    assert saved["unrelated"] == {"newer": True}
+
+
+@pytest.mark.parametrize(
+    "mutation",
+    [
+        pytest.param(
+            lambda: config_module.LiteralSettingsMutation(
+                section_values={("api_settings", "", "model_defaults"): {"x": 1}},
+                delete_keys={},
+            ),
+            id="empty-path-element",
+        ),
+        pytest.param(
+            lambda: config_module.LiteralSettingsMutation(
+                section_values={("speech_studio",): {"x": 1}},
+                delete_keys={},
+            ),
+            id="revision-owned-root",
+        ),
+        pytest.param(
+            lambda: config_module.LiteralSettingsMutation(
+                section_values={("chat_defaults",): {"model": "new"}},
+                delete_keys={("chat_defaults",): ("model",)},
+            ),
+            id="set-delete-overlap",
+        ),
+    ],
+)
+def test_literal_transaction_rejects_invalid_targets_before_write(
+    tmp_path: Path,
+    monkeypatch,
+    mutation,
+) -> None:
+    config_path = tmp_path / "config.toml"
+    _write_config(config_path, {"chat_defaults": {"model": "old"}})
+    monkeypatch.setenv("TLDW_CONFIG_PATH", str(config_path))
+    original = config_path.read_bytes()
+    write_calls = []
+    monkeypatch.setattr(
+        config_module,
+        "atomic_private_write_text",
+        lambda *args, **kwargs: write_calls.append((args, kwargs)),
+    )
+
+    result = config_module.apply_literal_settings_transaction_to_cli_config(
+        lambda _snapshot: mutation()
+    )
+
+    assert result == config_module.LiteralConfigMutationResult(
+        file_replaced=False,
+        caches_reloaded=False,
+        settings_view=None,
+        failure_phase="before_replace",
+    )
+    assert write_calls == []
+    assert config_path.read_bytes() == original
+
+
+def test_literal_transaction_contains_builder_exception_and_invokes_once(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    config_path = tmp_path / "config.toml"
+    _write_config(config_path, {"chat_defaults": {"model": "old"}})
+    monkeypatch.setenv("TLDW_CONFIG_PATH", str(config_path))
+    calls = 0
+
+    def fail_builder(_snapshot):
+        nonlocal calls
+        calls += 1
+        raise RuntimeError("sensitive builder detail")
+
+    result = config_module.apply_literal_settings_transaction_to_cli_config(
+        fail_builder
+    )
+
+    assert result.failure_phase == "before_replace"
+    assert result.settings_view is None
+    assert calls == 1
+    assert tomllib.loads(config_path.read_text(encoding="utf-8")) == {
+        "chat_defaults": {"model": "old"}
+    }
