@@ -79,6 +79,27 @@ SINK_CALL_NAMES = {
     "open_private_text_append",
     "open_private_text_append_stream",
 }
+PATH_TERMINAL_TOKENS = frozenset(
+    {"path", "paths", "root", "roots", "dir", "directory", "folder"}
+)
+PATH_PRIVACY_RULES = {
+    "candidate_status": "legacy_unreviewed",
+    "status_meaning": (
+        "unresolved baseline candidate; inventory presence is not approval or "
+        "a reviewed-safe classification"
+    ),
+    "identifier_rule": (
+        "bounded snake-case terminal path/root/dir/directory/folder tokens and "
+        "explicit *_path_str forms"
+    ),
+    "safe_transforms": [
+        "content_fingerprint(path)",
+        "redact_user_paths(path)",
+        "path.suffix",
+        "len(paths)",
+        "type(exc).__name__",
+    ],
+}
 
 
 def _attribute_parts(node: ast.AST) -> list[str]:
@@ -131,6 +152,43 @@ def _is_diagnostic_call(node: ast.Call, logger_symbols: set[str]) -> bool:
     )
 
 
+def _scope_contexts(
+    tree: ast.Module,
+) -> tuple[
+    dict[int, str],
+    dict[int, ast.AST],
+    dict[int, list[tuple[ast.AST, ast.AST]]],
+]:
+    """Collect scope names, lexical owners, and assignments in one tree walk."""
+    names: dict[int, str] = {}
+    lexical_scopes: dict[int, ast.AST] = {id(tree): tree}
+    assignments: dict[int, list[tuple[ast.AST, ast.AST]]] = {}
+    stack: list[tuple[ast.AST, str, ast.AST]] = [(tree, "", tree)]
+    while stack:
+        node, prefix, scope = stack.pop()
+        for child in ast.iter_child_nodes(node):
+            if isinstance(child, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
+                child_prefix = f"{prefix}.{child.name}" if prefix else child.name
+                child_scope = child
+            else:
+                child_prefix = prefix
+                child_scope = scope
+            names[id(child)] = child_prefix
+            lexical_scopes[id(child)] = child_scope
+            if isinstance(child, ast.Assign):
+                targets = child.targets
+            elif isinstance(child, ast.AnnAssign) and child.value is not None:
+                targets = [child.target]
+            else:
+                targets = []
+            for target in targets:
+                assignments.setdefault(id(child_scope), []).append(
+                    (target, child.value)
+                )
+            stack.append((child, child_prefix, child_scope))
+    return names, lexical_scopes, assignments
+
+
 def _scope_names(tree: ast.Module) -> dict[int, str]:
     """Map every node to the dotted name of its enclosing def/class scope.
 
@@ -149,19 +207,7 @@ def _scope_names(tree: ast.Module) -> dict[int, str]:
             scope). Keyed by identity because AST nodes are unhashable by
             value and identity is stable for the lifetime of ``tree``.
     """
-    names: dict[int, str] = {}
-    stack: list[tuple[ast.AST, str]] = [(tree, "")]
-    while stack:
-        node, prefix = stack.pop()
-        for child in ast.iter_child_nodes(node):
-            if isinstance(
-                child, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)
-            ):
-                child_prefix = f"{prefix}.{child.name}" if prefix else child.name
-            else:
-                child_prefix = prefix
-            names[id(child)] = child_prefix
-            stack.append((child, child_prefix))
+    names, _lexical_scopes, _assignments = _scope_contexts(tree)
     return names
 
 
@@ -207,9 +253,7 @@ def diagnostic_digest(diagnostics: list[dict[str, Any]]) -> str:
     Returns:
         str: 20-hex-char content digest for the file's diagnostics.
     """
-    content = sorted(
-        (entry["method"], entry["digest"]) for entry in diagnostics
-    )
+    content = sorted((entry["method"], entry["digest"]) for entry in diagnostics)
     return hashlib.sha256(
         json.dumps(content, sort_keys=True).encode("utf-8")
     ).hexdigest()[:20]
@@ -227,20 +271,180 @@ def _owner(path_text: str) -> tuple[str, str]:
     )
 
 
-def scan_source(
-    source: str, *, filename: str = "<source>"
-) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
-    """Return the (diagnostics, sinks) content entries for one module's source."""
-    tree = ast.parse(source, filename=filename)
+def _identifier_is_path_shaped(identifier: str) -> bool:
+    tokens = [token for token in identifier.casefold().split("_") if token]
+    if not tokens:
+        return False
+    return tokens[-1] in PATH_TERMINAL_TOKENS or tokens[-2:] == ["path", "str"]
+
+
+def _assignment_target_label(target: ast.AST) -> str | None:
+    if isinstance(target, ast.Name):
+        return target.id
+    if isinstance(target, ast.Attribute):
+        return ast.unparse(target)
+    return None
+
+
+def _is_safe_path_transform(node: ast.AST) -> bool:
+    if isinstance(node, ast.Attribute):
+        if node.attr == "suffix":
+            return True
+        if (
+            node.attr == "__name__"
+            and isinstance(node.value, ast.Call)
+            and _attribute_parts(node.value.func) == ["type"]
+        ):
+            return True
+    if not isinstance(node, ast.Call):
+        return False
+    parts = _attribute_parts(node.func)
+    if not parts:
+        return False
+    return parts[-1] in {"content_fingerprint", "redact_user_paths"} or parts == ["len"]
+
+
+def _is_known_path_producer(node: ast.AST) -> bool:
+    if not isinstance(node, ast.Call):
+        return False
+    parts = _attribute_parts(node.func)
+    if not parts:
+        return False
+    terminal = parts[-1].casefold()
+    return (
+        parts == ["Path"]
+        or parts == ["os", "getcwd"]
+        or parts == ["Path", "home"]
+        or terminal == "resolve"
+        or terminal.startswith("validate_path")
+    )
+
+
+def _get_literal_path_key(node: ast.AST) -> str | None:
+    if not (
+        isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Attribute)
+        and node.func.attr == "get"
+        and node.args
+        and isinstance(node.args[0], ast.Constant)
+        and isinstance(node.args[0].value, str)
+    ):
+        return None
+    key = node.args[0].value
+    return key if _identifier_is_path_shaped(key) else None
+
+
+def _expression_is_path_tainted(node: ast.AST, aliases: set[str]) -> bool:
+    if _is_safe_path_transform(node):
+        return False
+    if _is_known_path_producer(node) or _get_literal_path_key(node) is not None:
+        return True
+    if isinstance(node, ast.Name):
+        return node.id in aliases or _identifier_is_path_shaped(node.id)
+    if isinstance(node, ast.Attribute):
+        label = ast.unparse(node)
+        if label in aliases or _identifier_is_path_shaped(node.attr):
+            return True
+    return any(
+        _expression_is_path_tainted(child, aliases)
+        for child in ast.iter_child_nodes(node)
+    )
+
+
+def _scope_path_aliases(
+    assignments: dict[int, list[tuple[ast.AST, ast.AST]]],
+    active_scope_ids: set[int],
+) -> dict[int, set[str]]:
+    aliases: dict[int, set[str]] = {
+        scope_id: set() for scope_id in active_scope_ids if scope_id in assignments
+    }
+    for scope_id in aliases:
+        changed = True
+        while changed:
+            changed = False
+            for target, value in assignments[scope_id]:
+                label = _assignment_target_label(target)
+                if label is None:
+                    continue
+                if label in aliases[scope_id]:
+                    continue
+                if _expression_is_path_tainted(value, aliases[scope_id]):
+                    aliases[scope_id].add(label)
+                    changed = True
+    return aliases
+
+
+def _formatted_expressions(node: ast.AST) -> list[ast.AST]:
+    if isinstance(node, ast.JoinedStr):
+        return [
+            child.value
+            for child in ast.walk(node)
+            if isinstance(child, ast.FormattedValue)
+        ]
+    if isinstance(node, ast.BinOp) and isinstance(node.op, ast.Mod):
+        if isinstance(node.right, (ast.Tuple, ast.List)):
+            return list(node.right.elts)
+        return [node.right]
+    if (
+        isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Attribute)
+        and node.func.attr == "format"
+    ):
+        return [*node.args, *(keyword.value for keyword in node.keywords)]
+    if isinstance(node, ast.Constant) and isinstance(node.value, str):
+        return []
+    return [node]
+
+
+def _diagnostic_dynamic_expressions(node: ast.Call) -> list[ast.AST]:
+    expressions: list[ast.AST] = []
+    for argument in node.args:
+        expressions.extend(_formatted_expressions(argument))
+    for keyword in node.keywords:
+        expressions.extend(_formatted_expressions(keyword.value))
+    return expressions
+
+
+def _path_candidate_entry(
+    source: str,
+    node: ast.Call,
+    *,
+    scope: str,
+    aliases: set[str],
+) -> dict[str, Any] | None:
+    labels = sorted(
+        {
+            ast.unparse(expression)
+            for expression in _diagnostic_dynamic_expressions(node)
+            if _expression_is_path_tainted(expression, aliases)
+        }
+    )
+    if not labels:
+        return None
+    call = _call_entry(source, node)
+    return {
+        "method": call["method"],
+        "call_digest": call["digest"],
+        "scope": scope or "<module>",
+        "path_expressions": labels,
+        "status": "legacy_unreviewed",
+    }
+
+
+def _scan_parsed_source(
+    source: str, tree: ast.Module
+) -> tuple[list[dict[str, Any]], list[dict[str, Any]], list[dict[str, Any]]]:
     symbols = _logger_symbols(tree)
-    scopes = _scope_names(tree)
+    scope_names, lexical_scopes, assignments = _scope_contexts(tree)
     diagnostics: list[dict[str, Any]] = []
     sinks: list[dict[str, Any]] = []
+    diagnostic_calls: list[ast.Call] = []
     for node in ast.walk(tree):
         if not isinstance(node, ast.Call):
             continue
         if _is_diagnostic_call(node, symbols):
             diagnostics.append(_call_entry(source, node))
+            diagnostic_calls.append(node)
         parts = _attribute_parts(node.func)
         call_name = parts[-1] if parts else ""
         is_loguru_add = call_name == "add" and any(
@@ -259,9 +463,26 @@ def scan_source(
                     source,
                     node,
                     kind="loguru_sink" if is_loguru_add else call_name,
-                    scope=scopes.get(id(node), ""),
+                    scope=scope_names.get(id(node), ""),
                 )
             )
+
+    aliases = _scope_path_aliases(
+        assignments,
+        {id(lexical_scopes[id(node)]) for node in diagnostic_calls},
+    )
+    candidates: list[dict[str, Any]] = []
+    for node in diagnostic_calls:
+        scope_id = id(lexical_scopes[id(node)])
+        candidate = _path_candidate_entry(
+            source,
+            node,
+            scope=scope_names.get(id(node), ""),
+            aliases=aliases.get(scope_id, set()),
+        )
+        if candidate is not None:
+            candidates.append(candidate)
+
     diagnostics.sort(key=lambda entry: (entry["method"], entry["digest"]))
     sinks.sort(
         key=lambda entry: (
@@ -271,19 +492,50 @@ def scan_source(
             entry["digest"],
         )
     )
+    candidates.sort(
+        key=lambda entry: (
+            entry["scope"],
+            entry["method"],
+            entry["call_digest"],
+            entry["path_expressions"],
+        )
+    )
+    return diagnostics, sinks, candidates
+
+
+def scan_source(
+    source: str, *, filename: str = "<source>"
+) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
+    """Return the (diagnostics, sinks) content entries for one module's source."""
+    tree = ast.parse(source, filename=filename)
+    diagnostics, sinks, _candidates = _scan_parsed_source(source, tree)
     return diagnostics, sinks
 
 
-def _scan_file(path: Path) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
-    return scan_source(path.read_text(encoding="utf-8"), filename=str(path))
+def scan_path_diagnostic_candidates(
+    source: str, *, filename: str = "<source>"
+) -> list[dict[str, Any]]:
+    """Return unresolved path-shaped diagnostic candidates in one module."""
+    tree = ast.parse(source, filename=filename)
+    _diagnostics, _sinks, candidates = _scan_parsed_source(source, tree)
+    return candidates
+
+
+def _scan_file(
+    path: Path,
+) -> tuple[list[dict[str, Any]], list[dict[str, Any]], list[dict[str, Any]]]:
+    source = path.read_text(encoding="utf-8")
+    tree = ast.parse(source, filename=str(path))
+    return _scan_parsed_source(source, tree)
 
 
 def build_inventory() -> dict[str, Any]:
     owners: list[dict[str, Any]] = []
     topology: list[dict[str, Any]] = []
+    path_privacy_candidates: list[dict[str, Any]] = []
     for path in sorted(PACKAGE_ROOT.rglob("*.py")):
         relative = path.relative_to(REPO_ROOT).as_posix()
-        diagnostics, sinks = _scan_file(path)
+        diagnostics, sinks, candidates = _scan_file(path)
         if diagnostics:
             owner, reason = _owner(relative)
             owners.append(
@@ -297,6 +549,8 @@ def build_inventory() -> dict[str, Any]:
             )
         if sinks:
             topology.append({"path": relative, "sinks": sinks})
+        if candidates:
+            path_privacy_candidates.append({"path": relative, "candidates": candidates})
 
     task_492_calls = sum(
         entry["call_count"] for entry in owners if entry["owner"] == "TASK-492"
@@ -305,10 +559,9 @@ def build_inventory() -> dict[str, Any]:
         entry["call_count"] for entry in owners if entry["owner"] == "TASK-494"
     )
     return {
-        # 2: digests and sink entries are keyed on diagnostic CONTENT only.
-        # Line numbers are no longer an input, so v1 and v2 digests for an
-        # unchanged file differ and must never be compared across the bump.
-        "schema_version": 2,
+        # 3: adds the unresolved path-privacy candidate projection. Existing
+        # owner digests and sink identities retain their schema-v2 meaning.
+        "schema_version": 3,
         "scope": "tldw_chatbook/**/*.py",
         "classification_rules": {
             "TASK-492": {
@@ -321,6 +574,7 @@ def build_inventory() -> dict[str, Any]:
                 "reason": "remaining production domains",
             },
         },
+        "path_privacy_rules": PATH_PRIVACY_RULES,
         "reviewed_exclusions": [
             {
                 "paths": ["Tests/**", "Docs/**", "backlog/**", "examples/**"],
@@ -336,9 +590,13 @@ def build_inventory() -> dict[str, Any]:
             "task_492_calls": task_492_calls,
             "task_494_calls": task_494_calls,
             "persistent_sink_files": len(topology),
+            "path_privacy_candidate_calls": sum(
+                len(row["candidates"]) for row in path_privacy_candidates
+            ),
         },
         "owners": owners,
         "persistent_sink_topology": topology,
+        "path_privacy_candidates": path_privacy_candidates,
     }
 
 
@@ -381,6 +639,7 @@ _METADATA_KEYS = (
     "schema_version",
     "scope",
     "classification_rules",
+    "path_privacy_rules",
     "reviewed_exclusions",
 )
 
@@ -411,6 +670,37 @@ def _sink_rows(inventory: dict[str, Any]) -> dict[str, list[dict[str, Any]]]:
     return {
         str(row["path"]): list(row.get("sinks", []))
         for row in inventory.get("persistent_sink_topology", [])
+    }
+
+
+def _path_candidate_key(
+    entry: dict[str, Any],
+) -> tuple[str, str, str, tuple[str, ...], str]:
+    return (
+        str(entry.get("scope", "")),
+        str(entry.get("method", "")),
+        str(entry.get("call_digest", "")),
+        tuple(str(label) for label in entry.get("path_expressions", [])),
+        str(entry.get("status", "")),
+    )
+
+
+def _describe_path_candidate_key(
+    key: tuple[str, str, str, tuple[str, ...], str],
+) -> str:
+    scope, method, digest, expressions, status = key
+    labels = ", ".join(expressions) or "<none>"
+    return (
+        f"{scope or '<module>'}: {method} ({digest}) paths=[{labels}] status={status}"
+    )
+
+
+def _path_candidate_rows(
+    inventory: dict[str, Any],
+) -> dict[str, list[dict[str, Any]]]:
+    return {
+        str(row["path"]): list(row.get("candidates", []))
+        for row in inventory.get("path_privacy_candidates", [])
     }
 
 
@@ -462,9 +752,7 @@ def _owner_lines(committed: dict[str, Any], rebuilt: dict[str, Any]) -> list[str
             f"{old_count}/{old_digest} -> {new_count}/{new_digest}  ({note})"
         )
         if before.get("owner") != after.get("owner"):
-            lines.append(
-                f"      owner: {before.get('owner')} -> {after.get('owner')}"
-            )
+            lines.append(f"      owner: {before.get('owner')} -> {after.get('owner')}")
     return lines
 
 
@@ -498,8 +786,7 @@ def _sink_lines(committed: dict[str, Any], rebuilt: dict[str, Any]) -> list[str]
         if before_counts == after_counts:
             continue
         lines.append(
-            f"  ~ changed sinks: {path} "
-            f"({len(old[path])} -> {len(new[path])} entries)"
+            f"  ~ changed sinks: {path} ({len(old[path])} -> {len(new[path])} entries)"
         )
         for key in sorted(set(before_counts) | set(after_counts)):
             before_n, after_n = before_counts[key], after_counts[key]
@@ -518,6 +805,62 @@ def _sink_lines(committed: dict[str, Any], rebuilt: dict[str, Any]) -> list[str]
                     f"{before_n} -> {after_n}  ({after_n - before_n:+d})"
                 )
     return lines
+
+
+def _path_candidate_lines(
+    committed: dict[str, Any], rebuilt: dict[str, Any]
+) -> list[str]:
+    old = _path_candidate_rows(committed)
+    new = _path_candidate_rows(rebuilt)
+    lines: list[str] = []
+    for path in sorted(set(old) | set(new)):
+        before_counts = Counter(
+            _path_candidate_key(entry) for entry in old.get(path, [])
+        )
+        after_counts = Counter(
+            _path_candidate_key(entry) for entry in new.get(path, [])
+        )
+        if before_counts == after_counts:
+            continue
+
+        if path not in new:
+            lines.append(
+                f"  - only in committed (candidate file removed): {path} "
+                f"({sum(before_counts.values())} candidate call(s))"
+            )
+        elif path not in old:
+            lines.append(
+                f"  + only in rebuild (NEW candidate file): {path} "
+                f"({sum(after_counts.values())} candidate call(s))"
+            )
+        else:
+            lines.append(
+                f"  ~ changed candidates: {path} "
+                f"({sum(before_counts.values())} -> "
+                f"{sum(after_counts.values())} calls)"
+            )
+
+        for key in sorted(set(before_counts) | set(after_counts)):
+            before_n, after_n = before_counts[key], after_counts[key]
+            if before_n == after_n:
+                continue
+            description = _describe_path_candidate_key(key)
+            if before_n == 0:
+                lines.append(f"      + {description} x{after_n}")
+            elif after_n == 0:
+                lines.append(f"      - {description} x{before_n}")
+            else:
+                lines.append(
+                    f"      ~ {description}: x{before_n} -> x{after_n} "
+                    f"({after_n - before_n:+d})"
+                )
+    if not lines:
+        return []
+    return [
+        "  ! Legacy path-privacy candidates are unresolved; inventory presence "
+        "is not approved.",
+        *lines,
+    ]
 
 
 def _metadata_lines(committed: dict[str, Any], rebuilt: dict[str, Any]) -> list[str]:
@@ -548,9 +891,10 @@ def render_diff(committed_text: str, rebuilt: dict[str, Any]) -> str:
     Returns:
         str: A multi-section report naming rows only-in-committed,
             only-in-rebuild and changed (with ``old_count/old_digest ->
-            new_count/new_digest``), sink-topology deltas, metadata deltas,
-            and the exact next command. Never empty: a formatting-only drift
-            still yields an explanation rather than silence.
+            new_count/new_digest``), sink-topology deltas, unresolved
+            path-candidate deltas, metadata deltas, and the exact next command.
+            Never empty: a formatting-only drift still yields an explanation
+            rather than silence.
     """
     try:
         committed = json.loads(committed_text)
@@ -565,13 +909,14 @@ def render_diff(committed_text: str, rebuilt: dict[str, Any]) -> str:
         ("summary", _summary_lines(committed, rebuilt)),
         ("owners", _owner_lines(committed, rebuilt)),
         ("persistent sink topology", _sink_lines(committed, rebuilt)),
+        (
+            "path privacy candidates",
+            _path_candidate_lines(committed, rebuilt),
+        ),
         ("inventory metadata", _metadata_lines(committed, rebuilt)),
     )
     body = [
-        line
-        for title, lines in sections
-        if lines
-        for line in (f"{title}:", *lines)
+        line for title, lines in sections if lines for line in (f"{title}:", *lines)
     ]
     if not body:
         # Parsed content is identical, so only the serialization differs --
@@ -738,8 +1083,15 @@ def _source_at(revision: str, path: str) -> str | None:
     if result.returncode == 0:
         return result.stdout.decode("utf-8", errors="replace")
     resolved = subprocess.run(
-        ["git", "-C", str(REPO_ROOT), "rev-parse", "--quiet", "--verify",
-         f"{revision}^{{commit}}"],
+        [
+            "git",
+            "-C",
+            str(REPO_ROOT),
+            "rev-parse",
+            "--quiet",
+            "--verify",
+            f"{revision}^{{commit}}",
+        ],
         capture_output=True,
     )
     if resolved.returncode == 0:

@@ -1056,6 +1056,40 @@ def _digest(source: str) -> str:
     return diagnostic_inventory.diagnostic_digest(diagnostics)
 
 
+def test_build_inventory_projects_schema_v3_path_candidates(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    package_root = tmp_path / "tldw_chatbook"
+    package_root.mkdir()
+    (package_root / "sample.py").write_text(
+        'logger.info("Workspace {}", workspace_root)\n', encoding="utf-8"
+    )
+    monkeypatch.setattr(diagnostic_inventory, "REPO_ROOT", tmp_path)
+    monkeypatch.setattr(diagnostic_inventory, "PACKAGE_ROOT", package_root)
+
+    inventory = diagnostic_inventory.build_inventory()
+
+    assert inventory["schema_version"] == 3
+    assert inventory["path_privacy_rules"]["candidate_status"] == ("legacy_unreviewed")
+    assert inventory["summary"]["path_privacy_candidate_calls"] == 1
+    assert inventory["path_privacy_candidates"] == [
+        {
+            "path": "tldw_chatbook/sample.py",
+            "candidates": [
+                {
+                    "method": "info",
+                    "call_digest": inventory["path_privacy_candidates"][0][
+                        "candidates"
+                    ][0]["call_digest"],
+                    "scope": "<module>",
+                    "path_expressions": ["workspace_root"],
+                    "status": "legacy_unreviewed",
+                }
+            ],
+        }
+    ]
+
+
 BASE_MODULE = (
     "from loguru import logger\n"
     "\n"

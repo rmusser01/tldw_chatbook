@@ -146,6 +146,39 @@ def test_path_shaped_diagnostic_inputs_are_candidates(
             "target",
             id="validated-path-alias",
         ),
+        pytest.param(
+            dedent(
+                """
+                def emit(raw):
+                    target = Path(raw)
+                    logger.info("Target {}", target)
+                """
+            ),
+            "target",
+            id="path-constructor-alias",
+        ),
+        pytest.param(
+            dedent(
+                """
+                def emit():
+                    target = Path.home()
+                    logger.info("Target {}", target)
+                """
+            ),
+            "target",
+            id="path-home-alias",
+        ),
+        pytest.param(
+            dedent(
+                """
+                def emit(raw):
+                    target = raw.resolve()
+                    logger.info("Target {}", target)
+                """
+            ),
+            "target",
+            id="resolved-path-alias",
+        ),
     ],
 )
 def test_simple_assignment_taint_reaches_diagnostic_arguments(
@@ -155,6 +188,36 @@ def test_simple_assignment_taint_reaches_diagnostic_arguments(
 
     assert len(candidates) == 1
     assert path_expression in candidates[0]["path_expressions"]
+
+
+def test_assignment_taint_reaches_a_scope_local_fixed_point() -> None:
+    source = dedent(
+        """
+        def emit(raw):
+            final = intermediate
+            intermediate: str = Path(raw)
+            logger.info("Target {}", final)
+        """
+    )
+
+    candidates = scan_path_diagnostic_candidates(source, filename="fixed_point.py")
+
+    assert len(candidates) == 1
+    assert candidates[0]["path_expressions"] == ["final"]
+
+
+def test_assignment_taint_does_not_bleed_between_lexical_scopes() -> None:
+    source = dedent(
+        """
+        def discover():
+            value = os.getcwd()
+
+        def emit(value):
+            logger.info("Value {}", value)
+        """
+    )
+
+    assert scan_path_diagnostic_candidates(source, filename="scopes.py") == []
 
 
 @pytest.mark.parametrize(
@@ -247,3 +310,51 @@ def test_path_candidate_report_preserves_all_files_and_duplicate_findings() -> N
     assert duplicate_digest in report
     assert other_digest in report
     assert "x2" in report
+
+
+def test_path_candidate_report_counts_additions_removals_and_changes() -> None:
+    old = scan_path_diagnostic_candidates(
+        'logger.warning("Old root {}", workspace_root)', filename="old.py"
+    )[0]
+    new = scan_path_diagnostic_candidates(
+        'logger.error("New path {}", output_path)', filename="new.py"
+    )[0]
+    committed = _inventory_with_path_candidates(
+        [
+            {"path": "removed.py", "candidates": [old, old]},
+            {"path": "changed.py", "candidates": [old]},
+            {"path": "multiplicity.py", "candidates": [old, old]},
+        ],
+        candidate_count=5,
+    )
+    rebuilt = _inventory_with_path_candidates(
+        [
+            {"path": "added.py", "candidates": [new, new]},
+            {"path": "changed.py", "candidates": [new]},
+            {"path": "multiplicity.py", "candidates": [old]},
+        ],
+        candidate_count=4,
+    )
+
+    report = render_diff(json.dumps(committed), rebuilt)
+
+    for path in ("removed.py", "added.py", "changed.py", "multiplicity.py"):
+        assert path in report
+    assert old["call_digest"] in report
+    assert new["call_digest"] in report
+    assert "x2" in report
+    assert "x2 -> x1" in report
+    assert "unresolved" in report
+    assert "not approved" in report
+
+
+def test_path_privacy_rules_are_inventory_metadata() -> None:
+    committed = _inventory_with_path_candidates([], candidate_count=0)
+    rebuilt = _inventory_with_path_candidates([], candidate_count=0)
+    committed["path_privacy_rules"] = {"candidate_status": "old"}
+    rebuilt["path_privacy_rules"] = {"candidate_status": "legacy_unreviewed"}
+
+    report = render_diff(json.dumps(committed), rebuilt)
+
+    assert "path_privacy_rules" in report
+    assert "legacy_unreviewed" in report
