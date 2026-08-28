@@ -1,9 +1,10 @@
 ---
 id: TASK-574
 title: 'Console /rewind: restore-to-before-first-message does not survive restart'
-status: To Do
+status: In Progress
 assignee: []
 created_date: '2026-07-25'
+updated_date: '2026-08-28 22:08'
 labels:
   - console
   - chat
@@ -22,4 +23,22 @@ Documented v1 limitation of the `/rewind` menu (SP2, PR #844): restoring to befo
 - [ ] #1 A /rewind restore to before the first message survives an app restart: the conversation resumes showing an empty active path (with all turns recoverable by swipe/rewind), not the most-recent leaf
 - [ ] #2 Conversations with a genuinely-unset pointer (legacy, or never rewound) keep the existing most-recent-leaf resume fallback
 - [ ] #3 The persisted representation stays local-only (no sync_log row, matching active_leaf_message_id's write-through)
+- [ ] #4 After restart, the deliberately-before-first state restores the selected first prompt's original text into the composer; later unsent edits remain session-only and another restart restores the original text again
 <!-- AC:END -->
+
+## Implementation Plan
+
+<!-- SECTION:PLAN:BEGIN -->
+1. Record the approved local tri-state cursor contract in ADR-100 and the reviewed design spec.
+2. Add the local-only `active_leaf_before_message_id` migration and atomic cursor persistence API.
+3. Hydrate explicit-before-first cursor state and original prompt text on resume, while preserving unset and invalid-state fallback behavior.
+4. Route first-prompt `/rewind` through the dedicated before-message operation and clear the marker when a durable leaf advances.
+5. Update the stale rewind integration fixture's durable Library-policy hydration, then add focused migration, store, UI, integration, and sync-log regression coverage using TDD.
+6. Run focused verification, self-review, and document implementation notes.
+
+ADR required: yes
+
+ADR path: `backlog/decisions/100-console-active-path-before-first-cursor.md`
+
+Reason: TASK-574 changes the durable conversation schema, local data ownership, and resume contract.
+<!-- SECTION:PLAN:END -->
