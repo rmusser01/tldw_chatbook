@@ -5,6 +5,7 @@ from __future__ import annotations
 import os
 from pathlib import Path
 import shutil
+from types import SimpleNamespace
 
 import pytest
 
@@ -12,6 +13,12 @@ from tldw_chatbook.DB.Workspace_DB import WorkspaceDB
 from tldw_chatbook.Workspaces import DEFAULT_WORKSPACE_ID, LocalWorkspaceRegistryService
 from tldw_chatbook.Tools import workspace_file_roots as wfr
 from tldw_chatbook.Tools import file_operation_tools as file_tools
+
+
+_DRIFT_WARNING = (
+    "Workspace folder binding excluded because its path no longer resolves "
+    "to itself (symlink or mount drift)"
+)
 
 
 @pytest.fixture(autouse=True)
@@ -30,6 +37,42 @@ def _registry(tmp_path: Path) -> LocalWorkspaceRegistryService:
     registry.create_workspace(workspace_id="ws-a", name="Client A")
     registry.create_workspace(workspace_id="ws-b", name="Client B")
     return registry
+
+
+def _root_consumer_registry(locator: Path):
+    binding = SimpleNamespace(
+        binding_id="binding-1",
+        locator=str(locator),
+        metadata={"access": "rw"},
+    )
+    record = SimpleNamespace(name="Client A")
+
+    class Registry:
+        def get_workspace(self, _workspace_id):
+            return record
+
+        def list_folder_bindings(self, _workspace_id):
+            return (binding,)
+
+        def change_review_enabled(self, _workspace_id):
+            return True
+
+    return Registry()
+
+
+def _invoke_root_consumer(consumer, registry, tmp_path, monkeypatch) -> None:
+    monkeypatch.setattr(wfr, "_registry_factory", lambda: registry)
+    monkeypatch.setenv("TLDW_CHANGE_REVIEW_ENABLED", "1")
+    if consumer == "allowed":
+        sandbox = tmp_path / "sandbox"
+        sandbox.mkdir(exist_ok=True)
+        with wfr.run_workspace("ws-a"):
+            wfr.allowed_file_roots(write=False, sandbox_root=sandbox)
+        return
+    if consumer == "tracking":
+        wfr.folder_binding_roots("ws-a")
+        return
+    wfr.workspace_context_note("ws-a", launch_cwd=tmp_path, registry=registry)
 
 
 def test_roots_follow_run_workspace_not_active(tmp_path, monkeypatch) -> None:
@@ -307,6 +350,56 @@ def test_change_review_gates_precede_binding_validation(tmp_path, monkeypatch) -
     assert wfr.folder_binding_roots("ws-a") == ()
     assert listing_calls == 0
     assert calls == 1
+
+
+@pytest.mark.parametrize("consumer", ("allowed", "tracking", "note"))
+@pytest.mark.parametrize("shape", ("symlink", "resolve-mismatch"))
+def test_consumers_share_exact_path_free_drift_warning(
+    tmp_path, monkeypatch, consumer, shape
+) -> None:
+    target = tmp_path / "target"
+    target.mkdir()
+    if shape == "symlink":
+        locator = tmp_path / "linked-root"
+        locator.symlink_to(target)
+    else:
+        locator = target / ".." / target.name
+    registry = _root_consumer_registry(locator)
+    records = []
+    sink_id = wfr.logger.add(
+        lambda message: records.append(message.record), level="WARNING"
+    )
+    try:
+        _invoke_root_consumer(consumer, registry, tmp_path, monkeypatch)
+    finally:
+        wfr.logger.remove(sink_id)
+
+    messages = [record["message"] for record in records]
+    assert messages.count(_DRIFT_WARNING) == 1
+    assert str(locator) not in "\n".join(messages)
+    assert str(target) not in "\n".join(messages)
+
+
+def test_missing_and_broken_symlink_bindings_remain_silent(tmp_path) -> None:
+    missing = SimpleNamespace(locator=str(tmp_path / "missing"))
+    broken = tmp_path / "broken"
+    broken.symlink_to(tmp_path / "absent-target")
+    records = []
+    sink_id = wfr.logger.add(
+        lambda message: records.append(message.record), level="WARNING"
+    )
+    try:
+        assert (
+            list(
+                wfr._iter_valid_folder_bindings(
+                    (missing, SimpleNamespace(locator=str(broken)))
+                )
+            )
+            == []
+        )
+    finally:
+        wfr.logger.remove(sink_id)
+    assert _DRIFT_WARNING not in [record["message"] for record in records]
 
 
 # --- Launched-location accessor (feat/workspace-agent-context-note) ---
