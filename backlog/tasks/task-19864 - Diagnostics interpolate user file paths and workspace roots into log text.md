@@ -96,3 +96,32 @@ file), once too severe (persistent sink).
 ## Design
 
 Approved design: [Diagnostic path privacy and regression guard](../../Docs/superpowers/specs/2026-08-28-diagnostic-path-privacy-and-guard-design.md).
+
+## Implementation Plan
+
+ADR required: no
+
+ADR path: `backlog/decisions/029-local-private-data-boundary.md`
+
+Reason: this enforces ADR-029's existing producer-side diagnostic privacy rule
+without changing sink admission, storage, ownership, or service contracts.
+
+Detailed plan: [TASK-19864 diagnostic path privacy implementation](../../Docs/superpowers/plans/2026-08-28-task-19864-diagnostic-path-privacy-implementation.md).
+
+1. Add born-red AST-scanner tests for path expressions, safe transforms,
+   alias propagation, multiplicity, and whole-set reporting.
+2. Extend the existing diagnostic inventory scanner and advance its generated
+   artifact to schema version 3 with explicit `legacy_unreviewed` candidates.
+3. Add an owned-file gate and runtime sentinel tests for the five recorded
+   owners, then prove them red against the current diagnostics.
+4. Replace raw file/database locations with extensions, stable fingerprints,
+   counts, or exception types; remove path-bearing traceback capture.
+5. Repair Change Review, Git workspace detection, and Inspector diagnostics
+   while preserving their user-facing recovery behavior.
+6. Classify and repair the inherited `virtual_cli_provider.py` inventory drift
+   that is already red on the branch's `dev` base.
+7. Review and regenerate the production diagnostic inventory, restamp its
+   dependent summarization fixture, and pin the still-accurate Copy visible
+   warning.
+8. Run focused behavior, architecture, formatting, and diff gates; self-review
+   the complete patch before checking criteria and adding implementation notes.

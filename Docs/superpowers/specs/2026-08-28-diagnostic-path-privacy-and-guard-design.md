@@ -71,6 +71,11 @@ No new path-identity abstraction is introduced. `content_fingerprint` and
 Call-site repair also keeps terminal output, the Logs pane, and any future descriptive
 consumer consistent.
 
+When a path-bearing failure currently uses `logger.opt(exception=True)`, the repair
+also removes dynamic traceback/diagnose capture and emits the exception type explicitly.
+Changing only the message is insufficient: Loguru can render path-bearing exception
+text and frame locals even when the message itself contains only a fingerprint.
+
 TASK-19936's failing-normalization diagnostic keeps disclosure identity through a fixed
 event label and failure class. It does not print `raw` or `str(exc)`.
 
@@ -160,7 +165,8 @@ Focused architecture tests use synthetic source to prove:
 
 Focused Loguru-capture tests drive distinctive absolute-path sentinels through the five
 owners' reachable failure paths. Each test asserts that the expected event still appears
-while the full sentinel and path-bearing exception text do not. Source-level assertions
+while the full sentinel and path-bearing exception text do not appear anywhere in the
+captured record, including exception output. Source-level assertions
 cover branches whose production setup would be disproportionate, but every
 runtime-reachable repair uses the real logging path.
 
