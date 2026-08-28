@@ -5912,8 +5912,28 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
     def handle_run_progress_tick(self, event: RunProgressTick) -> None:
         """A running run may have moved on -- check, cheaply (Qodo #1348)."""
         event.stop()
+        backend = self.runtime_backend
+        selected = self.selected_run
+        selected_identity = self._canonical_run_identity(
+            selected,
+            default_backend=backend,
+        )
+        requested_identity = self._canonical_run_identity(
+            {"id": event.run_id},
+            default_backend=backend,
+        )
+        if selected is None or selected_identity != requested_identity:
+            return
+        self._runs_refresh_generation += 1
+        publication_generation = self._runs_refresh_generation
         self.run_worker(
-            self._refresh_running_run(event.run_id),
+            self._refresh_running_run(
+                event.run_id,
+                backend=backend,
+                publication_generation=publication_generation,
+                selected=dict(selected),
+                selected_identity=selected_identity,
+            ),
             exclusive=True,
             group="wc_run_tick",
         )
@@ -5937,7 +5957,15 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
         """The volatile part of a run record, as a comparable tuple."""
         return tuple(str(run.get(field) or "") for field in cls._RUN_PROGRESS_FIELDS)
 
-    async def _refresh_running_run(self, run_id: Any) -> None:
+    async def _refresh_running_run(
+        self,
+        run_id: Any,
+        *,
+        backend: str,
+        publication_generation: int,
+        selected: dict[str, Any],
+        selected_identity: tuple[str, str],
+    ) -> None:
         """Re-read one running run and repaint only if it actually changed.
 
         Qodo, PR #1348. `run_poll` used to re-post `RunSelected` every second,
@@ -5958,21 +5986,19 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
 
         Args:
             run_id: The namespaced id the poll is watching.
+            backend: Backend captured when the tick was accepted.
+            publication_generation: Shared Runs publication owner.
+            selected: Selected run snapshot captured with the tick.
+            selected_identity: Canonical identity captured with the tick.
         """
-        backend = self.runtime_backend
-        publication_generation = self._runs_refresh_generation
-        selected = self.selected_run
-        selected_identity = self._canonical_run_identity(
-            selected,
-            default_backend=backend,
-        )
-        requested_identity = self._canonical_run_identity(
-            {"id": run_id},
-            default_backend=backend,
-        )
-        if selected is None or selected_identity != requested_identity:
-            # The user moved on between the tick being posted and this worker
-            # starting. Nothing to refresh, and nothing to resurrect.
+        if (
+            publication_generation != self._runs_refresh_generation
+            or not self._run_selection_is_current(
+                backend=backend,
+                selected_identity=selected_identity,
+                selected_was_present=True,
+            )
+        ):
             return
         try:
             record = await self._controller.get_run(

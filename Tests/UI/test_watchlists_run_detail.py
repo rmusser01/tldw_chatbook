@@ -2084,3 +2084,135 @@ async def test_older_same_run_detail_error_is_silent_after_newer_success():
         assert pane.run_items[0]["title"] == "Newest successful item"
         assert screen._run_detail_items == pane.run_items
         assert "newest successful log" in _logs_text(pane)
+
+
+@pytest.mark.asyncio
+async def test_newer_same_run_tick_supersedes_an_older_cancellation_resistant_tick():
+    app = _build_test_app()
+    app.watchlist_scope_service = StaticWatchlistsScopeService([])
+    host = _visual_destination_harness(app, "watchlists_collections")
+    async with host.run_test(size=(235, 52)) as pilot:
+        screen, pane = await _refresh_test_pane(pilot, host)
+        await _seed_refresh_snapshot(screen, pane, pilot)
+        older_started = asyncio.Event()
+        release_older = asyncio.Event()
+        newer_detail_loaded = asyncio.Event()
+        run_calls = 0
+        detail_calls = 0
+        older = dict(
+            RUNS[1],
+            found_count=99,
+            processed_count=99,
+            log_text="older tick completed last",
+        )
+        newer = dict(
+            RUNS[1],
+            found_count=12,
+            processed_count=12,
+            log_text="newer tick owns publication",
+        )
+
+        async def ordered_get_run(**_kwargs):
+            nonlocal run_calls
+            run_calls += 1
+            if run_calls == 1:
+                older_started.set()
+                while not release_older.is_set():
+                    try:
+                        await release_older.wait()
+                    except asyncio.CancelledError:
+                        continue
+                return older
+            return newer
+
+        async def ordered_items(**_kwargs):
+            nonlocal detail_calls
+            detail_calls += 1
+            if detail_calls == 1:
+                newer_detail_loaded.set()
+                return [{"title": "Newer tick item", "status": "new"}]
+            return [{"title": "Older stale item", "status": "new"}]
+
+        screen._controller.get_run = ordered_get_run
+        screen._controller.list_items = ordered_items
+        screen.post_message(RunProgressTick(RUNS[1]["id"]))
+        await asyncio.wait_for(older_started.wait(), timeout=2)
+
+        screen.post_message(RunProgressTick(RUNS[1]["id"]))
+        await asyncio.wait_for(newer_detail_loaded.wait(), timeout=2)
+        newer_landed = screen.selected_run == pane.selected_run == newer
+
+        release_older.set()
+        assert await _wait_worker_group_idle(pilot, screen, "wc_run_tick")
+        assert await _wait_worker_group_idle(pilot, screen, "wc_run_detail")
+
+        assert newer_landed
+        assert screen._loaded_runs == pane.runs == [dict(RUNS[0]), newer]
+        assert screen.selected_run == pane.selected_run == newer
+        assert pane.run_items[0]["title"] == "Newer tick item"
+        assert "newer tick owns publication" in _logs_text(pane)
+        assert "older tick completed last" not in _logs_text(pane)
+
+
+@pytest.mark.asyncio
+async def test_newer_tick_supersedes_an_older_explicit_refresh():
+    app = _build_test_app()
+    app.watchlist_scope_service = StaticWatchlistsScopeService([])
+    host = _visual_destination_harness(app, "watchlists_collections")
+    async with host.run_test(size=(235, 52)) as pilot:
+        screen, pane = await _refresh_test_pane(pilot, host)
+        await _seed_refresh_snapshot(screen, pane, pilot)
+        refresh_started = asyncio.Event()
+        release_refresh = asyncio.Event()
+        tick_detail_loaded = asyncio.Event()
+        detail_calls = 0
+        stale_refresh = dict(
+            RUNS[1],
+            found_count=7,
+            processed_count=7,
+            log_text="older explicit refresh",
+        )
+        tick = dict(
+            RUNS[1],
+            found_count=13,
+            processed_count=13,
+            log_text="newer tick publication",
+        )
+
+        async def list_runs(**_kwargs):
+            refresh_started.set()
+            await release_refresh.wait()
+            return [dict(RUNS[0]), stale_refresh]
+
+        async def get_run(**_kwargs):
+            return tick
+
+        async def ordered_items(**_kwargs):
+            nonlocal detail_calls
+            detail_calls += 1
+            if detail_calls == 1:
+                tick_detail_loaded.set()
+                return [{"title": "Newer tick item", "status": "new"}]
+            return [{"title": "Stale refresh item", "status": "new"}]
+
+        screen._controller.list_runs = list_runs
+        screen._controller.get_run = get_run
+        screen._controller.list_items = ordered_items
+        screen.post_message(RefreshRunsRequested())
+        await asyncio.wait_for(refresh_started.wait(), timeout=2)
+
+        screen.post_message(RunProgressTick(RUNS[1]["id"]))
+        await asyncio.wait_for(tick_detail_loaded.wait(), timeout=2)
+        tick_landed = screen.selected_run == pane.selected_run == tick
+
+        release_refresh.set()
+        assert await _wait_worker_group_idle(pilot, screen, "wc_runs")
+        assert await _wait_worker_group_idle(pilot, screen, "wc_run_tick")
+        assert await _wait_worker_group_idle(pilot, screen, "wc_run_detail")
+
+        assert tick_landed
+        assert screen._loaded_runs == pane.runs == [dict(RUNS[0]), tick]
+        assert screen.selected_run == pane.selected_run == tick
+        assert pane.run_items[0]["title"] == "Newer tick item"
+        assert "newer tick publication" in _logs_text(pane)
+        assert "older explicit refresh" not in _logs_text(pane)
