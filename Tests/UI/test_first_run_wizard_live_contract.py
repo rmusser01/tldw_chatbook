@@ -98,6 +98,7 @@ from tldw_chatbook.UI.Wizards.first_run_setup_state import (
     build_first_run_model_discovery_key,
 )
 from tldw_chatbook.UI.Wizards.FirstRunSetupWizard import (
+    _PICKER_MODEL_LIMIT,
     FirstRunSetupWizard,
     ModelStep,
     NotesSyncStep,
@@ -3723,3 +3724,140 @@ async def test_model_step_renders_auth_copy_on_both_handoff_branches(
         "the generic server-unreachable copy is the exact wrong advice for a "
         f"401: {rendered!r}"
     )
+
+
+# ---------------------------------------------------------------------------
+# TASK-23090: the catalog-size defects were caught by a manual live walk, not
+# by the suite. This drives the real ProviderStep -> ModelStep handoff against
+# a real local HTTP peer so a bound that trims or rejects a production-sized
+# catalog between discovery and the rendered picker fails here instead.
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.loopback_network
+@pytest.mark.asyncio
+async def test_production_sized_catalog_reaches_the_model_picker(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """A 128-model catalog must survive discovery and reach the picker.
+
+    Pins two of the three live-key defects through the real handoff, both
+    confirmed by reverting them:
+
+    * the wizard's typed-result bound -- reverting it to 100 fails here,
+      which is the defect that rendered "Couldn't reach the server" for a
+      valid key;
+    * the discovery module's identity encoding -- removing that header
+      fails here as ``invalid_response``, because the peer compresses.
+
+    It also pins ModelStep's own handoff: the assertion is on
+    ``_discovered_model_ids``, the full set the step produced, because the
+    rendered picker is capped at ``_PICKER_MODEL_LIMIT`` and would hide any
+    trim that kept the first 20.
+
+    It does NOT pin the settings_endpoint_probe encoding fix: this path
+    never presses Test, so the probe module is not exercised. That one is
+    covered by
+    ``test_provider_test_button_requests_identity_encoding_from_a_real_peer``.
+
+    Args:
+        monkeypatch: Pytest fixture used to isolate config/HOME state.
+        tmp_path: Pytest fixture providing the throwaway profile directory.
+    """
+    catalog_size = 128
+    newest_model = "gpt-5.4-pro"
+    model_ids = [f"model-{index}" for index in range(catalog_size - 1)]
+    model_ids.append(newest_model)  # newest last, as the real API orders them
+
+    with _RecordingModelsServer(model_ids) as server:
+        app = _build_fresh_wizard_app(monkeypatch, tmp_path)
+        # The app snapshots [providers] into providers_models at init, and
+        # its catalog loader reads that attribute -- a fresh test app has an
+        # empty snapshot, which discovery reports as "no matching provider
+        # model list in [providers]" before it ever issues a request.
+        from tldw_chatbook.config import get_cli_providers_and_models
+
+        app.providers_models = get_cli_providers_and_models()
+        with patch("tldw_chatbook.app.get_cli_setting", side_effect=_test_cli_setting):
+            async with app.run_test(size=(140, 45)) as pilot:
+                await _wait_until(
+                    pilot, lambda: type(app.screen).__name__ == "FirstRunSetupWizard"
+                )
+                container = app.screen.query_one(SetupWizardContainer)
+                await _wait_until(pilot, lambda: container.can_proceed)
+                _press(app.screen, "#wizard-next")
+                await _wait_until(
+                    pilot, lambda: _current_step_id(container) == STEP_PROVIDER
+                )
+
+                provider = next(
+                    s for s in container.steps if isinstance(s, ProviderStep)
+                )
+                provider.select_provider("llama_cpp")
+                await pilot.pause(0.4)
+                provider.query_one("#setup-provider-endpoint", Input).value = (
+                    server.base_url
+                )
+                await pilot.pause(0.4)
+
+                _press(app.screen, "#wizard-next")
+                await _wait_until(
+                    pilot,
+                    lambda: _current_step_id(container) == STEP_MODEL,
+                    timeout_seconds=20.0,
+                )
+                model_step = container.steps[container.current_step]
+                for _ in range(60):
+                    await pilot.pause(0.5)
+                    labels = [
+                        str(b.label)
+                        for b in model_step.query("#setup-model-choice RadioButton")
+                    ]
+                    if labels and all("loading models" not in x for x in labels):
+                        break
+                outcomes = dict(provider._selected_provider_outcomes)
+                handed_off_ids = model_step._discovered_model_ids
+
+    # The boundary that used to reject: a production-sized catalog must come
+    # back as a success with every model, not as an error the step renders as
+    # "Couldn't reach the server".
+    assert len(outcomes) == 1
+    outcome = next(iter(outcomes.values()))
+    assert outcome.status == "success", (
+        f"a {catalog_size}-model catalog did not survive discovery: "
+        f"{outcome.status} / {getattr(outcome.error, 'kind', None)}"
+    )
+    assert len(outcome.models) == catalog_size
+    assert outcome.models[-1].model_id == newest_model, (
+        "the newest model is missing; a trim drops it first"
+    )
+
+    # The boundary that actually matters for a trim: what ModelStep produced
+    # when it consumed that outcome, before the picker's bounded slice. The
+    # rendered list cannot stand in for this -- the picker shows only
+    # _PICKER_MODEL_LIMIT entries, so any trim that keeps the first 20 is
+    # invisible there.
+    assert len(handed_off_ids) == catalog_size, (
+        f"ModelStep's handoff produced {len(handed_off_ids)} of {catalog_size} "
+        "ids -- a bound between discovery and the picker trimmed the catalog"
+    )
+    assert handed_off_ids[-1] == newest_model, (
+        "the newest model is missing from the handoff; a trim drops it first"
+    )
+
+    # ...and the step renders a real choice list rather than a failure row.
+    assert labels, "the picker rendered nothing"
+    assert not any("Couldn't reach" in label for label in labels), (
+        f"a reachable peer with a full catalog rendered as a failure: {labels}"
+    )
+    assert labels[0].startswith("model-0"), labels[:3]
+    assert len(labels) == _PICKER_MODEL_LIMIT, (
+        f"the picker's bounded slice changed: {len(labels)} rows"
+    )
+
+    # Identity encoding on the discovery request, asserted from the
+    # server's point of view. Note this covers the discovery module's
+    # header, not settings_endpoint_probe's -- see the docstring.
+    assert server.accept_encodings and all(
+        "gzip" not in encoding.casefold() for encoding in server.accept_encodings
+    ), server.accept_encodings

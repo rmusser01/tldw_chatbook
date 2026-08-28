@@ -3172,6 +3172,11 @@ class ProviderStep(SetupStep):
 
 MODEL_DISCOVERY_TIMEOUT_SECONDS = 8.0
 
+# How many discovered models the radio picker renders. The full set stays on
+# the step as _discovered_model_ids; the adjacent "Or enter a model name"
+# input is the escape hatch for anything past this bound.
+_PICKER_MODEL_LIMIT = 20
+
 
 class ModelStep(SetupStep):
     """Pick a default model for the chosen provider.
@@ -3201,6 +3206,11 @@ class ModelStep(SetupStep):
             raise TypeError("Model discovery requires FirstRunProviderDraft.")
         self._discover_models = discover_models
         self._explicit_provider_draft = provider_draft
+        # The complete id set the last handoff produced. The picker renders
+        # a bounded slice of it (see _PICKER_MODEL_LIMIT), so without this
+        # the step keeps no record of what it actually received and a trim
+        # introduced in the handoff is invisible from the outside.
+        self._discovered_model_ids: tuple[str, ...] = ()
         self._shown_for_provider: Optional[str] = None
         self._shown_for_discovery_key: wizard_state.FirstRunModelDiscoveryKey | None = (
             None
@@ -3610,8 +3620,9 @@ class ModelStep(SetupStep):
             models = wizard_state.curated_models_for_provider(
                 get_cli_providers_and_models(), provider_value
             )
+        self._discovered_model_ids = tuple(models)
         await self._render_models(
-            models[:20],
+            models[:_PICKER_MODEL_LIMIT],
             discovery_state=discovery_state,
             failure_category=failure_category,
             discovery_key=discovery_key,
