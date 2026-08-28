@@ -245,6 +245,12 @@ class SchedulesWorkbench(BaseAppScreen):
             return
 
         self._tasks = list(tasks)
+        # Marks must always refer to rows that still exist (task-23107
+        # review F1): a task deleted or filtered out of existence must not
+        # linger as an invisible mark a bulk verb would act on.
+        self._marked_ids.intersection_update(
+            {task.id for task in self._tasks}
+        )
         self._render_table()
         await self._refresh_console_context()
 
@@ -833,13 +839,20 @@ class SchedulesWorkbench(BaseAppScreen):
         parts: list[str] = []
         if self._resize_notice:
             parts.append(self._resize_notice)
-        marked_count = sum(
-            1 for task in self._tasks if task.id in self._marked_ids
-        )
+        # Marking is reminder-only and marks are pruned on load, so the
+        # legend count IS the count the bulk verbs act on (review F1).
+        marked_count = len(self._marked_reminder_tasks())
         if marked_count:
+            visible_ids = {task.id for task in self._visible_tasks}
+            hidden = sum(
+                1 for task_id in self._marked_ids if task_id not in visible_ids
+            )
+            hidden_note = (
+                f" ({hidden} hidden by the filter)" if hidden else ""
+            )
             parts.append(
-                f"{marked_count} marked — space toggles all · d deletes all "
-                "· esc clears"
+                f"{marked_count} marked{hidden_note} — space toggles all "
+                "· d deletes all · esc clears"
             )
         if any(_was_missed_while_away(task) for task in self._visible_tasks):
             parts.append("◇ = ran late (dispatched after its scheduled time)")
@@ -931,9 +944,26 @@ class SchedulesWorkbench(BaseAppScreen):
             pass
 
     def action_delete(self) -> None:
-        """Delete marked tasks in bulk, else the selected one (confirmed)."""
-        marked = self._marked_reminder_tasks()
-        if marked:
+        """Delete marked tasks in bulk, else the selected one (confirmed).
+
+        While ANY mark exists, d never falls through to the highlighted,
+        unmarked row (task-23107 review F1): acting on a row the user
+        never marked is worse than refusing.
+        """
+        if self._marked_ids:
+            marked = self._marked_reminder_tasks()
+            if not marked:
+                # Defensive: marking is reminder-only and marks are pruned
+                # on every load, so this means the marked rows vanished
+                # between renders. Refuse instead of falling through.
+                self._marked_ids.clear()
+                self._render_table()
+                self.app_instance.notify(
+                    "The marked rows are no longer in the queue — marks "
+                    "cleared; nothing was deleted.",
+                    severity="warning",
+                )
+                return
             from ....Widgets.delete_confirmation_dialog import (
                 DeleteConfirmationDialog,
             )
@@ -1022,11 +1052,23 @@ class SchedulesWorkbench(BaseAppScreen):
         self.post_message(EditTaskRequested(task))
 
     def action_mark_task(self) -> None:
-        """Mark/unmark the highlighted task for bulk actions (x key)."""
+        """Mark/unmark the highlighted task for bulk actions (x key).
+
+        Only rows the bulk verbs can act on are markable (task-23107
+        review F1): marking a read-only projection row would either be
+        silently ignored by the bulk actions or, worse, let them fall
+        through to an unmarked row.
+        """
         task = self._selected_task()
         if task is None:
             self.app_instance.notify(
                 "Nothing to mark — select a task first.",
+                severity="warning",
+            )
+            return
+        if not isinstance(task, ReminderTask):
+            self.app_instance.notify(
+                _managed_elsewhere_notice(task, verb="manage"),
                 severity="warning",
             )
             return
@@ -1051,41 +1093,23 @@ class SchedulesWorkbench(BaseAppScreen):
         ]
 
     def action_toggle_enabled(self) -> None:
-        """Enable/disable marked tasks in bulk, else the highlighted one."""
-        marked = self._marked_reminder_tasks()
-        if marked:
-            service = self._service()
-            if service is None:
+        """Enable/disable marked tasks in bulk, else the highlighted one.
+
+        While ANY mark exists, space never falls through to the
+        highlighted, unmarked row (task-23107 review F1).
+        """
+        if self._marked_ids:
+            marked = self._marked_reminder_tasks()
+            if not marked:
+                self._marked_ids.clear()
+                self._render_table()
                 self.app_instance.notify(
-                    "Scheduling service is unavailable; cannot update the scheduled tasks.",
+                    "The marked rows are no longer in the queue — marks "
+                    "cleared; nothing was toggled.",
                     severity="warning",
                 )
                 return
-
-            async def _bulk_toggle() -> None:
-                errors = 0
-                for task in marked:
-                    try:
-                        await service.update_reminder(
-                            task.id, {"enabled": not task.enabled}
-                        )
-                    except Exception:  # noqa: BLE001
-                        logger.exception("Failed to toggle reminder {}", task.id)
-                        errors += 1
-                count = len(marked) - errors
-                self.app_instance.notify(
-                    f"Toggled {count} marked task{'s' if count != 1 else ''}"
-                    + (f" ({errors} failed)" if errors else "") + ".",
-                    severity="information" if not errors else "warning",
-                )
-                self._marked_ids.clear()
-                await self.load_tasks()
-
-            self.run_worker(
-                _bulk_toggle,
-                exclusive=True,
-                group="schedules-bulk-toggle",
-            )  # type: ignore[arg-type]
+            self._bulk_toggle_marked(marked)
             return
 
         task = self._selected_task()
@@ -1104,6 +1128,41 @@ class SchedulesWorkbench(BaseAppScreen):
             )
             return
         self._set_reminder_enabled(task, not task.enabled)
+
+    def _bulk_toggle_marked(self, marked: list[ReminderTask]) -> None:
+        """Toggle every marked task's enabled state (space with marks)."""
+        service = self._service()
+        if service is None:
+            self.app_instance.notify(
+                "Scheduling service is unavailable; cannot update the scheduled tasks.",
+                severity="warning",
+            )
+            return
+
+        async def _bulk_toggle() -> None:
+            errors = 0
+            for task in marked:
+                try:
+                    await service.update_reminder(
+                        task.id, {"enabled": not task.enabled}
+                    )
+                except Exception:  # noqa: BLE001
+                    logger.exception("Failed to toggle reminder {}", task.id)
+                    errors += 1
+            count = len(marked) - errors
+            self.app_instance.notify(
+                f"Toggled {count} marked task{'s' if count != 1 else ''}"
+                + (f" ({errors} failed)" if errors else "") + ".",
+                severity="information" if not errors else "warning",
+            )
+            self._marked_ids.clear()
+            await self.load_tasks()
+
+        self.run_worker(
+            _bulk_toggle,
+            exclusive=True,
+            group="schedules-bulk-toggle",
+        )  # type: ignore[arg-type]
 
     def action_sync_now(self) -> None:
         """Sync schedule state now."""
