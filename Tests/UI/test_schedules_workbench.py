@@ -546,7 +546,9 @@ async def test_workbench_renders_watchlist_job_row():
         assert "Watchlist Title" in str(watchlist_row[0])
         assert "Watchlist Job" in str(watchlist_row[1])
         assert "Waiting" in str(watchlist_row[2])
-        assert "2026-07-20 11:00 UTC" in str(watchlist_row[3])
+        # task-23111: the queue column drops the TZ token and appends a
+        # relative form ("2026-07-20 11:00 (overdue 39d)").
+        assert "2026-07-20 11:00" in str(watchlist_row[3])
 
 
 @pytest.mark.asyncio

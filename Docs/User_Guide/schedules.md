@@ -43,6 +43,13 @@ pinned at the bottom while you edit.
   is preselected and listed first, followed by common zones and any zone
   your existing tasks already use.
 
+## Next Run readability
+
+Next Run pairs the absolute time with a relative form: the detail pane
+shows "2026-08-31 14:30 UTC (in 2d)" and the queue column a shorter
+"2026-08-31 14:30 (in 2d)". Overdue times read "(overdue 2h)"; times
+within a minute read "(due now)".
+
 ## Bulk actions — marking rows
 
 Press **x** to mark or unmark the highlighted row (●). While any rows

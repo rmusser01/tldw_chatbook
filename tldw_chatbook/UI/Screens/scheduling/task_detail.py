@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from datetime import datetime, timezone
 from typing import Any
 
 from rich.text import Text
@@ -108,17 +109,55 @@ def _format_timezone(dt) -> str:
     return dt.tzname() or "UTC"
 
 
-def _format_next_run(task: ReminderTask | ScheduledTask | None) -> str:
-    """Format a task's next run time with timezone.
+def _format_relative(next_run_at: datetime, now: datetime) -> str:
+    """Render the distance to ``next_run_at`` as plain prose (task-23111).
+
+    Naive datetimes are treated as UTC, matching ``_format_timezone``'s
+    labeling of naive values.
+    """
+    if next_run_at.tzinfo is None:
+        next_run_at = next_run_at.replace(tzinfo=timezone.utc)
+    if now.tzinfo is None:
+        now = now.replace(tzinfo=timezone.utc)
+    seconds = (next_run_at - now).total_seconds()
+    overdue = seconds < 0
+    seconds = abs(seconds)
+    if seconds < 60:
+        return "due now"
+    if seconds < 3600:
+        amount = f"{int(seconds // 60)}m"
+    elif seconds < 2 * 86400:
+        amount = f"{int(seconds // 3600)}h"
+    else:
+        amount = f"{int(seconds // 86400)}d"
+    return f"overdue {amount}" if overdue else f"in {amount}"
+
+
+def _format_next_run(
+    task: ReminderTask | ScheduledTask | None,
+    *,
+    now: datetime | None = None,
+    compact: bool = False,
+) -> str:
+    """Format a task's next run time with a relative form alongside.
 
     A disabled reminder will not run at its stored ``next_run_at``, so a
-    concrete future time would be a false promise (task-23101).
+    concrete future time would be a false promise (task-23101). The
+    detail pane uses the full form ("2026-08-28 09:00 UTC (in 14h)");
+    the queue column passes ``compact=True`` to drop the timezone token
+    and keep the column width sane (task-23111). ``now`` is injectable
+    for deterministic tests.
     """
     if task is None or task.next_run_at is None:
         return "-"
     if isinstance(task, ReminderTask) and not task.enabled:
         return "— (disabled)"
-    return f"{task.next_run_at.strftime('%Y-%m-%d %H:%M')} {_format_timezone(task.next_run_at)}"
+    reference = now if now is not None else datetime.now(timezone.utc)
+    absolute = task.next_run_at.strftime("%Y-%m-%d %H:%M")
+    relative = _format_relative(task.next_run_at, reference)
+    if compact:
+        return f"{absolute} ({relative})"
+    return f"{absolute} {_format_timezone(task.next_run_at)} ({relative})"
 
 
 def _format_last_run(task: ReminderTask | ScheduledTask | None) -> str:

@@ -281,7 +281,9 @@ class SchedulesWorkbench(BaseAppScreen):
                 + task.title,
                 _task_type_label(task),
                 status_badge_text(_task_status(task)),
-                _format_next_run(task),
+                # Compact: same relative form as the detail pane, without
+                # the timezone token (task-23111).
+                _format_next_run(task, compact=True),
             )
             for task in self._visible_tasks
         ]
