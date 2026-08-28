@@ -1,0 +1,5 @@
+{
+  "kind": "automated",
+  "result_name": "Tests/Library/test_library_notes_session.py::test_stale_open_session_cannot_replace_a_newer_loaded_session",
+  "status": "PASS"
+}

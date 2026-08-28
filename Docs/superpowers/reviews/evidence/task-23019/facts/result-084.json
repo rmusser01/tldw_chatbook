@@ -1,0 +1,575 @@
+{
+  "cleanup_owner_counts": {
+    "host_task_leaks": 0,
+    "host_thread_worker_leaks": 0,
+    "host_worker_leaks": 0,
+    "host_workers_before": 0,
+    "host_workers_owned": 0
+  },
+  "compositor_text": "                     \u256d\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u256e                                                                 \n \u23031 Home  \u23032 Console \u2502 \u23033 Library \u2502 F10 Research  \u23034 Artifacts  \u23035 Roleplay  \u23036 Watchlists  More \u25be  \n\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\n Library | Local                                                                                    \n     Prompts (3)                                      \u2039 Back to list                                \n     \u258a\u2594\u2594\u2594\u2594\u2594\u2594\u2594\u2594\u2594\u2594\u2594\u2594\u2594\u2594\u2594\u2594\u2594\u2594\u2594\u2594\u2594\u2594\u2594\u2594\u2594\u2594\u2594\u2594\u2594\u2594\u2594\u2594\u2594\u2594\u2594\u2594\u2594\u2594\u2594\u2594\u258e     Name                                            \n     \u258a Filter prompts\u2026 (Enter)                \u258e     \u258a\u2594\u2594\u2594\u2594\u2594\u2594\u2594\u2594\u2594\u2594\u2594\u2594\u2594\u2594\u2594\u2594\u2594\u2594\u2594\u2594\u2594\u2594\u2594\u2594\u2594\u2594\u2594\u2594\u2594\u2594\u2594\u2594\u2594\u2594\u2594\u2594\u2594\u2594\u2594\u2594\u2594\u2594\u2594\u2594\u2594\u258e \n     \u258a\u2581\u2581\u2581\u2581\u2581\u2581\u2581\u2581\u2581\u2581\u2581\u2581\u2581\u2581\u2581\u2581\u2581\u2581\u2581\u2581\u2581\u2581\u2581\u2581\u2581\u2581\u2581\u2581\u2581\u2581\u2581\u2581\u2581\u2581\u2581\u2581\u2581\u2581\u2581\u2581\u258e     \u258a Structured closeout prompt                  \u258e \n                                                    \u258a\u2581\u2581\u2581\u2581\u2581\u2581\u2581\u2581\u2581\u2581\u2581\u2581\u2581\u2581\u2581\u2581\u2581\u2581\u2581\u2581\u2581\u2581\u2581\u2581\u2581\u2581\u2581\u2581\u2581\u2581\u2581\u2581\u2581\u2581\u2581\u2581\u2581\u2581\u2581\u2581\u2581\u2581\u2581\u2581\u2581\u258e \n       collection: All prompts                                                                      \n        sort: Newest        Select                  Description                                     \n          Import\u2026          Export\u2026                  \u258a\u2594\u2594\u2594\u2594\u2594\u2594\u2594\u2594\u2594\u2594\u2594\u2594\u2594\u2594\u2594\u2594\u2594\u2594\u2594\u2594\u2594\u2594\u2594\u2594\u2594\u2594\u2594\u2594\u2594\u2594\u2594\u2594\u2594\u2594\u2594\u2594\u2594\u2594\u2594\u2594\u2594\u2594\u2594\u2594\u2594\u258e \n      Structured closeout prompt                    \u258a Advanced-only detail v2                     \u258e \n      Prompt \u00b7 Local \u00b7 System + User                \u258a\u2581\u2581\u2581\u2581\u2581\u2581\u2581\u2581\u2581\u2581\u2581\u2581\u2581\u2581\u2581\u2581\u2581\u2581\u2581\u2581\u2581\u2581\u2581\u2581\u2581\u2581\u2581\u2581\u2581\u2581\u2581\u2581\u2581\u2581\u2581\u2581\u2581\u2581\u2581\u2581\u2581\u2581\u2581\u2581\u2581\u258e \n                                                                                                    \n      Closeout prompt 2                                  Basic           Advanced           Info   \u2585\n--->  Prompt \u00b7 Local \u00b7 System + User           <---                                                 \n                                                    Prompt \u00b7 Local \u00b7 structured format              \n      Closeout prompt 1                             \u258a\u2594\u2594\u2594\u2594\u2594\u2594\u2594\u2594\u2594\u2594\u2594\u2594\u2594\u2594\u2594\u2594\u2594\u2594\u2594\u2594\u2594\u2594\u2594\u2594\u2594\u2594\u2594\u2594\u2594\u2594\u2594\u2594\u2594\u2594\u2594\u2594\u2594\u2594\u2594\u2594\u2594\u2594\u2594\u2594\u258e  \n      Prompt \u00b7 Local \u00b7 System + User         \u2587      \u258a\u2594\u2594\u2594\u2594\u2594\u2594\u2594\u2594\u2594\u2594\u2594\u2594\u2594\u2594\u2594\u2594\u2594\u2594\u2594\u2594\u2594\u2594\u2594\u2594\u2594\u2594\u2594\u2594\u2594\u2594\u2594\u2594\u2594\u2594\u2594\u2594\u2594\u2594\u2594\u2594\u2594\u2594\u2594\u2594\u2594\u258e \n     1-3 of 3 \u00b7 Page 1 of 1                         \u258a closeout, structured                        \u258e \n     Already on the first page. \u00b7 No more           \u258a\u2581\u2581\u2581\u2581\u2581\u2581\u2581\u2581\u2581\u2581\u2581\u2581\u2581\u2581\u2581\u2581\u2581\u2581\u2581\u2581\u2581\u2581\u2581\u2581\u2581\u2581\u2581\u2581\u2581\u2581\u2581\u2581\u2581\u2581\u2581\u2581\u2581\u2581\u2581\u2581\u2581\u2581\u2581\u2581\u2581\u258e \n     results.                                                                                       \n         \u25cb Previous         \u25cb Next                  Author                                          \n                                                    \u258a\u2594\u2594\u2594\u2594\u2594\u2594\u2594\u2594\u2594\u2594\u2594\u2594\u2594\u2594\u2594\u2594\u2594\u2594\u2594\u2594\u2594\u2594\u2594\u2594\u2594\u2594\u2594\u2594\u2594\u2594\u2594\u2594\u2594\u2594\u2594\u2594\u2594\u2594\u2594\u2594\u2594\u2594\u2594\u2594\u2594\u258e \n                                                    \u258a Advanced Author                             \u258e \n                                                                                                    \n                                                                      Save changes                  \n                                                                    Discard changes                 \n  / focus search | F6 next pane | esc back to list | F1 help \u00b7 Ctrl+P palette \u00b7 Ctrl+Q quit         ",
+  "contained": true,
+  "destination": "prompts",
+  "f6_route": [],
+  "final_destination": "prompts",
+  "focus_owner": "library-prompt-name",
+  "footer_shortcuts": [
+    [
+      "/",
+      "focus search"
+    ],
+    [
+      "F6",
+      "next pane"
+    ],
+    [
+      "esc",
+      "back to list"
+    ]
+  ],
+  "grips": {
+    "items": {
+      "focusable": true,
+      "id": "library-prompts-items-grip",
+      "painted": true
+    },
+    "library": {
+      "focusable": true,
+      "id": "library-prompts-library-grip",
+      "painted": true
+    }
+  },
+  "host_worker_groups": [
+    "library_prompt_editor_mode"
+  ],
+  "identities": {
+    "items": "library-canvas",
+    "shell": "library-prompts-reader-shell",
+    "work": "library-prompt-work-pane"
+  },
+  "kind": "live",
+  "observations": {
+    "basic_draft": "Ship the verified closeout.",
+    "bulk_preview_copy": "Read-only preview \u00b7 Not included in bulk selection",
+    "catalogue_ids": [
+      "PR-01",
+      "PR-02"
+    ],
+    "history_title": "Retained history (2)",
+    "import_boundary": "opened_and_cancelled",
+    "preserved_advanced_author": "Ada",
+    "preserved_advanced_details": "Closeout fixture",
+    "preserved_advanced_keywords": "closeout",
+    "preserved_advanced_mapping_hint": "Advanced-only user mapping hint.",
+    "preserved_advanced_title_before_validation": "Delivery contract",
+    "retry_prior_loaded_id": 2,
+    "retry_selected_id": 1,
+    "structured_prompt_id": 3,
+    "validation_focus_owner": "prompt-block-title-delivery",
+    "validation_status": "Fix block validation errors before saving."
+  },
+  "preferences": {
+    "effective_items_open": true,
+    "effective_items_width": 42,
+    "effective_library_open": false,
+    "effective_library_width": 0,
+    "effective_priority_pane": null,
+    "effective_reader_width": 48,
+    "requested_custom_widths_enabled": false,
+    "requested_items_open": true,
+    "requested_items_width": 40,
+    "requested_library_open": true,
+    "requested_library_width": 31
+  },
+  "primary_actions": [
+    {
+      "disabled": false,
+      "id": "library-prompts-library-grip",
+      "label": "--->",
+      "region": {
+        "bottom": 29,
+        "height": 25,
+        "right": 5,
+        "width": 5,
+        "x": 0,
+        "y": 4
+      }
+    },
+    {
+      "disabled": false,
+      "id": "library-prompts-collection",
+      "label": "collection: All prompts",
+      "region": {
+        "bottom": 10,
+        "height": 1,
+        "right": 32,
+        "width": 27,
+        "x": 5,
+        "y": 9
+      }
+    },
+    {
+      "disabled": false,
+      "id": "library-prompts-sort",
+      "label": "sort: Newest",
+      "region": {
+        "bottom": 11,
+        "height": 1,
+        "right": 22,
+        "width": 16,
+        "x": 6,
+        "y": 10
+      }
+    },
+    {
+      "disabled": false,
+      "id": "library-prompts-select",
+      "label": "Select",
+      "region": {
+        "bottom": 11,
+        "height": 1,
+        "right": 39,
+        "width": 16,
+        "x": 23,
+        "y": 10
+      }
+    },
+    {
+      "disabled": false,
+      "id": "library-prompts-import",
+      "label": "Import\u2026",
+      "region": {
+        "bottom": 12,
+        "height": 1,
+        "right": 22,
+        "width": 16,
+        "x": 6,
+        "y": 11
+      }
+    },
+    {
+      "disabled": false,
+      "id": "library-prompts-export",
+      "label": "Export\u2026",
+      "region": {
+        "bottom": 12,
+        "height": 1,
+        "right": 39,
+        "width": 16,
+        "x": 23,
+        "y": 11
+      }
+    },
+    {
+      "disabled": false,
+      "id": "library-prompt-row-3",
+      "label": "Structured closeout prompt\nPrompt \u00b7 Local \u00b7 System + User\nAdvanced-only detail v2 \u00b7 now",
+      "region": {
+        "bottom": 14,
+        "height": 2,
+        "right": 45,
+        "width": 40,
+        "x": 5,
+        "y": 12
+      }
+    },
+    {
+      "disabled": false,
+      "id": "library-prompt-row-2",
+      "label": "Closeout prompt 2\nPrompt \u00b7 Local \u00b7 System + User\nCloseout fixture \u00b7 now",
+      "region": {
+        "bottom": 17,
+        "height": 2,
+        "right": 45,
+        "width": 40,
+        "x": 5,
+        "y": 15
+      }
+    },
+    {
+      "disabled": false,
+      "id": "library-prompt-row-1",
+      "label": "Closeout prompt 1\nPrompt \u00b7 Local \u00b7 System + User\nCloseout fixture \u00b7 now",
+      "region": {
+        "bottom": 20,
+        "height": 2,
+        "right": 45,
+        "width": 40,
+        "x": 5,
+        "y": 18
+      }
+    },
+    {
+      "disabled": true,
+      "id": "library-prompts-page-previous",
+      "label": "\u25cb Previous",
+      "region": {
+        "bottom": 24,
+        "height": 1,
+        "right": 22,
+        "width": 16,
+        "x": 6,
+        "y": 23
+      }
+    },
+    {
+      "disabled": true,
+      "id": "library-prompts-page-next",
+      "label": "\u25cb Next",
+      "region": {
+        "bottom": 24,
+        "height": 1,
+        "right": 39,
+        "width": 16,
+        "x": 23,
+        "y": 23
+      }
+    },
+    {
+      "disabled": false,
+      "id": "library-prompts-items-grip",
+      "label": "<---",
+      "region": {
+        "bottom": 29,
+        "height": 25,
+        "right": 52,
+        "width": 5,
+        "x": 47,
+        "y": 4
+      }
+    },
+    {
+      "disabled": false,
+      "id": "library-prompt-back",
+      "label": "\u2039 Back to list",
+      "region": {
+        "bottom": 5,
+        "height": 1,
+        "right": 70,
+        "width": 18,
+        "x": 52,
+        "y": 4
+      }
+    },
+    {
+      "disabled": false,
+      "id": "library-prompt-mode-basic",
+      "label": "Basic",
+      "region": {
+        "bottom": 16,
+        "height": 1,
+        "right": 68,
+        "width": 16,
+        "x": 52,
+        "y": 15
+      }
+    },
+    {
+      "disabled": false,
+      "id": "library-prompt-mode-advanced",
+      "label": "Advanced",
+      "region": {
+        "bottom": 16,
+        "height": 1,
+        "right": 85,
+        "width": 16,
+        "x": 69,
+        "y": 15
+      }
+    },
+    {
+      "disabled": false,
+      "id": "library-prompt-mode-info",
+      "label": "Info",
+      "region": {
+        "bottom": 16,
+        "height": 1,
+        "right": 102,
+        "width": 16,
+        "x": 86,
+        "y": 15
+      }
+    },
+    {
+      "disabled": true,
+      "id": "prompt-block-move-up-role",
+      "label": "\u2191 Up",
+      "region": {
+        "bottom": 29,
+        "height": 3,
+        "right": 65,
+        "width": 9,
+        "x": 56,
+        "y": 26
+      }
+    },
+    {
+      "disabled": true,
+      "id": "prompt-block-move-down-role",
+      "label": "\u2193 Down",
+      "region": {
+        "bottom": 29,
+        "height": 3,
+        "right": 75,
+        "width": 10,
+        "x": 65,
+        "y": 26
+      }
+    },
+    {
+      "disabled": false,
+      "id": "prompt-block-duplicate-role",
+      "label": "Duplicate",
+      "region": {
+        "bottom": 29,
+        "height": 3,
+        "right": 85,
+        "width": 10,
+        "x": 75,
+        "y": 26
+      }
+    },
+    {
+      "disabled": false,
+      "id": "prompt-block-delete-role",
+      "label": "Delete",
+      "region": {
+        "bottom": 29,
+        "height": 3,
+        "right": 95,
+        "width": 10,
+        "x": 85,
+        "y": 26
+      }
+    },
+    {
+      "disabled": false,
+      "id": "prompt-lane-add-system",
+      "label": "Add System block",
+      "region": {
+        "bottom": 44,
+        "height": 3,
+        "right": 96,
+        "width": 41,
+        "x": 55,
+        "y": 41
+      }
+    },
+    {
+      "disabled": true,
+      "id": "prompt-block-move-up-delivery",
+      "label": "\u2191 Up",
+      "region": {
+        "bottom": 59,
+        "height": 3,
+        "right": 65,
+        "width": 9,
+        "x": 56,
+        "y": 56
+      }
+    },
+    {
+      "disabled": true,
+      "id": "prompt-block-move-down-delivery",
+      "label": "\u2193 Down",
+      "region": {
+        "bottom": 59,
+        "height": 3,
+        "right": 75,
+        "width": 10,
+        "x": 65,
+        "y": 56
+      }
+    },
+    {
+      "disabled": false,
+      "id": "prompt-block-duplicate-delivery",
+      "label": "Duplicate",
+      "region": {
+        "bottom": 59,
+        "height": 3,
+        "right": 85,
+        "width": 10,
+        "x": 75,
+        "y": 56
+      }
+    },
+    {
+      "disabled": false,
+      "id": "prompt-block-delete-delivery",
+      "label": "Delete",
+      "region": {
+        "bottom": 59,
+        "height": 3,
+        "right": 95,
+        "width": 10,
+        "x": 85,
+        "y": 56
+      }
+    },
+    {
+      "disabled": false,
+      "id": "prompt-lane-add-user",
+      "label": "Add User block",
+      "region": {
+        "bottom": 75,
+        "height": 3,
+        "right": 96,
+        "width": 41,
+        "x": 55,
+        "y": 72
+      }
+    },
+    {
+      "disabled": false,
+      "id": "library-prompt-memberships-manage",
+      "label": "Manage collections",
+      "region": {
+        "bottom": 35,
+        "height": 1,
+        "right": 74,
+        "width": 22,
+        "x": 52,
+        "y": 34
+      }
+    },
+    {
+      "disabled": true,
+      "id": "library-prompt-memberships-apply",
+      "label": "Apply memberships",
+      "region": {
+        "bottom": 36,
+        "height": 1,
+        "right": 73,
+        "width": 21,
+        "x": 52,
+        "y": 35
+      }
+    },
+    {
+      "disabled": false,
+      "id": "library-prompt-save",
+      "label": "Save changes",
+      "region": {
+        "bottom": 28,
+        "height": 1,
+        "right": 100,
+        "width": 48,
+        "x": 52,
+        "y": 27
+      }
+    },
+    {
+      "disabled": false,
+      "id": "library-prompt-discard",
+      "label": "Discard changes",
+      "region": {
+        "bottom": 29,
+        "height": 1,
+        "right": 100,
+        "width": 48,
+        "x": 52,
+        "y": 28
+      }
+    }
+  ],
+  "record": {
+    "loaded": 3,
+    "mode": "advanced",
+    "pending": null,
+    "selected": 3
+  },
+  "regions": {
+    "items": {
+      "bottom": 29,
+      "height": 25,
+      "right": 47,
+      "width": 42,
+      "x": 5,
+      "y": 4
+    },
+    "items_grip": {
+      "bottom": 29,
+      "height": 25,
+      "right": 52,
+      "width": 5,
+      "x": 47,
+      "y": 4
+    },
+    "library": {
+      "bottom": 0,
+      "height": 0,
+      "right": 0,
+      "width": 0,
+      "x": 0,
+      "y": 0
+    },
+    "library_grip": {
+      "bottom": 29,
+      "height": 25,
+      "right": 5,
+      "width": 5,
+      "x": 0,
+      "y": 4
+    },
+    "work": {
+      "bottom": 29,
+      "height": 25,
+      "right": 100,
+      "width": 48,
+      "x": 52,
+      "y": 4
+    }
+  },
+  "regions_do_not_intersect": true,
+  "result_name": "prompts_capability",
+  "selected_row": {
+    "identity": "3",
+    "region": {
+      "bottom": 14,
+      "height": 2,
+      "right": 45,
+      "width": 40,
+      "x": 5,
+      "y": 12
+    },
+    "selected": true,
+    "widget_id": "library-prompt-row-3"
+  },
+  "status": "PASS",
+  "terminal_size": [
+    100,
+    30
+  ],
+  "visible_controls": [
+    "library-prompts-library-grip",
+    "library-prompts-collection",
+    "library-prompts-sort",
+    "library-prompts-select",
+    "library-prompts-import",
+    "library-prompts-export",
+    "library-prompt-row-3",
+    "library-prompt-row-2",
+    "library-prompt-row-1",
+    "library-prompts-page-previous",
+    "library-prompts-page-next",
+    "library-prompts-items-grip",
+    "library-prompt-back",
+    "library-prompt-mode-basic",
+    "library-prompt-mode-advanced",
+    "library-prompt-mode-info",
+    "prompt-block-move-up-role",
+    "prompt-block-move-down-role",
+    "prompt-block-duplicate-role",
+    "prompt-block-delete-role",
+    "prompt-lane-add-system",
+    "prompt-block-move-up-delivery",
+    "prompt-block-move-down-delivery",
+    "prompt-block-duplicate-delivery",
+    "prompt-block-delete-delivery",
+    "prompt-lane-add-user",
+    "library-prompt-memberships-manage",
+    "library-prompt-memberships-apply",
+    "library-prompt-save",
+    "library-prompt-discard"
+  ]
+}
