@@ -3665,7 +3665,7 @@ UPDATE db_schema_version
             )
 
             logger.warning(
-                f"Integrity constraint violation: {query[:300]}... Error: {e}"
+                f"Integrity constraint violation: {query[:300]}... Error: exception_type={type(e).__name__}"
             )
             # Distinguish unique constraint from other integrity errors if possible
             if "unique constraint failed" in str(e).lower():
@@ -3690,8 +3690,8 @@ UPDATE db_schema_version
                 },
             )
 
-            logger.opt(exception=True).error(
-                f"Query execution failed: {query[:300]}... Error: {e}"
+            logger.error(
+                f"Query execution failed: {query[:300]}... Error: exception_type={type(e).__name__}"
             )
             raise CharactersRAGDBError(f"Query execution failed: {e}") from e
 
@@ -3733,7 +3733,7 @@ UPDATE db_schema_version
             return cursor
         except sqlite3.IntegrityError as e:
             logger.warning(
-                f"Integrity constraint violation during batch: {query[:150]}... Error: {e}"
+                f"Integrity constraint violation during batch: {query[:150]}... Error: exception_type={type(e).__name__}"
             )
             if "unique constraint failed" in str(e).lower():
                 raise ConflictError(
@@ -3743,8 +3743,8 @@ UPDATE db_schema_version
                 f"Database constraint violation during batch: {e}"
             ) from e
         except sqlite3.Error as e:
-            logger.opt(exception=True).error(
-                f"Execute Many failed: {query[:150]}... Error: {e}"
+            logger.error(
+                f"Execute Many failed: {query[:150]}... Error: exception_type={type(e).__name__}"
             )
             raise CharactersRAGDBError(f"Execute Many failed: {e}") from e
 
@@ -3809,8 +3809,8 @@ UPDATE db_schema_version
                 and "db_schema_version" in str(e).lower()
             ):
                 return 0
-            logger.opt(exception=True).error(
-                f"Could not determine database schema version for '{self._SCHEMA_NAME}': {e}"
+            logger.error(
+                f"Could not determine database schema version for '{self._SCHEMA_NAME}': exception_type={type(e).__name__}"
             )
             raise SchemaError(
                 f"Could not determine schema version for '{self._SCHEMA_NAME}': {e}"
@@ -7360,15 +7360,19 @@ UPDATE db_schema_version
                 )
 
         except (SchemaError, sqlite3.Error) as e:
-            logger.opt(exception=True).error(
-                f"Schema initialization/migration failed for '{self._SCHEMA_NAME}': {e}"
+            logger.error(
+                f"Schema initialization/migration failed for '{self._SCHEMA_NAME}' "
+                f"db_sha256={self._db_diagnostic_ref} "
+                f"exception_type={type(e).__name__}"
             )
             raise SchemaError(
                 f"Schema initialization/migration for '{self._SCHEMA_NAME}' failed: {e}"
             ) from e
         except Exception as e:
-            logger.opt(exception=True).error(
-                f"Unexpected error during schema initialization for '{self._SCHEMA_NAME}': {e}"
+            logger.error(
+                f"Unexpected error during schema initialization for '{self._SCHEMA_NAME}' "
+                f"db_sha256={self._db_diagnostic_ref} "
+                f"exception_type={type(e).__name__}"
             )
             raise CharactersRAGDBError(
                 f"Unexpected error applying schema for '{self._SCHEMA_NAME}': {e}"
@@ -7724,7 +7728,7 @@ UPDATE db_schema_version
             )
 
             logger.error(
-                f"Database error adding character card '{card_data.get('name')}': {e}"
+                f"Database error adding character card '{card_data.get('name')}': exception_type={type(e).__name__}"
             )
             raise
         return None  # Should not be reached
@@ -7922,7 +7926,7 @@ UPDATE db_schema_version
             )
 
             logger.error(
-                f"Database error fetching character card ID {character_id}: {e}"
+                f"Database error fetching character card ID {character_id}: exception_type={type(e).__name__}"
             )
             raise
 
@@ -8082,7 +8086,7 @@ UPDATE db_schema_version
             )
 
             logger.error(
-                f"Database error fetching character card by name '{name}': {e}"
+                f"Database error fetching character card by name '{name}': exception_type={type(e).__name__}"
             )
             raise
 
@@ -8164,7 +8168,9 @@ UPDATE db_schema_version
                 },
             )
 
-            logger.error(f"Database error listing character cards: {e}")
+            logger.error(
+                f"Database error listing character cards: exception_type={type(e).__name__}"
+            )
             raise
 
     # P3a: json-valid guard so json_each never sees NULL / non-JSON tags.
@@ -8619,15 +8625,15 @@ UPDATE db_schema_version
                     "error_type": "integrity_error",
                 },
             )
-            logger.opt(exception=True).critical(
-                f"DATABASE IntegrityError during update_character_card (SINGLE UPDATE STRATEGY) for ID {character_id}: {e}"
+            logger.critical(
+                f"DATABASE IntegrityError during update_character_card (SINGLE UPDATE STRATEGY) for ID {character_id}: exception_type={type(e).__name__}"
             )
             raise CharactersRAGDBError(
                 f"Database integrity error during single update: {e}"
             ) from e
         except sqlite3.DatabaseError as e:
-            logger.opt(exception=True).critical(
-                f"DATABASE ERROR during update_character_card (SINGLE UPDATE STRATEGY) for ID {character_id}: {e}"
+            logger.critical(
+                f"DATABASE ERROR during update_character_card (SINGLE UPDATE STRATEGY) for ID {character_id}: exception_type={type(e).__name__}"
             )
             raise CharactersRAGDBError(
                 f"Database error during single update: {e}"
@@ -8663,8 +8669,8 @@ UPDATE db_schema_version
             )
             raise
         except Exception as e:  # Catch any other unexpected Python errors
-            logger.opt(exception=True).error(
-                f"Unexpected Python error in update_character_card (SINGLE UPDATE STRATEGY) for ID {character_id}: {e}"
+            logger.error(
+                f"Unexpected Python error in update_character_card (SINGLE UPDATE STRATEGY) for ID {character_id}: exception_type={type(e).__name__}"
             )
             raise CharactersRAGDBError(
                 f"Unexpected error updating character card: {e}"
@@ -8815,8 +8821,8 @@ UPDATE db_schema_version
                     "error_type": "database_error",
                 },
             )
-            logger.opt(exception=True).error(
-                f"Database error soft-deleting character card ID {character_id} (expected v{expected_version}): {e}"
+            logger.error(
+                f"Database error soft-deleting character card ID {character_id} (expected v{expected_version}): exception_type={type(e).__name__}"
             )
             raise
 
@@ -8851,12 +8857,12 @@ UPDATE db_schema_version
 
         except ConflictError as e:
             logger.error(
-                f"Conflict error deleting character card ID {character_id}: {e}"
+                f"Conflict error deleting character card ID {character_id}: exception_type={type(e).__name__}"
             )
             return False
         except Exception as e:
-            logger.opt(exception=True).error(
-                f"Unexpected error deleting character card ID {character_id}: {e}"
+            logger.error(
+                f"Unexpected error deleting character card ID {character_id}: exception_type={type(e).__name__}"
             )
             raise CharactersRAGDBError(f"Error deleting character card: {e}") from e
 
@@ -8963,8 +8969,8 @@ UPDATE db_schema_version
         except ConflictError:
             raise
         except CharactersRAGDBError as e:
-            logger.opt(exception=True).error(
-                f"Database error restoring character card ID {character_id} (expected v{expected_version}): {e}",
+            logger.error(
+                f"Database error restoring character card ID {character_id} (expected v{expected_version}): exception_type={type(e).__name__}",
             )
             raise
 
@@ -9035,7 +9041,7 @@ UPDATE db_schema_version
             ]
         except CharactersRAGDBError as e:
             logger.error(
-                f"Error searching character cards for '{match_expression}': {e}"
+                f"Error searching character cards for '{match_expression}': exception_type={type(e).__name__}"
             )
             raise
 
@@ -9704,7 +9710,9 @@ UPDATE db_schema_version
                     "error_type": "database_error",
                 },
             )
-            logger.error(f"Database error adding conversation: {e}")
+            logger.error(
+                f"Database error adding conversation: exception_type={type(e).__name__}"
+            )
             raise
         return None  # Should not be reached
 
@@ -9788,13 +9796,13 @@ UPDATE db_schema_version
 
             return conversations
         except CharactersRAGDBError as e:
-            logger.opt(exception=True).error(
-                f"Database error listing all active conversations: {e}"
+            logger.error(
+                f"Database error listing all active conversations: exception_type={type(e).__name__}"
             )
             raise  # Re-raise the specific error
         except Exception as e:  # Catch any other unexpected errors
-            logger.opt(exception=True).error(
-                f"Unexpected error listing all active conversations: {e}"
+            logger.error(
+                f"Unexpected error listing all active conversations: exception_type={type(e).__name__}"
             )
             raise CharactersRAGDBError(
                 f"Unexpected error listing conversations: {e}"
@@ -9849,7 +9857,7 @@ UPDATE db_schema_version
             return result
         except CharactersRAGDBError as e:
             logger.error(
-                f"Database error fetching conversation ID {conversation_id}: {e}"
+                f"Database error fetching conversation ID {conversation_id}: exception_type={type(e).__name__}"
             )
             raise
 
@@ -9899,7 +9907,7 @@ UPDATE db_schema_version
             return results
         except CharactersRAGDBError as e:
             logger.error(
-                f"Database error fetching conversations by name {conversation_name}: {e}"
+                f"Database error fetching conversations by name {conversation_name}: exception_type={type(e).__name__}"
             )
             raise
 
@@ -10005,7 +10013,7 @@ UPDATE db_schema_version
             return results
         except (sqlite3.Error, CharactersRAGDBError) as e:
             logger.error(
-                f"Database error fetching conversations for character ID {character_id}: {e}"
+                f"Database error fetching conversations for character ID {character_id}: exception_type={type(e).__name__}"
             )
             if isinstance(e, CharactersRAGDBError):
                 raise
@@ -10348,7 +10356,7 @@ UPDATE db_schema_version
         except CharactersRAGDBError as e:
             logger.error(
                 f"Database error listing all conversation ids "
-                f"(client_id={self.client_id!r}, scope_type='all'): {e}"
+                f"(client_id={self.client_id!r}, scope_type='all'): exception_type={type(e).__name__}"
             )
             raise
 
@@ -10950,13 +10958,13 @@ UPDATE db_schema_version
         except InputError:
             raise
         except CharactersRAGDBError as e:
-            logger.opt(exception=True).error(
-                f"Application-level database error in update_conversation for ID {conversation_id}: {e}",
+            logger.error(
+                f"Application-level database error in update_conversation for ID {conversation_id}: exception_type={type(e).__name__}",
             )
             raise
         except Exception as e:
-            logger.opt(exception=True).error(
-                f"Unexpected Python error in update_conversation for ID {conversation_id}: {e}"
+            logger.error(
+                f"Unexpected Python error in update_conversation for ID {conversation_id}: exception_type={type(e).__name__}"
             )
             raise CharactersRAGDBError(
                 f"Unexpected error during update_conversation: {e}"
@@ -11222,8 +11230,8 @@ UPDATE db_schema_version
         except ConflictError:
             raise
         except CharactersRAGDBError as e:
-            logger.opt(exception=True).error(
-                f"Database error soft-deleting conversation ID {conversation_id} (expected v{expected_version}): {e}"
+            logger.error(
+                f"Database error soft-deleting conversation ID {conversation_id} (expected v{expected_version}): exception_type={type(e).__name__}"
             )
             raise
 
@@ -11313,8 +11321,8 @@ UPDATE db_schema_version
         except ConflictError:
             raise
         except CharactersRAGDBError as e:
-            logger.opt(exception=True).error(
-                f"Database error restoring conversation ID {conversation_id} (expected v{expected_version}): {e}",
+            logger.error(
+                f"Database error restoring conversation ID {conversation_id} (expected v{expected_version}): exception_type={type(e).__name__}",
             )
             raise
 
@@ -11378,7 +11386,7 @@ UPDATE db_schema_version
             return [dict(row) for row in cursor.fetchall()]
         except CharactersRAGDBError as e:
             logger.error(
-                f"Error searching conversations for title '{safe_search_term}': {e}"
+                f"Error searching conversations for title '{safe_search_term}': exception_type={type(e).__name__}"
             )
             raise
 
@@ -11468,7 +11476,7 @@ UPDATE db_schema_version
             return results
         except CharactersRAGDBError as e:
             logger.error(
-                f"Error searching conversations by content '{safe_search_query}': {e}"
+                f"Error searching conversations by content '{safe_search_query}': exception_type={type(e).__name__}"
             )
             raise
 
@@ -11736,7 +11744,9 @@ UPDATE db_schema_version
         except InputError:
             raise
         except CharactersRAGDBError as e:
-            logger.error(f"Database error adding message: {e}")
+            logger.error(
+                f"Database error adding message: exception_type={type(e).__name__}"
+            )
             raise
 
     def create_assistant_with_continuation(
@@ -12141,7 +12151,9 @@ UPDATE db_schema_version
             row = cursor.fetchone()
             return dict(row) if row else None
         except CharactersRAGDBError as e:
-            logger.error(f"Database error fetching message ID {message_id}: {e}")
+            logger.error(
+                f"Database error fetching message ID {message_id}: exception_type={type(e).__name__}"
+            )
             raise
 
     def get_message_by_id_without_blob(
@@ -12183,7 +12195,7 @@ UPDATE db_schema_version
             return dict(row) if row else None
         except CharactersRAGDBError as e:
             logger.error(
-                f"Database error fetching message ID {message_id} (no-blob): {e}"
+                f"Database error fetching message ID {message_id} (no-blob): exception_type={type(e).__name__}"
             )
             raise
 
@@ -12601,7 +12613,7 @@ UPDATE db_schema_version
             return [dict(row) for row in cursor.fetchall()]
         except CharactersRAGDBError as e:
             logger.error(
-                f"Database error fetching messages for conversation ID {conversation_id}: {e}"
+                f"Database error fetching messages for conversation ID {conversation_id}: exception_type={type(e).__name__}"
             )
             raise
 
@@ -12681,7 +12693,9 @@ UPDATE db_schema_version
             return result
 
         except CharactersRAGDBError as e:
-            logger.error(f"Database error fetching messages for conversations: {e}")
+            logger.error(
+                f"Database error fetching messages for conversations: exception_type={type(e).__name__}"
+            )
             raise
 
     def update_message(
@@ -12956,8 +12970,8 @@ UPDATE db_schema_version
                 )
                 return True
         except sqlite3.IntegrityError as e:
-            logger.opt(exception=True).error(
-                f"SQLite integrity error updating message ID {message_id} (expected v{expected_version}): {e}"
+            logger.error(
+                f"SQLite integrity error updating message ID {message_id} (expected v{expected_version}): exception_type={type(e).__name__}"
             )
             raise CharactersRAGDBError(
                 f"Database integrity error updating message: {e}"
@@ -12969,8 +12983,8 @@ UPDATE db_schema_version
         ):  # Should not be raised from here directly, but for completeness
             raise
         except CharactersRAGDBError as e:
-            logger.opt(exception=True).error(
-                f"Database error updating message ID {message_id} (expected v{expected_version}): {e}"
+            logger.error(
+                f"Database error updating message ID {message_id} (expected v{expected_version}): exception_type={type(e).__name__}"
             )
             raise
 
@@ -13028,15 +13042,15 @@ UPDATE db_schema_version
                 )
                 return cursor.rowcount > 0
         except sqlite3.IntegrityError as e:
-            logger.opt(exception=True).error(
-                f"SQLite integrity error writing local usage for message ID {message_id}: {e}"
+            logger.error(
+                f"SQLite integrity error writing local usage for message ID {message_id}: exception_type={type(e).__name__}"
             )
             raise CharactersRAGDBError(
                 f"Database integrity error writing local usage: {e}"
             ) from e
         except sqlite3.Error as e:
-            logger.opt(exception=True).error(
-                f"Database error writing local usage for message ID {message_id}: {e}"
+            logger.error(
+                f"Database error writing local usage for message ID {message_id}: exception_type={type(e).__name__}"
             )
             raise CharactersRAGDBError(
                 f"Database error writing local usage: {e}"
@@ -13085,15 +13099,15 @@ UPDATE db_schema_version
                 )
                 return cursor.rowcount > 0
         except sqlite3.IntegrityError as e:
-            logger.opt(exception=True).error(
-                f"SQLite integrity error writing local metadata for message ID {message_id}: {e}"
+            logger.error(
+                f"SQLite integrity error writing local metadata for message ID {message_id}: exception_type={type(e).__name__}"
             )
             raise CharactersRAGDBError(
                 f"Database integrity error writing local metadata: {e}"
             ) from e
         except sqlite3.Error as e:
-            logger.opt(exception=True).error(
-                f"Database error writing local metadata for message ID {message_id}: {e}"
+            logger.error(
+                f"Database error writing local metadata for message ID {message_id}: exception_type={type(e).__name__}"
             )
             raise CharactersRAGDBError(
                 f"Database error writing local metadata: {e}"
@@ -13208,8 +13222,8 @@ UPDATE db_schema_version
                     for r in cursor.fetchall()
                 ]
         except sqlite3.Error as e:
-            logger.opt(exception=True).error(
-                f"Database error reading message exchanges for message ID {message_id}: {e}"
+            logger.error(
+                f"Database error reading message exchanges for message ID {message_id}: exception_type={type(e).__name__}"
             )
             raise CharactersRAGDBError(
                 f"Database error reading message exchanges: {e}"
@@ -13362,8 +13376,8 @@ UPDATE db_schema_version
                         ),
                     )
         except sqlite3.Error as e:
-            logger.opt(exception=True).error(
-                f"Database error upserting trajectory rows: {e}"
+            logger.error(
+                f"Database error upserting trajectory rows: exception_type={type(e).__name__}"
             )
             raise CharactersRAGDBError(
                 f"Database error upserting trajectory rows: {e}"
@@ -13519,9 +13533,9 @@ UPDATE db_schema_version
                     for r in cursor.fetchall()
                 ]
         except sqlite3.Error as e:
-            logger.opt(exception=True).error(
+            logger.error(
                 f"Database error reading trajectory rows for conversation"
-                f" {conversation_id}: {e}"
+                f" {conversation_id}: exception_type={type(e).__name__}"
             )
             raise CharactersRAGDBError(
                 f"Database error reading trajectory rows: {e}"
@@ -13629,8 +13643,8 @@ UPDATE db_schema_version
         except ConflictError:
             raise
         except CharactersRAGDBError as e:
-            logger.opt(exception=True).error(
-                f"Database error soft-deleting message ID {message_id} (expected v{expected_version}): {e}"
+            logger.error(
+                f"Database error soft-deleting message ID {message_id} (expected v{expected_version}): exception_type={type(e).__name__}"
             )
             raise
 
@@ -14035,7 +14049,9 @@ UPDATE db_schema_version
         except InputError:
             raise
         except Exception as e:
-            logger.opt(exception=True).error(f"Error creating message variant: {e}")
+            logger.error(
+                f"Error creating message variant: exception_type={type(e).__name__}"
+            )
             raise CharactersRAGDBError(f"Failed to create message variant: {e}") from e
 
     def get_message_variants(self, message_id: str) -> List[Dict[str, Any]]:
@@ -14084,7 +14100,9 @@ UPDATE db_schema_version
                 return variants
 
         except Exception as e:
-            logger.opt(exception=True).error(f"Error getting message variants: {e}")
+            logger.error(
+                f"Error getting message variants: exception_type={type(e).__name__}"
+            )
             raise CharactersRAGDBError(f"Failed to get message variants: {e}") from e
 
     def select_message_variant(self, variant_id: str) -> bool:
@@ -14144,7 +14162,9 @@ UPDATE db_schema_version
         except InputError:
             raise
         except Exception as e:
-            logger.opt(exception=True).error(f"Error selecting message variant: {e}")
+            logger.error(
+                f"Error selecting message variant: exception_type={type(e).__name__}"
+            )
             raise CharactersRAGDBError(f"Failed to select message variant: {e}") from e
 
     def search_messages_by_content(
@@ -14214,7 +14234,7 @@ UPDATE db_schema_version
             return [dict(row) for row in cursor.fetchall()]
         except CharactersRAGDBError as e:
             logger.error(
-                f"Error searching messages for content '{safe_search_term}': {e}"
+                f"Error searching messages for content '{safe_search_term}': exception_type={type(e).__name__}"
             )
             raise
 
@@ -14382,7 +14402,9 @@ UPDATE db_schema_version
         except ConflictError:  # From undelete path
             raise
         except CharactersRAGDBError as e:
-            logger.error(f"Database error adding {table_name} '{logged_value}': {e}")
+            logger.error(
+                f"Database error adding {table_name} '{logged_value}': exception_type={type(e).__name__}"
+            )
             raise
         return None  # Should not be reached if exceptions are raised properly
 
@@ -14408,7 +14430,9 @@ UPDATE db_schema_version
             row = cursor.fetchone()
             return dict(row) if row else None
         except CharactersRAGDBError as e:
-            logger.error(f"Database error fetching {table_name} ID {item_id}: {e}")
+            logger.error(
+                f"Database error fetching {table_name} ID {item_id}: exception_type={type(e).__name__}"
+            )
             raise
 
     def _get_generic_item_by_unique_text(
@@ -14441,7 +14465,7 @@ UPDATE db_schema_version
         except CharactersRAGDBError as e:
             logged_value = "<redacted>" if table_name == "keywords" else value
             logger.error(
-                f"Database error fetching {table_name} by {unique_col_name} '{logged_value}': {e}"
+                f"Database error fetching {table_name} by {unique_col_name} '{logged_value}': exception_type={type(e).__name__}"
             )
             raise
 
@@ -14468,7 +14492,9 @@ UPDATE db_schema_version
             cursor = self.execute_query(query, (limit, offset))
             return [dict(row) for row in cursor.fetchall()]
         except CharactersRAGDBError as e:
-            logger.error(f"Database error listing {table_name}: {e}")
+            logger.error(
+                f"Database error listing {table_name}: exception_type={type(e).__name__}"
+            )
             raise
 
     def _update_generic_item(
@@ -14616,8 +14642,8 @@ UPDATE db_schema_version
                         entity=table_name,
                         entity_id=val,
                     ) from e
-            logger.opt(exception=True).error(
-                f"SQLite integrity error during update of {table_name} ID {item_id} (expected version {expected_version}): {e}"
+            logger.error(
+                f"SQLite integrity error during update of {table_name} ID {item_id} (expected version {expected_version}): exception_type={type(e).__name__}"
             )
             raise CharactersRAGDBError(
                 f"Database integrity error updating {table_name} ({item_id}): {e}"
@@ -14629,8 +14655,8 @@ UPDATE db_schema_version
         ):  # Should be caught by callers if they check 'update_data' emptiness first
             raise
         except CharactersRAGDBError as e:
-            logger.opt(exception=True).error(
-                f"Database error updating {table_name} ID {item_id} (expected version {expected_version}): {e}"
+            logger.error(
+                f"Database error updating {table_name} ID {item_id} (expected version {expected_version}): exception_type={type(e).__name__}"
             )
             raise
         # No implicit return None, function should return True or raise.
@@ -14750,8 +14776,8 @@ UPDATE db_schema_version
         except ConflictError:
             raise
         except CharactersRAGDBError as e:  # Catches sqlite3.Error from conn.execute
-            logger.opt(exception=True).error(
-                f"Database error soft-deleting {table_name} ID {item_id} (expected version {expected_version}): {e}"
+            logger.error(
+                f"Database error soft-deleting {table_name} ID {item_id} (expected version {expected_version}): exception_type={type(e).__name__}"
             )
             raise
         # No implicit return None.
@@ -14811,7 +14837,9 @@ UPDATE db_schema_version
             return [dict(row) for row in cursor.fetchall()]
         except CharactersRAGDBError as e:
             logged_term = "<redacted>" if main_table_name == "keywords" else search_term
-            logger.error(f"Error searching {main_table_name} for '{logged_term}': {e}")
+            logger.error(
+                f"Error searching {main_table_name} for '{logged_term}': exception_type={type(e).__name__}"
+            )
             raise
 
     # Keywords
@@ -15165,7 +15193,9 @@ UPDATE db_schema_version
                 f"Database integrity error adding note: {e}"
             ) from e
         except CharactersRAGDBError as e:
-            logger.error(f"Database error adding note '{title.strip()}': {e}")
+            logger.error(
+                f"Database error adding note '{title.strip()}': exception_type={type(e).__name__}"
+            )
             raise
 
     @staticmethod
@@ -15434,7 +15464,7 @@ UPDATE db_schema_version
             return {"items": items, "total": total}
         except sqlite3.Error as e:
             logger.error(
-                f"Error listing library notes page (limit={limit}, offset={offset}): {e}"
+                f"Error listing library notes page (limit={limit}, offset={offset}): exception_type={type(e).__name__}"
             )
             raise CharactersRAGDBError(f"Failed to list library notes page: {e}") from e
 
@@ -15544,7 +15574,7 @@ UPDATE db_schema_version
         except sqlite3.Error as e:
             logger.error(
                 "Error searching library notes "
-                f"(query_chars={len(query)}, limit={limit}, offset={offset}): {e}"
+                f"(query_chars={len(query)}, limit={limit}, offset={offset}): exception_type={type(e).__name__}"
             )
             raise CharactersRAGDBError(f"Failed to search library notes: {e}") from e
 
@@ -15600,7 +15630,7 @@ UPDATE db_schema_version
         except sqlite3.Error as e:
             logger.error(
                 "Error reading library note text "
-                f"(note_id={note_id!r}, start={start}, max_chars={max_chars}): {e}"
+                f"(note_id={note_id!r}, start={start}, max_chars={max_chars}): exception_type={type(e).__name__}"
             )
             raise CharactersRAGDBError(f"Failed to read library note text: {e}") from e
 
@@ -15723,7 +15753,7 @@ UPDATE db_schema_version
         except sqlite3.Error as e:
             logger.error(
                 "Error listing library conversations page "
-                f"(limit={limit}, offset={offset}): {e}"
+                f"(limit={limit}, offset={offset}): exception_type={type(e).__name__}"
             )
             raise CharactersRAGDBError(
                 f"Failed to list library conversations page: {e}"
@@ -15841,7 +15871,7 @@ UPDATE db_schema_version
         except sqlite3.Error as e:
             logger.error(
                 "Error searching library conversations "
-                f"(query_chars={len(query)}, limit={limit}, offset={offset}): {e}"
+                f"(query_chars={len(query)}, limit={limit}, offset={offset}): exception_type={type(e).__name__}"
             )
             raise CharactersRAGDBError(
                 f"Failed to search library conversations: {e}"
@@ -16011,7 +16041,7 @@ UPDATE db_schema_version
                 "Error reading library conversation messages "
                 f"(conversation_id={conversation_id!r}, message_offset={message_offset}, "
                 f"message_limit={message_limit}, max_chars={max_chars}, "
-                f"message_id={message_id!r}, char_start={char_start}): {e}"
+                f"message_id={message_id!r}, char_start={char_start}): exception_type={type(e).__name__}"
             )
             raise CharactersRAGDBError(
                 f"Failed to read library conversation messages: {e}"
@@ -16042,7 +16072,9 @@ UPDATE db_schema_version
             cursor = self.execute_query(query)
             return [row["id"] for row in cursor.fetchall()]
         except CharactersRAGDBError as e:
-            logger.error(f"Database error listing all note ids: {e}")
+            logger.error(
+                f"Database error listing all note ids: exception_type={type(e).__name__}"
+            )
             raise
 
     def update_note(
@@ -16132,8 +16164,8 @@ UPDATE db_schema_version
         except ConflictError:
             raise
         except CharactersRAGDBError as e:  # Catches sqlite3.Error
-            logger.opt(exception=True).error(
-                f"Database error updating note ID {note_id} (expected v{expected_version}): {e}"
+            logger.error(
+                f"Database error updating note ID {note_id} (expected v{expected_version}): exception_type={type(e).__name__}"
             )
             raise
 
@@ -16211,8 +16243,8 @@ UPDATE db_schema_version
         except ConflictError:
             raise
         except CharactersRAGDBError as e:
-            logger.opt(exception=True).error(
-                f"Database error soft-deleting note ID {note_id} (expected v{expected_version}): {e}"
+            logger.error(
+                f"Database error soft-deleting note ID {note_id} (expected v{expected_version}): exception_type={type(e).__name__}"
             )
             raise
 
@@ -16389,7 +16421,9 @@ UPDATE db_schema_version
             cursor = self.execute_query(query, tuple(params))
             return [dict(row) for row in cursor.fetchall()]
         except CharactersRAGDBError as e:
-            logger.error(f"Error searching notes for '{search_term}': {e}")
+            logger.error(
+                f"Error searching notes for '{search_term}': exception_type={type(e).__name__}"
+            )
             raise
 
     # --- Linking Table Methods (with manual sync_log entries) ---
@@ -16461,15 +16495,15 @@ UPDATE db_schema_version
             )
             return rows_affected > 0
         except sqlite3.Error as e:  # Catch SQLite specific errors from conn.execute
-            logger.opt(exception=True).error(
-                f"SQLite error during {operation} for {link_table} ({col1_name}={col1_val}, {col2_name}={col2_val}): {e}"
+            logger.error(
+                f"SQLite error during {operation} for {link_table} ({col1_name}={col1_val}, {col2_name}={col2_val}): exception_type={type(e).__name__}"
             )
             raise CharactersRAGDBError(
                 f"Database error during {operation} for {link_table}: {e}"
             ) from e
         except CharactersRAGDBError as e:  # Catch custom errors like InputError
-            logger.opt(exception=True).error(
-                f"Application error during {operation} for {link_table}: {e}"
+            logger.error(
+                f"Application error during {operation} for {link_table}: exception_type={type(e).__name__}"
             )
             raise
 
@@ -16758,8 +16792,8 @@ UPDATE db_schema_version
                 keywords_by_note.setdefault(note_id, []).append(keyword)
             return keywords_by_note
         except sqlite3.Error as e:
-            logger.opt(exception=True).error(
-                f"Error fetching keywords for notes batch: {e}"
+            logger.error(
+                f"Error fetching keywords for notes batch: exception_type={type(e).__name__}"
             )
             raise CharactersRAGDBError(
                 f"Failed to fetch keywords for notes batch: {e}"
@@ -17682,7 +17716,9 @@ UPDATE db_schema_version
                 results.append(entry)
             return results
         except CharactersRAGDBError as e:
-            logger.error(f"Error fetching sync log entries: {e}")
+            logger.error(
+                f"Error fetching sync log entries: exception_type={type(e).__name__}"
+            )
             raise
 
     def get_latest_sync_log_change_id(self) -> int:
@@ -17693,7 +17729,9 @@ UPDATE db_schema_version
             row = cursor.fetchone()
             return row["max_id"] if row and row["max_id"] is not None else 0
         except CharactersRAGDBError as e:
-            logger.error(f"Error fetching latest sync log change_id: {e}")
+            logger.error(
+                f"Error fetching latest sync log change_id: exception_type={type(e).__name__}"
+            )
             raise
 
     # --- Sync Log Retention (task-19564) ---
@@ -17820,7 +17858,9 @@ UPDATE db_schema_version
             )
             return deleted
         except (CharactersRAGDBError, sqlite3.Error) as e:
-            logger.error(f"Error deleting sync_log entries: {e}")
+            logger.error(
+                f"Error deleting sync_log entries: exception_type={type(e).__name__}"
+            )
             raise CharactersRAGDBError("Failed to delete sync log entries") from e
 
     def delete_sync_log_entries_before(self, change_id_threshold: int) -> int:
@@ -17854,7 +17894,9 @@ UPDATE db_schema_version
             )
             return deleted
         except (CharactersRAGDBError, sqlite3.Error) as e:
-            logger.error(f"Error deleting sync_log entries before threshold: {e}")
+            logger.error(
+                f"Error deleting sync_log entries before threshold: exception_type={type(e).__name__}"
+            )
             raise CharactersRAGDBError(
                 "Failed to delete sync log entries before threshold"
             ) from e
@@ -18011,7 +18053,7 @@ UPDATE db_schema_version
             )
             return removed
         except (CharactersRAGDBError, sqlite3.Error) as e:
-            logger.error(f"Error pruning sync_log: {e}")
+            logger.error(f"Error pruning sync_log: exception_type={type(e).__name__}")
             raise CharactersRAGDBError("Failed to prune sync log") from e
 
     def backfill_messages_fts(
@@ -20924,8 +20966,8 @@ class TransactionContextManager:
                         f"Transaction (outermost) committed successfully on thread {threading.get_ident()}."
                     )
                 except sqlite3.Error as commit_err:
-                    logger.opt(exception=True).error(
-                        f"Failed to commit transaction on thread {threading.get_ident()}: {commit_err}"
+                    logger.error(
+                        f"Failed to commit transaction on thread {threading.get_ident()}: exception_type={type(commit_err).__name__}"
                     )
                     # Attempt rollback after failed commit
                     try:
@@ -20934,8 +20976,8 @@ class TransactionContextManager:
                             f"Rollback after failed commit successful on thread {threading.get_ident()}."
                         )
                     except sqlite3.Error as rb_err_after_commit_fail:
-                        logger.opt(exception=True).critical(
-                            f"Rollback after failed commit also FAILED on thread {threading.get_ident()}: {rb_err_after_commit_fail}"
+                        logger.critical(
+                            f"Rollback after failed commit also FAILED on thread {threading.get_ident()}: exception_type={type(rb_err_after_commit_fail).__name__}"
                         )
                     # Re-raise the commit error so the caller knows the transaction failed.
                     # Encapsulate it if it's not already a DB-specific error from our library.
@@ -20953,8 +20995,8 @@ class TransactionContextManager:
                         f"Transaction (outermost) rolled back due to exception ({exc_type.__name__}) on thread {threading.get_ident()}."
                     )
                 except sqlite3.Error as rollback_err:
-                    logger.opt(exception=True).error(
-                        f"Failed to rollback transaction after exception on thread {threading.get_ident()}: {rollback_err}"
+                    logger.error(
+                        f"Failed to rollback transaction after exception on thread {threading.get_ident()}: exception_type={type(rollback_err).__name__}"
                     )
                     # If rollback also fails, we wrap both errors
                     raise CharactersRAGDBError(
