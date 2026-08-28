@@ -101,6 +101,9 @@ class SchedulesWorkbench(BaseAppScreen):
         # can restore the same selection instead of always jumping to row 0.
         self._selected_task_id: str | None = None
         self._marked_ids: set[str] = set()
+        #: The current hidden-panes notice from on_resize; combined with
+        #: the marks/glyph legend in _update_pane_notice (task-23107).
+        self._resize_notice = ""
         self._sync_running = False
         self._current_console_follow_item = None
         self._latest_console_follow_item_id: str | None = None
@@ -287,6 +290,7 @@ class SchedulesWorkbench(BaseAppScreen):
         table.clear()
         for row in rows:
             table.add_row(*row)
+        self._update_pane_notice()
 
         if rows:
             target_index = 0
@@ -789,7 +793,6 @@ class SchedulesWorkbench(BaseAppScreen):
             width = self.size.width
             inspector = self.query_one("#scheduling-inspector-pane")
             detail = self.query_one("#scheduling-detail-pane")
-            notice = self.query_one("#scheduling-pane-notice", Static)
         except Exception:  # noqa: BLE001 - panes not mounted yet
             return
         hide_inspector = 0 < width < 118
@@ -806,11 +809,39 @@ class SchedulesWorkbench(BaseAppScreen):
             base = "Detail and inspector hidden — widen the window to see them."
             if not self._tasks:
                 base += " Press c to schedule your first task."
-            notice.update(base)
+            self._resize_notice = base
         elif hide_inspector:
-            notice.update("Inspector hidden — widen the window to see it.")
+            self._resize_notice = "Inspector hidden — widen the window to see it."
         else:
-            notice.update("")
+            self._resize_notice = ""
+        self._update_pane_notice()
+
+    def _update_pane_notice(self) -> None:
+        """Compose the queue-pane notice: hidden panes, marks, glyph legend.
+
+        task-23107: while rows are marked, visible text states the count,
+        the keys that act on all marked rows, and how to clear the marks;
+        the ◇ missed-while-away glyph gets an on-screen explanation
+        whenever a visible row carries it.
+        """
+        try:
+            notice = self.query_one("#scheduling-pane-notice", Static)
+        except Exception:  # noqa: BLE001 - not mounted yet
+            return
+        parts: list[str] = []
+        if self._resize_notice:
+            parts.append(self._resize_notice)
+        marked_count = sum(
+            1 for task in self._tasks if task.id in self._marked_ids
+        )
+        if marked_count:
+            parts.append(
+                f"{marked_count} marked — space toggles all · d deletes all "
+                "· esc clears"
+            )
+        if any(_was_missed_while_away(task) for task in self._visible_tasks):
+            parts.append("◇ = ran late (dispatched after its scheduled time)")
+        notice.update("\n".join(parts))
 
     @on(Button.Pressed, "#scheduling-owner-local")
     def _on_owner_local(self) -> None:

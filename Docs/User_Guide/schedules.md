@@ -43,6 +43,15 @@ pinned at the bottom while you edit.
   is preselected and listed first, followed by common zones and any zone
   your existing tasks already use.
 
+## Bulk actions — marking rows
+
+Press **x** to mark or unmark the highlighted row (●). While any rows
+are marked, a legend under the queue states the count and the keys:
+"2 marked — space toggles all · d deletes all · esc clears". The ◇
+missed-while-away glyph also gets an on-screen explanation ("◇ = ran
+late (dispatched after its scheduled time)") whenever a visible row
+carries it.
+
 ## Disabled tasks
 
 Press **space** on a highlighted task (or the **Disable** button in the
