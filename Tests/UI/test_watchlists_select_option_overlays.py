@@ -27,7 +27,6 @@ from textual.widgets import Button, Select
 from textual.widgets._select import SelectCurrent, SelectOverlay
 
 from Tests.UI.full_app_destination_context import (
-    StaticWatchlistsScopeService,
     active_destination_screen as _active_destination_screen,
     full_app_destination_context as _visual_destination_harness,
     wait_for_selector as _wait_for_selector,
@@ -49,7 +48,6 @@ UAT_SIZE = (235, 52)
 
 def _watchlists_host():
     app = _build_test_app()
-    app.watchlist_scope_service = StaticWatchlistsScopeService([])
     return _visual_destination_harness(app, "watchlists_collections")
 
 

@@ -124,8 +124,6 @@ async def test_viewer_substate_escape_refreshes_the_footer_shortcut_set() -> Non
     async with host.run_test(size=LIBRARY_TEST_SIZE) as pilot:
         screen = await _boot_media_library(host, pilot)
         screen.query_one("#library-media-row-0", Button).press()
-        await _wait_for_selector(screen, pilot, "#library-media-reader-more")
-        screen.query_one("#library-media-reader-more", Button).press()
         await _wait_for_selector(screen, pilot, "#library-media-edit")
 
         plain_viewer_shortcuts = screen._footer_shortcut_registration
@@ -192,12 +190,11 @@ async def test_canvas_sync_suppresses_its_screen_fallback_inside_a_projection() 
                 )
                 await pilot.pause()
         finally:
-            screen._finish_library_canvas_projection()
+            screen._library_canvas_projection_depth -= 1
         assert calls == [], (
             "the canvas-sync fallback fired a whole-screen recompose while a "
             "targeted projection owned the canvas host"
         )
-        await _wait_for_selector(screen, pilot, "#library-media-canvas")
 
         # CONTROL: identical failure with no projection in flight must still
         # take the legacy fallback -- otherwise the treatment proves nothing.
@@ -214,32 +211,29 @@ async def test_canvas_sync_suppresses_its_screen_fallback_inside_a_projection() 
 
 @pytest.mark.asyncio
 async def test_slow_canvas_swap_is_not_raced_by_the_media_browse_sync() -> None:
-    """Reader Back keeps the retained canvas mounted and avoids recomposition."""
+    """An overlapping Media browse settlement keeps the retained canvas."""
     host = _media_app_host()
     async with host.run_test(size=LIBRARY_TEST_SIZE) as pilot:
         screen = await _boot_media_library(host, pilot)
         screen.query_one("#library-media-row-0", Button).press()
         await _wait_for_selector(screen, pilot, "#library-media-content-search")
 
-        canvas_host = screen.query_one("#library-canvas")
-        removals: list[tuple[object, ...]] = []
-        original_remove = canvas_host.remove_children
+        fired: list[str] = []
 
-        def record_remove(*args, **kwargs):
-            removals.append(args)
-            return original_remove(*args, **kwargs)
-
-        canvas_host.remove_children = record_remove
         calls, spy = _screen_recompose_spy()
         with patch.object(BaseAppScreen, "refresh", spy):
-            screen.query_one("#library-media-back", Button).press()
-            await _wait_for_selector(screen, pilot, "#library-media-row-0")
+            # Items and Reader are retained siblings now. Settle the page in
+            # the same pump window as the scheduled Reader exit continuation.
+            screen._exit_library_media_viewer()
+            screen._sync_library_media_browse_state(None)
+            fired.append("browse-sync")
             for _ in range(15):
                 await pilot.pause(0.02)
 
-        assert removals == [], "Reader Back tore down the retained canvas"
+        assert fired, "the mid-swap browse sync never ran -- window not hit"
         assert calls == [], (
-            "a whole-screen recompose fired while returning to retained Items"
+            "a whole-screen recompose fired during the targeted swap -- the "
+            "canvas-sync fallback raced the projection"
         )
         # Exactly one canvas, i.e. no duplicate-id collision survived.
         assert len(screen.query("#library-media-canvas")) == 1
@@ -255,14 +249,7 @@ async def test_slow_canvas_swap_is_not_raced_by_the_media_browse_sync() -> None:
 
 @pytest.mark.asyncio
 async def test_routine_snapshot_midswap_still_runs_the_projection_follow_up() -> None:
-    """A routine snapshot cannot suppress the permanent Reader's return focus.
-
-    Media Items and Reader now remain mounted together, so returning from the
-    viewer no longer has an await window in which to intercept a canvas-child
-    swap. Preserve the original regression's user-visible contract by bumping
-    the snapshot generation immediately before Back and verifying that the
-    already-mounted list still receives its focus/scroll follow-up.
-    """
+    """A generation-only update still runs the retained exit follow-up."""
     host = _media_app_host()
     async with host.run_test(size=LIBRARY_TEST_SIZE) as pilot:
         screen = await _boot_media_library(host, pilot)
@@ -278,13 +265,22 @@ async def test_routine_snapshot_midswap_still_runs_the_projection_follow_up() ->
 
         screen._arm_library_list_entry_focus = spy_arm
 
+        route_before: list[tuple] = []
+
+        screen._exit_library_media_viewer()
+        # A routine snapshot lands before the scheduled retained-reader exit
+        # continuation: generation moves, route key does not.
+        route_before.append(screen._library_entry_route_key())
         screen._library_snapshot_state_generation += 1
-        screen.query_one("#library-media-back", Button).press()
-        await _wait_for_selector(screen, pilot, "#library-media-row-0")
         for _ in range(15):
             await pilot.pause(0.02)
 
+        assert route_before, "the mid-swap snapshot bump never ran"
+        assert screen._library_entry_route_key() == route_before[0], (
+            "the route changed too -- this test must exercise a "
+            "GENERATION-only supersede"
+        )
         assert armed, (
-            "the Reader return follow-up was dropped after a snapshot "
-            "generation change: task-2856 AC1 focus and scroll restore never ran"
+            "the projection's follow-up was dropped on a generation-only "
+            "supersede: task-2856 AC1 focus and the scroll restore never ran"
         )

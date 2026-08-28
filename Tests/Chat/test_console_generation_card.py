@@ -196,7 +196,7 @@ def test_generation_card_row_replaces_image_row():
     transcript.set_image_specs({message.id: _image_row_spec(message.id)})
     transcript.set_generation_card_specs({message.id: _card_spec(message.id)})
 
-    rows = transcript._transcript_rows()
+    rows = transcript._flat_transcript_rows()
     kinds = [row.kind for row in rows]
 
     assert "generation-card" in kinds
@@ -214,7 +214,7 @@ def test_non_generation_image_message_still_renders_image_row():
     transcript.set_image_specs({message.id: _image_row_spec(message.id)})
     # No card spec registered at all for this message.
 
-    rows = transcript._transcript_rows()
+    rows = transcript._flat_transcript_rows()
     kinds = [row.kind for row in rows]
 
     assert "image" in kinds
@@ -240,14 +240,18 @@ def test_transcript_row_signature_changes_on_browse():
         {message.id: _card_spec(message.id, browsed_index=0, variant_count=2)}
     )
     first = next(
-        row for row in transcript._transcript_rows() if row.kind == "generation-card"
+        row
+        for row in transcript._flat_transcript_rows()
+        if row.kind == "generation-card"
     )
 
     transcript.set_generation_card_specs(
         {message.id: _card_spec(message.id, browsed_index=1, variant_count=2)}
     )
     second = next(
-        row for row in transcript._transcript_rows() if row.kind == "generation-card"
+        row
+        for row in transcript._flat_transcript_rows()
+        if row.kind == "generation-card"
     )
 
     assert first.signature != second.signature

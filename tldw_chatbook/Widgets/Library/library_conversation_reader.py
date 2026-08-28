@@ -6,6 +6,7 @@ from typing import Any, Mapping
 
 from textual.app import ComposeResult
 from textual.containers import Horizontal, Vertical, VerticalScroll
+from textual.css.query import NoMatches, QueryError
 from textual.message import Message
 from textual.widgets import Button, Input, Static
 
@@ -282,8 +283,14 @@ class LibraryConversationReader(Vertical):
         if not self.is_mounted:
             return
 
-        read = self.query_one("#library-conversation-reader-read", Button)
-        info = self.query_one("#library-conversation-reader-info", Button)
+        try:
+            read = self.query_one("#library-conversation-reader-read", Button)
+            info = self.query_one("#library-conversation-reader-info", Button)
+        except (NoMatches, QueryError):
+            # A retained-reader recompose can briefly leave the mounted
+            # parent without children. State and metadata were assigned
+            # above, so the replacement compose will render this arrival.
+            return
         read.set_class(state.mode == "read", "-selected")
         info.set_class(state.mode == "info", "-selected")
         self.query_one("#library-conversation-reader-status", Static).update(

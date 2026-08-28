@@ -334,6 +334,27 @@ method counts real tokens (and says plainly to install tiktoken if it's
 missing, instead of silently approximating by word count) and the `xml`
 method parses safely by default.
 
+### Offline token tables
+
+A standard Chatbook installation pins `tiktoken==0.14.0` and includes the
+reviewed GPT-2, r50k, p50k, cl100k, and o200k tables. Token estimates and the
+`tokens` chunking method therefore do not download an encoding on first use.
+The bundle is read-only: Chatbook verifies each requested URL, cache key, and
+SHA-256 hash and never writes into the installed package.
+
+The bundled inventory is intentionally closed. If a newer model needs an
+encoding that is not listed, update Chatbook to a release that includes it or
+set an upstream cache explicitly; the standard bundle will not download it.
+Token estimates log the load problem and retain their conservative character
+approximation. Token chunking still requires a real tokenizer and raises an
+error instead of silently returning word-sized approximations.
+
+Advanced callers can set `TIKTOKEN_CACHE_DIR`, or the legacy
+`DATA_GYM_CACHE_DIR`, **before the first import of `tldw_chatbook`**. Chatbook
+then leaves that value unchanged and uses tiktoken's normal cache behavior.
+That cache is caller-owned and may be writable or download missing data; it is
+not the immutable offline guarantee described above.
+
 If you use a **chunking template** (the "Chunking template" picker above),
 two more things apply. First, a default can be set for every import that
 didn't pick one: `[chunking] default_template = "<name>"` in config.toml
@@ -755,6 +776,11 @@ are pinned by `Tests/Local_Ingestion/test_ingest_template_resolution.py`,
 `Tests/UI/test_library_ingest_template_picker.py`, and
 `Tests/Library/test_library_rechunk_service.py`. Template CRUD refuses
 the reserved name `auto` on create and rename.)*
+
+*Verified for TASK-2526 — 2026-08-27: standard source and installed-wheel
+tokenization uses the immutable bundled tables with network access prohibited;
+source-built and sdist-rebuilt wheels were also exercised from read-only
+installed trees. Explicit pre-import cache overrides remain caller-owned.*
 
 *Verified against task/19556-burn @ f12bb21ad — 2026-08-22 (TASK-19556 (a)):
 the import pre-check no longer contacts a URL. It used to fetch the address's

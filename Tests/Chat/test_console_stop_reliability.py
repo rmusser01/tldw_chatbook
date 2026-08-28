@@ -10,7 +10,6 @@ thread and assert the message never grows past the stop point.
 
 import asyncio
 import threading
-from types import SimpleNamespace
 
 import pytest
 
@@ -47,6 +46,8 @@ class _ChunkThenParkGateway:
 
 def _controller(tmp_path, gateway):
     store = ConsoleChatStore()
+    session = store.create_session(title="Stop reliability", ephemeral=True)
+    store.active_session_id = session.id
     db = AgentRunsDB(tmp_path / "runs.db", client_id="t")
     bridge = ConsoleAgentBridge(
         agent_runs_db=db, store=store, provider_gateway=gateway

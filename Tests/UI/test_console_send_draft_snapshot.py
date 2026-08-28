@@ -15,11 +15,10 @@ from textual.widgets import Button
 
 from Tests.UI.test_console_native_chat_flow import (
     BlockedGateway,
-    CapturingGateway,
-    _configure_native_ready_console,
+    _build_console_send_test_app,
+    _persist_console_provider_config,
     _select_llamacpp_console,
 )
-from Tests.UI.app_factory import attach_chachanotes_db
 from Tests.UI.test_destination_shells import _build_test_app, _wait_for_selector
 from Tests.UI.test_product_maturity_gate1_core_loop_screen_adaptation import (
     ConsoleHarness,
@@ -33,7 +32,10 @@ from tldw_chatbook.Chat.console_chat_models import (
 from tldw_chatbook.Chat.console_chat_controller import ConsoleSubmitResult
 from tldw_chatbook.Widgets.Console import ConsoleComposerBar
 
-async def _wait_for_text(console, pilot, needle: str, tries: int = 120) -> None:
+DUMMY_OPENAI_API_KEY = "DUMMY_OPENAI_API_KEY"
+
+
+async def _wait_for_text(console, pilot, needle: str, tries: int = 40) -> None:
     for _ in range(tries):
         if needle in _visible_text(console):
             return
@@ -41,11 +43,22 @@ async def _wait_for_text(console, pilot, needle: str, tries: int = 120) -> None:
     raise AssertionError(f"timed out waiting for {needle!r}")
 
 
-def _ready_app(reply: str):
-    app = _build_test_app()
-    attach_chachanotes_db(app)
-    _configure_native_ready_console(app)
-    app.console_provider_gateway_factory = lambda: CapturingGateway((reply,))
+def _ready_openai_app(monkeypatch, reply: str):
+    app = _build_console_send_test_app()
+    _persist_console_provider_config(
+        app,
+        provider="openai",
+        model="gpt-4.1",
+        provider_settings={"api_key": DUMMY_OPENAI_API_KEY},
+    )
+
+    def fake_chat_api_call(**_kwargs):
+        return reply
+
+    monkeypatch.setattr(
+        "tldw_chatbook.Chat.Chat_Functions.chat_api_call",
+        fake_chat_api_call,
+    )
     return app
 
 
@@ -55,8 +68,8 @@ def _press_enter_synchronously(console) -> None:
 
 
 @pytest.mark.asyncio
-async def test_console_enter_snapshots_draft_before_late_keystrokes():
-    app = _ready_app("snapshot reply")
+async def test_console_enter_snapshots_draft_before_late_keystrokes(monkeypatch):
+    app = _ready_openai_app(monkeypatch, "snapshot reply")
     host = ConsoleHarness(app)
 
     async with host.run_test(size=(160, 48)) as pilot:
@@ -124,9 +137,9 @@ async def test_mouse_send_completion_preserves_text_typed_after_acceptance(monke
 
 @pytest.mark.asyncio
 async def test_console_blocked_send_restores_snapshot_before_late_keystrokes():
-    app = _build_test_app()
-    attach_chachanotes_db(app)
-    _configure_native_ready_console(app, model="test-model")
+    app = _build_console_send_test_app()
+    app.chat_api_provider_value = "llama_cpp"
+    app.chat_api_model_value = "test-model"
     app.console_provider_gateway_factory = BlockedGateway
     host = ConsoleHarness(app)
 
@@ -150,8 +163,8 @@ async def test_console_blocked_send_restores_snapshot_before_late_keystrokes():
 
 
 @pytest.mark.asyncio
-async def test_console_unknown_command_hint_restores_draft():
-    app = _ready_app("never sent")
+async def test_console_unknown_command_hint_restores_draft(monkeypatch):
+    app = _ready_openai_app(monkeypatch, "never sent")
     host = ConsoleHarness(app)
 
     async with host.run_test(size=(160, 48)) as pilot:
@@ -173,9 +186,9 @@ async def test_console_unknown_command_hint_restores_draft():
 
 @pytest.mark.asyncio
 async def test_console_blocked_send_restore_preserves_paste_segments():
-    app = _build_test_app()
-    attach_chachanotes_db(app)
-    _configure_native_ready_console(app, model="test-model")
+    app = _build_console_send_test_app()
+    app.chat_api_provider_value = "llama_cpp"
+    app.chat_api_model_value = "test-model"
     app.console_provider_gateway_factory = BlockedGateway
     host = ConsoleHarness(app)
 
@@ -206,10 +219,10 @@ async def test_console_blocked_send_restore_preserves_paste_segments():
 
 
 @pytest.mark.asyncio
-async def test_console_double_enter_sends_once_and_loses_nothing():
+async def test_console_double_enter_sends_once_and_loses_nothing(monkeypatch):
     """A second Enter before the first Pressed handler runs must not
     overwrite the pending stash with None (that ate the message)."""
-    app = _ready_app("double reply")
+    app = _ready_openai_app(monkeypatch, "double reply")
     host = ConsoleHarness(app)
 
     async with host.run_test(size=(160, 48)) as pilot:
@@ -237,7 +250,7 @@ async def test_console_submit_exception_restores_draft_and_keeps_app_alive(
     monkeypatch,
 ):
     """If submit_draft raises, the keypress-cleared draft must come back."""
-    app = _ready_app("never used")
+    app = _ready_openai_app(monkeypatch, "never used")
     host = ConsoleHarness(app)
 
     async with host.run_test(size=(160, 48)) as pilot:
@@ -283,7 +296,7 @@ async def test_console_fresh_profile_first_send_resolves_real_session_not_sentin
     map, the worker group, and the double-send gate all key on the same,
     resolvable id instead of silently starting a separate "no session"
     bucket."""
-    app = _ready_app("fresh reply")
+    app = _ready_openai_app(monkeypatch, "fresh reply")
     host = ConsoleHarness(app)
 
     async with host.run_test(size=(160, 48)) as pilot:
@@ -398,7 +411,9 @@ async def test_console_session_closed_mid_dispatch_notifies_instead_of_silent_sw
 
 
 @pytest.mark.asyncio
-async def test_console_enter_no_op_press_restores_draft_and_unblocks_next_send():
+async def test_console_enter_no_op_press_restores_draft_and_unblocks_next_send(
+    monkeypatch,
+):
     """Textual 8.2.7's `Button.press()` returns immediately -- without
     posting `Button.Pressed` -- when the button is `disabled` or not
     `display`ed. Before this fix, the Enter handler stashed-and-cleared the
@@ -406,7 +421,7 @@ async def test_console_enter_no_op_press_restores_draft_and_unblocks_next_send()
     empty composer AND the duplicate-guard just above permanently swallowed
     every subsequent Enter (the pending-stash slot never went back to
     `None` on its own)."""
-    app = _ready_app("after reenable")
+    app = _ready_openai_app(monkeypatch, "after reenable")
     host = ConsoleHarness(app)
 
     async with host.run_test(size=(160, 48)) as pilot:

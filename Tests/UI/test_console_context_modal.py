@@ -33,6 +33,7 @@ from textual.app import ComposeResult
 from textual.containers import Horizontal, Vertical
 from textual.widgets import Button, Collapsible, Label, Static, TextArea
 
+from Tests.UI.consolidated_css import ConsolidatedCSSApp
 from tldw_chatbook.Chat.console_chat_models import (
     ConsoleChatMessage,
     ConsoleContextSnapshot,

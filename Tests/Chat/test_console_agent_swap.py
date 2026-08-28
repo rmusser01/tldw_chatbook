@@ -844,8 +844,11 @@ async def test_stop_during_parked_bridge_thread_persists_cancelled_not_done(tmp_
     surviving thread still observes the cancellation correctly.
     """
     gateway = _ParkingGateway()
-    store = ConsoleChatStore()
-    store.create_session(ephemeral=True)
+    store = ConsoleChatStore(
+        persistence=ChatPersistenceService(
+            CharactersRAGDB(str(tmp_path / "chat.db"), "test")
+        )
+    )
     db = AgentRunsDB(tmp_path / "runs.db", client_id="t")
     bridge = ConsoleAgentBridge(agent_runs_db=db, store=store, provider_gateway=gateway)
     controller = ConsoleChatController(
@@ -1457,6 +1460,9 @@ async def test_agent_runtime_gate_refreshes_without_screen_teardown():
 
     fake_bridge = _FakeBridge()
     screen = ChatScreen(app)
+    store = ConsoleChatStore()
+    store.create_session(ephemeral=True)
+    screen._console_chat_store = store
     screen._ensure_console_agent_bridge = lambda: fake_bridge
 
     class _FakeGateway:
@@ -1489,7 +1495,6 @@ async def test_agent_runtime_gate_refreshes_without_screen_teardown():
     assert result.accepted is True
     assert scheduled_syncs == []
     assert fake_bridge.calls == 0  # legacy path used, not the agent bridge
-    store = screen._ensure_console_chat_store()
     messages = store.messages_for_session(store.active_session_id)
     assert messages[-1].content == "legacy answer."
 

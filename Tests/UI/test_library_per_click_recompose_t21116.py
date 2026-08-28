@@ -7,10 +7,10 @@ skills/prompts inline Import open/cancel, and the section "Export…" entry.
 Each test pins BOTH that zero whole-screen recomposes happen and that the
 shell (rail) keeps widget identity across the interaction.
 
-The harness boots into the compact UNKNOWN-lifecycle rail on this dev
-base, so media-path tests disclose the full rail via
-``#library-rail-explore-all`` first; the prompts/skills tests reuse the
-real-service wiring that already resolves the full rail (the
+When the harness boots into the legacy compact UNKNOWN-lifecycle rail,
+media-path tests disclose the full rail via ``#library-rail-explore-all``;
+the current lifecycle exposes those rows directly. The prompts/skills tests
+reuse the real-service wiring that already resolves the full rail (the
 ``test_real_prompt_and_skill_rows_keep_their_canvas_identity`` recipe).
 """
 
@@ -63,12 +63,11 @@ async def _wait_for_selector_gone(screen, pilot, selector, *, attempts=80):
 
 
 async def _boot_media_library(host, pilot):
-    """Mount the Library shell, disclose the full rail, enter Browse Media."""
+    """Mount the Library shell, disclose legacy compact rail, enter Media."""
     screen = _active_library_screen(host)
     await _wait_for_library_shell(screen, pilot)
-    explore = screen.query("#library-rail-explore-all")
-    if explore:
-        explore.first(Button).press()
+    if screen.query("#library-rail-explore-all"):
+        screen.query_one("#library-rail-explore-all", Button).press()
     await _wait_for_selector(screen, pilot, "#library-row-browse-media")
     screen.query_one("#library-row-browse-media", Button).press()
     await _wait_for_selector(screen, pilot, "#library-media-row-0")
@@ -138,8 +137,6 @@ async def test_media_viewer_substate_escape_is_viewer_scoped() -> None:
     async with host.run_test(size=LIBRARY_TEST_SIZE) as pilot:
         screen = await _boot_media_library(host, pilot)
         screen.query_one("#library-media-row-0", Button).press()
-        await _wait_for_selector(screen, pilot, "#library-media-reader-more")
-        screen.query_one("#library-media-reader-more", Button).press()
         await _wait_for_selector(screen, pilot, "#library-media-edit")
         # Entering edit mode is out of this conversion's scope and may
         # rebuild the screen -- do it OUTSIDE the spy window.
@@ -170,9 +167,8 @@ async def test_open_item_by_id_media_is_canvas_scoped() -> None:
     async with host.run_test(size=LIBRARY_TEST_SIZE) as pilot:
         screen = _active_library_screen(host)
         await _wait_for_library_shell(screen, pilot)
-        explore = screen.query("#library-rail-explore-all")
-        if explore:
-            explore.first(Button).press()
+        if screen.query("#library-rail-explore-all"):
+            screen.query_one("#library-rail-explore-all", Button).press()
         await _wait_for_selector(screen, pilot, "#library-row-browse-notes")
         # Start from a NON-media canvas so the open crosses canvas kinds
         # (the RAG "Open" shape): rail selection + canvas child must both
@@ -219,9 +215,8 @@ async def test_open_item_by_id_notes_keeps_route_owned_source_strip() -> None:
     async with host.run_test(size=LIBRARY_TEST_SIZE) as pilot:
         screen = _active_library_screen(host)
         await _wait_for_library_shell(screen, pilot)
-        explore = screen.query("#library-rail-explore-all")
-        if explore:
-            explore.first(Button).press()
+        if screen.query("#library-rail-explore-all"):
+            screen.query_one("#library-rail-explore-all", Button).press()
         await _wait_for_selector(screen, pilot, "#library-row-browse-conversations")
         screen.query_one("#library-row-browse-conversations", Button).press()
         await _wait_for_selector(screen, pilot, "#library-conversations-canvas")

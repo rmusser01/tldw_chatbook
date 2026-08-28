@@ -83,18 +83,20 @@ def _assert_visible_in_viewport(
 
 def _app_with_watchlists(watch_items):
     app = _build_test_app()
-    app.watchlist_scope_service = StaticWatchlistsScopeService(watch_items)
+    app.watchlist_scope_service.list_watch_items = (
+        StaticWatchlistsScopeService(watch_items).list_watch_items
+    )
     return app
 
 
 @pytest.mark.asyncio
 async def test_inspector_pane_mounts_in_screen():
-    app = _app_with_watchlists([])
+    """The production destination mounts its Inspector pane."""
+    app = _build_test_app()
     host = DestinationHarness(app, "watchlists_collections")
     async with host.run_test(size=(180, 50)) as pilot:
         await pilot.pause(0.2)
         screen = host.screen_stack[-1]
-
         assert isinstance(screen, WatchlistsCollectionsScreen)
         assert screen.query_one("#watchlists-entity-inspector", InspectorPane)
 
@@ -396,12 +398,6 @@ async def test_tree_scope_reaching_screen_populates_inspector_breadcrumb():
         await pilot.pause(0.2)
         screen = host.screen_stack[-1]
 
-        # Read navigation commits only after the replacement snapshot loads.
-        # This test exercises the synchronous screen-to-Inspector wiring, so
-        # use a management section rather than racing that separate contract.
-        screen.active_section = "sources"
-        await pilot.pause(0.2)
-
         # Seeds the same data `_load_tree_data` would have loaded, so the
         # breadcrumb shows the real watchlist name rather than the
         # `Watchlist {id}` fallback `_resolve_breadcrumb_labels` uses when
@@ -438,12 +434,6 @@ async def test_inspector_breadcrumb_survives_a_left_rail_toggle():
     async with host.run_test(size=(180, 50)) as pilot:
         await pilot.pause(0.2)
         screen = host.screen_stack[-1]
-
-        # Read navigation commits only after the replacement snapshot loads.
-        # This test exercises rebuild persistence, so enter a management
-        # section before posting the scope event.
-        screen.active_section = "sources"
-        await pilot.pause(0.2)
 
         screen._tree_watchlists = [{"id": 7, "name": "Morning AI Brief"}]
         screen.post_message(

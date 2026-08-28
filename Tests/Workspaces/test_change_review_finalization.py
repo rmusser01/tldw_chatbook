@@ -433,6 +433,60 @@ def test_survivor_window_holds_lane_until_its_turn_children_settle(tmp_path):
     coordinator.shutdown(timeout=1)
 
 
+def test_survivor_window_receives_late_child_write_paths(tmp_path):
+    class _PathRecordingTracker(_RecordingTracker):
+        def __init__(self) -> None:
+            super().__init__()
+            self.finished_paths: list[tuple[str, ...]] = []
+
+        def finish_turn(self, handle, touched_paths=(), *, end_shas=None):
+            self.finished_paths.append(tuple(touched_paths))
+            return super().finish_turn(
+                handle,
+                touched_paths=touched_paths,
+                end_shas=end_shas,
+            )
+
+    tracker = _PathRecordingTracker()
+    publications: list[ChangeReviewPublication] = []
+    coordinator = ChangeReviewFinalizationCoordinator(
+        tracker=tracker,
+        publish=publications.append,
+        worker_count=1,
+        capacity=4,
+    )
+    root = tmp_path / "shared"
+    root.mkdir()
+
+    reservation = coordinator.register([root], survivor_key="assistant-1")
+    assert reservation is not None
+    _wait_until(lambda: "shared" in tracker.baseline_release)
+    tracker.baseline_release["shared"].set()
+    assert reservation.await_baseline(timeout=1)
+    assert coordinator.finalize(
+        reservation,
+        run_id="run-1",
+        kind="turn",
+        touched_paths=("parent.txt",),
+        has_live_survivors=True,
+    )
+    _wait_until(lambda: len(publications) == 1)
+
+    coordinator.record_survivor_paths(
+        "assistant-1",
+        ("late-child.txt",),
+    )
+    coordinator.settle_survivors("assistant-1")
+    _wait_until(lambda: len(publications) == 2)
+
+    assert tracker.finished_paths == [
+        ("parent.txt",),
+        ("late-child.txt",),
+    ]
+    assert publications[1].kind == "subagent_post_turn"
+    coordinator.shutdown(timeout=1)
+
+
 def test_successor_timeout_degrades_survivor_lane_until_quiescence(tmp_path):
     tracker = _RecordingTracker()
     publications: list[ChangeReviewPublication] = []

@@ -6993,6 +6993,7 @@ class SummaryStep(SetupStep):
         self._speech_runtime_installed = speech_runtime_installed
         self.exit_route: Optional[str] = None
         self.provider_model_complete = False
+        self._render_worker = None
 
     def compose_step(self) -> ComposeResult:
         with Vertical(classes="setup-summary"):
@@ -7045,7 +7046,11 @@ class SummaryStep(SetupStep):
                 "Left at recommended defaults: tools off, RAG off, default theme, "
                 "notes sync off — each lives in Settings when you want it."
             )
-        self.run_worker(self._render_rows(), exclusive=True, group="setup-summary-load")
+        if self._render_worker is not None and self._render_worker.is_running:
+            return
+        self._render_worker = self.run_worker(
+            self._render_rows(), exclusive=True, group="setup-summary-load"
+        )
 
     async def _render_rows(self) -> None:
         import asyncio

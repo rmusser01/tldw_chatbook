@@ -2457,12 +2457,12 @@ def test_library_screen_bindings_are_all_gated_or_universal():
 
     from tldw_chatbook.UI.Screens.library_screen import LibraryScreen
 
-    # No LibraryScreen binding is meant to work identically on every
-    # surface today -- "/" (focus search) and F6 (next pane) are real
-    # screen-wide keys, but they are NOT Bindings (see
-    # ``LibraryScreen.on_key``/``action_focus_next_workbench_pane``'s own
-    # wiring), so they never appear in BINDINGS and are out of scope here.
-    universal_actions: frozenset[str] = frozenset()
+    # Shift+F6 is the one screen-wide Binding: the shared pane-focus helper
+    # resolves only visible targets and safely no-ops when none exist.  "/"
+    # (focus search) and F6 (next pane) are also screen-wide keys, but they
+    # are not Bindings (see ``LibraryScreen.on_key`` and the app-global F6
+    # wiring), so they never appear in this audit.
+    universal_actions = frozenset({"focus_previous_workbench_pane"})
 
     app = _build_test_app()
     screen = LibraryScreen(app)

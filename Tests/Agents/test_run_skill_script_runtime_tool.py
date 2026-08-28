@@ -333,8 +333,13 @@ def test_run_skill_script_absent_and_falls_through_when_not_wired(tmp_path):
     assert RUN_SKILL_SCRIPT_TOOL_NAME not in first_system_content
 
     run = db.get_run(rid)
-    results = [s["result"] for s in run["steps"] if s["kind"] == "tool_result"]
+    results = [s.result for s in outcome.steps if s.kind == "tool_result"]
     assert any("Tool not permitted: run_skill_script" in r for r in results)
+    assert any(
+        step["kind"] == "tool_failed"
+        and step["summary"] == "run_skill_script blocked"
+        for step in run["steps"]
+    )
 
 
 def test_subagent_can_also_dispatch_and_be_pinned_run_skill_script(tmp_path):
@@ -405,7 +410,9 @@ def test_subagent_can_also_dispatch_and_be_pinned_run_skill_script(tmp_path):
 
     child_runs = [r for r in db.list_runs("c1") if r["agent_kind"] == "subagent"]
     assert len(child_runs) == 1
-    tool_results = [
-        s["result"] for s in child_runs[0]["steps"] if s["kind"] == "tool_result"
-    ]
-    assert any("stdout: hi" in r for r in tool_results)
+    assert any(
+        step["kind"] == "tool_succeeded"
+        and step["tool_name"] == RUN_SKILL_SCRIPT_TOOL_NAME
+        and step["tool_outcome"] == "success"
+        for step in child_runs[0]["steps"]
+    )

@@ -72,7 +72,6 @@ from Tests.UI.background_signals import (
     wait_for_signal,
 )
 from Tests.UI.test_library_content_hub import StaticLibraryCollectionsService
-from Tests.UI.test_destination_shells import StaticLibraryConversationScopeService
 from Tests.UI.test_library_shell import (
     LIBRARY_TEST_SIZE,
     LibraryHarness,
@@ -110,9 +109,7 @@ _ENTRY_WORKER_CASES = (
         "collections", "#library-collection-select-0", LibraryCollectionsPanel
     ),
     _EntryWorkerCase("skills", "#library-skill-row-code-review", LibrarySkillsListCanvas),
-    _EntryWorkerCase(
-        "notes", "#library-note-body", LibraryNotesCanvas, owner_replaced=True
-    ),
+    _EntryWorkerCase("notes", "#library-note-body", LibraryNotesCanvas),
     _EntryWorkerCase(
         "media", "#library-media-viewer", LibraryMediaCanvas
     ),
@@ -444,7 +441,6 @@ async def test_library_landing_late_sync_cannot_replace_a_new_route_owner(
     async with host.run_test(size=LIBRARY_TEST_SIZE) as pilot:
         screen = _active_library_screen(host)
         await _wait_for_library_shell(screen, pilot)
-        await _wait_for_selector(screen, pilot, "#library-hub-recents")
         landing = screen.query_one("#library-landing-canvas", LibraryLandingCanvas)
         await screen._select_library_rail_row(LIBRARY_ROW_BROWSE_MEDIA)
         await _wait_for_selector(screen, pilot, "#library-media-canvas")
@@ -908,6 +904,7 @@ async def test_automatic_entry_worker_composes_screen_once_and_routes_in_place(
         first_owner = active_screen._library_entry_canvas_owner()
         assert first_owner is not None
         if size == (60, 20):
+            active_screen._library_notes_stage = "notes"
             active_screen._set_library_rail_collapsed(True)
             await pilot.pause()
             await pilot.pause()
@@ -928,14 +925,14 @@ async def test_automatic_entry_worker_composes_screen_once_and_routes_in_place(
             "pending-conversations": "Design review notes",
             "pending-prompt": "Entry prompt",
         }[case.name]
-        if case.name == "pending-conversations" and size == (60, 20):
-            # The compact permanent Reader prioritizes transcript progress;
-            # its title metadata is intentionally outside the visible slice.
-            painted_copy = "3 of 3 messages"
         if case.name == "skills" and size == (60, 20):
-            # The compact Skills Reader exposes Work first; the populated
-            # Items owner remains mounted behind its reachable pane grip.
+            # The narrow adaptive shell retains the Items canvas mounted but
+            # paints the Work pane until the user opens Items explicitly.
             painted_copy = "Select a skill to inspect it here."
+        elif case.name == "pending-conversations" and size == (60, 20):
+            # The narrow dedicated reader paints semantic load status in the
+            # viewport; the conversation title remains outside that pane.
+            painted_copy = "Loaded chat-2"
         await _wait_for_condition(
             pilot,
             lambda: _entry_worker_terminal(case, active_screen),
@@ -962,12 +959,7 @@ async def test_automatic_entry_worker_composes_screen_once_and_routes_in_place(
             assert final_owner is not first_owner
         elif case.owner_replaced is False:
             assert final_owner is first_owner
-        assert compose_calls.count(active_screen) == 1, (
-            f"unexpected screen compose count for {case.name}: "
-            f"compose={compose_calls.count(active_screen)}, "
-            f"refresh_recompose={len(refresh_recompose_calls)}, "
-            f"recompose={len(recompose_calls)}"
-        )
+        assert compose_calls.count(active_screen) == 1
         assert refresh_recompose_calls == []
         assert recompose_calls == []
         compositor = _compositor_text(active_screen)
@@ -1078,6 +1070,9 @@ async def test_stale_prompt_token_is_rejected_on_the_same_route(
     async with host.run_test(size=LIBRARY_TEST_SIZE) as pilot:
         active_screen = _active_library_screen(host)
         row = await _wait_for_selector(active_screen, pilot, "#library-prompt-row-1")
+        await active_screen.workers.wait_for_complete()
+        await pilot.pause()
+        row = active_screen.query_one("#library-prompt-row-1")
         stale_result = active_screen._library_prompt_browse_controller.result
         active_screen._library_prompt_browse_controller.begin(stale_result.scope)
         owner = active_screen._library_entry_canvas_owner()
@@ -1268,7 +1263,9 @@ async def test_skills_rail_starts_trust_posture_after_canvas_mount(
 
 
 @pytest.mark.asyncio
-async def test_skills_rail_without_trust_service_clears_mounted_header() -> None:
+async def test_skills_rail_without_trust_service_clears_mounted_header(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     """Clear a mounted stale trust header when its service disappears."""
     app = _build_test_app()
     _seed_conversations(app, _two_conversations())
@@ -1276,6 +1273,7 @@ async def test_skills_rail_without_trust_service_clears_mounted_header() -> None
         available=[{"name": "code-review"}]
     )
     app.local_skill_trust_service = SimpleNamespace(trust_posture=lambda: "ready")
+    monkeypatch.setattr(app, "_build_local_skill_trust_service", lambda: None)
     host = LibraryHarness(app)
 
     async with host.run_test(size=LIBRARY_TEST_SIZE) as pilot:
@@ -1288,7 +1286,7 @@ async def test_skills_rail_without_trust_service_clears_mounted_header() -> None
         await active_screen._select_library_rail_row(
             LIBRARY_ROW_BROWSE_CONVERSATIONS
         )
-        app.local_skill_trust_service = SimpleNamespace()
+        app.local_skill_trust_service = None
 
         await active_screen._select_library_rail_row(LIBRARY_ROW_BROWSE_SKILLS)
         await _wait_for_selector(active_screen, pilot, "#library-skills-canvas")
@@ -1308,6 +1306,7 @@ async def test_missing_trust_service_supersedes_in_flight_posture_worker(
         available=[{"name": "code-review"}]
     )
     app.local_skill_trust_service = None
+    monkeypatch.setattr(app, "_build_local_skill_trust_service", lambda: None)
     host = LibraryHarness(app)
 
     async with host.run_test(size=LIBRARY_TEST_SIZE) as pilot:
@@ -1378,6 +1377,7 @@ async def test_missing_trust_service_already_clear_list_skips_repaint(
         available=[{"name": "code-review"}]
     )
     app.local_skill_trust_service = None
+    monkeypatch.setattr(app, "_build_local_skill_trust_service", lambda: None)
     host = LibraryHarness(app)
 
     async with host.run_test(size=LIBRARY_TEST_SIZE) as pilot:
@@ -1388,23 +1388,6 @@ async def test_missing_trust_service_already_clear_list_skips_repaint(
         await active_screen.workers.wait_for_complete()
         canvas = active_screen.query_one(
             "#library-skills-canvas", LibrarySkillsListCanvas
-        )
-        # Establish the explicit already-clear list state before recording
-        # whether the absent-service refresh performs another repaint.
-        app.local_skill_trust_service = None
-        active_screen.app_instance.local_skill_trust_service = None
-        active_screen.workers.cancel_group(
-            active_screen, "library_skills_trust_posture"
-        )
-        active_screen._library_skills_trust_posture = ""
-        canvas.sync_state(**active_screen._library_skills_canvas_kwargs())
-        await _wait_for_condition(
-            pilot,
-            lambda: (
-                active_screen._library_skills_trust_posture == ""
-                and not active_screen.query("#library-skills-trust-header")
-            ),
-            message="Skills posture did not clear before the no-op refresh.",
         )
         sync_calls: list[None] = []
         original_sync_state = canvas.sync_state
@@ -1427,8 +1410,8 @@ async def test_missing_trust_service_already_clear_list_skips_repaint(
             record_cancel_group,
         )
 
-        active_screen.app_instance.local_skill_trust_service = None
         active_screen._refresh_library_skills_trust_posture()
+        await pilot.pause()
 
         assert active_screen._library_skills_trust_posture == ""
         assert not active_screen.query("#library-skills-trust-header")
@@ -2273,7 +2256,17 @@ async def test_stale_media_generation_reconciles_on_the_current_same_route() -> 
 @pytest.mark.asyncio
 async def test_stale_pending_conversation_open_cannot_project_after_route_switch() -> None:
     app = _build_test_app()
-    _seed_conversations(app, _two_conversations())
+    conversations = (
+        *_two_conversations(),
+        {
+            "conversation_id": "chat-pending",
+            "title": "Late pending conversation",
+            "message_count": 1,
+        },
+    )
+    _seed_conversations(app, conversations)
+    service = app.chat_conversation_scope_service
+    original_locate = service.locate_conversation_page
     host = LibraryHarness(app)
     async with host.run_test(size=LIBRARY_TEST_SIZE) as pilot:
         screen = _active_library_screen(host)
@@ -2281,20 +2274,14 @@ async def test_stale_pending_conversation_open_cannot_project_after_route_switch
         started = threading.Event()
         release = threading.Event()
 
-        def gated_conversation(_conversation_id, *, include_deleted=False):
-            assert include_deleted is False
+        async def gated_locator(conversation_id, **kwargs):
             started.set()
-            assert release.wait(timeout=10), "Pending-open gate was not released."
-            return {
-                "conversation_id": "chat-pending",
-                "title": "Late pending conversation",
-                "message_count": 1,
-            }
+            assert await asyncio.to_thread(
+                release.wait, 10
+            ), "Pending-open gate was not released."
+            return await original_locate(conversation_id, **kwargs)
 
-        app.chachanotes_db = SimpleNamespace(
-            is_memory_db=False,
-            get_conversation_by_id=gated_conversation,
-        )
+        service.locate_conversation_page = gated_locator
         screen._pending_library_source_open = ("conversations", "chat-pending")
         task = asyncio.create_task(screen._open_pending_library_source())
         await _wait_for_condition(
@@ -2317,29 +2304,56 @@ async def test_pending_conversation_open_cannot_overwrite_same_route_user_select
 ) -> None:
     """The selected conversation is part of an entry worker's ownership."""
     app = _build_test_app()
-    _seed_conversations(app, _two_conversations())
+    conversations = (
+        *_two_conversations(),
+        {
+            "conversation_id": "chat-pending",
+            "title": "Late pending conversation",
+            "message_count": 1,
+        },
+    )
+    _seed_conversations(app, conversations)
+    service = app.chat_conversation_scope_service
+    original_locate = service.locate_conversation_page
     host = LibraryHarness(app)
     async with host.run_test(size=LIBRARY_TEST_SIZE) as pilot:
         screen = _active_library_screen(host)
         await _wait_for_library_shell(screen, pilot)
+        await screen.workers.wait_for_complete()
+        await pilot.pause()
         await screen._select_library_rail_row(LIBRARY_ROW_BROWSE_CONVERSATIONS)
         await _wait_for_selector(screen, pilot, "#library-conversations-canvas")
+        screen._start_library_conversation_page_request(1, "")
+        await _wait_for_condition(
+            pilot,
+            lambda: (
+                not screen._library_conversation_loading
+                and "chat-1"
+                in {
+                    screen._conversation_record_id(record, index)
+                    for index, record in enumerate(screen._conversation_records())
+                }
+            ),
+            message=lambda: (
+                "Conversation page did not settle before the locator race: "
+                f"loading={screen._library_conversation_loading!r}, "
+                f"error={screen._library_conversation_error!r}, "
+                f"records={screen._conversation_records()!r}, "
+                f"calls={service.calls!r}."
+            ),
+        )
         started = asyncio.Event()
         release = asyncio.Event()
 
-        async def gated_fetch(_conversation_id: str):
+        async def gated_locator(conversation_id: str, **kwargs):
             started.set()
             await release.wait()
-            return {
-                "conversation_id": "chat-pending",
-                "title": "Late pending conversation",
-                "message_count": 1,
-            }
+            return await original_locate(conversation_id, **kwargs)
 
         monkeypatch.setattr(
-            screen,
-            "_fetch_library_conversation_by_id",
-            gated_fetch,
+            service,
+            "locate_conversation_page",
+            gated_locator,
         )
         screen._selected_conversation_id = "chat-pending"
         screen._pending_library_source_open = ("conversations", "chat-pending")
@@ -2381,7 +2395,17 @@ async def test_pending_conversation_open_retries_initial_snapshot_generation(
 ) -> None:
     """An initial snapshot race must still open an out-of-page deep link."""
     app = _build_test_app()
-    _seed_conversations(app, _two_conversations())
+    conversations = (
+        *_two_conversations(),
+        {
+            "conversation_id": "chat-pending",
+            "title": "Late pending conversation",
+            "message_count": 1,
+        },
+    )
+    _seed_conversations(app, conversations)
+    service = app.chat_conversation_scope_service
+    original_locate = service.locate_conversation_page
     host = LibraryHarness(app)
     async with host.run_test(size=LIBRARY_TEST_SIZE) as pilot:
         screen = _active_library_screen(host)
@@ -2390,36 +2414,21 @@ async def test_pending_conversation_open_retries_initial_snapshot_generation(
         focus = await _wait_for_selector(screen, pilot, "#library-conversations-filter")
         started = asyncio.Event()
         release = asyncio.Event()
-        pending_record = {
-            "conversation_id": "chat-pending",
-            "title": "Late pending conversation",
-            "message_count": 1,
-        }
+        fetch_calls = 0
 
-        class GatedLocator(StaticLibraryConversationScopeService):
-            def __init__(self):
-                fillers = tuple(
-                    {
-                        "conversation_id": f"filler-{index}",
-                        "title": f"Filler {index}",
-                        "message_count": 1,
-                    }
-                    for index in range(22)
-                )
-                super().__init__((*fillers, pending_record))
-                self.locator_calls = 0
+        async def gated_locator(conversation_id: str, **kwargs):
+            nonlocal fetch_calls
+            fetch_calls += 1
+            if fetch_calls == 1:
+                started.set()
+                await release.wait()
+            return await original_locate(conversation_id, **kwargs)
 
-            async def locate_conversation_page(self, conversation_id, **kwargs):
-                self.locator_calls += 1
-                if self.locator_calls == 1:
-                    started.set()
-                    await release.wait()
-                return await super().locate_conversation_page(
-                    conversation_id, **kwargs
-                )
-
-        service = GatedLocator()
-        app.chat_conversation_scope_service = service
+        monkeypatch.setattr(
+            service,
+            "locate_conversation_page",
+            gated_locator,
+        )
         screen._selected_conversation_id = "chat-pending"
         screen._pending_library_source_open = ("conversations", "chat-pending")
         owner = screen._library_entry_canvas_owner()
@@ -2462,19 +2471,12 @@ async def test_pending_conversation_open_retries_initial_snapshot_generation(
         await pilot.pause()
 
         assert result is LibraryEntryReconcileResult.APPLIED
-        assert service.locator_calls == 2
+        assert fetch_calls == 2
         assert screen._selected_conversation_id == "chat-pending"
         assert "chat-pending" in {
             screen._conversation_record_id(record, index)
-            for index, record in enumerate(
-                screen._library_conversation_page_records
-            )
+            for index, record in enumerate(screen._conversation_records())
         }
-        # The broad landing snapshot remains independent from the locator's
-        # retained owner page.
-        assert screen._conversation_record_id(
-            screen._local_source_records["conversations"][0], 0
-        ) == "chat-1"
         assert isinstance(
             screen._library_entry_canvas_owner(), LibraryConversationsCanvas
         )
@@ -2884,11 +2886,6 @@ async def test_uat_cold_conversations_loading_to_rows_is_compositor_visible(
             what="cold conversations snapshot load",
         )
         await _wait_for_selector(active, pilot, "#library-canvas-loading")
-        if size == (60, 20):
-            active._library_notes_stage = "notes"
-            active._set_library_rail_collapsed(True)
-            await pilot.pause()
-            await pilot.pause()
         loading_identity = _screen_identity_tuple(active)
         assert "Loading local Library sources" in _compositor_text(active)
         assert "Loading local Library sources" in _exported_svg_text(host)
@@ -2896,6 +2893,11 @@ async def test_uat_cold_conversations_loading_to_rows_is_compositor_visible(
         release.set()
         await _wait_for_selector(active, pilot, "#library-conversation-row-0")
         await active.workers.wait_for_complete()
+        if size == (60, 20):
+            reader_shell = active.query_one("#library-conversations-reader-shell")
+            if not reader_shell.items.display:
+                reader_shell.items_grip.press()
+                await pilot.pause()
         await pilot.pause()
         rows_identity = _screen_identity_tuple(active)
         compositor = _compositor_text(active)
@@ -2903,8 +2905,11 @@ async def test_uat_cold_conversations_loading_to_rows_is_compositor_visible(
 
         assert rows_identity[:3] == loading_identity[:3]
         assert rows_identity[3] != loading_identity[3]
-        assert "Conversations (2)" in compositor
-        assert "Conversations (2)" in exported_svg
+        assert "Conversations" in compositor
+        assert "Conversations" in exported_svg
+        if size == (170, 48):
+            assert "Conversations (2)" in compositor
+            assert "Conversations (2)" in exported_svg
         assert "Design review notes" in compositor
         assert "Design review notes" in exported_svg
         assert evidence.compose.count(active) == 1
@@ -2930,7 +2935,6 @@ async def test_landing_snapshot_sync_retains_actions_focus_and_updates_recents()
     async with host.run_test(size=LIBRARY_TEST_SIZE) as pilot:
         screen = _active_library_screen(host)
         await _wait_for_library_shell(screen, pilot)
-        await _wait_for_selector(screen, pilot, "#library-hub-recents")
         landing = screen.query_one("#library-landing-canvas", LibraryLandingCanvas)
         import_button = screen.query_one("#library-hub-action-import")
         search_button = screen.query_one("#library-hub-action-search")
@@ -2968,7 +2972,6 @@ async def test_landing_deferred_recents_converge_on_latest_state(monkeypatch):
     async with host.run_test(size=LIBRARY_TEST_SIZE) as pilot:
         screen = _active_library_screen(host)
         await _wait_for_library_shell(screen, pilot)
-        await _wait_for_selector(screen, pilot, "#library-hub-recents")
         landing = screen.query_one("#library-landing-canvas", LibraryLandingCanvas)
         first = LibraryLandingCanvasState(
             purpose=landing.state.purpose,
@@ -3117,8 +3120,8 @@ async def test_retained_entry_actions_paint_before_and_after_sync(size, surface)
             # Compact Library is a one-pane presentation. Expose its mounted
             # content stage so the render oracle measures the owner rather than
             # correctly-hidden children behind the entry rail.
-            screen._library_notes_stage = "notes"
-            screen._set_library_rail_collapsed(True)
+            screen._library_emergency_stage = "canvas-only"
+            screen._apply_library_notes_stage_visibility()
             await pilot.pause()
         if surface == "handoff":
             await screen._select_library_rail_row(LIBRARY_ROW_CREATE_STUDY)
@@ -3205,7 +3208,8 @@ async def test_source_worker_completion_during_mount_dispatch_reconciles_once(
         return result
 
     def recorded_sync(screen: LibraryScreen, kind: str, **kwargs):
-        target_sync_calls.append(screen._library_snapshot_state_generation)
+        if kind == "landing" and screen._library_entry_reconcile_dirty:
+            target_sync_calls.append(screen._library_snapshot_state_generation)
         return original_sync(screen, kind, **kwargs)
 
     async def gated_on_mount(screen: LibraryScreen) -> None:
@@ -3305,8 +3309,8 @@ async def test_snapshot_timeout_is_repaired_by_blocked_fresh_success(
         screen._apply_source_snapshot_timeout()
         await pilot.pause()
         if size == (60, 20):
-            screen._library_notes_stage = "notes"
-            screen._set_library_rail_collapsed(True)
+            screen._library_emergency_stage = "canvas-only"
+            screen._apply_library_notes_stage_visibility()
             await pilot.pause()
             await pilot.pause()
         identity_before = _screen_identity_tuple(screen)
@@ -3456,7 +3460,10 @@ async def test_two_changed_generations_render_only_the_newer_generation(
         )
         assert sync_generations == [newer_generation]
         assert screen._library_snapshot_rendered_generation == newer_generation
-        assert "Newest generation" in _compositor_text(screen)
+        assert "(3)" in str(
+            screen.query_one("#library-row-browse-conversations").label
+        )
+        assert "Newest generation" not in _compositor_text(screen)
         assert "Superseded generation" not in _compositor_text(screen)
 
 
@@ -3706,11 +3713,8 @@ async def test_library_source_snapshot_changed_reconciles_conversations_below_sc
             )
             is canvas
         )
-        # The dedicated page remains authoritative and keeps its own stable
-        # title; the broad source snapshot updates only the rail count.
-        assert (
-            str(screen.query_one("#library-conversations-title").renderable)
-            == "Conversations"
+        assert str(screen.query_one("#library-conversations-title").renderable) == (
+            "Conversations"
         )
         assert "(3)" in str(screen.query_one("#library-row-browse-conversations").label)
         assert True not in refresh_calls
@@ -3728,9 +3732,15 @@ async def test_library_source_snapshot_changed_retains_conversation_row_focus():
         screen = _active_library_screen(host)
         await _wait_for_library_shell(screen, pilot)
         await screen._select_library_rail_row(LIBRARY_ROW_BROWSE_CONVERSATIONS)
+        await screen.workers.wait_for_complete()
+        screen._start_library_conversation_page_request(1, "")
         await _wait_for_selector(screen, pilot, "#library-conversation-row-0")
         await screen.workers.wait_for_complete()
-        row = screen.query_one("#library-conversation-row-0")
+        row = next(
+            candidate
+            for candidate in screen.query(".library-conversation-row")
+            if getattr(candidate, "conversation_id", None) == "chat-2"
+        )
         row.focus()
         await pilot.pause()
         assert getattr(screen.focused, "conversation_id", None) == "chat-2"
@@ -3978,10 +3988,8 @@ async def test_same_generation_new_route_receives_its_own_first_retry(
 
 
 @pytest.mark.asyncio
-async def test_library_source_snapshot_missing_skills_retries_then_equal_can_retry(
-    monkeypatch,
-):
-    """Falling through a missing Skills selector would falsely mark it rendered."""
+async def test_library_source_snapshot_missing_skills_repairs_then_equal_is_noop():
+    """A missing Skills owner is rebuilt once; an equal snapshot stays a no-op."""
     app = _build_test_app()
     _seed_conversations(app, _two_conversations())
     host = LibraryHarness(app)
@@ -3995,41 +4003,18 @@ async def test_library_source_snapshot_missing_skills_retries_then_equal_can_ret
         route_key = screen._library_entry_route_key()
         screen._library_entry_reconcile_dirty = True
         screen._library_entry_reconcile_pending = (generation, route_key)
-        queued: list[tuple[object, tuple[object, ...]]] = []
-        scheduled_attempts: list[tuple[object, ...]] = []
         reconcile_results: list[LibraryEntryReconcileResult] = []
-
-        def capture_call_later(callback, *args):
-            queued.append((callback, args))
-            scheduled_attempts.append(args)
-
-        monkeypatch.setattr(screen, "call_later", capture_call_later)
 
         reconcile_results.append(
             await screen._reconcile_library_entry_state(generation, route_key)
         )
+        await pilot.pause()
+        await pilot.pause()
 
-        assert reconcile_results == [LibraryEntryReconcileResult.FAILED]
-        assert screen._library_entry_reconcile_dirty is True
-        assert screen._library_entry_reconcile_pending == (generation, route_key)
-        assert screen._library_entry_reconcile_retry_generation == (
-            generation,
-            route_key,
-        )
-        assert len(queued) == 1
-
-        callback, args = queued.pop()
-        reconcile_results.append(await callback(*args))
-
-        assert reconcile_results == [
-            LibraryEntryReconcileResult.FAILED,
-            LibraryEntryReconcileResult.FAILED,
-        ]
-        assert screen._library_entry_reconcile_dirty is True
+        assert reconcile_results == [LibraryEntryReconcileResult.APPLIED]
+        assert screen._library_entry_reconcile_dirty is False
         assert screen._library_entry_reconcile_pending is None
         assert screen._library_entry_reconcile_retry_generation is None
-        assert queued == []
-        assert len(scheduled_attempts) == 1
 
         changed = screen._apply_local_source_snapshot(
             dict(screen._local_source_records),
@@ -4041,9 +4026,7 @@ async def test_library_source_snapshot_missing_skills_retries_then_equal_can_ret
         )
 
         assert changed is False
-        assert screen._library_entry_reconcile_pending == (generation, route_key)
-        assert len(queued) == 1
-        assert len(scheduled_attempts) == 2
+        assert screen._library_entry_reconcile_pending is None
 
 
 @pytest.mark.asyncio

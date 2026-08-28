@@ -301,22 +301,26 @@ class LibraryMediaViewer(Vertical):
                         compact=True,
                     )
                 yield from self._compose_content_mode_toggle()
-                matches = find_content_matches(self.viewer.content, self.content_query)
-                yield LibraryMediaContentSearchControls(
-                    is_markdown=self.viewer.is_markdown,
-                    query=self.content_query,
-                    matches=matches,
-                    match_index=self.content_match_index,
-                    id="library-media-content-search-controls",
-                )
-                yield LibraryMediaContentBody(
-                    content=self.viewer.content,
-                    is_markdown=self.viewer.is_markdown,
-                    mode=self.content_mode,
-                    query=self.content_query,
-                    match_index=self.content_match_index,
-                    id="library-media-viewer-content",
-                )
+            # Keep the search controls and content body as direct children of
+            # the scrolling Reader. Textual docks relative to the immediate
+            # container, so nesting these under the mode marker pins an active
+            # Find bar below the Reader header instead of at the viewport top.
+            matches = find_content_matches(self.viewer.content, self.content_query)
+            yield LibraryMediaContentSearchControls(
+                is_markdown=self.viewer.is_markdown,
+                query=self.content_query,
+                matches=matches,
+                match_index=self.content_match_index,
+                id="library-media-content-search-controls",
+            )
+            yield LibraryMediaContentBody(
+                content=self.viewer.content,
+                is_markdown=self.viewer.is_markdown,
+                mode=self.content_mode,
+                query=self.content_query,
+                match_index=self.content_match_index,
+                id="library-media-viewer-content",
+            )
             return
         if self.reader_mode == "analysis":
             with Vertical(id="library-media-reader-mode-analysis"):

@@ -21,9 +21,9 @@ so a keystroke could block on another connection's lock.
 
 These tests call the handler synchronously and assert on the state of the world
 *before yielding to the event loop at all*, so nothing else can have run in
-between. Each "zero" is paired with a control that lets the debounce fire and
-requires the same counter to move -- a handler that had simply stopped
-searching would pass the first half and fail the second.
+between. A control lets the debounce fire and requires its context sync to
+move; the generation-keyed workspace display cache keeps registry calls at
+zero even after that pass.
 
 Part 4 (folded in from task-15452's review) covers the composer memo: the
 draft-edit keystroke path calls `_console_composer_or_none()` twice, and it
@@ -174,10 +174,11 @@ async def test_a_keystroke_does_no_db_work_and_no_tray_recompose():
 
 @pytest.mark.asyncio
 async def test_the_debounced_pass_still_does_that_work():
-    """Control for the test above: the same counters move once the timer fires.
+    """Control for the test above: the search sync runs once the timer fires.
 
     Without this, "zero work per keystroke" would also pass against a handler
-    that had stopped searching altogether.
+    that had stopped searching altogether. Registry reads remain cached by
+    TASK-22201, so firing the pass must not reintroduce registry SQL.
     """
     app = _build_test_app()
     host = ConsoleHarness(app)
@@ -191,9 +192,6 @@ async def test_the_debounced_pass_still_does_that_work():
             )
             await pilot.pause(0.35)
             assert counter.context_syncs > 0
-            # The debounced pass now consumes the mounted/cache-backed browser
-            # projection; it must still synchronize without reopening the
-            # workspace registry on the UI path.
             assert counter.registry_calls == 0
 
 

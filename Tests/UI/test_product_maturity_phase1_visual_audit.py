@@ -44,7 +44,7 @@ DESTINATION_BODY_SELECTORS: dict[str, tuple[str, ...]] = {
     # always-present control bar + native session surface instead.
     "console": ("#console-control-bar", "#console-session-surface"),
     "library": ("#library-shell-grid",),
-    "research": ("#research-mode-strip",),
+    "research": ("#research-workspace-shell",),
     "artifacts": ("#artifacts-shell",),
     "personas": ("#personas-shell",),
     "watchlists_collections": ("#watchlists-collections-shell",),

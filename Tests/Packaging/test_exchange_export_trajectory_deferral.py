@@ -105,6 +105,7 @@ import sys
 MODULE = {module!r}
 FORBIDDEN = {forbidden!r}
 EXPECTED_LEAVES = {leaves!r}
+EXPECTED_ABSENT = {absent!r}
 
 __import__(MODULE)
 
@@ -128,30 +129,45 @@ assert not missing, (
     f"{{missing}} -- this guard is no longer watching a live seam and must "
     "be re-pointed, not deleted."
 )
+
+unexpected = [name for name in EXPECTED_ABSENT if name in sys.modules]
+assert not unexpected, (
+    f"{{MODULE}} eagerly resolved deferred exchange-export modules "
+    f"{{unexpected}}. Keep them behind the inspector action boundary."
+)
 print("EDGE_OK")
 """
 
 
 @pytest.mark.parametrize(
-    ("module", "leaves"),
+    ("module", "leaves", "absent"),
     [
         # The Chat-layer projector needs only the enum leaf.
-        ("tldw_chatbook.Chat.console_exchange_export", (ENUM_LEAF,)),
+        ("tldw_chatbook.Chat.console_exchange_export", (ENUM_LEAF,), ()),
         # The dialog needs the enum AND the shared presentation.
         (
             "tldw_chatbook.Widgets.Console.console_exchange_export_dialog",
             (ENUM_LEAF, UI_LEAF),
+            (),
         ),
-        # The inspector is the module chat_screen actually imports; it must
-        # stay clean TRANSITIVELY (this is the edge #2126 rode).
+        # The inspector is what chat_screen imports. The dialog and its light
+        # leaves must now remain deferred until the export action is invoked.
         (
             "tldw_chatbook.Widgets.Console.console_conversation_inspector",
-            (ENUM_LEAF, UI_LEAF),
+            (),
+            (
+                "tldw_chatbook.Widgets.Console.console_exchange_export_dialog",
+                ENUM_LEAF,
+                UI_LEAF,
+            ),
         ),
     ],
 )
 def test_chat_leg_exchange_export_module_stays_off_the_trajectory_engine(
-    tmp_path: Path, module: str, leaves: tuple[str, ...]
+    tmp_path: Path,
+    module: str,
+    leaves: tuple[str, ...],
+    absent: tuple[str, ...],
 ) -> None:
     """Importing each chat-leg exchange-export module resolves no engine module.
 
@@ -162,9 +178,13 @@ def test_chat_leg_exchange_export_module_stays_off_the_trajectory_engine(
         tmp_path: pytest fixture; isolated dir for the subprocess's HOME/XDG.
         module: The chat-leg module to import bare.
         leaves: Light modules that must be resident afterwards (anti-vacuity).
+        absent: Deferred modules that must not be resident afterwards.
     """
     code = _PER_EDGE_SNIPPET.format(
-        module=module, forbidden=FORBIDDEN_ON_CHAT_LEG, leaves=leaves
+        module=module,
+        forbidden=FORBIDDEN_ON_CHAT_LEG,
+        leaves=leaves,
+        absent=absent,
     )
     result = _run_isolated_python(tmp_path, code)
     assert result.returncode == 0, (

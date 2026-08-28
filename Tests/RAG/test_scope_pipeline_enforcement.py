@@ -2123,7 +2123,7 @@ class TestFreshPromptBoundaryAuthority:
         assert authorized == (candidate,)
 
     @pytest.mark.asyncio
-    async def test_fresh_workspace_with_valid_zero_item_scope_remains_unscoped(
+    async def test_fresh_workspace_with_valid_zero_item_scope_remains_empty(
         self, media_db, tmp_path, monkeypatch
     ):
         media_id = _seed_media(media_db, n=1)[0]
@@ -2155,8 +2155,8 @@ class TestFreshPromptBoundaryAuthority:
         effective = await cre.resolve_effective_scope_for_chat(app, use_cache=False)
         authorized = await cre.authorize_local_results_for_prompt(app, (candidate,))
 
-        assert effective.state == "unscoped"
-        assert authorized == (candidate,)
+        assert effective.state == "empty"
+        assert authorized == ()
 
     @pytest.mark.asyncio
     async def test_fresh_missing_linked_workspace_fails_closed(

@@ -28,7 +28,6 @@ from tldw_chatbook.MCP.unified_control_models import (
     UnifiedMCPContext,
 )
 from tldw_chatbook.runtime_policy.types import PolicyDeniedError, RuntimeSourceState
-from tldw_chatbook.Subscriptions.watchlist_item_page import WatchlistItemPage
 from tldw_chatbook.UI.MCP_Modules.mcp_inspector import MCPInspector
 from tldw_chatbook.UI.MCP_Modules.mcp_rail import MCPRail
 from tldw_chatbook.UI.MCP_Modules.mcp_servers_mode import MCPServersMode
@@ -627,9 +626,6 @@ class StaticLibraryConversationScopeService:
     def __init__(self, conversations):
         self.conversations = tuple(conversations)
         self.calls = []
-        # The adaptive Conversation Reader obtains detail from the local
-        # service behind the scope facade, matching the production shape.
-        self.local_service = self
 
     async def list_conversations(self, **kwargs):
         self.calls.append(kwargs)
@@ -682,52 +678,6 @@ class StaticLibraryConversationScopeService:
             },
         }
 
-    def get_library_conversation_messages(self, conversation_id, **kwargs):
-        """Return a bounded authoritative detail envelope for Reader tests."""
-
-        record = next(
-            (
-                item
-                for item in self.conversations
-                if str(item.get("id") or item.get("conversation_id") or "")
-                == str(conversation_id)
-            ),
-            None,
-        )
-        if record is None:
-            return None
-        offset = max(0, int(kwargs.get("message_offset", 0)))
-        limit = max(0, int(kwargs.get("message_limit", 20)))
-        total = max(0, int(record.get("message_count", 0)))
-        stop = min(offset + limit, total)
-        messages = [
-            {
-                "id": f"{conversation_id}-message-{index}",
-                "sender": "user" if index % 2 == 0 else "assistant",
-                "timestamp": record.get("updated_at"),
-                "revision": f"revision-{index}",
-                "total_chars": len(text := f"Message {index + 1}"),
-                "char_start": 0,
-                "returned_chars": len(text),
-                "has_more": False,
-                "text": text,
-            }
-            for index in range(offset, stop)
-        ]
-        return {
-            "id": str(conversation_id),
-            "title": record.get("title") or "Untitled conversation",
-            "version": max(0, int(record.get("version", 1))),
-            "message_epoch": f"epoch-{conversation_id}",
-            "message_total": total,
-            "message_offset": offset,
-            "returned_message_count": len(messages),
-            "has_more": stop < total,
-            "next_message_offset": stop if stop < total else None,
-            "include_rag_context": False,
-            "messages": messages,
-        }
-
 
 def _link_library_items_to_active_workspace(app, items) -> None:
     active_workspace = app.workspace_registry_service.get_active_workspace()
@@ -771,7 +721,18 @@ class PolicyDeniedLibraryNotesScopeService:
         )
 
 
-class StaticWatchlistsScopeService:
+class _WatchlistsScopeContract:
+    """Shared create-form capability required by the Watchlists screen."""
+
+    def create_form_source_types(self, *, runtime_backend=None):
+        return (
+            ("rss", "site", "forum")
+            if runtime_backend == "server"
+            else ("rss", "atom", "url")
+        )
+
+
+class StaticWatchlistsScopeService(_WatchlistsScopeContract):
     def __init__(self, watch_items):
         self.watch_items = tuple(watch_items)
         self.calls = []
@@ -780,36 +741,13 @@ class StaticWatchlistsScopeService:
         self.calls.append(kwargs)
         return list(self.watch_items)
 
-    def create_form_source_types(self, *, runtime_backend=None):
-        """Mirror the production scope contract used during composition."""
 
-        return (
-            ("rss", "site", "forum")
-            if runtime_backend == "server"
-            else ("rss", "atom", "url")
-        )
-
-    async def list_reader_items_page(self, **kwargs):
-        """Return the typed empty Reader page used by production composition."""
-
-        return WatchlistItemPage(
-            items=(),
-            has_more=False,
-            snapshot_max_item_id=0,
-            snapshot_count=0,
-            next_cursor=None,
-        )
-
-
-class RaisingWatchlistsScopeService:
-    def create_form_source_types(self, *, runtime_backend=None):
-        return ("rss", "atom", "url")
-
+class RaisingWatchlistsScopeService(_WatchlistsScopeContract):
     async def list_watch_items(self, **kwargs):
         raise RuntimeError("watchlists unavailable")
 
 
-class PolicyDeniedWatchlistsScopeService:
+class PolicyDeniedWatchlistsScopeService(_WatchlistsScopeContract):
     def __init__(
         self,
         *,
@@ -832,14 +770,8 @@ class PolicyDeniedWatchlistsScopeService:
             authority_owner=self.authority_owner,
         )
 
-    def create_form_source_types(self, *, runtime_backend=None):
-        return ("rss", "atom", "url")
 
-
-class HangingWatchlistsScopeService:
-    def create_form_source_types(self, *, runtime_backend=None):
-        return ("rss", "atom", "url")
-
+class HangingWatchlistsScopeService(_WatchlistsScopeContract):
     async def list_watch_items(self, **kwargs):
         await asyncio.sleep(10)
         return []

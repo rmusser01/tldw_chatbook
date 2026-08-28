@@ -16503,6 +16503,10 @@ class ConsoleChatController:
                     )
                     if action == "disable":
                         self._clear_project_instruction_delivery(session_id)
+                        try:
+                            self.store.mark_message_failed(assistant_message_id)
+                        except KeyError:
+                            return self._session_closed_result(session_id=session_id)
                         return self._block(session_id, "project_instructions_disabled")
                     if action != "select" or project_selection is None:
                         self._clear_project_instruction_delivery(session_id)

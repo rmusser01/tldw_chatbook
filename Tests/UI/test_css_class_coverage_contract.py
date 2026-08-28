@@ -88,6 +88,11 @@ KNOWN_UNSTYLED: dict[str, str] = {
         "the shared, styled .console-rail-section-body class, never "
         "selected via .console-agent-section itself."
     ),
+    "console-activity-detail-placeholder": (
+        "empty lazy-render sentinel inside the styled activity detail stack; "
+        "its presence records hidden expandable output until refresh replaces "
+        "it, and it is never selected or painted independently."
+    ),
     "console-attachment-indicator": (
         "duplicates the widget's own id (#console-attachment-indicator); "
         "text/visibility are driven by query_one(#id) + styles.display, "
@@ -98,10 +103,6 @@ KNOWN_UNSTYLED: dict[str, str] = {
         "`ConsoleTranscriptSurface > ConsoleBackgroundEffect` in its own "
         "DEFAULT_CSS and paints itself via render_line(); the class token "
         "has no selector anywhere."
-    ),
-    "console-activity-detail-placeholder": (
-        "structural empty-state placeholder inside the already styled activity "
-        "detail stack; it is replaced in place and needs no distinct styling."
     ),
     "console-composer-menu-button": (
         "per-button identifier stacked on the styled `destination-action-"
@@ -128,16 +129,19 @@ KNOWN_UNSTYLED: dict[str, str] = {
         "selected via the class."
     ),
     "console-inspector-outer-scroll-hint": (
-        "behavioral marker duplicating #console-inspector-outer-scroll-hint; "
-        "copy and visibility are driven directly by the rail controller."
+        "duplicates #console-inspector-outer-scroll-hint; the pinned cue's "
+        "height/display are set inline and its copy is updated through the "
+        "id, so this class carries no independent style."
     ),
     "console-left-rail-outer-hint": (
-        "behavioral marker duplicating #console-left-rail-outer-hint; copy and "
-        "visibility are driven directly by the rail controller."
+        "duplicates #console-left-rail-outer-hint; the pinned cue's "
+        "height/display are set inline and its copy is updated through the "
+        "id, so this class carries no independent style."
     ),
     "console-live-work-status-badge": (
-        "semantic marker stacked on the styled ds-status-badge base class; "
-        "the status badge base owns its visual treatment."
+        "semantic duplicate of #console-live-work-status-badge stacked on "
+        "the styled ds-status-badge base; swaps toggle it through the id and "
+        "the class is never queried or styled separately."
     ),
     "console-markdown-footer": (
         "query-selector handle: ConsoleMarkdownMessage.sync_message reads "

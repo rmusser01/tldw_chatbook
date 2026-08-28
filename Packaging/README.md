@@ -104,6 +104,11 @@ python build_app.py --mode minimal  # Smallest size
 python build_app.py --mode full     # All features
 ```
 
+The Nuitka builder explicitly copies the reviewed
+`tldw_chatbook/assets/tiktoken_cache` directory into the same package-relative
+location in the app bundle. Nuitka does not consume setuptools package-data
+declarations for this build route.
+
 ### Code Signing
 
 To sign the app for distribution:

@@ -102,6 +102,11 @@ class _FleetBridge:
             return AgentLiveSnapshot()
         return AgentLiveSnapshot(status="running", step=1)
 
+    def subagent_counts(self, conversation_ids: list[str]) -> dict[str, int]:
+        if not self._handles or self._conversation_id not in conversation_ids:
+            return {}
+        return {self._conversation_id: len(self._handles)}
+
     def subagent_run(self, run_id: str):
         handle = self._by_run_id.get(run_id)
         if handle is None:

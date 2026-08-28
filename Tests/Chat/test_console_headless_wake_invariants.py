@@ -150,8 +150,9 @@ async def test_a_disposed_runtime_refuses_the_wake_and_loses_nothing(tmp_path):
 
     `dispose()` closes the provider gateway and cancels/awaits every
     session's stream task, so a turn started here could reach nobody. The
-    pending entry, the durable mark and the unstamped ledger all survive
-    for the next process.
+    durable mark and unstamped ledger survive for the next process. The
+    coordinator's in-memory pending registry is intentionally discarded at
+    process teardown and rebuilt from those durable layers on the next mount.
     """
     rig = _controller_rig(tmp_path)
     chacha, app, runs_db, store, session, gateway, _bridge, controller = rig
@@ -175,7 +176,9 @@ async def test_a_disposed_runtime_refuses_the_wake_and_loses_nothing(tmp_path):
             "and its stream tasks are cancelled; nothing it produced could "
             "reach anyone"
         )
-        assert wake.has_pending(session.id), "a refused wake keeps its pending bit"
+        assert not wake.has_pending(session.id), (
+            "process teardown must release the ephemeral pending registry"
+        )
         assert not (runs_db.get_run(run_id) or {}).get("wake_delivered_at"), (
             "a refused wake must never stamp the delivered ledger"
         )
@@ -524,11 +527,12 @@ async def test_a_wake_racing_app_exit_leaves_consistent_durable_state(tmp_path):
 
     * stamped ledger  => the notice row exists and the pending entry is
       gone (the supervisor was woken; a restart must not re-announce it);
-    * unstamped ledger => the pending entry AND the ◈ mark survive (a
-      restart owes it and will claim it).
+    * unstamped ledger => runtime teardown discards the ephemeral pending
+      entry, while the ◈ mark survives so restart recovery can rebuild it.
 
-    A "stamped but nothing landed" or "unstamped but dropped from pending"
-    outcome is a lost or duplicated completion, and neither is acceptable.
+    A "stamped but nothing landed" or an unstamped completion without its
+    durable ◈ mark is a lost or duplicated completion, and neither is
+    acceptable.
 
     **Measured branch** (probe run, recorded so nobody has to re-derive
     it): `stamped=True, notices=1, pending=False, marked=True`. The turn
@@ -574,9 +578,9 @@ async def test_a_wake_racing_app_exit_leaves_consistent_durable_state(tmp_path):
                 "announce it twice"
             )
         else:
-            assert wake.has_pending(session.id), (
-                "an unstamped completion was dropped from the pending "
-                "registry -- nothing will ever wake the supervisor for it"
+            assert not wake.has_pending(session.id), (
+                "runtime teardown must clear its ephemeral pending registry; "
+                "restart recovery rebuilds it from durable marks"
             )
             assert _marked(app, session.id), (
                 "an unstamped completion lost its ◈ mark, so no restart can "

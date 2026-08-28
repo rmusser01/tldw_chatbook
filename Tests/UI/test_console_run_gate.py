@@ -15,7 +15,6 @@ from types import SimpleNamespace
 
 import pytest
 
-from Tests.UI.background_signals import wait_for_signal
 from tldw_chatbook.Chat.console_chat_models import (
     ConsoleMessageRole,
     ConsoleRunState,
@@ -25,7 +24,7 @@ from tldw_chatbook.Chat.console_chat_models import (
 ALREADY_RUNNING_COPY = "A run is already running in this tab."
 
 
-def _build_screen():
+def _build_screen(*, with_persona_buddy: bool = False):
     from Tests.UI.app_factory import _build_test_app
     from tldw_chatbook.UI.Screens.chat_screen import ChatScreen
 
@@ -36,6 +35,8 @@ def _build_screen():
     }
     app.chat_api_provider_value = "llama_cpp"
     app.chat_api_model_value = "test-model"
+    if with_persona_buddy:
+        assert app.ensure_persona_buddy_controller() is not None
     screen = ChatScreen(app)
     return app, screen
 
@@ -88,8 +89,7 @@ def _start_fake_run(screen) -> None:
 @pytest.mark.unit
 def test_persona_buddy_run_and_approval_states_drive_real_controller_producers():
     """The real controller callbacks publish and settle exact Buddy owners."""
-    app, screen = _build_screen()
-    app.ensure_persona_buddy_controller()
+    app, screen = _build_screen(with_persona_buddy=True)
     controller = screen._ensure_console_chat_controller()
     buddy = app.persona_buddy_controller
 
@@ -133,8 +133,7 @@ def test_persona_buddy_missing_controller_sink_is_noop():
 @pytest.mark.asyncio
 async def test_persona_buddy_stale_run_terminal_cannot_release_replacement():
     """Each actual run task carries the exact owner captured at validation."""
-    app, screen = _build_screen()
-    app.ensure_persona_buddy_controller()
+    app, screen = _build_screen(with_persona_buddy=True)
     controller = screen._ensure_console_chat_controller()
     old_validating = asyncio.Event()
     release_old = asyncio.Event()
@@ -167,7 +166,7 @@ async def test_persona_buddy_stale_run_terminal_cannot_release_replacement():
 
     old_task = asyncio.create_task(old_run())
     new_task = asyncio.create_task(new_run())
-    await wait_for_signal(new_validating, what="replacement Buddy validation start")
+    await new_validating.wait()
     release_old.set()
     await old_task
 

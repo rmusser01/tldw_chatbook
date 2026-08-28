@@ -12,6 +12,7 @@ import pytest
 
 _REPO_ROOT = Path(__file__).resolve().parents[2]
 _SCREEN_RELATIVE_PATH = "tldw_chatbook/UI/Screens/chat_screen.py"
+_SCREEN_PATH = _REPO_ROOT / _SCREEN_RELATIVE_PATH
 _RATCHET_PATH = _REPO_ROOT / "Tests/Architecture/test_screen_size_ratchet.py"
 _GIT_TIMEOUT_SECONDS = 10
 
@@ -22,6 +23,7 @@ POST_IMAGE_COUNTS = (22_172, 712)
 FINAL_WAVE6_DELIVERY_COUNTS = (19_863, 630)
 AMENDMENT_COUNTS = (19_884, 632)
 IMMUTABLE_BUDGETS = (17_727, 593)
+FINAL_CLOSEOUT_COUNTS = (17_037, 564)
 
 # Each tuple is (task base, delivered revision, base counts, delivered counts).
 TASK_DELIVERIES = (
@@ -394,6 +396,9 @@ def test_closeout_evidence_explains_the_remaining_absolute_deficit() -> None:
         AMENDMENT_COUNTS[1] - IMMUTABLE_BUDGETS[1],
     ) == (2_157, 39)
 
+    live_counts = _counts(_SCREEN_PATH.read_text(encoding="utf-8"))
+    assert live_counts == FINAL_CLOSEOUT_COUNTS
+
     ratchet_tree = ast.parse(_RATCHET_PATH.read_text(encoding="utf-8"))
     budget_assignment = next(
         node
@@ -404,7 +409,7 @@ def test_closeout_evidence_explains_the_remaining_absolute_deficit() -> None:
     )
     assert budget_assignment.value is not None
     budgets = ast.literal_eval(budget_assignment.value)
-    assert budgets[_SCREEN_RELATIVE_PATH] == ("ChatScreen", *IMMUTABLE_BUDGETS)
+    assert budgets[_SCREEN_RELATIVE_PATH] == ("ChatScreen", *FINAL_CLOSEOUT_COUNTS)
 
 
 @pytest.mark.unit

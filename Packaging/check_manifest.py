@@ -7,8 +7,9 @@ import argparse
 import configparser
 from email.parser import Parser
 import fnmatch
-from pathlib import Path, PurePosixPath
+from pathlib import Path, PurePosixPath, PureWindowsPath
 import re
+import stat
 import tarfile
 import zipfile
 
@@ -76,6 +77,29 @@ SAMIRA_RESOURCE_PATHS = {
     f"{SAMIRA_RESOURCE_ROOT}/expressions/{label}.webp"
     for label in SAMIRA_REACTION_LABELS
 }
+TIKTOKEN_CACHE_PREFIX = "tldw_chatbook/assets/tiktoken_cache/"
+WINDOWS_INVALID_COMPONENT_CHARS = frozenset('<>:"\\|?*')
+WINDOWS_RESERVED_COMPONENTS = frozenset(
+    {"con", "prn", "aux", "nul"}
+    | {f"com{number}" for number in range(1, 10)}
+    | {f"lpt{number}" for number in range(1, 10)}
+    | {f"{prefix}{number}" for prefix in ("com", "lpt") for number in "¹²³"}
+)
+TIKTOKEN_RESOURCE_PATHS = {
+    f"{TIKTOKEN_CACHE_PREFIX}{name}"
+    for name in (
+        "0ea1e91bbb3a60f729a8dc8f777fd2fc07cd8df4",
+        "6c7ea1a7e38e3a7f062df639a5b80947f075ffe6",
+        "6d1cbeee0f20b3d9449abfede4726ed8212e3aee",
+        "9b5ad71b2ce5302211f9c61530b329a4922fc6a4",
+        "ec7223a39ce59f226a68acc30dc1af2788490e15",
+        "fb374d419588a4632f3f557e76b4b70aebbca790",
+        "LICENSE.txt",
+        "NOTICE.txt",
+        "manifest.json",
+    )
+}
+TIKTOKEN_REQUIREMENT = "tiktoken==0.14.0"
 
 REQUIRED_SDIST_PATHS = {
     "LICENSE",
@@ -96,7 +120,7 @@ REQUIRED_SDIST_PATHS = {
     # Apache-2.0 re-licensed subtrees whose modules ship (task-19860 review).
     "tldw_chatbook/LLM_Calls/LICENSE",
     "tldw_chatbook/tldw_api/LICENSE",
-} | SAMIRA_RESOURCE_PATHS
+} | SAMIRA_RESOURCE_PATHS | TIKTOKEN_RESOURCE_PATHS
 
 REQUIRED_WHEEL_PATHS = {
     "tldw_chatbook/__init__.py",
@@ -109,7 +133,7 @@ REQUIRED_WHEEL_PATHS = {
     # Apache-2.0 re-licensed subtrees whose modules ship (task-19860 review).
     "tldw_chatbook/LLM_Calls/LICENSE",
     "tldw_chatbook/tldw_api/LICENSE",
-} | SAMIRA_RESOURCE_PATHS
+} | SAMIRA_RESOURCE_PATHS | TIKTOKEN_RESOURCE_PATHS
 
 REQUIRED_SDIST_GLOBS = {
     "tldw_chatbook/css/*.tcss",
@@ -199,10 +223,67 @@ def runtime_migration_paths(module_source: str) -> set[str]:
     return {f"{MIGRATIONS_PREFIX}{name}" for name in names}
 
 
-def _sdist_members(path: Path) -> tuple[set[str], list[str]]:
+def _is_portable_archive_component(component: str) -> bool:
+    device_stem = component.split(".", 1)[0].rstrip(" ").casefold()
+    return not (
+        component.endswith((".", " "))
+        or any(
+            character in WINDOWS_INVALID_COMPONENT_CHARS or ord(character) < 32
+            for character in component
+        )
+        or device_stem in WINDOWS_RESERVED_COMPONENTS
+    )
+
+
+def _archive_name_errors(label: str, names: list[str]) -> list[str]:
     errors: list[str] = []
+    seen: set[str] = set()
+    duplicates: set[str] = set()
+    extraction_names: dict[str, str] = {}
+    for name in names:
+        if name in seen:
+            duplicates.add(name)
+        seen.add(name)
+        posix_path = PurePosixPath(name)
+        extraction_name = posix_path.as_posix()
+        previous = extraction_names.setdefault(extraction_name.casefold(), name)
+        if previous != name:
+            errors.append(
+                f"{label}: duplicate archive path: {name} aliases {previous}"
+            )
+        canonical = extraction_name + ("/" if name.endswith("/") else "")
+        if (
+            "\\" in name
+            or posix_path.is_absolute()
+            or PureWindowsPath(name).drive
+            or posix_path == PurePosixPath(".")
+            or ".." in posix_path.parts
+            or name != canonical
+        ):
+            errors.append(f"{label}: non-canonical archive path: {name}")
+        if any(
+            not _is_portable_archive_component(component)
+            for component in posix_path.parts
+        ):
+            errors.append(f"{label}: non-portable archive path: {name}")
+    for duplicate in sorted(duplicates):
+        errors.append(f"{label}: duplicate archive member: {duplicate}")
+    return errors
+
+
+def _sdist_members(path: Path) -> tuple[set[str], list[str]]:
     with tarfile.open(path, "r:gz") as archive:
-        files = [member.name for member in archive.getmembers() if member.isfile()]
+        archive_members = archive.getmembers()
+    errors = _archive_name_errors(
+        "source distribution", [member.name for member in archive_members]
+    )
+    for member in archive_members:
+        if not (member.isfile() or member.isdir()):
+            errors.append(
+                "source distribution: archive entry is not a regular file or "
+                f"directory: {member.name}"
+            )
+    files = [member.name for member in archive_members if member.isfile()]
     roots = {name.split("/", 1)[0] for name in files}
     if len(roots) != 1:
         errors.append(
@@ -213,9 +294,50 @@ def _sdist_members(path: Path) -> tuple[set[str], list[str]]:
     return members, errors
 
 
-def _wheel_members(path: Path) -> set[str]:
+def _sdist_tiktoken_members(path: Path) -> tuple[set[str], list[str]]:
+    """Return every non-directory cache entry and reject non-regular types."""
+    members: set[str] = set()
+    errors: list[str] = []
+    with tarfile.open(path, "r:gz") as archive:
+        for member in archive.getmembers():
+            if "/" not in member.name or member.isdir():
+                continue
+            relative = member.name.split("/", 1)[1]
+            if not relative.startswith(TIKTOKEN_CACHE_PREFIX):
+                continue
+            members.add(relative)
+            if not member.isfile():
+                errors.append(
+                    f"sdist: tiktoken cache entry is not a regular file: {relative}"
+                )
+    return members, errors
+
+
+def _wheel_members(path: Path) -> tuple[set[str], list[str]]:
     with zipfile.ZipFile(path) as archive:
-        return {name for name in archive.namelist() if not name.endswith("/")}
+        names = archive.namelist()
+    return (
+        {name for name in names if not name.endswith("/")},
+        _archive_name_errors("wheel", names),
+    )
+
+
+def _wheel_tiktoken_members(path: Path) -> tuple[set[str], list[str]]:
+    """Return wheel cache entries and reject declared non-regular types."""
+    members: set[str] = set()
+    errors: list[str] = []
+    with zipfile.ZipFile(path) as archive:
+        for member in archive.infolist():
+            if member.is_dir() or not member.filename.startswith(TIKTOKEN_CACHE_PREFIX):
+                continue
+            members.add(member.filename)
+            file_type = stat.S_IFMT(member.external_attr >> 16)
+            if file_type not in {0, stat.S_IFREG}:
+                errors.append(
+                    "wheel: tiktoken cache entry is not a regular file: "
+                    f"{member.filename}"
+                )
+    return members, errors
 
 
 def _sdist_member_text(path: Path, member: str) -> str | None:
@@ -278,6 +400,7 @@ def _validate_content(
     required_paths: set[str],
     required_globs: set[str],
     forbidden_paths: set[str] | None = None,
+    tiktoken_members: set[str] | None = None,
 ) -> list[str]:
     errors: list[str] = []
     for path in sorted(required_paths - members):
@@ -311,6 +434,17 @@ def _validate_content(
             f"{label}: Samira resources differ; "
             f"missing={sorted(SAMIRA_RESOURCE_PATHS - samira_members)}, "
             f"unexpected={sorted(samira_members - SAMIRA_RESOURCE_PATHS)}"
+        )
+
+    if tiktoken_members is None:
+        tiktoken_members = {
+            name for name in members if name.startswith(TIKTOKEN_CACHE_PREFIX)
+        }
+    if tiktoken_members != TIKTOKEN_RESOURCE_PATHS:
+        errors.append(
+            f"{label}: tiktoken cache resources differ; "
+            f"missing={sorted(TIKTOKEN_RESOURCE_PATHS - tiktoken_members)}, "
+            f"unexpected={sorted(tiktoken_members - TIKTOKEN_RESOURCE_PATHS)}"
         )
 
     template_store_paths = {
@@ -362,17 +496,11 @@ def _validate_metadata(
             archive.read(wheel_entry_point_names[0]).decode("utf-8")
         )
 
-    with tarfile.open(sdist, "r:gz") as archive:
-        member = next(
-            item
-            for item in archive.getmembers()
-            if item.isfile() and item.name.endswith("/PKG-INFO")
-        )
-        stream = archive.extractfile(member)
-        if stream is None:
-            errors.append("sdist PKG-INFO: could not read metadata")
-            return errors
-        sdist_metadata = Parser().parsestr(stream.read().decode("utf-8"))
+    sdist_metadata_text = _sdist_member_text(sdist, sdist_metadata_names[0])
+    if sdist_metadata_text is None:
+        errors.append("sdist PKG-INFO: could not read metadata")
+        return errors
+    sdist_metadata = Parser().parsestr(sdist_metadata_text)
 
     for label, metadata in (
         ("wheel METADATA", wheel_metadata),
@@ -390,6 +518,16 @@ def _validate_metadata(
             )
         if "LICENSE" not in (metadata.get_all("License-File") or []):
             errors.append(f"{label}: missing License-File: LICENSE")
+        tiktoken_requirements = [
+            requirement
+            for requirement in metadata.get_all("Requires-Dist") or []
+            if re.match(r"(?i)^tiktoken(?=$|\s|[<>=!~;\[])", requirement)
+        ]
+        if tiktoken_requirements != [TIKTOKEN_REQUIREMENT]:
+            errors.append(
+                f"{label}: expected exactly Requires-Dist: {TIKTOKEN_REQUIREMENT}; "
+                f"found {tiktoken_requirements}"
+            )
 
     if not entry_points.has_section("console_scripts"):
         errors.append("wheel entry_points.txt: missing [console_scripts]")
@@ -429,8 +567,13 @@ def check_distribution(dist_dir: Path = Path("dist")) -> bool:
     sdist = sdists[0]
     wheel = wheels[0]
     sdist_members, sdist_errors = _sdist_members(sdist)
-    wheel_members = _wheel_members(wheel)
+    wheel_members, wheel_errors = _wheel_members(wheel)
     errors.extend(sdist_errors)
+    errors.extend(wheel_errors)
+    sdist_tiktoken_members, sdist_tiktoken_errors = _sdist_tiktoken_members(sdist)
+    errors.extend(sdist_tiktoken_errors)
+    wheel_tiktoken_members, wheel_tiktoken_errors = _wheel_tiktoken_members(wheel)
+    errors.extend(wheel_tiktoken_errors)
 
     # Migration requirements are derived, not listed (task-19860): the source
     # tree states what the artifacts owe, and each artifact's own schema
@@ -456,6 +599,7 @@ def check_distribution(dist_dir: Path = Path("dist")) -> bool:
             sdist_members,
             required_paths=REQUIRED_SDIST_PATHS | source_migrations | sdist_migrations,
             required_globs=REQUIRED_SDIST_GLOBS,
+            tiktoken_members=sdist_tiktoken_members,
         )
     )
     errors.extend(
@@ -465,6 +609,7 @@ def check_distribution(dist_dir: Path = Path("dist")) -> bool:
             required_paths=REQUIRED_WHEEL_PATHS | source_migrations | wheel_migrations,
             required_globs=REQUIRED_WHEEL_GLOBS,
             forbidden_paths=FORBIDDEN_WHEEL_PATHS,
+            tiktoken_members=wheel_tiktoken_members,
         )
     )
     errors.extend(

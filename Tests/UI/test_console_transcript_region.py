@@ -45,6 +45,7 @@ from textual.containers import Vertical
 from textual.css.query import NoMatches
 from textual.widgets import Button, Static
 
+from Tests.UI.consolidated_css import BUNDLED_STYLESHEET
 from Tests.UI.test_console_native_chat_flow import _configure_native_ready_console
 from Tests.UI.test_destination_shells import _build_test_app, _wait_for_selector
 from Tests.UI.test_product_maturity_gate1_core_loop_screen_adaptation import (
@@ -126,11 +127,17 @@ def _speech_status(transcript: ConsoleTranscript, message_id: str) -> str:
     return str(label.renderable)
 
 
-def _ready_console_host() -> ConsoleHarness:
+class _ProductionStyledConsoleHarness(ConsoleHarness):
+    """Mount the real Console with the application stylesheet tier."""
+
+    CSS_PATH = str(BUNDLED_STYLESHEET)
+
+
+def _ready_console_host() -> _ProductionStyledConsoleHarness:
     """Build a Console harness whose provider readiness is already satisfied."""
     app = _build_test_app()
     _configure_native_ready_console(app)
-    return ConsoleHarness(app)
+    return _ProductionStyledConsoleHarness(app)
 
 
 def _tail_is_anchored(transcript: ConsoleTranscript) -> bool:
@@ -163,12 +170,9 @@ async def _seed_transcript(console, pilot):
     the production sync path, so what the assertions below read back is the
     transcript's response to persisted state, not a hand-set attribute.
 
-    The ``pilot.pause()`` is load-bearing, not defensive: ``max_scroll_y``
-    is derived from the laid-out virtual size, so without letting Textual
-    run a layout pass the freshly pushed rows can still measure as
-    zero-height and every anchor assertion below degenerates (``scroll_y ==
-    max_scroll_y == 0`` reads as "anchored"). Observed as an order-dependent
-    flake while writing this file.
+    The condition wait is load-bearing: ``max_scroll_y`` is derived from the
+    laid-out virtual size, so the rows must be measured before the anchor
+    assertions can distinguish the transcript tail from position zero.
 
     Args:
         console: The mounted ``ChatScreen``.
@@ -194,10 +198,10 @@ async def _seed_transcript(console, pilot):
         selected_message_id = message.id
     await console._sync_native_console_chat_ui()
     transcript = console.query_one("#console-native-transcript", ConsoleTranscript)
-    for _ in range(40):
+    for _ in range(50):
         if transcript.max_scroll_y > 0:
             break
-        await pilot.pause(0.05)
+        await pilot.pause(0.02)
     assert transcript.max_scroll_y > 0
     transcript.select_message(selected_message_id)
     return transcript, selected_message_id

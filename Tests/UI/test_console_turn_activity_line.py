@@ -20,7 +20,6 @@ from unittest.mock import AsyncMock, MagicMock, Mock
 
 import pytest
 from textual.app import ComposeResult
-from textual.css.query import NoMatches
 from textual.widgets import Markdown, Static
 
 from Tests.Chat.test_console_agent_bridge import _bridge, _fence, _test_resolution
@@ -49,9 +48,6 @@ from tldw_chatbook.Widgets.Console.console_transcript import (
     ConsoleMarkdownMessage,
     ConsoleTranscript,
 )
-from tldw_chatbook.Widgets.Console.console_assistant_turn import (
-    ConsoleAssistantTurnWidget,
-)
 
 
 class _ActivityHarness(ConsolidatedCSSApp):
@@ -62,20 +58,18 @@ class _ActivityHarness(ConsolidatedCSSApp):
 
 
 def _rendered_row_text(transcript: ConsoleTranscript, message_id: str) -> str:
-    """Visible text of ONE mounted row, read off the row's own widgets.
+    """Visible text of one mounted message's presentation owner.
 
-    Deliberately resolves the row by DOM id and reads the child ``Static``
-    renderables (plus a markdown row's source), so nothing here can pass by
-    reading the transcript's message model.
+    TASK-19426 moved an Assistant answer's header onto its stable turn shell,
+    while the nested message widget owns only the answer body. Resolve that
+    shell when present and read its mounted ``Static`` renderables plus the
+    nested markdown source, so nothing here can pass by reading the
+    transcript's message model.
     """
     row = transcript.query_one(f"#console-message-{message_id}")
-    try:
-        visible_row = transcript.query_one(
-            f"#console-assistant-turn-{message_id}", ConsoleAssistantTurnWidget
-        )
-    except NoMatches:
-        visible_row = row
-    parts = [str(static.renderable) for static in visible_row.query(Static)]
+    turn_shells = list(transcript.query(f"#console-assistant-turn-{message_id}"))
+    presentation_owner = turn_shells[0] if turn_shells else row
+    parts = [str(static.renderable) for static in presentation_owner.query(Static)]
     if isinstance(row, ConsoleMarkdownMessage):
         parts.append(row.query_one(Markdown).source)
     if not parts:
@@ -309,7 +303,9 @@ async def test_only_the_elapsed_changing_repaints_the_default_markdown_row():
     async with app.run_test(size=(80, 24)) as pilot:
         transcript = app.query_one(ConsoleTranscript)
         messages = [_user(), _in_flight_assistant()]
-        row_key = "message:a1"
+        # TASK-19426 groups an Assistant answer and its activity markers under
+        # one stable turn shell; that composite owns the top-level render key.
+        row_key = "assistant-turn:a1"
 
         first = await _paint(transcript, messages, "⚙ read_file · 4s")
         await pilot.pause()
@@ -738,7 +734,6 @@ def _sync_stub(activity: str, effective: str | None = None):
     transcript = SimpleNamespace(
         pending_selection_id=None,
         set_presentation_context=Mock(),
-        set_model_thinking_visible=Mock(),
         set_change_review_provider_factory=Mock(),
         set_messages=Mock(),
         apply_turn_activity=Mock(

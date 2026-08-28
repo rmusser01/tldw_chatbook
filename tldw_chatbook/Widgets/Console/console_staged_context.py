@@ -95,9 +95,7 @@ class ConsoleStagedContextTray(RecomposeCaptureGuard, Vertical):
         if self.state.source_rows:
             for index, row in enumerate(self.state.source_rows):
                 primary = Button(
-                    Text(
-                        f"{row.status.title()} · {row.title} · {row.source_type}"
-                    ),
+                    Text(f"{row.status.title()} · {row.title} · {row.source_type}"),
                     id=f"console-staged-source-primary-{index}",
                     classes=(
                         "console-staged-source-primary "
@@ -108,17 +106,14 @@ class ConsoleStagedContextTray(RecomposeCaptureGuard, Vertical):
                 detail_children: list[Widget] = [
                     Static(
                         row.snippet or "No snippet available.",
-                        classes="console-staged-source-snippet",
                         markup=False,
                     ),
                     Static(
                         f"Authority: {row.authority}",
-                        classes="console-staged-source-authority",
                         markup=False,
                     ),
                     Static(
                         f"Freshness: {row.freshness}",
-                        classes="console-staged-source-freshness",
                         markup=False,
                     ),
                 ]
@@ -134,7 +129,6 @@ class ConsoleStagedContextTray(RecomposeCaptureGuard, Vertical):
                     detail_children.append(
                         Static(
                             f"Action: {row.action_label}",
-                            classes="console-staged-source-action-copy",
                             markup=False,
                         )
                     )

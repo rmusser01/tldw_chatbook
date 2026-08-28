@@ -129,6 +129,7 @@ class _ReservationState:
     run_id: str = ""
     kind: str = "turn"
     touched_paths: tuple[str, ...] = ()
+    survivor_touched_paths: tuple[str, ...] = ()
     end_shas: dict[str, str] | None = None
     survivor_key: str = ""
     has_live_survivors: bool = False
@@ -428,6 +429,22 @@ class ChangeReviewFinalizationCoordinator:
                 self._maybe_clear_degraded_locked(root)
             self._schedule_ready_locked()
 
+    def record_survivor_paths(
+        self,
+        survivor_key: str,
+        paths: Sequence[str],
+    ) -> None:
+        """Attach late child WRITE paths to their originating survivor window."""
+        if not survivor_key or not paths:
+            return
+        with self._lock:
+            for state in self._states.values():
+                if state.survivor_key != survivor_key:
+                    continue
+                state.survivor_touched_paths = tuple(
+                    dict.fromkeys((*state.survivor_touched_paths, *paths))
+                )
+
     def await_baseline(
         self,
         reservation: ChangeReviewReservation,
@@ -618,6 +635,7 @@ class ChangeReviewFinalizationCoordinator:
                     reservation_id=state.public.id,
                     kind="survivor_finalize",
                     handle=state.active_handle or state.public._handle,
+                    touched_paths=state.survivor_touched_paths,
                 )
             if operation is None:
                 continue

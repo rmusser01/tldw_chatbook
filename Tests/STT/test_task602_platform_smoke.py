@@ -273,7 +273,12 @@ def test_run_smoke_returns_only_bounded_allowlisted_observations(
     monkeypatch.setattr(smoke, "_executor_observations", observe_executor)
     monkeypatch.setattr(smoke, "_bounded_runtime_observations", lambda *_args: runtime)
     monkeypatch.setattr(smoke, "_close_resources", lambda _resources: None)
-    monkeypatch.setattr(smoke.time, "monotonic", iter((0.0, 3.0, 5.0)).__next__)
+    monotonic_values = iter((0.0, 3.0, 5.0))
+    monkeypatch.setattr(
+        smoke.time,
+        "monotonic",
+        lambda: next(monotonic_values, 5.0),
+    )
 
     result = smoke.run_smoke("macos-arm64", tmp_path)
 

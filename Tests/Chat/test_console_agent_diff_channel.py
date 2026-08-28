@@ -117,6 +117,8 @@ def _tool_rows(store, session):
         m
         for m in store.messages_for_session(session.id)
         if m.role is ConsoleMessageRole.TOOL
+        and m.activity_presentation is not None
+        and m.activity_presentation.kind == "tool"
     ]
 
 
