@@ -2,9 +2,10 @@
 id: TASK-19864
 title: >-
   Diagnostics interpolate user file paths and workspace roots into log text
-status: To Do
+status: In Progress
 assignee: []
 created_date: '2026-08-22'
+updated_date: '2026-08-28'
 labels:
   - privacy
   - diagnostics
@@ -67,13 +68,13 @@ outcome this task needs is a **rule plus a check**, not a list of edits.
 
 ## Acceptance Criteria
 
-- [ ] Production diagnostics do not place a user's absolute path, workspace root
-      or database location into log message text where a less-identifying form
-      (basename, extension, path depth, a stable hash) carries the same
-      diagnostic value
-- [ ] Where a full path genuinely is the diagnostic — a "file not found" the
-      user must act on — it goes through the redaction seam rather than being
-      interpolated raw
+- [ ] In the five recorded owner files, production diagnostics do not place a
+      user's absolute path, workspace root or database location into log
+      message text where a less-identifying form (extension, path depth, a
+      stable hash) carries the same diagnostic value
+- [ ] In those owners, where a full path genuinely is the diagnostic — a "file
+      not found" the user must act on — it goes through the redaction seam
+      rather than being interpolated raw
 - [ ] "Copy visible logs" no longer needs to warn that file names were not
       removed, or its warning is still accurate after the change
 - [ ] A guard detects a newly-added diagnostic that interpolates a path-shaped
@@ -91,3 +92,7 @@ clipboard action the user takes deliberately and is warned about. It is filed
 because it is the same untracked class as TASK-19321/19322 and because the
 count has now been wrong in both directions — once too small (three calls, one
 file), once too severe (persistent sink).
+
+## Design
+
+Approved design: [Diagnostic path privacy and regression guard](../../Docs/superpowers/specs/2026-08-28-diagnostic-path-privacy-and-guard-design.md).
