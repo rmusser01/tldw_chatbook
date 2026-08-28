@@ -286,10 +286,14 @@ user's established constraint.
 
 ## ADR check
 
-ADR required: no
+ADR required: yes
 
 ADR path: `backlog/decisions/042-watchlists-reader-first-ia.md`
 
-Reason: this task repairs two controls within the existing Watchlists screen,
-pane, controller, and worker boundaries. It does not change storage, service
-ownership, backend contracts, or long-lived navigation architecture.
+Reason: the repair establishes a cross-module/runtime identity and publication
+boundary: canonical local subscription keys, distinct server source/job
+namespaces, controller forwarding through the existing scope seam, and
+screen-owned concurrency plus monotonic Runs publication/selection authority.
+
+The 2026-08-27 amendment to ADR-042 records this boundary; it introduces no
+new backend API, storage, or navigation architecture.

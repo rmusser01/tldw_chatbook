@@ -5,7 +5,7 @@ status: Done
 assignee:
   - '@codex'
 created_date: '2026-08-04'
-updated_date: '2026-08-28 02:35'
+updated_date: '2026-08-28 03:04'
 labels:
   - watchlists
   - bug
@@ -47,11 +47,11 @@ the batch-2 branch; now more visible since run rows carry real accounting.
 4. Unify local Check-now/Re-run concurrency identity, preserve distinct server source/job namespaces, and add honest Re-run feedback/cleanup.
 5. Run only affected Watchlists tests, modified-file Ruff and formatter checks, branch diff checks, self-review, and Backlog completion hygiene.
 
-ADR required: no
+ADR required: yes
 
 ADR path: `backlog/decisions/042-watchlists-reader-first-ia.md`
 
-Reason: the existing Watchlists reader-first screen and pane boundaries already govern this repair; no persistence, service ownership, backend API, dependency, or navigation architecture changes.
+Reason: the repair establishes a cross-module/runtime identity and publication boundary: canonical local subscription keys, distinct server source/job namespaces, controller forwarding through the existing scope seam, and screen-owned concurrency plus monotonic Runs publication/selection authority. ADR-042 was amended to record it without introducing a new backend API, storage, or navigation architecture.
 <!-- SECTION:PLAN:END -->
 
 ## Implementation Notes
@@ -59,7 +59,7 @@ Reason: the existing Watchlists reader-first screen and pane boundaries already 
 <!-- SECTION:NOTES:BEGIN -->
 Implemented Runs Refresh and Re-run feedback across `RunsPane`, the Watchlists collections screen, and backend controller seams. Refresh uses staged, generation/backend-guarded publication with identity-pinned selection and transient-failure snapshot retention; Re-run carries backend-specific source/job identity, shares the canonical local operation guard, preserves independent server targets, and keeps busy/toast outcomes honest.
 
-Verification evidence: `pytest -q Tests/Watchlists/test_watchlists_runs_pane.py` — 37 passed, 1 warning, exit 0; `pytest -q Tests/Watchlists/test_watchlists_backend_controller.py Tests/Watchlists/test_watchlist_scope_service.py` — 48 passed, 1 warning, exit 0; `pytest -q Tests/UI/test_watchlists_run_detail.py` — 48 passed, 2 warnings, exit 0; `pytest -q Tests/UI/test_watchlists_check_now_progress.py` — 10 passed, 2 warnings, exit 0; `pytest -q Tests/UI/test_watchlists_check_now_skipped.py Tests/UI/test_watchlists_check_now_failure.py` — 24 passed, 2 warnings, exit 0; exact Task-4 rerun/check nodeids in `test_watchlists_destination_shell.py` — 13 passed, 2 warnings, exit 0. Ruff check on all eight modified Python files passed (exit 0). `git diff --check origin/dev...HEAD` passed after removing two trailing spaces from the new plan (exit 0).
+Post-format verification evidence: `pytest -q Tests/Watchlists/test_watchlists_runs_pane.py` — 37 passed, 1 warning, exit 0; `pytest -q Tests/Watchlists/test_watchlists_backend_controller.py Tests/Watchlists/test_watchlist_scope_service.py` — 48 passed, 1 warning, exit 0; `pytest -q Tests/UI/test_watchlists_run_detail.py` — 48 passed, 2 warnings, exit 0; `pytest -q Tests/UI/test_watchlists_check_now_progress.py` — 10 passed, 2 warnings, exit 0; `pytest -q Tests/UI/test_watchlists_check_now_skipped.py Tests/UI/test_watchlists_check_now_failure.py` — 24 passed, 2 warnings, exit 0; exact Task-4 rerun/check nodes in `test_watchlists_destination_shell.py` — 13 passed, 2 warnings, exit 0. Total: 180 passed, 0 failed, exit 0. Ruff check on all eight modified Python files passed (exit 0); Ruff format check reports all eight already formatted (exit 0). `git diff --check origin/dev...HEAD` passed (exit 0).
 
-Formatting concern: Ruff `format --check` exits 1 and reports all eight modified Python files would be reformatted; the corresponding `origin/dev` versions report the same result, establishing a pre-existing baseline. No unrelated bulk formatting was applied. ADR required: no; `backlog/decisions/042-watchlists-reader-first-ia.md` governs the existing screen/pane boundaries, and the linked design spec and implementation plan document the repair.
+The prior broad exploratory `-k "runs or run_detail or rerun or check_now or launch_run"` selection is not a gate: it includes eight unchanged unmounted-route deep-link tests with baseline `NoActiveAppError` failures. The exact 13 changed Task-4 destination-shell nodes above are the gate and pass. Mechanical formatting is isolated in `2220218666` (`style: format Watchlists runs files`), with 558 insertions/452 deletions and AST_UNCHANGED=True for all eight files compared with pre-format HEAD. ADR required: yes; `backlog/decisions/042-watchlists-reader-first-ia.md` was amended on 2026-08-27 to record canonical local identity, distinct server source/job namespaces, existing controller/scope forwarding, and screen-owned concurrency/publication authority.
 <!-- SECTION:NOTES:END -->

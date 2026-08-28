@@ -8,9 +8,9 @@
 
 **Tech Stack:** Python 3.11+, Textual 8.x messages/reactives/workers, existing Watchlists controller/scope services, pytest/pytest-asyncio, Ruff.
 
-**ADR required:** no
+**ADR required:** yes
 **ADR path:** `backlog/decisions/042-watchlists-reader-first-ia.md`
-**Reason:** ADR-042 already owns the long-lived Watchlists screen/pane boundaries. This repair changes no persistence, service ownership, backend API, dependency, or navigation architecture.
+**Reason:** the repair establishes a cross-module/runtime identity and publication boundary: canonical local subscription keys, distinct server source/job namespaces, controller forwarding through the existing scope seam, and screen-owned concurrency plus monotonic Runs publication/selection authority. The 2026-08-27 ADR-042 amendment records this boundary without introducing a new backend API, storage, or navigation architecture.
 
 ---
 
@@ -505,7 +505,11 @@ git commit -m "fix: report and deduplicate Watchlists reruns"
 
 - [ ] **Step 1: Run the approved focused test selection**
 
-Run only affected Watchlists tests, not the full suite:
+Run only affected Watchlists tests, not the full suite. The broad exploratory
+selection previously used `-k "runs or run_detail or rerun or check_now or
+launch_run"` is not the gate: it also selects eight unchanged unmounted-route
+deep-link tests that fail with the baseline `NoActiveAppError`. The exact
+changed Task-4 destination-shell nodes below are the gate.
 
 ```bash
 ../../.venv/bin/python -m pytest -q \
@@ -516,8 +520,18 @@ Run only affected Watchlists tests, not the full suite:
   Tests/UI/test_watchlists_check_now_progress.py \
   Tests/UI/test_watchlists_check_now_skipped.py \
   Tests/UI/test_watchlists_check_now_failure.py \
-  Tests/UI/test_watchlists_destination_shell.py -k \
-  "runs or run_detail or rerun or check_now or launch_run"
+  Tests/UI/test_watchlists_destination_shell.py::test_rerun_busy_state_survives_a_mounted_runs_pane_rebuild \
+  Tests/UI/test_watchlists_destination_shell.py::test_unmounting_during_rerun_cleans_state_without_refreshing \
+  Tests/UI/test_watchlists_destination_shell.py::test_external_local_check_now_paints_the_selected_run_as_checking \
+  Tests/UI/test_watchlists_destination_shell.py::test_server_rerun_deduplicates_one_job_without_blocking_another \
+  Tests/UI/test_watchlists_destination_shell.py::test_rerun_rejects_an_old_backend_request_before_launch_or_busy_state \
+  Tests/UI/test_watchlists_destination_shell.py::test_rerun_completion_after_backend_switch_does_not_repaint_old_state \
+  Tests/UI/test_watchlists_destination_shell.py::test_server_rerun_reports_started_and_launches_by_job_id \
+  Tests/UI/test_watchlists_destination_shell.py::test_running_server_rerun_with_skipped_stats_reports_started \
+  Tests/UI/test_watchlists_destination_shell.py::test_unexpected_rerun_status_does_not_claim_the_run_started \
+  Tests/UI/test_watchlists_destination_shell.py::test_local_rerun_reports_an_entirely_skipped_run \
+  Tests/UI/test_watchlists_destination_shell.py::test_rerun_reports_a_returned_failed_status \
+  Tests/UI/test_watchlists_destination_shell.py::test_rerun_raises_with_a_safe_stated_error_and_warning_log
 ```
 
 Expected: PASS. Record the exact passed/deselected/warning counts.
@@ -582,7 +596,7 @@ Update all acceptance criteria to checked, add concise Implementation Notes incl
 ```bash
 git add "backlog/tasks/task-2331 - Runs-toolbar-Refresh-reloads-and-Re-run-gives-feedback.md"
 git add Docs/superpowers/plans/2026-08-27-watchlists-runs-refresh-rerun-feedback.md
-git commit -m "docs: complete TASK-2331"
+git commit -m "docs: record Watchlists runs authority"
 git diff --check origin/dev...HEAD
 git status --short
 ```
