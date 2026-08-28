@@ -188,6 +188,22 @@ async def test_popover_actions_remain_reachable_and_ordered_at_narrow_width(
         assert panel.region.bottom <= 24
         assert all(panel.region.contains_region(button.region) for button in main)
         _assert_non_overlapping_regions(main)
+        main[0].focus()
+        await pilot.pause()
+        main_focus_order: list[str] = []
+        for _ in main:
+            focused = app.focused
+            main_focus_order.append(getattr(focused, "id", "") or "")
+            assert focused is not None
+            assert panel.region.contains_region(focused.region)
+            await pilot.press("tab")
+            await pilot.pause()
+        assert main_focus_order == [
+            "console-popover-cancel",
+            "console-popover-full-settings",
+            "console-popover-defaults",
+            "console-popover-apply",
+        ]
 
         await pilot.click("#console-popover-defaults")
         await pilot.pause()
@@ -199,6 +215,20 @@ async def test_popover_actions_remain_reachable_and_ordered_at_narrow_width(
         ]
         assert all(panel.region.contains_region(button.region) for button in defaults)
         _assert_non_overlapping_regions(defaults)
+        assert app.focused is defaults[0]
+        defaults_focus_order: list[str] = []
+        for _ in defaults:
+            focused = app.focused
+            defaults_focus_order.append(getattr(focused, "id", "") or "")
+            assert focused is not None
+            assert panel.region.contains_region(focused.region)
+            await pilot.press("tab")
+            await pilot.pause()
+        assert defaults_focus_order == [
+            "console-popover-save-model-default",
+            "console-popover-make-new-chat-default",
+            "console-popover-defaults-back",
+        ]
 
 
 @pytest.mark.asyncio

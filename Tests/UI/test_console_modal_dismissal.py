@@ -35,6 +35,8 @@ from tldw_chatbook.Chat.console_session_settings import (
     ConsoleSettingsContextEstimate,
 )
 from tldw_chatbook.Chat.console_settings_apply import (
+    ConsoleSettingsAction,
+    ConsoleSettingsCommittedSubmission,
     ConsoleSettingsDraftState,
     ConsoleSettingsFieldDraft,
     ConsoleSettingsFieldProvenance,
@@ -2158,13 +2160,32 @@ async def test_popover_cancel_sources_return_none(source: str) -> None:
     assert app.results == [None]
 
 
+@pytest.mark.parametrize(
+    ("button_id", "expected_action"),
+    (
+        ("#console-popover-apply", ConsoleSettingsAction.APPLY_TO_CHAT),
+        (
+            "#console-popover-save-model-default",
+            ConsoleSettingsAction.SAVE_MODEL_DEFAULT,
+        ),
+        (
+            "#console-popover-make-new-chat-default",
+            ConsoleSettingsAction.MAKE_NEW_CHAT_DEFAULT,
+        ),
+    ),
+)
 @pytest.mark.asyncio
-async def test_popover_releases_input_mouse_capture_before_live_commit() -> None:
+async def test_popover_recovered_mouse_activates_each_action_after_capture_release(
+    button_id: str,
+    expected_action: ConsoleSettingsAction,
+) -> None:
     app = _Task2Harness()
     capture_at_commit: list[object | None] = []
+    submissions: list[ConsoleSettingsSubmission] = []
 
     def commit(submission: ConsoleSettingsSubmission) -> ConsoleSettingsLiveCommit:
         capture_at_commit.append(app.mouse_captured)
+        submissions.append(submission)
         return ConsoleSettingsLiveCommit(
             submission_id=submission.submission_id,
             session_id=submission.origin.session_id,
@@ -2179,16 +2200,72 @@ async def test_popover_releases_input_mouse_capture_before_live_commit() -> None
     modal = _model_popover_factory(live_committer=commit)
     async with app.run_test(size=(90, 34)) as pilot:
         await app.push_screen(modal, callback=app.results.append)
+        if expected_action is not ConsoleSettingsAction.APPLY_TO_CHAT:
+            await pilot.click("#console-popover-defaults")
         temperature = modal.query_one("#console-popover-temperature", Input)
         temperature.focus()
         temperature.capture_mouse()
         assert app.mouse_captured is temperature
 
-        await pilot.click("#console-popover-apply")
+        await pilot.click(button_id)
         await pilot.pause()
 
     assert capture_at_commit == [None]
+    assert len(submissions) == 1
+    assert submissions[0].action is expected_action
     assert len(app.results) == 1
+    assert isinstance(app.results[0], ConsoleSettingsCommittedSubmission)
+
+
+@pytest.mark.parametrize(
+    ("button_id", "expected_action"),
+    (
+        ("#console-popover-apply", ConsoleSettingsAction.APPLY_TO_CHAT),
+        (
+            "#console-popover-save-model-default",
+            ConsoleSettingsAction.SAVE_MODEL_DEFAULT,
+        ),
+        (
+            "#console-popover-make-new-chat-default",
+            ConsoleSettingsAction.MAKE_NEW_CHAT_DEFAULT,
+        ),
+    ),
+)
+@pytest.mark.asyncio
+async def test_popover_duplicate_activation_commits_and_dismisses_once(
+    button_id: str,
+    expected_action: ConsoleSettingsAction,
+) -> None:
+    app = _Task2Harness()
+    submissions: list[ConsoleSettingsSubmission] = []
+
+    def commit(submission: ConsoleSettingsSubmission) -> ConsoleSettingsLiveCommit:
+        submissions.append(submission)
+        return ConsoleSettingsLiveCommit(
+            submission_id=submission.submission_id,
+            session_id=submission.origin.session_id,
+            persisted_conversation_id=None,
+            conversation_binding_revision=0,
+            generation_revision=1,
+            context_policy_revision=1,
+            settings=submission.draft.settings,
+            context_policy_overrides=submission.draft.context_policy_overrides,
+        )
+
+    modal = _model_popover_factory(live_committer=commit)
+    async with app.run_test(size=(90, 34)) as pilot:
+        await app.push_screen(modal, callback=app.results.append)
+        if expected_action is not ConsoleSettingsAction.APPLY_TO_CHAT:
+            await pilot.click("#console-popover-defaults")
+        button = modal.query_one(button_id, Button)
+        button.press()
+        button.press()
+        await pilot.pause()
+
+    assert len(submissions) == 1
+    assert submissions[0].action is expected_action
+    assert len(app.results) == 1
+    assert isinstance(app.results[0], ConsoleSettingsCommittedSubmission)
 
 
 @pytest.mark.asyncio

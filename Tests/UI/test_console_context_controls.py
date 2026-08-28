@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from dataclasses import replace
 from pathlib import Path
 
 import pytest
@@ -27,6 +28,7 @@ from tldw_chatbook.Chat.console_settings_apply import (
     ConsoleSettingsFieldDraft,
     ConsoleSettingsFieldProvenance,
     ConsoleSettingsLiveCommit,
+    ConsoleModelDraft,
     ConsoleSettingsOrigin,
     ConsoleSettingsSubmission,
     ConsoleSettingsTransfer,
@@ -161,6 +163,7 @@ def _accept_live_submission(
 def _popover(
     *,
     settings: ConsoleSessionSettings | None = None,
+    initial_draft: ConsoleSettingsDraftState | None = None,
     providers_models=None,
     context_state=None,
     app_config=None,
@@ -184,7 +187,11 @@ def _popover(
     return ConsoleModelPopover(
         origin=ConsoleSettingsOrigin("session-a", None, 0),
         app_config=config,
-        initial_draft=_draft(session_settings, context_state=controls),
+        initial_draft=(
+            initial_draft
+            if initial_draft is not None
+            else _draft(session_settings, context_state=controls)
+        ),
         providers_models=(
             providers_models
             if providers_models is not None
@@ -372,6 +379,190 @@ async def test_popover_defaults_disable_blocked_new_chat_provider() -> None:
         assert make_default.disabled
         assert "Unavailable" in reason
         assert "missing api key" in reason.lower()
+
+
+@pytest.mark.asyncio
+async def test_popover_defaults_disable_console_unsupported_provider() -> None:
+    app = _ContextHarness()
+    settings = ConsoleSessionSettings(provider="local_transformers", model="m")
+    async with app.run_test(size=(90, 34)) as pilot:
+        await app.push_screen(
+            _popover(
+                settings=settings,
+                providers_models={"local_transformers": ["m"]},
+                app_config={"api_settings": {"local_transformers": {}}},
+            )
+        )
+        await pilot.click("#console-popover-defaults")
+        await pilot.pause()
+
+        make_default = app.screen.query_one(
+            "#console-popover-make-new-chat-default", Button
+        )
+        reason = str(
+            app.screen.query_one(
+                "#console-popover-new-chat-default-block", Static
+            ).renderable
+        )
+        assert make_default.disabled
+        assert "Unavailable" in reason
+        assert "not available in Console yet" in reason
+
+
+@pytest.mark.asyncio
+async def test_popover_equal_numeric_temperature_text_is_still_an_edit() -> None:
+    app = _ContextHarness()
+    settings = ConsoleSessionSettings(
+        provider="llama_cpp",
+        model="model-a",
+        temperature=0.7,
+    )
+    popover = _popover(settings=settings)
+    async with app.run_test(size=(90, 34)) as pilot:
+        await app.push_screen(popover)
+        temperature = popover.query_one("#console-popover-temperature", Input)
+        initial = next(
+            field
+            for field in popover._draft.field_drafts
+            if field.name == "temperature"
+        )
+        assert not initial.dirty
+        assert str(
+            popover.query_one(
+                "#console-popover-temperature-provenance", Static
+            ).renderable
+        ) == "Inherited"
+
+        temperature.value = "0.70"
+        await pilot.pause()
+
+        edited = next(
+            field
+            for field in popover._draft.field_drafts
+            if field.name == "temperature"
+        )
+        assert edited.dirty
+        assert edited.provenance is ConsoleSettingsFieldProvenance.EXPLICIT
+        assert str(
+            popover.query_one(
+                "#console-popover-temperature-provenance", Static
+            ).renderable
+        ) == "Edited"
+
+
+@pytest.mark.asyncio
+async def test_popover_carried_source_uses_explicit_keyed_draft_provenance() -> None:
+    app = _ContextHarness()
+    current_settings = ConsoleSessionSettings(
+        provider="vllm",
+        model="model-b",
+        temperature=0.2,
+    )
+    source_settings = replace(
+        current_settings,
+        provider="llama_cpp",
+        model="model-a",
+    )
+    intermediate_settings = replace(
+        current_settings,
+        provider="ollama",
+        model="model-c",
+    )
+    explicit = ConsoleSettingsFieldDraft(
+        name="temperature",
+        effective_value=0.2,
+        profile_override=0.2,
+        provenance=ConsoleSettingsFieldProvenance.EXPLICIT,
+        dirty=True,
+    )
+    carried = replace(
+        explicit,
+        provenance=ConsoleSettingsFieldProvenance.CARRIED,
+    )
+    streaming = ConsoleSettingsFieldDraft(
+        name="streaming",
+        effective_value=current_settings.streaming,
+        profile_override=current_settings.streaming,
+        provenance=ConsoleSettingsFieldProvenance.INHERITED,
+        dirty=False,
+    )
+    draft = ConsoleSettingsDraftState(
+        settings=current_settings,
+        context_policy_overrides=ConsoleContextPolicyOverrides(),
+        field_drafts=(carried, streaming),
+        model_drafts=(
+            ConsoleModelDraft(
+                provider="llama_cpp",
+                model="model-a",
+                settings=source_settings,
+                field_drafts=(explicit, streaming),
+                endpoint_draft=None,
+            ),
+            ConsoleModelDraft(
+                provider="ollama",
+                model="model-c",
+                settings=intermediate_settings,
+                field_drafts=(carried, streaming),
+                endpoint_draft=None,
+            ),
+        ),
+        endpoint_draft=None,
+    )
+    async with app.run_test(size=(90, 34)):
+        popover = _popover(
+            settings=current_settings,
+            initial_draft=draft,
+            providers_models={"vllm": ["model-b"]},
+        )
+        await app.push_screen(popover)
+
+        assert str(
+            popover.query_one(
+                "#console-popover-temperature-provenance", Static
+            ).renderable
+        ) == "Edited — carried from llama_cpp/model-a"
+
+
+@pytest.mark.parametrize(
+    ("button_id", "expected_action"),
+    (
+        ("#console-popover-apply", ConsoleSettingsAction.APPLY_TO_CHAT),
+        (
+            "#console-popover-save-model-default",
+            ConsoleSettingsAction.SAVE_MODEL_DEFAULT,
+        ),
+        (
+            "#console-popover-make-new-chat-default",
+            ConsoleSettingsAction.MAKE_NEW_CHAT_DEFAULT,
+        ),
+    ),
+)
+@pytest.mark.asyncio
+async def test_popover_enter_activates_each_committing_action_once(
+    button_id: str,
+    expected_action: ConsoleSettingsAction,
+) -> None:
+    app = _ContextHarness()
+    submissions: list[ConsoleSettingsSubmission] = []
+
+    def commit(submission: ConsoleSettingsSubmission) -> ConsoleSettingsLiveCommit:
+        submissions.append(submission)
+        return _accept_live_submission(submission)
+
+    async with app.run_test(size=(90, 34)) as pilot:
+        popover = _popover(live_committer=commit)
+        await app.push_screen(popover, callback=app.capture)
+        if expected_action is not ConsoleSettingsAction.APPLY_TO_CHAT:
+            await pilot.click("#console-popover-defaults")
+        button = popover.query_one(button_id, Button)
+        button.focus()
+        await pilot.press("enter")
+        await pilot.pause()
+
+    assert len(submissions) == 1
+    assert submissions[0].action is expected_action
+    assert app.capture_count == 1
+    assert isinstance(app.result, ConsoleSettingsCommittedSubmission)
 
 
 @pytest.mark.parametrize("activation", ("mouse", "keyboard"))

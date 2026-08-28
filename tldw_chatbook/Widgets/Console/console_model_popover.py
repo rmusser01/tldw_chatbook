@@ -25,6 +25,7 @@ from tldw_chatbook.Chat.console_session_settings import (
     ConsoleSettingsContextEstimate,
     build_console_model_options,
     build_console_provider_options,
+    build_console_settings_readiness,
 )
 from tldw_chatbook.Chat.console_settings_apply import (
     QUICK_MODEL_DEFAULT_FIELDS,
@@ -40,7 +41,6 @@ from tldw_chatbook.Chat.console_settings_apply import (
     remember_model_draft,
 )
 from tldw_chatbook.Chat.provider_catalog import provider_display_name
-from tldw_chatbook.Chat.provider_readiness import get_provider_readiness
 from tldw_chatbook.Utils.input_validation import validate_text_input
 from tldw_chatbook.Widgets.modal_dismissal import SafeModalDismissMixin
 from .console_context_controls import (
@@ -291,6 +291,12 @@ class ConsoleModelPopover(
         self._draft_rebaser = draft_rebaser
         self._live_committer = live_committer
         self._streaming = bool(initial_draft.settings.streaming)
+        self._temperature_mount_value = (
+            ""
+            if initial_draft.settings.temperature is None
+            else str(initial_draft.settings.temperature)
+        )
+        self._temperature_mount_echo_pending = True
         self._active_view: Literal["main", "defaults"] = "main"
         self._updating_controls = False
         self._submit_pending = False
@@ -325,34 +331,34 @@ class ConsoleModelPopover(
         if field is None or not field.dirty:
             return "Inherited"
         if field.provenance is ConsoleSettingsFieldProvenance.CARRIED:
-            source = self._carried_from.get(name) or self._infer_carried_source(name)
+            source = self._carried_from.get(name) or self._keyed_carried_source(name)
             if source is not None:
                 provider, model = source
                 return f"Edited — carried from {provider}/{model or 'No model'}"
         return "Edited"
 
-    def _infer_carried_source(self, name: str) -> tuple[str, str | None] | None:
+    def _keyed_carried_source(self, name: str) -> tuple[str, str | None] | None:
+        """Return one unambiguous explicit source from remembered keyed drafts."""
+
         target = (self._draft.settings.provider, self._draft.settings.model)
-        field = self._field_draft(name)
-        if field is None:
-            return None
-        for remembered in reversed(self._draft.model_drafts):
+        sources: list[tuple[str, str | None]] = []
+        for remembered in self._draft.model_drafts:
             if (remembered.provider, remembered.model) == target:
                 continue
             remembered_field = next(
                 (
                     candidate
                     for candidate in remembered.field_drafts
-                    if candidate.name == name and candidate.dirty
+                    if candidate.name == name
+                    and candidate.dirty
+                    and candidate.provenance
+                    is ConsoleSettingsFieldProvenance.EXPLICIT
                 ),
                 None,
             )
-            if (
-                remembered_field is not None
-                and remembered_field.effective_value == field.effective_value
-            ):
-                return remembered.provider, remembered.model
-        return None
+            if remembered_field is not None:
+                sources.append((remembered.provider, remembered.model))
+        return sources[0] if len(sources) == 1 else None
 
     def _target_label(self) -> str:
         settings = self._draft.settings
@@ -675,15 +681,12 @@ class ConsoleModelPopover(
     def _temperature_changed(self, event: Input.Changed) -> None:
         if self._updating_controls:
             return
+        if self._temperature_mount_echo_pending:
+            self._temperature_mount_echo_pending = False
+            if event.value == self._temperature_mount_value:
+                return
         value = self._parse_temperature(event.value)
         if value is not None:
-            current = self._field_draft("temperature")
-            if (
-                current is not None
-                and not current.dirty
-                and current.effective_value == value
-            ):
-                return
             self._replace_quick_field("temperature", value, direct_edit=True)
         else:
             field = self._field_draft("temperature")
@@ -822,11 +825,14 @@ class ConsoleModelPopover(
                 pass
 
         settings = self._draft.settings
-        readiness = get_provider_readiness(settings.provider, self._app_config)
+        readiness = build_console_settings_readiness(
+            settings,
+            app_config=self._app_config,
+        )
         if not settings.model:
             block_copy = "Unavailable: choose a model first."
-        elif not readiness.ready:
-            block_copy = f"Unavailable: {readiness.user_message}"
+        elif not readiness.native_send_supported:
+            block_copy = f"Unavailable: {readiness.detail}"
         else:
             block_copy = ""
         try:
