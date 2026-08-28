@@ -98,5 +98,7 @@ Final post-closeout repair evidence: required Derived Artifacts run 33125171664 
 
 When dev advanced again through Research Workspace-only PR #2150, the closeout branch rebased cleanly onto fd2af6dc5a. The new Research slot-pool tests plus the Console closeout gates and repaired Watchlists, exchange-export, and Media focus/resize surfaces pass together (114 focused tests across two commands); the exact 17,037-line/565-definition ratchet is unchanged.
 
+The subsequent Console survivor-write PR #2142 also rebased cleanly at b34b94916c. The exact 19-test closeout/size/review-boundary shard passes, and the 17,037-line/565-definition ratchet remains unchanged.
+
 ADR required: no. Existing ADR-068 and the approved Console decomposition designs govern the completed ownership boundaries. No new lesson was warranted because the work applies the existing final-rebase ratchet lesson.
 <!-- SECTION:NOTES:END -->
