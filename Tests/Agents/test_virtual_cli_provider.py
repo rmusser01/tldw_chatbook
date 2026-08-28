@@ -62,9 +62,7 @@ def test_provider_projects_ten_distinct_permission_tools(tmp_path):
 
     assert [tool.name for tool in tools] == list(VIRTUAL_CLI_COMMANDS)
     assert {tool.server_key for tool in tools} == {VIRTUAL_CLI_SERVER_KEY}
-    hashes = {
-        definition_hash(tool.description, tool.input_schema) for tool in tools
-    }
+    hashes = {definition_hash(tool.description, tool.input_schema) for tool in tools}
     assert len(hashes) == len(VIRTUAL_CLI_COMMANDS)
 
 
@@ -89,9 +87,7 @@ def test_missing_permission_is_ask_and_discoverability_does_not_execute(tmp_path
     target.write_text("secret", encoding="utf-8")
     provider = make_provider(tmp_path)
 
-    result = provider.invoke(
-        "virtual_cli", {"command": "cat", "argv": ["note.txt"]}
-    )
+    result = provider.invoke("virtual_cli", {"command": "cat", "argv": ["note.txt"]})
 
     assert not result.ok
     assert result.outcome == "blocked"
@@ -101,7 +97,9 @@ def test_missing_permission_is_ask_and_discoverability_does_not_execute(tmp_path
 def test_one_command_permission_does_not_authorize_another(tmp_path):
     (tmp_path / "note.txt").write_text("hello", encoding="utf-8")
     states = {"cat": ALLOW, "ls": DENY}
-    provider = make_provider(tmp_path, state=None, resolve_state=lambda hub: states[hub.name])
+    provider = make_provider(
+        tmp_path, state=None, resolve_state=lambda hub: states[hub.name]
+    )
 
     cat = provider.invoke("virtual_cli", {"command": "cat", "argv": ["note.txt"]})
     listing = provider.invoke("virtual_cli", {"command": "ls", "argv": ["."]})

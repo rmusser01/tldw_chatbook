@@ -3,6 +3,7 @@
 Every test drives REAL git in a temp repo -- the engine has no mockable
 seam by design (spec: AC #5, no mocked git).
 """
+
 import subprocess
 from pathlib import Path
 
@@ -59,9 +60,7 @@ def test_detection_failure_logs_safe_root_metadata(
         assert local_root_value
         raise GitWorkspaceError(raw_exception)
 
-    monkeypatch.setattr(
-        git_workspace_module, "_detect_git_workspace", fail_detection
-    )
+    monkeypatch.setattr(git_workspace_module, "_detect_git_workspace", fail_detection)
     records: list[str] = []
     sink_id = logger.add(lambda message: records.append(str(message)))
     try:

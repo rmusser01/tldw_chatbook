@@ -110,7 +110,9 @@ async def _empty_exchanges_loader(
     return []
 
 
-def _inspector(snapshot_factory=_snapshot_factory, **overrides: object) -> ConsoleConversationInspector:
+def _inspector(
+    snapshot_factory=_snapshot_factory, **overrides: object
+) -> ConsoleConversationInspector:
     """Build a ``ConsoleConversationInspector`` scoped to the Next Send tab.
 
     Mirrors the retired modal's own constructor surface (``snapshot_
@@ -234,9 +236,7 @@ async def test_context_modal_in_progress_warning():
         modal = app.screen
         warning = modal.query_one("#console-inspector-next-send-warning", Static)
         assert "in progress" in str(warning.renderable)
-        refresh_button = modal.query_one(
-            "#console-inspector-next-send-refresh", Button
-        )
+        refresh_button = modal.query_one("#console-inspector-next-send-refresh", Button)
         assert refresh_button.disabled
         assert app.focused is modal.query_one(f"#{CLOSE_BUTTON_ID}", Button)
 
@@ -282,7 +282,9 @@ async def test_context_modal_stays_within_supported_viewports(size):
         assert modal.region.bottom <= size[1]
         assert actions.region.width > 0
         assert actions.region.bottom <= modal.region.bottom
-        assert all(control.region.right <= modal.region.right for control in actions.children)
+        assert all(
+            control.region.right <= modal.region.right for control in actions.children
+        )
 
 
 @pytest.mark.asyncio
@@ -823,7 +825,9 @@ async def test_copy_json_failure_log_and_toast_omit_the_raw_exception_body(
     log_lines: list[str] = []
     from loguru import logger
 
-    sink_id = logger.add(lambda message: log_lines.append(str(message)), level="WARNING")
+    sink_id = logger.add(
+        lambda message: log_lines.append(str(message)), level="WARNING"
+    )
 
     async with app.run_test(size=(120, 44)) as pilot:
         app.push_screen(_inspector())
@@ -919,7 +923,9 @@ async def test_save_json_failure_log_fingerprints_path_and_toast_names_destinati
     log_lines: list[str] = []
     from loguru import logger
 
-    sink_id = logger.add(lambda message: log_lines.append(str(message)), level="WARNING")
+    sink_id = logger.add(
+        lambda message: log_lines.append(str(message)), level="WARNING"
+    )
 
     async with app.run_test(size=(120, 44)) as pilot:
         app.push_screen(_inspector())
@@ -941,9 +947,9 @@ async def test_save_json_failure_log_fingerprints_path_and_toast_names_destinati
     combined_log = "\n".join(log_lines)
     assert sentinel not in combined_log, combined_log
     assert "OSError" in combined_log, combined_log
-    assert (
-        f"path_sha256={content_fingerprint(fake_path_str)}" in combined_log
-    ), combined_log
+    assert f"path_sha256={content_fingerprint(fake_path_str)}" in combined_log, (
+        combined_log
+    )
     assert fake_path_str not in combined_log, combined_log
     assert Path(fake_path_str).name not in combined_log, combined_log
 
@@ -1091,9 +1097,7 @@ async def test_context_modal_save_button_is_disabled_with_a_reason_when_ephemera
         app.push_screen(_inspector(ephemeral=True))
         await pilot.pause()
 
-        save_button = app.screen.query_one(
-            "#console-inspector-next-send-save", Button
-        )
+        save_button = app.screen.query_one("#console-inspector-next-send-save", Button)
         assert save_button.disabled is True
         assert save_button.tooltip == blocked_reason("save-context", ephemeral=True)
 

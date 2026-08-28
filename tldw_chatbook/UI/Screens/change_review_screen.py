@@ -142,9 +142,7 @@ PR_TURN_MODE_REFUSAL = (
 #: keys stop being advertised and the line says WHY (T6 re-review finding
 #: (a): the affordances must present as unavailable rather than looking live
 #: and failing on press).
-FOOTER_TURN_MODE = (
-    "j/k files · Enter diff · c comment line · C comment file · Esc back"
-)
+FOOTER_TURN_MODE = "j/k files · Enter diff · c comment line · C comment file · Esc back"
 FOOTER_CURRENT_MODE = (
     "j/k files · Enter diff · g commit · p push · P open PR · Esc back · "
     "revert (u/U) and comments (c/C) need a recorded turn"
@@ -272,8 +270,8 @@ class AgentRunsChangeReviewProvider:
         #: workspace. The revert engine refuses while one is live -- the
         #: per-root lock covers git ops, not the agent's own file tools.
         self.run_active = run_active if run_active is not None else (lambda: False)
-        self.run_active_for_root: Callable[[str], bool] = (
-            lambda _root: self.run_active()
+        self.run_active_for_root: Callable[[str], bool] = lambda _root: (
+            self.run_active()
         )
         if diff_display_max_lines is None:
             diff_display_max_lines = self._configured_cap()
@@ -347,9 +345,7 @@ class AgentRunsChangeReviewProvider:
         """
         by_run: dict[str, list[dict]] = {}
         order: list[str] = []
-        for row in self._db.change_snapshots_for_conversation(
-            self._conversation_id
-        ):
+        for row in self._db.change_snapshots_for_conversation(self._conversation_id):
             run_id = str(row["run_id"])
             if run_id not in by_run:
                 by_run[run_id] = []
@@ -440,13 +436,7 @@ class AgentRunsChangeReviewProvider:
         rel: set[str] = set()
         for raw in ChangeTurnTracker.tool_touched_paths(steps):
             try:
-                rel.add(
-                    _P(raw)
-                    .expanduser()
-                    .resolve()
-                    .relative_to(root)
-                    .as_posix()
-                )
+                rel.add(_P(raw).expanduser().resolve().relative_to(root).as_posix())
             except (ValueError, OSError):
                 continue
         return rel
@@ -486,9 +476,7 @@ class AgentRunsChangeReviewProvider:
         repo = self._service.repo_for_root(row["root"])
         return repo.changed_files(str(row["baseline_sha"]), str(row["end_sha"]))
 
-    def preflight_revert(
-        self, row: dict, paths: list[str]
-    ) -> RevertPreflight:
+    def preflight_revert(self, row: dict, paths: list[str]) -> RevertPreflight:
         """The confirm dialog's data: which paths were edited after E.
 
         Args:
@@ -730,9 +718,7 @@ class AgentRunsChangeReviewProvider:
         path = Path(root)
         info = detect_git_workspace(path)
         if not isinstance(info, GitWorkspaceInfo):
-            reason = (
-                info.reason if info is not None else "not a git repository"
-            )
+            reason = info.reason if info is not None else "not a git repository"
             raise GitWorkspaceError(
                 f"git workspace detection failed for {root}: {reason}"
             )
@@ -1196,9 +1182,7 @@ def _commit_entries(
     return entries
 
 
-def _root_summary_line(
-    info: "GitWorkspaceInfo", *, name_root: bool
-) -> str:
+def _root_summary_line(info: "GitWorkspaceInfo", *, name_root: bool) -> str:
     """The `current` mode's per-root header line (spec §4).
 
     Args:
@@ -1526,9 +1510,7 @@ class ChangeReviewScreen(Screen):
         """
         with Vertical(id="change-review-screen"):
             with Horizontal(id="change-review-header"):
-                yield Static(
-                    "Change review", id="change-review-title", markup=False
-                )
+                yield Static("Change review", id="change-review-title", markup=False)
                 yield Select(
                     [],
                     id="change-review-turn-select",
@@ -1627,9 +1609,7 @@ class ChangeReviewScreen(Screen):
         except Exception:  # noqa: BLE001 -- screen dismissed before refresh
             return
         self._turns = self._provider.turns()
-        self._select_options = [
-            (turn.label, turn.run_id) for turn in self._turns
-        ]
+        self._select_options = [(turn.label, turn.run_id) for turn in self._turns]
         select.set_options(list(self._select_options))
         if self._turns:
             wanted = self._initial_run_id
@@ -1767,9 +1747,7 @@ class ChangeReviewScreen(Screen):
             if isinstance(result, _Info):
                 infos[str(result.root)] = result
             elif isinstance(result, _Refusal):
-                refusals.append(
-                    f"git actions unavailable for {root}: {result.reason}"
-                )
+                refusals.append(f"git actions unavailable for {root}: {result.reason}")
         self._current_infos = infos
         self._git_refusal_banners = refusals
         if refusals:
@@ -1936,9 +1914,7 @@ class ChangeReviewScreen(Screen):
                 # are not tracked at all.
                 limit = NESTED_BANNER_NAMED_LIMIT
                 shown = ", ".join(nested[:limit]) + (
-                    f" (+{len(nested) - limit} more)"
-                    if len(nested) > limit
-                    else ""
+                    f" (+{len(nested) - limit} more)" if len(nested) > limit else ""
                 )
                 plural = "ies" if len(nested) != 1 else "y"
                 banners.append(
@@ -1958,13 +1934,9 @@ class ChangeReviewScreen(Screen):
                     grouped.setdefault(change.status, []).append((row, change))
             except ChangeTrackingError as exc:
                 if self._provider.snapshots_pruned(row):
-                    banners.append(
-                        f"history for {row['root']} was pruned by retention"
-                    )
+                    banners.append(f"history for {row['root']} was pruned by retention")
                 else:
-                    banners.append(
-                        f"⚠ diff unavailable for {row['root']}: {exc}"
-                    )
+                    banners.append(f"⚠ diff unavailable for {row['root']}: {exc}")
 
         touched_by_row: dict[int, "set[str] | None"] = {}
 
@@ -1972,9 +1944,7 @@ class ChangeReviewScreen(Screen):
             rid = id(row)
             if rid not in touched_by_row:
                 try:
-                    touched_by_row[rid] = self._provider.tool_touched_relpaths(
-                        row
-                    )
+                    touched_by_row[rid] = self._provider.tool_touched_relpaths(row)
                 except Exception as exc:  # noqa: BLE001 -- badge must never break review
                     logger.warning(
                         "change_review: badge derivation failed; rendering without "
@@ -2282,9 +2252,7 @@ class ChangeReviewScreen(Screen):
             commit_btn = self.query_one("#change-review-git-commit-btn", Button)
             push_btn = self.query_one("#change-review-git-push-btn", Button)
             pr_btn = self.query_one("#change-review-git-pr-btn", Button)
-            comment_btn = self.query_one(
-                "#change-review-comment-file-btn", Button
-            )
+            comment_btn = self.query_one("#change-review-comment-file-btn", Button)
             footer = self.query_one("#change-review-footer", Static)
         except Exception:  # noqa: BLE001 -- screen dismissed / not composed
             return
@@ -2473,9 +2441,7 @@ class ChangeReviewScreen(Screen):
             True when this load is still the live one.
         """
         if token is not self._current_load_token:
-            logger.debug(
-                "change_review: dropping a superseded current-mode landing"
-            )
+            logger.debug("change_review: dropping a superseded current-mode landing")
             return False
         if not self._current_mode_active():
             logger.debug(
@@ -2870,9 +2836,7 @@ class ChangeReviewScreen(Screen):
         last = result.outcomes[-1] if result.outcomes else None
         if last is not None and not last.ok:
             detail = last.detail or "git reported no detail"
-            self.notify(
-                f"Commit failed at {last.step}: {detail}", severity="error"
-            )
+            self.notify(f"Commit failed at {last.step}: {detail}", severity="error")
         elif result.short_sha:
             self.notify(f"Committed {file_count} file(s) as {result.short_sha}")
         else:
@@ -3325,9 +3289,7 @@ class ChangeReviewScreen(Screen):
             # never 'not by the agent' (script writes are agent work too,
             # and badge absence is not proof of tool provenance). Dim,
             # monochrome.
-            label.append(
-                "  ⚠ changed outside direct file tools", style="dim"
-            )
+            label.append("  ⚠ changed outside direct file tools", style="dim")
         return label
 
     def _refresh_untracked_writable_banner(self) -> None:
@@ -3383,9 +3345,7 @@ class ChangeReviewScreen(Screen):
             from tldw_chatbook.Utils.path_validation import validate_path_simple
 
             target = validate_path_simple(raw)
-            tracked = {
-                validate_path_simple(root) for root in self._workspace_roots
-            }
+            tracked = {validate_path_simple(root) for root in self._workspace_roots}
         except (ValueError, OSError, RuntimeError) as exc:
             logger.debug(
                 "change_review: skipping untracked-writable disclosure "
@@ -3651,9 +3611,7 @@ class ChangeReviewScreen(Screen):
         """
         try:
             focused = self.app.focused
-            if focused is None or not focused.has_class(
-                "change-review-comment-input"
-            ):
+            if focused is None or not focused.has_class("change-review-comment-input"):
                 return
             if event.key == "enter":
                 event.stop()
@@ -3686,9 +3644,7 @@ class ChangeReviewScreen(Screen):
         """
         try:
             focused = self.app.focused
-            if focused is not None and focused.has_class(
-                "change-review-comment-input"
-            ):
+            if focused is not None and focused.has_class("change-review-comment-input"):
                 await focused.remove()
             self.query_one("#change-review-diff", ChangeReviewDiffPane).focus()
         except Exception:
@@ -3798,9 +3754,7 @@ class ChangeReviewScreen(Screen):
             if note_input.is_mounted:
                 await note_input.remove()
             try:
-                self.query_one(
-                    "#change-review-diff", ChangeReviewDiffPane
-                ).focus()
+                self.query_one("#change-review-diff", ChangeReviewDiffPane).focus()
             except Exception:  # noqa: BLE001 -- focus-return is cosmetic
                 pass
             self._refresh_notes_ui_for_focused_leaf()
@@ -3821,9 +3775,7 @@ class ChangeReviewScreen(Screen):
             note_id = getattr(button, "note_id", None)
             if note_id is None:
                 return
-            delete_change_note = getattr(
-                self._provider, "delete_change_note", None
-            )
+            delete_change_note = getattr(self._provider, "delete_change_note", None)
             if not callable(delete_change_note):
                 return
 
@@ -3842,9 +3794,7 @@ class ChangeReviewScreen(Screen):
                 return
             self._refresh_notes_ui_for_focused_leaf()
         except Exception:
-            logger.opt(exception=True).warning(
-                "change_review: note delete failed"
-            )
+            logger.opt(exception=True).warning("change_review: note delete failed")
 
     @on(Button.Pressed, ".change-review-note-delete")
     async def _on_note_delete_pressed(self, event: Button.Pressed) -> None:
@@ -3883,9 +3833,7 @@ class ChangeReviewScreen(Screen):
         try:
             notes = self._provider.notes_for_run(self._active_turn.run_id)
         except Exception:
-            logger.opt(exception=True).warning(
-                "change_review: notes load failed"
-            )
+            logger.opt(exception=True).warning("change_review: notes load failed")
             return []
         return [
             note
@@ -3961,11 +3909,7 @@ class ChangeReviewScreen(Screen):
                 "change_review: notes strip clear failed"
             )
             return
-        if (
-            not self._leaves
-            or self._focused_leaf < 0
-            or self._active_turn is None
-        ):
+        if not self._leaves or self._focused_leaf < 0 or self._active_turn is None:
             strip.display = False
             return
         if notes is None:
@@ -4003,9 +3947,7 @@ class ChangeReviewScreen(Screen):
         label.append(str(note.get("note", "")))
         if delivered:
             label.append("  · sent", style="dim")
-        children: list = [
-            Static(label, classes="change-review-note-text")
-        ]
+        children: list = [Static(label, classes="change-review-note-text")]
         if not delivered:
             delete_btn = Button(
                 Text(resolve_glyph(_GLYPH_DELETE)),
@@ -4111,9 +4053,7 @@ class ChangeReviewScreen(Screen):
             ChangeRevertConfirmModal(summary, preflight.edited_since), callback=_apply
         )
 
-    async def _revert_rows(
-        self, rows_paths: list[tuple[dict, list[str]]]
-    ) -> None:
+    async def _revert_rows(self, rows_paths: list[tuple[dict, list[str]]]) -> None:
         """Apply one confirmed selection off-thread, then update the screen."""
         outcomes = []
         for row, paths in rows_paths:
@@ -4202,9 +4142,7 @@ class ChangeReviewScreen(Screen):
                 if row.get("kind") == "git_current":
                     self._diff_cache_text = self._current_diff_text(row, change)
                 else:
-                    self._diff_cache_text = self._provider.diff_text(
-                        row, change.path
-                    )
+                    self._diff_cache_text = self._provider.diff_text(row, change.path)
             except ChangeTrackingError as exc:
                 self._diff_cache_error = exc
         if self._diff_cache_error is not None:
@@ -4250,9 +4188,7 @@ class ChangeReviewScreen(Screen):
         root = str(row.get("root") or "")
         info = self._current_infos.get(root)
         unborn = bool(info is not None and info.unborn)
-        if unborn or change.path in self._current_untracked.get(
-            root, frozenset()
-        ):
+        if unborn or change.path in self._current_untracked.get(root, frozenset()):
             return self._provider.untracked_preview(root, change.path)
         try:
             return self._provider.current_diff_text(root, change)
@@ -4336,18 +4272,14 @@ class ChangeReviewScreen(Screen):
                 # the cursor's own line, the marker also carries the
                 # cursor's background so the highlighted band doesn't
                 # visibly break partway through.
-                marker_style = (
-                    f"dim {_CURSOR_LINE_STYLE}" if cursor_here else "dim"
-                )
+                marker_style = f"dim {_CURSOR_LINE_STYLE}" if cursor_here else "dim"
                 text.append(
                     f" {resolve_glyph(_GLYPH_LINE_COMMENT_MARKER)} comment",
                     style=marker_style,
                 )
             text.append("\n")
         if hidden:
-            text.append(
-                f"… diff truncated — {hidden} more lines", style="yellow"
-            )
+            text.append(f"… diff truncated — {hidden} more lines", style="yellow")
         content.update(text)
         if rendered_count > 0:
             self._scroll_cursor_into_view(self._cursor_line)
@@ -4485,9 +4417,7 @@ class ChangeGitCommitModal(SafeModalDismissMixin, ModalScreen["dict | None"]):
             )
             yield Static("", id="change-git-commit-error", markup=False)
             with Horizontal(id="change-git-commit-buttons"):
-                yield Button(
-                    "Commit", id="change-git-commit-yes", variant="primary"
-                )
+                yield Button("Commit", id="change-git-commit-yes", variant="primary")
                 yield Button("Cancel", id="change-git-commit-no")
 
     def on_mount(self) -> None:
@@ -4514,9 +4444,7 @@ class ChangeGitCommitModal(SafeModalDismissMixin, ModalScreen["dict | None"]):
             message: Why the submit was refused.
         """
         try:
-            self.query_one("#change-git-commit-error", Static).update(
-                Text(message)
-            )
+            self.query_one("#change-git-commit-error", Static).update(Text(message))
         except Exception:  # noqa: BLE001 -- never raise out of a handler
             logger.opt(exception=True).warning(
                 "change_review: commit modal error render failed"
@@ -4525,24 +4453,18 @@ class ChangeGitCommitModal(SafeModalDismissMixin, ModalScreen["dict | None"]):
     def _submit(self) -> None:
         """Validate the form and dismiss with the commit request."""
         try:
-            message = self.query_one(
-                "#change-git-commit-message", Input
-            ).value.strip()
+            message = self.query_one("#change-git-commit-message", Input).value.strip()
             if not message:
                 self._show_error("a commit message is required")
                 return
             selected = [box for box in self.query(Checkbox) if box.value]
             files = [
-                path
-                for box in selected
-                for path in getattr(box, "file_paths", ())
+                path for box in selected for path in getattr(box, "file_paths", ())
             ]
             if not files:
                 self._show_error("select at least one file to commit")
                 return
-            branch = self.query_one(
-                "#change-git-commit-branch", Input
-            ).value.strip()
+            branch = self.query_one("#change-git-commit-branch", Input).value.strip()
             self.dismiss(
                 {
                     "message": message,
@@ -4745,9 +4667,7 @@ class ChangeGitPushModal(SafeModalDismissMixin, ModalScreen["dict | None"]):
             all_urls = dict(getattr(info, "remote_push_urls", ()) or ())
             urls = tuple(all_urls.get(remote_name) or ())
             if not urls:
-                urls = tuple(
-                    url for name, url in info.remotes if name == remote_name
-                )
+                urls = tuple(url for name, url in info.remotes if name == remote_name)
         except (KeyError, AttributeError, TypeError, ValueError):
             return remote_name
         if not urls:
@@ -4817,9 +4737,7 @@ class ChangeGitPushModal(SafeModalDismissMixin, ModalScreen["dict | None"]):
         try:
             self.query_one("#change-git-push-yes", Button).focus()
         except Exception:  # noqa: BLE001 -- focus is never load-bearing
-            logger.opt(exception=True).warning(
-                "change_review: push modal focus failed"
-            )
+            logger.opt(exception=True).warning("change_review: push modal focus failed")
 
     @on(Select.Changed, "#change-git-push-root")
     def _on_root_changed(self, event: Select.Changed) -> None:
@@ -4915,9 +4833,7 @@ class ChangeGitPushModal(SafeModalDismissMixin, ModalScreen["dict | None"]):
                 type(exc).__name__,
             )
             try:
-                self.app.notify(
-                    f"Could not submit: {exc}", severity="error"
-                )
+                self.app.notify(f"Could not submit: {exc}", severity="error")
             except Exception as notify_exc:  # noqa: BLE001 -- notify is best-effort
                 logger.debug(
                     "change_review: push modal could not report its failure "

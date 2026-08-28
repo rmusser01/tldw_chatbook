@@ -861,8 +861,12 @@ async def test_estimates_labeled_and_reported_authoritative() -> None:
     unprefixed half of the Response title) must NOT -- it is the
     authoritative, provider-reported number."""
     usage = ProviderUsage(
-        uncached_input=100, cache_read=0, cache_write=0, output=5,
-        provider="anthropic", model="m",
+        uncached_input=100,
+        cache_read=0,
+        cache_write=0,
+        output=5,
+        provider="anthropic",
+        model="m",
     )
     cap = _capture(
         "r1",
@@ -893,10 +897,12 @@ async def test_estimates_labeled_and_reported_authoritative() -> None:
         call.collapsed = False
         await _wait_until(
             pilot,
-            lambda: bool(call.query(Collapsible))
-            and any(
-                str(s.renderable).startswith("Reported usage")
-                for s in call.query(Static)
+            lambda: (
+                bool(call.query(Collapsible))
+                and any(
+                    str(s.renderable).startswith("Reported usage")
+                    for s in call.query(Static)
+                )
             ),
         )
 
@@ -912,7 +918,9 @@ async def test_estimates_labeled_and_reported_authoritative() -> None:
         assert "out:5" in reported_line
 
         response_title = _rendered_title(
-            call.query_one("#console-inspector-exchange-section-0-0-response", Collapsible)
+            call.query_one(
+                "#console-inspector-exchange-section-0-0-response", Collapsible
+            )
         )
         assert "~" in response_title
         assert "tokens est." in response_title
@@ -962,7 +970,9 @@ async def test_synthetic_fallback_response_is_labeled_not_shown_as_model_output(
         await _wait_until(pilot, lambda: bool(call.query(Collapsible)))
 
         response_title = _rendered_title(
-            call.query_one("#console-inspector-exchange-section-0-0-response", Collapsible)
+            call.query_one(
+                "#console-inspector-exchange-section-0-0-response", Collapsible
+            )
         )
         assert "synthesized fallback" in response_title
         assert "~" not in response_title
@@ -971,7 +981,7 @@ async def test_synthetic_fallback_response_is_labeled_not_shown_as_model_output(
 
 @pytest.mark.asyncio
 async def test_status_badges() -> None:
-    """"stopped"/"error" statuses and an ``abandoned=True`` pair each render
+    """ "stopped"/"error" statuses and an ``abandoned=True`` pair each render
     their own distinct badge in the call's title -- all three coexisting on
     one turn's three calls."""
     stopped_cap = _capture("r1", 0, "t0", "m", status="stopped")
@@ -1056,15 +1066,38 @@ async def test_collapsible_bodies_mount_lazily() -> None:
 
 # Finding 2's hardcoded half of the pin -- see the test below for why this
 # must NOT be computed from the live import.
-_TODAY_CAPTURE_ALLOWLIST_SNAPSHOT = frozenset({
-    "api_endpoint", "api_base_url", "system_message", "messages_payload",
-    "tools", "model", "streaming", "temp", "topp", "maxp", "topk", "minp",
-    "max_tokens", "seed", "presence_penalty", "frequency_penalty",
-    "reasoning_effort", "reasoning_summary", "verbosity", "thinking_effort",
-    "thinking_budget_tokens", "prompt_caching", "response_format",
-    "api_mode", "request_timeout", "request_retries", "request_retry_delay",
-    "provider_continuations",
-})
+_TODAY_CAPTURE_ALLOWLIST_SNAPSHOT = frozenset(
+    {
+        "api_endpoint",
+        "api_base_url",
+        "system_message",
+        "messages_payload",
+        "tools",
+        "model",
+        "streaming",
+        "temp",
+        "topp",
+        "maxp",
+        "topk",
+        "minp",
+        "max_tokens",
+        "seed",
+        "presence_penalty",
+        "frequency_penalty",
+        "reasoning_effort",
+        "reasoning_summary",
+        "verbosity",
+        "thinking_effort",
+        "thinking_budget_tokens",
+        "prompt_caching",
+        "response_format",
+        "api_mode",
+        "request_timeout",
+        "request_retries",
+        "request_retry_delay",
+        "provider_continuations",
+    }
+)
 
 
 @pytest.mark.asyncio
@@ -1101,7 +1134,11 @@ async def test_sampling_section_key_set_is_pinned_to_the_capture_allowlist() -> 
 
     request = {key: f"value-for-{key}" for key in CAPTURE_REQUEST_ALLOWLIST}
     cap = _capture(
-        "r1", 0, "t", "m", request=request,
+        "r1",
+        0,
+        "t",
+        "m",
+        request=request,
         response={"content": "x", "tool_calls": []},
     )
 
@@ -1164,9 +1201,7 @@ async def test_ephemeral_call_uses_only_governed_export_action() -> None:
         call.collapsed = False
         await _wait_until(pilot, lambda: bool(call.query(Button)))
 
-        export_button = call.query_one(
-            "#console-inspector-exchange-export-0-0", Button
-        )
+        export_button = call.query_one("#console-inspector-exchange-export-0-0", Button)
         assert export_button.disabled is False
         button_ids = {button.id or "" for button in call.query(Button)}
         assert not any(
@@ -1272,7 +1307,10 @@ async def test_per_message_collapsible_mounts_its_json_body() -> None:
     coverage. Expand it and assert the message's own content actually
     renders (and, before that, that it genuinely was not mounted yet)."""
     cap = _capture(
-        "r1", 0, "t", "m",
+        "r1",
+        0,
+        "t",
+        "m",
         request={"messages_payload": [{"role": "user", "content": "hello"}]},
     )
 
@@ -1465,7 +1503,9 @@ async def test_default_group_worker_error_does_not_toast_next_send_or_clear_its_
 
 
 @pytest.mark.asyncio
-async def test_next_send_refresh_does_not_cancel_an_in_flight_costs_capture_load() -> None:
+async def test_next_send_refresh_does_not_cancel_an_in_flight_costs_capture_load() -> (
+    None
+):
     """task-10 review finding 2b: before the fix, the snapshot worker's
     ``exclusive=True`` lived in the SAME "default" group as the Costs
     tab's ``_load_turn_captures`` worker (``exclusive`` cancels every
@@ -1672,7 +1712,9 @@ async def test_stale_capture_revision_blocks_expansion_and_export(
 
 
 @pytest.mark.asyncio
-async def test_inspector_adopts_first_revision_after_opening_during_quiescence() -> None:
+async def test_inspector_adopts_first_revision_after_opening_during_quiescence() -> (
+    None
+):
     revision = SimpleNamespace(value=None)
     app = InspectorHarness(
         **_default_kwargs(capture_revision_provider=lambda: revision.value)
@@ -1716,11 +1758,13 @@ async def test_revision_change_during_async_capture_load_discards_result() -> No
         turn.collapsed = False
         await _wait_until(
             pilot,
-            lambda: "Refresh required"
-            in str(
-                modal.query_one(
-                    "#console-inspector-capture-status", Static
-                ).renderable
+            lambda: (
+                "Refresh required"
+                in str(
+                    modal.query_one(
+                        "#console-inspector-capture-status", Static
+                    ).renderable
+                )
             ),
         )
 
@@ -1801,9 +1845,7 @@ def test_messages_section_title_states_original_and_elided_counts() -> None:
     compacted_capture = _capture(
         "run-1", 0, "t", "m", request={"messages_payload": compacted}
     )
-    title = str(
-        inspector._build_messages_section(compacted_capture, "k").title
-    )
+    title = str(inspector._build_messages_section(compacted_capture, "k").title)
     assert f"{len(rows)} sent" in title
     marker = history_elision_marker(compacted)
     assert f"{marker['omitted_rows']} elided by capture policy" in title
@@ -1811,7 +1853,5 @@ def test_messages_section_title_states_original_and_elided_counts() -> None:
     plain_capture = _capture(
         "run-1", 0, "t", "m", request={"messages_payload": rows[-3:]}
     )
-    plain_title = str(
-        inspector._build_messages_section(plain_capture, "k").title
-    )
+    plain_title = str(inspector._build_messages_section(plain_capture, "k").title)
     assert plain_title == "Messages (3)"

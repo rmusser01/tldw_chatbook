@@ -35,7 +35,7 @@ from collections import deque
 import pytest
 from loguru import logger as loguru_logger
 
-from tldw_chatbook.UI.Logs_Window import MAX_LOG_RECORDS
+from tldw_chatbook.UI.Logs_Window import LogRecord, LogsWindow, MAX_LOG_RECORDS
 from tldw_chatbook.Utils.persistent_diagnostics import log_persistent_metadata
 
 pytestmark = pytest.mark.unit
@@ -175,6 +175,32 @@ def test_copy_all_share_artifact_keeps_triage_metadata() -> None:
         assert "exception_type=TimeoutError" in share
 
 
+def test_copy_visible_warns_that_file_names_and_search_terms_remain() -> None:
+    """The rich clipboard path still discloses its residual privacy risk."""
+    notifications: list[str] = []
+    copied: list[str] = []
+
+    class _App:
+        def copy_to_clipboard(self, text: str) -> None:
+            copied.append(text)
+
+        def notify(self, message: str, **_kwargs: object) -> None:
+            notifications.append(message)
+
+    class _Window:
+        app = _App()
+
+        @staticmethod
+        def _visible_records() -> list[LogRecord]:
+            return [LogRecord("INFO", "test", "visible diagnostic")]
+
+    LogsWindow._on_copy_visible(_Window())
+
+    assert copied == ["visible diagnostic"]
+    assert len(notifications) == 1
+    assert "file names and search terms were not" in notifications[0]
+
+
 def test_schema_validated_metadata_records_survive_the_share_artifact() -> None:
     """ADR-029 metadata events are admitted verbatim, exactly as to the file."""
     with _Collector() as stub:
@@ -266,9 +292,7 @@ def test_a_credential_astride_the_truncation_boundary_reaches_no_surface() -> No
             )
 
         # ...and the sweep really did produce oversized lines to cut.
-        assert any(
-            "truncated," in message for _l, _n, message in stub._log_records
-        )
+        assert any("truncated," in message for _l, _n, message in stub._log_records)
 
         surfaces = "\n".join(
             (

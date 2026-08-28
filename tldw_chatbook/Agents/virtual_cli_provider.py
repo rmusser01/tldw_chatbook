@@ -38,9 +38,7 @@ SOURCE = "virtual_cli"
 
 _MAX_RESULT_BYTES = 32 * 1024
 _MAX_ERROR_CHARS = 300
-_ANSI_ESCAPE = re.compile(
-    r"\x1b(?:\[[0-?]*[ -/]*[@-~]|\][^\x07]*(?:\x07|\x1b\\))"
-)
+_ANSI_ESCAPE = re.compile(r"\x1b(?:\[[0-?]*[ -/]*[@-~]|\][^\x07]*(?:\x07|\x1b\\))")
 
 _USAGE = {
     "ls": "ls [PATH]",
@@ -98,7 +96,8 @@ class VirtualCliProvider:
         resolve_state: Callable[[HubTool], EffectiveToolState] | None = None,
         local_tools_enabled: Callable[[], bool] = lambda: True,
         kill_switch: Callable[[], bool] = lambda: False,
-        approval_callback: Callable[[list[MCPPendingCall]], dict[str, str]] | None = None,
+        approval_callback: Callable[[list[MCPPendingCall]], dict[str, str]]
+        | None = None,
         is_session_approved: Callable[[HubTool], bool] | None = None,
         persist_approval: Callable[[HubTool, str], None] | None = None,
         record_decision: Callable[[HubTool, str], None] | None = None,
@@ -296,7 +295,9 @@ class VirtualCliProvider:
             verdict = self._ask_verdict(hub, command, args)
         if verdict != "allow":
             self._record(hub, "denied-timeout" if verdict == "timeout" else "denied")
-            refusal = LOCAL_TIMEOUT_REFUSAL if verdict == "timeout" else LOCAL_DENY_REFUSAL
+            refusal = (
+                LOCAL_TIMEOUT_REFUSAL if verdict == "timeout" else LOCAL_DENY_REFUSAL
+            )
             return ToolResult.blocked(refusal)
 
         def execute() -> ToolResult:
@@ -321,7 +322,9 @@ class VirtualCliProvider:
             with scope:
                 return execute()
         except Exception:
-            return ToolResult.blocked("Private scratch space is unavailable; the tool was not run.")
+            return ToolResult.blocked(
+                "Private scratch space is unavailable; the tool was not run."
+            )
 
     def _ask_verdict(self, hub: HubTool, command: str, args: dict) -> str:
         stamp = self._pop_stamp(current_run_id(), command)
@@ -345,7 +348,11 @@ class VirtualCliProvider:
         decision = decisions.get(pending.call_id or pending.llm_name, "timeout")
         if decision in {"approve_session", "always_allow"}:
             self._persist(hub, decision)
-        return "allow" if decision in {"approve_once", "approve_session", "always_allow"} else decision
+        return (
+            "allow"
+            if decision in {"approve_once", "approve_session", "always_allow"}
+            else decision
+        )
 
     def _root_is_valid(self) -> bool:
         if self._root_guard is None:

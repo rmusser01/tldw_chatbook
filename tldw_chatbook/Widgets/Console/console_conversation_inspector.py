@@ -642,7 +642,9 @@ class ConsoleConversationInspector(SafeModalDismissMixin, ModalScreen[None]):
                                 disabled=self._save_blocked_reason is not None,
                             )
                             if self._save_blocked_reason is not None:
-                                next_send_save_button.tooltip = self._save_blocked_reason
+                                next_send_save_button.tooltip = (
+                                    self._save_blocked_reason
+                                )
                             yield next_send_save_button
             with Horizontal(id="console-inspector-actions"):
                 yield Button("Close", id=CLOSE_BUTTON_ID, variant="primary")
@@ -684,8 +686,7 @@ class ConsoleConversationInspector(SafeModalDismissMixin, ModalScreen[None]):
             )
         elif snapshot.next_detail is not None:
             run_state = (
-                "Next eligible send: "
-                f"{snapshot.next_detail.value.title()} (armed)"
+                f"Next eligible send: {snapshot.next_detail.value.title()} (armed)"
             )
         else:
             run_state = "No active run is frozen"
@@ -810,9 +811,7 @@ class ConsoleConversationInspector(SafeModalDismissMixin, ModalScreen[None]):
         if self._project_instruction_recovery is None:
             return
         event.stop()
-        state = await self._project_instruction_recovery(
-            event.session_id, event.action
-        )
+        state = await self._project_instruction_recovery(event.session_id, event.action)
         if state is None:
             return
         self._project_instruction_state = state
@@ -930,9 +929,7 @@ class ConsoleConversationInspector(SafeModalDismissMixin, ModalScreen[None]):
         if turn is None:
             return
         self._loaded_row_indices.add(row_index)
-        self.run_worker(
-            self._load_turn_captures(collapsible, turn), exclusive=False
-        )
+        self.run_worker(self._load_turn_captures(collapsible, turn), exclusive=False)
 
     async def _load_turn_captures(
         self, collapsible: Collapsible, turn: InspectorTurn
@@ -1422,9 +1419,7 @@ class ConsoleConversationInspector(SafeModalDismissMixin, ModalScreen[None]):
             if not isinstance(messages, list):
                 messages = []
             for message_ordinal, message in enumerate(messages):
-                role = (
-                    message.get("role", "?") if isinstance(message, dict) else "?"
-                )
+                role = message.get("role", "?") if isinstance(message, dict) else "?"
                 message_id = (
                     f"{_EXCHANGE_MESSAGE_ID_PREFIX}{call_key}-{message_ordinal}"
                 )
@@ -1447,18 +1442,14 @@ class ConsoleConversationInspector(SafeModalDismissMixin, ModalScreen[None]):
             return True
 
         if section == _SECTION_RESPONSE:
-            contents.mount(
-                TextArea(self._response_text(capture), read_only=True)
-            )
+            contents.mount(TextArea(self._response_text(capture), read_only=True))
             return True
 
         if section == _SECTION_TOOL_CALLS:
             tool_calls = (
                 capture.response.get("tool_calls") if capture.response else None
             )
-            contents.mount(
-                TextArea(self._json_block(tool_calls or []), read_only=True)
-            )
+            contents.mount(TextArea(self._json_block(tool_calls or []), read_only=True))
             return True
 
         if section == _SECTION_SAMPLING:
@@ -1519,6 +1510,7 @@ class ConsoleConversationInspector(SafeModalDismissMixin, ModalScreen[None]):
 
             def provider() -> int:
                 return 0
+
         self.app.push_screen(
             ConsoleExchangeExportDialog(
                 capture,
@@ -1576,9 +1568,7 @@ class ConsoleConversationInspector(SafeModalDismissMixin, ModalScreen[None]):
                 content_fingerprint(str(path)),
                 type(exc).__name__,
             )
-            self.notify(
-                f"Save failed ({type(exc).__name__}): {path}", severity="error"
-            )
+            self.notify(f"Save failed ({type(exc).__name__}): {path}", severity="error")
             return None
 
     # -- Next Send tab (task-10, ported from the retired context modal) -
@@ -1694,9 +1684,7 @@ class ConsoleConversationInspector(SafeModalDismissMixin, ModalScreen[None]):
                 # -- msg.role/msg.status are enum-derived today, but a
                 # Collapsible title IS markup-parsed by default and this
                 # file does not leave that to chance anywhere else.
-                title=Content.from_text(
-                    f"[{msg.role}] {msg.status}", markup=False
-                ),
+                title=Content.from_text(f"[{msg.role}] {msg.status}", markup=False),
                 collapsed=True,
             )
             for msg in self.snapshot.current_messages
@@ -1710,8 +1698,7 @@ class ConsoleConversationInspector(SafeModalDismissMixin, ModalScreen[None]):
         if len(text.encode("utf-8")) > SIZE_THRESHOLD_BYTES:
             widgets.append(
                 Label(
-                    "Context exceeds 1 MiB. Use Save to File to view the "
-                    "full payload.",
+                    "Context exceeds 1 MiB. Use Save to File to view the full payload.",
                     markup=False,
                 )
             )
@@ -1965,9 +1952,7 @@ class ConsoleConversationInspector(SafeModalDismissMixin, ModalScreen[None]):
                 content_fingerprint(str(path)),
                 type(exc).__name__,
             )
-            self.notify(
-                f"Save failed ({type(exc).__name__}): {path}", severity="error"
-            )
+            self.notify(f"Save failed ({type(exc).__name__}): {path}", severity="error")
         except Exception as exc:
             logger.error(
                 "Unexpected error saving context snapshot path_sha256={} "
@@ -1975,12 +1960,10 @@ class ConsoleConversationInspector(SafeModalDismissMixin, ModalScreen[None]):
                 content_fingerprint(str(path)),
                 type(exc).__name__,
             )
-            self.notify(
-                f"Save failed ({type(exc).__name__}): {path}", severity="error"
-            )
+            self.notify(f"Save failed ({type(exc).__name__}): {path}", severity="error")
 
     def action_refresh(self) -> None:
-        """"r" binding: refresh the ACTIVE tab, when it has a live-reload
+        """ "r" binding: refresh the ACTIVE tab, when it has a live-reload
         entry point.
 
         Only the Next Send tab does (``_load_snapshot``, ported from the
