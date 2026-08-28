@@ -10481,6 +10481,53 @@ async def test_field_search_enter_focuses_the_field():
         ), f"focused={focused!r}"
 
 
+def test_search_finds_reduce_motion_with_scope_text():
+    """TASK-23109: 'reduce motion' (the critique's unfindable setting) must
+    surface Appearance, and the echo line must carry category and group."""
+    app = _build_test_app()
+    screen = SettingsScreen(app)
+
+    matches = screen._filtered_category_summaries("reduce motion")
+
+    assert matches and matches[0].category is SettingsCategoryId.APPEARANCE
+    status = screen._category_search_status_text("reduce motion")
+    assert "Appearance › Reduce motion (Interface)" in status
+
+
+def test_search_ambiguous_theme_disambiguates_with_scope():
+    """TASK-23109: 'theme' hits the Theme category and Appearance's Theme
+    setting; the results line names both with their scopes instead of a
+    bare-title coin flip."""
+    app = _build_test_app()
+    screen = SettingsScreen(app)
+
+    status = screen._category_search_status_text("theme")
+
+    assert "Enter opens Theme (Interface)" in status
+    assert "Next: " in status, status
+    matches = screen._filtered_category_summaries("theme")
+    assert any(s.category is SettingsCategoryId.APPEARANCE for s in matches)
+
+
+@pytest.mark.asyncio
+async def test_search_enter_focuses_reduce_motion():
+    """TASK-23109 journey: Enter on 'reduce motion' opens Appearance with
+    the Reduce motion control focused."""
+    app = _build_test_app()
+    host = DestinationHarness(app, "settings")
+    async with host.run_test(size=(190, 55)) as pilot:
+        await _settle_settings_mount_storm(pilot)
+        screen = _active_destination_screen(host)
+        screen._submit_category_search("reduce motion")
+        for _ in range(8):
+            await pilot.pause()
+        assert screen.active_category == SettingsCategoryId.APPEARANCE.value
+        focused = host.focused
+        assert focused is not None and focused.id == (
+            "settings-appearance-reduce-motion"
+        ), f"focused={focused!r}"
+
+
 @pytest.mark.asyncio
 async def test_state_banner_is_pinned_outside_detail_scroll():
     """The State banner is pinned outside the detail scroll body.

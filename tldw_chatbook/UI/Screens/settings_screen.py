@@ -190,6 +190,12 @@ from .settings_config_adapter import (
     failure_status_text,
     redact_secret_text,
 )
+from .settings_search_index import (
+    FIELD_SEARCH_INDEX,
+    LIBRARY_READER_DESTINATIONS,
+    RAG_FIELD_GROUP_BY_ID as _RAG_FIELD_GROUP_BY_ID,
+    build_field_search_index as _build_field_search_index,
+)
 from .settings_context_memory import (
     CONTEXT_MEMORY_CONFIG_KEYS,
     SUMMARY_PROMPT_ID,
@@ -524,13 +530,6 @@ MAX_CATEGORY_SEARCH_QUERY_CHARS = 80
 # compact layout (fixed-width category sidebar, inspector pane hidden),
 # following the personas-workbench-compact precedent (task-1342).
 SETTINGS_COMPACT_WORKBENCH_MAX_WIDTH = 100
-LIBRARY_READER_DESTINATIONS = (
-    ("media", "Media"),
-    ("conversations", "Conversations"),
-    ("notes", "Notes"),
-    ("prompts", "Prompts"),
-    ("skills", "Skills"),
-)
 PROVIDER_ENDPOINT_KEYS = ("api_base_url", "api_base", "base_url", "api_url", "endpoint")
 PROVIDER_MODEL_PROFILE_FIELD_KEYS = {
     "model_profile_temperature": "temperature",
@@ -1329,218 +1328,9 @@ DOMAIN_CONTRACT_BY_CATEGORY = _build_domain_contract_by_category(
 DOMAIN_SETTINGS_CATEGORY_IDS = frozenset(DOMAIN_CONTRACT_BY_CATEGORY)
 _WORKSPACE_RECORD_UNSET = object()
 
-# Task 3 (541 v2 UX AC3): RAG widget id -> guidance-group key. Mirrors the
-# ids `_library_rag_field_selector` and the LIBRARY_RAG compose branch mint
-# (search around "settings-library-rag-" in this file). Used by
-# `_rag_field_guidance_rows()` so the Scope Inspector follows the focused
-# field; falls back to `_active_rag_scope_group` (the last-expanded
-# Collapsible) when the focused widget isn't one of these.
-_RAG_FIELD_GROUP_BY_ID: dict[str, str] = {
-    "settings-library-rag-search-mode": "search",
-    "settings-library-rag-default-top-k": "search",
-    "settings-library-rag-fts-top-k": "search",
-    "settings-library-rag-vector-top-k": "search",
-    "settings-library-rag-hybrid-alpha": "search",
-    "settings-library-rag-score-threshold": "search",
-    "settings-library-rag-include-citations": "search",
-    "settings-library-rag-direct-library-tools": "search",
-    "settings-library-rag-citation-style": "search",
-    "settings-library-rag-snippet-max-chars": "search",
-    "settings-library-rag-max-context-size": "search",
-    "settings-library-rag-embedding-model": "embedding",
-    "settings-library-rag-embedding-device": "embedding",
-    "settings-library-rag-embedding-batch-size": "embedding",
-    "settings-library-rag-embedding-max-length": "embedding",
-    "settings-library-rag-chunk-size": "chunking",
-    "settings-library-rag-chunk-overlap": "chunking",
-    "settings-library-rag-chunking-method": "chunking",
-    "settings-library-rag-distance-metric": "vector_store",
-    "settings-library-rag-enable-reranking": "reranking",
-    "settings-library-rag-reranker-provider": "reranking",
-    "settings-library-rag-reranker-model": "reranking",
-    "settings-library-rag-reranker-top-k": "reranking",
-    "settings-library-rag-profile-select": "profile",
-    "settings-library-rag-profile-set-active": "profile",
-    "settings-library-rag-profile-clone": "profile",
-    "settings-library-rag-profile-rename": "profile",
-    "settings-library-rag-profile-delete": "profile",
-    "settings-library-rag-index-backfill": "index",
-}
-
-
-def _rag_field_search_label(field_id: str) -> str:
-    """Human label for a RAG field id (task-1715 field-level search).
-
-    Args:
-        field_id: A ``settings-library-rag-*`` widget id.
-
-    Returns:
-        The id suffix as a spaced title, e.g. "hybrid alpha".
-    """
-    return field_id.removeprefix("settings-library-rag-").replace("-", " ")
-
-
-#: task-1715: field-level search index -- "/" previously matched only
-#: category names/descriptions/owned keys, so "threshold" found nothing
-#: on a 23-category screen (critique r4 P1). Labels mirror the visible
-#: row labels; Enter focuses the matched field.
-FIELD_SEARCH_INDEX: dict["SettingsCategoryId", tuple[tuple[str, str], ...]] = {}
-
-
-def _build_field_search_index() -> None:
-    from .settings_storage_defaults import STORAGE_FIELD_LABELS as _labels
-
-    FIELD_SEARCH_INDEX.update(
-        {
-            SettingsCategoryId.CONSOLE_BEHAVIOR: (
-                (
-                    "settings-console-show-model-thinking",
-                    "Show model thinking",
-                ),
-                (
-                    "settings-console-rail-layout-scope",
-                    "Rail layout scope",
-                ),
-                (
-                    "settings-console-rail-layout-scope",
-                    "Global per workspace layout scope",
-                ),
-                (
-                    "settings-console-stack-collapsed-rail-labels",
-                    "Stack collapsed rail labels",
-                ),
-                (
-                    "settings-console-stack-collapsed-rail-labels",
-                    "Rail handle presentation",
-                ),
-                (
-                    "settings-console-stack-collapsed-rail-labels",
-                    "Stacked vertical Context Inspector",
-                ),
-                (
-                    "settings-console-status-row-position-toggle",
-                    "Status row placement",
-                ),
-                (
-                    "settings-console-status-row-position-toggle",
-                    "Status chips above below composer",
-                ),
-                ("settings-console-paste-collapse-threshold", "Threshold (chars)"),
-                ("settings-console-max-parallel-runs", "Max parallel agent runs"),
-                ("settings-console-tool-result-display-chars", "Display cap (chars)"),
-                ("settings-console-sidechat-model", "Side chat model"),
-                (
-                    "settings-console-sidechat-prompt-template",
-                    "Side chat prompt template",
-                ),
-                (
-                    "settings-console-sidechat-prompt-template",
-                    "More Details prompt",
-                ),
-                (
-                    "settings-console-context-budget-mode",
-                    "Conversation budget strategy",
-                ),
-                ("settings-console-context-budget-tokens", "Conversation max tokens"),
-                ("settings-console-context-compaction-mode", "When limit nears"),
-                (
-                    "settings-console-context-compaction-representation",
-                    "Compaction representation",
-                ),
-                (
-                    "settings-console-context-trigger-percent",
-                    "Compact at percent",
-                ),
-                (
-                    "settings-console-context-target-percent",
-                    "Reduce conversation to percent",
-                ),
-                (
-                    "settings-console-context-summary-max-tokens",
-                    "Summary response max tokens",
-                ),
-                (
-                    "settings-console-context-failure-behavior",
-                    "If compaction fails",
-                ),
-                (
-                    "settings-console-context-carry-forward-mode",
-                    "Keep after compaction",
-                ),
-            ),
-            SettingsCategoryId.APPEARANCE: (
-                ("settings-appearance-theme", "Theme"),
-                ("settings-appearance-palette-theme-limit", "Palette limit (themes)"),
-                ("settings-appearance-font-size", "Web font size (px)"),
-                ("settings-appearance-density", "Density"),
-                ("settings-appearance-transcript-style", "Console transcript"),
-                ("settings-appearance-animations-enabled", "Animations"),
-                ("settings-appearance-smooth-scrolling", "Smooth scrolling"),
-                (
-                    "settings-appearance-library-media-library-open",
-                    "Shared Library rail",
-                ),
-                (
-                    "settings-appearance-library-media-custom-widths",
-                    "Shared Library rail width mode",
-                ),
-                (
-                    "settings-appearance-library-media-library-width",
-                    "Preferred Library rail width",
-                ),
-                *(
-                    (
-                        f"settings-appearance-library-{destination}-items-{suffix}",
-                        f"{label} Items {description}",
-                    )
-                    for destination, label in LIBRARY_READER_DESTINATIONS
-                    for suffix, description in (
-                        ("open", "pane"),
-                        ("width", "width"),
-                    )
-                ),
-            ),
-            SettingsCategoryId.PROVIDERS_MODELS: (
-                ("settings-provider-value", "Provider"),
-                ("settings-provider-api-mode", "API mode"),
-                (
-                    "settings-provider-api-mode",
-                    "api_settings.<provider>.api_mode",
-                ),
-                ("settings-model-value", "Model"),
-                ("settings-provider-endpoint-value", "Endpoint"),
-                ("settings-provider-api-key", "API key"),
-                ("settings-provider-credential-env-var", "Credential env var"),
-                ("settings-model-context-window", "Model context window tokens"),
-            ),
-            SettingsCategoryId.SPEECH_TTS: (
-                ("settings-speech-default-provider", "Default TTS Provider"),
-                ("settings-speech-model-value", "TTS model"),
-                ("settings-speech-voice-value", "TTS voice"),
-                ("settings-speech-configure-provider", "audio.cpp audio_cpp"),
-                ("settings-speech-configure-provider", "OpenAI"),
-                ("settings-speech-configure-provider", "ElevenLabs"),
-                ("settings-speech-configure-provider", "Kokoro"),
-                ("settings-speech-configure-provider", "Chatterbox"),
-                ("settings-speech-configure-provider", "Higgs"),
-                ("settings-speech-configure-provider", "AllTalk"),
-            ),
-            SettingsCategoryId.STORAGE: tuple(
-                (f"settings-storage-{name.replace('_', '-')}", label)
-                for name, label in _labels.items()
-            ),
-            SettingsCategoryId.PRIVACY_SECURITY: (
-                ("settings-raw-cli-permitted", "Allow raw CLI host access"),
-            ),
-            SettingsCategoryId.LIBRARY_RAG: tuple(
-                (field_id, _rag_field_search_label(field_id))
-                for field_id in _RAG_FIELD_GROUP_BY_ID
-            ),
-        }
-    )
-
-
-_build_field_search_index()
+# task-1715 / TASK-23109: the field-level search index (and the RAG
+# field->group map it derives labels from) lives in settings_search_index.py;
+# imported at the top of this module with compatibility aliases.
 
 
 # Task 4 (541 v2 UX AC1): the Library/RAG editor field keys whose disabled
@@ -6365,8 +6155,14 @@ class SettingsScreen(BaseAppScreen):
         # task-1715: field labels -- typing a setting's visible name
         # ("threshold") surfaces its category with an Enter-focuses-field
         # promise (see _top_field_match / _submit_category_search).
-        if self._top_field_match(query, summary.category) is not None:
-            return 3
+        # TASK-23109: two field tiers -- a label that STARTS with the query
+        # ("Threshold (chars)") outranks a mid-label hit ("VAD threshold"),
+        # so completing the index cannot re-route an established landing.
+        field = self._top_field_match(query, summary.category)
+        if field is not None:
+            if field[1].lower().startswith(query):
+                return 3
+            return 4
         # task-1564: last tier -- the category's owned config keys. The Scope
         # Inspector already publishes them; indexing them lets "/" find the
         # category that OWNS a setting instead of forcing a 23-item scan.
@@ -6377,8 +6173,11 @@ class SettingsScreen(BaseAppScreen):
         except Exception:
             owned = ""
         if owned and query in owned:
-            return 4
+            return 5
         return None
+
+    #: Ranks produced by the field-label tiers of ``_category_search_rank``.
+    FIELD_MATCH_RANKS = frozenset({3, 4})
 
     @staticmethod
     def _top_field_match(
@@ -6396,7 +6195,13 @@ class SettingsScreen(BaseAppScreen):
         query = query_text.strip().lower()
         if not query:
             return None
-        for field_id, label in FIELD_SEARCH_INDEX.get(category, ()):
+        entries = FIELD_SEARCH_INDEX.get(category, ())
+        # TASK-23109: a label that starts with the query wins over a
+        # mid-label hit, mirroring the rank tiers in _category_search_rank.
+        for field_id, label in entries:
+            if label.lower().startswith(query):
+                return (field_id, label)
+        for field_id, label in entries:
             if query in label.lower():
                 return (field_id, label)
         return None
@@ -6425,6 +6230,50 @@ class SettingsScreen(BaseAppScreen):
             for summary in self._filtered_category_summaries(query_text)
         ]
 
+    def _category_group_title(self, category: SettingsCategoryId) -> str:
+        """The rail group a category lives in ("Core", "Interface", ...)."""
+        for group_title, category_ids in self._category_groups():
+            if category in category_ids:
+                return group_title
+        return ""
+
+    def _search_match_scope_text(
+        self,
+        query: str,
+        summary: SettingsCategorySummary,
+        *,
+        field_landing: bool,
+    ) -> str:
+        """One search match with its scope: 'Category [› Field] (Group)'.
+
+        TASK-23109: ambiguous matches ("theme" hits both the Theme category
+        and Appearance's Theme setting) disambiguate with the category and
+        rail-group scope instead of a bare title coin flip.
+
+        Args:
+            query: The active filter text.
+            summary: The matched category.
+            field_landing: Whether Enter would land ON the matched field.
+                For the top match this is True only when the match CAME from
+                the field tier (typing a category's own title must open the
+                category plainly, not steal focus into its first field);
+                runner-up lines always name a matching field as information.
+        """
+        target = summary.title
+        # task-1715: when the hit is (or contains) a matching field, promise
+        # the field-level landing in the echo line.
+        field = self._top_field_match(query, summary.category)
+        if field is not None and field_landing:
+            target = f"{target} › {field[1]}"
+        group = self._category_group_title(summary.category)
+        return f"{target} ({group})" if group else target
+
+    def _search_match_is_field_landing(
+        self, query: str, summary: SettingsCategorySummary
+    ) -> bool:
+        """Whether Enter on this top match lands focus on a matched field."""
+        return self._category_search_rank(summary, query) in self.FIELD_MATCH_RANKS
+
     def _category_search_status_text(self, query_text: str | None = None) -> str:
         query = self._category_search_text(query_text)
         if not query:
@@ -6432,15 +6281,22 @@ class SettingsScreen(BaseAppScreen):
         matches = self._filtered_category_summaries(query)
         match_label = "match" if len(matches) == 1 else "matches"
         if matches:
-            target = matches[0].title
-            # task-1715: when the top hit is (or contains) a matching
-            # field, promise the field-level landing in the echo line.
-            field = self._top_field_match(query, matches[0].category)
-            if field is not None:
-                target = f"{target} › {field[1]}"
-            return (
+            target = self._search_match_scope_text(
+                query,
+                matches[0],
+                field_landing=self._search_match_is_field_landing(query, matches[0]),
+            )
+            status = (
                 f"Filter: {query} | {len(matches)} {match_label} | Enter opens {target}"
             )
+            if len(matches) > 1:
+                status += (
+                    " | Next: "
+                    + self._search_match_scope_text(
+                        query, matches[1], field_landing=True
+                    )
+                )
+            return status
         return f"Filter: {query} | 0 matches | Esc clears"
 
     @staticmethod
@@ -6543,9 +6399,17 @@ class SettingsScreen(BaseAppScreen):
             if speech_target is not None:
                 self._after_category_panes(self._apply_speech_tts_navigation_context)
             # task-1715: if the query named a field, land ON the field --
-            # focusing it also fires its inspector guidance.
+            # focusing it also fires its inspector guidance. TASK-23109:
+            # only when the match CAME from the field tier -- typing a
+            # category's own title opens the category plainly instead of
+            # stealing focus into its first coincidentally-matching field.
             opened = SettingsCategoryId(category_values[0])
-            field = self._top_field_match(query_text, opened)
+            opened_summary = self._category_summary_by_id(opened)
+            field = (
+                self._top_field_match(query_text, opened)
+                if self._search_match_is_field_landing(query_text, opened_summary)
+                else None
+            )
             if field is not None:
                 field_id = field[0]
 
