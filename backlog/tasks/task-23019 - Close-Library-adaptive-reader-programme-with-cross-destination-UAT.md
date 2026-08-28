@@ -56,11 +56,11 @@ Reason: verifies ADR-086 without changing its storage, service-authority, securi
 
 <!-- SECTION:NOTES:BEGIN -->
 Closed the cross-reader verification matrix against subject
-`60241aa67404d1e5b504ebaeface184c13337d1b`, tree
-`a78ea7a9395954698e99a0953ada5aa801d6ebf1`. The retained TASK-23019 bundle records 60
+`02bb98c201a252966fd566f4b8395761c1ee780a`, tree
+`d1f9c8c9501ac35d20b05bd6f91404f0c6d9b2f9`. The retained TASK-23019 bundle records 60
 automated and 32 live PASS results, 92 fact files, and 16 captures across all five readers and
 the 160x50 / 120x35 / 100x30 / 80x24 live matrix. `hashes.json` covers 114 files with SHA-256;
-`manifest.json` hashes to `844b3578258d5199dd344faa361c51d04f21c21c14ae3e028e25ffcf5a79c0bc`
+`manifest.json` hashes to `2c783081b667885b28e656501570ef298e1d8c57f19795576bfd8cb705de8a42`
 and `summary.json` to `b9fdf4e2f9ed1a4a8b79aaf4e3412f16811a225231f16ba00eaeb34c402c7866`.
 
 The task-local runner, child containment boundary, live scenarios, and closeout tests provide the
@@ -71,7 +71,7 @@ Qodo review repairs retain dirty create-prompt drafts when navigation is vetoed,
 boundary and parser contract, and explicitly prove that F6 skips a collapsed Library rail. The
 post-rebase production sweep also exposed a pristine-dev Chat/Library/Skills import cycle; the
 localized lazy title-helper proxy preserves the public monkeypatch seam while removing the eager
-package cycle. The 490-test closeout module passed at code parent `0cdf368f1e`; the frozen evidence
+package cycle. The 490-test closeout module passed at code parent `7a25394873`; the frozen evidence
 subject differs only by removal of the superseded retained bundle. The exact 60-result automated
 matrix and all 32 live results passed on the frozen subject, and the exact verifier passed twice
 without creating bytecode or changing the evidence inventory. No product schema, reader capability,
