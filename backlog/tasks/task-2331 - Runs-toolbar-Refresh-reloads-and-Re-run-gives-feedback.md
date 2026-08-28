@@ -1,11 +1,11 @@
 ---
 id: TASK-2331
 title: Runs toolbar Refresh reloads and Re-run gives feedback
-status: In Progress
+status: Done
 assignee:
   - '@codex'
 created_date: '2026-08-04'
-updated_date: '2026-08-27 21:49'
+updated_date: '2026-08-28 02:35'
 labels:
   - watchlists
   - bug
@@ -13,6 +13,7 @@ dependencies: []
 references:
   - >-
     Docs/superpowers/specs/2026-08-27-watchlists-runs-refresh-rerun-feedback-design.md
+  - Docs/superpowers/plans/2026-08-27-watchlists-runs-refresh-rerun-feedback.md
   - backlog/decisions/042-watchlists-reader-first-ia.md
 priority: medium
 ---
@@ -30,11 +31,11 @@ the batch-2 branch; now more visible since run rows carry real accounting.
 
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
-- [ ] #1 Refresh reloads authoritative run rows and the selected run's fresh detail while preserving that selection by identity when it still exists.
-- [ ] #2 Refresh clears an authoritatively deleted selection, retains the complete mounted snapshot on transient failure, and never publishes results after a backend switch.
-- [ ] #3 Re-run source immediately exposes a disabled `Re-running...` state and reports honest local-complete, server-started, skipped, and failure outcomes consistent with TASK-2309.
-- [ ] #4 Local Check now and Re-run source share one canonical source guard; server Re-run uses and deduplicates by its required job identity; different targets remain independent.
-- [ ] #5 Discriminating affected Watchlists tests, modified-file Ruff, and `git diff --check` pass.
+- [x] #1 Refresh reloads authoritative run rows and the selected run's fresh detail while preserving that selection by identity when it still exists.
+- [x] #2 Refresh clears an authoritatively deleted selection, retains the complete mounted snapshot on transient failure, and never publishes results after a backend switch.
+- [x] #3 Re-run source immediately exposes a disabled `Re-running...` state and reports honest local-complete, server-started, skipped, and failure outcomes consistent with TASK-2309.
+- [x] #4 Local Check now and Re-run source share one canonical source guard; server Re-run uses and deduplicates by its required job identity; different targets remain independent.
+- [x] #5 Discriminating affected Watchlists tests, modified-file Ruff, and `git diff --check` pass.
 <!-- AC:END -->
 
 ## Implementation Plan
@@ -52,3 +53,13 @@ ADR path: `backlog/decisions/042-watchlists-reader-first-ia.md`
 
 Reason: the existing Watchlists reader-first screen and pane boundaries already govern this repair; no persistence, service ownership, backend API, dependency, or navigation architecture changes.
 <!-- SECTION:PLAN:END -->
+
+## Implementation Notes
+
+<!-- SECTION:NOTES:BEGIN -->
+Implemented Runs Refresh and Re-run feedback across `RunsPane`, the Watchlists collections screen, and backend controller seams. Refresh uses staged, generation/backend-guarded publication with identity-pinned selection and transient-failure snapshot retention; Re-run carries backend-specific source/job identity, shares the canonical local operation guard, preserves independent server targets, and keeps busy/toast outcomes honest.
+
+Verification evidence: `pytest -q Tests/Watchlists/test_watchlists_runs_pane.py` — 37 passed, 1 warning, exit 0; `pytest -q Tests/Watchlists/test_watchlists_backend_controller.py Tests/Watchlists/test_watchlist_scope_service.py` — 48 passed, 1 warning, exit 0; `pytest -q Tests/UI/test_watchlists_run_detail.py` — 48 passed, 2 warnings, exit 0; `pytest -q Tests/UI/test_watchlists_check_now_progress.py` — 10 passed, 2 warnings, exit 0; `pytest -q Tests/UI/test_watchlists_check_now_skipped.py Tests/UI/test_watchlists_check_now_failure.py` — 24 passed, 2 warnings, exit 0; exact Task-4 rerun/check nodeids in `test_watchlists_destination_shell.py` — 13 passed, 2 warnings, exit 0. Ruff check on all eight modified Python files passed (exit 0). `git diff --check origin/dev...HEAD` passed after removing two trailing spaces from the new plan (exit 0).
+
+Formatting concern: Ruff `format --check` exits 1 and reports all eight modified Python files would be reformatted; the corresponding `origin/dev` versions report the same result, establishing a pre-existing baseline. No unrelated bulk formatting was applied. ADR required: no; `backlog/decisions/042-watchlists-reader-first-ia.md` governs the existing screen/pane boundaries, and the linked design spec and implementation plan document the repair.
+<!-- SECTION:NOTES:END -->

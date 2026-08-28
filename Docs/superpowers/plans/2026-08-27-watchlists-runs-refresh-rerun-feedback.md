@@ -8,8 +8,8 @@
 
 **Tech Stack:** Python 3.11+, Textual 8.x messages/reactives/workers, existing Watchlists controller/scope services, pytest/pytest-asyncio, Ruff.
 
-**ADR required:** no  
-**ADR path:** `backlog/decisions/042-watchlists-reader-first-ia.md`  
+**ADR required:** no
+**ADR path:** `backlog/decisions/042-watchlists-reader-first-ia.md`
 **Reason:** ADR-042 already owns the long-lived Watchlists screen/pane boundaries. This repair changes no persistence, service ownership, backend API, dependency, or navigation architecture.
 
 ---
