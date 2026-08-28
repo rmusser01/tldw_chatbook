@@ -2,7 +2,7 @@
 
 **Date:** 2026-08-28
 
-**Status:** Design approved; independent written-spec review approved
+**Status:** Amended after final adversarial review; awaiting owner re-approval
 
 **Originating task:** [TASK-23026](../../../backlog/tasks/task-23026%20-%20Exchange-capture-stores-the-whole-conversation-on-every-send-forever.md), completed by the now-superseded bounded-retention implementation
 
@@ -81,8 +81,9 @@ authority.
 - Persist provider-only material exactly once per sanitized semantic identity.
 - Make cumulative normalized trace growth linear for an append-only conversation.
 - Normalize and logically reclaim existing oversized captures without requiring a manual purge.
-- Keep capture best-effort: trace failure must not roll back a successful provider result or saved
-  conversation message.
+- Keep post-dispatch settlement best-effort: trace failure must not roll back a successful provider
+  result or saved conversation message, while reservation and destructive-message preservation keep
+  their explicit fail-closed contracts.
 - Remove recognized credentials from every durable trace owner and offer optional PII masking with
   built-in and user-authored rules.
 - Keep Safe and Full labels as honest viewer/export disclosure profiles rather than competing
@@ -146,15 +147,18 @@ byte-for-byte or complete semantic reconstruction for that call.
    its new suffix.
 7. **Sanitization fails closed.** A component that cannot be safely transformed is omitted with a
    content-free marker; raw fallback persistence is forbidden.
-8. **Conversation success outranks trace success.** Trace settlement is independently idempotent
-   and cannot roll back a provider result or assistant message.
-9. **Deletion preserves reachable history transactionally.** Required materialization succeeds in
-   the same transaction that removes a live source, or deletion aborts.
-10. **Every destructive sweep rechecks ownership.** Garbage collection uses an ownership epoch and
-    aborts when its captured root set has changed.
-11. **Capture On reserves before dispatch.** Every dispatched Capture On call already has a durable,
-    content-free reservation. A crash or later capture failure may leave an incomplete record, but
-    never a completely invisible dispatched call.
+8. **Conversation success outranks post-dispatch trace settlement.** Once dispatch starts, trace
+   sealing is independently idempotent and cannot roll back a provider result or a successfully
+   saved assistant message. Pre-dispatch reservation remains mandatory.
+9. **Destructive semantic mutation preserves reachable history transactionally.** Required
+   materialization, projection binding, semantic revision transition, canonical mutation, and
+   surface replacement either commit together or all abort.
+10. **Every destructive sweep rechecks the complete reachability graph.** A global trace-graph
+    epoch advances on every root or edge mutation; sweep aborts if that epoch changes.
+11. **Capture On reserves and marks dispatch before provider entry.** Every dispatched Capture On
+    call has a durable content-free reservation and a durable `dispatch_started` transition. Crash
+    recovery distinguishes calls known not to have dispatched from calls whose provider receipt is
+    unknowable.
 
 ## Conceptual storage model
 
@@ -172,19 +176,39 @@ Each semantic revision records:
 - source conversation and message identities;
 - normalized structural role/content kind without a persisted content digest;
 - creation reason and time;
-- whether content currently resolves through the live message row or a materialized artifact; and
+- a live canonical-source locator while that source remains valid; and
 - the source revision it replaces, when any.
 
 Creating a trace reference to the current message creates metadata only. Before an edit or hard
-deletion overwrites/removes the referenced content, the old sanitized trace projection is
-materialized once per unique disclosure projection, then the live locator changes atomically.
-Repeated calls referencing the same revision and policy reuse it.
+deletion overwrites/removes referenced content, every required frozen disclosure projection is
+materialized once and bound through a separate immutable `(revision, policy) -> artifact-or-omission`
+relation. The revision itself does not have one ambiguous materialized locator. Repeated calls under
+the same frozen policy reuse the same binding; different policies may resolve to different artifacts
+or omissions. The canonical locator is retired only in the same transaction that proves all
+reachable policy bindings are durable.
 
 Ordinary conversation text is never assigned a persisted raw, salted, or keyed content fingerprint
 for trace identity. Revision equality is its opaque revision identity maintained transactionally by
 the message write path. Capture-time comparison with provider values may use an ephemeral in-memory
 digest, but that value is discarded before persistence. This prevents a deleted or masked message
 from leaving a durable guess-verification oracle in trace metadata.
+
+#### Model-visible envelope and mandatory mutation choke point
+
+The semantic revision covers the complete provider-visible message envelope: role, optional name,
+text/content, ordered multimodal blocks, tool-call identifier and tool-call structures, replayed
+reasoning/thinking fields, attachment identities and selected variants, and every provider-neutral
+sidecar field that can change final semantic kwargs. Inclusion, ordering, or context selection is a
+surface-head change; changing one of those message-owned values is a semantic revision.
+
+All writes capable of changing that envelope—including ordinary edits, generation settlement or
+replacement, imports, sync, attachment/variant rewrites, regeneration, and hard deletion—must pass
+through one `SemanticRevisionCoordinator` database boundary. Implementation first inventories every
+current mutation route. A transaction-scoped mutation grant plus database constraints or triggers
+reject direct mutation/deletion of a referenced semantic source unless the same transaction creates
+the required revision transition, projection bindings, and surface replacement. Negative tests must
+prove that direct SQL and every inventoried bypass fail closed. Soft deletion that retains the row
+changes visibility/ownership, not its semantic bytes; later hard deletion still uses this boundary.
 
 ### Trace lineage and segments
 
@@ -210,7 +234,8 @@ The minimum logical vocabulary is:
 
 - turn and call boundaries;
 - model-surface append;
-- model-surface replacement citing all shadowed source events;
+- model-surface replacement carrying one predecessor surface head, one bounded contiguous range
+  reference, and the replacement node;
 - tool call and model-facing tool result;
 - request-header selection;
 - provider route/overlay selection where it affects captured semantics;
@@ -219,7 +244,10 @@ The minimum logical vocabulary is:
 - trace gap or unavailable component.
 
 A surface event stores a small structural shell and references content slots. It does not embed an
-ordinary conversation body. Folding append and replacement events yields the ordered semantic
+ordinary conversation body. The surface is a persistent sequence/operation chain addressed by an
+immutable head. A replacement never stores a variable-length list of shadowed events: predecessor
+head plus validated start/end nodes identifies the replaced range. Folding append and replacement
+events yields the ordered semantic
 surface visible to the model at any boundary. A human transcript remains a separate projection of
 canonical messages; compaction or replacement may shadow model context without hiding the
 original human transcript.
@@ -247,6 +275,8 @@ A provider call is owned by conversation, trace lineage, turn, run, and call seq
 eventual assistant message. It records:
 
 - immutable call identity and idempotency key;
+- lifecycle state (`reserved`, `not_dispatched`, `dispatch_started`, `dispatch_unknown`,
+  `response_started`, or a terminal outcome);
 - trace surface boundary consumed by the call;
 - effective request-header identity;
 - provider/model/route identity;
@@ -258,6 +288,12 @@ eventual assistant message. It records:
 
 Retries and tool-loop calls are distinct calls. A call may later be linked to the assistant message
 that presents its result, but that link is presentation metadata rather than ownership.
+
+The lifecycle is monotonic. `reserved` can become `not_dispatched` or `dispatch_started`;
+`dispatch_started` can become `response_started`, `dispatch_unknown`, or a terminal provider error;
+`response_started` can become `complete`, `stopped`, `error`, or `interrupted`. `abandoned` is a
+terminal user/run decision only when durable evidence proves no provider operation remains live.
+Recovery never moves a call backward or converts uncertainty into `not_dispatched`.
 
 ### Content-addressed artifacts
 
@@ -274,19 +310,23 @@ Artifact content identities are computed only over the sanitized body that the a
 stores. They are never computed over a withheld credential, masked PII value, canonical conversation
 text, or omission marker. Because anyone who can read the artifact already has its sanitized body,
 its internal deduplication identity reveals no additional omitted content.
+Reuse compares the stored sanitized bytes and structural identity rather than trusting a digest
+alone. A mismatch allocates a separate opaque artifact identity instead of aliasing two bodies.
 
 ### Redaction projections
 
 Redaction projections are keyed by opaque source revision/artifact identity plus an immutable policy
 identity containing credential-detector version, PII-enabled state, and an opaque PII ruleset
 revision identity.
-They store normalized Unicode codepoint ranges, category, stable rule IDs, detector versions, and
-outcomes. They never store matched values, value hashes, captured substrings, exception text, or
+They store a structured field path plus normalized Unicode codepoint ranges, category, stable rule
+IDs, detector versions, and outcomes. They never store matched values, value hashes, captured substrings, exception text, or
 user-authored regex source. Start/end ranges necessarily disclose the matched codepoint count and
 position; that limited leakage is accepted because exact ranges are required to mask a referenced
 canonical message without copying it. No separate value length or surrounding text is stored.
 
-The same revision referenced repeatedly under the same frozen policy reuses one projection.
+The same revision referenced repeatedly under the same frozen policy reuses one projection. Both
+Safe and Full trace reads resolve canonical references through the call's frozen mandatory and
+optional masks. The ordinary conversation UI remains an unredacted view of canonical messages.
 
 ## Provenance-aware request preparation
 
@@ -324,37 +364,60 @@ already-reserved call; it never falls back to persisting the raw kwargs wholesal
    revision/artifact references.
 6. **Select the header.** Reuse the prior header if value-identical; otherwise record a new complete
    logical header containing content references.
-7. **Bind the call.** Store the surface boundary and header identity on the reservation. If binding,
+7. **Bind and mark dispatch.** Store the surface boundary and header identity on the reservation.
+   Immediately before entering the provider adapter, durably transition the call to
+   `dispatch_started`. If binding,
    sanitization, or descriptor verification fails after reservation, retain the reservation as
-   incomplete with content-free status when writable; dispatch may proceed because the durable row
-   already proves that the call existed.
+   incomplete with content-free status when writable; a manually admitted call may proceed because
+   the durable row already proves that it existed.
 8. **Observe the response.** Accumulate the bounded semantic response required by the current
    Inspector. Raw token chunks remain out of scope.
 9. **Seal independently.** Commit response reference/artifact, outcome, usage, omissions, and policy
    provenance in an idempotent trace transaction independent of conversation-message settlement.
 10. **Settle failures honestly.** A failed post-dispatch trace write enters a bounded best-effort
     settlement queue. Process death leaves the durable reservation open or incomplete; cold recovery
-    closes it as interrupted/gap rather than inventing missing content.
+    maps `reserved` to `not_dispatched`, maps `dispatch_started` without provider evidence to
+    `dispatch_unknown`, and maps `response_started` to `interrupted`. It never claims whether an
+    unknown dispatch reached the remote provider.
 
-If the sanitized assembled response exactly equals the saved assistant semantic revision, the call
-references that revision. If display filtering, reasoning separation, tool payloads, synthetic
+Reservation retries use the immutable call idempotency key: after an ambiguous local commit result,
+the gateway queries that identity before creating another row. For the initial manually initiated
+call, reservation/binding failure offers Retry or explicit Send without capture. During a retry,
+tool loop, or other already-running interactive sequence, the run pauses before the next provider
+entry and requires Resume with capture or an explicit capture-off continuation. An autonomous or
+scheduled run fails safely instead of silently disabling capture. A capture-off bypass exists only
+in live run/UI state because Capture Off deliberately creates no durable trace row.
+
+Temporary conversations remain non-durable. They cannot enter a provider adapter with durable
+Capture On while still temporary. The UI offers **Save & Send**, which promotes the conversation and
+persists its in-memory lineage before reservation, or an explicit **Send without capture**. Existing
+temporary trace/fork state can remain coherent in memory but is not restart-durable until saved.
+
+After a provider response, conversation settlement first saves the canonical assistant message and
+its semantic revision. Trace sealing then re-reads that immutable revision and links it only if its
+sanitized envelope exactly equals the assembled provider-facing response. If trace sealing loses the
+race or cannot verify equality, it stores the sanitized response artifact rather than a questionable
+revision link. Failure to save the conversation message may still leave the provider response in the
+trace artifact; failure to seal trace never rolls back a saved message. If display filtering, reasoning separation, tool payloads, synthetic
 fallback copy, or another transformation makes it differ, the trace stores the provider-facing
 response as one sanitized artifact and labels the relationship.
 
 ## Message edits and replacements
 
-The edit transaction must:
+Every destructive semantic mutation transaction must:
 
 1. identify the current semantic revision;
-2. find every reachable trace projection that would lose its source content;
-3. materialize each required sanitized projection once;
+2. enumerate every reachable frozen policy binding that would lose its source content;
+3. materialize each required sanitized projection or explicit omission once;
 4. append a new semantic revision for the edited message;
-5. append a trace surface replacement citing the shadowed event; and
-6. commit the materialization, edit, and replacement atomically.
+5. append a bounded predecessor-head/range surface replacement; and
+6. commit projection bindings, revision transition, canonical mutation, and replacement atomically.
 
 Historical calls retain their earlier boundary and resolve the old revision. New calls fold the
 replacement. Regeneration and context compaction use the same append/replace semantics rather than
-editing trace events.
+editing trace events. This fail-closed mutation contract is intentionally different from
+post-dispatch response settlement: an edit, attachment rewrite, sync update, generation replacement,
+or hard delete that cannot preserve reachable trace history does not commit.
 
 ## Fork behavior
 
@@ -388,6 +451,14 @@ to retries and tool-loop calls. Forks inherit the source's future-capture config
 historical call retains its original policy provenance. Viewer profile is a local presentation
 preference and does not mutate capture policy or historical data.
 
+The existing capture-detail Safe/Full setting is retired for future writes. Historical
+`capture_detail` remains immutable provenance. Existing capture-enabled and per-conversation
+enable/disable choices migrate to Capture On/Off, but an old Full choice never silently enables Full
+disclosure: after upgrade, every profile starts in Safe viewer mode and receives a one-time
+explanation. Persisted old Full bodies remain available only after the user explicitly switches the
+viewer to Full. Obsolete next-send capture-detail overrides are discarded at restart rather than
+being reinterpreted; new next-send controls are Capture and PII only.
+
 Safe and Full use the same stored trace:
 
 - **Safe** shows ordinary transcript context plus structural trace facts while collapsing or
@@ -395,6 +466,11 @@ Safe and Full use the same stored trace:
   and other high-disclosure sections. Safe search, copy, and export operate only on this projection.
 - **Full** may reveal all persisted non-credential content that survived capture-time PII policy.
   Expanding a sensitive section and copying/exporting Full require explicit confirmation.
+
+Canonical message references are masked through each call's frozen credential/PII projections in
+both profiles. Safe/Full changes provider-only disclosure, not whether frozen capture-time masks are
+honored. The normal conversation transcript remains unchanged and may therefore contain PII that
+the trace masks.
 
 Existing users receive a one-time disclosure that Safe is a viewer/export profile, not a reduced
 at-rest trace. Status copy reports stored fidelity, credential filtering, PII state, and current
@@ -461,18 +537,25 @@ not imply forensic erasure.
 
 ## Failure, integrity, and concurrency
 
-- Call/open and call/seal operations are idempotent under immutable call identity.
+- Reservation, lifecycle transition, binding, and sealing operations are idempotent under immutable
+  call identity.
 - Every Capture On provider dispatch requires a committed content-free call reservation. Reservation
   failure blocks automatic dispatch until Retry or an explicit one-shot Capture Off confirmation.
-- A call may remain open after a crash; cold recovery closes it as interrupted without deleting
-  already durable events.
-- Provider success and assistant-message persistence are not transactional with trace settlement.
+- Cold recovery maps a committed `reserved` row with no dispatch transition to `not_dispatched`, a
+  `dispatch_started` row without provider evidence to `dispatch_unknown`, and a `response_started`
+  row without a terminal seal to `interrupted`; already durable events remain immutable.
+- Provider success and assistant-message persistence are not transactional with post-dispatch trace
+  settlement. Destructive semantic message mutations are transactionally coupled to required trace
+  preservation and fail closed.
 - A trace component resolution mismatch fails closed for that component and marks the call
   incomplete; it never captures raw kwargs as a fallback.
 - Fork boundaries and edit replacements validate immutable revision and lineage heads before commit.
 - Hard deletion stages sanitized materialization and removal in one transaction.
-- Garbage collection captures the ownership epoch with its root snapshot, rechecks that epoch in
-  the sweep transaction, and aborts on change.
+- Every mutation of a reachability root or edge—including events, surface heads, owner/fork links,
+  projection bindings, revision locators, headers, artifacts, and migration state—advances one
+  global trace-graph epoch transactionally. Garbage collection records it with the mark snapshot,
+  obtains the maintenance exclusion for sweep, rechecks the epoch in the sweep transaction, and
+  aborts on change.
 - Multiple independent app processes writing one profile remain unsupported unless an existing
   database-wide owner already provides the required exclusion.
 
@@ -488,20 +571,25 @@ For each legacy exchange:
 1. Decode through the bounded production decoder.
 2. Apply the current mandatory credential filter. Optional PII is not retroactively applied.
 3. Split request history into independently classifiable semantic components.
-4. Match ordinary rows to unique historical message revisions using role, order, structural shape,
-   and an ephemeral sanitized semantic fingerprint that is discarded before commit.
-5. Store exact matches as revision references.
+4. Match ordinary rows to unique historical message revisions using role, within-call order,
+   structural shape, and an ephemeral sanitized semantic fingerprint discarded before commit.
+5. Store exact matches as revision references, but do not infer a cross-call parent, fork, edit, or
+   replacement chronology the legacy blob never recorded.
 6. Store unmatched provider-only rows as independently content-addressed artifacts.
 7. Preserve ambiguous rows as individual sanitized legacy artifacts with an ambiguity marker; never
    drop them or retain the entire accumulated list merely because one row is ambiguous.
 8. Deduplicate system framing, tool schemas, provider overlays, and responses.
-9. Reconstruct append/replacement surface events and changed-only request headers across calls.
+9. Represent each legacy call as an isolated immutable `legacy_snapshot` surface whose ordered
+   components use persistent sequence nodes `(parent_node, component_ref)`. Equal prefixes therefore
+   deduplicate structurally without storing a per-call history array. Call owner, run tag, sequence,
+   and timestamp provide only their recorded partial order; live normalized lineage starts from an
+   explicit import/legacy boundary and never invents a global predecessor.
 10. Write and read back the normalized call.
 11. Reconstruct the expected sanitized legacy projection and compare it structurally.
 12. Delete the legacy blob only after equivalence succeeds in the same transaction.
 
 ADR-096's earlier bounded-excerpt migration may already have irreversibly removed rows. A valid
-aggregate omission marker is normalized as an explicit `legacy_omission`; the new system does not
+aggregate omission marker becomes an explicit component node `legacy_omission`; the new system does not
 pretend to recover its missing content. Existing Safe project-instruction omissions and corrupt or
 truncated blobs receive the same honest treatment.
 
@@ -518,8 +606,10 @@ Unexpected code or SQLite errors roll back the current batch and leave its check
 
 ## Garbage collection and physical compaction
 
-Deleting a conversation or migrated blob drops an ownership root; it does not synchronously walk
-the complete shared graph. A background mark/sweep later reclaims unreachable events, artifacts,
+Deleting a conversation or migrated blob drops an ownership root and advances the trace-graph epoch;
+it does not synchronously walk
+the complete shared graph. Every other edge mutation advances the same epoch. A background
+mark/sweep later reclaims unreachable events, artifacts,
 headers, revisions, and redaction projections. Soft-deleted conversations and migration-pending
 legacy rows remain roots.
 
@@ -536,6 +626,8 @@ maintenance pause only when:
 If admission fails, compaction remains visibly pending and retries at a later eligible idle window.
 Logical live bytes, freelist bytes, WAL bytes, and allocated database-file bytes are measured and
 reported separately. Neither logical purge nor VACUUM claims erasure from backups or prior exports.
+Graph mutation is excluded during the final sweep transaction; inability to obtain the exclusion is
+a normal retry condition, not permission to sweep against a stale mark.
 
 ## Performance and growth verification
 
@@ -562,19 +654,52 @@ For an append-only conversation with unchanged header and no provider-only body 
 The report must separately show logical reclamation after legacy normalization and physical file
 size after the eligible compaction step.
 
+The benchmark fixture is versioned in the repository with fixed per-turn input/output lengths,
+provider kwargs shape, randomness seed, and content checksum. The benchmark is a release gate, not
+an observational report. Using five fresh-database runs and the median (with the reference machine
+and SQLite settings recorded), it passes only when:
+
+- normalized live trace-owned bytes added by turns 101–200 are at most 1.25 times those added by
+  turns 1–100, excluding canonical conversation bytes and SQLite freelist/WAL allocation;
+- normalized trace-owned rows added by turns 101–200 are at most 1.25 times those added by turns
+  1–100;
+- normalized live trace-owned bytes at turn 200 are no more than 2.0 MiB for the pinned fixture;
+- pre-dispatch reservation/`dispatch_started` persistence has p95 latency at most 10 ms and no
+  reference-run sample exceeds 50 ms;
+- post-dispatch settlement runs off the UI thread and has p95 transaction latency at most 25 ms;
+- each legacy batch holds its write transaction for at most 100 ms, decodes at most 4 MiB and 100
+  rows, and yields before the next batch; the pinned 200-turn legacy fixture normalizes within 5 s;
+  and
+- every result includes the raw per-run measurements so a median cannot hide a pathological run.
+
+A second 200-turn compaction-heavy fixture replaces the oldest 75 percent of the active model
+surface every 20 turns. It must meet the same 1.25 second-half row/byte growth ratios, and schema
+inspection must prove no replacement row contains a variable-length shadowed-source list.
+
+Physical compaction of the pinned fixture must complete within 5 s on the recorded reference
+machine. Arbitrary user databases have no dishonest universal time bound: they must receive a
+preflight estimate and visible progress, the UI event loop must remain responsive, and provider
+dispatch stays paused only for the admitted maintenance interval.
+
 ## Rollout and implementation decomposition
 
 TASK-23026 is the originating finding but is already Done on `origin/dev` under ADR-096's
 superseded bounded-retention implementation. Its checked acceptance criteria and implementation
 notes remain historical evidence and must not be rewritten. Before implementation, the writing
 plan must create a new umbrella task for ADR-097 and dependency-ordered, atomic Backlog work
-packages suitable for single pull requests:
+packages suitable for single pull requests. Core ledger capture, mandatory filtering, and logical
+legacy normalization land and prove their gates before custom-regex execution and physical
+compaction are enabled:
 
 1. schema, semantic revisions, artifact identity, trace lineage, and dual-read foundation;
 2. provenance-aware request preparation and normalized new-call capture;
 3. edit, regeneration, fork, hard-delete, recovery, and ownership integration;
-4. credential/PII policy, Safe/Full viewer projection, search/copy/export, and settings UX; and
-5. legacy normalization, garbage collection, physical maintenance, benchmark, and rollout docs.
+4. mandatory credential policy, Safe/Full viewer projection, search/copy/export, settings migration,
+   and built-in PII masking;
+5. legacy snapshot normalization, garbage collection, linear-growth benchmark, and rollout docs;
+6. bounded custom-regex subprocess and policy-management UX after core ledger/privacy gates pass;
+   and
+7. physical compaction admission/progress after logical reclamation and GC are proven.
 
 Exact task IDs must be created before they are referenced from Backlog task files. TASK-23112 stays
 a separate later feature and is not a prerequisite for the forthcoming ADR-097 implementation
@@ -590,22 +715,27 @@ Implementation follows test-driven development. Targeted coverage must include:
 - Anthropic system separation, provider transformations, and llama.cpp literal ownership;
 - response equality/ref selection versus provider-only response artifacts;
 - repeated message edits, surface replacements, compaction, and copy-on-write materialization;
+- mutation-route census plus rejection of direct SQL and every edit/sync/import/attachment bypass;
 - durable-to-durable, durable-to-temporary, temporary-to-temporary, and later-saved fork prefixes;
+- temporary-chat Save & Send, explicit capture-off send, and restart-durability boundaries;
 - source soft deletion, successful hard deletion, and injected materialization failure rollback;
-- shared-owner purge disclosure and ownership-epoch garbage-collection races;
+- shared-owner purge disclosure and trace-graph-epoch garbage-collection races;
 - credential fields, URLs, nested values, recognized free-text formats, sanitizer failure, and
   absence from trace-owned tables/artifacts and every trace-derived log, exception, preview,
   clipboard, and export path; canonical conversation rows are explicitly outside this absence
   assertion;
-- durable pre-dispatch reservation, reservation failure Retry/Send-without-capture behavior,
-  post-reservation binding failure, seal failure, and crash recovery to an incomplete call;
+- durable pre-dispatch reservation and `dispatch_started` transition; ambiguous reservation retry;
+  manual Retry/Send-without-capture behavior; interactive loop pause/resume; autonomous fail-safe;
+  post-reservation binding failure; seal failure; and crash recovery to `not_dispatched`,
+  `dispatch_unknown`, or `interrupted` as evidence permits;
 - built-in and custom PII rules, Unicode spans, overlaps, `mixed` classification, invalid patterns,
   subprocess timeout/crash/malformed output, ruleset changes, and Safe/Full behavior;
 - dual reads, all legacy capture variants, ambiguous matches, old aggregate markers, corruption,
-  idempotent resume, equivalence failure, and batch rollback;
+  isolated persistent legacy snapshots without invented lineage, idempotent resume, equivalence
+  failure, and batch rollback;
 - idle-maintenance admission, WAL checkpoint failure, disk preflight failure, deferred retry, and
   physical size reporting; and
-- the real 200-turn growth benchmark described above.
+- the append-only and compaction-heavy 200-turn release gates described above.
 
 Per repository policy, implementation verification begins with tests touching the modified
 functionality. A full suite requires explicit user opt-in.
@@ -619,6 +749,9 @@ The Console user guide and Inspector help must explain:
 - Safe and Full are viewer/export disclosure profiles over the same stored trace;
 - credential filtering is mandatory but cannot guarantee arbitrary prose secrets;
 - PII redaction protects traces and does not rewrite the conversation;
+- existing Safe/Full capture-detail choices migrate to a Safe-default viewer without deleting old
+  Full bodies;
+- temporary chats require Save & Send for durable Capture On, or an explicit capture-off send;
 - edits and forks retain coherent historical traces through immutable revisions/shared prefixes;
 - owner-scoped purge may leave history retained by forks;
 - automatic legacy normalization may contain explicit irrecoverable omissions from older policies;

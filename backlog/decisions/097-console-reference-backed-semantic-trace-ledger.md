@@ -1,6 +1,6 @@
 # ADR-097: Use a reference-backed semantic trace ledger
 
-Status: Accepted
+Status: Proposed (amended after final adversarial review; awaiting owner re-approval)
 
 Date: 2026-08-28
 
@@ -41,7 +41,9 @@ project-instruction bodies never enter default durable capture.
 
 2. **Use copy-on-write historical revisions.** Before an edit or hard deletion would
    destroy referenced content, the required sanitized trace projection is materialized
-   once per unique disclosure policy in the same transaction. Failure aborts the edit
+   once per unique disclosure policy and bound through an immutable
+   `(revision, policy) -> artifact-or-omission` relation in the same transaction. A
+   revision does not have one ambiguous materialized locator. Failure aborts the edit
    or deletion.
 
    Semantic revision identity is an opaque transactional identity, not a persisted
@@ -70,7 +72,8 @@ project-instruction bodies never enter default durable capture.
    RAG/memory context, tool schemas, provider overlays, unmatched legacy rows, and
    responses not equal to a saved assistant revision enter a sanitized content-
    addressed artifact store. Binary bodies remain external or stubbed under existing
-   attachment rules.
+   attachment rules. Artifact reuse compares sanitized stored bytes and structure after
+   digest lookup; a mismatch receives a separate opaque identity rather than aliasing.
 
 7. **Define fidelity as semantic with disclosed omissions.** Reconstruction covers the
    final semantic kwargs handed to Chatbook's provider-call boundary, not provider-
@@ -91,15 +94,23 @@ project-instruction bodies never enter default durable capture.
    prefix copying. Source deletion cannot remove a prefix still owned by a fork.
 
 10. **Keep historical trace immutable and non-editable.** Message edits, regeneration,
-    and context compaction append model-surface replacements citing shadowed source
+    and context compaction append model-surface replacements using one predecessor
+    surface head plus a bounded contiguous range, never a variable list of shadowed
     events. The viewer may inspect, filter, search permitted projections, copy, export,
     or purge ownership; it never edits historical trace.
+
+    The semantic revision covers the complete provider-visible message envelope,
+    including ordered multimodal/tool/reasoning/attachment sidecars. Every mutation
+    route passes through one coordinator enforced by transaction-scoped database
+    guards; direct mutation of referenced semantic content fails closed.
 
 11. **Separate capture, PII, and viewer controls.** Capture On/Off and optional PII
     redaction resolve at global, conversation, and eligible next-send scope and freeze
     for a run. PII defaults Off. Safe/Full is a local viewer/export disclosure profile
     over the same stored trace, not a different at-rest history. Forks inherit future
-    settings while historical calls retain their frozen provenance.
+    settings while historical calls retain their frozen provenance. Both viewer modes
+    apply each call's frozen credential/PII masks to canonical references; the ordinary
+    conversation transcript remains unchanged.
 
 12. **Filter credentials mandatorily and fail closed.** Known credential fields,
     credential-bearing URL components, nested credential fields, and recognized secret
@@ -108,8 +119,9 @@ project-instruction bodies never enter default durable capture.
     creates a content-free unavailable marker; no raw fallback is stored.
 
 13. **Offer irreversible trace PII masking.** Built-in detectors and validated user-
-    authored regex rules produce immutable Unicode-span projections. Custom regex runs
-    in a bounded killable subprocess because CPython `re` has no portable hard timeout.
+    authored regex rules produce immutable structured-field-path plus Unicode-span
+    projections. Custom regex runs in a bounded killable subprocess because CPython
+    `re` has no portable hard timeout.
     Historical projections retain source identity, start/end codepoint ranges,
     detector/rule IDs, and an opaque ruleset revision identity, never matched values,
     value hashes, surrounding text, or regex source. Ranges necessarily reveal matched position and
@@ -121,32 +133,53 @@ project-instruction bodies never enter default durable capture.
     enables normalized writes and dual reads. After UI readiness, idle bounded batches
     split legacy blobs into revision references and deduplicated provider-only
     artifacts. A blob is deleted only after reading back the normalized call and
-    reproducing its sanitized legacy projection. Ambiguous rows remain individual
-    legacy artifacts. ADR-096 aggregate markers become explicit irreversible legacy
-    omissions.
+    reproducing its sanitized legacy projection. Legacy calls become isolated immutable
+    snapshot surfaces backed by persistent prefix sequence nodes; migration does not
+    invent cross-call edit/fork chronology the old rows never recorded. Ambiguous rows
+    remain individual legacy artifacts. ADR-096 aggregate markers become explicit
+    irreversible legacy omissions.
 
 15. **Reserve Capture On calls before provider dispatch.** A minimal content-free call
     reservation containing identity, lineage, and frozen capture policy commits before
-    each Capture On dispatch. Reservation failure blocks automatic dispatch and offers
-    Retry or an explicit one-shot Send without capture action. After reservation,
-    component capture and sealing remain best-effort and independently idempotent: they
-    cannot roll back a provider result or assistant message. Failed writes enter a
-    bounded settlement queue; process death leaves a durable open/incomplete call that
-    cold recovery closes honestly.
+    each Capture On dispatch, then durably becomes `dispatch_started` immediately before
+    provider-adapter entry. Reservation failure blocks automatic dispatch and offers
+    Retry or an explicit one-shot Send without capture action. Interactive tool/retry
+    loops pause for that choice; autonomous runs fail safely. Cold recovery maps an
+    untouched reservation to `not_dispatched`, an uncertain started call to
+    `dispatch_unknown`, and a response-bearing open call to `interrupted`.
+
+    Temporary conversations cannot make a durable Capture On call until Save & Send
+    promotes their in-memory lineage. After dispatch, component capture and sealing are
+    best-effort and independently idempotent: they cannot roll back a provider result or
+    saved assistant message. Destructive semantic edits/deletes are different: required
+    preservation and canonical mutation commit together or all abort.
 
 16. **Use shared-owner garbage collection and honest physical maintenance.** Deletion
     detaches one conversation root. Background mark/sweep reclaims unreachable objects
-    only after an ownership-epoch recheck. SQLite physical compaction runs automatically
+    only after a global trace-graph epoch recheck. Every root or reachability-edge
+    mutation advances that epoch, and sweep holds maintenance exclusion. SQLite
+    physical compaction runs automatically
     at a later eligible visible idle pause with connection closure, WAL checkpoint, disk
     preflight, and maintenance lease. Logical, freelist, WAL, and allocated bytes are
     reported separately; no action claims forensic erasure from backups or exports.
 
 17. **Prove linear growth with the real gateway.** A semi-incompressible 200-turn
     production-shaped benchmark records normalized rows and bytes, legacy bytes,
-    database/freelist/WAL size, and settlement costs. No normalized call may contain a
-    list or blob proportional to prior transcript length.
+    database/freelist/WAL size, and settlement costs. A second fixture repeatedly
+    replaces 75 percent of the surface. Second-half trace bytes and rows may be at most
+    1.25 times first-half growth; the pinned append-only fixture is capped at 2.0 MiB of
+    trace-owned live bytes at 200 turns. Reservation p95 is capped at 10 ms, settlement
+    p95 at 25 ms, and migration write batches at 100 ms. No normalized call or
+    replacement may contain a list or blob proportional to prior transcript length.
 
-18. **Keep token-chunk packing separate.** Raw token-level event capture and lossless
+18. **Migrate disclosure settings conservatively and stage expensive features.** Old
+   capture enablement maps to Capture On/Off, but old Safe/Full capture detail remains
+   historical provenance and every upgraded profile starts with the Safe viewer. Full
+   requires a new explicit viewer choice. Core ledger capture, mandatory filtering, and
+   logical normalization must prove their gates before custom-regex execution or physical
+   compaction is enabled.
+
+19. **Keep token-chunk packing separate.** Raw token-level event capture and lossless
     chunk-row encoding are deferred to [TASK-23112](../tasks/task-23112%20-%20Add-lossless-chunk-row-encoding-for-streamed-trace-events.md)
     and are not required by the forthcoming ADR-097 implementation umbrella.
 
@@ -165,8 +198,9 @@ project-instruction bodies never enter default durable capture.
 - Current messages remain unduplicated until an edit or deletion makes one historical
   copy necessary. Repeated calls and forks reuse that copy.
 - Capture On adds one small synchronous reservation write before each provider call.
-  Users may explicitly bypass a reservation failure for one send, which is recorded as
-  a deliberate Capture Off admission rather than an unexplained trace loss.
+  Users may explicitly bypass a reservation failure for one send; that choice is shown
+  in live run/UI state but, consistently with Capture Off, is not guaranteed a durable
+  trace record.
 - A trace with intentional masking or legacy omission is structurally reconstructable
   but not content-complete, and the UI must say so.
 - Source hard deletion may fail safely when required historical materialization cannot
@@ -179,7 +213,7 @@ project-instruction bodies never enter default durable capture.
   remain until automatic physical compaction is admitted.
 - TASK-23026 remains the completed historical record of ADR-096's implementation.
   Implementation requires a new umbrella task and multiple dependency-ordered Backlog
-  work packages. The approved spec defines their boundaries; exact IDs are created
+  work packages. The design spec defines their boundaries; exact IDs are created
   during implementation planning.
 
 ## Alternatives considered
