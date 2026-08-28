@@ -6578,6 +6578,18 @@ behavior or from identity across mode buttons alone. Inventory every legacy
 identity across at least one ordinary exit, one asynchronous task settlement,
 and one destructive/recovery settlement.
 
+**Recurred, TASK-22866 (2026-08-28).** A reactive local/server backend flag on
+Watchlists Sources used `recompose=True` so two local-only buttons could change
+labels and disabled state. The replacement `DataTable` lost the user's focus and
+cursor; worse, its synthetic initial row highlight republished the first stale local
+source immediately after the screen had cleared local selection for server mode.
+The create form's Watchlist destination had the same authority problem when patched
+only visually. The fix updates the mounted controls in place and strips local
+destination data at submit while retaining the local draft for restoration. For a
+mode/capability switch, assert object identity, focus, cursor, selected entity, draft
+values, disabled copy, and the submitted payload in both directions. Rendering the
+right labels is not enough when replacement widgets emit selection events.
+
 ## `exclusive=True` does not cancel work already handed to `to_thread` (TASK-19003, 2026-08-20)
 
 The first import handler scheduled an exclusive Textual worker. A repeated
