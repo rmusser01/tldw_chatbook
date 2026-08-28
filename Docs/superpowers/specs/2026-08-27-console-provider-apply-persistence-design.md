@@ -1,6 +1,6 @@
 # Console Provider Apply, Conversation Persistence, and Defaults Design
 
-**Status:** Design approved; independent spec review passed; awaiting final written-spec approval
+**Status:** Approved; implementation-plan review findings addressed
 **Date:** 2026-08-27
 **Task:** TASK-22515
 **ADR:** ADR-095

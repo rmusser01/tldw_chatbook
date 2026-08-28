@@ -1,10 +1,10 @@
 ---
 id: TASK-22515
 title: Make Console provider Apply update and persist conversation settings
-status: To Do
+status: In Progress
 assignee: []
 created_date: '2026-08-28 05:52'
-updated_date: '2026-08-28 07:35'
+updated_date: '2026-08-28 08:00'
 labels: []
 dependencies: []
 references:
@@ -42,3 +42,35 @@ Ensure the Console Provider/Model popover and full Console Settings apply provid
 - [ ] #17 Locked exact-field config mutation preserves sibling model profiles, unexposed fields, literal punctuated model IDs, and unrelated concurrent edits; a newer explicit default action supersedes stale retry intent.
 - [ ] #18 Targeted tests cover interaction and 60×24/72×24 layout, exact-origin execution, provider/model draft rebasing, quick-to-full transfer, persistence/resume, eligible new-chat paths, inheritance, endpoint safety, config concurrency, staged persistence/promotion, partial failures, retry/discard/dismiss, and restart behavior.
 <!-- AC:END -->
+
+## Implementation Plan
+
+Detailed executable plan:
+Docs/superpowers/plans/2026-08-28-console-provider-apply-and-defaults.md.
+
+1. Define one UI-neutral exact-origin submission, draft provenance, target rebase,
+   and default field-mask contract shared by quick and full Console settings.
+2. Add a strict versioned conversation-generation metadata codec, merge-safe
+   persistence service methods, and config-derived resume hydration.
+3. Make ConsoleChatStore own the exact-session live commit, per-component
+   revisioned failure state, Retry behavior, and first-persistence staging.
+4. Extend the atomic config writer with literal tuple paths and implement exact
+   model-profile/global-default mutation plus the two honest failure phases.
+5. Route all eligible blank-new-chat entry points through the published global
+   provider/model and exact model profile without changing source-derived chats.
+6. Rebuild the quick popover and full Console Settings actions on the shared
+   contract, including draft transfer, inherited streaming, endpoint opt-in,
+   validation, teardown safety, and narrow-terminal layout.
+7. Coordinate live Apply/default persistence in ChatScreen, expose session-local
+   and app-global recovery actions, and verify the complete targeted matrix.
+8. Complete backlog notes, acceptance-criteria evidence, static checks, and task
+   hygiene only after the implementation is verified.
+
+ADR required: yes
+
+ADR path:
+backlog/decisions/095-conversation-owned-console-generation-settings.md
+
+Reason: ADR-095 is the accepted owner/boundary decision for conversation
+generation metadata, context-policy persistence, exact-model defaults, global
+new-chat defaults, and runtime publication.
