@@ -20,6 +20,9 @@ is out — so it is exactly the operation that must report.
 
 from __future__ import annotations
 
+import ast
+from pathlib import Path
+
 import pytest
 from loguru import logger
 from rich.text import Text
@@ -30,6 +33,7 @@ from Tests.UI.full_app_destination_context import (
     FullAppDestinationContext as DestinationHarness,
 )
 from tldw_chatbook.UI.Watchlists_Modules.sources_pane import SourcesPane
+from tldw_chatbook.UI.Watchlists_Modules.watchlist_tree import TreeScope
 
 
 class Notified:
@@ -370,17 +374,12 @@ def _method_source(module_source: str, name: str) -> str:
 #:    per failed repaint is not what the exemption is buying. Its real fetch
 #:    handler IS covered, and stays covered -- which a method-level exemption
 #:    would have silently stopped doing.
-#:  * `_load_source_rows_for_tree` (:1535), which is SYNCHRONOUS: the tree
-#:    calls it during `compose()`. It swallows into `debug` with no toast, so
-#:    an expanded watchlist can render no sources with nothing said. That is a
-#:    real gap, it PRE-DATES this batch, and it is deliberately not fixed here
-#:    -- see the follow-up note in `task-2306`. It is named here so the next
-#:    reader finds it rather than having to rediscover it.
+#:  * `_load_source_rows_for_tree`, which is SYNCHRONOUS: the tree calls it
+#:    during `compose()`. TASK-2340 now covers this synchronous loader gap via
+#:    the debug-handler contract below, alongside `scoped_source_rows`.
 
 
 def _screen_source() -> str:
-    from pathlib import Path
-
     return (
         Path(__file__).resolve().parents[2]
         / "tldw_chatbook"
@@ -388,6 +387,258 @@ def _screen_source() -> str:
         / "Screens"
         / "watchlists_collections_screen.py"
     ).read_text(encoding="utf-8")
+
+
+SYNCHRONOUS_DEBUG_HANDLER_EXEMPTIONS = {
+    (
+        "_read_tree_data_snapshot.read_branch",
+        "Failed to load watchlists tree branch: {}.",
+    ): "Snapshot branch failures are episode-toasted by the tree-load coordinator.",
+    (
+        "_read_tree_data_snapshot",
+        "Failed to load Watchlists tree membership.",
+    ): "Snapshot membership failures are episode-toasted by the tree-load coordinator.",
+    (
+        "_recompute_effective_layout",
+        "Workbench not mounted yet; layout applies on compose.",
+    ): "Workbench mount lifecycle handling is outside the synchronous loader policy.",
+    (
+        "_schedule_layout_persist",
+        "Could not schedule preferred Watchlists layout persistence.",
+    ): "Preference-write scheduling is outside the synchronous loader policy.",
+    (
+        "_persist_layout_worker",
+        "Failed to persist preferred Watchlists pane layout.",
+    ): "Preference-write persistence is outside the synchronous loader policy.",
+    (
+        "_persist_layout_worker",
+        "Could not acknowledge preferred Watchlists layout write.",
+    ): "Preference-write acknowledgement is outside the synchronous loader policy.",
+    (
+        "_restore_focus_after_swap",
+        "No section tab to restore focus to after the swap.",
+    ): "Focus-restoration lifecycle handling is outside the synchronous loader policy.",
+}
+
+
+_SYNCHRONOUS_SCAN_BOUNDARIES = (
+    ast.FunctionDef,
+    ast.AsyncFunctionDef,
+    ast.Lambda,
+    ast.ClassDef,
+)
+_HANDLER_ATTRIBUTION_BOUNDARIES = (
+    ast.ExceptHandler,
+    *_SYNCHRONOUS_SCAN_BOUNDARIES,
+)
+
+
+def _nested_synchronous_functions(node: ast.AST):
+    """Yield local sync functions without entering any nested scope."""
+    for child in ast.iter_child_nodes(node):
+        if isinstance(child, ast.FunctionDef):
+            yield child
+            continue
+        if isinstance(child, (ast.AsyncFunctionDef, ast.Lambda, ast.ClassDef)):
+            continue
+        yield from _nested_synchronous_functions(child)
+
+
+def _synchronous_function_handlers(function: ast.FunctionDef):
+    """Yield each handler in one sync function, including nested handlers."""
+
+    def walk(node: ast.AST):
+        if isinstance(node, _SYNCHRONOUS_SCAN_BOUNDARIES):
+            return
+        for child in ast.iter_child_nodes(node):
+            if isinstance(child, _SYNCHRONOUS_SCAN_BOUNDARIES):
+                continue
+            if isinstance(child, ast.ExceptHandler):
+                yield child
+            yield from walk(child)
+
+    for statement in function.body:
+        yield from walk(statement)
+
+
+def _synchronous_watchlists_handlers():
+    """Yield qualified owners and handlers from class-body sync methods only."""
+    module = ast.parse(_screen_source())
+    classes = [
+        node
+        for node in module.body
+        if isinstance(node, ast.ClassDef) and node.name == "WatchlistsCollectionsScreen"
+    ]
+    assert len(classes) == 1, (
+        f"expected exactly one WatchlistsCollectionsScreen class, found {len(classes)}"
+    )
+
+    def visit(function: ast.FunctionDef, qualified_owner: str):
+        for handler in _synchronous_function_handlers(function):
+            yield qualified_owner, handler
+        for local_function in _nested_synchronous_functions(function):
+            yield from visit(local_function, f"{qualified_owner}.{local_function.name}")
+
+    for node in classes[0].body:
+        if isinstance(node, ast.FunctionDef):
+            yield from visit(node, node.name)
+
+
+def _handler_owned_nodes(handler: ast.ExceptHandler):
+    """Yield nodes owned by one handler without borrowing nested-scope calls."""
+    stack = list(handler.body)
+    while stack:
+        node = stack.pop()
+        if isinstance(node, _HANDLER_ATTRIBUTION_BOUNDARIES):
+            continue
+        yield node
+        stack.extend(ast.iter_child_nodes(node))
+
+
+def _call_chain_root(node: ast.AST) -> str | None:
+    """Return the root name of an attribute/call chain, if it has one."""
+    if isinstance(node, ast.Name):
+        return node.id
+    if isinstance(node, ast.Attribute):
+        return _call_chain_root(node.value)
+    if isinstance(node, ast.Call):
+        return _call_chain_root(node.func)
+    return None
+
+
+def _literal_logger_debug_calls(handler: ast.ExceptHandler):
+    """Yield module-logger debug calls and their required literal messages."""
+    for node in _handler_owned_nodes(handler):
+        if not isinstance(node, ast.Call):
+            continue
+        if not isinstance(node.func, ast.Attribute) or node.func.attr != "debug":
+            continue
+        if _call_chain_root(node.func) != "logger":
+            continue
+        assert node.args and isinstance(node.args[0], ast.Constant), (
+            "synchronous debug handlers must use a literal first message argument"
+        )
+        message = node.args[0].value
+        assert isinstance(message, str), (
+            "synchronous debug handlers must use a string literal first message argument"
+        )
+        yield node, message
+
+
+def _is_exact_error_notification(call: ast.Call) -> bool:
+    """Whether this is a safe, literal self._notify_watchlists error toast."""
+    if not (
+        isinstance(call.func, ast.Attribute)
+        and call.func.attr == "_notify_watchlists"
+        and isinstance(call.func.value, ast.Name)
+        and call.func.value.id == "self"
+    ):
+        return False
+    keywords = {keyword.arg: keyword.value for keyword in call.keywords}
+    severity = keywords.get("severity")
+    markup = keywords.get("markup")
+    return (
+        isinstance(severity, ast.Constant)
+        and severity.value == "error"
+        and isinstance(markup, ast.Constant)
+        and markup.value is False
+    )
+
+
+def test_synchronous_debug_handlers_notify_or_have_exact_exemptions():
+    """Sync debug swallows must toast or carry one exact, reviewed exemption."""
+    discovered: set[tuple[str, str]] = set()
+    silent: set[tuple[str, str]] = set()
+
+    for qualified_owner, handler in _synchronous_watchlists_handlers():
+        debug_calls = list(_literal_logger_debug_calls(handler))
+        if not debug_calls:
+            continue
+        assert len(debug_calls) == 1, (
+            f"{qualified_owner} has {len(debug_calls)} literal logger debug calls "
+            "in one exception handler; expected exactly one"
+        )
+        key = (qualified_owner, debug_calls[0][1])
+        assert key not in discovered, (
+            f"duplicate synchronous debug handler key: {key!r}"
+        )
+        discovered.add(key)
+
+        has_safe_notification = any(
+            isinstance(node, ast.Call) and _is_exact_error_notification(node)
+            for node in _handler_owned_nodes(handler)
+        )
+        if not has_safe_notification:
+            silent.add(key)
+
+    assert discovered, "the synchronous debug-handler scan found nothing"
+    assert all(SYNCHRONOUS_DEBUG_HANDLER_EXEMPTIONS.values()), (
+        "every synchronous debug-handler exemption must explain why it is safe"
+    )
+
+    exemption_keys = set(SYNCHRONOUS_DEBUG_HANDLER_EXEMPTIONS)
+    unexplained = silent - exemption_keys
+    stale = exemption_keys - silent
+    assert not unexplained and not stale, (
+        f"unexplained silent synchronous debug handlers: {sorted(unexplained)!r}; "
+        f"stale exact exemptions: {sorted(stale)!r}"
+    )
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("method_name", "expected_message"),
+    (
+        (
+            "_load_source_rows_for_tree",
+            "Failed to load sources for this watchlist.",
+        ),
+        (
+            "scoped_source_rows",
+            "Failed to resolve sources for the selected scope.",
+        ),
+    ),
+)
+async def test_synchronous_source_loader_failure_is_safely_reported(
+    method_name, expected_message
+):
+    """Mounted sync loaders report fixed copy without leaking exception text."""
+    app = _build_test_app()
+    _seed_source(app)
+    notifications: list[tuple[str, tuple, dict]] = []
+
+    def capture_notification(message, *args, **kwargs) -> None:
+        notifications.append((str(message), args, kwargs))
+
+    app.notify = capture_notification
+    host = DestinationHarness(app, "watchlists_collections")
+    async with host.run_test(size=(180, 50)) as pilot:
+        await pilot.pause(0.2)
+        screen, _pane = await _open_sources(pilot, host)
+
+        sentinel = "service exploded at [/bold]/private/watchlists.db"
+
+        class ExplodingBundleService:
+            def list_source_rows(self, watchlist_id):
+                raise RuntimeError(sentinel)
+
+        app.watchlist_bundle_service = ExplodingBundleService()
+        screen.tree_scope = TreeScope(kind="watchlist", watchlist_id=73)
+        await pilot.pause()
+
+        notifications.clear()
+        if method_name == "_load_source_rows_for_tree":
+            result = screen._load_source_rows_for_tree(73)
+        else:
+            result = screen.scoped_source_rows()
+
+        assert result == []
+        assert len(notifications) == 1
+        message, args, kwargs = notifications[0]
+        assert message == expected_message
+        assert args == ()
+        assert kwargs == {"severity": "error", "markup": False}
+        assert sentinel not in repr(notifications)
 
 
 def _own_nodes(node):

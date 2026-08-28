@@ -2194,6 +2194,11 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
             return self._watchlist_bundle_service().list_source_rows(watchlist_id)
         except Exception:
             logger.opt(exception=True).debug("Failed to load tree source rows.")
+            self._notify_watchlists(
+                "Failed to load sources for this watchlist.",
+                severity="error",
+                markup=False,
+            )
             return []
 
     def scoped_source_rows(self) -> list[dict[str, Any]]:
@@ -2250,6 +2255,11 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
             return [dict(row) for row in self._tree_all_source_rows]
         except Exception:
             logger.opt(exception=True).debug("Failed to resolve scoped source rows.")
+            self._notify_watchlists(
+                "Failed to resolve sources for the selected scope.",
+                severity="error",
+                markup=False,
+            )
             return []
 
     def _create_form_watchlist_choices(self) -> list[dict[str, Any]]:
