@@ -2,8 +2,7 @@
 
 **Date:** 2026-08-27
 
-**Status:** Owner-approved direction; awaiting independent spec review and final
-written-spec approval
+**Status:** Independent spec review approved; awaiting final written-spec approval
 
 **Task:** [TASK-22514](../../../backlog/tasks/task-22514%20-%20Console-turns-survive-screen-navigation.md)
 
@@ -43,9 +42,10 @@ controller, Chat screen, and navigation shell. It supersedes the screen-scoped
 user-turn policy recorded by TASK-1143 and TASK-15860 acceptance criterion 2.
 
 No schema migration is expected. `conversation_local_marks` already stores arbitrary
-validated mark types; the code allowlist gains a new local-only `CONSOLE_UNSEEN` type.
-The terminal transcript commit and unseen mark must share the existing ChaChaNotes
-transaction rather than rely on cross-database rollback.
+validated mark strings; its validator gains a local-only
+`console_unseen:<terminal-receipt-id>` namespace. The matching terminal transcript
+commit and receipt mark must share the existing ChaChaNotes transaction rather than
+rely on cross-database rollback.
 
 ## User promise
 
@@ -176,9 +176,10 @@ subscribe for repaint hints while attached, but the task's completion and cleanu
 not depend on that subscription.
 
 The request transfers accepted attachment objects rather than deep-copying their byte
-payloads. No raw request, prompt, attachment bytes, credential, local path, or tool
-result may enter the request's `repr`, logs, attention state, navigation labels, sync,
-or export surfaces.
+payloads. Existing provider construction may consume the prompt and accepted
+attachments under its current policy; runtime custody must not broaden that provider
+payload or create a new raw copy in `repr`, logs, attention state, navigation labels,
+sync, export, or unrelated remote APIs.
 
 ### Frozen inputs
 
@@ -281,31 +282,44 @@ shutdown remain authoritative.
 
 ### Terminal results
 
-Every accepted turn's user-visible terminal transcript commit writes a local-only
-`CONSOLE_UNSEEN` mark for the owning durable conversation in the same ChaChaNotes
-transaction. The write happens regardless of whether Console appears visible. A
-currently attached view clears the mark only after terminal acknowledgement.
+Each user-visible **completed** or **terminally failed** transcript commit mints a
+stable opaque terminal receipt ID and writes a local-only
+`console_unseen:<terminal-receipt-id>` mark for the owning durable conversation in the
+same ChaChaNotes transaction. The receipt ID is stable across an idempotent retry of
+that terminal commit. The write happens regardless of whether Console appears visible.
+A terminal row carries its receipt ID into the live store and display projection; a
+currently attached view clears only that exact namespaced mark after acknowledging the
+matching row.
 
 Always-write-then-acknowledge makes completion/unmount races favor a retained marker
-and avoids guessing visibility before the transcript paints. The user-visible
-transcript plus unseen mark are the ChaChaNotes authority. `AgentRunsDB` and shell
-presentation are derived projections and are not included in a fictitious cross-file
-transaction.
+and avoids guessing visibility before the transcript paints. Separate receipts allow
+several terminal outcomes in one conversation: an acknowledgement for an older row
+cannot clear a newer result. The user-visible transcript plus receipt marks are the
+ChaChaNotes authority. `AgentRunsDB` and shell presentation are derived projections and
+are not included in a fictitious cross-file transaction.
 
 First-send promotion must provide the durable conversation identity before terminal
 commit. No accepted durable result may become unmarkable because the original session
 started temporary.
 
-The new mark uses the existing `conversation_local_marks` table and is absent from
-conversation sync, export, prompt payloads, and remote APIs. It is separate from
-`FLEET_UNSEEN`; supervisor wake delivery may continue to clear its own fleet mark
-without erasing a hidden ordinary-turn result.
+The namespaced marks use the existing `conversation_local_marks` table and are absent
+from conversation sync, export, prompt payloads, and unrelated remote APIs. They are
+separate from `FLEET_UNSEEN`; supervisor wake delivery may continue to clear its own
+fleet mark without erasing a hidden ordinary-turn result.
+
+Explicit user Stop and confirmed session-close cancellation create no new terminal
+attention: those actions are themselves acknowledgement and, for a closed session,
+there is no result surface to revisit. App-shutdown cancellations create no mark or
+toast because the app is closing. A cancellation not attributable to one of those
+explicit reasons is classified by the controller as a terminal failure and follows the
+failed-receipt path.
 
 ### Shell presentation
 
-When a terminal mark is created for a session that has not acknowledged it, the app
-shows one sanitized toast: success is informational and terminal failure is an error.
-Bursts may coalesce into a bounded summary toast, but every underlying mark remains.
+When a terminal receipt mark is created for a session that has not acknowledged it,
+the app shows one sanitized toast: completion is informational and terminal failure is
+an error. Bursts may coalesce into a bounded summary toast, but every underlying receipt
+mark remains.
 Notification failure never rolls back terminal persistence.
 
 The main and overflow navigation surfaces show a boolean, non-color-only Console
@@ -315,18 +329,18 @@ restart cannot erase attention. Session tabs and conversation rows retain the de
 run/approval markers already owned by Console.
 
 Opening Console does not clear the global marker. Resolving a pending decision clears
-that decision's in-memory attention; terminal attention clears per conversation only
-after terminal acknowledgement. The global glyph disappears only when neither durable
-terminal marks nor pending decisions remain.
+that decision's in-memory attention; terminal attention clears one receipt only after
+the matching terminal acknowledgement. The global glyph disappears only when neither
+durable terminal receipt marks nor pending decisions remain.
 
 ## Cancellation and terminal races
 
 | Trigger | Scope and behavior |
 | --- | --- |
 | Screen navigation | Detach view only; accepted turns and rounds continue. |
-| Stop | Signal and cancel the selected turn/chain; revoke only its rounds. |
-| Session close | Fence new/queued submissions for the session, confirm when active, then cancel and await that session's turns, rounds, and delegated children. |
-| Confirmed app quit | Revision-pin the active set, fence runtime admission, cancel all turns and rounds, drain bounded cleanup, then close gateway and databases. |
+| Stop | Signal and cancel the selected turn/chain; revoke only its rounds; create no unseen receipt. |
+| Session close | Fence new/queued submissions for the session, confirm when active, then cancel and await that session's turns, rounds, and delegated children; create no unseen receipt. |
+| Confirmed app quit | Revision-pin the active set, fence runtime admission, cancel all turns and rounds without new attention, drain bounded cleanup, then close gateway and databases. |
 | View/render failure | Report bounded UI failure; runtime and persistence continue. |
 | Recoverable tool failure | Persist the ordinary tool result; the controller may continue the turn. |
 | Terminal provider/tool failure | Commit terminal failure plus unseen state and notify when unacknowledged. |
@@ -376,10 +390,10 @@ tool arguments/results, exception text, credentials, attachment names containing
 paths, or project-instruction content. Failure logs use exception types and stable
 codes under existing redaction policy.
 
-`CONSOLE_UNSEEN` stores only conversation ID, mark type, and timestamps. It remains
-local-only and does not enter sync or export. Pending approval payloads retain existing
-in-memory security semantics and die on explicit turn/session cancellation or app
-exit.
+Each namespaced unseen receipt stores only conversation ID, a mark type containing one
+opaque terminal receipt ID, and timestamps. It remains local-only and does not enter
+sync or export. Pending approval payloads retain existing in-memory security semantics
+and die on explicit turn/session cancellation or app exit.
 
 The runtime drops terminal task records after attention projection. Recovery entries
 remain only until restored or discarded. Tests must prove completed request/context
@@ -422,8 +436,11 @@ Required deterministic cases include:
   completion and an uncooperative provider/thread;
 - injected unmount cleanup, notification, navigation-bar, and render failures never
   affect runtime completion;
-- terminal result and `CONSOLE_UNSEEN` are both present or both absent across injected
-  ChaChaNotes transaction failures;
+- each completed/failed terminal row and its exact namespaced receipt mark are both
+  present or both absent across injected ChaChaNotes transaction failures;
+- acknowledgement of one terminal receipt cannot clear a later receipt for the same
+  conversation, while explicit Stop/session-close/app-shutdown cancellation creates no
+  receipt or outcome toast;
 - a fresh marks service and app/runtime over the same temporary SQLite database restore
   the global marker before Console has ever mounted;
 - active-session terminal synchronization clears only the acknowledged conversation;
@@ -450,9 +467,11 @@ to the runtime, owns no resulting task, and remains absent from retained callbac
 detach. They also preserve `ConsoleRuntime` as the single shared controller/store
 construction and disposal owner. They do not pin incidental helper names.
 
-Critical tests are TDD/mutation-checked: restoring screen-owned cancellation, advancing
-a hidden decision clock, clearing all unseen state on Console mount, or accepting a late
-post-cancel terminal write must make the corresponding test fail.
+For the critical lifecycle invariants, red/green evidence includes locally inverting
+the named behavior: restoring screen-owned cancellation, advancing a hidden decision
+clock, clearing all unseen state on Console mount, or accepting a late post-cancel
+terminal write must make the corresponding focused test fail. This is targeted
+test-validation evidence, not a new repository-wide mutation-testing framework.
 
 ### Real UI and live provider verification
 
@@ -492,7 +511,7 @@ user explicitly opts into a full repository sweep.
 | A detached task calls a dead view | Enumerated hook detach plus attachment-generation fencing. |
 | Navigation cancels the awaiting screen worker | Screen never owns or awaits the accepted runtime task. |
 | Invisible approval expires or fails closed | Retained unified rounds and decision-active clocks. |
-| Terminal completion races unmount | Atomic terminal mark followed by positive render acknowledgement. |
+| Terminal completion races unmount or another completion | One atomic namespaced receipt mark per terminal row followed by exact-receipt acknowledgement. |
 | Stop races completion | One atomic terminalization gate and late-write generation fence. |
 | Quit hangs on a worker thread | Bounded cooperative drain followed by wrapper cancellation and fencing. |
 | Multiple stores imply false rollback | ChaChaNotes transcript+mark is the authority; other databases are projections. |
@@ -506,12 +525,12 @@ TASK-22514 acceptance criteria map directly to the sections above:
 
 1. Runtime custody, frozen context, execution, and view lifecycle.
 2. Human decisions while detached.
-3. Attention and notification behavior.
-4. Cancellation and terminal races.
-5. Send handoff plus privacy and bounded retention.
-6. Turn execution plus navigation reconciliation.
-7. Verification strategy.
-8. Documentation changes.
+3. Cancellation and terminal races.
+4. Turn execution plus navigation reconciliation.
+5. Verification strategy.
+6. Documentation changes.
+7. Attention and notification behavior.
+8. Send handoff plus privacy and bounded retention.
 
 No implementation begins until this written spec passes independent review and the
 owner approves the reviewed document.

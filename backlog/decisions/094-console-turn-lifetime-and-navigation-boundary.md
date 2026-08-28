@@ -32,13 +32,19 @@ answerable. A hidden round emits one app-wide notice and waits without approving
 denying, or consuming decision-active time. Returning to Console re-derives the active
 session's ordered pending decisions.
 
-Every user-visible terminal transcript commit writes a local-only
-`CONSOLE_UNSEEN` conversation mark in the same ChaChaNotes transaction. A mounted view
-clears that mark only after the owning session synchronizes the terminal row. Shell
-navigation displays a boolean attention glyph while any terminal mark or pending
-decision exists. The mark never enters conversation sync, export, prompt payloads, or
-remote APIs. `AgentRunsDB` and shell state are projections, not participants in a
-cross-database transaction.
+Each user-visible completed or terminally failed transcript commit mints a stable opaque
+terminal receipt ID and writes a local-only
+`console_unseen:<terminal-receipt-id>` conversation mark in the same ChaChaNotes
+transaction. A mounted view clears only that exact mark after synchronizing the
+matching terminal row. Several outcomes in one conversation therefore cannot erase one
+another through a stale acknowledgement. Shell navigation displays a boolean attention
+glyph while any receipt mark or pending decision exists. Receipt marks never enter
+conversation sync, export, prompt payloads, or unrelated remote APIs. `AgentRunsDB` and
+shell state are projections, not participants in a cross-database transaction.
+
+Explicit Stop and confirmed session-close or app-shutdown cancellation create no new
+receipt or outcome toast. A cancellation without one of those explicit reasons is a
+terminal failure and follows the failed-receipt path.
 
 Navigation is not a cancellation boundary. Stop cancels its selected turn/chain;
 session close fences and cancels that session; confirmed app quit revision-pins the
@@ -98,11 +104,12 @@ adding a second job system or changing the navigation stack model.
   Navigation uses detach semantics; Stop/session close/app disposal own cancellation.
 - Approval timing needs a decision-active clock and a unified view projection for all
   three human-decision types.
-- `ConversationLocalMarksService` gains a distinct `CONSOLE_UNSEEN` allowed type. The
-  existing table is sufficient; no schema migration is expected.
-- Terminal transcript finalization and `CONSOLE_UNSEEN` insertion share one ChaChaNotes
-  transaction. Visible views acknowledge afterward, so races may briefly retain an
-  extra marker but never silently lose one.
+- `ConversationLocalMarksService` gains a validated
+  `console_unseen:<terminal-receipt-id>` namespace. The existing table is sufficient;
+  no schema migration is expected.
+- Completed/failed transcript finalization and exact receipt insertion share one
+  ChaChaNotes transaction. Visible views acknowledge that receipt afterward, so stale
+  acknowledgements and later completions cannot silently erase one another.
 - The navigation bar and overflow menu gain a boolean, non-color-only attention state.
   Detailed counts and statuses remain inside Console.
 - The old navigate-away loss confirmation, teardown notice, and screen-scoped User
