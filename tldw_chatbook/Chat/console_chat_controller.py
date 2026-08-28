@@ -2122,6 +2122,7 @@ class ConsoleChatController:
         buddy_sink: "PersonaBuddyConsoleAdapter | None" = None,
         scratch_spaces: ConsoleScratchSpaceManager | None = None,
         staged_evidence_provider: Callable[[str], bool] | None = None,
+        cancel_raw_cli_session: Callable[[str], object] | None = None,
         library_preparation_timeout: float = 5.0,
     ) -> None:
         self.store = store
@@ -2156,6 +2157,7 @@ class ConsoleChatController:
         self._world_info_applier = world_info_applier
         self._rag_capture_provider = rag_capture_provider
         self._staged_evidence_provider = staged_evidence_provider
+        self._cancel_raw_cli_session = cancel_raw_cli_session
         self._library_preparation_timeout = max(
             0.001, float(library_preparation_timeout)
         )
@@ -7999,6 +8001,11 @@ class ConsoleChatController:
             raise RuntimeError(
                 "Finish or discard the pending turn before closing this chat."
             )
+        if self._cancel_raw_cli_session is not None:
+            try:
+                self._cancel_raw_cli_session(session_id)
+            except Exception:  # noqa: BLE001 -- teardown remains best-effort
+                logger.warning("close_session could not cancel raw CLI commands")
         # Revoke file authority before any close action can wake a worker or
         # remove the owning session from the store.
         self._scratch_spaces.close(session_id)

@@ -2879,11 +2879,71 @@ def test_historical_snapshot_caches_per_conversation_not_hit_every_call(
     first = bridge.historical_snapshot("conv-1")
     second = bridge.historical_snapshot("conv-1")
     assert first == second
-    assert len(calls) == 1  # the 0.2s rail poll must not re-hit the DB
+    assert calls == ["conv-1", "conv-1"]  # exact primary + exact subagent
 
     # A different conversation is a separate cache entry.
     bridge.historical_snapshot("conv-2")
-    assert len(calls) == 2
+    assert calls == ["conv-1", "conv-1", "conv-2"]
+
+
+def test_bridge_run_consumers_never_issue_a_broad_secret_bearing_query(
+    tmp_path, monkeypatch
+):
+    db = AgentRunsDB(tmp_path / "runs.db", client_id="t")
+    primary_id = db.create_run(conversation_id="conv-1", agent_kind="primary")
+    db.set_status(primary_id, "done", result="ok")
+    subagent_id = db.create_run(
+        conversation_id="conv-1",
+        agent_kind="subagent",
+        parent_run_id=primary_id,
+        task="child",
+    )
+    db.create_run(
+        conversation_id="conv-1",
+        agent_kind="local_command",
+        task="Local command",
+        assistant_message_id="assistant-leaf",
+    )
+    original_list_runs = db.list_runs
+    requested_kinds: list[str | None] = []
+
+    def exact_kind_only(conversation_id, *args, **kwargs):
+        kind = kwargs.get("agent_kind")
+        requested_kinds.append(kind)
+        if kind is None:
+            raise AssertionError("broad query would hydrate poison local-command steps")
+        return original_list_runs(conversation_id, *args, **kwargs)
+
+    monkeypatch.setattr(db, "list_runs", exact_kind_only)
+    original_local_projection = db.local_command_resume_records
+    local_projection_calls: list[str] = []
+
+    def exact_local_projection(conversation_id):
+        local_projection_calls.append(conversation_id)
+        return original_local_projection(conversation_id)
+
+    monkeypatch.setattr(
+        db, "local_command_resume_records", exact_local_projection
+    )
+    bridge = ConsoleAgentBridge(agent_runs_db=db, store=None, provider_gateway=None)
+
+    assert [row["id"] for row in bridge.subagent_runs("conv-1")] == [subagent_id]
+    assert requested_kinds == ["subagent"]
+
+    requested_kinds.clear()
+    bridge.resume_marker_messages("conv-1")
+    assert requested_kinds == ["primary"]
+    assert local_projection_calls == ["conv-1"]
+
+    requested_kinds.clear()
+    assert bridge._previous_primary_run_id("conv-1") == primary_id
+    assert requested_kinds == ["primary"]
+
+    requested_kinds.clear()
+    snapshot = bridge.historical_snapshot("conv-1")
+    assert snapshot.status == "done"
+    assert [subagent.run_id for subagent in snapshot.subagents] == [subagent_id]
+    assert requested_kinds == ["primary", "subagent"]
 
 
 # -- Plan-B final-review Medium-1: inline transcript TOOL markers re-derive

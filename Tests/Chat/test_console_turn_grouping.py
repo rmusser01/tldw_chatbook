@@ -10,6 +10,7 @@ from tldw_chatbook.Chat.console_chat_models import (
     ConsoleChatMessage,
     ConsoleMessageRole,
     ConsoleMessageStatus,
+    RawCliPresentation,
 )
 from tldw_chatbook.Chat.console_turn_grouping import (
     ConsoleAssistantTurn,
@@ -62,6 +63,43 @@ def test_groups_contiguous_tools_under_the_preceding_assistant() -> None:
         ),
         ConsoleTranscriptUnit.for_standalone(user_after),
     )
+
+
+def test_live_raw_cli_marker_is_standalone_after_the_pending_assistant() -> None:
+    assistant = _message(ConsoleMessageRole.ASSISTANT, "Answer", message_id="a1")
+    ordinary_tool = _message(
+        ConsoleMessageRole.TOOL,
+        "Read",
+        message_id="t1",
+    )
+    raw_marker = ConsoleChatMessage(
+        role=ConsoleMessageRole.TOOL,
+        content="Raw command running",
+        id="raw1",
+        raw_cli_presentation=RawCliPresentation(
+            invocation_id="raw-invocation",
+            caller="user",
+            lifecycle_state="running",
+            command="printf ok",
+            shell="/bin/zsh",
+            cwd="/private/tmp",
+            started_at_monotonic=1.0,
+            elapsed_seconds=0.1,
+            exit_code=None,
+            truncated=False,
+            cleanup_proven=None,
+        ),
+    )
+
+    units = group_console_transcript_messages([assistant, ordinary_tool, raw_marker])
+
+    assert units == (
+        ConsoleTranscriptUnit.for_assistant_turn(
+            ConsoleAssistantTurn(assistant, (ordinary_tool,))
+        ),
+        ConsoleTranscriptUnit.for_standalone(raw_marker),
+    )
+    assert _ids(visual_messages(units)) == ["t1", "a1", "raw1"]
 
 
 def test_leading_tool_is_a_standalone_orphan() -> None:

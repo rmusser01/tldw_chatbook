@@ -6580,6 +6580,12 @@ ConsoleBoundedSection {
     color: $ds-text-muted;
 }
 
+#console-raw-cli-status.console-raw-cli-danger,
+#console-composer-collapsed-status.console-raw-cli-danger {
+    color: $ds-status-error-readable;
+    text-style: bold;
+}
+
 #console-collapsed-stop-generation {
     width: 8;
     min-width: 8;
@@ -9013,6 +9019,106 @@ _CredentialClearModal {
     border: solid $ds-grid-line;
     background: $ds-surface-panel;
 }
+
+/* RAW CLI DANGER GATE START */
+.settings-raw-cli-danger {
+    width: 100%;
+    min-width: 0;
+    height: auto;
+    padding: 1;
+    border: solid $surface-lighten-2;
+    background: $surface;
+}
+
+.settings-raw-cli-danger.settings-raw-cli-armed {
+    border: solid $error;
+    background: $error 10%;
+}
+
+#settings-raw-cli-title,
+#settings-raw-cli-state,
+.settings-raw-cli-disclosure,
+#settings-raw-cli-immediate {
+    width: 100%;
+    min-width: 0;
+    height: auto;
+    min-height: 1;
+    text-wrap: wrap;
+}
+
+#settings-raw-cli-title,
+#settings-raw-cli-state {
+    color: $error;
+    text-style: bold;
+}
+
+.settings-raw-cli-disclosure {
+    color: $text;
+    margin: 0 0 1 0;
+}
+
+#settings-raw-cli-permitted {
+    width: 100%;
+    min-width: 0;
+    height: auto;
+    min-height: 1;
+    margin: 0 0 1 0;
+}
+
+.settings-raw-cli-action-row {
+    width: 100%;
+    min-width: 0;
+    height: auto;
+    min-height: 0;
+}
+
+#settings-raw-cli-immediate {
+    color: $text-muted;
+}
+
+#settings-shell Button#settings-raw-cli-arm {
+    width: 100%;
+    min-width: 0;
+    height: 3;
+    min-height: 3;
+    margin: 0;
+    border: none;
+    outline: none;
+    background: $error 20%;
+    color: $text;
+    text-style: bold;
+}
+
+#settings-shell Button#settings-raw-cli-arm:focus,
+#settings-shell Button#settings-raw-cli-arm:hover,
+#settings-shell Button#settings-raw-cli-arm:hover:focus {
+    width: 100%;
+    height: 3;
+    min-height: 3;
+    margin: 0;
+    border: none;
+    outline: none;
+    background: $error 20%;
+    color: $text;
+    text-style: bold underline;
+}
+
+/* App-tier Legible Disabled: Textual's Button dimming compounds with the
+   theme's disabled opacity. The label itself states the recovery action,
+   while the inert surface remains visibly distinct and above the measured
+   3:1 disabled-label contrast floor. */
+#settings-shell Button#settings-raw-cli-arm:disabled,
+#settings-shell Button#settings-raw-cli-arm:disabled:hover,
+#settings-shell Button#settings-raw-cli-arm:disabled:hover:focus {
+    opacity: 100%;
+    text-opacity: 100%;
+    text-style: none;
+    color: $text;
+    background: $surface-darken-1;
+    border: none;
+    outline: none;
+}
+/* RAW CLI DANGER GATE END */
 
 #settings-advanced-config-card {
     height: 1fr;

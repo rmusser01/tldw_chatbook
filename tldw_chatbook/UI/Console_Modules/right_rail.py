@@ -51,8 +51,9 @@ the compound-widget boundary transparently, proven live in task 3's review.
 
 from __future__ import annotations
 
-from collections.abc import Callable
+from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
+from datetime import datetime, timezone
 import os
 
 from textual import on
@@ -61,6 +62,7 @@ from textual.containers import Horizontal, Vertical, VerticalScroll
 from textual.css.query import NoMatches, QueryError
 from textual.events import DescendantBlur, DescendantFocus, Key, Resize
 from textual.geometry import Size
+from textual.message import Message
 from textual.widget import Widget
 from textual.widgets import Button, Input, Static, TextArea
 
@@ -72,6 +74,8 @@ from ...Chat.console_display_state import (
 )
 from ...Chat.console_session_settings import ConsoleSettingsSummaryState
 from ...Chat.console_live_work import PENDING_LAUNCH_CARD_ID
+from ...Chat.console_library_activity_buffer import LibraryActivityFlushResult
+from ...Chat.library_activity import LibraryActivityRecord, LibraryActivityView
 from ...Constants import (
     LIBRARY_NAV_CONTEXT_OPEN_SOURCE_ID,
     LIBRARY_NAV_CONTEXT_OPEN_SOURCE_TYPE,
@@ -107,6 +111,169 @@ class _FocusRecoveryIncident:
     target_id: str | None
     target_index: int | None
     remaining_reconcile_passes: int = 8
+
+
+class ConsoleSelectedTurnActivity(Vertical):
+    """Render cited-source and Library-operation review for one selected turn."""
+
+    class RetryRequested(Message):
+        """Request that the screen/controller retry retained activity writes."""
+
+    def __init__(
+        self,
+        view: LibraryActivityView,
+        *,
+        citation_count: int = 0,
+        flush_result: LibraryActivityFlushResult | None = None,
+        on_reconcile: Callable[[], None] | None = None,
+    ) -> None:
+        super().__init__(id="console-selected-turn")
+        self._view = view
+        self._citation_count = max(0, citation_count)
+        self._flush_result = flush_result
+        self._on_reconcile = on_reconcile
+        self.display = view.selected_turn_id is not None
+        self.styles.height = "auto"
+        self.styles.min_height = 0
+        self.styles.width = "100%"
+        self.styles.min_width = 0
+
+    def sync_state(
+        self,
+        view: LibraryActivityView,
+        *,
+        citation_count: int,
+        flush_result: LibraryActivityFlushResult | None,
+    ) -> None:
+        """Replace the pure selected-turn projection when it changed."""
+
+        normalized_count = max(0, citation_count)
+        self.display = view.selected_turn_id is not None
+        if (
+            view == self._view
+            and normalized_count == self._citation_count
+            and flush_result == self._flush_result
+        ):
+            return
+        self._view = view
+        self._citation_count = normalized_count
+        self._flush_result = flush_result
+        self.refresh(recompose=True)
+        if self._on_reconcile is not None:
+            self.call_after_refresh(self._on_reconcile)
+
+    @staticmethod
+    def _time_copy(record: LibraryActivityRecord) -> str:
+        if record.occurred_at is None:
+            return "time unavailable"
+        try:
+            occurred_at = datetime.fromtimestamp(
+                record.occurred_at, tz=timezone.utc
+            )
+        except (OSError, OverflowError, ValueError):
+            return "time unavailable"
+        return occurred_at.strftime("%H:%M:%S UTC")
+
+    @classmethod
+    def _action_widgets(
+        cls, record: LibraryActivityRecord, index: int
+    ) -> tuple[Widget, ...]:
+        event = record.event
+        mode = "Direct" if event.library_provider == "direct" else "RAG"
+        result_word = "result" if event.result_count == 1 else "results"
+        widgets: list[Widget] = [
+            Static(
+                (
+                    f"{event.operation} · {event.actor_kind} · {mode} · "
+                    f"{event.status} · {event.result_count} {result_word} · "
+                    f"{cls._time_copy(record)}"
+                ),
+                id=f"console-library-activity-action-{index}",
+                classes="console-library-activity-action",
+                markup=False,
+            )
+        ]
+        for ref_index, ref in enumerate(event.source_refs):
+            widgets.append(
+                Static(
+                    f"{ref.source_type} · {ref.title} · {ref.source_id}",
+                    id=f"console-library-activity-ref-{index}-{ref_index}",
+                    classes="console-library-activity-source-ref",
+                    markup=False,
+                )
+            )
+        if event.error_summary:
+            widgets.append(
+                Static(
+                    event.error_summary,
+                    id=f"console-library-activity-error-{index}",
+                    classes="console-library-activity-error",
+                    markup=False,
+                )
+            )
+        return tuple(widgets)
+
+    def compose(self) -> ComposeResult:
+        yield Static(
+            "Selected turn",
+            id="console-selected-turn-heading",
+            classes="console-inspector-group-heading destination-section",
+            markup=False,
+        )
+        yield Static(
+            f"Cited sources ({self._citation_count})",
+            id="console-selected-turn-cited-sources",
+            classes="console-selected-turn-subsection",
+            markup=False,
+        )
+        with Vertical(id="console-selected-turn-library-activity"):
+            yield Static(
+                f"Library activity ({len(self._view.actions)} actions)",
+                id="console-selected-turn-library-activity-heading",
+                classes="console-selected-turn-subsection",
+                markup=False,
+            )
+            body: list[Widget] = []
+            if not self._view.actions:
+                body.append(
+                    Static(
+                        "No Library activity for this turn.",
+                        id="console-library-activity-empty",
+                        markup=False,
+                    )
+                )
+            else:
+                for index, record in enumerate(self._view.actions):
+                    body.extend(self._action_widgets(record, index))
+            if self._view.corrupt_row_count:
+                body.append(
+                    Static(
+                        "Some Library activity could not be displayed.",
+                        id="console-library-activity-corrupt",
+                        markup=False,
+                    )
+                )
+            if self._flush_result is not None and self._flush_result.warning:
+                body.append(
+                    Static(
+                        self._flush_result.warning,
+                        id="console-library-activity-save-warning",
+                        markup=False,
+                    )
+                )
+                body.append(
+                    Button(
+                        "Retry",
+                        id="console-library-activity-retry",
+                        compact=True,
+                    )
+                )
+            yield ConsoleBoundedSection(*body, section_id="library-activity")
+
+    @on(Button.Pressed, "#console-library-activity-retry")
+    def _request_retry(self, event: Button.Pressed) -> None:
+        event.stop()
+        self.post_message(self.RetryRequested())
 
 
 class _InspectorOuterBody(VerticalScroll):
@@ -233,6 +400,10 @@ class ConsoleInspectorRail(Vertical):
         project_instruction_state: ConsoleProjectInstructionState,
         settings_summary_state: ConsoleSettingsSummaryState,
         live_work_card_builder: Callable[[], Widget],
+        library_activity_view: LibraryActivityView | None = None,
+        library_activity_citation_count: int = 0,
+        library_activity_flush_result: LibraryActivityFlushResult | None = None,
+        library_activity_retry: Callable[[], Awaitable[None]] | None = None,
         ownership_policy: InspectorOwnershipPolicy | None = None,
         inspector_more_open: bool = False,
         **kwargs,
@@ -273,6 +444,12 @@ class ConsoleInspectorRail(Vertical):
                 ``ConsoleDictationController``'s late-binding constructor
                 rule -- see ``dictation.py``'s module docstring) always
                 mounts a brand-new instance instead.
+            library_activity_view: Pure selected-turn activity projection.
+            library_activity_citation_count: Cited-source count for the same
+                selected turn.
+            library_activity_flush_result: Current store-owned persistence
+                state for retained Library activity.
+            library_activity_retry: Store-owned retained-write retry callback.
             ownership_policy: Optional explicit Inspector ownership policy.
                 Production resolves the strict opt-in environment flag at
                 this composition boundary when omitted.
@@ -289,6 +466,15 @@ class ConsoleInspectorRail(Vertical):
         self._project_instruction_state = project_instruction_state
         self._settings_summary_state = settings_summary_state
         self._live_work_card_builder = live_work_card_builder
+        self._library_activity_view = library_activity_view or LibraryActivityView(
+            selected_turn_id=None,
+            actions=(),
+        )
+        self._library_activity_citation_count = max(
+            0, library_activity_citation_count
+        )
+        self._library_activity_flush_result = library_activity_flush_result
+        self._library_activity_retry = library_activity_retry
         self._ownership_policy = (
             ownership_policy or _resolve_inspector_ownership_policy()
         )
@@ -298,6 +484,7 @@ class ConsoleInspectorRail(Vertical):
         self._outer_reconcile_dirty = False
         self._outer_reconcile_owner_demand = False
         self._outer_owner_reconcile_count = 0
+        self._library_activity_focus_pending = False
         self._inspector_focus_active = False
         self._navigation_generation = 0
         self._section_focus_history: dict[str, tuple[Widget, tuple[Widget, ...]]] = {}
@@ -311,7 +498,51 @@ class ConsoleInspectorRail(Vertical):
     def on_unmount(self) -> None:
         """Discard pending generations when the Inspector leaves the DOM."""
 
+        self._library_activity_focus_pending = False
         self._clear_outer_reconcile_state()
+
+    def sync_library_activity(
+        self,
+        view: LibraryActivityView,
+        *,
+        citation_count: int,
+        flush_result: LibraryActivityFlushResult | None,
+    ) -> None:
+        """Keep the rail owner and mounted selected-turn child in sync."""
+
+        self._library_activity_view = view
+        self._library_activity_citation_count = max(0, citation_count)
+        self._library_activity_flush_result = flush_result
+        try:
+            selected_turn = self.query_one(
+                "#console-selected-turn", ConsoleSelectedTurnActivity
+            )
+        except (NoMatches, QueryError):
+            return
+        selected_turn.sync_state(
+            view,
+            citation_count=citation_count,
+            flush_result=flush_result,
+        )
+
+    def request_library_activity_focus(self) -> None:
+        """Focus activity after the selected-turn and outer rail settle."""
+
+        self._library_activity_focus_pending = True
+        self.request_outer_reconcile()
+
+    @on(ConsoleSelectedTurnActivity.RetryRequested)
+    def retry_library_activity(
+        self, event: ConsoleSelectedTurnActivity.RetryRequested
+    ) -> None:
+        """Keep Retry inside the Inspector region and delegate persistence."""
+        event.stop()
+        if self._library_activity_retry is not None:
+            self.run_worker(
+                self._library_activity_retry(),
+                group="console-library-activity-retry",
+                exclusive=True,
+            )
 
     @on(ConsoleStagedSourceOpenRequested)
     def open_staged_source(self, event: ConsoleStagedSourceOpenRequested) -> None:
@@ -423,6 +654,29 @@ class ConsoleInspectorRail(Vertical):
             return
         if owner_demand:
             self._outer_owner_reconcile_count += 1
+        if self._library_activity_focus_pending:
+            self._library_activity_focus_pending = False
+            self._focus_library_activity()
+
+    def _focus_library_activity(self) -> None:
+        """Focus and reveal the settled selected-turn activity heading."""
+
+        try:
+            heading = self.query_one(
+                "#console-selected-turn-library-activity-heading", Static
+            )
+            body = self.query_one("#console-inspector-rail-body", VerticalScroll)
+        except (NoMatches, QueryError):
+            return
+        heading.can_focus = True
+        self.screen.set_focus(heading, scroll_visible=False)
+        body.scroll_to_widget(
+            heading,
+            animate=False,
+            immediate=True,
+            force=True,
+            top=True,
+        )
 
     def _reconcile_outer_fold(self) -> bool:
         """Apply the counterfactual outer-hint predicate from laid-out geometry."""
@@ -1161,6 +1415,12 @@ class ConsoleInspectorRail(Vertical):
                     on_more_focus_removed=self._recover_keyed_boundary_focus,
                     more_open=self._inspector_more_open,
                     id="console-run-inspector-state",
+                )
+                yield ConsoleSelectedTurnActivity(
+                    self._library_activity_view,
+                    citation_count=self._library_activity_citation_count,
+                    flush_result=self._library_activity_flush_result,
+                    on_reconcile=self.request_outer_reconcile,
                 )
                 settings_summary = ConsoleSettingsSummary(
                     self._settings_summary_state,

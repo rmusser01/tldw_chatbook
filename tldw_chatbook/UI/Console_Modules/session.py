@@ -610,6 +610,7 @@ class ConsoleSessionController:
         current_chat_store_accessor: Callable[[], ConsoleChatStore | None],
         ensure_console_chat_controller: Callable[[], Any],
         composer_accessor: Callable[[], Any],
+        restore_banked_raw_cli_stashes: Callable[[str, Any], int],
         effective_console_provider_model: Callable[[], tuple[Any, Any]],
         provider_readiness_app_config: Callable[[], Any],
         build_provider_selection: Callable[[str], Any],
@@ -700,6 +701,8 @@ class ConsoleSessionController:
             composer_accessor: `ChatScreen._console_composer_or_none` (DOM);
                 same shape as `dictation.py`'s/`hands_free.py`'s own
                 `composer_accessor`.
+            restore_banked_raw_cli_stashes: Late-bound raw CLI refusal restore
+                after the origin session's composer has been reconciled.
             effective_console_provider_model: `ChatScreen._effective_
                 console_provider_model`, used by `_default_console_session_
                 settings`.
@@ -788,6 +791,7 @@ class ConsoleSessionController:
         self._current_chat_store_accessor = current_chat_store_accessor
         self._ensure_console_chat_controller_fn = ensure_console_chat_controller
         self._composer_accessor = composer_accessor
+        self._restore_banked_raw_cli_stashes_fn = restore_banked_raw_cli_stashes
         self._effective_console_provider_model_fn = effective_console_provider_model
         self._provider_readiness_app_config_fn = provider_readiness_app_config
         self._build_provider_selection_fn = build_provider_selection
@@ -3559,6 +3563,7 @@ class ConsoleSessionController:
             return
         visible_session_id = self._console_visible_draft_session_id
         if visible_session_id == active_session_id:
+            self._restore_banked_raw_cli_stashes_fn(active_session_id, composer)
             if visible_session_id is not None:
                 try:
                     store.set_session_draft(visible_session_id, composer.draft_text())
@@ -3602,6 +3607,7 @@ class ConsoleSessionController:
         composer.restore_undo_history(
             self._console_undo_histories.get(active_session_id)
         )
+        self._restore_banked_raw_cli_stashes_fn(active_session_id, composer)
         if typed_suffix:
             composer.insert_text(typed_suffix)
         self._sync_console_command_popup()

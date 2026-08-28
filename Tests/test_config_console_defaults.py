@@ -395,6 +395,45 @@ def test_console_local_tools_defaults(tmp_path, monkeypatch):
     assert console["workspace_root"] == ""
 
 
+def test_console_raw_cli_permitted_defaults_false(tmp_path, monkeypatch):
+    template = tomllib.loads(config_module.CONFIG_TOML_CONTENT)
+    assert template["console"]["raw_cli_permitted"] is False
+    assert (
+        config_module.DEFAULT_CONFIG_FROM_TOML["console"]["raw_cli_permitted"] is False
+    )
+
+    monkeypatch.setenv("TLDW_CONFIG_PATH", str(tmp_path / "missing-config.toml"))
+    console = config_module.load_settings(force_reload=True)["console"]
+
+    assert console["raw_cli_permitted"] is False
+    assert "raw_cli_armed" not in console
+    assert "armed" not in console
+
+
+@pytest.mark.parametrize(
+    ("raw_value", "expected"),
+    [
+        ("true", True),
+        ("false", False),
+        ('"yes"', True),
+        ('"sideways"', False),
+    ],
+)
+def test_console_raw_cli_permitted_uses_bool_coercion(
+    tmp_path, monkeypatch, raw_value, expected
+):
+    config_path = tmp_path / "config.toml"
+    config_path.write_text(
+        f"[console]\nraw_cli_permitted = {raw_value}\n",
+        encoding="utf-8",
+    )
+    monkeypatch.setenv("TLDW_CONFIG_PATH", str(config_path))
+
+    console = config_module.load_settings(force_reload=True)["console"]
+
+    assert console["raw_cli_permitted"] is expected
+
+
 def test_config_template_enables_local_and_standard_web_tools():
     """Fresh profiles persist the same default the missing-key loader uses."""
     template = tomllib.loads(config_module.CONFIG_TOML_CONTENT)

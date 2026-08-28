@@ -1403,7 +1403,7 @@ def test_child_cannot_spawn(db):
     assert db.count_subagent_runs("c") == 1  # no grandchildren
 
 
-def test_supersede_marks_old_tree_before_new_run(db):
+def test_supersede_marks_old_tree_before_new_run(db, monkeypatch):
     service, _ = make_service(db, ["first answer"])
     old_id, _ = service.run_turn(
         conversation_id="c",
@@ -1411,6 +1411,22 @@ def test_supersede_marks_old_tree_before_new_run(db):
         config=CFG,
         api_endpoint="llama_cpp",
     )
+    local_id = db.create_run(
+        conversation_id="c",
+        agent_kind="local_command",
+        task="Local command",
+    )
+    original_list_runs = db.list_runs
+    requested_kinds: list[str | None] = []
+
+    def exact_kind_only(conversation_id, *args, **kwargs):
+        kind = kwargs.get("agent_kind")
+        requested_kinds.append(kind)
+        if kind is None:
+            raise AssertionError("broad query would hydrate poison local-command steps")
+        return original_list_runs(conversation_id, *args, **kwargs)
+
+    monkeypatch.setattr(db, "list_runs", exact_kind_only)
     service2, _ = make_service(db, ["second answer"])
     new_id, _ = service2.run_turn(
         conversation_id="c",
@@ -1421,6 +1437,8 @@ def test_supersede_marks_old_tree_before_new_run(db):
     )
     assert db.get_run(old_id)["status"] == "superseded"
     assert db.get_run(new_id)["status"] == "done"
+    assert db.get_run(local_id)["status"] == "running"
+    assert requested_kinds == ["primary", "subagent"]
     assert [
         step["kind"]
         for step in db.get_run(old_id)["steps"]
@@ -2774,6 +2792,43 @@ def test_make_invoke_tool_bypasses_wrapper_when_unlimited(db, monkeypatch):
     result = invoke_tool(ToolCall(name="calculator", args={"expression": "2+2"}))
     assert result.ok is True
     assert json.loads(result.content)["result"] == 4
+
+
+def test_make_invoke_tool_binds_exact_subagent_actor_on_timeout_thread(
+    db, monkeypatch
+):
+    """Provider capture sees child and parent identity on the actual tool thread."""
+    from tldw_chatbook.Agents.agent_models import ToolCall
+    from tldw_chatbook.Agents.run_context import (
+        CurrentRunActor,
+        current_run_actor,
+    )
+
+    service = _service_with_chat(db, lambda **_kwargs: provider_reply("unused"))
+    seen = []
+
+    def invoke_by_name(_name, _args):
+        seen.append(current_run_actor())
+        return ToolResult(ok=True, content="ok")
+
+    monkeypatch.setattr(service.registry, "invoke_by_name", invoke_by_name)
+    cfg = AgentConfig(
+        model="test-model",
+        system_prompt="s",
+        allowed_tools=("calculator",),
+        budget=RunBudget(max_tool_call_seconds=1.0),
+    )
+    actor = CurrentRunActor("subagent", "run-child", "run-parent")
+    invoke_tool = service._make_invoke_tool(
+        cfg,
+        disclosed_names={"calculator"},
+        run_id=actor.run_id,
+        run_actor=actor,
+    )
+
+    assert invoke_tool(ToolCall(name="calculator", args={})).ok is True
+    assert seen == [actor]
+    assert current_run_actor() is None
 
 
 def test_make_invoke_tool_wraps_slow_custom_tool_in_timeout(db, monkeypatch):

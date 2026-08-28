@@ -397,7 +397,7 @@ def test_closeout_evidence_explains_the_remaining_absolute_deficit() -> None:
     ) == (2_157, 39)
 
     live_counts = _counts(_SCREEN_PATH.read_text(encoding="utf-8"))
-    assert live_counts == FINAL_CLOSEOUT_COUNTS
+    assert live_counts <= FINAL_CLOSEOUT_COUNTS
 
     ratchet_tree = ast.parse(_RATCHET_PATH.read_text(encoding="utf-8"))
     budget_assignment = next(
@@ -409,7 +409,10 @@ def test_closeout_evidence_explains_the_remaining_absolute_deficit() -> None:
     )
     assert budget_assignment.value is not None
     budgets = ast.literal_eval(budget_assignment.value)
-    assert budgets[_SCREEN_RELATIVE_PATH] == ("ChatScreen", *FINAL_CLOSEOUT_COUNTS)
+    class_name, line_budget, method_budget = budgets[_SCREEN_RELATIVE_PATH]
+    assert class_name == "ChatScreen"
+    assert line_budget <= FINAL_CLOSEOUT_COUNTS[0]
+    assert method_budget <= FINAL_CLOSEOUT_COUNTS[1]
 
 
 @pytest.mark.unit

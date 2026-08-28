@@ -18,6 +18,7 @@ from ..Metrics.metrics_logger import log_counter, log_histogram
 PROVIDER_API_KEY_MAX_LENGTH = 4096
 CONSOLE_DRAFT_MAX_LENGTH = 100_000
 CONSOLE_FORK_TITLE_MAX_LENGTH = 60
+RAW_CLI_COMMAND_MAX_BYTES = 16 * 1024
 
 
 def validate_console_fork_title(value: object) -> str:
@@ -569,6 +570,31 @@ def validate_console_draft(
             return "", None
         return "", "Type a message before sending."
     return clean_draft, None
+
+
+def validate_raw_cli_command(
+    command: object,
+    *,
+    max_bytes: int = RAW_CLI_COMMAND_MAX_BYTES,
+) -> str:
+    """Validate an exact user-authored command without sanitizing it.
+
+    Raw CLI deliberately accepts shell syntax, so this boundary checks only
+    the invariants required before process execution and returns the original
+    text unchanged.
+    """
+    if type(command) is not str or not command.strip():
+        raise ValueError("raw CLI command must not be empty or whitespace")
+    if "\x00" in command:
+        raise ValueError("raw CLI command must not contain NUL")
+    try:
+        command_bytes = len(command.encode("utf-8"))
+    except UnicodeEncodeError as exc:
+        raise ValueError("raw CLI command must be valid UTF-8") from exc
+    if command_bytes > max_bytes:
+        limit_kib = max_bytes // 1024
+        raise ValueError(f"raw CLI command exceeds the {limit_kib} KiB UTF-8 limit")
+    return command
 
 
 def validate_json_size(json_str: str, max_size: int = 1024 * 1024) -> bool:

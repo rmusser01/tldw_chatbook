@@ -131,6 +131,7 @@ from ..Console_Modules.retrieval import (
 )
 from ..Console_Modules.transcript import _ConsoleTranscriptReadingState
 from ..Console_Modules.wiring import build_console_controllers
+from ..Console_Modules import raw_cli as raw_cli_ui
 from ..Console_Modules.session import (
     _has_selected_text,
     _is_empty_select_value,
@@ -161,6 +162,7 @@ from ...Chat.console_cost_tracker import (
     build_cost_rows_totals,
     build_cost_snapshot,
     build_cost_state,
+    console_cost_snapshot_messages,
     fingerprint_break_reason,
     token_estimate_signature,
 )
@@ -229,7 +231,6 @@ from ...Chat.console_chat_models import (
     ConsoleWorkspaceContext,
     derive_console_session_title,
 )
-from ...Chat.console_turn_context import ConsoleTurnExecutionContext
 from ...UI.character_display_text import sanitize_character_display_label
 from ...Chat.console_session_settings import (
     ConsoleSessionSettings,
@@ -1017,7 +1018,6 @@ CONSOLE_WORKBENCH_SHORTCUTS_SETUP_BLOCKED = tuple(
     ("Enter", "continue setup") if pair == ("Enter", "send / queue") else pair
     for pair in CONSOLE_WORKBENCH_SHORTCUTS
 )
-
 
 #: TASK-362: the full Console keyboard vocabulary for the F1 help panel, grouped
 #: by surface. The flat CONSOLE_WORKBENCH_SHORTCUTS above stays the compact
@@ -4997,87 +4997,6 @@ class ChatScreen(BaseAppScreen):
         """Delegate to `ConsolePromptsController` (wave-3 console decomposition, task 3)."""
         return self._prompts._ensure_console_prompt_history()
 
-    def _console_library_provider_factory(
-        self, turn_context: ConsoleTurnExecutionContext | None = None
-    ):
-        """Resolve the Library retrieval provider for one Console agent run.
-
-        ADR-079: the final turn authority pins the Library mode for one run;
-        a missing context fails closed. Direct mode assembles
-        ``LocalLibraryToolService`` purely from the app's local service
-        attributes (any missing backend degrades its own tools to
-        ``feature_unavailable``); off mode binds the bounded RAG provider to
-        the app-owned ``library_rag_search_service``.
-        """
-        if turn_context is None:
-            return None
-        app = self.app_instance
-        direct_library_tools = turn_context.library_authority.direct_library_tools
-        if not direct_library_tools:
-            from tldw_chatbook.Agents.library_rag_tool_provider import (
-                LibraryRagToolProvider,
-            )
-
-            return LibraryRagToolProvider(
-                getattr(app, "library_rag_search_service", None)
-            )
-        from tldw_chatbook.Agents.library_tool_provider import LibraryToolProvider
-        from tldw_chatbook.Library.local_library_tool_service import (
-            LocalLibraryToolService,
-        )
-
-        media_chunk_service = None
-        media_reading_service = getattr(app, "local_media_reading_service", None)
-        media_db = getattr(app, "media_db", None) or getattr(
-            media_reading_service, "media_db", None
-        )
-        if media_db is not None or media_reading_service is not None:
-            # The chunk tools need the media DB (row/chunk reads, template
-            # interop) on top of the reading service; built here so a missing
-            # handle degrades only its own tools, like every other backend.
-            from tldw_chatbook.Chunking.chunking_interop_library import (
-                get_chunking_service,
-            )
-            from tldw_chatbook.Library.local_media_chunk_tool_service import (
-                LocalMediaChunkToolService,
-            )
-
-            media_chunk_service = LocalMediaChunkToolService(
-                media_db,
-                media_reading_service,
-                template_interop=(
-                    get_chunking_service(media_db) if media_db is not None else None
-                ),
-                # chunking-agent-tools (Task 5, spec §6): the app's policy
-                # enforcer closes the Console-direct gate on the WRITING
-                # chunk tools (`library_save_chunk_spec`,
-                # `library_rechunk_media`) -- denials surface as named
-                # payloads before any backend touch. The same handle every
-                # other tool-bearing service receives
-                # (`service_policy_enforcer`, built off the app's runtime
-                # policy context).
-                policy_enforcer=getattr(app, "service_policy_enforcer", None),
-            )
-        service = LocalLibraryToolService(
-            media_service=media_reading_service,
-            notes_service=getattr(app, "notes_service", None),
-            prompt_service=getattr(app, "local_prompt_service", None),
-            skills_service=getattr(app, "local_skills_service", None),
-            conversation_service=getattr(app, "local_chat_conversation_service", None),
-            collections_service=getattr(app, "local_library_collections_service", None),
-            media_chunk_service=media_chunk_service,
-            # student-workflow (spec §4.3): the note-save folder seam -- the
-            # app's scope service (folders live only there); a missing handle
-            # degrades folder requests to feature_unavailable like every
-            # other optional backend.
-            notes_scope_service=getattr(app, "notes_scope_service", None),
-            # student-workflow (spec §6): the writing note tool's
-            # Console-direct gate (the chunk-tools pattern) -- the same app
-            # enforcer handle the writing chunk tools receive above.
-            policy_enforcer=getattr(app, "service_policy_enforcer", None),
-        )
-        return LibraryToolProvider(service)
-
     def _ensure_console_chat_controller(self) -> ConsoleChatController:
         """Return the native Console chat controller with fresh selection state.
 
@@ -5118,7 +5037,7 @@ class ChatScreen(BaseAppScreen):
                 world_info_applier=self._console_world_info_applier,
                 rag_capture_provider=self._retrieval._capture_console_staged_rag,
                 default_session_settings=self._session._default_console_session_settings,
-                library_provider_factory=self._console_library_provider_factory,
+                library_provider_factory=self._library_activity.build_provider,
                 global_user_display_name=self._global_chat_display_name,
                 turn_context_provider=(
                     self._session._build_console_turn_execution_context
@@ -5186,7 +5105,7 @@ class ChatScreen(BaseAppScreen):
             "_default_session_settings": getattr(
                 session, "_default_console_session_settings", None
             ),
-            "_library_provider_factory": self._console_library_provider_factory,
+            "_library_provider_factory": self._library_activity.build_provider,
             "_global_user_display_name": self._global_chat_display_name,
             "_turn_context_provider": getattr(
                 session, "_build_console_turn_execution_context", None
@@ -6583,26 +6502,9 @@ class ChatScreen(BaseAppScreen):
                 self._console_cost_cache_state = ConsoleCacheState.NONE
                 return None
 
-            # Spec: "No mid-stream cost animation -- the chip updates at
-            # message completion." `messages_for_session` materializes
-            # buffered stream chunks straight into `.content` (so the
-            # transcript can render live text), and this method is called
-            # from the same 0.2s tick that drives that materialization --
-            # so an in-flight row (no `usage` yet) would otherwise get a
-            # bigger `_estimate_tokens_locally` estimate on every tick,
-            # visibly growing the chip while the reply streams in. `{
-            # "pending", "streaming"}` is the store's own established
-            # "not yet finalized" status set (see e.g.
-            # ``ConsoleChatStore._validate_can_mark_terminal``); excluding
-            # it here freezes the snapshot at its pre-send total until the
-            # row lands as "complete"/"stopped"/"failed" (all of which bump
-            # the payload revision and stop changing further).
-            snapshot_messages = [
-                message
-                for message in messages
-                if getattr(message, "status", "complete")
-                not in {"pending", "streaming"}
-            ]
+            # Keep the chip stable until provider rows finish; direct raw
+            # commands are local actions and never provider-billed rows.
+            snapshot_messages = console_cost_snapshot_messages(messages)
             # task-6: staged (not-yet-sent) evidence used to be invisible to
             # the cost chip entirely -- `ConsoleStagedSource` carries no
             # text, so a session with zero messages but several staged
@@ -10667,6 +10569,12 @@ class ChatScreen(BaseAppScreen):
                             else self._build_console_live_work_source_readiness_card()
                         )
                     ),
+                    library_activity_view=self._library_activity.view,
+                    library_activity_citation_count=(
+                        self._library_activity.selected_citation_count()
+                    ),
+                    library_activity_flush_result=self._library_activity.flush_result,
+                    library_activity_retry=self._library_activity.retry,
                     inspector_more_open=rail_state.inspector_more_open,
                 )
                 right_rail.can_focus = True
@@ -12119,6 +12027,9 @@ class ChatScreen(BaseAppScreen):
                 if type(count) is int and count > 0
             }
             transcript.set_citation_counts(visible_citation_counts)
+            visible_library_activity_counts = self._library_activity.sync_transcript(
+                transcript
+            )
             transcript.set_original_attempt_previews(
                 self._console_original_attempt_previews.copy()
             )
@@ -12213,6 +12124,7 @@ class ChatScreen(BaseAppScreen):
                 turn_activity,
                 tuple(sorted(self._console_original_attempt_previews.items())),
                 tuple(sorted(visible_citation_counts.items())),
+                tuple(sorted(visible_library_activity_counts.items())),
                 # task-18515: an annotation added, edited, or deleted must
                 # force a refresh on its own. Without this the marker row
                 # only changed when something ELSE in the key did -- phase 4
@@ -12944,12 +12856,11 @@ class ChatScreen(BaseAppScreen):
         # keypress; the mouse path still reads the live draft here.
         stash = self._console_pending_send_stash
         self._console_pending_send_stash = None
-        try:
-            composer = self.query_one("#console-native-composer", ConsoleComposerBar)
-            draft = stash.text if stash is not None else composer.draft_text()
-        except QueryError:
-            composer = None
-            draft = stash.text if stash is not None else ""
+        stash, composer, draft, raw_cli_handled = raw_cli_ui.prepare_visible_send(
+            stash, self._console_composer_or_none, self._raw_cli.start_user_command
+        )
+        if raw_cli_handled:
+            return False
         if not draft.strip() and self._console_pending_image_attachment() is None:
             if composer is not None:
                 composer.restore_stashed_draft(stash)
@@ -14435,6 +14346,10 @@ class ChatScreen(BaseAppScreen):
         under the original name for `on_button_pressed` and the
         pre-existing test suite's direct-call convention -- see
         `message.py`'s module docstring."""
+        if raw_cli_ui.handle_raw_cli_message_action(
+            self._raw_cli, event, self._ensure_console_chat_store()
+        ):
+            return True
         return await self._message.handle_console_message_action(event)
 
     def _console_save_as_destinations(self, message: Any) -> list[Any]:
@@ -14587,6 +14502,7 @@ class ChatScreen(BaseAppScreen):
                 computed on demand when not given.
         """
         self._sync_console_pending_delete_confirmation()
+        self._library_activity.sync_projection()
         control_state = self._build_console_control_state(
             self._pending_console_launch_context
         )
@@ -16614,6 +16530,11 @@ class ChatScreen(BaseAppScreen):
         This ensures buttons work properly with screen-based navigation.
         """
         button_id = event.button.id
+
+        if event.button.has_class("console-transcript-library-activity"):
+            event.stop()
+            self._library_activity.open_selected(event.button)
+            return
 
         # Log for debugging
         logger.info(f"ChatScreen on_button_pressed called with button: {button_id}")

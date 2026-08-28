@@ -2,7 +2,10 @@
 
 import pytest
 from pathlib import Path
-from tldw_chatbook.Utils.path_validation import validate_path_simple
+from tldw_chatbook.Utils.path_validation import (
+    validate_existing_absolute_directory,
+    validate_path_simple,
+)
 
 
 class TestValidatePathSimple:
@@ -87,6 +90,29 @@ class TestValidatePathSimple:
         # constructs this exact shape for a lock root beneath ``tmp_path``.
         with pytest.raises(ValueError, match="dangerous pattern"):
             validate_path_simple("C:\\Temp\\cache\\..\\..")
+
+
+def test_existing_absolute_directory_returns_normalized_path(tmp_path):
+    nested = tmp_path / "nested"
+    nested.mkdir()
+
+    result = validate_existing_absolute_directory(nested / "..")
+
+    assert result == tmp_path.resolve()
+
+
+def test_existing_absolute_directory_rejects_relative_missing_and_files(
+    tmp_path, monkeypatch
+):
+    monkeypatch.chdir(tmp_path)
+    relative = Path("relative")
+    relative.mkdir()
+    regular_file = tmp_path / "file.txt"
+    regular_file.write_text("not a directory", encoding="utf-8")
+
+    for candidate in (relative, tmp_path / "missing", regular_file):
+        with pytest.raises(ValueError, match="absolute existing directory"):
+            validate_existing_absolute_directory(candidate)
 
 
 if __name__ == "__main__":

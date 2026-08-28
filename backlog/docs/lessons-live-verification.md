@@ -286,6 +286,28 @@ concluding a launch hung, check that a *process* is alive AND that something
 was written where the render should be going — an empty pane plus a live PID
 is more often a redirect than a hang.
 
+---
+
+## A green process test does not prove multiprocessing starts under Textual (TASK-18926, 2026-08-27)
+
+**What happened.** The raw CLI executor's focused process suite passed, including
+real spawned shells and process-tree cleanup. The first mounted Console run still
+failed every command before launch. Textual had replaced `sys.stderr` with a
+capture whose `fileno()` returns `-1`; the first spawn-context `Event()` started
+CPython's process-global resource tracker, which blindly passed that sentinel to
+`fork_exec` and raised `ValueError: bad value(s) in fds_to_keep`. The controller
+correctly rendered its generic local `spawn_failed` marker, so only capturing the
+underlying executor exception revealed the cause. Library ingest had already met
+the same CPython/Textual interaction, but the separately built raw executor had
+not inherited that launch guard.
+
+**What to do.** Any feature that first constructs spawn-context primitives from a
+mounted Textual worker must construct them under an fd-backed stderr (and serialize
+the brief redirect because `sys.stderr` is process-global). Keep a fresh-process
+regression with `fileno() == -1`; an ordinary executor test may reuse an already
+running resource tracker and cannot prove first-launch behavior. Finish with a
+mounted command that reaches the actual subprocess, not only a synthetic executor.
+
 ## Credentials in a live run
 
 A live credential pasted into a session is a real secret. Keep it in an env var for the

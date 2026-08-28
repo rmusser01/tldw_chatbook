@@ -46,6 +46,7 @@ do not reintroduce a re-export in `chat_screen.py` to patch through.
 """
 
 from collections.abc import Callable
+from pathlib import Path
 from typing import Any, TYPE_CHECKING
 
 from textual.css.query import QueryError
@@ -74,6 +75,7 @@ from .dictation import ConsoleDictationController
 from .fleet import ConsoleFleetLifecycleController
 from .hands_free import ConsoleHandsFreeController
 from .image import ConsoleImageController
+from .library_activity import ConsoleLibraryActivityController
 from .library_policy import ConsoleLibraryPolicyController
 from .message import ConsoleMessageController
 from .prompt_queue import (
@@ -81,6 +83,7 @@ from .prompt_queue import (
     commit_queued_draft_transaction,
 )
 from .prompts import ConsolePromptsController
+from .raw_cli import ConsoleRawCliController, restore_refused_raw_cli_stash
 from .reaction_preview import get_console_reaction_preview_coordinator
 from .realtime import ConsoleRealtimeController
 from .review_selection import (
@@ -123,6 +126,13 @@ def _displayed_console_composer_draft(screen: Any) -> str | None:
     if composer is None:
         composer = screen._console_composer_or_none()
     return composer.draft_text() if composer is not None else None
+
+
+def _raw_cli_run_log_root() -> Path:
+    """Resolve the app-private local-command log root at call time."""
+    from tldw_chatbook.config import get_user_data_dir
+
+    return get_user_data_dir()
 
 
 def _console_screen_is_displayed(screen: Any) -> bool:
@@ -252,6 +262,14 @@ def _review_selection_capture_policy_bindings(
     )
 
 
+def _console_widget_or_none(screen: Any, selector: str) -> Any | None:
+    """Return one mounted Console widget without exposing query failures."""
+    try:
+        return screen.query_one(selector)
+    except QueryError:
+        return None
+
+
 async def _show_console_feedback_comment(
     screen: Any, action: str, quote: str
 ) -> str | None:
@@ -277,20 +295,137 @@ def _present_console_trajectory(screen: Any, launch: ConsoleTrajectoryLaunch) ->
     )
 
 
+def _raw_cli_active_session_id(screen: Any) -> str:
+    """Return the active Console session, creating the ordinary default if needed."""
+    return str(screen._ensure_console_chat_store().ensure_session().id)
+
+
+def _raw_cli_projection_is_current(screen: Any, session_id: str) -> bool:
+    """Return whether this screen may project one raw marker update."""
+    try:
+        if screen.app.screen is not screen:
+            return False
+    except Exception:  # noqa: BLE001 -- detached fixtures have no projection
+        return False
+    if bool(getattr(screen, "_closing", False)) or bool(
+        getattr(screen, "_closed", False)
+    ):
+        return False
+    try:
+        store = screen._ensure_console_chat_store()
+        return store.active_session_id == session_id
+    except Exception:  # noqa: BLE001 -- projection is navigation-best-effort
+        return False
+
+
+async def _drain_raw_cli_projection(screen: Any) -> None:
+    """Drain dirty raw updates through one screen-owned projection worker."""
+    try:
+        while True:
+            screen._raw_cli_projection_dirty = False
+            session_id = getattr(screen, "_raw_cli_projection_session_id", None)
+            if not isinstance(session_id, str) or not _raw_cli_projection_is_current(
+                screen, session_id
+            ):
+                return
+            await screen._sync_native_console_chat_ui()
+            if not bool(getattr(screen, "_raw_cli_projection_dirty", False)):
+                return
+    finally:
+        screen._raw_cli_projection_in_flight = False
+
+
+def _schedule_raw_cli_projection(screen: Any, session_id: str) -> None:
+    """Coalesce raw marker updates into one live-screen projection worker."""
+    if not _raw_cli_projection_is_current(screen, session_id):
+        return
+    screen._raw_cli_projection_session_id = session_id
+    screen._raw_cli_projection_dirty = True
+    if bool(getattr(screen, "_raw_cli_projection_in_flight", False)):
+        return
+    screen._raw_cli_projection_in_flight = True
+    projection = _drain_raw_cli_projection(screen)
+    try:
+        screen.run_worker(
+            projection,
+            group="console-raw-cli-projection",
+            exit_on_error=False,
+        )
+    except Exception:  # noqa: BLE001 -- projection is navigation-best-effort
+        screen._raw_cli_projection_in_flight = False
+        screen._raw_cli_projection_dirty = False
+        close = getattr(projection, "close", None)
+        if callable(close):
+            close()
+
+
+def _raw_cli_active_leaf_anchor(screen: Any, session_id: str) -> str | None:
+    """Capture the exact native leaf while the user submits the command."""
+    return screen._ensure_console_chat_store().active_leaf(session_id)
+
+
+def _raw_cli_persisted_leaf_anchor(
+    screen: Any,
+    session_id: str,
+    native_leaf_id: str,
+) -> str | None:
+    """Resolve the captured native leaf after first identity persistence."""
+    store = screen._ensure_console_chat_store()
+    return store.persisted_message_id_for_session_node(session_id, native_leaf_id)
+
+
+def _raw_cli_persist_session_if_needed(
+    screen: Any,
+    session_id: str,
+) -> str | None:
+    """Persist an ordinary session through the established durability gate."""
+    return screen._ensure_console_chat_store().persist_session_if_needed(session_id)
+
+
+def _raw_cli_selected_local_root(screen: Any, session_id: str) -> Path | None:
+    """Resolve the session's selected local-folder binding, if still usable."""
+    store = screen._ensure_console_chat_store()
+    session = next(
+        (item for item in store.sessions() if item.id == session_id),
+        None,
+    )
+    selected_id = (
+        session.project_instruction_state.working_folder_binding_id
+        if session is not None
+        else None
+    )
+    registry = getattr(screen.app_instance, "workspace_registry_service", None)
+    if not selected_id or registry is None:
+        return None
+    try:
+        binding = registry.get_runtime_binding(selected_id)
+        if str(getattr(binding, "workspace_id", "")) != str(session.workspace_id):
+            return None
+        kind = getattr(binding, "binding_kind", None)
+        if getattr(kind, "value", kind) != "local-filesystem":
+            return None
+        root = Path(binding.locator)
+        return root if root.is_absolute() and root.exists() and root.is_dir() else None
+    except (AttributeError, KeyError, OSError, RuntimeError, TypeError, ValueError):
+        return None
+
+
 def build_console_controllers(
     screen: "ChatScreen",
     *,
     rag_source_types_accessor: Callable[[], tuple[str, ...]],
     rag_top_k_accessor: Callable[[], int],
 ) -> None:
-    """Construct the Console screen's sixteen controllers and attach them.
+    """Construct the Console screen's controllers and coordinators.
 
     Assigns, in this order, `screen._image`, `screen._video`,
-    `screen._retrieval`, `screen._skill`, `screen._workspace`,
-    `screen._character`, `screen._fleet`, `screen._session`, `screen._dictation`,
-    `screen._hands_free`, `screen._realtime`, `screen._message`, `screen._prompts`,
-    `screen._agent`, `screen._prompt_queue`, and `screen._send_price`. The order is
-    documentation, not a constraint:
+    `screen._retrieval`, `screen._library_policy`, `screen._library_activity`,
+    `screen._skill`, `screen._workspace`, `screen._character`, `screen._fleet`,
+    `screen._session`, `screen._dictation`, `screen._hands_free`,
+    `screen._realtime`, `screen._message`, `screen._console_auto_speak`,
+    `screen._prompts`, `screen._agent`, `screen._raw_cli`,
+    `screen._prompt_queue`, `screen._review_selection`, and
+    `screen._send_price`. The order is documentation, not a constraint:
     every cross-controller dependency below is resolved at call time (see the
     module docstring), so no controller reads a sibling that does not exist
     yet.
@@ -298,7 +433,7 @@ def build_console_controllers(
     `ChatScreen.__init__` calls this at exactly the point the first
     construction used to occupy. That position matters: the ~250 attribute
     assignments around it in `__init__` include names these lambdas read, and
-    none of the sixteen constructors reads mutable state off `screen` eagerly
+    none of these constructors reads mutable state off `screen` eagerly
     (each stores its inputs and callables), so the call needs to sit where it
     can see everything the pre-move constructions could.
 
@@ -618,6 +753,20 @@ def build_console_controllers(
             )
         ),
     )
+    screen._library_activity = ConsoleLibraryActivityController(
+        app_instance=screen.app_instance,
+        ensure_store=lambda: screen._ensure_console_chat_store(),
+        transcript=lambda: _console_widget_or_none(
+            screen, "#console-native-transcript"
+        ),
+        inspector_rail=lambda: _console_widget_or_none(
+            screen, "#console-right-rail"
+        ),
+        citation_counts=lambda: screen._console_citation_counts,
+        reveal_inspector=lambda: screen._reveal_console_inspector_rail(),
+        sync_native_ui=lambda: screen._sync_native_console_chat_ui(),
+        notify=lambda *args, **kwargs: screen.app_instance.notify(*args, **kwargs),
+    )
     screen._character = ConsoleCharacterController(
         app_config_accessor=(
             lambda: getattr(screen.app_instance, "app_config", {}) or {}
@@ -886,6 +1035,11 @@ def build_console_controllers(
             lambda: screen._ensure_console_chat_controller()
         ),
         composer_accessor=lambda: screen._console_composer_or_none(),
+        restore_banked_raw_cli_stashes=(
+            lambda session_id, composer: screen._raw_cli.restore_banked_stashes(
+                session_id, composer
+            )
+        ),
         effective_console_provider_model=(
             lambda: screen._effective_console_provider_model()
         ),
@@ -1480,6 +1634,74 @@ def build_console_controllers(
         # straight to `run_worker` without calling it.
         sync_native_console_chat_ui_accessor=(
             lambda: screen._sync_native_console_chat_ui
+        ),
+    )
+    screen._raw_cli = ConsoleRawCliController(
+        raw_cli_runtime=lambda: screen.app_instance.raw_cli_runtime,
+        active_session_id=lambda: _raw_cli_active_session_id(screen),
+        persist_session_if_needed=(
+            lambda session_id: _raw_cli_persist_session_if_needed(screen, session_id)
+        ),
+        active_leaf_anchor=(
+            lambda session_id: _raw_cli_active_leaf_anchor(screen, session_id)
+        ),
+        persisted_leaf_anchor=(
+            lambda session_id, native_leaf_id: _raw_cli_persisted_leaf_anchor(
+                screen, session_id, native_leaf_id
+            )
+        ),
+        selected_local_root=(
+            lambda session_id: _raw_cli_selected_local_root(screen, session_id)
+        ),
+        private_scratch_root=(
+            lambda session_id: (
+                screen._console_runtime().scratch_spaces.snapshot(session_id).root
+            )
+        ),
+        refusal_stash_bank=screen._console_runtime().raw_cli_refusal_stash_bank,
+        accepts_raw_cli_refusal_callbacks=(
+            lambda: screen._console_runtime().accepts_raw_cli_refusal_callbacks
+        ),
+        restore_stash=(
+            lambda session_id, stash: restore_refused_raw_cli_stash(
+                session_id,
+                stash,
+                composer=screen._console_composer_or_none(),
+                active_session_id=(
+                    screen._ensure_console_chat_store().active_session_id
+                ),
+                visible_session_id=screen._console_visible_draft_session_id,
+            )
+        ),
+        append_local_error=(
+            lambda session_id, text: screen.run_worker(
+                screen._append_native_console_system_message(
+                    text, session_id=session_id
+                ),
+                exclusive=False,
+                name="_append_console_raw_cli_refusal",
+            )
+        ),
+        append_store_marker=(
+            lambda *args, **kwargs: screen._ensure_console_chat_store().append_message(
+                *args, **kwargs
+            )
+        ),
+        update_store_marker=(
+            lambda *args, **kwargs: getattr(
+                screen._ensure_console_chat_store(), "update_tool_marker"
+            )(*args, **kwargs)
+        ),
+        agent_runs_db=(
+            lambda: getattr(screen._ensure_console_agent_bridge(), "_db", None)
+        ),
+        run_log_access=lambda: _raw_cli_run_log_root(),
+        start_worker=lambda work, **kwargs: screen.run_worker(work, **kwargs),
+        marshal_to_ui=(
+            lambda callback, *args: screen.app.call_from_thread(callback, *args)
+        ),
+        schedule_projection=(
+            lambda session_id: _schedule_raw_cli_projection(screen, session_id)
         ),
     )
     screen._prompt_queue = ConsolePromptQueueUIController(

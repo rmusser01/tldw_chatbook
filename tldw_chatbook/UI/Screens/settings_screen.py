@@ -147,6 +147,7 @@ from ...config import (
     MIN_CONSOLE_PASTE_COLLAPSE_THRESHOLD,
     MIN_CONSOLE_TOOL_RESULT_DISPLAY_CHARS,
     ProviderSettingsError,
+    RuntimeConfigSnapshot,
     _default_base_data_dir,
     apply_settings_mutation_to_cli_config,
     apply_console_capture_settings,
@@ -158,6 +159,7 @@ from ...config import (
     load_settings,
     provider_settings_for_key,
     runtime_capture_policy,
+    run_if_runtime_config_generation_current,
     save_settings_to_cli_config,
 )
 from ...LLM_Provider_Catalog.model_catalog_settings import (
@@ -688,6 +690,22 @@ MODEL_CATALOG_FIELD_IDS = frozenset(
     MODEL_CATALOG_CHECKBOX_IDS | {"settings-model-catalog-stale-hours"}
 )
 
+RAW_CLI_PERMITTED_DRAFT_KEY = "console.raw_cli_permitted"
+RAW_CLI_CONFIG_RECONCILE_ATTEMPTS = 3
+RAW_CLI_DISCLOSURE_LINES = (
+    "Commands run with the same OS permissions as Chatbook.",
+    "Commands can read, modify, or delete any accessible file, including Chatbook's "
+    "config and permission store.",
+    "Commands can access the network, invoke credentialed clients, launch background "
+    "processes, and exhaust machine resources.",
+    "The environment is scrubbed, but commands can still read credential files and "
+    "other user data.",
+    "Cancellation attempts to terminate the owned process group/job; deliberately "
+    "detached descendants may survive.",
+    "Command text and bounded output may persist in local run logs.",
+    "This is not a sandbox and is not limited to your workspace.",
+)
+
 
 # TASK-18600: the Console agent's run budget, driven by ONE spec table
 # rather than five copies of the per-setting boilerplate every other
@@ -1016,6 +1034,7 @@ GUIDED_SETTINGS_MUTATION_CATEGORIES = frozenset(
         SettingsCategoryId.CONSOLE_BEHAVIOR,
         SettingsCategoryId.LIBRARY_RAG,
         SettingsCategoryId.STORAGE,
+        SettingsCategoryId.PRIVACY_SECURITY,
     }
 )
 # task-181: keep these rows in user language; they render on the Overview
@@ -1511,6 +1530,9 @@ def _build_field_search_index() -> None:
                 (f"settings-storage-{name.replace('_', '-')}", label)
                 for name, label in _labels.items()
             ),
+            SettingsCategoryId.PRIVACY_SECURITY: (
+                ("settings-raw-cli-permitted", "Allow raw CLI host access"),
+            ),
             SettingsCategoryId.LIBRARY_RAG: tuple(
                 (field_id, _rag_field_search_label(field_id))
                 for field_id in _RAG_FIELD_GROUP_BY_ID
@@ -1752,7 +1774,7 @@ _INSPECTOR_GUIDANCE: dict[SettingsCategoryId, tuple[tuple[str, str], ...]] = {
     SettingsCategoryId.PRIVACY_SECURITY: (
         (
             "Affected config",
-            "encryption posture, credential-source status, and redaction status",
+            "console.raw_cli_permitted only; privacy posture and secret status stay read-only",
         ),
         (
             "Credential source",
@@ -1760,11 +1782,11 @@ _INSPECTOR_GUIDANCE: dict[SettingsCategoryId, tuple[tuple[str, str], ...]] = {
         ),
         (
             "Recovery",
-            "open Providers & Models for provider defaults or Advanced Config for expert repair",
+            "save or revert the raw CLI unlock; use Check Privacy for posture verification",
         ),
         (
             "Boundary",
-            "raw secret values are never displayed; encryption mutation needs a password-gated flow",
+            "arming applies only to this launch; raw secrets remain hidden",
         ),
     ),
     SettingsCategoryId.CONSOLE_BEHAVIOR: (
@@ -2549,6 +2571,9 @@ class SettingsScreen(BaseAppScreen):
         self._console_capture_status = "Global exchange capture settings are active."
         self._console_capture_applying = False
         self._settings_drafts: dict[SettingsCategoryId, SettingsDraft] = {}
+        self._raw_cli_save_pending = False
+        self._raw_cli_unlock_confirmation_pending = False
+        self._raw_cli_arm_confirmation_pending = False
         self._provider_test_result = self._PROVIDER_TEST_NOT_RUN_COPY
         self._provider_test_evidence_store = ProviderTestEvidenceStore()
         self._provider_draft_generation = 0
@@ -3468,8 +3493,8 @@ class SettingsScreen(BaseAppScreen):
             SettingsCategorySummary(
                 SettingsCategoryId.PRIVACY_SECURITY,
                 "Privacy & Security",
-                "Secrets, encryption, redaction, and local privacy boundaries.",
-                "Local",
+                "Raw CLI host-access gate, secrets, redaction, and local privacy boundaries.",
+                "Guided",
             ),
             SettingsCategorySummary(
                 SettingsCategoryId.CONSOLE_BEHAVIOR,
@@ -3922,19 +3947,22 @@ class SettingsScreen(BaseAppScreen):
             ),
             SettingsOwnershipRecord(
                 category=SettingsCategoryId.PRIVACY_SECURITY,
-                owns_config_sections=(
-                    "encryption",
-                    "api_settings.<provider>.credential_source",
-                ),
+                owns_config_sections=("console.raw_cli_permitted",),
                 reads_runtime_state_from=(
-                    "config redaction",
-                    "environment credential status",
+                    "RawCliRuntime launch-local arm state",
+                    "encryption and config redaction posture",
+                    "api_settings environment credential status",
                 ),
-                writes_allowed=False,
-                runtime_owner="Privacy and credential services",
-                boundary_copy="Settings exposes privacy posture without printing raw secrets.",
-                recovery_copy="Rotate exposed credentials outside Chatbook and rerun privacy checks.",
-                read_only_reason="Encryption and credential migration need a dedicated recovery flow.",
+                writes_allowed=True,
+                runtime_owner="Settings unlock plus RawCliRuntime launch-local arm state",
+                boundary_copy=(
+                    "Only console.raw_cli_permitted is editable here; privacy posture, "
+                    "encryption, and credential status remain read-only."
+                ),
+                recovery_copy=(
+                    "Save or revert the unlock; Disarm acts immediately without changing "
+                    "the draft."
+                ),
             ),
             SettingsOwnershipRecord(
                 category=SettingsCategoryId.CONSOLE_BEHAVIOR,
@@ -4091,6 +4119,81 @@ class SettingsScreen(BaseAppScreen):
             console_settings = {}
             app_config["console"] = console_settings
         return console_settings
+
+    def _loaded_raw_cli_permitted(self) -> bool:
+        """Return the strict persisted raw CLI unlock from live app config."""
+        app_config = getattr(self.app_instance, "app_config", None)
+        if not isinstance(app_config, Mapping):
+            return False
+        console = app_config.get("console")
+        return isinstance(console, Mapping) and console.get("raw_cli_permitted") is True
+
+    def _raw_cli_runtime(self) -> Any | None:
+        """Return the app-owned launch-local raw CLI runtime, when available."""
+        return getattr(self.app_instance, "raw_cli_runtime", None)
+
+    def _raw_cli_draft_value(self) -> bool:
+        draft = self._settings_drafts.get(SettingsCategoryId.PRIVACY_SECURITY)
+        if draft is not None and RAW_CLI_PERMITTED_DRAFT_KEY in draft.values:
+            return draft.values[RAW_CLI_PERMITTED_DRAFT_KEY] is True
+        return self._loaded_raw_cli_permitted()
+
+    def _stage_raw_cli_permitted(self, value: bool) -> None:
+        category = SettingsCategoryId.PRIVACY_SECURITY
+        draft = self._settings_drafts.setdefault(category, SettingsDraft(category))
+        draft.set_value(
+            RAW_CLI_PERMITTED_DRAFT_KEY,
+            self._loaded_raw_cli_permitted(),
+            bool(value),
+        )
+        self._update_draft_status_widgets(category)
+        self._refresh_raw_cli_state()
+
+    def _raw_cli_is_armed(self) -> bool:
+        runtime = self._raw_cli_runtime()
+        return bool(runtime is not None and getattr(runtime, "armed", False))
+
+    def _raw_cli_state_text(self) -> str:
+        if self._raw_cli_is_armed():
+            return "ARMED — HOST ACCESS"
+        if self._loaded_raw_cli_permitted():
+            return "Unlocked, not armed"
+        return "Locked"
+
+    def _raw_cli_arm_button_state(self) -> tuple[str, bool]:
+        if self._raw_cli_is_armed():
+            return "Disarm now", False
+        if self._loaded_raw_cli_permitted() and not self._category_has_unsaved_changes(
+            SettingsCategoryId.PRIVACY_SECURITY
+        ):
+            return "Arm for this launch", False
+        return "Save unlock first", True
+
+    def _refresh_raw_cli_state(self) -> None:
+        """Refresh raw CLI authority from persisted config and runtime only."""
+        try:
+            card = self.query_one("#settings-raw-cli-card")
+            state = self.query_one("#settings-raw-cli-state", Static)
+            button = self.query_one("#settings-raw-cli-arm", Button)
+        except QueryError:
+            return
+        armed = self._raw_cli_is_armed()
+        card.set_class(armed, "settings-raw-cli-armed")
+        state.update(self._raw_cli_state_text())
+        label, disabled = self._raw_cli_arm_button_state()
+        button.label = label
+        button.disabled = disabled
+        button.refresh(layout=True)
+
+    def _sync_raw_cli_widgets(self) -> None:
+        try:
+            checkbox = self.query_one("#settings-raw-cli-permitted", Checkbox)
+        except QueryError:
+            self._refresh_raw_cli_state()
+            return
+        with checkbox.prevent(Checkbox.Changed):
+            checkbox.value = self._raw_cli_draft_value()
+        self._refresh_raw_cli_state()
 
     def _chat_defaults(self) -> dict:
         app_config = self._app_config_section_target()
@@ -6005,13 +6108,16 @@ class SettingsScreen(BaseAppScreen):
                     return f"Guided edits: {validation.message}"
                 return "Guided edits: Save or Revert Storage defaults."
             return "Guided edits: change a Storage default first."
+        if category is SettingsCategoryId.PRIVACY_SECURITY:
+            if self._category_has_unsaved_changes(category):
+                return "Guided edit: Save or Revert the raw CLI unlock."
+            return "Guided edit: raw CLI unlock only; posture remains read-only."
         if category in GUIDED_SETTINGS_MUTATION_CATEGORIES:
             if self._category_has_unsaved_changes(category):
                 return "Guided edits: Save or Revert changes."
             return "Guided edits: change a field first."
         messages = {
             SettingsCategoryId.OVERVIEW: "Guided edits: choose Providers or Console.",
-            SettingsCategoryId.PRIVACY_SECURITY: "Guided edits: use Check Privacy.",
             SettingsCategoryId.DIAGNOSTICS: "Guided edits: use Validate/Reload.",
             SettingsCategoryId.ABOUT: "Guided edits: read-only; links open in browser.",
             SettingsCategoryId.ADVANCED_CONFIG: "Guided edits: use Raw TOML controls.",
@@ -6489,7 +6595,10 @@ class SettingsScreen(BaseAppScreen):
         if category is SettingsCategoryId.STORAGE:
             return "Changes apply on next launch; active handles stay unchanged."
         if category is SettingsCategoryId.PRIVACY_SECURITY:
-            return "State: Local privacy | Secrets stay redacted in validation and diagnostics."
+            return (
+                "Only the raw CLI unlock is editable; privacy posture and secrets "
+                "remain read-only and redacted."
+            )
         if category is SettingsCategoryId.SPLASH_SCREEN:
             return "Splash changes take effect as you make them."
         if category is SettingsCategoryId.WORKSPACES:
@@ -16241,6 +16350,50 @@ class SettingsScreen(BaseAppScreen):
                     id="settings-privacy-check-result",
                     classes="settings-status-row",
                 )
+            armed_for_launch = self._raw_cli_is_armed()
+            raw_cli_label, raw_cli_disabled = self._raw_cli_arm_button_state()
+            with Vertical(
+                id="settings-raw-cli-card",
+                classes=(
+                    "settings-focus-card settings-raw-cli-danger"
+                    + (" settings-raw-cli-armed" if armed_for_launch else "")
+                ),
+            ):
+                yield Static(
+                    "DANGER!!! RAW CLI HOST ACCESS",
+                    id="settings-raw-cli-title",
+                    classes="destination-section",
+                )
+                yield Static(
+                    self._raw_cli_state_text(),
+                    id="settings-raw-cli-state",
+                )
+                for line in RAW_CLI_DISCLOSURE_LINES:
+                    yield Static(line, classes="settings-raw-cli-disclosure")
+                yield Checkbox(
+                    "Allow raw CLI host access",
+                    value=self._raw_cli_draft_value(),
+                    id="settings-raw-cli-permitted",
+                    tooltip=(
+                        "Stage the persistent raw CLI unlock; Save and Revert use the "
+                        "ordinary Settings draft."
+                    ),
+                )
+                with Vertical(classes="settings-raw-cli-action-row"):
+                    yield Static(
+                        "Applies immediately.",
+                        id="settings-raw-cli-immediate",
+                    )
+                    arm_button = Button(
+                        raw_cli_label,
+                        id="settings-raw-cli-arm",
+                        tooltip=(
+                            "Arm for this launch or immediately disarm active raw CLI "
+                            "authority."
+                        ),
+                    )
+                    arm_button.disabled = raw_cli_disabled
+                    yield arm_button
         elif category is SettingsCategoryId.DIAGNOSTICS:
             yield Static(
                 "Diagnostics", classes="destination-section settings-column-title"
@@ -17116,13 +17269,20 @@ class SettingsScreen(BaseAppScreen):
             return
 
     async def flush_pending_work(self) -> bool:
-        """Protect a mounted global Speech/TTS draft before dismissal."""
+        """Protect pending Settings work before dismissal."""
 
         attempt = (
             self._speech_tts_navigation_attempts.pop(0)
             if self._speech_tts_navigation_attempts
             else None
         )
+        if getattr(self, "_raw_cli_save_pending", False):
+            self.app.notify(
+                "Raw CLI unlock save is still in progress; staying in Settings.",
+                severity="warning",
+            )
+            return False
+
         expected = getattr(
             self.app_instance,
             "_audio_cpp_settings_model_library_request",
@@ -17958,6 +18118,8 @@ class SettingsScreen(BaseAppScreen):
     ) -> bool:
         """Stage one exact request and navigate without resolving the draft."""
 
+        if getattr(self, "_raw_cli_save_pending", False):
+            return False
         if (
             type(snapshot) is not SpeechTTSPanelDraftSnapshot
             or self._audio_cpp_result_cleanup is not None
@@ -21545,6 +21707,67 @@ class SettingsScreen(BaseAppScreen):
         event.stop()
         self.action_settings_test_category()
 
+    @on(Checkbox.Changed, "#settings-raw-cli-permitted")
+    def handle_raw_cli_permitted_changed(self, event: Checkbox.Changed) -> None:
+        event.stop()
+        self._stage_raw_cli_permitted(bool(event.value))
+
+    @on(Button.Pressed, "#settings-raw-cli-arm")
+    def handle_raw_cli_arm_pressed(self, event: Button.Pressed) -> None:
+        event.stop()
+        if getattr(self, "_raw_cli_arm_confirmation_pending", False):
+            self.app.notify(
+                "Raw CLI Arm confirmation is already open.", severity="warning"
+            )
+            return
+        runtime = self._raw_cli_runtime()
+        if runtime is None:
+            self.app.notify("Raw CLI runtime is unavailable.", severity="error")
+            return
+        if self._raw_cli_is_armed():
+            cancelled = tuple(runtime.disarm())
+            self._refresh_raw_cli_state()
+            message = "Raw CLI disarmed for this launch."
+            if cancelled:
+                message = f"{message} Cancellation requested for active commands."
+            self.app.notify(message, severity="warning")
+            return
+        _label, disabled = self._raw_cli_arm_button_state()
+        if disabled:
+            self._refresh_raw_cli_state()
+            return
+
+        async def _confirmed_arm() -> None:
+            self._raw_cli_arm_confirmation_pending = False
+            result = runtime.arm()
+            self._refresh_raw_cli_state()
+            if getattr(result, "armed", False):
+                self.app.notify("Raw CLI armed for this launch.", severity="warning")
+            else:
+                self.app.notify(
+                    "Raw CLI could not be armed; save the unlock first.",
+                    severity="error",
+                )
+
+        async def _cancelled_arm() -> None:
+            self._raw_cli_arm_confirmation_pending = False
+
+        self._raw_cli_arm_confirmation_pending = True
+        try:
+            self.app.push_screen(
+                ConfirmationDialog(
+                    title="Arm raw CLI for this launch",
+                    message="\n\n".join(RAW_CLI_DISCLOSURE_LINES),
+                    confirm_label="Arm host access",
+                    cancel_label="Cancel",
+                    confirm_callback=_confirmed_arm,
+                    cancel_callback=_cancelled_arm,
+                )
+            )
+        except Exception:
+            self._raw_cli_arm_confirmation_pending = False
+            raise
+
     @on(Button.Pressed, "#settings-open-provider-credentials")
     def handle_open_provider_credentials(self, event: Button.Pressed) -> None:
         event.stop()
@@ -21633,6 +21856,211 @@ class SettingsScreen(BaseAppScreen):
         event.stop()
         self._update_advanced_validation_status()
 
+    @staticmethod
+    def _save_raw_cli_permitted_value(
+        value: bool,
+    ) -> tuple[bool, RuntimeConfigSnapshot | None]:
+        """Persist and reload the strict raw CLI unlock literal."""
+        adapter = SettingsConfigAdapter()
+        try:
+            saved = adapter.save_sections(
+                {"console": {"raw_cli_permitted": bool(value)}}
+            )
+        except Exception:
+            logger.exception("Failed to persist raw CLI unlock")
+            return False, None
+        if not saved:
+            return False, None
+        try:
+            snapshot = get_runtime_config_snapshot(force_reload=True)
+        except Exception:
+            logger.exception(
+                "Saved raw CLI unlock but failed to observe runtime config"
+            )
+            return True, None
+        if not isinstance(snapshot, RuntimeConfigSnapshot):
+            return True, None
+        return True, snapshot
+
+    @staticmethod
+    def _raw_cli_snapshot_authority(
+        snapshot: RuntimeConfigSnapshot | None,
+    ) -> tuple[int, bool] | None:
+        """Extract one guarded, fail-closed authority value from a snapshot."""
+        if not isinstance(snapshot, RuntimeConfigSnapshot):
+            return None
+        if type(snapshot.generation) is not int or snapshot.generation < 0:
+            return None
+        values = snapshot.values
+        console = values.get("console") if isinstance(values, Mapping) else None
+        loaded_value = (
+            console.get("raw_cli_permitted") if isinstance(console, Mapping) else None
+        )
+        return snapshot.generation, (
+            loaded_value if type(loaded_value) is bool else False
+        )
+
+    def _reconcile_raw_cli_runtime_authority(
+        self,
+        published_snapshot: RuntimeConfigSnapshot | None,
+    ) -> tuple[bool, bool]:
+        """Apply a stable runtime generation or fail closed after bounded retries."""
+        candidate = published_snapshot
+        for _attempt in range(RAW_CLI_CONFIG_RECONCILE_ATTEMPTS):
+            parsed = self._raw_cli_snapshot_authority(candidate)
+            if parsed is None:
+                try:
+                    candidate = get_runtime_config_snapshot()
+                except Exception:
+                    logger.exception(
+                        "Failed to refresh raw CLI runtime config snapshot"
+                    )
+                    break
+                parsed = self._raw_cli_snapshot_authority(candidate)
+                if parsed is None:
+                    candidate = None
+                    continue
+            generation, authority = parsed
+
+            def _publish_authority() -> bool:
+                self._console_settings()["raw_cli_permitted"] = authority
+                return True
+
+            try:
+                if run_if_runtime_config_generation_current(
+                    generation,
+                    _publish_authority,
+                ):
+                    return authority, True
+            except Exception:
+                logger.exception(
+                    "Failed to guard raw CLI runtime config reconciliation"
+                )
+            candidate = None
+
+        logger.warning(
+            "Raw CLI runtime config generation did not stabilize; failing closed"
+        )
+        self._console_settings()["raw_cli_permitted"] = False
+        return False, False
+
+    def _apply_raw_cli_save_result(
+        self,
+        saved: bool,
+        published_snapshot: RuntimeConfigSnapshot | None,
+        value: bool,
+    ) -> None:
+        category = SettingsCategoryId.PRIVACY_SECURITY
+        self._raw_cli_save_pending = False
+        if not saved:
+            self._update_draft_status_widgets(category)
+            self._refresh_raw_cli_state()
+            self.app.notify("Failed to save the raw CLI unlock.", severity="error")
+            return
+        saved_value, stable = self._reconcile_raw_cli_runtime_authority(
+            published_snapshot
+        )
+        draft = self._settings_drafts.get(category)
+        current_value = (
+            draft.values.get(RAW_CLI_PERMITTED_DRAFT_KEY) is True
+            if draft is not None
+            else saved_value
+        )
+        if current_value == value:
+            self._settings_drafts.pop(category, None)
+        elif draft is not None:
+            draft.set_value(
+                RAW_CLI_PERMITTED_DRAFT_KEY,
+                saved_value,
+                current_value,
+            )
+        if not value or not saved_value:
+            runtime = self._raw_cli_runtime()
+            if runtime is not None:
+                runtime.disarm()
+        self._sync_raw_cli_widgets()
+        self._update_draft_status_widgets(category)
+        if stable and saved_value is value:
+            self.app.notify(
+                "Raw CLI unlock saved on." if value else "Raw CLI unlock saved off.",
+                severity="warning" if value else "information",
+            )
+        else:
+            self.app.notify(
+                "Raw CLI unlock reconciled to the latest saved state.",
+                severity="warning",
+            )
+
+    @work(exclusive=True, group="settings-save-raw-cli", thread=True)
+    def _settings_save_raw_cli_worker(self, value: bool) -> None:
+        saved, published_snapshot = self._save_raw_cli_permitted_value(value)
+        self.app.call_from_thread(
+            self._apply_raw_cli_save_result,
+            saved,
+            published_snapshot,
+            value,
+        )
+
+    def _start_raw_cli_save(self, value: bool) -> bool:
+        """Start one serialized raw CLI unlock save."""
+        if getattr(self, "_raw_cli_save_pending", False):
+            self.app.notify(
+                "Raw CLI unlock save is already in progress.", severity="warning"
+            )
+            return False
+        self._raw_cli_save_pending = True
+        try:
+            self._settings_save_raw_cli_worker(value)
+        except Exception:
+            self._raw_cli_save_pending = False
+            raise
+        return True
+
+    def _save_raw_cli_draft(self) -> None:
+        category = SettingsCategoryId.PRIVACY_SECURITY
+        if getattr(self, "_raw_cli_save_pending", False):
+            self._start_raw_cli_save(self._raw_cli_draft_value())
+            return
+        if getattr(self, "_raw_cli_unlock_confirmation_pending", False):
+            self.app.notify(
+                "Raw CLI unlock confirmation is already open.", severity="warning"
+            )
+            return
+        draft = self._settings_drafts.get(category)
+        if draft is None or RAW_CLI_PERMITTED_DRAFT_KEY not in draft.dirty_keys:
+            self._settings_drafts.pop(category, None)
+            self._sync_raw_cli_widgets()
+            self._update_draft_status_widgets(category)
+            self.app.notify("No Settings changes to save.", severity="information")
+            return
+        value = draft.values.get(RAW_CLI_PERMITTED_DRAFT_KEY) is True
+        if not value or self._loaded_raw_cli_permitted():
+            self._start_raw_cli_save(value)
+            return
+
+        async def _confirmed_unlock() -> None:
+            self._raw_cli_unlock_confirmation_pending = False
+            self._start_raw_cli_save(True)
+
+        async def _cancelled_unlock() -> None:
+            self._raw_cli_unlock_confirmation_pending = False
+
+        self._raw_cli_unlock_confirmation_pending = True
+        try:
+            self.app.push_screen(
+                ConfirmationDialog(
+                    title="Unlock raw CLI host access",
+                    message="\n\n".join(RAW_CLI_DISCLOSURE_LINES),
+                    confirm_label="Save unlock",
+                    cancel_label="Cancel",
+                    confirm_callback=_confirmed_unlock,
+                    cancel_callback=_cancelled_unlock,
+                )
+            )
+        except Exception:
+            self._raw_cli_unlock_confirmation_pending = False
+            raise
+
     def action_settings_save_category(
         self, *, allow_text_entry_focus: bool = False
     ) -> None:
@@ -21643,6 +22071,9 @@ class SettingsScreen(BaseAppScreen):
             self.app.notify(
                 self._guided_action_message(category), severity="information"
             )
+            return
+        if category is SettingsCategoryId.PRIVACY_SECURITY:
+            self._save_raw_cli_draft()
             return
         if category is SettingsCategoryId.SPEECH_TTS:
             try:
@@ -22424,6 +22855,13 @@ class SettingsScreen(BaseAppScreen):
         if not allow_text_entry_focus and self._settings_text_entry_has_focus():
             return
         category = self._active_category_id()
+        if category is SettingsCategoryId.PRIVACY_SECURITY and getattr(
+            self, "_raw_cli_save_pending", False
+        ):
+            self.app.notify(
+                "Raw CLI unlock save is still in progress.", severity="warning"
+            )
+            return
         if category is SettingsCategoryId.SPEECH_TTS:
             try:
                 panel = self.query_one(
@@ -22536,6 +22974,9 @@ class SettingsScreen(BaseAppScreen):
         elif category is SettingsCategoryId.STORAGE:
             self._storage_result = "Storage defaults reverted to last loaded values."
             self._sync_storage_widgets()
+            self._update_draft_status_widgets(category)
+        elif category is SettingsCategoryId.PRIVACY_SECURITY:
+            self._sync_raw_cli_widgets()
             self._update_draft_status_widgets(category)
         elif category is SettingsCategoryId.PROVIDERS_MODELS:
             values = self._provider_setting_values()

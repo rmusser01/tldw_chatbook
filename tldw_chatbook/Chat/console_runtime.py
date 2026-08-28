@@ -21,6 +21,9 @@ build for itself:
   controller),
 - the `ConsoleChatController`.
 
+It also owns the process-memory raw CLI refusal stash bank so an exact draft
+survives replacement of the screen/controller that received the refusal.
+
 Each is built lazily, on first `ensure_*` call, from parameters the
 calling view supplies — the same parameters, in the same order, the
 screen's own `_ensure_*` methods passed before this module existed.
@@ -517,6 +520,7 @@ class ConsoleRuntime:
         self._change_review_coordinator: Any | None = None
         self._chat_controller: Any | None = None
         self._scratch_spaces = ConsoleScratchSpaceManager()
+        self._raw_cli_refusal_stash_bank: dict[str, list[Any]] = {}
         self._persona_buddy_sink = PersonaBuddyConsoleAdapter(
             getattr(app, "persona_buddy_controller", None)
         )
@@ -573,6 +577,16 @@ class ConsoleRuntime:
     def scratch_spaces(self) -> ConsoleScratchSpaceManager:
         """The process-lifetime scratch authority shared by Console visits."""
         return self._scratch_spaces
+
+    @property
+    def raw_cli_refusal_stash_bank(self) -> dict[str, list[Any]]:
+        """The process-memory refusal bank shared by Console visits."""
+        return self._raw_cli_refusal_stash_bank
+
+    @property
+    def accepts_raw_cli_refusal_callbacks(self) -> bool:
+        """Whether raw CLI completion callbacks may still mutate UI state."""
+        return not self._disposed
 
     @property
     def persona_buddy_sink(self) -> PersonaBuddyConsoleAdapter:
@@ -839,6 +853,11 @@ class ConsoleRuntime:
 
         kwargs.setdefault("buddy_sink", self.persona_buddy_sink)
         kwargs.setdefault("scratch_spaces", self._scratch_spaces)
+        raw_cli_runtime = getattr(self._app, "raw_cli_runtime", None)
+        kwargs.setdefault(
+            "cancel_raw_cli_session",
+            getattr(raw_cli_runtime, "cancel_session", None),
+        )
         self._chat_controller = ConsoleChatController(**kwargs)
         if self.view is None:
             # task-15860 Task 4: a runtime can be VIEWLESS FROM BIRTH, not
@@ -1101,6 +1120,7 @@ class ConsoleRuntime:
         is exactly the right answer at exit.
         """
         self._disposed = True
+        self._raw_cli_refusal_stash_bank.clear()
         self._scratch_spaces.tombstone_all()
         self.detach_view(None)
         controller, gateway = self._chat_controller, self._provider_gateway

@@ -75,7 +75,7 @@ KIND_USER_FEEDBACK = "user_feedback"
 _TOOL_KINDS = frozenset({KIND_TOOL_CALL, KIND_TOOL_RESULT})
 # The preparation disclosure is projected by its owning pure module. It is never
 # a message row or nested tool row in the generic trajectory.
-_SIDECAR_ONLY_KINDS = frozenset({"library_preparation"})
+_SIDECAR_ONLY_KINDS = frozenset({"library_activity", "library_preparation"})
 # Kinds that nest UNDER the message they key on rather than being that
 # message's own sidecar row. Feedback (task-17169) is keyed to the message
 # it critiques, so treating it as that message's row would displace the

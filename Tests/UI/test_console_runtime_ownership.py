@@ -27,6 +27,7 @@ import threading
 from pathlib import Path
 
 import pytest
+from textual.events import Key
 
 from Tests.UI.app_factory import _build_test_app
 from Tests.UI.test_console_fleet_wake_wiring import _attach_real_dbs
@@ -47,6 +48,10 @@ from tldw_chatbook.UI.Console_Modules.fleet import (
 )
 from tldw_chatbook.UI.Navigation.main_navigation import NavigateToScreen
 from tldw_chatbook.UI.Screens.chat_screen import ChatScreen
+from tldw_chatbook.Widgets.Console.console_composer_bar import (
+    ConsoleComposerBar,
+    classify_console_raw_draft,
+)
 
 #: Constructor calls that must exist in exactly one place: the runtime.
 #: `ConsoleProviderGateway(` is deliberately NOT here -- the Personas
@@ -106,6 +111,24 @@ async def test_leaving_console_preserves_live_session_scratch(tmp_path):
     assert snapshot.root.is_dir()
     await runtime.dispose()
     assert not snapshot.root.exists()
+
+
+@pytest.mark.asyncio
+async def test_raw_cli_refusal_bank_survives_leave_and_clears_on_dispose():
+    runtime = ConsoleRuntime(type("App", (), {})())
+    stash = object()
+    bank = runtime.raw_cli_refusal_stash_bank
+    bank["session-a"] = [stash]
+
+    assert runtime.accepts_raw_cli_refusal_callbacks is True
+    assert await runtime.leave_console() is True
+    assert runtime.accepts_raw_cli_refusal_callbacks is True
+    assert runtime.raw_cli_refusal_stash_bank is bank
+    assert bank == {"session-a": [stash]}
+
+    await runtime.dispose()
+    assert runtime.accepts_raw_cli_refusal_callbacks is False
+    assert bank == {}
 
 
 @pytest.mark.asyncio
@@ -352,6 +375,61 @@ async def test_second_console_visit_reuses_the_runtime(tmp_path):
 
 
 @pytest.mark.asyncio
+async def test_post_unmount_raw_refusal_restores_on_second_console_visit(tmp_path):
+    app = _build_test_app()
+    _attach_real_dbs(app, tmp_path)
+    _configure_native_ready_console(app)
+
+    async with app.run_test(size=(160, 48)) as pilot:
+        chat = ChatScreen(app)
+        await app.push_screen(chat)
+        app._initial_screen_pushed = True
+        app.current_tab = "chat"
+        await pilot.pause()
+        await _wait_for_selector(chat, pilot, "#console-native-composer")
+
+        store = chat._ensure_console_chat_store()
+        origin_session_id = store.active_session_id
+        assert origin_session_id is not None
+        runtime = chat._console_runtime()
+        controller_a = chat._raw_cli
+
+        source = ConsoleComposerBar()
+        assert source.handle_console_key(Key("exclamation_mark", "!")) is True
+        assert source.handle_console_key(Key("space", " ")) is True
+        source.insert_pasted_text("pwd")
+        stash = source.stash_draft_for_send()
+        assert stash is not None
+
+        await app.handle_screen_navigation(NavigateToScreen("library"))
+        await pilot.pause()
+        assert chat not in app.screen_stack
+
+        controller_a._append_local_error = lambda _session_id, _text: None
+        controller_a._refuse(origin_session_id, stash, "test refusal")
+        assert runtime.raw_cli_refusal_stash_bank[origin_session_id][0] is stash
+
+        await app.handle_screen_navigation(NavigateToScreen("chat"))
+        await pilot.pause()
+        chat_two = app.screen
+        assert isinstance(chat_two, ChatScreen)
+        await _wait_for_selector(chat_two, pilot, "#console-native-composer")
+
+        assert chat_two._console_runtime() is runtime
+        assert chat_two._raw_cli is not controller_a
+        composer = chat_two.query_one("#console-native-composer", ConsoleComposerBar)
+        restored = composer.stash_draft_for_send()
+        assert restored is not None
+        assert restored.segments == stash.segments
+        assert restored.raw_cli_prefix_typed is True
+        assert restored.has_paste is True
+        classified = classify_console_raw_draft(restored)
+        assert classified.kind == "raw"
+        assert classified.text == "pwd"
+        assert runtime.raw_cli_refusal_stash_bank == {}
+
+
+@pytest.mark.asyncio
 async def test_a_terminal_run_state_after_leaving_does_not_reach_the_dead_screen(
     tmp_path,
 ):
@@ -546,6 +624,58 @@ def test_the_runtime_is_disposed_by_the_apps_shutdown_lifecycles():
     assert "_shutdown_console_runtime" in source, source
     disposer = inspect.getsource(TldwCli._shutdown_console_runtime)
     assert "dispose_console_runtime" in disposer, disposer
+
+
+@pytest.mark.unit
+def test_raw_cli_runtime_is_app_owned_unarmed_and_reads_config_replacements():
+    """The app owns one launch-local arm bit over its latest config object."""
+    from tldw_chatbook.app import TldwCli
+
+    initializer = inspect.getsource(TldwCli.__init__)
+    config_load = initializer.index("self.app_config = load_settings()")
+    raw_runtime = initializer.index("self.raw_cli_runtime")
+    next_owner = initializer.index("self.library_new_profile_admission")
+    assert config_load < raw_runtime < next_owner, initializer
+
+    app = _build_test_app(config_overrides={"console": {"raw_cli_permitted": True}})
+    runtime = app.raw_cli_runtime
+    assert runtime.permitted is True
+    assert runtime.armed is False
+
+    app.app_config = {"console": {"raw_cli_permitted": "true"}}
+    assert runtime.arm().armed is False
+    app.app_config = {"console": {"raw_cli_permitted": 1}}
+    assert runtime.arm().armed is False
+    app.app_config = {"console": {"raw_cli_permitted": True}}
+    assert runtime.arm().armed is True
+    assert app.raw_cli_runtime is runtime
+    runtime.shutdown()
+
+
+@pytest.mark.asyncio
+async def test_raw_cli_runtime_shutdown_is_once_and_precedes_console_shutdown():
+    """Both Textual shutdown paths share one raw-runtime shutdown task."""
+    from tldw_chatbook.app import TldwCli
+
+    calls: list[str] = []
+
+    class Runtime:
+        def shutdown(self) -> object:
+            calls.append("raw")
+            return object()
+
+    app = object.__new__(TldwCli)
+    app.raw_cli_runtime = Runtime()
+    app._raw_cli_runtime_shutdown_task = None
+
+    await TldwCli._shutdown_raw_cli_runtime(app)
+    await TldwCli._shutdown_raw_cli_runtime(app)
+
+    assert calls == ["raw"]
+    source = inspect.getsource(TldwCli._shutdown_app_owned_lifecycles)
+    raw = source.index("_shutdown_raw_cli_runtime")
+    console = source.index("_shutdown_console_runtime")
+    assert raw < console, source
 
 
 @pytest.mark.unit
@@ -783,6 +913,7 @@ async def test_app_fences_console_then_drains_buddy_before_profile_teardown(
     app._audio_cpp_artifact_lease_coordinator = None
     app.audio_cpp_model_install_owner = AsyncOwner()
     app._shutdown_notes_sync_runtime = no_op_lifecycle
+    app._shutdown_raw_cli_runtime = no_op_lifecycle
     app._shutdown_console_image_edits = later_lifecycle
     app._shutdown_console_runtime = shutdown_console_runtime
     app._shutdown_file_notes_session_owner = later_lifecycle

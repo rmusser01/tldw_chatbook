@@ -1047,6 +1047,24 @@ This boundary describes Chatbook-managed local tools only. Attachments,
 Library/RAG content, generated media, provider-hosted tools, and external MCP
 servers keep their own storage and authority contracts.
 
+### Raw CLI is not a local tool sandbox
+
+The user-only `! ` command described in [Chat basics](chat-basics.md#raw-cli-user-commands--full-host-authority)
+does not inherit the local file-tool boundary above. It bypasses the model,
+tool catalog, approval cards, prompt queue, provider call, and Workspace path
+checks, and runs with the full filesystem, process, and network authority of
+the OS user running Chatbook. Discovering the syntax is not authorization: a
+saved unlock and a separate per-launch Arm confirmation are both required.
+
+Each accepted user command is stored as a generic `local_command` run so its
+Tool marker can be restored at the same conversation leaf after restart.
+Command text and bounded sanitized output may persist in the run's steps and a
+dedicated app-private log. These rows are intentionally excluded from provider
+history, agent/sub-agent counts, rails, fleet state, costs, and the
+model-facing run-log search, slice, and statistics tools. This persistence is
+for the local user's display and audit only; it does not make raw CLI an agent
+tool.
+
 ### Project instructions before tools run
 
 When project instructions are enabled for a session, Chatbook treats the
@@ -1382,6 +1400,8 @@ The other run-budget ceilings are unchanged.
 | `/skills` | List installed skills in the transcript |
 | `/skills <name>` | Points you at the `$name` form (never runs) |
 | `$name …` | Run a skill, with everything after the name as its input |
+| Physically typed `! command` | Run one user-only raw host command after saved unlock and per-launch Arm |
+| `\! command` | Send ordinary chat text beginning with literal `! ` |
 | Enter / Space (on the Approvals chip) | Jump to the pending approval card |
 
 Approval-card decisions are mouse-driven (or Tab to a control and press

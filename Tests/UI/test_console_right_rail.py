@@ -217,6 +217,7 @@ def _mounted_boundary_ids(rail) -> tuple[str, ...]:
     run_wrapper_children = tuple(child.id for child in run_wrapper.children)
     assert run_wrapper_children == (
         "console-run-inspector-state",
+        "console-selected-turn",
         "console-settings-summary",
     )
     inspector = run_wrapper.query_one(
