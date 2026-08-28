@@ -31,11 +31,11 @@ Add a deliberately separate, user-controlled interactive terminal experience for
 - [ ] #1 Interactive terminal work remains a separate feature and does not change the one-shot raw CLI or model shell_exec contracts.
 - [ ] #2 A user can create, name, list, focus, and close persistent terminal sessions from a dedicated Console surface.
 - [ ] #3 POSIX sessions use a PTY; Windows sessions use ConPTY or a documented platform-supported equivalent.
-- [ ] #4 Each session retains its own shell process, current directory, environment, and terminal state until explicitly closed or Chatbook exits.
+- [ ] #4 Each running session retains its own shell process, current directory, environment, and terminal state until the shell exits, the user closes it, or Chatbook exits; an ordinary shell exit retains final terminal state until the user closes the record.
 - [ ] #5 Terminal input and output support interactive programs, resize events, Unicode, and bounded scrollback without leaking terminal controls into unrelated UI.
 - [ ] #6 The UI makes full OS-user authority and the absence of workspace confinement unmistakable before a session starts.
 - [ ] #7 Session concurrency and resource limits are explicit and produce predictable refusal behavior.
-- [ ] #8 Stop, shutdown, crash recovery, and orphan cleanup have focused POSIX and Windows verification.
+- [ ] #8 Stop, shutdown, app-process-failure cleanup, descendant cleanup, and honest cleanup-unproven behavior have focused POSIX and Windows verification.
 - [ ] #9 The implementation task records an ADR decision before code work because this introduces a long-lived runtime and UX boundary.
 - [ ] #10 User documentation distinguishes persistent terminals from raw ! commands, model shell_exec, and virtual_cli.
 <!-- AC:END -->
@@ -44,7 +44,7 @@ Add a deliberately separate, user-controlled interactive terminal experience for
 
 <!-- SECTION:PLAN:BEGIN -->
 1. Finalize and independently review the approved persistent-terminal design and ADR before code work.
-2. Qualify pyte and Windows pywinpty against the required shell, terminal-protocol, packaging, and real-platform matrices; stop and revisit ADR-099 if the parser boundary fails materially.
+2. Qualify pyte and Windows pywinpty against the required shell, terminal-protocol, packaging, and real-platform matrices; record results in `Docs/superpowers/reviews/evidence/task-22512/dependency-qualification.md` and stop to revisit ADR-099 if a mandatory row fails.
 3. Implement the app-global session contracts, authorization states, resource limits, and terminal screen model through focused test-driven slices.
 4. Add the admission-gated POSIX PTY and Windows ConPTY backends with one authoritative reaper, bounded control channels, and platform-native cleanup evidence.
 5. Add the Console Terminal workspace, session controls, focus routing, danger disclosure, navigation survival, and cleanup receipts without giving widgets process ownership.

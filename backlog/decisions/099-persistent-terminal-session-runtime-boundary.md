@@ -1,6 +1,6 @@
 # ADR-099: Persistent Terminal Session Runtime Boundary
 
-Status: Accepted
+Status: Proposed
 Date: 2026-08-28
 Related Task: [TASK-22512 - Persistent interactive PTY and ConPTY terminal sessions](../tasks/task-22512%20-%20Persistent-interactive-PTY-and-ConPTY-terminal-sessions.md)
 Design: [Persistent terminal sessions design](../../Docs/superpowers/specs/2026-08-28-persistent-terminal-sessions-design.md)
@@ -22,7 +22,9 @@ export, or model-context projection.
 One app-global `TerminalSessionManager` owns at most four process-memory session
 records across all conversations and screens. Widgets are projections only;
 navigation, recomposition, and remounting cannot restart, duplicate, or close a
-session. Session state is not persisted or reconnectable across app restarts.
+session. Lifecycle, terminal reason, exit code, and output completeness are
+separate fields. Session state is not persisted or reconnectable across app
+restarts.
 
 POSIX sessions use an admission-gated controlling PTY. A launcher establishes a
 new session and reports identity before parent admission; only after admission
@@ -30,27 +32,34 @@ may it acquire the controlling terminal and become the interactive shell. The
 parent retains the PTY master and one authoritative reaper. Cleanup accounts
 for shell job control creating process groups beyond the launcher's initial
 group. Same-session processes and tracked descendants are identified by PID plus
-birth time and revalidated before signalling; one `killpg` is not sufficient
-proof of session death.
+birth time and revalidated before signalling. Group signalling additionally
+requires a same-birth leader and complete exclusively owned membership; otherwise
+only individually validated processes are signalled. POSIX death proof requires
+the exact shell reaped, PTY EOF, and two stable zero-descendant scans; uncertainty
+becomes `cleanup_unproven`. One `killpg` is not sufficient proof.
 
 Windows sessions use an admitted Python worker assigned to a kill-on-close Job
-Object before it creates ConPTY through a Windows-only `pywinpty` dependency.
-The worker separates one credit-bounded blocking reader from its input, resize,
-and priority-close control path. The Job Object handle remains parent-owned and
-non-inheritable. The native ConPTY backend is selected and verified explicitly;
-legacy winpty, missing or unsupported ConPTY, and ordinary pipe fallbacks fail
-closed.
+Object before it creates ConPTY. The v1 dependency is `pywinpty==3.0.5` using
+low-level `winpty.PTY` with `winpty.Backend.ConPTY`; high-level `PtyProcess`,
+legacy winpty, and ordinary pipes are forbidden. One credit-bounded blocking
+reader is independent from input, resize, and priority close. The parent-only,
+non-inheritable Job handle and waitable process handles remain available for
+cleanup proof and Retry. Windows support starts at Windows 10 version 1809 and
+Windows Server 2019. Native-backend identity, Job membership, internal I/O
+bounds, concurrency, output integrity, and post-exit EOF behavior must pass the
+named qualification artifact or Windows Terminal fails closed.
 
-`pyte` is the reviewed VT-style parser dependency. Chatbook advertises
+`pyte==0.8.2` is the v1 VT-style parser qualification target. Chatbook advertises
 `TERM=linux`, incrementally decodes UTF-8, and renders only safe parsed cells.
 Raw output control sequences never reach the host terminal or unrelated UI.
 Clipboard, host-title, hyperlink, notification, arbitrary OSC, and unsupported
 control operations are ignored. Fixed device replies are allowlisted and
-bounded. A bounded gate caps control strings before pyte, and per-cell Unicode
-growth is capped in the screen adapter. Pyte must pass the design's shell,
-full-screen, Unicode, resize,
-alternate-screen, paste, terminal-query, and hostile-sequence qualification
-matrix before UI integration continues.
+bounded. A pre-parser gate caps every incomplete escape class, including CSI
+bytes, parameter count/digits/value, intermediates, and string controls. The
+screen adapter caps cells and cursor savepoints, and qualification inventories
+every mutable pyte collection. Pyte must pass the design's shell, full-screen,
+Unicode, resize, alternate-screen, paste, terminal-query, and hostile-sequence
+qualification matrix before UI integration continues.
 
 The app starts the normal interactive account shell from a scrubbed parent
 environment. Normal startup files may reload credentials, environment values,
@@ -63,15 +72,20 @@ a 300x120 active viewport, 5,000 lines and 4 MiB of normal-screen scrollback per
 session, 512 KiB pending input and output per session, and a 256 KiB atomic paste
 limit. Stateful terminal output applies operating-system backpressure instead
 of being discarded. Close, Disarm, and Shutdown use an out-of-band idempotent
-signal that cannot wait behind saturated input.
+signal that cannot wait behind saturated input. Four full sessions are limited
+to 256 MiB incremental managed-runtime RSS across the Chatbook parent,
+app-owned workers/helpers, and IPC, excluding user shell/program RSS.
 
 Closing uses bounded hangup, terminate, and force-kill stages plus platform
 identity validation. Exact shell exit is followed by bounded output draining
-and descendant settlement before `exited` is reported. Cleanup uncertainty is
-retained visibly and continues occupying a session slot. App failure relies on
-ordinary PTY-master closure on POSIX and Job Object handle closure on Windows.
-These are operational cleanup mechanisms, not a sandbox or universal guarantee
-against deliberately detached host-authority processes.
+and descendant settlement. `exited` proves the root reaped and zero owned
+processes; output completeness is reported separately and requires EOF. Cleanup
+uncertainty is retained visibly, keeps its cleanup authority where possible,
+continues occupying a session slot, and remains actionable while locked or
+unarmed. App failure relies on ordinary PTY-master closure on POSIX and final
+Job Object handle closure on Windows. These are operational cleanup mechanisms,
+not a sandbox or universal guarantee against deliberately detached
+host-authority processes.
 
 ## Context
 
@@ -129,7 +143,9 @@ license notices.
 
 - `pyte` and Windows-only `pywinpty` become new reviewed runtime dependencies.
 - Their supported wheel matrix, concurrency behavior, versions, licenses, and
-  required notices must be recorded before lockfile admission.
+  required notices must be recorded in
+  `Docs/superpowers/reviews/evidence/task-22512/dependency-qualification.md`
+  before lockfile admission.
 - `TERM=linux` is a compatibility boundary, not complete xterm emulation; some
   advanced terminal applications may degrade or remain unsupported.
 - Normal interactive startup files can restore secrets and arbitrary behavior
@@ -151,6 +167,8 @@ license notices.
   TASK-23113's separate design and ADR.
 - Replacing pyte after qualification failure requires a new decision rather
   than a silent dependency swap.
+- Changing the pywinpty version or low-level ConPTY API requires rerunning the
+  named qualification artifact and reviewing this ADR before lockfile change.
 - Nested-program mouse reporting requires TASK-23114's ADR check and real-
   terminal event evidence.
 - Arbitrary launch commands, caller-provided environment overrides, or a claim
