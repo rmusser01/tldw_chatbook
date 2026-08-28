@@ -1,4 +1,8 @@
-"""Contracts for the raw one-shot CLI boundary (no process spawning)."""
+"""Contracts for the raw one-shot CLI boundary.
+
+The executor itself stays synthetic here; one regression launches a fresh
+interpreter solely to prove the worker import graph is acyclic.
+"""
 
 from dataclasses import FrozenInstanceError, fields, is_dataclass
 import importlib
