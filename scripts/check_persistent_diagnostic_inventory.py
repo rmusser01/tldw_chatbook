@@ -84,6 +84,7 @@ PATH_TERMINAL_TOKENS = frozenset(
     {"path", "paths", "root", "roots", "dir", "directory", "folder"}
 )
 SAFE_PATH_TRANSFORMS = frozenset({"content_fingerprint", "redact_user_paths"})
+TRANSPARENT_SAFE_WRAPPERS = frozenset({"str"})
 LOG_SANITIZER_MODULE = ("tldw_chatbook", "Utils", "log_sanitizer")
 PATH_PRIVACY_RULES = {
     "candidate_status": "legacy_unreviewed",
@@ -202,7 +203,9 @@ def _import_bound_name(node: ast.Import | ast.ImportFrom, alias: ast.alias) -> s
 
 
 def _safe_transform_contexts(
-    tree: ast.Module, lexical_scopes: dict[int, ast.AST]
+    tree: ast.Module,
+    lexical_scopes: dict[int, ast.AST],
+    definition_parent_scopes: dict[int, ast.AST],
 ) -> dict[int, tuple[frozenset[tuple[str, ...]], frozenset[str]]]:
     """Resolve approved sanitizer names without leaking aliases across scopes."""
     scope_ids = {id(scope) for scope in lexical_scopes.values()}
@@ -216,7 +219,10 @@ def _safe_transform_contexts(
     for node in ast.walk(tree):
         scope_id = id(lexical_scopes[id(node)])
         if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+            shadowed[id(definition_parent_scopes[id(node)])].add(node.name)
             shadowed[scope_id].update(_parameter_names(node))
+        elif isinstance(node, ast.ClassDef):
+            shadowed[id(definition_parent_scopes[id(node)])].add(node.name)
         elif isinstance(node, ast.Assign):
             for target in node.targets:
                 shadowed[scope_id].update(_target_bound_names(target))
@@ -290,11 +296,13 @@ def _scope_contexts(
     dict[int, str],
     dict[int, ast.AST],
     dict[int, list[tuple[ast.AST, ast.AST]]],
+    dict[int, ast.AST],
 ]:
-    """Collect scope names, lexical owners, and assignments in one tree walk."""
+    """Collect scope names, lexical owners, assignments, and definition parents."""
     names: dict[int, str] = {}
     lexical_scopes: dict[int, ast.AST] = {id(tree): tree}
     assignments: dict[int, list[tuple[ast.AST, ast.AST]]] = {}
+    definition_parent_scopes: dict[int, ast.AST] = {}
     stack: list[tuple[ast.AST, str, ast.AST]] = [(tree, "", tree)]
     while stack:
         node, prefix, scope = stack.pop()
@@ -302,6 +310,7 @@ def _scope_contexts(
             if isinstance(child, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
                 child_prefix = f"{prefix}.{child.name}" if prefix else child.name
                 child_scope = child
+                definition_parent_scopes[id(child)] = scope
             else:
                 child_prefix = prefix
                 child_scope = scope
@@ -318,7 +327,7 @@ def _scope_contexts(
                     (target, child.value)
                 )
             stack.append((child, child_prefix, child_scope))
-    return names, lexical_scopes, assignments
+    return names, lexical_scopes, assignments, definition_parent_scopes
 
 
 def _scope_names(tree: ast.Module) -> dict[int, str]:
@@ -339,7 +348,7 @@ def _scope_names(tree: ast.Module) -> dict[int, str]:
             scope). Keyed by identity because AST nodes are unhashable by
             value and identity is stable for the lifetime of ``tree``.
     """
-    names, _lexical_scopes, _assignments = _scope_contexts(tree)
+    names, _lexical_scopes, _assignments, _definition_parents = _scope_contexts(tree)
     return names
 
 
@@ -438,7 +447,7 @@ def _is_safe_path_transform(
     if not parts:
         return False
     if parts == ["len"]:
-        return True
+        return "len" not in shadowed_names
     if len(parts) == 1:
         return parts[0] in SAFE_PATH_TRANSFORMS and parts[0] not in shadowed_names
     return (
@@ -515,13 +524,16 @@ def _expression_path_state(
             state is _PathState.TAINTED for state in value_states
         ):
             return _PathState.TAINTED
-        if value_states and all(
-            state is _PathState.PROVEN_SAFE for state in value_states
+        if (
+            isinstance(node.func, ast.Name)
+            and node.func.id in TRANSPARENT_SAFE_WRAPPERS
+            and node.func.id not in shadowed_names
+            and value_states
+            and all(state is _PathState.PROVEN_SAFE for state in value_states)
         ):
             return _PathState.PROVEN_SAFE
         if (
-            not value_states
-            and isinstance(node.func, ast.Attribute)
+            isinstance(node.func, ast.Attribute)
             and _expression_path_state(
                 node.func.value,
                 aliases,
@@ -529,6 +541,7 @@ def _expression_path_state(
                 shadowed_names,
             )
             is _PathState.PROVEN_SAFE
+            and all(state is _PathState.PROVEN_SAFE for state in value_states)
         ):
             return _PathState.PROVEN_SAFE
         return _PathState.UNKNOWN
@@ -681,8 +694,15 @@ def _scan_parsed_source(
     source: str, tree: ast.Module
 ) -> tuple[list[dict[str, Any]], list[dict[str, Any]], list[dict[str, Any]]]:
     symbols = _logger_symbols(tree)
-    scope_names, lexical_scopes, assignments = _scope_contexts(tree)
-    safe_transform_contexts = _safe_transform_contexts(tree, lexical_scopes)
+    (
+        scope_names,
+        lexical_scopes,
+        assignments,
+        definition_parent_scopes,
+    ) = _scope_contexts(tree)
+    safe_transform_contexts = _safe_transform_contexts(
+        tree, lexical_scopes, definition_parent_scopes
+    )
     diagnostics: list[dict[str, Any]] = []
     sinks: list[dict[str, Any]] = []
     diagnostic_calls: list[ast.Call] = []

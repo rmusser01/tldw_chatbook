@@ -385,6 +385,97 @@ def test_shadowed_unqualified_safe_transform_is_a_candidate(source: str) -> None
 
 
 @pytest.mark.parametrize(
+    "definition_template",
+    [
+        pytest.param(
+            "def {name}(value):\n    return value",
+            id="function-definition",
+        ),
+        pytest.param(
+            "async def {name}(value):\n    return value",
+            id="async-function-definition",
+        ),
+        pytest.param(
+            "class {name}:\n    pass",
+            id="class-definition",
+        ),
+    ],
+)
+@pytest.mark.parametrize(
+    "transform_name",
+    ["content_fingerprint", "redact_user_paths"],
+)
+def test_module_definition_shadows_unqualified_safe_transform(
+    definition_template: str,
+    transform_name: str,
+) -> None:
+    definition = definition_template.format(name=transform_name)
+    source = f'{definition}\nlogger.info("Path {{}}", {transform_name}(user_path))\n'
+
+    candidates = scan_path_diagnostic_candidates(
+        source, filename="module_definition_shadow.py"
+    )
+
+    assert len(candidates) == 1
+    assert candidates[0]["scope"] == "<module>"
+    assert candidates[0]["path_expressions"] == [f"{transform_name}(user_path)"]
+
+
+@pytest.mark.parametrize(
+    "definition_template",
+    [
+        pytest.param(
+            "    def {name}(value):\n        return value",
+            id="function-definition",
+        ),
+        pytest.param(
+            "    async def {name}(value):\n        return value",
+            id="async-function-definition",
+        ),
+        pytest.param(
+            "    class {name}:\n        pass",
+            id="class-definition",
+        ),
+    ],
+)
+@pytest.mark.parametrize(
+    "transform_name",
+    ["content_fingerprint", "redact_user_paths"],
+)
+def test_nested_definition_shadows_safe_transform_in_enclosing_scope(
+    definition_template: str,
+    transform_name: str,
+) -> None:
+    definition = definition_template.format(name=transform_name)
+    source = (
+        f"def emit():\n{definition}\n"
+        f'    logger.info("Path {{}}", {transform_name}(user_path))\n'
+    )
+
+    candidates = scan_path_diagnostic_candidates(
+        source, filename="nested_definition_shadow.py"
+    )
+
+    assert len(candidates) == 1
+    assert candidates[0]["scope"] == "emit"
+    assert candidates[0]["path_expressions"] == [f"{transform_name}(user_path)"]
+
+
+def test_shadowed_len_is_not_a_safe_cardinality_transform() -> None:
+    source = dedent(
+        """
+        def emit(len):
+            logger.info("Path count {path}", path=len(paths))
+        """
+    )
+
+    candidates = scan_path_diagnostic_candidates(source, filename="shadowed_len.py")
+
+    assert len(candidates) == 1
+    assert candidates[0]["path_expressions"] == ["len(paths)"]
+
+
+@pytest.mark.parametrize(
     "method",
     ["content_fingerprint", "redact_user_paths"],
 )
@@ -413,6 +504,57 @@ def test_path_shaped_hint_preserves_recursively_proven_safe_value() -> None:
     source = 'logger.info("Workspace {root}", root=str(content_fingerprint(user_path)))'
 
     assert scan_path_diagnostic_candidates(source, filename="safe_wrapper.py") == []
+
+
+@pytest.mark.parametrize(
+    ("argument", "expression"),
+    [
+        pytest.param("None", "load(None)", id="none"),
+        pytest.param("'workspace'", "load('workspace')", id="string"),
+    ],
+)
+def test_path_shaped_hint_keeps_unknown_call_result_as_a_candidate(
+    argument: str,
+    expression: str,
+) -> None:
+    source = f'logger.info("Workspace {{root}}", root=load({argument}))'
+
+    candidates = scan_path_diagnostic_candidates(source, filename="unknown_call.py")
+
+    assert len(candidates) == 1
+    assert candidates[0]["path_expressions"] == [f"root={expression}"]
+
+
+def test_shadowed_str_does_not_prove_a_safe_value_remains_safe() -> None:
+    source = dedent(
+        """
+        def emit(str):
+            logger.info(
+                "Workspace {root}",
+                root=str(content_fingerprint(user_path)),
+            )
+        """
+    )
+
+    candidates = scan_path_diagnostic_candidates(source, filename="shadowed_str.py")
+
+    assert len(candidates) == 1
+    assert candidates[0]["path_expressions"] == [
+        "root=str(content_fingerprint(user_path))"
+    ]
+
+
+def test_safe_receiver_method_with_safe_arguments_remains_safe() -> None:
+    source = dedent(
+        """
+        logger.info(
+            "Workspace {root}",
+            root=content_fingerprint(user_path).removeprefix("sha256:"),
+        )
+        """
+    )
+
+    assert scan_path_diagnostic_candidates(source, filename="safe_method.py") == []
 
 
 def test_tainted_child_dominates_an_ordinary_wrapper() -> None:
