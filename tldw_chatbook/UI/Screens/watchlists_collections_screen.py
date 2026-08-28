@@ -751,6 +751,7 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
         # re-seeding them below, the table would render empty until the next
         # unrelated navigation happened to trigger a reload.
         self._loaded_sources: list[dict[str, Any]] = []
+        self._scoped_source_failure_notified = False
         self._loaded_items: list[dict[str, Any]] = []
         self._items_snapshot: ReaderItemSnapshot | None = None
         self._items_page_index = 0
@@ -2194,6 +2195,11 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
             return self._watchlist_bundle_service().list_source_rows(watchlist_id)
         except Exception:
             logger.opt(exception=True).debug("Failed to load tree source rows.")
+            self._notify_watchlists(
+                "Failed to load sources for this watchlist.",
+                severity="error",
+                markup=False,
+            )
             return []
 
     def scoped_source_rows(self) -> list[dict[str, Any]]:
@@ -2227,12 +2233,12 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
         try:
             if scope.kind == "watchlist" and scope.watchlist_id is not None:
                 service = self._watchlist_bundle_service()
-                return (
+                rows = (
                     []
                     if service is None
                     else service.list_source_rows(scope.watchlist_id)
                 )
-            if scope.kind == "source" and scope.source_id is not None:
+            elif scope.kind == "source" and scope.source_id is not None:
                 if scope.parent_context == "unassigned":
                     rows = self._tree_unassigned_source_rows
                 elif scope.watchlist_id is not None:
@@ -2244,13 +2250,23 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
                     )
                 else:
                     rows = self._tree_all_source_rows
-                return [r for r in rows if int(r["id"]) == int(scope.source_id)]
-            if scope.kind == "unassigned":
-                return [dict(row) for row in self._tree_unassigned_source_rows]
-            return [dict(row) for row in self._tree_all_source_rows]
+                rows = [r for r in rows if int(r["id"]) == int(scope.source_id)]
+            elif scope.kind == "unassigned":
+                rows = [dict(row) for row in self._tree_unassigned_source_rows]
+            else:
+                rows = [dict(row) for row in self._tree_all_source_rows]
         except Exception:
             logger.opt(exception=True).debug("Failed to resolve scoped source rows.")
+            if not self._scoped_source_failure_notified:
+                self._notify_watchlists(
+                    "Failed to resolve sources for the selected scope.",
+                    severity="error",
+                    markup=False,
+                )
+                self._scoped_source_failure_notified = True
             return []
+        self._scoped_source_failure_notified = False
+        return rows
 
     def _create_form_watchlist_choices(self) -> list[dict[str, Any]]:
         """Watchlists the create form may file a new source into (TASK-2302).
