@@ -1375,3 +1375,52 @@ def test_legacy_dotted_mutation_detaches_inputs_before_entering_writer(
             "payload": {"nested": ["original"]},
         }
     }
+
+
+def test_legacy_dotted_mutation_snapshots_stateful_mappings_once_before_validation(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    config_path = tmp_path / "config.toml"
+    _write_config(
+        config_path,
+        {
+            "shared": {"remove": "old"},
+            "speech_studio": {"revision": 7, "retain": "protected"},
+        },
+    )
+    monkeypatch.setenv("TLDW_CONFIG_PATH", str(config_path))
+
+    class SwitchingMapping(dict):
+        def __init__(self, first, second):
+            super().__init__()
+            self.first = first
+            self.second = second
+            self.reads = 0
+
+        def items(self):
+            self.reads += 1
+            selected = self.first if self.reads == 1 else self.second
+            return selected.items()
+
+    section_values = SwitchingMapping(
+        {"shared": {"kept": "new"}},
+        {"speech_studio": {"revision": 99}},
+    )
+    delete_keys = SwitchingMapping(
+        {"shared": ["remove"]},
+        {"speech_studio": ["retain"]},
+    )
+
+    result = config_module.apply_settings_mutation_to_cli_config(
+        section_values,
+        delete_keys=delete_keys,
+    )
+
+    assert result.caches_reloaded is True
+    assert section_values.reads == 1
+    assert delete_keys.reads == 1
+    assert tomllib.loads(config_path.read_text(encoding="utf-8")) == {
+        "shared": {"kept": "new"},
+        "speech_studio": {"revision": 7, "retain": "protected"},
+    }

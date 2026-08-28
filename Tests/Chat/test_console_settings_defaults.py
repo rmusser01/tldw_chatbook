@@ -713,8 +713,7 @@ def test_concurrent_duplicate_is_rejected_and_failed_retry_remains_retryable(
         attempts += 1
         if attempts == 1:
             first_write_started.set()
-            if not release_first_write.wait(timeout=5):
-                raise AssertionError("first writer was not released")
+            release_first_write.wait()
             raise OSError("initial before-replace failure")
         if attempts == 2:
             raise OSError("retry before-replace failure")
@@ -735,16 +734,18 @@ def test_concurrent_duplicate_is_rejected_and_failed_retry_remains_retryable(
     worker_b = threading.Thread(target=invoke_duplicate)
     worker_a.start()
     assert first_write_started.wait(timeout=5)
-    worker_b.start()
-    assert duplicate_invoked.wait(timeout=5)
-    duplicate_finished_while_initial_active = duplicate_done.wait(timeout=0.25)
-    release_first_write.set()
+    try:
+        worker_b.start()
+        assert duplicate_invoked.wait(timeout=5)
+        assert duplicate_done.wait(timeout=5)
+        assert worker_a.is_alive()
+    finally:
+        release_first_write.set()
     worker_a.join(timeout=5)
     worker_b.join(timeout=5)
 
     assert not worker_a.is_alive()
     assert not worker_b.is_alive()
-    assert duplicate_finished_while_initial_active is True
     assert outcomes["initial"].failure_phase is ConsoleDefaultSavePhase.BEFORE_REPLACE
     assert outcomes["duplicate"].failure_phase is ConsoleDefaultSavePhase.BEFORE_REPLACE
     assert attempts == 1

@@ -6517,16 +6517,32 @@ def apply_settings_mutation_to_cli_config(
     """Atomically apply exact config sets/deletes, then refresh caches."""
     requested_deletes = {} if delete_keys is None else delete_keys
     try:
-        _validate_config_mutation_targets(section_values, requested_deletes)
+        if not isinstance(section_values, Mapping) or not isinstance(
+            requested_deletes,
+            Mapping,
+        ):
+            raise TypeError("Configuration mutations must use mappings")
+        owned_section_values: dict[str, dict[Any, Any]] = {}
+        for section, values in section_values.items():
+            if not isinstance(values, Mapping):
+                raise TypeError("Configuration section values must be mappings")
+            owned_section_values[section] = copy.deepcopy(dict(values.items()))
+        owned_delete_keys: dict[str, tuple[str, ...]] = {}
+        for section, keys in requested_deletes.items():
+            if isinstance(keys, (str, bytes)) or not isinstance(keys, Collection):
+                raise TypeError("Configuration delete keys must be collections")
+            owned_delete_keys[section] = tuple(keys)
+
+        _validate_config_mutation_targets(owned_section_values, owned_delete_keys)
         literal = _detach_literal_settings_mutation(
             LiteralSettingsMutation(
                 section_values={
                     tuple(section.split(".")): values
-                    for section, values in section_values.items()
+                    for section, values in owned_section_values.items()
                 },
                 delete_keys={
                     tuple(section.split(".")): keys
-                    for section, keys in requested_deletes.items()
+                    for section, keys in owned_delete_keys.items()
                 },
             )
         )
