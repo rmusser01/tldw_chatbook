@@ -28,6 +28,28 @@ counts the page under "skipped (check already running)" rather than
 reading like a clean check that found nothing. Different sources are
 unaffected — they check concurrently, exactly as before.
 
+## Recovering a failed source check
+
+Select a failed run to see a short failure reason and its **Next** action. The
+app keeps request addresses, response bodies, credentials, and internal error
+details out of this view. Older run records that predate classified failures
+show a generic failure and ask you to review the source configuration.
+
+| Failure | What to do | Re-run unchanged? |
+|---|---|---|
+| Access denied | Check whether the source permits automated access. | No |
+| Authentication required | Check the source credentials and authentication settings. | No |
+| Rate limited | Wait for the source's stated delay, when one is available. | Yes |
+| Invalid feed | Check the source address and feed format. | No |
+| Connection failure | Re-run when the network or source is available. | Yes |
+| Temporary server error | Re-run later. | Yes |
+| Blocked by network safety policy | Choose a public HTTP(S) source allowed by the network safety policy. | No |
+
+The **Re-run source** action is available for a failed run only when the
+recorded outcome says the same input can be retried. For authentication,
+access, invalid-feed, and policy failures, make the stated configuration or
+content change first and then use **Check now**.
+
 ## Exporting briefings and podcast feeds
 
 The **Artifacts** section of a watchlist holds its briefings — text digests

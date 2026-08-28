@@ -25,6 +25,7 @@ from tldw_chatbook.Subscriptions.html_text import (
     readable_body_text,
     strip_control_characters,
 )
+from tldw_chatbook.Subscriptions.watchlist_failure import project_watchlist_failure
 
 _SEARCH_KEYS = frozenset(
     {"query", "collection", "source", "statuses", "since", "limit", "cursor"}
@@ -1723,6 +1724,7 @@ class WatchlistsToolService:
             row["source_name"], _MAX_NAME_BYTES
         )
         status = WatchlistsToolService._safe_text(row["status"], 64)
+        recovery = project_watchlist_failure(row, failed=bool(row["has_error"]))
         return {
             "id": f"local:watchlist_run:{row['id']}",
             "kind": "source_check",
@@ -1740,8 +1742,14 @@ class WatchlistsToolService:
                 row["finished_at"], 128
             ),
             "result_available": row["stats_json"] is not None,
-            "error_category": "source_check_failed" if row["has_error"] else None,
-            "retry_capable": status in {"failed", "error"},
+            "error_category": recovery["error_category"] if recovery else None,
+            "error_message": recovery["error_message"] if recovery else None,
+            "next_action": recovery["next_action"] if recovery else None,
+            "retry_capable": recovery["retry_capable"] if recovery else False,
+            "http_status": recovery["http_status"] if recovery else None,
+            "retry_after_seconds": (
+                recovery["retry_after_seconds"] if recovery else None
+            ),
             "cancel_capable": status in {"queued", "running"},
             "destination": "runs",
         }

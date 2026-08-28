@@ -14,6 +14,7 @@ from textual.widgets import Button, DataTable, Static
 from textual.worker import get_current_worker
 
 from ...Subscriptions.html_text import strip_control_characters
+from ...Subscriptions.watchlist_failure import project_watchlist_failure
 from ...Widgets.recompose_capture_guard import RecomposeCaptureGuard
 from .humane_time import humane_timestamp
 from .table_selection import highlight_is_user_driven
@@ -175,9 +176,9 @@ class RunsPane(RecomposeCaptureGuard, Vertical):
         with Vertical(id="runs-detail-pane"):
             yield Static("Run detail", classes="pane-title")
             # `Text`, not the bare string: the detail block names the run's
-            # source and watchlist (user-typed) and, on a failure, quotes the
-            # remote error verbatim -- a `Static` given a `str` renders it as
-            # console markup.
+            # source and watchlist (user-typed). A `Static` given a `str`
+            # renders it as console markup; fixed failure recovery copy is
+            # intentionally inert too.
             yield Static(
                 Text(self._stats_text(selected_run)),
                 id="runs-detail-stats",
@@ -353,6 +354,16 @@ class RunsPane(RecomposeCaptureGuard, Vertical):
             skipped = dispositions.get("skipped", 0)
             if skipped:
                 base += f" | {skipped} skipped (check already running)"
+        recovery = project_watchlist_failure(
+            run,
+            failed=str(run.get("status") or "").lower()
+            in {"failed", "error", "errored"},
+        )
+        if recovery is not None:
+            base += (
+                f"\nFailure: {recovery['error_message']}"
+                f"\nNext: {recovery['next_action']}"
+            )
         return base
 
     def on_data_table_row_selected(self, event: DataTable.RowSelected) -> None:
@@ -471,8 +482,8 @@ class RunsPane(RecomposeCaptureGuard, Vertical):
         """Repaint `#runs-detail-logs` in place (task-2306).
 
         Args:
-            logs: The selected run's log text, rendered inert -- a failed run
-                quotes the remote error verbatim.
+            logs: The selected run's log text, rendered inert. Failed runs
+                carry only the normalizer's fixed recovery copy.
         """
         try:
             self.query_one("#runs-detail-logs", Static).update(Text(str(logs)))
@@ -533,7 +544,6 @@ class RunsPane(RecomposeCaptureGuard, Vertical):
         run = self.selected_run
         can_cancel = run is not None and str(run.get("status", "")).lower() == "running"
         rerun_target, _ = self._rerun_target_and_name(run, self.runtime_backend)
-        can_rerun = self._has_rerun_target(rerun_target)
         operation_key = self.selected_operation_key
         rerun_busy = operation_key is not None and (
             operation_key in self.busy_operation_keys
@@ -541,6 +551,17 @@ class RunsPane(RecomposeCaptureGuard, Vertical):
         )
         rerun_origin = (
             operation_key is not None and operation_key in self.rerun_operation_keys
+        )
+        recovery = project_watchlist_failure(
+            run,
+            failed=(
+                run is not None
+                and str(run.get("status") or "").lower()
+                in {"failed", "error", "errored"}
+            ),
+        )
+        can_rerun = self._has_rerun_target(rerun_target) and bool(
+            recovery and recovery["retry_capable"]
         )
         cancel_button.disabled = not can_cancel
         rerun_button.disabled = not can_rerun or rerun_busy

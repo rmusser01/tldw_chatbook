@@ -3,9 +3,9 @@
 from __future__ import annotations
 
 import asyncio
-import json
-import inspect
 import hashlib
+import inspect
+import json
 import sqlite3
 import threading
 import time
@@ -30,6 +30,14 @@ from .item_persist import (
 from .watchlist_content_alert_service import WatchlistContentAlertService
 from .watchlist_bundle_service import WatchlistBundleService
 from .watchlist_filter_service import WatchlistFilterService
+from .watchlist_failure import (
+    LEGACY_FAILURE_MESSAGE,
+    LEGACY_FAILURE_NEXT_ACTION,
+    classify_watchlist_failure,
+    sanitize_watchlist_failure_stats,
+    watchlist_failure_from_stats,
+    watchlist_failure_stats,
+)
 from .watchlist_normalizers import (
     WATCHLIST_NAME_SEPARATOR,
     build_watchlist_item_id,
@@ -86,6 +94,9 @@ _DISPOSITION_COUNTERS: tuple[str, ...] = (
     # already in flight -- see `_check_url_guarded`.
     "skipped",
 )
+
+_FAILED_RUN_STATUSES = frozenset({"failed", "error", "errored"})
+_PRODUCT_USER_AGENT = "tldw-chatbook/1.0 (+https://github.com/tldw/chatbook)"
 
 _RUN_CLAIM_WAIT_TIMEOUT_SECONDS = 300.0
 _RUN_CLAIM_POLL_INITIAL_SECONDS = 0.01
@@ -382,6 +393,24 @@ def _max_withheld_percentage(dispositions: list[dict[str, Any]]) -> float | None
         if disposition.get("withheld_percentage") is not None
     ]
     return max(percentages) if percentages else None
+
+
+def _sanitize_failed_run_payload(
+    stats: Mapping[str, Any],
+) -> tuple[dict[str, Any], str, str]:
+    """Keep failed-run accounting and validated recovery fields only."""
+    safe_stats, failure = sanitize_watchlist_failure_stats(stats)
+    if failure is None:
+        return (
+            safe_stats,
+            LEGACY_FAILURE_MESSAGE,
+            f"{LEGACY_FAILURE_MESSAGE} {LEGACY_FAILURE_NEXT_ACTION}",
+        )
+    return (
+        safe_stats,
+        failure.message,
+        f"{failure.message} {failure.next_action}",
+    )
 
 
 class LocalWatchlistsService:
@@ -1373,15 +1402,6 @@ class LocalWatchlistsService:
             all_error_message = _all_error_check_message(
                 stats.get("dispositions"), len(raw_items)
             )
-            await run_db_off_loop(
-                db,
-                db.record_check_result,
-                source_id,
-                items=None,
-                stats=stats,
-                error=all_error_message,
-            )
-
             status = str(result.get("status") or "completed")
             if all_error_message and status == "completed":
                 # More honest than "completed" with zero items: every URL
@@ -1389,13 +1409,27 @@ class LocalWatchlistsService:
                 # though it did not raise (that is exactly the point of the
                 # per-URL isolation this run status is not undoing).
                 status = "failed"
+            run_error = result.get("error_msg") or (
+                LEGACY_FAILURE_MESSAGE if all_error_message else None
+            )
+            run_log = result.get("log_text")
+            if status.strip().lower() in _FAILED_RUN_STATUSES:
+                stats, run_error, run_log = _sanitize_failed_run_payload(stats)
+            await run_db_off_loop(
+                db,
+                db.record_check_result,
+                source_id,
+                items=None,
+                stats=stats,
+                error=run_error,
+            )
 
             return await self.record_run_result(
                 run_id,
                 status=status,
                 stats=stats,
-                error_msg=result.get("error_msg") or all_error_message,
-                log_text=result.get("log_text"),
+                error_msg=run_error,
+                log_text=run_log,
             )
         except asyncio.CancelledError:
             # Batch-4 review, C1 (CRITICAL). This worker is cancelled whenever
@@ -1459,7 +1493,7 @@ class LocalWatchlistsService:
                     elapsed_ms=int((time.time() - start_time) * 1000),
                 )
             except Exception:
-                logger.opt(exception=True).warning(
+                logger.warning(
                     f"Watchlists: could not record the cancellation of run "
                     f"{run_id!r}; it may still read 'running'."
                 )
@@ -1505,7 +1539,10 @@ class LocalWatchlistsService:
         Returns:
             The recorded run.
         """
-        error_msg = str(error)
+        failure = classify_watchlist_failure(
+            error if isinstance(error, BaseException) else RuntimeError()
+        )
+        error_msg = failure.message
         db = self._db()
         if source_id is None:
             try:
@@ -1516,7 +1553,7 @@ class LocalWatchlistsService:
                 # record below is still worth writing. Warned, not debugged --
                 # this whole method exists because a swallowed failure here
                 # left no trace at all.
-                logger.opt(exception=True).warning(
+                logger.warning(
                     f"Watchlists: could not resolve the source of failed run "
                     f"{run_id}; subscriptions.last_error will not be updated."
                 )
@@ -1532,9 +1569,10 @@ class LocalWatchlistsService:
                 "items_ingested": 0,
                 "error_msg": error_msg,
                 "response_time_ms": elapsed_ms,
+                **watchlist_failure_stats(failure),
             },
             error_msg=error_msg,
-            log_text=f"Local watchlist execution failed: {error_msg}",
+            log_text=f"{error_msg} {failure.next_action}",
         )
 
     async def list_runs(
@@ -1723,8 +1761,10 @@ class LocalWatchlistsService:
         current = await self.get_run(run_id)
         now = self._utc_now()
         stats_payload = dict(stats or {})
-        if error_msg and "error_msg" not in stats_payload:
-            stats_payload["error_msg"] = error_msg
+        if str(status).strip().lower() in _FAILED_RUN_STATUSES:
+            stats_payload, error_msg, log_text = _sanitize_failed_run_payload(
+                stats_payload
+            )
         updated_rows = await run_db_off_loop(
             db,
             self._write_run_result,
@@ -2149,9 +2189,47 @@ class LocalWatchlistsService:
             # `execute_run` already does `stats = dict(result.get("stats") or {})`
             # and persists it to the run's `stats_json`, so this reaches the Runs
             # pane with nothing further to wire.
-            run_stats: dict[str, Any] = {
-                "dispositions": _disposition_counts(dispositions)
-            }
+            disposition_counts = _disposition_counts(dispositions)
+            run_stats: dict[str, Any] = {"dispositions": disposition_counts}
+            all_error_message = _all_error_check_message(
+                disposition_counts, len(items)
+            )
+            if all_error_message is not None:
+                failures = [
+                    failure
+                    for disposition in dispositions
+                    if (failure := watchlist_failure_from_stats(disposition))
+                    is not None
+                ]
+                categories = {failure.category for failure in failures}
+                error_count = int(disposition_counts.get("error", 0) or 0)
+                if len(failures) == error_count and len(categories) == 1:
+                    category = next(iter(categories))
+                    aggregate = watchlist_failure_from_stats(
+                        {"failure_category": category.value}
+                    )
+                    assert aggregate is not None
+                    aggregate_stats = watchlist_failure_stats(aggregate)
+                    statuses = {failure.http_status for failure in failures}
+                    retry_delays = {
+                        failure.retry_after_seconds for failure in failures
+                    }
+                    if len(statuses) == 1:
+                        aggregate_stats["http_status"] = next(iter(statuses))
+                    if len(retry_delays) == 1:
+                        aggregate_stats["retry_after_seconds"] = next(
+                            iter(retry_delays)
+                        )
+                    # Category, status, and delay are aggregate facts only
+                    # when every failed URL agrees. Never select per-URL
+                    # recovery metadata by input or exception order.
+                    run_stats.update(aggregate_stats)
+                    result_payload["error_msg"] = aggregate.message
+                    result_payload["log_text"] = (
+                        f"{aggregate.message} {aggregate.next_action}"
+                    )
+                else:
+                    result_payload["error_msg"] = LEGACY_FAILURE_MESSAGE
             # A sibling key rather than a sixth entry inside `dispositions`,
             # which is a dict of counters and stays one: a float in among the
             # integers would break every whole-dict comparison of the counts.
@@ -2379,10 +2457,12 @@ class LocalWatchlistsService:
             logger.debug(
                 f"watchlist URL check failed, isolated: {type(exc).__name__}"
             )
+            failure = classify_watchlist_failure(exc)
             return None, {
                 "kind": DISPOSITION_ERROR,
                 "reason": None,
                 "withheld_percentage": None,
+                **watchlist_failure_stats(failure),
             }
 
     @classmethod
@@ -2431,6 +2511,7 @@ class LocalWatchlistsService:
                 client=client,
                 max_bytes=MAX_FETCH_BYTES_SITEMAP,
                 trusted_origins=origin_set(source),
+                headers={"User-Agent": _PRODUCT_USER_AGENT},
             )
             response.raise_for_status()
 
@@ -2480,7 +2561,7 @@ class LocalWatchlistsService:
 
         headers = {
             "Accept": "application/json",
-            "User-Agent": "tldw-chatbook/1.0 (+https://github.com/tldw/chatbook)",
+            "User-Agent": _PRODUCT_USER_AGENT,
         }
         custom_headers = subscription.get("custom_headers")
         if isinstance(custom_headers, Mapping):

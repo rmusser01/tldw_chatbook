@@ -83,12 +83,17 @@ from ...Subscriptions.feed_server import (
 )
 from ...Subscriptions.html_text import strip_control_characters
 from ...Subscriptions.item_dates import effective_date
-from ...Subscriptions.watchlist_item_page import WatchlistItemPage
 from ...Subscriptions.watchlist_bundle_service import WatchlistBundleService
 from ...Subscriptions.watchlist_normalizers import (
     build_watchlist_item_id,
     normalize_watchlist_item,
 )
+from ...Subscriptions.watchlist_failure import (
+    classify_watchlist_failure,
+    project_watchlist_failure,
+    watchlist_failure_stats,
+)
+from ...Subscriptions.watchlist_item_page import WatchlistItemPage
 from ...Third_Party.textual_fspicker import FileSave, SelectDirectory
 from ...TTS.audio_player import play_audio_file
 from ...Utils.input_validation import sanitize_string, validate_text_input, validate_url
@@ -6978,11 +6983,10 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
             return None
         if str(result.get("status") or "").lower() not in cls._FAILED_RUN_STATUSES:
             return None
-        stats = result.get("stats")
-        error_msg = result.get("error_msg")
-        if not error_msg and isinstance(stats, Mapping):
-            error_msg = stats.get("error_msg")
-        return str(error_msg or "the source reported a failed run")
+        recovery = project_watchlist_failure(result, failed=True)
+        if recovery is None:
+            return None
+        return f"{recovery['error_message']} {recovery['next_action']}"
 
     @staticmethod
     def _check_was_entirely_skipped(result: Any) -> bool:
@@ -7055,11 +7059,13 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
         gone before anyone looked. Three UAT runs called the screen working.
 
         Two things changed. An unexpected exception is logged at `warning`
-        with the source it was checking, and its message is put in front of
-        the user instead of a generic "Failed to check source." And a run that
-        *completed* failed is now detected: `execute_run` records the failure
-        and returns normally, so the old code's `try` succeeded and it said
-        "Check now started." over a feed that had just failed to fetch.
+        by its bounded failure category, and fixed recovery copy is put in
+        front of the user. The raw exception can contain a source URL, local
+        path, response body, or credential and never crosses either boundary.
+        And a run that *completed* failed is now detected: `execute_run`
+        records the failure and returns normally, so the old code's `try`
+        succeeded and it said "Check now started." over a feed that had just
+        failed to fetch.
 
         The durable trace lives where it belongs -- `subscriptions.last_error`
         and a `failed` row in `local_watchlist_runs`, both written by the
@@ -7118,12 +7124,17 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
                         source_id=source_id,
                     )
             except Exception as exc:
-                logger.opt(exception=True).warning(
-                    f"Check now failed for watchlist source {source_id!r}: {exc}"
+                failure = classify_watchlist_failure(exc)
+                recovery = project_watchlist_failure(
+                    watchlist_failure_stats(failure), failed=True
+                )
+                logger.warning(
+                    "Check now failed with category {}.", failure.category.value
                 )
                 if callable(notify):
                     notify(
-                        f"Check failed: {name} — {exc}",
+                        f"Check failed: {name} — {recovery['error_message']} "
+                        f"{recovery['next_action']}",
                         severity="error",
                         timeout=10,
                         markup=False,

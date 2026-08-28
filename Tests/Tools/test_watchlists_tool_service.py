@@ -2040,13 +2040,110 @@ def test_operation_status_accepts_only_exact_receipts_and_scrubs_errors(
     }
     assert mismatched["status"] == "invalid_argument"
     assert run["operation"]["state"] == "needs_attention"
-    assert run["operation"]["retry_capable"] is True
+    assert run["operation"]["error_category"] == "source_check_failed"
+    assert run["operation"]["error_message"] == "Watchlists source check failed."
+    assert run["operation"]["next_action"] == (
+        "Review the source configuration before trying again."
+    )
+    assert run["operation"]["retry_capable"] is False
     assert run["operation"]["destination"] == "runs"
     assert "secret" not in run_raw and "/private" not in run_raw
     assert briefing["operation"]["state"] == "running"
     assert briefing["operation"]["cancel_capable"] is False
     assert briefing["operation"]["destination"] == "artifacts"
     assert invalid["status"] == "invalid_argument"
+
+
+def test_operation_status_projects_only_validated_failure_recovery(
+    db: SubscriptionsDB,
+) -> None:
+    source_id = _source(db, "Failure operations")
+    with db.transaction() as conn:
+        classified_id = int(
+            conn.execute(
+                """
+                INSERT INTO local_watchlist_runs (
+                    source_id, status, stats_json, error_msg, log_text,
+                    created_at, updated_at
+                ) VALUES (?, 'failed', ?, ?, ?, ?, ?)
+                """,
+                (
+                    source_id,
+                    json.dumps(
+                        {
+                            "failure_category": "rate_limited",
+                            "retryable": False,
+                            "http_status": 429,
+                            "retry_after_seconds": 31,
+                            "next_action": "TAMPERED-ACTION-CANARY",
+                        }
+                    ),
+                    "RAW-ERROR-CANARY /private/watchlists.db",
+                    "RAW-LOG-CANARY token=secret",
+                    "2026-08-20 10:00:00",
+                    "2026-08-20 10:00:00",
+                ),
+            ).lastrowid
+        )
+        policy_id = int(
+            conn.execute(
+                """
+                INSERT INTO local_watchlist_runs (
+                    source_id, status, stats_json, error_msg, created_at, updated_at
+                ) VALUES (?, 'failed', ?, ?, ?, ?)
+                """,
+                (
+                    source_id,
+                    json.dumps(
+                        {
+                            "failure_category": "policy_blocked",
+                            "retryable": True,
+                            "http_status": 999,
+                            "retry_after_seconds": 999_999,
+                            "next_action": "POLICY-TAMPER-CANARY",
+                        }
+                    ),
+                    "POLICY-ERROR-CANARY",
+                    "2026-08-20 11:00:00",
+                    "2026-08-20 11:00:00",
+                ),
+            ).lastrowid
+        )
+    service = _service(db)
+
+    classified_raw = service.get_operation_status(
+        {"operation_id": f"local:watchlist_run:{classified_id}"}
+    )
+    policy_raw = service.get_operation_status(
+        {"operation_id": f"local:watchlist_run:{policy_id}"}
+    )
+    classified = _payload(classified_raw)["operation"]
+    policy = _payload(policy_raw)["operation"]
+
+    assert classified["error_category"] == "rate_limited"
+    assert classified["error_message"] == "The source is rate limiting checks."
+    assert classified["next_action"] == "Retry after the source's wait period."
+    assert classified["retry_capable"] is True
+    assert classified["http_status"] == 429
+    assert classified["retry_after_seconds"] == 31
+    assert policy["error_category"] == "policy_blocked"
+    assert policy["retry_capable"] is False
+    assert policy["http_status"] is None
+    assert policy["retry_after_seconds"] is None
+    assert policy["next_action"] == (
+        "Choose a public HTTP(S) source allowed by the network safety policy."
+    )
+    rendered = classified_raw + policy_raw
+    for canary in (
+        "TAMPERED-ACTION",
+        "RAW-ERROR",
+        "RAW-LOG",
+        "POLICY-TAMPER",
+        "POLICY-ERROR",
+        "/private",
+        "token=secret",
+    ):
+        assert canary not in rendered
 
 
 def test_missing_and_transient_database_dependencies_are_structured_and_scrubbed(

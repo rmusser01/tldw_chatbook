@@ -269,6 +269,38 @@ async def test_check_now_source_handler_calls_controller(fake_controller):
 
 
 @pytest.mark.asyncio
+async def test_check_now_failure_toast_uses_validated_copy_and_action(fake_controller):
+    from unittest.mock import Mock
+
+    fake_controller.check_now.return_value = {
+        "status": "failed",
+        "error_msg": "RAW-TOAST-CANARY summitroute.com token=secret",
+        "stats": {
+            "failure_category": "invalid_feed",
+            "retryable": True,
+            "next_action": "TAMPERED-TOAST-ACTION-CANARY",
+        },
+    }
+    async with _open_screen(fake_controller) as (screen, pilot):
+        screen.app_instance.notify = Mock()
+        screen.post_message(CheckNowRequested({"id": "source-1", "name": "Feed"}))
+        await pilot.pause(0.2)
+
+        failure_toasts = [
+            str(call.args[0])
+            for call in screen.app_instance.notify.call_args_list
+            if "Check failed:" in str(call.args[0])
+        ]
+        assert failure_toasts == [
+            "Check failed: Feed — The source did not return a valid feed. "
+            "Check the source URL and feed format."
+        ]
+        assert "RAW-TOAST" not in failure_toasts[0]
+        assert "summitroute.com" not in failure_toasts[0]
+        assert "TAMPERED" not in failure_toasts[0]
+
+
+@pytest.mark.asyncio
 async def test_import_opml_handler_calls_controller(fake_controller):
     async with _open_screen(fake_controller) as (screen, pilot):
         screen.post_message(ImportOpmlRequested())

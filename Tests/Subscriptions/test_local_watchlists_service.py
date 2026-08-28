@@ -1653,7 +1653,10 @@ async def test_local_watchlists_service_evaluates_completed_run_alerts_into_noti
 
     notifications = notification_store.list_notifications(limit=10)
     assert completed["status"] == "failed"
-    assert completed["error_msg"] == "boom"
+    assert completed["failure_category"] is None
+    assert completed["retryable"] is False
+    assert completed["error_msg"] == "Watchlists source check failed."
+    assert "boom" not in str(completed)
     assert len(completed["triggered_alerts"]) == 1
     assert completed["triggered_alerts"][0]["rule_id"] == failed_rule["rule_id"]
     assert len(notifications) == 1
