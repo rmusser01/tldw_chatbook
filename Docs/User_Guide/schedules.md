@@ -34,6 +34,14 @@ pinned at the bottom while you edit.
   is preselected and listed first, followed by common zones and any zone
   your existing tasks already use.
 
+## Disabled tasks
+
+Press **space** on a highlighted task (or the **Disable** button in the
+detail pane) to disable it. A disabled task shows the text status
+**Disabled** in both the queue row and the detail badge, and its Next Run
+reads **— (disabled)** instead of a concrete time it will not honor.
+Enabling it restores the recorded last outcome and the real next run.
+
 ## Ran late — what happens to overdue reminders
 
 Reminders only fire while the app is running (they execute locally, even

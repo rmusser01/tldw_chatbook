@@ -109,9 +109,15 @@ def _format_timezone(dt) -> str:
 
 
 def _format_next_run(task: ReminderTask | ScheduledTask | None) -> str:
-    """Format a task's next run time with timezone."""
+    """Format a task's next run time with timezone.
+
+    A disabled reminder will not run at its stored ``next_run_at``, so a
+    concrete future time would be a false promise (task-23101).
+    """
     if task is None or task.next_run_at is None:
         return "-"
+    if isinstance(task, ReminderTask) and not task.enabled:
+        return "— (disabled)"
     return f"{task.next_run_at.strftime('%Y-%m-%d %H:%M')} {_format_timezone(task.next_run_at)}"
 
 
@@ -194,8 +200,16 @@ def _humanize_schedule(task: ReminderTask) -> str:
 
 
 def _task_status(task: ReminderTask | ScheduledTask) -> TaskStatus:
-    """Return the current status for either a reminder or a projected task."""
+    """Return the current status for either a reminder or a projected task.
+
+    A disabled reminder reads as Disabled regardless of its last dispatch
+    outcome: disabling never touches ``last_status``, so deriving from it
+    left disabled rows showing "Waiting" (task-23101). Enabling restores
+    the recorded last outcome.
+    """
     if isinstance(task, ReminderTask):
+        if not task.enabled:
+            return TaskStatus.DISABLED
         return task.last_status
     return task.status
 
