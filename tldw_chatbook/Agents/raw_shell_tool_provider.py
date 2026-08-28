@@ -196,7 +196,8 @@ class RawShellToolProvider:
             parameters=_MODEL_SCHEMA,
         )
 
-    def hub_tool(self) -> HubTool:
+    @staticmethod
+    def hub_tool() -> HubTool:
         """Return the stable Ask/Off policy identity shown in Tools."""
 
         return HubTool(

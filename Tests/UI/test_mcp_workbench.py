@@ -20,6 +20,10 @@ from textual.widgets import Button, Checkbox, ContentSwitcher, DataTable, Input,
 import tldw_chatbook
 import tldw_chatbook.UI.MCP_Modules.mcp_inspector as mcp_inspector_module
 import tldw_chatbook.UI.MCP_Modules.mcp_workbench as mcp_workbench_module
+from tldw_chatbook.Agents.raw_shell_tool_provider import (
+    RAW_SHELL_SERVER_KEY,
+    RAW_SHELL_TOOL_NAME,
+)
 from tldw_chatbook.MCP.local_control_service import MCPGovernanceDenied
 from tldw_chatbook.MCP.permission_store import (
     BUILTIN_TOOL_SERVER_KEY,
@@ -8776,7 +8780,7 @@ async def test_tools_catalog_includes_local_agent_tools_as_own_group(monkeypatch
 
         local = [
             t for t in workbench._last_hub_tools
-            if t.server_key == "local:__local__"
+            if t.server_key == "local:__local__" and t.name != RAW_SHELL_TOOL_NAME
         ]
         names = {t.name for t in local}
         assert _LOCAL_AGENT_TOOL_NAMES <= names
@@ -8857,16 +8861,19 @@ async def test_tools_catalog_lists_virtual_cli_as_an_independent_group(monkeypat
 @pytest.mark.asyncio
 async def test_local_agent_group_absent_when_master_flag_explicitly_off():
     app = WorkbenchApp()
+    app.raw_cli_runtime = SimpleNamespace(permitted=False, armed=False)
     async with app.run_test() as pilot:
         await pilot.pause()
         await app.workers.wait_for_complete()
         workbench = app.query_one(MCPWorkbench)
         await workbench._mount_deferred_canvases()
         await workbench._sync_children()
-        assert [
-            t for t in workbench._last_hub_tools
-            if t.server_key == "local:__local__"
-        ] == []
+        local_names = {
+            tool.name
+            for tool in workbench._last_hub_tools
+            if tool.server_key == RAW_SHELL_SERVER_KEY
+        }
+        assert local_names == {RAW_SHELL_TOOL_NAME}
         assert app.query_one("#mcp-tools-local-config").display is True
         assert app.query_one("#mcp-tools-local-enabled", Checkbox).value is False
 
@@ -9086,6 +9093,7 @@ async def test_local_agent_catalog_failure_degrades_to_no_local_group(monkeypatc
 
     monkeypatch.setattr(mcp_workbench_module, "LocalToolProvider", _boom)
     app = WorkbenchApp()
+    app.raw_cli_runtime = SimpleNamespace(permitted=False, armed=False)
     async with app.run_test() as pilot:
         await pilot.pause()
         await app.workers.wait_for_complete()
@@ -9093,12 +9101,194 @@ async def test_local_agent_catalog_failure_degrades_to_no_local_group(monkeypatc
         await workbench._mount_deferred_canvases()
         await workbench._sync_children()
 
-        # The local group is simply absent...
-        assert [
-            t for t in workbench._last_hub_tools
-            if t.server_key == "local:__local__"
-        ] == []
+        # The workspace-agent group is absent, while raw-shell policy
+        # discoverability remains independent of provider construction.
+        assert {
+            tool.name
+            for tool in workbench._last_hub_tools
+            if tool.server_key == RAW_SHELL_SERVER_KEY
+        } == {RAW_SHELL_TOOL_NAME}
         # ...and the rest of the catalog was neither broken nor emptied.
         assert any(
             t.server_key == "local:docs" for t in workbench._last_hub_tools
         )
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("permitted", "armed", "availability"),
+    [
+        (False, False, "Locked —"),
+        (True, False, "Unlocked, not armed —"),
+        (True, True, "Armed —"),
+    ],
+)
+async def test_raw_shell_is_always_visible_with_text_labeled_availability(
+    tmp_path, permitted, armed, availability
+):
+    """Discoverability is stable; launch authority is visible but separate."""
+    app = PermissionsApp(tmp_path / "mcp_permissions_raw_visibility.json")
+    app.raw_cli_runtime = SimpleNamespace(permitted=permitted, armed=armed)
+
+    async with app.run_test(size=(100, 30)) as pilot:
+        await pilot.pause()
+        await app.workers.wait_for_complete()
+        workbench = app.query_one(MCPWorkbench)
+        raw_tool = next(
+            tool
+            for tool in workbench._last_hub_tools
+            if (
+                tool.server_key == RAW_SHELL_SERVER_KEY
+                and tool.name == RAW_SHELL_TOOL_NAME
+            )
+        )
+
+        assert raw_tool.executable is False
+        assert availability in raw_tool.description
+        assert "DANGER" in raw_tool.description
+        assert "full authority of the OS user" in raw_tool.description
+        assert "not workspace confined" in raw_tool.description
+
+        workbench.set_mode("tools")
+        await pilot.pause()
+        table = app.query_one("#mcp-tools-table", DataTable)
+        table.focus()
+        table.move_cursor(row=table.get_row_index(raw_tool.tool_id))
+        await pilot.press("enter")
+        await pilot.pause()
+
+        assert app.focused is table
+        assert _tools_table_state(app, RAW_SHELL_TOOL_NAME).startswith("Ask")
+        description = str(
+            app.query_one("#mcp-inspector-tool-description", Static).renderable
+        )
+        assert availability in description
+        assert "DANGER" in description
+        assert "not workspace confined" in description
+        phase_note = str(
+            app.query_one("#mcp-inspector-tool-phase-note", Static).renderable
+        )
+        assert phase_note == (
+            "Policy only — raw shell commands run from Console under its "
+            "separate approval flow."
+        )
+
+
+@pytest.mark.asyncio
+async def test_raw_shell_hand_edited_allow_renders_ask_and_cycles_only_ask_off(
+    monkeypatch, tmp_path
+):
+    """The exact raw-shell row has no persistent Allow or Inherit rung."""
+    _enable_local_tools(monkeypatch)
+    store_path = tmp_path / "mcp_permissions_raw_cycle.json"
+    app = PermissionsApp(store_path)
+    app.raw_cli_runtime = SimpleNamespace(permitted=True, armed=True)
+
+    async with app.run_test(size=(120, 40)) as pilot:
+        await pilot.pause()
+        await app.workers.wait_for_complete()
+        workbench = app.query_one(MCPWorkbench)
+        raw_tool = workbench._tool_for(RAW_SHELL_SERVER_KEY, RAW_SHELL_TOOL_NAME)
+        assert raw_tool is not None
+
+        # Simulate a valid hand-edited Allow entry without triggering the
+        # definition-change downgrade; the UI must still project it to Ask.
+        app.unified_mcp_service.set_tool_state(
+            RAW_SHELL_SERVER_KEY,
+            RAW_SHELL_TOOL_NAME,
+            "allow",
+            tool=raw_tool,
+        )
+        await workbench._sync_children()
+        await pilot.pause()
+
+        assert _tools_table_state(app, RAW_SHELL_TOOL_NAME).startswith("Ask")
+        assert not _tools_table_state(app, RAW_SHELL_TOOL_NAME).startswith("Allow")
+
+        workbench.set_mode("permissions")
+        await pilot.pause()
+        raw_row = next(
+            row
+            for row in app.query_one(MCPPermissionsMode)._all_rows
+            if (
+                row.kind == "tool"
+                and row.server_key == RAW_SHELL_SERVER_KEY
+                and row.tool_name == RAW_SHELL_TOOL_NAME
+            )
+        )
+        assert raw_row.state_label.startswith("Ask")
+
+        table = app.query_one("#mcp-perm-table", DataTable)
+        table.focus()
+        raw_row_index = _perm_row_keys(app).index(
+            f"{RAW_SHELL_SERVER_KEY}::{RAW_SHELL_TOOL_NAME}"
+        )
+        table.move_cursor(row=raw_row_index)
+        await pilot.press("enter")
+        await pilot.pause()
+        assert str(
+            app.query_one(
+                "#mcp-inspector-permission-cascade-tool", Static
+            ).renderable
+        ) == "▸ Tool override: Ask •"
+
+        await pilot.press("space")
+        await pilot.pause()
+        await app.workers.wait_for_complete()
+        await pilot.pause()
+
+        entry = MCPPermissionStore(store_path).get_tool_entry(
+            RAW_SHELL_SERVER_KEY, RAW_SHELL_TOOL_NAME
+        )
+        assert entry is not None and entry["state"] == "deny"
+        assert _tools_table_state(app, RAW_SHELL_TOOL_NAME).startswith("Off")
+
+        table.move_cursor(
+            row=_perm_row_keys(app).index(
+                f"{RAW_SHELL_SERVER_KEY}::{RAW_SHELL_TOOL_NAME}"
+            )
+        )
+        await pilot.press("space")
+        await pilot.pause()
+        await app.workers.wait_for_complete()
+        await pilot.pause()
+
+        entry = MCPPermissionStore(store_path).get_tool_entry(
+            RAW_SHELL_SERVER_KEY, RAW_SHELL_TOOL_NAME
+        )
+        assert entry is not None and entry["state"] == "ask"
+        assert _tools_table_state(app, RAW_SHELL_TOOL_NAME).startswith("Ask")
+
+
+@pytest.mark.asyncio
+async def test_virtual_cli_permission_cycle_remains_independent_of_raw_shell(
+    monkeypatch, tmp_path
+):
+    """Raw-shell coercion must not remove Allow from virtual CLI commands."""
+    _enable_local_tools(monkeypatch)
+    store_path = tmp_path / "mcp_permissions_virtual_cli_independent.json"
+    app = PermissionsApp(store_path)
+    app.raw_cli_runtime = SimpleNamespace(permitted=True, armed=True)
+
+    async with app.run_test(size=(120, 40)) as pilot:
+        await pilot.pause()
+        await app.workers.wait_for_complete()
+        workbench = app.query_one(MCPWorkbench)
+        workbench.set_mode("permissions")
+        await pilot.pause()
+
+        table = app.query_one("#mcp-perm-table", DataTable)
+        table.focus()
+        table.move_cursor(
+            row=_perm_row_keys(app).index("local:__virtual_cli__::ls")
+        )
+        await pilot.press("space")
+        await pilot.pause()
+        await app.workers.wait_for_complete()
+        await pilot.pause()
+
+        entry = MCPPermissionStore(store_path).get_tool_entry(
+            "local:__virtual_cli__", "ls"
+        )
+        assert entry is not None and entry["state"] == "allow"
+        assert _tools_table_state(app, "ls").startswith("Allow")

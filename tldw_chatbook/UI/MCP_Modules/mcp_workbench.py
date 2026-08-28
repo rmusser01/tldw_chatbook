@@ -29,6 +29,12 @@ from tldw_chatbook.Agents.builtin_tool_gate import (
     tool_gate_breadcrumb,
 )
 from tldw_chatbook.Agents.local_tool_provider import LocalToolProvider
+from tldw_chatbook.Agents.raw_shell_tool_provider import (
+    RAW_SHELL_SERVER_KEY,
+    RAW_SHELL_TOOL_NAME,
+    RawShellToolProvider,
+    resolve_raw_shell_state,
+)
 from tldw_chatbook.Agents.virtual_cli_provider import VirtualCliProvider
 from tldw_chatbook.config import (
     coerce_bool_setting,
@@ -175,6 +181,23 @@ def _cycled_ui_label(state: str | None) -> str:
 # this section renders -- Constraint 3 requires the UI never let a user
 # mistake one for the other.
 _BUILTIN_SECTION_LABEL = "Built-in (agent runtime)"
+
+
+def _is_raw_shell_tool(server_key: str, tool_name: str | None) -> bool:
+    """Return whether one policy identity is the unsafe host shell."""
+
+    return (
+        server_key == RAW_SHELL_SERVER_KEY
+        and tool_name == RAW_SHELL_TOOL_NAME
+    )
+
+
+def _project_raw_shell_store_state(state: str | None) -> str | None:
+    """Map a generic stored rung to raw shell's Ask/Off-only policy."""
+
+    if state is None:
+        return None
+    return "deny" if state == "deny" else "ask"
 
 
 def _safe_exception_text(exc: BaseException) -> str:
@@ -1713,6 +1736,14 @@ class MCPWorkbench(Container):
             # permission store the Console gates on, resolved by the same
             # `effective_tool_states()` pass as every other row.
             tools.extend(self._local_agent_hub_tools())
+            # TASK-22510: policy discoverability is not runtime authority.
+            # Keep the raw host shell visible even while locked, unarmed,
+            # disabled by the local-tools master switch, or absent from the
+            # model's live schema catalog. The Tools view itself cannot run
+            # it; Console owns the separate command-visible approval path.
+            raw_shell_tool = self._raw_shell_hub_tool()
+            if raw_shell_tool is not None:
+                tools.append(raw_shell_tool)
         else:
             for snap in self._snapshots:
                 if snap.source != "server" or not self._is_external_record_key(snap.server_key):
@@ -1780,6 +1811,51 @@ class MCPWorkbench(Container):
         except Exception as exc:  # noqa: BLE001 -- catalog view must never break the hub
             logger.warning(f"MCP local agent tool catalog unavailable: {exc}")
             return []
+
+    def _raw_shell_hub_tool(self) -> HubTool | None:
+        """Project raw-shell policy when this app owns the required runtime."""
+
+        runtime = getattr(self.app_instance, "raw_cli_runtime", None)
+        if runtime is None:
+            # Compatibility/fail-soft boundary: lightweight embedders and
+            # test harnesses may mount the generic MCP workbench without the
+            # app-owned raw CLI subsystem. Chatbook itself always creates
+            # that runtime before screens compose; absence means the feature
+            # does not exist here, not a misleading persistent "Locked" row.
+            return None
+        try:
+            permitted = runtime.permitted is True
+            armed = permitted and runtime.armed is True
+        except Exception:  # noqa: BLE001 -- a broken runtime must read locked
+            permitted = False
+            armed = False
+
+        if not permitted:
+            availability = (
+                "Locked — the persistent Raw CLI unlock is Off. Models cannot "
+                "use this tool."
+            )
+        elif not armed:
+            availability = (
+                "Unlocked, not armed — re-arm Raw CLI in Privacy & Security "
+                "for this Chatbook launch before models can use it."
+            )
+        else:
+            availability = (
+                "Armed — available to models, but each command still requires "
+                "visible approval unless this Console session has temporary "
+                "authority."
+            )
+        warning = (
+            "DANGER: This runs a real host shell with the full authority of "
+            "the OS user and is not workspace confined. Permission is Ask or "
+            "Off only; a stored Allow value is treated as Ask."
+        )
+        return replace(
+            RawShellToolProvider.hub_tool(),
+            description=f"{availability}\n\n{warning}",
+            executable=False,
+        )
 
     def _empty_tools_diagnosis(self) -> tuple[str, str]:
         """Diagnose why the Tools mode catalog is currently empty.
@@ -1871,13 +1947,30 @@ class MCPWorkbench(Container):
         """
         service = self._service()
         loader = getattr(service, "effective_tool_states", None)
-        if not callable(loader):
-            return {}
-        try:
-            return loader(tools)
-        except Exception as exc:
-            logger.warning(f"MCP effective tool state resolution failed: {exc}")
-            return {}
+        states: dict[tuple[str, str], EffectiveToolState] = {}
+        if callable(loader):
+            try:
+                states = dict(loader(tools))
+            except Exception as exc:
+                logger.warning(f"MCP effective tool state resolution failed: {exc}")
+
+        for tool in tools:
+            if not _is_raw_shell_tool(tool.server_key, tool.name):
+                continue
+            key = (tool.server_key, tool.name)
+            stored = states.get(key) or EffectiveToolState(
+                state="ask", origin="global_default"
+            )
+            states[key] = EffectiveToolState(
+                state=resolve_raw_shell_state(stored),
+                origin=stored.origin,
+                # Raw shell never honors persistent Allow, so its generic
+                # definition-hash and inherited-risk-floor markers would
+                # only advertise a misleading Re-allow path.
+                config_changed=False,
+                risk_floored=False,
+            )
+        return states
 
     def _builtin_permission_rows(self, payload: dict[str, Any]) -> list:
         """This run's built-in tool rows, resolved by the BUILT-IN resolver.
@@ -2378,9 +2471,21 @@ class MCPWorkbench(Container):
                         cycle_current=tool_cycle_current,
                     )
                 )
-                cascade_map[(tool.server_key, tool.name)] = (
-                    tool_cycle_current, server_cycle_current, global_state,
-                )
+                if _is_raw_shell_tool(tool.server_key, tool.name):
+                    # The generic store may contain Allow at any rung, but
+                    # raw shell projects every such value to Ask. Keep the
+                    # inspector's provenance cascade truthful too: showing
+                    # "Permission: Ask" above "Tool override: Allow" would
+                    # imply the forbidden silent-authority path still wins.
+                    cascade_map[(tool.server_key, tool.name)] = (
+                        _project_raw_shell_store_state(tool_cycle_current),
+                        _project_raw_shell_store_state(server_cycle_current),
+                        _project_raw_shell_store_state(global_state) or "ask",
+                    )
+                else:
+                    cascade_map[(tool.server_key, tool.name)] = (
+                        tool_cycle_current, server_cycle_current, global_state,
+                    )
 
         preview = self._build_permission_preview(
             rows, tools_by_server, labels_by_key, effective, global_label,
@@ -2501,6 +2606,7 @@ class MCPWorkbench(Container):
             )
             return
         cycled_tool: HubTool | None = None
+        raw_cycled_state: str | None = None
         try:
             if event.row_kind == "global":
                 if event.new_state is not None:
@@ -2508,7 +2614,35 @@ class MCPWorkbench(Container):
             elif event.row_kind == "server":
                 service.set_server_default(event.server_key, event.new_state)
             elif event.row_kind == "tool":
-                if event.server_key == BUILTIN_TOOL_SERVER_KEY:
+                if _is_raw_shell_tool(event.server_key, event.tool_name):
+                    cycled_tool = self._tool_for(
+                        event.server_key, event.tool_name or ""
+                    )
+                    if cycled_tool is None:
+                        self.app.notify(
+                            _toast(
+                                "Raw shell policy is no longer in the catalog — "
+                                "refresh and try again."
+                            ),
+                            severity="warning",
+                        )
+                        return
+                    current = resolve_raw_shell_state(
+                        self._effective_for_display(cycled_tool)
+                    )
+                    # This exact row is a two-state control. Re-derive from
+                    # the rendered effective state because the generic child
+                    # table cycles four raw-store rungs (including Allow and
+                    # Inherit), neither of which is valid raw-shell policy.
+                    next_state = "ask" if current == "deny" else "deny"
+                    raw_cycled_state = next_state
+                    service.set_tool_state(
+                        event.server_key,
+                        event.tool_name or "",
+                        next_state,
+                        tool=cycled_tool,
+                    )
+                elif event.server_key == BUILTIN_TOOL_SERVER_KEY:
                     # Task 4: built-in tools have no `HubTool` -- skip the
                     # catalog lookup and its "no longer in the catalog"
                     # guard, which would otherwise reject every built-in
@@ -2541,7 +2675,10 @@ class MCPWorkbench(Container):
         # narrower scope, not an oversight).
         echo: str | None = None
         if event.row_kind == "tool":
-            echo = f"{event.tool_name} → {_cycled_ui_label(event.new_state)} · "
+            echoed_state = event.new_state
+            if raw_cycled_state is not None:
+                echoed_state = raw_cycled_state
+            echo = f"{event.tool_name} → {_cycled_ui_label(echoed_state)} · "
         async with self._sync_children_lock:
             await self._sync_permissions_mode(echo=echo)
 
@@ -3648,8 +3785,19 @@ class MCPWorkbench(Container):
             self.app.notify("Select a tool in Tools mode first.", severity="warning")
             return
         if status == "not_executable":
+            tool = inspector.current_tool
+            message = "Server-source tools are display-only."
+            if tool is not None and _is_raw_shell_tool(
+                tool.server_key, tool.name
+            ):
+                message = (
+                    "Raw shell is policy-only here; run commands from Console "
+                    "under its separate approval flow."
+                )
+            elif tool is not None and tool.source != "server":
+                message = "Tool testing is unavailable from this policy view."
             self.app.notify(
-                "Server-source tools are display-only.",
+                message,
                 severity="information",
             )
             return
