@@ -9244,3 +9244,43 @@ tree gave 174 and 175). Use `-p no:randomly` on both sides or the sets are not
 comparable. Sampling is not enough either: five sampled failures all reproduced
 on base and pointed at "dev's problem", while the set diff exposed 79 that were
 ours. There is no undefined-name linter in this repo's CI to catch this class.
+
+## A PR that ran zero shards also reports zero failures — never baseline one PR's failure COUNT against another's (TASK-23029, 2026-08-28)
+
+**The incident.** PR #2166 showed nine failing shards (3 Core, 6 UI). To decide
+whether they were mine, I compared against PR #2160, open at the same time,
+which reported **zero** failures — which reads as "dev is fine, your branch
+broke it". #2160 had no `UI Tests` check runs *at all*: its `Tests` workflow
+never started its shards, the same burst-cancellation problem tracked in
+TASK-22250. Zero failures out of zero tests. Had I trusted it I would have
+gone hunting for a defect in a diff that could not contain one.
+
+**What actually settled it, in this order.** (1) A *structural* argument first,
+because it is free: `git diff <base>...HEAD --name-only` filtered to everything
+outside `Tests/Performance/`, `backlog/`, and one script came back **empty**, so
+the diff cannot reach `Tests/UI`. (2) Then reproduce: the named failures were run
+locally on the branch and failed there too, which — given (1) — means they fail on
+the base. (3) Only then read the failure text, which named the real cause anyway
+(`'ChatScreen' object has no attribute '_library_activity'` is a rename landing
+without its tests, not a perf change).
+
+**The rule.** Before using another PR's checks as a baseline, confirm it *ran the
+same checks*: `gh pr view <n> --json statusCheckRollup` and group by
+`status+conclusion` — `QUEUED`, `IN_PROGRESS`, and absent are all "no data", and
+only `COMPLETED` rows carry a verdict. A comparison between "0 failures of 0
+shards" and "9 failures of 12 shards" is not a comparison.
+
+## An auto-lander that polls by PR number will attribute the OLD head's verdict to a head you just pushed (2026-08-28)
+
+**The incident.** After force-pushing a rebased #2160, a background lander polling
+`gh pr view 2160` printed `GREEN -> merge` **eight seconds later** — far too fast
+for CI on the new commit. The verdict belonged to the pre-rebase head that had
+been green before the push. GitHub's per-head required check refused the merge, so
+the damage was zero and the PR simply stayed open; the lander's own log was the
+only thing that lied.
+
+**The rule.** A lander's "merged" line is a claim, not a result. Confirm with
+`gh pr view <n> --json state,mergeCommit,headRefOid` that `state == MERGED`,
+`mergeCommit` is non-null, **and** `headRefOid` equals the SHA you pushed. The
+same check catches the related case where a lander merges a head that is no longer
+the one you verified locally.
