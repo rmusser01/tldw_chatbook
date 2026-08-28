@@ -924,3 +924,67 @@ async def test_owned_tts_probe_client_closes_when_cancelled(monkeypatch) -> None
         )
 
     assert client.closed is True
+
+
+@pytest.mark.asyncio
+async def test_probe_requests_identity_encoding_so_real_gzip_peers_stay_reachable() -> (
+    None
+):
+    """A content-negotiating peer must not read as a connection failure.
+
+    Live incident: `read_bounded_model_response` streams raw bytes and
+    rejects any non-identity `Content-Encoding`, but this probe never asked
+    for identity -- so httpx advertised `gzip, deflate`, api.openai.com
+    honored it, and a *valid* key came back "unreachable: connection error"
+    with zero models. Mocked peers never compress, so no existing test saw
+    it. The two other `read_bounded_model_response` call sites already send
+    this header; this one did not.
+    """
+
+    seen: list[str | None] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        accept_encoding = request.headers.get("accept-encoding")
+        seen.append(accept_encoding)
+        # Behave like a real server: compress only when the client offers it.
+        if accept_encoding and "gzip" in accept_encoding.casefold():
+            import gzip as _gzip
+
+            return httpx.Response(
+                200,
+                headers={"Content-Encoding": "gzip"},
+                content=_gzip.compress(b'{"data": [{"id": "gpt-4.1-nano"}]}'),
+            )
+        return httpx.Response(200, json={"data": [{"id": "gpt-4.1-nano"}]})
+
+    outcome = await probe_settings_endpoint(
+        "https://api.openai.com/v1",
+        provider="openai",
+        http_client=_client(handler),
+    )
+
+    assert seen == ["identity"]
+    assert outcome.state == "reachable"
+    assert outcome.category is None
+    assert outcome.model_ids == ("gpt-4.1-nano",)
+
+
+@pytest.mark.asyncio
+async def test_tts_catalog_probe_also_requests_identity_encoding() -> None:
+    """The TTS catalog probe shares the same bounded reader and hazard."""
+
+    seen: list[str | None] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        seen.append(request.headers.get("accept-encoding"))
+        return httpx.Response(200, json={"data": [{"id": "tts-1"}]})
+
+    outcome = await probe_settings_endpoint(
+        "https://api.openai.com/v1",
+        provider="openai",
+        purpose="tts_catalog",
+        http_client=_client(handler),
+    )
+
+    assert seen == ["identity"]
+    assert outcome.state is not SpeechTTSConnectionState.UNREACHABLE

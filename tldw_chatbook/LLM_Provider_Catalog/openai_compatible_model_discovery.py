@@ -127,7 +127,15 @@ _COMPACT_SENSITIVE_METADATA_KEY_SUFFIXES = frozenset({"token"})
 _ANTHROPIC_PROVIDER_KEY = "anthropic"
 _ANTHROPIC_VERSION_HEADER = "2023-06-01"
 MODEL_DISCOVERY_RESPONSE_MAX_BYTES = MODEL_PROBE_RESPONSE_MAX_BYTES
-DISCOVERED_MODEL_MAX_COUNT = MODEL_IDS_MAX_COUNT
+# Deliberately NOT MODEL_IDS_MAX_COUNT (100). That constant bounds how many ids
+# the *probe* truncates to for a reachability sample; discovery instead fails
+# closed on an over-bound catalog so no partial list is ever cached. Aliasing
+# the two put the fail-closed bound below reality: api.openai.com returns 128
+# models for an ordinary account, so live first-run discovery errored with
+# "The models endpoint returned too many models" for every OpenAI user with a
+# valid key. The fail-closed semantics are kept; only the calibration changes.
+# MODEL_DISCOVERY_RESPONSE_MAX_BYTES (1 MiB) remains the real memory bound.
+DISCOVERED_MODEL_MAX_COUNT = 512
 DISCOVERED_MODEL_ID_MAX_CHARS = MODEL_ID_MAX_CHARS
 MODEL_METADATA_MAX_DEPTH = 8
 MODEL_METADATA_MAX_ITEMS = 256
@@ -135,7 +143,11 @@ MODEL_METADATA_MAX_SERIALIZED_BYTES = 16 * 1024
 MODEL_METADATA_MAX_VALUE_CHARS = 4096
 MODEL_METADATA_MAX_KEY_CHARS = 128
 
-_ANTHROPIC_MODELS_PAGE_LIMIT = DISCOVERED_MODEL_MAX_COUNT
+# Page size, not a total bound -- the two were the same constant only while
+# DISCOVERED_MODEL_MAX_COUNT happened to equal 100. Anthropic's list-models
+# `limit` is a per-request page size; the total stays bounded by
+# DISCOVERED_MODEL_MAX_COUNT across _ANTHROPIC_MAX_MODEL_PAGES pages.
+_ANTHROPIC_MODELS_PAGE_LIMIT = 100
 _ANTHROPIC_MAX_MODEL_PAGES = 10
 
 
