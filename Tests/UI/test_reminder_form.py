@@ -247,3 +247,98 @@ async def test_reminder_form_cancel_dismisses_without_submitting():
 
         assert not isinstance(pilot.app.screen, ReminderForm)
         assert app.submitted is None
+
+
+# --- task-23100: the form must not clip fields at common terminal sizes ----
+#
+# The oracle for "is this widget actually visible" is the compositor
+# (get_widget_at), not the widget's own cached region: a clipped widget
+# still reports a plausible region (see lessons-live-verification.md).
+
+
+def _painted_at_own_center(app: App, widget) -> bool:
+    """Return True when the compositor paints ``widget`` at its own center."""
+    region = widget.region
+    if region.height <= 0 or region.width <= 0:
+        return False
+    cx, cy = region.center
+    try:
+        target, _ = app.get_widget_at(int(cx), int(cy))
+    except Exception:
+        return False
+    return target is widget or widget in list(target.ancestors)
+
+
+@pytest.mark.asyncio
+async def test_recurring_fields_reachable_and_preview_pinned_at_80x24():
+    """At 80x24 a focused cron field is painted and the live preview stays visible."""
+    app = FormTestApp()
+    async with app.run_test(size=(80, 24)) as pilot:
+        await app.push_screen(ReminderForm())
+        await pilot.pause()
+        form = pilot.app.screen
+        form.query_one("#reminder-kind", Select).value = ScheduleKind.RECURRING.value
+        await pilot.pause()
+
+        cron_input = form.query_one("#reminder-cron", Input)
+        cron_input.focus()
+        await pilot.pause()
+
+        # A focused widget must never be rendered invisible (AC).
+        assert _painted_at_own_center(app, cron_input), (
+            "the focused cron input is not painted at its own center -- it is "
+            "clipped out of the modal"
+        )
+
+        # The live "Runs:" preview stays visible while the cron is edited (AC):
+        # frame-level assertion, not a style probe (lessons-testing-evidence.md).
+        frame = app.export_screenshot()
+        assert "Runs:" in frame, "the live schedule preview is not on the frame"
+
+        # Save/Cancel must be reachable too.
+        assert _painted_at_own_center(app, form.query_one("#reminder-save"))
+
+
+@pytest.mark.asyncio
+async def test_all_recurring_fields_painted_at_235x52():
+    """At 235x52 every recurring field, helper, and the preview is painted."""
+    app = FormTestApp()
+    async with app.run_test(size=(235, 52)) as pilot:
+        await app.push_screen(ReminderForm())
+        await pilot.pause()
+        form = pilot.app.screen
+        form.query_one("#reminder-kind", Select).value = ScheduleKind.RECURRING.value
+        await pilot.pause()
+
+        for selector in (
+            "#reminder-title",
+            "#reminder-body",
+            "#reminder-kind",
+            "#reminder-cron-preset",
+            "#reminder-cron",
+            "#reminder-timezone",
+            "#reminder-save",
+            "#reminder-cancel",
+        ):
+            widget = form.query_one(selector)
+            assert _painted_at_own_center(app, widget), (
+                f"{selector} is not painted at 235x52"
+            )
+        frame = app.export_screenshot()
+        assert "Runs:" in frame
+
+
+@pytest.mark.asyncio
+async def test_one_time_fields_painted_at_80x24():
+    """At 80x24 the one-time Run At field and the buttons are all painted."""
+    app = FormTestApp()
+    async with app.run_test(size=(80, 24)) as pilot:
+        await app.push_screen(ReminderForm())
+        await pilot.pause()
+        form = pilot.app.screen
+
+        run_at = form.query_one("#reminder-run-at", Input)
+        run_at.focus()
+        await pilot.pause()
+        assert _painted_at_own_center(app, run_at)
+        assert _painted_at_own_center(app, form.query_one("#reminder-save"))

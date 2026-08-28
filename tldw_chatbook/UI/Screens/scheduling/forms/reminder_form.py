@@ -9,7 +9,7 @@ from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 from croniter import croniter
 from textual.app import ComposeResult
 from textual.binding import Binding
-from textual.containers import Container, Horizontal, Vertical
+from textual.containers import Container, Horizontal, Vertical, VerticalScroll
 from textual.screen import ModalScreen
 from textual.widgets import Button, Input, Label, Select, Static, TextArea
 
@@ -34,17 +34,49 @@ class ReminderForm(ModalScreen):
 
     ReminderForm > Container {
         width: 80;
+        max-width: 100%;
         height: auto;
-        max-height: 55;
+        max-height: 100%;
         background: $surface;
         border: thick $primary;
         padding: 1 2;
     }
 
+    /* task-23100: the field column scrolls; the preview/errors/buttons
+       footer is pinned below it so it can never be clipped off screen.
+       The scroll area's max-height is set from Python (an auto-height
+       parent clamps by CLIPPING, so the bound must live on the scroll
+       container itself, where overflow becomes a scrollbar instead). */
+    #reminder-form-fields {
+        height: auto;
+    }
+
+    /* Plain Vertical defaults to height:1fr, which measures as ~1 row in
+       the scroll container's virtual size while its children paint taller
+       -- the invisible-but-focusable trap (task-23100). */
+    #reminder-run-at-group,
+    #reminder-cron-group,
+    #reminder-timezone-group {
+        height: auto;
+    }
+
+    #reminder-form-footer {
+        height: auto;
+    }
+
+    #reminder-errors {
+        display: none;
+    }
+
+    #reminder-body {
+        height: 3;
+        max-height: 5;
+    }
+
     .form-title {
         text-style: bold;
         text-align: center;
-        padding: 1 0;
+        padding: 0;
     }
 
     .form-label {
@@ -58,17 +90,25 @@ class ReminderForm(ModalScreen):
         padding: 0;
     }
 
+    .form-preview {
+        color: $text-muted;
+        height: auto;
+        min-height: 1;
+        padding: 0;
+    }
+
     .error-text {
         color: $error;
         text-style: bold;
         height: auto;
-        padding: 1 0;
+        padding: 0;
     }
 
     .button-container {
         align: center middle;
         height: auto;
-        padding: 1 0;
+        padding: 0;
+        margin-top: 1;
     }
 
     .button-container Button {
@@ -86,6 +126,9 @@ class ReminderForm(ModalScreen):
         self._reminder_task = task
         self._dirty = False
         self._ready = False
+        #: Rows currently used by the validation line; part of the pinned
+        #: footer's height budget (task-23100).
+        self._error_line_count = 0
 
     def action_dismiss(self) -> None:
         """Dismiss the modal when the Escape key is pressed."""
@@ -119,7 +162,7 @@ class ReminderForm(ModalScreen):
                 classes="form-title",
             )
 
-            with Vertical():
+            with VerticalScroll(id="reminder-form-fields"):
                 yield Label("Title:", classes="form-label")
                 yield Input(placeholder="Enter reminder title...", id="reminder-title")
 
@@ -134,7 +177,7 @@ class ReminderForm(ModalScreen):
                     id="reminder-kind",
                 )
                 yield Static(
-                    "One-time runs once at a set time; recurring repeats on a cron schedule.",
+                    "One-time runs once; recurring repeats on a cron schedule.",
                     classes="form-helper",
                 )
 
@@ -145,11 +188,9 @@ class ReminderForm(ModalScreen):
                         id="reminder-run-at",
                     )
                     yield Static(
-                        "Date and time to run, with timezone offset, e.g. 2026-08-04T09:00:00+00:00. "
-                        "Recurring schedules get a separate Timezone field.",
+                        "Date and time with timezone offset, e.g. 2026-08-04T09:00:00+00:00.",
                         classes="form-helper",
                     )
-                    yield Static("", id="reminder-run-at-preview", classes="form-helper")
 
                 with Vertical(id="reminder-cron-group"):
                     yield Label("Frequency:", classes="form-label")
@@ -162,11 +203,9 @@ class ReminderForm(ModalScreen):
                     yield Label("Cron Expression:", classes="form-label")
                     yield Input(placeholder="0 9 * * 1", id="reminder-cron")
                     yield Static(
-                        "Standard 5-field cron: minute hour day-of-month month weekday. "
-                        "E.g. 0 9 * * * runs every day at 9:00.",
+                        "5-field cron (minute hour day month weekday): 0 9 * * * = daily at 9:00.",
                         classes="form-helper",
                     )
-                    yield Static("", id="reminder-cron-preview", classes="form-helper")
 
                 with Vertical(id="reminder-timezone-group"):
                     yield Label("Timezone:", classes="form-label")
@@ -179,14 +218,20 @@ class ReminderForm(ModalScreen):
                         classes="form-helper",
                     )
 
+            # Pinned footer (task-23100): the live schedule preview, the
+            # validation line, and the actions stay visible while the field
+            # column above scrolls.
+            with Vertical(id="reminder-form-footer"):
+                yield Static("", id="reminder-run-at-preview", classes="form-preview")
+                yield Static("", id="reminder-cron-preview", classes="form-preview")
                 yield Static("", id="reminder-errors", classes="error-text")
-
-            with Horizontal(classes="button-container"):
-                yield Button("Save", variant="success", id="reminder-save")
-                yield Button("Cancel", id="reminder-cancel")
+                with Horizontal(classes="button-container"):
+                    yield Button("Save", variant="success", id="reminder-save")
+                    yield Button("Cancel", id="reminder-cancel")
 
     def on_mount(self) -> None:
         """Prefill the form when editing an existing reminder."""
+        self._sync_field_scroll_height()
         if self._reminder_task is None:
             self.query_one("#reminder-timezone", Input).value = _DEFAULT_TIMEZONE
             # Create mode: start the cron field from the default preset.
@@ -219,6 +264,37 @@ class ReminderForm(ModalScreen):
         self._dirty = False
         self._ready = True
 
+    def on_resize(self) -> None:
+        """Re-bound the scrolling field column when the terminal resizes."""
+        self._sync_field_scroll_height()
+
+    def _sync_field_scroll_height(self) -> None:
+        """Bound the field column so the pinned footer stays on screen.
+
+        The modal container is ``height: auto; max-height: 100%`` -- an
+        auto-height parent clamps by CLIPPING its children, so the bound
+        must live on the scroll container itself, where overflow becomes a
+        scrollbar instead of invisible-but-focusable fields (task-23100).
+        """
+        try:
+            scroll = self.query_one("#reminder-form-fields", VerticalScroll)
+        except Exception:  # noqa: BLE001 - not composed yet
+            return
+        # Fixed chrome outside the scroll area: container border (2) +
+        # vertical padding (2) + title row (1) + preview line (1) + button
+        # row incl. its top margin (4), plus the current validation lines.
+        overhead = 10 + self._error_line_count
+        scroll.styles.max_height = max(5, self.app.size.height - overhead)
+
+    def _set_errors(self, errors: list[str]) -> None:
+        """Render validation errors and re-budget the field column height."""
+        error_widget = self.query_one("#reminder-errors", Static)
+        error_widget.update("\n".join(errors))
+        # Hidden when empty so the footer row budget stays exact.
+        error_widget.display = bool(errors)
+        self._error_line_count = len(errors)
+        self._sync_field_scroll_height()
+
     def on_select_changed(self, event: Select.Changed) -> None:
         """Show/hide schedule field groups based on the selected schedule kind."""
         if not self._ready:
@@ -250,18 +326,22 @@ class ReminderForm(ModalScreen):
             self._dirty = True
 
     def _update_schedule_field_visibility(self, kind: str) -> None:
-        """Toggle which schedule input groups are visible."""
+        """Toggle which schedule input groups (and pinned preview) are visible."""
         run_at_group = self.query_one("#reminder-run-at-group", Vertical)
         cron_group = self.query_one("#reminder-cron-group", Vertical)
         tz_group = self.query_one("#reminder-timezone-group", Vertical)
-        if kind == ScheduleKind.ONE_TIME.value:
-            run_at_group.display = True
-            cron_group.display = False
-            tz_group.display = False
-        else:
-            run_at_group.display = False
-            cron_group.display = True
-            tz_group.display = True
+        run_at_preview = self.query_one("#reminder-run-at-preview", Static)
+        cron_preview = self.query_one("#reminder-cron-preview", Static)
+        one_time = kind == ScheduleKind.ONE_TIME.value
+        run_at_group.display = one_time
+        cron_group.display = not one_time
+        tz_group.display = not one_time
+        run_at_preview.display = one_time
+        cron_preview.display = not one_time
+        # Reveal the newly shown group: at short terminal heights it may sit
+        # below the scroll window (task-23100).
+        shown_group = run_at_group if one_time else cron_group
+        self.call_after_refresh(shown_group.scroll_visible)
 
     @staticmethod
     def _schedule_options() -> list[tuple[str, str]]:
@@ -333,8 +413,6 @@ class ReminderForm(ModalScreen):
 
     def _save(self) -> None:
         """Validate the form and emit the submitted event on success."""
-        error_widget = self.query_one("#reminder-errors", Static)
-
         title = self.query_one("#reminder-title", Input).value.strip()
         body = self.query_one("#reminder-body", TextArea).text.strip()
         schedule_kind = str(self.query_one("#reminder-kind", Select).value)
@@ -383,10 +461,10 @@ class ReminderForm(ModalScreen):
                     errors.append(f"Unknown timezone: {timezone}")
 
         if errors:
-            error_widget.update("\n".join(errors))
+            self._set_errors(errors)
             return
 
-        error_widget.update("")
+        self._set_errors([])
 
         form_data: dict[str, Any] = {
             "title": title,
