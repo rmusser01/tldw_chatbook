@@ -2,7 +2,7 @@
 
 **Date:** 2026-08-28
 
-**Status:** Revised after second code-grounded review; pending independent re-review
+**Status:** Reviewer-approved; awaiting user written-spec approval
 
 **Task:** TASK-574
 
