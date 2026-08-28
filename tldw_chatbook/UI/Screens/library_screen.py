@@ -6587,12 +6587,17 @@ class LibraryScreen(BaseAppScreen):
         elif (
             layout.items_open
             and self._library_pending_list_entry_focus
+            and (
+                self._library_pending_list_entry_media_return is not None
+                or focused is None
+                or not focused.has_class("library-media-row")
+            )
         ):
             # A fresh entry or retained Media return may try to focus while
             # the Items host is still disabled pending this post-compose
-            # geometry pass. Reapply the semantic row only after Items is
-            # open; retained returns also restore their exact scroll here so
-            # Textual's ensuing layout correction cannot replace it.
+            # geometry pass. Reapply only when the entry focus has not already
+            # landed on a Media row; retained returns still restore their exact
+            # row and scroll here after Textual's layout correction.
             self._focus_library_list_entry_if_current(
                 self._library_list_entry_focus_generation
             )

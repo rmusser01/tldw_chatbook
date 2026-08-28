@@ -83,11 +83,15 @@ def test_layout_intent_dataclasses_use_pascal_case_names() -> None:
 
 
 def test_layout_width_uses_only_positive_screen_allocation() -> None:
-    receiver = SimpleNamespace(size=Size(145, 50))
+    receiver = SimpleNamespace(size=Size(145, 50), is_mounted=True)
 
     assert WatchlistsCollectionsScreen._available_layout_width(receiver) == 145
 
     receiver.size = Size(0, 50)
+    assert WatchlistsCollectionsScreen._available_layout_width(receiver) is None
+
+    receiver.is_mounted = False
+    receiver.size = Size(145, 50)
     assert WatchlistsCollectionsScreen._available_layout_width(receiver) is None
 
 
