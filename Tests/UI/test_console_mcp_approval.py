@@ -25,7 +25,7 @@ from textual import on
 # Harness apps load the consolidated widget CSS the real app loads
 # (TASK-15450); without it the widgets under test mount unstyled.
 from Tests.UI.consolidated_css import ConsolidatedCSSApp
-from textual.app import App, ComposeResult
+from textual.app import ComposeResult
 from textual.widgets import Button, Select, Static
 
 import tldw_chatbook
