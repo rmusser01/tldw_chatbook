@@ -8,7 +8,11 @@ from typing import TYPE_CHECKING, Any
 
 from loguru import logger
 
-from .briefing_service import accept_briefing, execute_accepted_briefing
+from .briefing_service import (
+    INTERRUPTED_ERROR,
+    accept_briefing,
+    execute_accepted_briefing,
+)
 
 if TYPE_CHECKING:
     from ..DB.Subscriptions_DB import SubscriptionsDB
@@ -38,6 +42,7 @@ class WatchlistsOperationCoordinator:
         self._check_slots = asyncio.Semaphore(4)
         self._tasks: dict[str, asyncio.Task[None]] = {}
         self._kinds: dict[str, str] = {}
+        self._briefing_terminal_errors: dict[str, str] = {}
         self._reconcile_tasks: dict[str, asyncio.Task[None]] = {}
         self._background_tasks: set[asyncio.Task[Any]] = set()
         self._accepting = True
@@ -81,8 +86,19 @@ class WatchlistsOperationCoordinator:
         self._consume_exception(task)
         if self._tasks.get(receipt_id) is not task:
             return
+        self._start_reconciliation(receipt_id, task)
+
+    def _start_reconciliation(
+        self,
+        receipt_id: str,
+        owner: asyncio.Task[None],
+    ) -> None:
+        """Resume terminal persistence without repeating the owned effect."""
+        current = self._reconcile_tasks.get(receipt_id)
+        if current is not None and not current.done():
+            return
         reconcile = asyncio.create_task(
-            self._reconcile_terminal(receipt_id, task),
+            self._reconcile_terminal(receipt_id, owner),
             name=f"watchlists:reconcile:{receipt_id}",
         )
         self._reconcile_tasks[receipt_id] = reconcile
@@ -148,12 +164,23 @@ class WatchlistsOperationCoordinator:
         briefing_id = int(receipt["id"])
         canonical_id = f"local:briefing:{briefing_id}"
         claim_acquired = bool(receipt.pop("_claim_acquired"))
-        if claim_acquired or not self._has_live_executor(canonical_id):
+        owner = self._tasks.get(canonical_id)
+        if claim_acquired:
+            self._briefing_terminal_errors[canonical_id] = _BRIEFING_FAILURE
             self._start(
                 canonical_id,
                 "briefing",
                 self._run_briefing(briefing_id),
             )
+        elif owner is None:
+            self._briefing_terminal_errors[canonical_id] = INTERRUPTED_ERROR
+            self._start(
+                canonical_id,
+                "briefing",
+                self._recover_orphaned_briefing(canonical_id),
+            )
+        elif owner.done():
+            self._start_reconciliation(canonical_id, owner)
         return receipt
 
     def submit_checks(self, source_ids: Sequence[int]) -> list[dict[str, Any]]:
@@ -213,12 +240,24 @@ class WatchlistsOperationCoordinator:
         except BaseException:  # noqa: BLE001 - durable boundary owns terminal state
             await asyncio.to_thread(self._fail_briefing_if_active, briefing_id)
 
-    def _fail_briefing_if_active(self, briefing_id: int) -> None:
+    async def _recover_orphaned_briefing(self, receipt_id: str) -> None:
+        """Terminalize an unowned generating row without replaying its provider."""
+        await self._ensure_terminal(
+            receipt_id,
+            "briefing",
+            cancel_check=False,
+        )
+
+    def _fail_briefing_if_active(
+        self,
+        briefing_id: int,
+        error: str = _BRIEFING_FAILURE,
+    ) -> None:
         try:
             self._briefing_db.transition_briefing(
                 briefing_id,
                 status="failed",
-                error=_BRIEFING_FAILURE,
+                error=error,
             )
         except Exception:  # noqa: BLE001 - shutdown/recovery remains best effort
             logger.error("Could not terminalize a failed Watchlists briefing.")
@@ -260,6 +299,10 @@ class WatchlistsOperationCoordinator:
                 await asyncio.to_thread(
                     self._fail_briefing_if_active,
                     numeric_id,
+                    self._briefing_terminal_errors.get(
+                        receipt_id,
+                        _BRIEFING_FAILURE,
+                    ),
                 )
         except Exception:  # noqa: BLE001 - verified and retried by the caller
             logger.error("Could not persist a Watchlists terminal receipt.")
@@ -301,6 +344,7 @@ class WatchlistsOperationCoordinator:
         if durable and owner.done() and self._tasks.get(receipt_id) is owner:
             self._tasks.pop(receipt_id, None)
             self._kinds.pop(receipt_id, None)
+            self._briefing_terminal_errors.pop(receipt_id, None)
 
     async def wait_idle(self, *, timeout: float) -> None:
         """Wait boundedly until every currently owned operation settles."""

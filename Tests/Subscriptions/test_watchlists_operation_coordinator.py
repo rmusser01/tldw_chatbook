@@ -320,16 +320,17 @@ async def test_check_ownership_survives_failed_terminal_write_and_duplicate_retr
 
 
 @pytest.mark.asyncio
-async def test_briefing_ownership_survives_failed_terminal_write_and_duplicate_retries(
-    tmp_path, monkeypatch
+async def test_briefing_duplicate_retries_terminal_write_without_provider_replay(
+    tmp_path,
+    monkeypatch,
 ):
     db = SubscriptionsDB(tmp_path / "subscriptions.db", "test")
     watchlist_id = WatchlistBundleService(db).create("Threat intel")["id"]
-    execute_calls = 0
+    provider_side_effects = 0
 
     async def broken_execute(*_args, **_kwargs):
-        nonlocal execute_calls
-        execute_calls += 1
+        nonlocal provider_side_effects
+        provider_side_effects += 1
         raise RuntimeError("secret model failure")
 
     monkeypatch.setattr(
@@ -366,38 +367,62 @@ async def test_briefing_ownership_survives_failed_terminal_write_and_duplicate_r
     await coordinator.wait_idle(timeout=2)
 
     assert duplicate["id"] == first["id"]
-    assert execute_calls == 2
+    assert provider_side_effects == 1
     assert db.get_briefing(first["id"])["status"] == "failed"
     assert operation_id not in coordinator.active_receipt_ids
 
 
 @pytest.mark.asyncio
-async def test_duplicate_active_receipts_without_live_tasks_are_adopted(tmp_path):
+async def test_duplicate_queued_check_without_live_task_is_adopted(tmp_path):
     db = SubscriptionsDB(tmp_path / "subscriptions.db", "test")
     source_id = _source(db, 1)
-    watchlist_id = WatchlistBundleService(db).create_with_sources(
-        "Threat intel",
-        description=None,
-        tags=None,
-        source_ids=[source_id],
-        if_exists="conflict",
-    )["watchlist"]["id"]
     service = LocalWatchlistsService(
         db_factory=lambda: db,
         run_executor=lambda _source: asyncio.sleep(0, result={"items": []}),
     )
     check = (await service.accept_source_checks([source_id]))[0]
-    briefing = await accept_briefing(db, watchlist_id, preset_id=None)
     coordinator = WatchlistsOperationCoordinator(
         local_service=service,
         briefing_db=db,
     )
 
     adopted_check = (await coordinator.accept_checks([source_id]))[0]
-    adopted_briefing = await coordinator.accept_briefing(watchlist_id)
     await coordinator.wait_idle(timeout=2)
 
     assert adopted_check["run_id"] == check["run_id"]
-    assert adopted_briefing["id"] == briefing["id"]
     assert (await service.get_run(check["run_id"]))["status"] == "completed"
-    assert db.get_briefing(briefing["id"])["status"] == "empty"
+
+
+@pytest.mark.asyncio
+async def test_duplicate_process_orphan_briefing_terminalizes_without_generation(
+    tmp_path,
+    monkeypatch,
+):
+    db = SubscriptionsDB(tmp_path / "subscriptions.db", "test")
+    watchlist_id = WatchlistBundleService(db).create("Threat intel")["id"]
+    orphan = await accept_briefing(db, watchlist_id, preset_id=None)
+    provider_side_effects = 0
+
+    async def provider_path(*_args, **_kwargs):
+        nonlocal provider_side_effects
+        provider_side_effects += 1
+        raise RuntimeError("orphan must not re-enter provider path")
+
+    monkeypatch.setattr(
+        coordinator_module,
+        "execute_accepted_briefing",
+        provider_path,
+    )
+    coordinator = WatchlistsOperationCoordinator(
+        local_service=LocalWatchlistsService(db_factory=lambda: db),
+        briefing_db=db,
+    )
+
+    duplicate = await coordinator.accept_briefing(watchlist_id)
+    await coordinator.wait_idle(timeout=2)
+
+    assert duplicate["id"] == orphan["id"]
+    assert provider_side_effects == 0
+    assert db.get_briefing(orphan["id"])["status"] == "failed"
+    assert db.get_briefing(orphan["id"])["error"] == "interrupted"
+    assert coordinator.active_receipt_ids == ()
