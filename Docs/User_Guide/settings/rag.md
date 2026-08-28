@@ -107,9 +107,12 @@ profile's index, in the background — you can keep using the app. It starts wit
 "Backfill started — this may take a while for large libraries." (pressing it
 again meanwhile gives "Backfill is already running.") and ends as one of:
 "Backfill complete: `N` indexed, `M` already up-to-date." · "Backfill finished
-with problems: `N` indexed, `M` failed. Last error: `…`" · "Backfill failed:
-`…`" · "Semantic indexing is unavailable (missing embeddings extras, or
-disabled in config)." · "No local databases are available to backfill."
+with problems: `N` indexed, `M` failed. `K` error(s) recorded — details are in
+Logs (F8)." · "Backfill failed before finishing (`ErrorType`). Run Backfill
+again — completed items are kept. Details are in Logs (F8)." · "Semantic
+indexing is unavailable (missing embeddings extras, or disabled in config)." ·
+"No local databases are available to backfill." Failure toasts stay plain
+language; per-item error detail lands in the log, never in the toast.
 
 ### The first-run starter panel
 
@@ -473,3 +476,11 @@ are the shim's `_guard_tokens_overlap` and the engine strategies' clamp
 (`tldw_chatbook/Chunking/engine/strategies/paragraphs.py`), pinned by
 `Tests/Chunking/`. No live TUI walkthrough; no behavior of this pane's own
 controls changed.*
+
+*Verified against feat/settings-ux-critique-burndown — 2026-08-28
+(TASK-23108 review round: the Backfill failure toasts documented above changed
+shape — the crash toast is plain language with the exception type name and a
+next step, and the partial-failure toast reports counts and points at Logs (F8)
+instead of embedding the last raw error string. Pinned by
+`Tests/UI/test_settings_rag_profile_region.py`'s backfill toast tests; no other
+behavior of this pane changed.)*

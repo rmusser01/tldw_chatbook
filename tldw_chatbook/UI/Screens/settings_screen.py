@@ -10939,13 +10939,16 @@ class SettingsScreen(BaseAppScreen):
                 staged_settings=staged_settings,
             )
         except Exception as exc:
-            # No traceback: the log file sink runs with diagnose=True, which would
-            # dump frame locals (api_key, headers) into the log file. The message
-            # text is redacted and logged so the detail stays reachable now that
-            # the status line is plain language (TASK-23108).
+            # Type name ONLY -- no traceback (the log file sink runs with
+            # diagnose=True, which would dump frame locals: api_key, headers)
+            # and no message text either: an httpx error's str() can embed
+            # "?key=..." URLs or Authorization headers, and redact_secret_text
+            # only catches "X = value" assignment shapes, so interpolating the
+            # message would write raw credentials into the on-disk log
+            # (TASK-23108 review round; sink-level redaction is the tracked
+            # follow-up).
             logger.warning(
-                "Provider model discovery failed: "
-                f"{type(exc).__name__}: {redact_secret_text(str(exc))}"
+                f"Provider model discovery failed: {type(exc).__name__}"
             )
             self._model_discovery_status = failure_status_text(
                 "Model discovery failed",
@@ -11086,7 +11089,13 @@ class SettingsScreen(BaseAppScreen):
                 model_ids=selected_model_ids,
             )
         except Exception as exc:
-            logger.exception("Provider model discovery persistence failed")
+            # Type name only -- logger.exception's traceback tail would print
+            # the raw exception message (and diagnose=True would dump frame
+            # locals); see the discovery-run branch above (TASK-23108 review).
+            logger.warning(
+                "Provider model discovery persistence failed: "
+                f"{type(exc).__name__}"
+            )
             self._model_discovery_status = failure_status_text(
                 "Could not save the discovered models",
                 exc,
@@ -14398,7 +14407,10 @@ class SettingsScreen(BaseAppScreen):
                 )
             )
         except Exception as e:
-            logger.error(f"RAG index backfill crashed: {type(e).__name__}: {e}")
+            # Type name only -- interpolating the message could write raw
+            # embedded credentials (remote-embedding HTTP errors) into the
+            # unredacted on-disk log (TASK-23108 review round, finding 1).
+            logger.error(f"RAG index backfill crashed: {type(e).__name__}")
             self.app.call_from_thread(
                 self.app.notify,
                 failure_status_text(
@@ -14414,8 +14426,16 @@ class SettingsScreen(BaseAppScreen):
         status = summary.get("status")
         errors = summary.get("errors") or []
         if status in ("unavailable", "error") or errors:
-            last_error = str(errors[-1]) if errors else None
-            detail = f" Last error: {last_error}" if last_error else ""
+            # TASK-23108 review round: no raw error text in the toast -- the
+            # engine already logs each failure with its traceback
+            # (ingestion_indexing's logger.opt(exception=True).error calls),
+            # so the toast stays plain language with a next step.
+            error_count = len(errors)
+            detail = (
+                f" {error_count} error(s) recorded — details are in Logs (F8)."
+                if error_count
+                else " Details are in Logs (F8)."
+            )
             self.app.call_from_thread(
                 self.app.notify,
                 f"Backfill finished with problems: {summary.get('indexed', 0)} "
