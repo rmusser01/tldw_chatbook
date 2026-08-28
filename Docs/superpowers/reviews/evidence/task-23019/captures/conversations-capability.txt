@@ -1,0 +1,52 @@
+result_name: conversations_capability
+status: PASS
+                     ╭────────────╮                                                                                                                             
+ ⌃1 Home  ⌃2 Console │ ⌃3 Library │ F10 Research  ⌃4 Artifacts  ⌃5 Roleplay  ⌃6 Watchlists  ⌃7 Schedules  ⌃8 Workflows  ⌃9 MCP  ⌃0 ACP  F7 Lab  F8 Log  More ▾  
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+ Library | Local                                                                                                                                                
+┌──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┐
+│ ┌───────────────────────────┐     ┌──────────────────────────────────────┐      Conversation reader                                                          │
+│ │ Navigation                │     │ Conversations (2)                    │         Read    Info                                                              │
+│ │     Import…               │     │     Export…                          │                                                                                   │
+│ │ ▊▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▎ │     │      Select                          │      Loaded chat-a · 1 of 1 messages · complete. · Find: 1 exact match.           │
+│ │ ▊ Search Library…       ▎ │     │ ▊▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▎ │                                                                                   │
+│ │ ▊▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▎ │     │ ▊ Filter conversations… (Enter)    ▎ │      ▊▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▎  │
+│ │                           │     │ ▊▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▎ │      ▊ needle                                                                  ▎  │
+│ │ ───────────────────────── │     │                                      │      ▊▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▎  │
+│ │  Browse              ▾    │     │  ▸ Alpha planning                    │                                                                                   │
+│ │    Media (4)              │     │      1 messages - 5d                 │      │ user · 2026-08-24T12:00:00Z                                                │
+│ │  ▸ Conversations (2)      │     │                                      │      │ retry reveals needle                                                       │
+│ │    Notes (2)              │     │    Beta review                       │                                                                                   │
+│ │    Prompts (2) — reuse    │     │      1 messages - 4d                 │                                                                                   │
+│ │    Skills (2)             │     │                                      │                                                                                   │
+│ │    Collections            │     │                                      │                                                                                   │
+│ │    Search / RAG           │     │                                      │                                                                                   │
+│ │ ───────────────────────── │     │                                      │                                                                                   │
+│ │  Create              ▾    │     │                                      │                                                                                   │
+│ │    New note               │     │                                      │                                                                                   │
+│ │    New prompt             │     │                                      │                                                                                   │
+│ │    New skill              │     │                                      │                                                                                   │
+│ │ ───────────────────────── │<--- │                                      │<---                                                                               │
+│ │  Study               ▾    │     │                                      │                                                                                   │
+│ │    Study decks            │     │                                      │                                                                                   │
+│ │                           │     │                                      │                                                                                   │
+│ │    Flashcards             │     │                                      │                                                                                   │
+│ │                           │     │                                      │                                                                                   │
+│ │    Quizzes                │     │                                      │                                                                                   │
+│ │                           │     │                                      │                                                                                   │
+│ │ ───────────────────────── │     │                                      │                                                                                   │
+│ │  Import / Export     ▾    │     │                                      │                                                                                   │
+│ │    Import…                │     │                                      │                                                                                   │
+│ │    Export                 │     │                                      │                                                                                   │
+│ │ ───────────────────────── │     │                                      │                                                                                   │
+│ │  Details             ▸    │     │                                      │                                                                                   │
+│ │                           │     │                                      │                                                                                   │
+│ │                           │     │                                      │                                                                                   │
+│ │                           │     │                                      │                                                                                   │
+│ │                           │     │                                      │                                                                                   │
+│ │                           │     │        1-2 of 2 · Page 1 of 1        │                                                                                   │
+│ │                           │     │ Already on the first page. · No mor… │                                                                                   │
+│ │                           │     │        ○ Previous     ○ Next         │         Open in Console                                                           │
+│ └───────────────────────────┘     └──────────────────────────────────────┘                                                                                   │
+└──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┘
+  / focus filter | F6 next pane | esc focus Items | F1 help · Ctrl+P palette · Ctrl+Q quit                                                                      

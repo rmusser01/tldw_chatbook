@@ -1,0 +1,37 @@
+result_name: conversations-120x35
+status: PASS
+                     ╭────────────╮                                                                                     
+ ⌃1 Home  ⌃2 Console │ ⌃3 Library │ F10 Research  ⌃4 Artifacts  ⌃5 Roleplay  ⌃6 Watchlists  ⌃7 Schedules  ⌃8 W  More ▾  
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+ Library | Local                                                                                                        
+┌──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┐
+│      ┌──────────────────────────────────────────────────────┐      Conversation reader                               │
+│      │ Conversations (2)                                    │         Read    Info                                   │
+│      │     Export…                                          │                                                        │
+│      │      Select                                          │      Loaded chat-b · 1 of 1 messages · complete.       │
+│      │ ▊▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▎ │                                                        │
+│      │ ▊ Filter conversations… (Enter)                    ▎ │      ▊▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▎  │
+│      │ ▊▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▎ │      ▊ Find in complete transcript…                 ▎  │
+│      │                                                      │      ▊▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▎  │
+│      │    Alpha planning                                    │                                                        │
+│      │      1 messages - 5d                                 │      │ user · 2026-08-24T12:00:00Z                     │
+│      │                                                      │      │ version 7                                       │
+│      │  ▸ Beta review                                       │                                                        │
+│      │      1 messages - 4d                                 │                                                        │
+│ ---> │                                                      │<---                                                    │
+│      │                                                      │                                                        │
+│      │                                                      │                                                        │
+│      │                                                      │                                                        │
+│      │                                                      │                                                        │
+│      │                                                      │                                                        │
+│      │                                                      │                                                        │
+│      │                                                      │                                                        │
+│      │                                                      │                                                        │
+│      │                                                      │                                                        │
+│      │                                                      │                                                        │
+│      │                1-2 of 2 · Page 1 of 1                │                                                        │
+│      │    Already on the first page. · No more results.     │                                                        │
+│      │                ○ Previous     ○ Next                 │         Open in Console                                │
+│      └──────────────────────────────────────────────────────┘                                                        │
+└──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┘
+  / focus filter | F6 next pane | esc focus Items | F1 help · Ctrl+P palette · Ctrl+Q quit                              

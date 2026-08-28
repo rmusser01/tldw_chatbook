@@ -1,0 +1,139 @@
+{
+  "cleanup_owner_counts": {
+    "host_task_leaks": 0,
+    "host_thread_worker_leaks": 0,
+    "host_worker_leaks": 0,
+    "host_workers_before": 0,
+    "host_workers_owned": 0
+  },
+  "compositor_text": "                     \u256d\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u256e                                                                                                                             \n \u23031 Home  \u23032 Console \u2502 \u23033 Library \u2502 F10 Research  \u23034 Artifacts  \u23035 Roleplay  \u23036 Watchlists  \u23037 Schedules  \u23038 Workflows  \u23039 MCP  \u23030 ACP  F7 Lab  F8 Log  More \u25be  \n\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\n Library | Local                                                                                                                                                \n\u250c\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2510\n\u2502 \u250c\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2510     \u250c\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2510       \u2039 Back to list                                                              \u2502\n\u2502 \u2502 Navigation                \u2502     \u2502 Prompts (2)                          \u2502     Name                                                                          \u2502\n\u2502 \u2502     Import\u2026               \u2502     \u2502 \u258a\u2594\u2594\u2594\u2594\u2594\u2594\u2594\u2594\u2594\u2594\u2594\u2594\u2594\u2594\u2594\u2594\u2594\u2594\u2594\u2594\u2594\u2594\u2594\u2594\u2594\u2594\u2594\u2594\u2594\u2594\u2594\u2594\u2594\u2594\u258e \u2502     \u258a\u2594\u2594\u2594\u2594\u2594\u2594\u2594\u2594\u2594\u2594\u2594\u2594\u2594\u2594\u2594\u2594\u2594\u2594\u2594\u2594\u2594\u2594\u2594\u2594\u2594\u2594\u2594\u2594\u2594\u2594\u2594\u2594\u2594\u2594\u2594\u2594\u2594\u2594\u2594\u2594\u2594\u2594\u2594\u2594\u2594\u2594\u2594\u2594\u2594\u2594\u2594\u2594\u2594\u2594\u2594\u2594\u2594\u2594\u2594\u2594\u2594\u2594\u2594\u2594\u2594\u2594\u2594\u2594\u2594\u2594\u2594\u2594\u2594\u2594\u2594\u258e \u2502\n\u2502 \u2502 \u258a\u2594\u2594\u2594\u2594\u2594\u2594\u2594\u2594\u2594\u2594\u2594\u2594\u2594\u2594\u2594\u2594\u2594\u2594\u2594\u2594\u2594\u2594\u2594\u258e \u2502     \u2502 \u258a Filter prompts\u2026 (Enter)          \u258e \u2502     \u258a Closeout prompt 1                                                         \u258e \u2502\n\u2502 \u2502 \u258a Search Library\u2026       \u258e \u2502     \u2502 \u258a\u2581\u2581\u2581\u2581\u2581\u2581\u2581\u2581\u2581\u2581\u2581\u2581\u2581\u2581\u2581\u2581\u2581\u2581\u2581\u2581\u2581\u2581\u2581\u2581\u2581\u2581\u2581\u2581\u2581\u2581\u2581\u2581\u2581\u2581\u258e \u2502     \u258a\u2581\u2581\u2581\u2581\u2581\u2581\u2581\u2581\u2581\u2581\u2581\u2581\u2581\u2581\u2581\u2581\u2581\u2581\u2581\u2581\u2581\u2581\u2581\u2581\u2581\u2581\u2581\u2581\u2581\u2581\u2581\u2581\u2581\u2581\u2581\u2581\u2581\u2581\u2581\u2581\u2581\u2581\u2581\u2581\u2581\u2581\u2581\u2581\u2581\u2581\u2581\u2581\u2581\u2581\u2581\u2581\u2581\u2581\u2581\u2581\u2581\u2581\u2581\u2581\u2581\u2581\u2581\u2581\u2581\u2581\u2581\u2581\u2581\u2581\u2581\u258e \u2502\n\u2502 \u2502 \u258a\u2581\u2581\u2581\u2581\u2581\u2581\u2581\u2581\u2581\u2581\u2581\u2581\u2581\u2581\u2581\u2581\u2581\u2581\u2581\u2581\u2581\u2581\u2581\u258e \u2502     \u2502                                      \u2502                                                                                   \u2502\n\u2502 \u2502                           \u2502     \u2502   collection: All prompts            \u2502     Description                                                                   \u2502\n\u2502 \u2502 \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500 \u2502     \u2502    sort: Newest        Select        \u2502     \u258a\u2594\u2594\u2594\u2594\u2594\u2594\u2594\u2594\u2594\u2594\u2594\u2594\u2594\u2594\u2594\u2594\u2594\u2594\u2594\u2594\u2594\u2594\u2594\u2594\u2594\u2594\u2594\u2594\u2594\u2594\u2594\u2594\u2594\u2594\u2594\u2594\u2594\u2594\u2594\u2594\u2594\u2594\u2594\u2594\u2594\u2594\u2594\u2594\u2594\u2594\u2594\u2594\u2594\u2594\u2594\u2594\u2594\u2594\u2594\u2594\u2594\u2594\u2594\u2594\u2594\u2594\u2594\u2594\u2594\u2594\u2594\u2594\u2594\u2594\u2594\u258e \u2502\n\u2502 \u2502  Browse              \u25be    \u2502     \u2502      Import\u2026          Export\u2026        \u2502     \u258a Closeout fixture                                                          \u258e \u2502\n\u2502 \u2502    Media (4) \u2014 your fil\u2026  \u2502     \u2502  Closeout prompt 2                   \u2502     \u258a\u2581\u2581\u2581\u2581\u2581\u2581\u2581\u2581\u2581\u2581\u2581\u2581\u2581\u2581\u2581\u2581\u2581\u2581\u2581\u2581\u2581\u2581\u2581\u2581\u2581\u2581\u2581\u2581\u2581\u2581\u2581\u2581\u2581\u2581\u2581\u2581\u2581\u2581\u2581\u2581\u2581\u2581\u2581\u2581\u2581\u2581\u2581\u2581\u2581\u2581\u2581\u2581\u2581\u2581\u2581\u2581\u2581\u2581\u2581\u2581\u2581\u2581\u2581\u2581\u2581\u2581\u2581\u2581\u2581\u2581\u2581\u2581\u2581\u2581\u2581\u258e \u2502\n\u2502 \u2502    Conversations (2)      \u2502     \u2502  Prompt \u00b7 Local \u00b7 System + User      \u2502                                                                                   \u2502\n\u2502 \u2502    Notes (2)              \u2502     \u2502                                      \u2502          Basic           Advanced           Info                                  \u2502\n\u2502 \u2502  \u25b8 Prompts (2) \u2014 reuse    \u2502     \u2502  Closeout prompt 1                   \u2502                                                                                   \u2502\n\u2502 \u2502    Skills (2)             \u2502     \u2502  Prompt \u00b7 Local \u00b7 System + User      \u2502                                                                                   \u2502\n\u2502 \u2502    Collections            \u2502     \u2502                                      \u2502                                                                                   \u2502\n\u2502 \u2502    Search / RAG           \u2502     \u2502                                      \u2502                                                                                   \u2502\n\u2502 \u2502 \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500 \u2502     \u2502                                      \u2502                                                                                   \u2502\n\u2502 \u2502  Create              \u25be    \u2502     \u2502                                      \u2502                                                                                   \u2502\n\u2502 \u2502    New note               \u2502     \u2502                                      \u2502                                                                                   \u2502\n\u2502 \u2502    New prompt             \u2502     \u2502                                      \u2502                                                                                   \u2502\n\u2502 \u2502    New skill              \u2502     \u2502                                      \u2502                                                                                   \u2502\n\u2502 \u2502 \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500 \u2502<--- \u2502                                      \u2502<---                                                                               \u2502\n\u2502 \u2502  Study               \u25be    \u2502     \u2502                                      \u2502                                                                                   \u2502\n\u2502 \u2502    Study decks            \u2502     \u2502                                      \u2502                                                                                   \u2502\n\u2502 \u2502                           \u2502     \u2502                                      \u2502     Instructions                                                                  \u2502\n\u2502 \u2502    Flashcards             \u2502     \u2502 1-2 of 2 \u00b7 Page 1 of 1               \u2502     Instructions the model always follows.                                        \u2502\n\u2502 \u2502                           \u2502     \u2502 Already on the first page. \u00b7 No      \u2502                                                                                   \u2502\n\u2502 \u2502    Quizzes                \u2502     \u2502 more results.                        \u2502     \u258a\u2594\u2594\u2594\u2594\u2594\u2594\u2594\u2594\u2594\u2594\u2594\u2594\u2594\u2594\u2594\u2594\u2594\u2594\u2594\u2594\u2594\u2594\u2594\u2594\u2594\u2594\u2594\u2594\u2594\u2594\u2594\u2594\u2594\u2594\u2594\u2594\u2594\u2594\u2594\u2594\u2594\u2594\u2594\u2594\u2594\u2594\u2594\u2594\u2594\u2594\u2594\u2594\u2594\u2594\u2594\u2594\u2594\u2594\u2594\u2594\u2594\u2594\u2594\u2594\u2594\u2594\u2594\u2594\u2594\u2594\u2594\u2594\u2594\u2594\u258e  \u2502\n\u2502 \u2502                           \u2502     \u2502     \u25cb Previous         \u25cb Next        \u2502     \u258a Be exact.                                                                \u258e  \u2502\n\u2502 \u2502 \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500 \u2502     \u2502                                      \u2502     \u258a                                                                          \u258e  \u2502\n\u2502 \u2502  Import / Export     \u25be    \u2502     \u2502                                      \u2502     \u258a                                                                          \u258e  \u2502\n\u2502 \u2502    Import\u2026                \u2502     \u2502                                      \u2502     \u258a                                                                          \u258e  \u2502\n\u2502 \u2502    Export                 \u2502     \u2502                                      \u2502     \u258a\u2581\u2581\u2581\u2581\u2581\u2581\u2581\u2581\u2581\u2581\u2581\u2581\u2581\u2581\u2581\u2581\u2581\u2581\u2581\u2581\u2581\u2581\u2581\u2581\u2581\u2581\u2581\u2581\u2581\u2581\u2581\u2581\u2581\u2581\u2581\u2581\u2581\u2581\u2581\u2581\u2581\u2581\u2581\u2581\u2581\u2581\u2581\u2581\u2581\u2581\u2581\u2581\u2581\u2581\u2581\u2581\u2581\u2581\u2581\u2581\u2581\u2581\u2581\u2581\u2581\u2581\u2581\u2581\u2581\u2581\u2581\u2581\u2581\u2581\u258e  \u2502\n\u2502 \u2502 \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500 \u2502     \u2502                                      \u2502                                                                                   \u2502\n\u2502 \u2502  Details             \u25b8    \u2502     \u2502                                      \u2502     Message template                                                              \u2502\n\u2502 \u2502                           \u2502     \u2502                                      \u2502     The message inserted into the composer.                                       \u2502\n\u2502 \u2502                           \u2502     \u2502                                      \u2502     Modified now \u00b7 v1                                                             \u2502\n\u2502 \u2502                           \u2502     \u2502                                      \u2502                                                                                   \u2502\n\u2502 \u2502                           \u2502     \u2502                                      \u2502                                                                                   \u2502\n\u2502 \u2502                           \u2502     \u2502                                      \u2502                                                                                   \u2502\n\u2502 \u2502                           \u2502     \u2502                                      \u2502                                                                                   \u2502\n\u2502 \u2502                           \u2502     \u2502                                      \u2502                                    Use in Console                                 \u2502\n\u2502 \u2514\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2518     \u2514\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2518                                     More actions                                  \u2502\n\u2514\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2518\n  / focus search | F6 next pane | esc back to list | F1 help \u00b7 Ctrl+P palette \u00b7 Ctrl+Q quit                                                                     ",
+  "contained": true,
+  "destination": "prompts",
+  "final_destination": "prompts",
+  "focus_owner": "library-row-browse-prompts",
+  "host_worker_groups": [],
+  "identities": {
+    "items": "library-canvas",
+    "shell": "library-prompts-reader-shell",
+    "work": "library-prompt-work-pane"
+  },
+  "kind": "live",
+  "observations": {
+    "config_write_worker_poll_calls": {
+      "config": 0,
+      "poll": 0,
+      "worker": 0,
+      "write": 0
+    },
+    "resize_sequence": [
+      [
+        120,
+        35
+      ],
+      [
+        100,
+        30
+      ],
+      [
+        80,
+        24
+      ],
+      [
+        160,
+        50
+      ]
+    ],
+    "semantic_state_retained": true,
+    "service_calls_during_resize": {
+      "conversation_detail.get_library_conversation_messages": 0,
+      "conversations.list_conversations": 0,
+      "media.get_media_item": 0,
+      "media.search_media": 0,
+      "notes.get_note_detail": 0,
+      "notes.list_notes": 0,
+      "prompts.get_prompt": 0,
+      "prompts.list_prompts": 0,
+      "skills.get_context": 0,
+      "skills.get_skill": 0
+    },
+    "widget_identity_retained": true
+  },
+  "preferences": {
+    "effective_items_open": true,
+    "effective_library_open": true,
+    "requested_items_open": true,
+    "requested_library_open": true
+  },
+  "record": {
+    "loaded": 1,
+    "mode": "basic",
+    "pending": null,
+    "selected": 1
+  },
+  "regions": {
+    "items": {
+      "height": 43,
+      "width": 40,
+      "x": 36,
+      "y": 5
+    },
+    "library": {
+      "height": 43,
+      "width": 29,
+      "x": 2,
+      "y": 5
+    },
+    "work": {
+      "height": 43,
+      "width": 77,
+      "x": 81,
+      "y": 5
+    }
+  },
+  "result_name": "prompts-resize-purity",
+  "status": "PASS",
+  "terminal_size": [
+    160,
+    50
+  ],
+  "visible_controls": [
+    "library-ingest-top-button",
+    "console-rail-section-toggle-library-browse",
+    "library-row-browse-media",
+    "library-row-browse-conversations",
+    "library-row-browse-notes",
+    "library-row-browse-prompts",
+    "library-row-browse-skills",
+    "library-row-browse-collections",
+    "library-row-browse-search",
+    "console-rail-section-toggle-library-create",
+    "library-row-create-note",
+    "library-row-create-prompt",
+    "library-row-create-skill",
+    "console-rail-section-toggle-library-study",
+    "library-row-create-study",
+    "library-row-create-flashcards",
+    "library-row-create-quizzes",
+    "console-rail-section-toggle-library-ingest",
+    "library-row-ingest-import-media",
+    "library-row-ingest-export",
+    "console-rail-section-toggle-library-details",
+    "library-prompts-library-grip",
+    "library-prompts-collection",
+    "library-prompts-sort",
+    "library-prompts-select",
+    "library-prompts-import",
+    "library-prompts-export",
+    "library-prompt-row-2",
+    "library-prompt-row-1",
+    "library-prompts-page-previous",
+    "library-prompts-page-next",
+    "library-prompts-items-grip",
+    "library-prompt-back",
+    "library-prompt-mode-basic",
+    "library-prompt-mode-advanced",
+    "library-prompt-mode-info",
+    "library-prompt-insert-console",
+    "library-prompt-more-actions"
+  ]
+}
