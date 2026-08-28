@@ -33,7 +33,7 @@ only app members read are `chat_conversation_scope_service` and
 from __future__ import annotations
 
 import inspect
-from dataclasses import replace
+from dataclasses import dataclass, replace
 from typing import Any, Mapping, Sequence
 
 from loguru import logger
@@ -44,12 +44,20 @@ from tldw_chatbook.Chat.console_chat_models import (
     ConsoleMessageRole,
     MessageAttachment,
 )
-from tldw_chatbook.Chat.console_session_settings import ConsoleSessionSettings
+from tldw_chatbook.Chat.console_generation_settings_metadata import (
+    ConsoleGenerationSettingsReadStatus,
+    ConsoleGenerationSettingsSnapshot,
+    parse_console_generation_settings,
+)
 from tldw_chatbook.Chat.console_prefill import (
     pinned_prefill_from_conversation_metadata,
 )
 from tldw_chatbook.Chat.console_roleplay_metadata import (
     parse_console_roleplay_context,
+)
+from tldw_chatbook.Chat.console_session_settings import (
+    ConsoleSessionSettings,
+    default_console_session_settings,
 )
 from tldw_chatbook.Chat.message_metadata import MessageMetadata
 from tldw_chatbook.Chat.provider_usage import ProviderUsage
@@ -58,11 +66,23 @@ from tldw_chatbook.Video_Generation.video_metadata import VideoGenerationMetadat
 __all__ = [
     "ConversationLoadFailed",
     "ConversationServiceUnavailable",
+    "ConsoleGenerationSettingsHydration",
     "apply_resume_settings_overrides",
     "console_messages_from_conversation_tree",
+    "hydrate_console_generation_settings",
     "hydrate_console_session",
     "load_console_conversation_tree",
 ]
+
+
+@dataclass(frozen=True, slots=True)
+class ConsoleGenerationSettingsHydration:
+    """Live settings plus their accepted durable metadata baseline."""
+
+    settings: ConsoleSessionSettings
+    durable_snapshot: ConsoleGenerationSettingsSnapshot | None
+    metadata_status: ConsoleGenerationSettingsReadStatus
+
 
 class ConversationServiceUnavailable(RuntimeError):
     """The app has no conversation service that can load a tree."""
@@ -340,6 +360,54 @@ def apply_resume_settings_overrides(
         conversation.get("metadata")
     )
     return replace(settings, system_prompt=system_prompt, pinned_prefill=pinned_prefill)
+
+
+def hydrate_console_generation_settings(
+    app_config: Mapping[str, object],
+    conversation: Mapping[str, object],
+) -> ConsoleGenerationSettingsHydration:
+    """Restore safe generation metadata atop current provider configuration.
+
+    Persisted metadata selects the provider/model and safe generation values,
+    while the live configuration remains authoritative for endpoints. The
+    existing conversation-row owners are applied last for system prompt and
+    pinned prefill.
+    """
+    parsed = parse_console_generation_settings(conversation.get("metadata"))
+    snapshot = parsed.snapshot
+    if snapshot is None:
+        settings = default_console_session_settings(app_config)
+    else:
+        defaults = default_console_session_settings(
+            app_config,
+            snapshot.provider,
+            snapshot.model,
+        )
+        settings = replace(
+            defaults,
+            provider=snapshot.provider,
+            model=snapshot.model,
+            temperature=snapshot.temperature,
+            top_p=snapshot.top_p,
+            min_p=snapshot.min_p,
+            top_k=snapshot.top_k,
+            max_tokens=snapshot.max_tokens,
+            seed=snapshot.seed,
+            presence_penalty=snapshot.presence_penalty,
+            frequency_penalty=snapshot.frequency_penalty,
+            reasoning_effort=snapshot.reasoning_effort,
+            reasoning_summary=snapshot.reasoning_summary,
+            verbosity=snapshot.verbosity,
+            thinking_effort=snapshot.thinking_effort,
+            thinking_budget_tokens=snapshot.thinking_budget_tokens,
+            streaming=snapshot.streaming,
+        )
+    settings = apply_resume_settings_overrides(settings, conversation)
+    return ConsoleGenerationSettingsHydration(
+        settings=settings,
+        durable_snapshot=snapshot,
+        metadata_status=parsed.status,
+    )
 
 
 async def hydrate_console_session(

@@ -28,6 +28,15 @@ from tldw_chatbook.Chat.console_library_policy import (
     ConsoleLibraryPolicySnapshot,
     ConsoleLibraryPolicyWriteStatus,
 )
+from tldw_chatbook.Chat.console_generation_settings_metadata import (
+    ConsoleGenerationSettingsReadResult,
+    ConsoleGenerationSettingsReadStatus,
+    ConsoleGenerationSettingsSnapshot,
+    ConsoleGenerationSettingsWriteResult,
+    ConsoleGenerationSettingsWriteStatus,
+    merge_console_generation_settings,
+    parse_console_generation_settings,
+)
 from tldw_chatbook.Chat.console_transaction_contribution import (
     ConsoleTransactionContribution,
     _scoped_console_transaction_writer,
@@ -196,6 +205,94 @@ class ChatPersistenceService:
     ) -> ContextPolicyReadResult:
         """Return local sparse context-policy overrides for one conversation."""
         return self.context_repository.load_policy(conversation_id)
+
+    def get_conversation_generation_settings(
+        self, conversation_id: str
+    ) -> ConsoleGenerationSettingsReadResult:
+        """Read one conversation's complete safe generation snapshot."""
+        if type(conversation_id) is not str or not conversation_id:
+            return ConsoleGenerationSettingsReadResult(
+                ConsoleGenerationSettingsReadStatus.ABSENT
+            )
+        record = self.db.get_conversation_by_id(conversation_id)
+        if record is None or record.get("deleted"):
+            return ConsoleGenerationSettingsReadResult(
+                ConsoleGenerationSettingsReadStatus.ABSENT
+            )
+        return parse_console_generation_settings(record.get("metadata"))
+
+    def update_conversation_generation_settings(
+        self,
+        *,
+        conversation_id: str,
+        snapshot: ConsoleGenerationSettingsSnapshot,
+        expected_snapshot: ConsoleGenerationSettingsSnapshot | None,
+    ) -> ConsoleGenerationSettingsWriteResult:
+        """Compare-and-set one complete owned snapshot with one bounded retry.
+
+        A conversation version conflict is retryable only when a fresh read
+        proves this codec's complete owned value still equals the caller's
+        expected base. The retry then merges against that fresh record so
+        unrelated metadata siblings are preserved.
+        """
+        try:
+            merge_console_generation_settings({}, snapshot)
+            if expected_snapshot is not None:
+                merge_console_generation_settings({}, expected_snapshot)
+        except (TypeError, ValueError):
+            return ConsoleGenerationSettingsWriteResult(
+                ConsoleGenerationSettingsWriteStatus.INVALID
+            )
+
+        target = str(conversation_id)
+        for attempt in range(2):
+            record = self.db.get_conversation_by_id(target)
+            if record is None or record.get("deleted"):
+                return ConsoleGenerationSettingsWriteResult(
+                    ConsoleGenerationSettingsWriteStatus.MISSING
+                )
+            current = parse_console_generation_settings(record.get("metadata"))
+            if current.status is ConsoleGenerationSettingsReadStatus.INVALID:
+                return ConsoleGenerationSettingsWriteResult(
+                    ConsoleGenerationSettingsWriteStatus.INVALID
+                )
+            if (
+                current.status
+                is ConsoleGenerationSettingsReadStatus.UNSUPPORTED_VERSION
+            ):
+                return ConsoleGenerationSettingsWriteResult(
+                    ConsoleGenerationSettingsWriteStatus.UNSUPPORTED_VERSION
+                )
+            if current.snapshot != expected_snapshot:
+                return ConsoleGenerationSettingsWriteResult(
+                    ConsoleGenerationSettingsWriteStatus.SUPERSEDED,
+                    current.snapshot,
+                )
+            metadata = merge_console_generation_settings(
+                record.get("metadata"),
+                snapshot,
+            )
+            try:
+                self.db.update_conversation(
+                    target,
+                    {
+                        "metadata": json.dumps(
+                            metadata,
+                            allow_nan=False,
+                            sort_keys=True,
+                        )
+                    },
+                    expected_version=record["version"],
+                )
+            except ConflictError:
+                if attempt == 1:
+                    raise
+                continue
+            return ConsoleGenerationSettingsWriteResult(
+                ConsoleGenerationSettingsWriteStatus.WRITTEN,
+                snapshot,
+            )
+        raise AssertionError("Unreachable generation-settings retry state.")
 
     def update_conversation_context_policy(
         self,

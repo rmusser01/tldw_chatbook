@@ -23,6 +23,7 @@ failure the plan named ("rather than duplicating it").
 from __future__ import annotations
 
 import asyncio
+import json
 
 import pytest
 
@@ -35,8 +36,15 @@ from Tests.UI.test_console_native_chat_flow import (
 from tldw_chatbook.Chat.console_conversation_hydration import (
     apply_resume_settings_overrides,
     console_messages_from_conversation_tree,
+    hydrate_console_generation_settings,
     hydrate_console_session,
     load_console_conversation_tree,
+)
+from tldw_chatbook.Chat.console_generation_settings_metadata import (
+    CONSOLE_GENERATION_SETTINGS_METADATA_KEY,
+    ConsoleGenerationSettingsReadStatus,
+    ConsoleGenerationSettingsSnapshot,
+    merge_console_generation_settings,
 )
 from tldw_chatbook.Chat.console_session_settings import (
     default_console_session_settings,
@@ -288,3 +296,131 @@ async def test_production_hydration_never_activates_placeholder_authority(
     assert observed == [(prior.id, session.id), (prior.id, session.id)]
     assert session.library_policy_hydrated is True
     assert store.active_session_id == session.id
+
+
+def _saved_generation_snapshot() -> ConsoleGenerationSettingsSnapshot:
+    return ConsoleGenerationSettingsSnapshot(
+        provider="anthropic",
+        model="claude-saved",
+        temperature=0.2,
+        top_p=0.6,
+        min_p=0.05,
+        top_k=25,
+        max_tokens=3072,
+        seed=17,
+        presence_penalty=0.3,
+        frequency_penalty=-0.3,
+        reasoning_effort="high",
+        reasoning_summary="detailed",
+        verbosity="low",
+        thinking_effort="medium",
+        thinking_budget_tokens=8192,
+        streaming=False,
+    )
+
+
+def test_generation_hydration_rebases_saved_target_and_keeps_existing_owners() -> None:
+    snapshot = _saved_generation_snapshot()
+    metadata = merge_console_generation_settings(
+        {"pinned_response_prefill": "Certainly,", "sibling": {"keep": True}},
+        snapshot,
+    )
+    conversation = {
+        "system_prompt": "  keep exact formatting\n",
+        "metadata": json.dumps(metadata, sort_keys=True),
+    }
+    app_config = {
+        "chat_defaults": {
+            "provider": "openai",
+            "model": "global-model",
+            "temperature": 1.7,
+        },
+        "api_settings": {
+            "anthropic": {
+                "api_url": "https://current-config.example/v1",
+                "model": "provider-fallback",
+                "model_defaults": {
+                    "claude-saved": {
+                        "temperature": 0.9,
+                        "top_p": 0.95,
+                    }
+                },
+            }
+        },
+    }
+    before_metadata = conversation["metadata"]
+
+    hydration = hydrate_console_generation_settings(app_config, conversation)
+
+    assert hydration.metadata_status is ConsoleGenerationSettingsReadStatus.VALID
+    assert hydration.durable_snapshot == snapshot
+    assert hydration.settings.provider == snapshot.provider
+    assert hydration.settings.model == snapshot.model
+    for field in (
+        "temperature",
+        "top_p",
+        "min_p",
+        "top_k",
+        "max_tokens",
+        "seed",
+        "presence_penalty",
+        "frequency_penalty",
+        "reasoning_effort",
+        "reasoning_summary",
+        "verbosity",
+        "thinking_effort",
+        "thinking_budget_tokens",
+        "streaming",
+    ):
+        assert getattr(hydration.settings, field) == getattr(snapshot, field)
+    assert hydration.settings.base_url == "https://current-config.example/v1"
+    assert hydration.settings.system_prompt == "  keep exact formatting\n"
+    assert hydration.settings.pinned_prefill == "Certainly,"
+    assert conversation["metadata"] == before_metadata
+
+
+@pytest.mark.parametrize(
+    ("owned", "status"),
+    [
+        ({"version": 1}, ConsoleGenerationSettingsReadStatus.INVALID),
+        (
+            {"version": 2, "future_field": "keep"},
+            ConsoleGenerationSettingsReadStatus.UNSUPPORTED_VERSION,
+        ),
+    ],
+)
+def test_invalid_or_future_generation_metadata_falls_back_without_rewriting(
+    owned, status
+) -> None:
+    metadata = {
+        CONSOLE_GENERATION_SETTINGS_METADATA_KEY: owned,
+        "pinned_response_prefill": "Pinned",
+        "sibling": "untouched",
+    }
+    conversation = {
+        "system_prompt": "Current system owner",
+        "metadata": json.dumps(metadata, sort_keys=True),
+    }
+    app_config = {
+        "chat_defaults": {
+            "provider": "openai",
+            "model": "current-model",
+            "temperature": 0.45,
+            "streaming": False,
+        },
+        "api_settings": {"openai": {"api_url": "https://current-openai.example/v1"}},
+    }
+    before = conversation["metadata"]
+
+    hydration = hydrate_console_generation_settings(app_config, conversation)
+
+    assert hydration.metadata_status is status
+    assert hydration.durable_snapshot is None
+    assert hydration.settings.provider == "openai"
+    assert hydration.settings.model == "current-model"
+    assert hydration.settings.temperature == 0.45
+    assert hydration.settings.streaming is False
+    assert hydration.settings.base_url == "https://current-openai.example/v1"
+    assert hydration.settings.system_prompt == "Current system owner"
+    assert hydration.settings.pinned_prefill == "Pinned"
+    assert conversation["metadata"] == before

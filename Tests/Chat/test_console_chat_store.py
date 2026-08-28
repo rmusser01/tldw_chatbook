@@ -2026,6 +2026,67 @@ def test_real_persistence_round_trips_roleplay_and_reply_speech_metadata(tmp_pat
         db.close_connection()
 
 
+def test_generation_settings_metadata_preserves_store_roleplay_and_speech_owners(
+    tmp_path,
+):
+    from tldw_chatbook.Chat.console_generation_settings_metadata import (
+        ConsoleGenerationSettingsWriteStatus,
+        snapshot_from_session_settings,
+    )
+    from tldw_chatbook.Chat.console_roleplay_metadata import (
+        parse_console_roleplay_context,
+    )
+    from tldw_chatbook.Chat.console_speech_preferences import ConsoleSpeechPreferences
+
+    db = CharactersRAGDB(tmp_path / "generation-owner-siblings.db", "generation-test")
+    try:
+        service = ChatPersistenceService(db)
+        conversation_id = service.create_conversation(
+            conversation_title="Shared metadata",
+            metadata={
+                "console_roleplay_context": {
+                    "version": 1,
+                    "user_name_override": "Rowan",
+                }
+            },
+            speech_preferences=ConsoleSpeechPreferences(auto_speak=True),
+        )
+        snapshot = snapshot_from_session_settings(
+            ConsoleSessionSettings(
+                provider="openai",
+                model="gpt-5",
+                temperature=0.4,
+                streaming=False,
+            )
+        )
+
+        result = service.update_conversation_generation_settings(
+            conversation_id=conversation_id,
+            snapshot=snapshot,
+            expected_snapshot=None,
+        )
+        record = db.get_conversation_by_id(conversation_id)
+        restored = ConsoleChatStore(persistence=service).restore_persisted_session(
+            title="Shared metadata",
+            workspace_id=None,
+            persisted_conversation_id=conversation_id,
+            all_nodes=[],
+        )
+
+        assert result.status is ConsoleGenerationSettingsWriteStatus.WRITTEN
+        assert (
+            service.get_conversation_generation_settings(conversation_id).snapshot
+            == snapshot
+        )
+        assert restored.speech_preferences == ConsoleSpeechPreferences(auto_speak=True)
+        assert (
+            parse_console_roleplay_context(record["metadata"]).user_name_override
+            == "Rowan"
+        )
+    finally:
+        db.close_connection()
+
+
 def test_initial_reply_speech_is_inserted_at_version_one_with_sibling_metadata(
     tmp_path,
 ):
