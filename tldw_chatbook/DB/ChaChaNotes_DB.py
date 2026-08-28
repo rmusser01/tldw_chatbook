@@ -3563,7 +3563,11 @@ UPDATE db_schema_version
 
             return is_ok
         except Exception as e:
-            logger.error(f"Failed to check database integrity: {e}")
+            logger.error(
+                f"Failed to check database integrity "
+                f"db_sha256={self._db_diagnostic_ref} "
+                f"exception_type={type(e).__name__}"
+            )
             return False
 
     # --- Query Execution ---
@@ -18104,7 +18108,11 @@ UPDATE db_schema_version
                 f"Successfully vacuumed database: db_sha256={self._db_diagnostic_ref}"
             )
         except Exception as e:
-            logger.error(f"Failed to vacuum database: {e}")
+            logger.error(
+                f"Failed to vacuum database "
+                f"db_sha256={self._db_diagnostic_ref} "
+                f"exception_type={type(e).__name__}"
+            )
             raise CharactersRAGDBError(f"Vacuum failed: {e}") from e
 
     # --- Study Methods (Learning Paths, Flashcards, Mindmaps) ---
