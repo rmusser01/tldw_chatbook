@@ -12,7 +12,8 @@ from typing import Any, Mapping
 
 import httpx
 
-from ..Utils.egress import EgressBlockedError, EgressFetchError
+from ..DB.Subscriptions_DB import AuthenticationError, RateLimitError
+from ..Utils.egress import EgressBlockedError
 from .security import SecurityError
 
 
@@ -76,6 +77,10 @@ class InvalidFeedError(ValueError):
     """A fetched payload is not a supported feed."""
 
 
+class WatchlistPolicyFailure:
+    """Marker for an owned wrapper around a concrete network-policy block."""
+
+
 _COPY: dict[WatchlistFailureCategory, tuple[str, bool, str]] = {
     WatchlistFailureCategory.ACCESS_DENIED: (
         "The source denied access.",
@@ -131,6 +136,11 @@ def _http_status(error: BaseException) -> int | None:
     status = getattr(response, "status_code", None)
     if type(status) is int and 100 <= status <= 599:
         return status
+    status = getattr(error, "http_status", None)
+    if type(status) is int and isinstance(error, AuthenticationError) and status == 401:
+        return 401
+    if type(status) is int and isinstance(error, RateLimitError) and status == 429:
+        return 429
     return None
 
 
@@ -169,11 +179,11 @@ def _category_for(
         return WatchlistFailureCategory.POLICY_BLOCKED
     if isinstance(error, (InvalidFeedError, json.JSONDecodeError, ElementTree.ParseError)):
         return WatchlistFailureCategory.INVALID_FEED
-    if status == 401 or type(error).__name__ == "AuthenticationError":
+    if status == 401 or isinstance(error, AuthenticationError):
         return WatchlistFailureCategory.AUTHENTICATION_REQUIRED
     if status == 403:
         return WatchlistFailureCategory.ACCESS_DENIED
-    if status == 429 or type(error).__name__ == "RateLimitError":
+    if status == 429 or isinstance(error, RateLimitError):
         return WatchlistFailureCategory.RATE_LIMITED
     if status in {500, 502, 503, 504}:
         return WatchlistFailureCategory.TEMPORARY_SERVER_ERROR
@@ -194,8 +204,13 @@ def _category_for(
 
 def _is_policy_error(error: BaseException) -> bool:
     """Recognize egress policy errors without importing the monitor wrapper."""
-    return isinstance(error, (EgressBlockedError, EgressFetchError, SecurityError)) or (
-        type(error).__name__ == "FetchBlockedError"
+    return isinstance(
+        error,
+        (
+            EgressBlockedError,
+            SecurityError,
+            WatchlistPolicyFailure,
+        ),
     )
 
 

@@ -33,6 +33,7 @@ from .watchlist_filter_service import WatchlistFilterService
 from .watchlist_failure import (
     LEGACY_FAILURE_MESSAGE,
     LEGACY_FAILURE_NEXT_ACTION,
+    WatchlistFailure,
     classify_watchlist_failure,
     sanitize_watchlist_failure_stats,
     watchlist_failure_from_stats,
@@ -1515,7 +1516,7 @@ class LocalWatchlistsService:
         run_id: Any,
         *,
         source_id: Any = None,
-        error: BaseException | str,
+        error: BaseException | str | WatchlistFailure,
         elapsed_ms: int = 0,
     ) -> dict[str, Any]:
         """Mark a run failed and its source errored, durably.
@@ -1539,9 +1540,14 @@ class LocalWatchlistsService:
         Returns:
             The recorded run.
         """
-        failure = classify_watchlist_failure(
-            error if isinstance(error, BaseException) else RuntimeError()
-        )
+        if isinstance(error, WatchlistFailure):
+            failure = watchlist_failure_from_stats(
+                {"failure_category": error.category}
+            ) or classify_watchlist_failure(RuntimeError())
+        else:
+            failure = classify_watchlist_failure(
+                error if isinstance(error, BaseException) else RuntimeError()
+            )
         error_msg = failure.message
         db = self._db()
         if source_id is None:

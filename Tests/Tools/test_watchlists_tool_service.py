@@ -2146,6 +2146,117 @@ def test_operation_status_projects_only_validated_failure_recovery(
         assert canary not in rendered
 
 
+def test_run_operation_recovery_depends_on_terminal_status_not_error_truthiness(
+    db: SubscriptionsDB,
+) -> None:
+    source_id = _source(db, "Terminal status operations")
+    stale_canary = "STALE-COMPLETED-ERROR-CANARY token=secret"
+    with db.transaction() as conn:
+        failed_id = int(
+            conn.execute(
+                """
+                INSERT INTO local_watchlist_runs (
+                    source_id, status, stats_json, error_msg, created_at, updated_at
+                ) VALUES (?, 'failed', NULL, NULL, ?, ?)
+                """,
+                (source_id, "2026-08-20 12:00:00", "2026-08-20 12:00:00"),
+            ).lastrowid
+        )
+        completed_id = int(
+            conn.execute(
+                """
+                INSERT INTO local_watchlist_runs (
+                    source_id, status, stats_json, error_msg, created_at, updated_at
+                ) VALUES (?, 'completed', ?, ?, ?, ?)
+                """,
+                (
+                    source_id,
+                    json.dumps(
+                        {
+                            "failure_category": "connection_failure",
+                            "retryable": True,
+                        }
+                    ),
+                    stale_canary,
+                    "2026-08-20 13:00:00",
+                    "2026-08-20 13:00:00",
+                ),
+            ).lastrowid
+        )
+    service = _service(db)
+    with db.transaction() as conn:
+        stored_stale_error = conn.execute(
+            "SELECT error_msg FROM local_watchlist_runs WHERE id = ?",
+            (completed_id,),
+        ).fetchone()["error_msg"]
+
+    failed_raw = service.get_operation_status(
+        {"operation_id": f"local:watchlist_run:{failed_id}"}
+    )
+    completed_raw = service.get_operation_status(
+        {"operation_id": f"local:watchlist_run:{completed_id}"}
+    )
+    failed = _payload(failed_raw)["operation"]
+    completed = _payload(completed_raw)["operation"]
+
+    assert stored_stale_error == stale_canary, "anti-vacuity: stale raw data exists"
+    assert failed["state"] == "needs_attention"
+    assert failed["error_category"] == "source_check_failed"
+    assert failed["error_message"] == "Watchlists source check failed."
+    assert failed["retry_capable"] is False
+    assert completed["state"] == "ok"
+    assert completed["error_category"] is None
+    assert completed["error_message"] is None
+    assert completed["next_action"] is None
+    assert completed["retry_capable"] is False
+    assert completed["http_status"] is None
+    assert completed["retry_after_seconds"] is None
+    assert stale_canary not in completed_raw
+
+
+def test_direct_run_operation_shaping_ignores_inconsistent_error_marker() -> None:
+    base_row: dict[str, Any] = {
+        "id": 7,
+        "source_id": 11,
+        "source_name": "Direct status source",
+        "started_at": None,
+        "finished_at": None,
+        "created_at": "2026-08-20 12:00:00",
+        "updated_at": "2026-08-20 12:00:00",
+    }
+
+    failed = WatchlistsToolService._shape_run_operation(
+        {
+            **base_row,
+            "status": "errored",
+            "stats_json": None,
+            "has_error": 0,
+        }
+    )
+    completed = WatchlistsToolService._shape_run_operation(
+        {
+            **base_row,
+            "status": "completed",
+            "stats_json": json.dumps(
+                {
+                    "failure_category": "connection_failure",
+                    "retryable": True,
+                }
+            ),
+            "has_error": 1,
+        }
+    )
+
+    assert failed["state"] == "needs_attention"
+    assert failed["error_category"] == "source_check_failed"
+    assert failed["retry_capable"] is False
+    assert completed["state"] == "ok"
+    assert completed["error_category"] is None
+    assert completed["error_message"] is None
+    assert completed["next_action"] is None
+    assert completed["retry_capable"] is False
+
+
 def test_missing_and_transient_database_dependencies_are_structured_and_scrubbed(
     tmp_path: Path,
 ) -> None:

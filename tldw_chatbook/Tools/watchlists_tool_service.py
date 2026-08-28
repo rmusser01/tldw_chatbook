@@ -1712,7 +1712,7 @@ class WatchlistsToolService:
             return "waiting"
         if status == "running":
             return "running"
-        if status in {"failed", "error"}:
+        if status in {"failed", "error", "errored"}:
             return "needs_attention"
         if status in {"disabled", "cancelled", "canceled"}:
             return "disabled"
@@ -1724,7 +1724,8 @@ class WatchlistsToolService:
             row["source_name"], _MAX_NAME_BYTES
         )
         status = WatchlistsToolService._safe_text(row["status"], 64)
-        recovery = project_watchlist_failure(row, failed=bool(row["has_error"]))
+        failed = WatchlistsToolService._normalize_run_state(status) == "needs_attention"
+        recovery = project_watchlist_failure(row, failed=failed)
         return {
             "id": f"local:watchlist_run:{row['id']}",
             "kind": "source_check",

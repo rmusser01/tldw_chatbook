@@ -21,6 +21,10 @@ from tldw_chatbook.Subscriptions.watchlist_item_page import (
     WatchlistItemCursor,
     WatchlistItemPage,
 )
+from tldw_chatbook.Subscriptions.watchlist_failure import (
+    WatchlistFailure,
+    WatchlistFailureCategory,
+)
 
 
 @pytest.mark.asyncio
@@ -1384,6 +1388,46 @@ async def test_local_watchlists_service_record_run_failure_auto_pauses_at_thresh
         "exactly one auto-pause WARNING must fire (on the 3rd failure only), got "
         f"{[r.message for r in auto_pause_warnings]}"
     )
+
+
+@pytest.mark.asyncio
+async def test_record_run_failure_recanonicalizes_caller_supplied_failure_copy(
+    tmp_path,
+) -> None:
+    db = SubscriptionsDB(tmp_path / "subscriptions.db", "test")
+    service = LocalWatchlistsService(db_factory=lambda: db)
+    source = await service.create_source(
+        {
+            "name": "Forged failure source",
+            "url": "https://example.com/feed.xml",
+            "source_type": "rss",
+        }
+    )
+    launched = await service.launch_run(source_id=source["source_id"])
+    forged_canary = "FORGED-FAILURE-CANARY token=secret /private/watchlists.db"
+    forged = WatchlistFailure(
+        category=WatchlistFailureCategory.RATE_LIMITED,
+        message=forged_canary,
+        retryable=False,
+        http_status=401,
+        retry_after_seconds=99_999,
+        next_action="FORGED-ACTION-CANARY",
+    )
+
+    completed = await service.record_run_failure(
+        launched["run_id"], source_id=source["source_id"], error=forged
+    )
+    stored_source = db.get_subscription(source["source_id"])
+
+    assert forged.message == forged_canary, "anti-vacuity: forged copy reached boundary"
+    assert stored_source["last_error"] == "The source is rate limiting checks."
+    assert completed["failure_category"] == "rate_limited"
+    assert completed["retryable"] is True
+    assert completed["http_status"] is None
+    assert completed["retry_after_seconds"] is None
+    public = json.dumps({"source": stored_source, "run": completed}, default=str)
+    assert forged_canary not in public
+    assert "FORGED-ACTION-CANARY" not in public
 
 
 @pytest.mark.asyncio

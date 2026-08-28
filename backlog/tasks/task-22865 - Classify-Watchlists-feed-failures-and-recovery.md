@@ -78,4 +78,17 @@ The anti-vacuous mutation check failed after deliberately leaking `str(error)` a
 passed after restoration. Ruff, the Impeccable detector, and `git diff --check` pass.
 The task intentionally remains In Progress with all ACs unchecked for independent
 review and UAT.
+
+Review round 1 remediation removed raw exception persistence/logging from the
+scheduled outer and fallback paths, separated true egress policy blocks from generic
+guarded-fetch container failures, and replaced exception-name matching with concrete
+owned types. Operation recovery now follows terminal failed status, nested JSON Feed
+shapes fail as `invalid_feed`, and feed-specific 401/429 exceptions retain only their
+validated structured status (plus bounded Retry-After for 429). Mutation-resistant
+MockTransport, direct/wrapped classifier, SQLite receipt, and scheduler canary probes
+cover each distinction. A final review additionally pinned and fixed terminal
+scheduler-write traceback leakage plus forged structured-failure copy, then approved
+the resulting category-only boundaries. Updated targeted evidence is 384 task-path
+tests and 47 Runs/toast/egress-preservation tests passing; Ruff and diff checks remain
+clean.
 <!-- SECTION:NOTES:END -->

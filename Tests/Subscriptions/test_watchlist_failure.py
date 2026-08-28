@@ -123,9 +123,9 @@ def _http_error(
                 "redirect target blocked",
                 url="https://source.example/feed?token=SIGNED-QUERY",
             ),
-            "policy_blocked",
+            "connection_failure",
             None,
-            False,
+            True,
         ),
         (SSRFError("private path and host"), "policy_blocked", None, False),
         (RuntimeError("unknown secret detail"), "connection_failure", None, True),
@@ -145,6 +145,49 @@ def test_classifier_maps_failures_to_the_exact_safe_vocabulary(
     assert (failure.message, failure.next_action) == EXPECTED_COPY[failure.category]
     assert len(failure.message.encode("utf-8")) <= 256
     assert len(failure.next_action.encode("utf-8")) <= 256
+
+
+@pytest.mark.parametrize(
+    ("error_type", "status", "category", "retry_after"),
+    [
+        (AuthenticationError, 401, "authentication_required", None),
+        (RateLimitError, 429, "rate_limited", 23),
+    ],
+)
+def test_owned_domain_errors_retain_structured_http_status_direct_and_wrapped(
+    error_type, status: int, category: str, retry_after: int | None
+) -> None:
+    error = error_type("RAW-DOMAIN-ERROR-CANARY-22865")
+    error.http_status = status
+    error.retry_after_seconds = "23"
+    wrapped = RuntimeError("RAW-WRAPPER-CANARY-22865")
+    wrapped.__cause__ = error
+
+    direct_failure = classify_watchlist_failure(error)
+    wrapped_failure = classify_watchlist_failure(wrapped)
+
+    for failure in (direct_failure, wrapped_failure):
+        assert failure.category.value == category
+        assert failure.http_status == status
+        assert failure.retry_after_seconds == retry_after
+        public = json.dumps(failure.__dict__, default=str)
+        assert "RAW-" not in public
+
+
+@pytest.mark.parametrize(
+    ("error_type", "status"),
+    [(AuthenticationError, 401.0), (RateLimitError, 429.0)],
+)
+def test_owned_domain_http_status_requires_an_exact_integer_type(
+    error_type, status: object
+) -> None:
+    error = error_type("RAW-NONINTEGER-STATUS-CANARY-22865")
+    error.http_status = status
+
+    failure = classify_watchlist_failure(error)
+
+    assert failure.http_status is None
+    assert "RAW-" not in json.dumps(failure.__dict__, default=str)
 
 
 def test_public_category_vocabulary_is_exact() -> None:
@@ -207,6 +250,56 @@ def test_direct_fetch_block_wrapper_is_a_non_retryable_policy_failure() -> None:
     assert failure.category is WatchlistFailureCategory.POLICY_BLOCKED
     assert failure.retryable is False
     assert "DIRECT-POLICY-CANARY" not in json.dumps(failure.__dict__)
+
+
+def test_wrapped_fetch_transport_error_is_connection_failure_without_raw_data() -> None:
+    inner = EgressFetchError(
+        "redirect without Location",
+        url="https://source.example/feed?token=WRAPPED-FETCH-CANARY-22865",
+    )
+    outer = RuntimeError("WRAPPED-OUTER-FETCH-CANARY-22865")
+    outer.__cause__ = inner
+
+    failure = classify_watchlist_failure(outer)
+
+    assert failure.category is WatchlistFailureCategory.CONNECTION_FAILURE
+    assert failure.retryable is True
+    assert "CANARY" not in json.dumps(failure.__dict__)
+
+
+def test_wrapped_real_policy_error_remains_non_retryable_policy_blocked() -> None:
+    from tldw_chatbook.Subscriptions.monitoring_engine import FetchBlockedError
+
+    inner = FetchBlockedError("WRAPPED-POLICY-CANARY-22865")
+    outer = RuntimeError("WRAPPED-POLICY-OUTER-CANARY-22865")
+    outer.__cause__ = inner
+
+    failure = classify_watchlist_failure(outer)
+
+    assert failure.category is WatchlistFailureCategory.POLICY_BLOCKED
+    assert failure.retryable is False
+    assert "CANARY" not in json.dumps(failure.__dict__)
+
+
+def test_exception_class_name_lookalikes_use_the_unknown_fallback() -> None:
+    class AuthenticationError(Exception):
+        pass
+
+    class RateLimitError(Exception):
+        pass
+
+    class FetchBlockedError(Exception):
+        pass
+
+    for error in (
+        AuthenticationError("SPOOF-AUTH-CANARY-22865"),
+        RateLimitError("SPOOF-RATE-CANARY-22865"),
+        FetchBlockedError("SPOOF-POLICY-CANARY-22865"),
+    ):
+        failure = classify_watchlist_failure(error)
+        assert failure.category is WatchlistFailureCategory.CONNECTION_FAILURE
+        assert failure.retryable is True
+        assert "CANARY" not in json.dumps(failure.__dict__)
 
 
 def test_classifier_finds_a_supported_failure_inside_a_safe_wrapper() -> None:
@@ -646,9 +739,64 @@ async def test_mock_transport_429_persists_bounded_retry_after_and_no_request_da
     assert request.headers["X-Feed-Token"] == header_canary
     assert request.headers["User-Agent"] == PRODUCT_USER_AGENT
     assert completed["failure_category"] == "rate_limited"
+    assert completed["http_status"] == 429
     assert completed["retry_after_seconds"] == 19
     public = json.dumps(completed, default=str)
     for canary in (query_canary, header_canary, body_canary):
+        assert canary not in public
+
+
+@pytest.mark.asyncio
+async def test_mock_transport_401_retains_status_without_request_or_response_data(
+    tmp_path, monkeypatch
+) -> None:
+    _allow_mock_hosts(monkeypatch)
+    query_canary = "AUTH-QUERY-CANARY-22865"
+    request_header_canary = "AUTH-REQUEST-HEADER-CANARY-22865"
+    response_header_canary = "AUTH-RESPONSE-HEADER-CANARY-22865"
+    body_canary = "AUTH-BODY-CANARY-22865"
+    seen_requests: list[httpx.Request] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        seen_requests.append(request)
+        return httpx.Response(
+            401,
+            headers={"X-Response-Secret": response_header_canary},
+            text=body_canary,
+            request=request,
+        )
+
+    _install_mock_transport(monkeypatch, handler)
+    db = SubscriptionsDB(tmp_path / "subscriptions.db", "test")
+    service = LocalWatchlistsService(db_factory=lambda: db)
+    source = await service.create_source(
+        {
+            "name": "Authenticated feed",
+            "url": f"https://source.example/feed?token={query_canary}",
+            "source_type": "rss",
+            "custom_headers": {"X-Feed-Token": request_header_canary},
+        }
+    )
+    launched = await service.launch_run(source_id=source["source_id"])
+
+    completed = await service.execute_run(launched["run_id"])
+
+    assert seen_requests, "anti-vacuity: the MockTransport must receive the request"
+    request = seen_requests[0]
+    assert query_canary in str(request.url)
+    assert request.headers["X-Feed-Token"] == request_header_canary
+    assert request.headers["User-Agent"] == PRODUCT_USER_AGENT
+    assert completed["failure_category"] == "authentication_required"
+    assert completed["http_status"] == 401
+    assert completed["retryable"] is False
+    assert completed["retry_after_seconds"] is None
+    public = json.dumps(completed, default=str)
+    for canary in (
+        query_canary,
+        request_header_canary,
+        response_header_canary,
+        body_canary,
+    ):
         assert canary not in public
 
 
@@ -692,6 +840,61 @@ async def test_malformed_and_nonfeed_payloads_are_invalid_feed_failures(
     assert completed["status"] == "failed"
     assert completed["failure_category"] == "invalid_feed"
     assert completed["retryable"] is False
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "payload",
+    [
+        {"items": [None]},
+        {"items": ["NESTED-ITEM-CANARY-22865"]},
+        {"items": [{"author": "NESTED-AUTHOR-CANARY-22865"}]},
+        {"items": [{"authors": "NESTED-AUTHORS-LIST-CANARY-22865"}]},
+        {"items": [{"authors": ["NESTED-AUTHORS-ENTRY-CANARY-22865"]}]},
+        {"items": [{"attachments": "NESTED-ATTACHMENTS-LIST-CANARY-22865"}]},
+        {
+            "items": [
+                {"attachments": ["NESTED-ATTACHMENTS-ENTRY-CANARY-22865"]}
+            ]
+        },
+    ],
+)
+async def test_malformed_nested_json_feed_shapes_are_safe_invalid_feed_failures(
+    tmp_path, monkeypatch, payload: object
+) -> None:
+    _allow_mock_hosts(monkeypatch)
+    body = json.dumps(payload)
+    served_bodies: list[str] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        served_bodies.append(body)
+        return httpx.Response(
+            200,
+            headers={"Content-Type": "application/json"},
+            text=body,
+            request=request,
+        )
+
+    _install_mock_transport(monkeypatch, handler)
+    db = SubscriptionsDB(tmp_path / "subscriptions.db", "test")
+    service = LocalWatchlistsService(db_factory=lambda: db)
+    source = await service.create_source(
+        {
+            "name": "Nested invalid JSON feed fixture",
+            "url": "https://source.example/feed",
+            "source_type": "json_feed",
+        }
+    )
+    launched = await service.launch_run(source_id=source["source_id"])
+
+    completed = await service.execute_run(launched["run_id"])
+
+    assert served_bodies == [body], "anti-vacuity: the malformed payload was fetched"
+    assert completed["status"] == "failed"
+    assert completed["failure_category"] == "invalid_feed"
+    assert completed["retryable"] is False
+    public = json.dumps(completed, default=str)
+    assert "NESTED-" not in public
 
 
 @pytest.mark.asyncio
@@ -861,6 +1064,44 @@ async def test_all_fetch_paths_send_the_exact_product_user_agent(monkeypatch, tm
         "/api": PRODUCT_USER_AGENT,
         "/sitemap.xml": PRODUCT_USER_AGENT,
     }
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("source_type", ["rss", "url", "url_list", "sitemap", "api"])
+async def test_guarded_fetch_container_errors_are_safe_connection_failures(
+    tmp_path, monkeypatch, source_type: str
+) -> None:
+    _allow_mock_hosts(monkeypatch)
+    query_canary = f"{source_type.upper()}-FETCH-CANARY-22865"
+    source_url = f"https://source.example/{source_type}?token={query_canary}"
+    seen_requests: list[httpx.Request] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        seen_requests.append(request)
+        return httpx.Response(302, request=request)
+
+    _install_mock_transport(monkeypatch, handler)
+    db = SubscriptionsDB(tmp_path / "subscriptions.db", "test")
+    service = LocalWatchlistsService(db_factory=lambda: db)
+    payload = {
+        "name": f"Guarded fetch {source_type}",
+        "url": source_url,
+        "source_type": source_type,
+    }
+    if source_type == "url_list":
+        payload["extraction_rules"] = {"urls": [source_url]}
+    source = await service.create_source(payload)
+    launched = await service.launch_run(source_id=source["source_id"])
+
+    completed = await service.execute_run(launched["run_id"])
+
+    assert seen_requests, "anti-vacuity: the production builder must issue a request"
+    assert any(query_canary in str(request.url) for request in seen_requests)
+    assert completed["status"] == "failed"
+    assert completed["failure_category"] == "connection_failure"
+    assert completed["retryable"] is True
+    assert completed["http_status"] is None
+    assert query_canary not in json.dumps(completed, default=str)
 
 
 @pytest.mark.asyncio

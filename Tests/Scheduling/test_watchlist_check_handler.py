@@ -11,6 +11,7 @@ from tldw_chatbook.Scheduling.scheduler.handlers.watchlist_check_handler import 
 )
 from tldw_chatbook.Subscriptions import LocalWatchlistsService, WatchlistScopeService
 from tldw_chatbook.Subscriptions import local_watchlists_service
+from tldw_chatbook.Subscriptions.watchlist_failure import WatchlistFailure
 
 
 def _durable_claim_state(
@@ -458,9 +459,15 @@ async def test_failure_escaping_execute_run_marks_the_launched_run_failed(handle
 
     await handler.handle(_task())
 
-    handler.watchlists_service.record_run_failure.assert_awaited_once_with(
-        7, source_id=42, error=error
-    )
+    handler.watchlists_service.record_run_failure.assert_awaited_once()
+    call = handler.watchlists_service.record_run_failure.await_args
+    assert call.args == (7,)
+    assert call.kwargs["source_id"] == 42
+    failure = call.kwargs["error"]
+    assert isinstance(failure, WatchlistFailure)
+    assert failure.category.value == "connection_failure"
+    assert failure.message == "The source could not be reached."
+    assert "feed unreachable" not in str(failure)
     handler.subscriptions_db.record_check_result.assert_not_called()
     handler.subscriptions_db.record_check_error.assert_not_called()
 
@@ -475,7 +482,7 @@ async def test_failure_before_a_run_exists_falls_back_to_record_check_error(hand
 
     handler.watchlists_service.record_run_failure.assert_not_awaited()
     handler.subscriptions_db.record_check_error.assert_called_once_with(
-        42, "launch failed"
+        42, "The source could not be reached."
     )
 
 

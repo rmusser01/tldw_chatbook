@@ -15,6 +15,11 @@ from tldw_chatbook.Subscriptions.local_watchlists_service import (
     LocalWatchlistsService,
 )
 from tldw_chatbook.Subscriptions.monitoring_engine import FeedMonitor, URLMonitor
+from tldw_chatbook.Subscriptions.watchlist_failure import (
+    WatchlistFailure,
+    classify_watchlist_failure,
+    project_watchlist_failure,
+)
 
 _WATCHLIST_TASK_PREFIX = "watchlist"
 
@@ -224,14 +229,13 @@ class WatchlistCheckHandler:
                 # `local_watchlist_runs.error_msg` column; the `stats` copy is
                 # a mirror it makes only when the column is set, so the column
                 # is the one to trust and the mirror is the fallback.
-                error_text = (
-                    executed.get("error_msg")
-                    or stats.get("error_msg")
-                    or "no error message recorded"
-                )
+                recovery = project_watchlist_failure(executed, failed=True)
                 logger.warning(
-                    f"Scheduled check FAILED: '{subscription.get('name')}' "
-                    f"(ID: {subscription_id}), run {run_id}: {error_text}"
+                    "Scheduled check failed with category {} "
+                    "(subscription_id={}, run_id={}).",
+                    recovery["error_category"],
+                    subscription_id,
+                    run_id,
                 )
             else:
                 status = _STATUS_SUCCESS
@@ -260,9 +264,14 @@ class WatchlistCheckHandler:
 
         except Exception as exc:
             status = _STATUS_ERROR
-            logger.error(f"Error checking subscription {subscription_id}: {exc}")
+            failure = classify_watchlist_failure(exc)
+            logger.error(
+                "Scheduled check failed with category {} (subscription_id={}).",
+                failure.category.value,
+                subscription_id,
+            )
             if claim_acquired:
-                await self._record_failure(subscription_id, run_id, exc)
+                await self._record_failure(subscription_id, run_id, failure)
 
         finally:
             duration = time.time() - start_time
@@ -281,7 +290,10 @@ class WatchlistCheckHandler:
             log_histogram("watchlist_check_duration", duration, labels=labels)
 
     async def _record_failure(
-        self, subscription_id: int | None, run_id: Any, exc: BaseException
+        self,
+        subscription_id: int | None,
+        run_id: Any,
+        failure: WatchlistFailure,
     ) -> None:
         """Persist a failure that escaped ``execute_run``'s own handling.
 
@@ -304,20 +316,29 @@ class WatchlistCheckHandler:
             # calls `record_check_error`.
             try:
                 await self.watchlists_service.record_run_failure(
-                    run_id, source_id=subscription_id, error=exc
+                    run_id, source_id=subscription_id, error=failure
                 )
                 return
             except Exception:
-                logger.opt(exception=True).warning(
+                logger.warning(
                     f"Watchlists: could not mark scheduled run {run_id} failed; "
                     f"falling back to recording the error on the subscription."
                 )
-        await run_db_off_loop(
-            self.subscriptions_db,
-            self.subscriptions_db.record_check_error,
-            subscription_id,
-            str(exc),
-        )
+        try:
+            await run_db_off_loop(
+                self.subscriptions_db,
+                self.subscriptions_db.record_check_error,
+                subscription_id,
+                failure.message,
+            )
+        except Exception:
+            logger.warning(
+                "Could not persist scheduled failure with category {} "
+                "(subscription_id={}, run_id={}).",
+                failure.category.value,
+                subscription_id,
+                run_id,
+            )
 
     async def _check_in_shadow(
         self, subscription: dict[str, Any], subscription_type: str
