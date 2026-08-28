@@ -728,6 +728,8 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
         self._pending_navigation_run_backend: str | None = None
         self._loaded_runs: list[dict[str, Any]] = []
         self._runs_refresh_generation = 0
+        self._pending_runs_refresh_generation: int | None = None
+        self._run_tick_generation = 0
         self._run_selection_generation = 0
         self._run_detail_generation = 0
         # TASK-2306: the selected run's Items and Logs, mirrored here for the
@@ -5356,6 +5358,8 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
         # the monotonic owners even for an A -> B -> A transition, where a
         # plain backend-equality check would otherwise admit pre-B work.
         self._runs_refresh_generation += 1
+        self._pending_runs_refresh_generation = None
+        self._run_tick_generation += 1
         self._run_selection_generation += 1
         self._run_detail_generation += 1
         if (
@@ -5497,6 +5501,8 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
                 continue
             for attribute, value in values.items():
                 setattr(pane, attribute, value)
+            if isinstance(pane, RunsPane):
+                self._seed_runs_operation_state(pane)
 
     def watch_selected_entity(self) -> None:
         """Push the current selection into the live Inspector.
@@ -5673,8 +5679,7 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
 
     def _request_runs_refresh(self) -> None:
         """Capture one refresh intent and supersede every older Runs read."""
-        self._runs_refresh_generation += 1
-        generation = self._runs_refresh_generation
+        generation = self._begin_runs_refresh()
         backend = self.runtime_backend
         selected = self.selected_run
         selected_identity = self._canonical_run_identity(
@@ -5682,17 +5687,41 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
             default_backend=backend,
         )
         self.run_worker(
-            self._refresh_runs(
-                backend=backend,
+            self._track_runs_refresh(
+                self._refresh_runs(
+                    backend=backend,
+                    generation=generation,
+                    selection_generation=self._run_selection_generation,
+                    selected_identity=selected_identity,
+                    selected_run_id=self._raw_run_id(selected),
+                    selected_was_present=selected is not None,
+                ),
                 generation=generation,
-                selection_generation=self._run_selection_generation,
-                selected_identity=selected_identity,
-                selected_run_id=self._raw_run_id(selected),
-                selected_was_present=selected is not None,
             ),
             exclusive=True,
             group="wc_runs",
         )
+
+    def _begin_runs_refresh(self) -> int:
+        """Claim authoritative Runs-list publication and invalidate ticks."""
+        self._runs_refresh_generation += 1
+        generation = self._runs_refresh_generation
+        self._pending_runs_refresh_generation = generation
+        self._run_tick_generation += 1
+        return generation
+
+    async def _track_runs_refresh(
+        self,
+        request: Coroutine[Any, Any, None],
+        *,
+        generation: int,
+    ) -> None:
+        """Clear pending authority only when this request still owns it."""
+        try:
+            await request
+        finally:
+            if self._pending_runs_refresh_generation == generation:
+                self._pending_runs_refresh_generation = None
 
     @staticmethod
     def _raw_run_id(run: Mapping[str, Any] | None) -> Any:
@@ -5748,6 +5777,26 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
                 backend=backend,
                 selected_identity=selected_identity,
                 selected_was_present=selected_was_present,
+            )
+        )
+
+    def _run_tick_is_current(
+        self,
+        *,
+        backend: str,
+        tick_generation: int,
+        selection_generation: int,
+        selected_identity: tuple[str, str],
+    ) -> bool:
+        """Return whether one periodic tick still owns its selected run."""
+        return (
+            self._pending_runs_refresh_generation is None
+            and tick_generation == self._run_tick_generation
+            and selection_generation == self._run_selection_generation
+            and self._run_selection_is_current(
+                backend=backend,
+                selected_identity=selected_identity,
+                selected_was_present=True,
             )
         )
 
@@ -5906,6 +5955,7 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
     @on(RunSelected)
     def handle_run_selected(self, event: RunSelected) -> None:
         event.stop()
+        self._run_tick_generation += 1
         self._run_selection_generation += 1
         self.selected_run = event.run
         self._select_entity(event.run)
@@ -5920,6 +5970,8 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
     def handle_run_progress_tick(self, event: RunProgressTick) -> None:
         """A running run may have moved on -- check, cheaply (Qodo #1348)."""
         event.stop()
+        if self._pending_runs_refresh_generation is not None:
+            return
         backend = self.runtime_backend
         selected = self.selected_run
         selected_identity = self._canonical_run_identity(
@@ -5933,13 +5985,13 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
         if selected is None or selected_identity != requested_identity:
             return
         selection_generation = self._run_selection_generation
-        self._runs_refresh_generation += 1
-        publication_generation = self._runs_refresh_generation
+        self._run_tick_generation += 1
+        tick_generation = self._run_tick_generation
         self.run_worker(
             self._refresh_running_run(
                 event.run_id,
                 backend=backend,
-                publication_generation=publication_generation,
+                tick_generation=tick_generation,
                 selection_generation=selection_generation,
                 selected=dict(selected),
                 selected_identity=selected_identity,
@@ -5972,7 +6024,7 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
         run_id: Any,
         *,
         backend: str,
-        publication_generation: int,
+        tick_generation: int,
         selection_generation: int,
         selected: dict[str, Any],
         selected_identity: tuple[str, str],
@@ -5998,17 +6050,16 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
         Args:
             run_id: The namespaced id the poll is watching.
             backend: Backend captured when the tick was accepted.
-            publication_generation: Shared Runs publication owner.
+            tick_generation: Monotonic periodic-tick publication owner.
             selection_generation: Selection epoch captured with the tick.
             selected: Selected run snapshot captured with the tick.
             selected_identity: Canonical identity captured with the tick.
         """
-        if not self._runs_refresh_is_current(
+        if not self._run_tick_is_current(
             backend=backend,
-            generation=publication_generation,
+            tick_generation=tick_generation,
             selection_generation=selection_generation,
             selected_identity=selected_identity,
-            selected_was_present=True,
         ):
             return
         try:
@@ -6025,12 +6076,11 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
                 f"{type(exc).__name__}"
             )
             return
-        if not self._runs_refresh_is_current(
+        if not self._run_tick_is_current(
             backend=backend,
-            generation=publication_generation,
+            tick_generation=tick_generation,
             selection_generation=selection_generation,
             selected_identity=selected_identity,
-            selected_was_present=True,
         ):
             return
         if not isinstance(record, Mapping) or not record:
@@ -7388,10 +7438,12 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
 
     def _load_runs(self) -> Coroutine[Any, Any, None]:
         """Capture a Runs-load intent before its coroutine is scheduled."""
-        self._runs_refresh_generation += 1
-        generation = self._runs_refresh_generation
+        generation = self._begin_runs_refresh()
         backend = self.runtime_backend
-        return self._load_runs_for(backend=backend, generation=generation)
+        return self._track_runs_refresh(
+            self._load_runs_for(backend=backend, generation=generation),
+            generation=generation,
+        )
 
     async def _load_runs_for(self, *, backend: str, generation: int) -> None:
         """Stage and publish the captured initial/deep-link Runs load."""
@@ -7436,6 +7488,7 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
                 if had_pending_target:
                     with runs_pane.prevent(RunSelected):
                         runs_pane.selected_run = requested_run
+                    self._seed_runs_operation_state(runs_pane)
             except Exception:
                 pass
         if had_pending_target and requested_run is not None:

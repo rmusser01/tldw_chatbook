@@ -36,6 +36,9 @@ from Tests.UI.full_app_destination_context import (
     full_app_destination_context as _visual_destination_harness,
 )
 from Tests.UI.app_factory import _build_test_app
+from tldw_chatbook.UI.Screens.watchlists_collections_screen import (
+    WatchlistsCollectionsScreen,
+)
 from tldw_chatbook.UI.Watchlists_Modules.runs_pane import (
     RefreshRunsRequested,
     RunProgressTick,
@@ -1190,6 +1193,7 @@ async def test_refresh_replaces_rows_and_reloads_selected_fresh_detail_by_id():
         assert screen._run_detail_items == pane.run_items
         assert "authoritative refresh log" in _logs_text(pane)
         assert "Found: 9" in _stats_text(pane)
+        assert screen._pending_runs_refresh_generation is None
 
 
 @pytest.mark.asyncio
@@ -1379,6 +1383,7 @@ async def test_refresh_transient_failure_preserves_the_complete_mounted_snapshot
         assert "secret" not in message and "path" not in message
         assert kwargs.get("severity") == "error"
         assert kwargs.get("markup") is False
+        assert screen._pending_runs_refresh_generation is None
 
 
 @pytest.mark.asyncio
@@ -1474,6 +1479,7 @@ async def test_second_refresh_generation_supersedes_an_older_late_response():
             [dict(RUNS[0], source_title="newest response"), dict(RUNS[1])],
         ]
         call_count = 0
+        older_returned = asyncio.Event()
 
         async def list_runs(**_kwargs):
             nonlocal call_count
@@ -1487,6 +1493,8 @@ async def test_second_refresh_generation_supersedes_an_older_late_response():
                     # The generation check, not cooperative cancellation, is
                     # the publication authority this regression exercises.
                     continue
+            if index == 0:
+                older_returned.set()
             return deepcopy(rows[index])
 
         async def list_items(**_kwargs):
@@ -1507,6 +1515,13 @@ async def test_second_refresh_generation_supersedes_an_older_late_response():
         )
         await asyncio.wait_for(starts[1].wait(), timeout=2)
 
+        releases[0].set()
+        await asyncio.wait_for(older_returned.wait(), timeout=2)
+        await pilot.pause()
+        assert screen._pending_runs_refresh_generation == baseline_generation + 2, (
+            "an obsolete worker must not clear the newer authoritative owner"
+        )
+
         releases[1].set()
         assert await _pump_until(
             pilot,
@@ -1515,13 +1530,36 @@ async def test_second_refresh_generation_supersedes_an_older_late_response():
                 and screen._loaded_runs[0]["source_title"] == "newest response"
             ),
         )
-        releases[0].set()
         assert await _wait_worker_group_idle(pilot, screen, "wc_runs")
         assert await _wait_worker_group_idle(pilot, screen, "wc_run_detail")
         await pilot.pause()
 
         assert screen._loaded_runs[0]["source_title"] == "newest response"
         assert pane.runs[0]["source_title"] == "newest response"
+        assert screen._pending_runs_refresh_generation is None
+
+
+@pytest.mark.asyncio
+async def test_cancelled_authoritative_runs_request_clears_pending_authority():
+    app = _build_test_app()
+    screen = WatchlistsCollectionsScreen(app)
+    started = asyncio.Event()
+    never_release = asyncio.Event()
+
+    async def blocked_request():
+        started.set()
+        await never_release.wait()
+
+    generation = screen._begin_runs_refresh()
+    task = asyncio.create_task(
+        screen._track_runs_refresh(blocked_request(), generation=generation)
+    )
+    await asyncio.wait_for(started.wait(), timeout=2)
+    task.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await task
+
+    assert screen._pending_runs_refresh_generation is None
 
 
 @pytest.mark.asyncio
@@ -2162,7 +2200,7 @@ async def test_newer_same_run_tick_supersedes_an_older_cancellation_resistant_ti
 
 
 @pytest.mark.asyncio
-async def test_newer_tick_supersedes_an_older_explicit_refresh():
+async def test_tick_during_an_authoritative_refresh_cannot_discard_its_rows():
     app = _build_test_app()
     app.watchlist_scope_service = StaticWatchlistsScopeService([])
     host = _visual_destination_harness(app, "watchlists_collections")
@@ -2171,58 +2209,61 @@ async def test_newer_tick_supersedes_an_older_explicit_refresh():
         await _seed_refresh_snapshot(screen, pane, pilot)
         refresh_started = asyncio.Event()
         release_refresh = asyncio.Event()
-        tick_detail_loaded = asyncio.Event()
-        detail_calls = 0
-        stale_refresh = dict(
+        tick_reads: list[dict[str, Any]] = []
+        authoritative = dict(
             RUNS[1],
             found_count=7,
             processed_count=7,
-            log_text="older explicit refresh",
+            log_text="authoritative refresh publication",
+        )
+        added = dict(
+            RUNS[0],
+            id="local:watchlist_run:3",
+            run_id=3,
+            source_id=3,
+            source_title="Newly added authoritative row",
         )
         tick = dict(
             RUNS[1],
             found_count=13,
             processed_count=13,
-            log_text="newer tick publication",
+            log_text="periodic tick must be suppressed",
         )
 
         async def list_runs(**_kwargs):
             refresh_started.set()
             await release_refresh.wait()
-            return [dict(RUNS[0]), stale_refresh]
+            return [authoritative, added]
 
-        async def get_run(**_kwargs):
+        async def get_run(**kwargs):
+            tick_reads.append(kwargs)
             return tick
 
-        async def ordered_items(**_kwargs):
-            nonlocal detail_calls
-            detail_calls += 1
-            if detail_calls == 1:
-                tick_detail_loaded.set()
-                return [{"title": "Newer tick item", "status": "new"}]
-            return [{"title": "Stale refresh item", "status": "new"}]
+        async def list_items(**_kwargs):
+            return [{"title": "Authoritative refresh item", "status": "new"}]
 
         screen._controller.list_runs = list_runs
         screen._controller.get_run = get_run
-        screen._controller.list_items = ordered_items
+        screen._controller.list_items = list_items
         screen.post_message(RefreshRunsRequested())
         await asyncio.wait_for(refresh_started.wait(), timeout=2)
 
         screen.post_message(RunProgressTick(RUNS[1]["id"]))
-        await asyncio.wait_for(tick_detail_loaded.wait(), timeout=2)
-        tick_landed = screen.selected_run == pane.selected_run == tick
+        await pilot.pause()
 
         release_refresh.set()
         assert await _wait_worker_group_idle(pilot, screen, "wc_runs")
         assert await _wait_worker_group_idle(pilot, screen, "wc_run_tick")
         assert await _wait_worker_group_idle(pilot, screen, "wc_run_detail")
 
-        assert tick_landed
-        assert screen._loaded_runs == pane.runs == [dict(RUNS[0]), tick]
-        assert screen.selected_run == pane.selected_run == tick
-        assert pane.run_items[0]["title"] == "Newer tick item"
-        assert "newer tick publication" in _logs_text(pane)
-        assert "older explicit refresh" not in _logs_text(pane)
+        assert tick_reads == [], "periodic ticks are subordinate to pending Refresh"
+        assert screen._loaded_runs == pane.runs == [authoritative, added]
+        assert all(run["id"] != RUNS[0]["id"] for run in pane.runs)
+        assert screen.selected_run == pane.selected_run == authoritative
+        assert pane.run_items[0]["title"] == "Authoritative refresh item"
+        assert "authoritative refresh publication" in _logs_text(pane)
+        assert "periodic tick must be suppressed" not in _logs_text(pane)
+        assert screen._pending_runs_refresh_generation is None
 
 
 @pytest.mark.asyncio

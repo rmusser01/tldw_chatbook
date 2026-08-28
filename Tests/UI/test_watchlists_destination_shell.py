@@ -563,6 +563,74 @@ async def test_server_run_deep_link_selects_server_backend_before_loading():
 
 
 @pytest.mark.asyncio
+async def test_mounted_server_run_deep_link_reseeds_server_rerun_identity():
+    app = _build_test_app()
+    screen = WatchlistsCollectionsScreen(app)
+    screen._controller.list_runs = AsyncMock(return_value=[])
+    host = WatchlistsContextHarness(screen)
+
+    async with host.run_test(size=(180, 50)) as pilot:
+        screen.active_section = "runs"
+        for _ in range(40):
+            await pilot.pause()
+            if screen.query("#watchlists-runs-pane"):
+                break
+        for _ in range(40):
+            await pilot.pause()
+            if screen._controller.list_runs.await_count:
+                break
+
+        pane = screen.query_one("#watchlists-runs-pane", RunsPane)
+        assert pane.runtime_backend == "local", "precondition: pane mounted local"
+
+        server_run = {
+            "id": "server:watchlist_run:8",
+            "run_id": 8,
+            "backend": "server",
+            "source_id": "wrong-local-source",
+            "job_id": "server-job-8",
+            "source_title": "Server feed",
+            "status": "failed",
+        }
+        screen._controller.list_runs = AsyncMock(return_value=[server_run])
+        screen._controller.list_items = AsyncMock(return_value=[])
+        screen._controller.launch_run = AsyncMock(return_value={"status": "queued"})
+        screen._request_runs_refresh = Mock()
+
+        screen.apply_navigation_context(
+            {
+                "section": "runs",
+                "backend": "server",
+                "run_id": "server:watchlist_run:8",
+            }
+        )
+        for _ in range(40):
+            await pilot.pause()
+            if pane.selected_run == server_run:
+                break
+
+        rerun = pane.query_one("#runs-rerun-button", Button)
+        assert pane.selected_run == server_run
+        assert pane.runtime_backend == "server"
+        assert pane.selected_operation_key == screen._rerun_operation_key(
+            "server", "server-job-8"
+        )
+        assert not rerun.disabled
+
+        rerun.press()
+        for _ in range(40):
+            await pilot.pause()
+            if screen._controller.launch_run.await_count:
+                break
+
+        screen._controller.launch_run.assert_awaited_once_with(
+            runtime_backend="server",
+            source_id=None,
+            job_id="server-job-8",
+        )
+
+
+@pytest.mark.asyncio
 async def test_missing_run_deep_link_is_consumed_without_later_stale_selection():
     app = _build_test_app()
     screen = WatchlistsCollectionsScreen(app)
