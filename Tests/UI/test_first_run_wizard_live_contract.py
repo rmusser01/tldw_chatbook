@@ -3637,24 +3637,24 @@ async def test_model_step_renders_auth_copy_on_both_handoff_branches(
             )
 
             provider = next(s for s in container.steps if isinstance(s, ProviderStep))
-            provider.select_provider("openai")
-            await pilot.pause(0.4)
-            # A credential is required for the step to commit at all.
-            provider.query_one("#setup-provider-api-key", Input).value = "rejected-key"
-            await pilot.pause(0.3)
-
             outcome = _recorded_auth_failure_result()
 
             def _fake_begin(provider_draft, *, sync_live_credential=True):
-                # Stand in for the network at the exact seam where commit
-                # starts discovery, recording what a real 401 leaves behind:
-                # a failed discovery whose typed outcome says "credentials".
+                # Stand in for the network at the exact seam where selection
+                # and commit start discovery, recording what a real 401
+                # leaves behind: a failed discovery whose typed outcome says
+                # "credentials". Installed BEFORE select_provider, which
+                # kicks off a real discovery worker of its own -- otherwise
+                # this test would do genuine network work and depend on its
+                # timing rather than isolating the handoff.
                 draft = (
                     provider._effective_provider_draft()
                     if isinstance(provider_draft, str) or provider_draft is None
                     else provider_draft
                 )
                 key = provider._model_discovery_key(draft)
+                if key is None:
+                    return
                 provider._selected_discovery_key = key
                 provider._selected_discovery_state = "failed"
                 provider._selected_provider_outcomes = {key: outcome}
@@ -3680,6 +3680,13 @@ async def test_model_step_renders_auth_copy_on_both_handoff_branches(
                 monkeypatch.setattr(
                     provider, "_outcome_from_selected_discovery", _no_outcome
                 )
+
+            provider.select_provider("openai")
+            await pilot.pause(0.3)
+            # A credential is required for the step to commit at all, and
+            # entering it is what re-keys the discovery commit then records.
+            provider.query_one("#setup-provider-api-key", Input).value = "rejected-key"
+            await pilot.pause(0.3)
 
             _press(app.screen, "#wizard-next")
             await _wait_until(
