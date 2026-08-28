@@ -5,7 +5,7 @@ status: Done
 assignee:
   - '@codex'
 created_date: '2026-08-22'
-updated_date: '2026-08-28 14:43'
+updated_date: '2026-08-28 15:23'
 labels:
   - console
   - rag
@@ -143,12 +143,12 @@ logs.
 The final qualification reconciled all governed documentation and joined the
 migration, policy, runtime, send, recovery, queue, continuation, activity,
 sync/export, Settings, and Textual paths. Exact post-rebase Delivery 6
-verification passed 1,760 tests in 347.59 seconds, the focused new contract
-passed 41 tests in 2.51 seconds, and 23 exact counterfactual node IDs expanded
+verification passed 1,760 tests in 339.21 seconds, the focused new contract
+passed 41 tests in 2.61 seconds, and 23 exact counterfactual node IDs expanded
 to 29 passing cases across nine security/correctness guard families;
 TASK-19900.6 records the full list. Ruff, compileall, CSS bundle sync,
 screen-size ratchet, production
-diagnostic inventory (540 owners, 1,260 TASK-492 calls, 7,394 TASK-494 calls,
+diagnostic inventory (541 owners, 1,260 TASK-492 calls, 7,396 TASK-494 calls,
 and 8 sink files), backlog-ID, and diff checks passed. An explicitly
 isolated real-app walkthrough proved Direct/RAG disclosure, all four policy
 states, exact manual-search draft preservation, atomic first persistence,
@@ -159,6 +159,10 @@ PR review also closed Qodo's three findings by moving purge reads under the
 transaction boundary, routing scripted tool/continuation turns through the
 production streaming adapter, and restoring exact privacy-safe direct-tool
 argument assertions. TASK-19900.6 records the red/green and focused evidence.
+The final `dev` rebase also inherited two Virtual CLI callback warnings that
+could persist raw exception text; canary-based regression coverage now proves
+they emit exception types only, and the reviewed diagnostic inventory includes
+that new two-call owner.
 
 TASK-19900.1 through TASK-19900.6 are Done with checked acceptance criteria.
 The owner approved the integrated targeted scope and chose not to run the full

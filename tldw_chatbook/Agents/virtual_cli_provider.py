@@ -381,7 +381,10 @@ class VirtualCliProvider:
         try:
             self._persist_approval(hub, decision)
         except Exception as exc:
-            logger.warning(f"Virtual CLI approval persistence failed: {exc}")
+            logger.warning(
+                "Virtual CLI approval persistence failed (exception_type={})",
+                type(exc).__name__,
+            )
 
     def _record(self, hub: HubTool, decision: str) -> None:
         if self._record_decision is None:
@@ -389,4 +392,7 @@ class VirtualCliProvider:
         try:
             self._record_decision(hub, decision)
         except Exception as exc:
-            logger.warning(f"Virtual CLI decision audit failed: {exc}")
+            logger.warning(
+                "Virtual CLI decision audit failed (exception_type={})",
+                type(exc).__name__,
+            )
