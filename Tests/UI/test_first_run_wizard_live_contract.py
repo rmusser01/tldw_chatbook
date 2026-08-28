@@ -98,6 +98,7 @@ from tldw_chatbook.UI.Wizards.first_run_setup_state import (
     build_first_run_model_discovery_key,
 )
 from tldw_chatbook.UI.Wizards.FirstRunSetupWizard import (
+    _PICKER_MODEL_LIMIT,
     FirstRunSetupWizard,
     ModelStep,
     NotesSyncStep,
@@ -3749,6 +3750,11 @@ async def test_production_sized_catalog_reaches_the_model_picker(
     * the discovery module's identity encoding -- removing that header
       fails here as ``invalid_response``, because the peer compresses.
 
+    It also pins ModelStep's own handoff: the assertion is on
+    ``_discovered_model_ids``, the full set the step produced, because the
+    rendered picker is capped at ``_PICKER_MODEL_LIMIT`` and would hide any
+    trim that kept the first 20.
+
     It does NOT pin the settings_endpoint_probe encoding fix: this path
     never presses Test, so the probe module is not exercised. That one is
     covered by
@@ -3810,6 +3816,7 @@ async def test_production_sized_catalog_reaches_the_model_picker(
                     if labels and all("loading models" not in x for x in labels):
                         break
                 outcomes = dict(provider._selected_provider_outcomes)
+                handed_off_ids = model_step._discovered_model_ids
 
     # The boundary that used to reject: a production-sized catalog must come
     # back as a success with every model, not as an error the step renders as
@@ -3825,15 +3832,28 @@ async def test_production_sized_catalog_reaches_the_model_picker(
         "the newest model is missing; a trim drops it first"
     )
 
+    # The boundary that actually matters for a trim: what ModelStep produced
+    # when it consumed that outcome, before the picker's bounded slice. The
+    # rendered list cannot stand in for this -- the picker shows only
+    # _PICKER_MODEL_LIMIT entries, so any trim that keeps the first 20 is
+    # invisible there.
+    assert len(handed_off_ids) == catalog_size, (
+        f"ModelStep's handoff produced {len(handed_off_ids)} of {catalog_size} "
+        "ids -- a bound between discovery and the picker trimmed the catalog"
+    )
+    assert handed_off_ids[-1] == newest_model, (
+        "the newest model is missing from the handoff; a trim drops it first"
+    )
+
     # ...and the step renders a real choice list rather than a failure row.
-    # The picker deliberately shows only the first models[:20]; the point
-    # here is that it shows models at all, which it did not when the catalog
-    # exceeded the extractor's bound.
     assert labels, "the picker rendered nothing"
     assert not any("Couldn't reach" in label for label in labels), (
         f"a reachable peer with a full catalog rendered as a failure: {labels}"
     )
     assert labels[0].startswith("model-0"), labels[:3]
+    assert len(labels) == _PICKER_MODEL_LIMIT, (
+        f"the picker's bounded slice changed: {len(labels)} rows"
+    )
 
     # Identity encoding on the discovery request, asserted from the
     # server's point of view. Note this covers the discovery module's
