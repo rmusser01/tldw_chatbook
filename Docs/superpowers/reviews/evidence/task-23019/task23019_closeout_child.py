@@ -184,9 +184,13 @@ def _write_allowed(path: object) -> bool:
     return resolved is not None and _under(resolved, _SCRATCH)
 
 
-def _fd_write_allowed(descriptor: int) -> bool:
+def _fd_mutation_allowed(descriptor: int, *, metadata_only: bool) -> bool:
     opened = _fd_authority(descriptor)
-    return bool(opened is not None and opened[2] and _under(opened[0], _SCRATCH))
+    return bool(
+        opened is not None
+        and (metadata_only or opened[2])
+        and _under(opened[0], _SCRATCH)
+    )
 
 
 def _traversal_allowed(path: str, flags: int) -> bool:
@@ -258,7 +262,9 @@ def _audit(event: str, arguments: tuple[object, ...]) -> None:
         return
     if event in _MUTATION_SINGLE_PATH_EVENTS:
         if arguments and isinstance(arguments[0], int):
-            if not _fd_write_allowed(arguments[0]):
+            if not _fd_mutation_allowed(
+                arguments[0], metadata_only=event != "os.truncate"
+            ):
                 _contain(FILESYSTEM_WRITE_DENIED)
             return
         dir_fd_index = _MUTATION_DIR_FD_INDEX.get(event)

@@ -1840,6 +1840,72 @@ def test_child_allows_tracked_scratch_file_descriptor_mutation(api, tmp_path):
     assert (scratch / "attempts.jsonl").read_bytes() == b""
 
 
+@pytest.mark.skipif(
+    not hasattr(os, "fchmod"),
+    reason="read-only descriptor metadata coverage requires os.fchmod",
+)
+def test_child_allows_scratch_metadata_mutation_through_read_only_descriptor(tmp_path):
+    module = _load_runner()
+    body = textwrap.dedent(
+        """
+        scratch_file = os.path.join(os.environ["TMPDIR"], "read-only.bin")
+        created_fd = os.open(scratch_file, os.O_WRONLY | os.O_CREAT, 0o400)
+        os.close(created_fd)
+        read_only_fd = os.open(scratch_file, os.O_RDONLY)
+        os.fchmod(read_only_fd, 0o600)
+        os.close(read_only_fd)
+        """
+    ).strip()
+
+    result, scratch, _checkout = _run_pytest_child(
+        module, tmp_path, body, must_not_continue=False
+    )
+
+    assert result.returncode == 0
+    assert result.error is None
+    assert (scratch / "tmp/read-only.bin").stat().st_mode & 0o777 == 0o600
+    assert (scratch / "attempts.jsonl").read_bytes() == b""
+
+
+@pytest.mark.skipif(
+    not hasattr(os, "ftruncate"),
+    reason="read-only descriptor data-mutation coverage requires os.ftruncate",
+)
+def test_child_blocks_scratch_data_mutation_through_read_only_descriptor(tmp_path):
+    module = _load_runner()
+    body = textwrap.dedent(
+        """
+        scratch_file = os.path.join(os.environ["TMPDIR"], "read-only.bin")
+        created_fd = os.open(scratch_file, os.O_WRONLY | os.O_CREAT, 0o600)
+        os.close(created_fd)
+        read_only_fd = os.open(scratch_file, os.O_RDONLY)
+        os.ftruncate(read_only_fd, 0)
+        """
+    ).strip()
+
+    result, scratch, _checkout = _run_pytest_child(module, tmp_path, body)
+
+    _assert_containment_attempt(module, result, scratch, "filesystem_write_denied")
+
+
+@pytest.mark.skipif(
+    not hasattr(os, "fchmod"),
+    reason="runtime descriptor metadata coverage requires os.fchmod",
+)
+def test_child_blocks_runtime_metadata_mutation_through_read_only_descriptor(tmp_path):
+    module = _load_runner()
+    body = textwrap.dedent(
+        """
+        runtime_fd = os.open(os.path.realpath(os.sys.executable), os.O_RDONLY)
+        os.fchmod(runtime_fd, 0o600)
+        """
+    ).strip()
+
+    result, scratch, _checkout = _run_pytest_child(module, tmp_path, body)
+
+    _assert_containment_attempt(module, result, scratch, "filesystem_write_denied")
+
+
 @pytest.mark.parametrize("api", FD_MUTATION_APIS)
 def test_child_blocks_file_descriptor_mutation_for_checkout_read(api, tmp_path):
     module = _load_runner()
@@ -2398,6 +2464,26 @@ def test_real_hermetic_child_still_runs_declared_synchronous_selector(tmp_path):
     matching = module.matching_node_ids(selector, recorded)
     assert matching
     assert {recorded[node_id] for node_id in matching} == {"PASS"}
+
+
+def test_real_hermetic_child_allows_legacy_config_private_read(tmp_path):
+    module = _load_runner()
+    selector = (
+        "Tests/UI/test_library_media_reader_shell.py::"
+        "test_persisted_shared_library_read_honors_real_legacy_config"
+    )
+    scratch = tmp_path / "legacy-config-child"
+
+    result = module.run_closeout_child(
+        checkout=REPO_ROOT,
+        scratch=scratch,
+        mode="pytest",
+        target=Path(f"{REPO_ROOT / selector}"),
+    )
+
+    assert result.returncode == 0
+    assert result.error is None
+    assert json.loads(result.result_path.read_text()) == {selector: "PASS"}
 
 
 def test_child_pytest_explicitly_loads_only_required_async_plugin(
