@@ -4471,8 +4471,8 @@ def test_generated_readme_is_the_canonical_closeout_runbook(tmp_path):
     ):
         assert literal in readme
     assert (
-        f"- `{kwargs['subject'].commit[:10]}`: frozen subject including current "
-        "visible-control remount settling"
+        f"- `{kwargs['subject'].commit[:10]}`: frozen subject including all current "
+        "final hardening"
     ) in readme
 
 
