@@ -988,6 +988,12 @@ def _legacy_model_ids(values: object) -> tuple[str, ...]:
     return tuple(model_ids)
 
 
+# The category a failed discovery falls back to when nothing more specific is
+# known. It drives user-visible copy (see classify_discovery_failure), so the
+# fallback branches must not drift apart from each other.
+GENERIC_DISCOVERY_FAILURE_CATEGORY = "request failed"
+
+
 def _model_discovery_ui_outcome(result: object) -> tuple[list[str], str, str]:
     """Interpret one typed discovery result into bounded Model-step state."""
 
@@ -1008,7 +1014,7 @@ def _model_discovery_ui_outcome(result: object) -> tuple[list[str], str, str]:
     category = {
         "invalid_response": "invalid response",
         "missing_credentials": "authentication",
-    }.get(error_kind, "request failed")
+    }.get(error_kind, GENERIC_DISCOVERY_FAILURE_CATEGORY)
     return [], "connection_failed", category
 
 
@@ -1034,12 +1040,12 @@ def _handed_off_failure_category(owner: object, discovery_key: object) -> str:
 
     outcomes = getattr(owner, "_selected_provider_outcomes", None)
     if not isinstance(outcomes, Mapping) or discovery_key not in outcomes:
-        return "request failed"
+        return GENERIC_DISCOVERY_FAILURE_CATEGORY
     try:
         _models, _state, category = _model_discovery_ui_outcome(outcomes[discovery_key])
     except ValueError:
-        return "request failed"
-    return category or "request failed"
+        return GENERIC_DISCOVERY_FAILURE_CATEGORY
+    return category or GENERIC_DISCOVERY_FAILURE_CATEGORY
 
 
 def _first_run_discovery_staged_settings(

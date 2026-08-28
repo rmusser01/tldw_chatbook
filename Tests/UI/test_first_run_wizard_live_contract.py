@@ -3573,3 +3573,146 @@ async def test_provider_test_button_requests_identity_encoding_from_a_real_peer(
         "a reachable, gzip-capable peer must verify as reachable, not fail "
         f"the way the live incident did: {status.renderable!r}"
     )
+
+
+# ---------------------------------------------------------------------------
+# TASK-23091 (Qodo review, PR #2171): the category helper is unit-tested, but
+# the two _load_models handoff branches that consume it are what actually
+# render copy. Without wizard-level coverage a wiring revert would put
+# "Couldn't reach the server" back in front of users while every unit test
+# stayed green.
+# ---------------------------------------------------------------------------
+
+
+def _recorded_auth_failure_result():
+    from tldw_chatbook.LLM_Provider_Catalog.model_discovery_contracts import (
+        ModelDiscoveryError,
+        ModelDiscoveryResult,
+    )
+
+    return ModelDiscoveryResult(
+        provider="openai",
+        provider_list_key="openai",
+        endpoint_fingerprint="https://api.openai.com/v1",
+        status="error",
+        error=ModelDiscoveryError(
+            kind="missing_credentials",
+            message="The models endpoint rejected the configured credentials.",
+            recovery_hint="Check the API key configured for this provider.",
+        ),
+    )
+
+
+@pytest.mark.parametrize("handoff", ["models_mapping", "outcome_unavailable"])
+@pytest.mark.asyncio
+async def test_model_step_renders_auth_copy_on_both_handoff_branches(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, handoff: str
+) -> None:
+    """A rejected key must read as a rejected key on either handoff path.
+
+    Both _load_models branches previously hardcoded the generic category, so
+    a 401 rendered as "Couldn't reach the server ... Check it's running" --
+    pointing away from the fix, which lives one step Back. This drives the
+    real wizard to the Model step and asserts the rendered radio copy, so
+    reverting either call site fails here even though the helper's own unit
+    tests would still pass.
+
+    Args:
+        monkeypatch: Pytest fixture used to isolate config/HOME state and,
+            for the second branch, to force the outcome-unavailable path.
+        tmp_path: Pytest fixture providing the throwaway profile directory.
+        handoff: Which _load_models branch to exercise.
+    """
+    app = _build_fresh_wizard_app(monkeypatch, tmp_path)
+    with patch("tldw_chatbook.app.get_cli_setting", side_effect=_test_cli_setting):
+        async with app.run_test(size=(140, 45)) as pilot:
+            await _wait_until(
+                pilot, lambda: type(app.screen).__name__ == "FirstRunSetupWizard"
+            )
+            container = app.screen.query_one(SetupWizardContainer)
+            await _wait_until(pilot, lambda: container.can_proceed)
+            _press(app.screen, "#wizard-next")
+            await _wait_until(
+                pilot, lambda: _current_step_id(container) == STEP_PROVIDER
+            )
+
+            provider = next(s for s in container.steps if isinstance(s, ProviderStep))
+            provider.select_provider("openai")
+            await pilot.pause(0.4)
+            # A credential is required for the step to commit at all.
+            provider.query_one("#setup-provider-api-key", Input).value = "rejected-key"
+            await pilot.pause(0.3)
+
+            outcome = _recorded_auth_failure_result()
+
+            def _fake_begin(provider_draft, *, sync_live_credential=True):
+                # Stand in for the network at the exact seam where commit
+                # starts discovery, recording what a real 401 leaves behind:
+                # a failed discovery whose typed outcome says "credentials".
+                draft = (
+                    provider._effective_provider_draft()
+                    if isinstance(provider_draft, str) or provider_draft is None
+                    else provider_draft
+                )
+                key = provider._model_discovery_key(draft)
+                provider._selected_discovery_key = key
+                provider._selected_discovery_state = "failed"
+                provider._selected_provider_outcomes = {key: outcome}
+                provider._selected_provider_models = {key: []}
+                container._first_run_provider_discovery_owner = provider
+                container._first_run_selected_provider_outcomes = {}
+                if handoff == "models_mapping":
+                    # Branch 1: models handed off, empty, owner failed.
+                    container._first_run_selected_provider_models = {key: []}
+                else:
+                    # Branch 2: nothing handed off and no typed outcome comes
+                    # back, so the owner's recorded state is the only source.
+                    container._first_run_selected_provider_models = {}
+
+            monkeypatch.setattr(
+                provider, "_begin_selected_provider_discovery", _fake_begin
+            )
+            if handoff != "models_mapping":
+
+                async def _no_outcome(*_args, **_kwargs):
+                    return None
+
+                monkeypatch.setattr(
+                    provider, "_outcome_from_selected_discovery", _no_outcome
+                )
+
+            _press(app.screen, "#wizard-next")
+            await _wait_until(
+                pilot,
+                lambda: _current_step_id(container) == STEP_MODEL,
+                timeout_seconds=20.0,
+            )
+            model_step = container.steps[container.current_step]
+            # The placeholder is a non-empty label too, so waiting on
+            # "any text" can read the loading state and pass by accident.
+            await _wait_until(
+                pilot,
+                lambda: (
+                    (labels := [
+                        str(button.label)
+                        for button in model_step.query(
+                            "#setup-model-choice RadioButton"
+                        )
+                    ])
+                    and all("loading models" not in label for label in labels)
+                ),
+                timeout_seconds=20.0,
+            )
+            rendered = " ".join(
+                str(button.label)
+                for button in model_step.query("#setup-model-choice RadioButton")
+            )
+
+    assert "Authentication failed" in rendered, (
+        f"a rejected key rendered as something else on the {handoff!r} branch: "
+        f"{rendered!r}"
+    )
+    assert "Check it's running" not in rendered, (
+        "the generic server-unreachable copy is the exact wrong advice for a "
+        f"401: {rendered!r}"
+    )
