@@ -3208,6 +3208,7 @@ def _bounded_diagnostic(
     *,
     secrets: Collection[str] = (),
     roots: Collection[str] = (),
+    retain_tail: bool = False,
 ) -> str:
     """Normalize one diagnostic without retaining credentials or host paths."""
     text = "" if value is None else str(value)
@@ -3217,7 +3218,19 @@ def _bounded_diagnostic(
         text = text.replace(root, "<path>")
     text = _CREDENTIAL_ASSIGNMENT.sub(r"\1=<redacted>", text)
     text = _ABSOLUTE_PATH.sub("<path>", text)
-    return " ".join(text.split())[:MAX_DIAGNOSTIC_TEXT]
+    normalized = " ".join(text.split()).encode("utf-8")
+    if len(normalized) <= MAX_DIAGNOSTIC_TEXT:
+        return normalized.decode("utf-8")
+    if not retain_tail:
+        return normalized[:MAX_DIAGNOSTIC_TEXT].decode("utf-8", errors="ignore")
+    separator = b" ... "
+    head_size = (MAX_DIAGNOSTIC_TEXT - len(separator)) // 2
+    tail_size = MAX_DIAGNOSTIC_TEXT - len(separator) - head_size
+    return (
+        normalized[:head_size].decode("utf-8", errors="ignore")
+        + separator.decode()
+        + normalized[-tail_size:].decode("utf-8", errors="ignore")
+    )
 
 
 def _child_failure_details(
@@ -3229,7 +3242,10 @@ def _child_failure_details(
     details: dict[str, object] = {"returncode": completed.returncode}
     for stream in ("stdout", "stderr"):
         diagnostic = _bounded_diagnostic(
-            getattr(completed, stream, ""), secrets=secrets, roots=roots
+            getattr(completed, stream, ""),
+            secrets=secrets,
+            roots=roots,
+            retain_tail=stream == "stderr",
         )
         if diagnostic:
             details[stream] = diagnostic
@@ -3427,6 +3443,11 @@ def run_closeout_child(
 
     checkout_root = checkout.resolve()
     scratch_root = scratch.resolve()
+    resolved_target = target.resolve()
+    try:
+        target_identity = resolved_target.relative_to(checkout_root).as_posix()
+    except ValueError:
+        target_identity = "<outside-checkout>"
     source_environment = os.environ if environ is None else environ
     credential_values = tuple(
         value
@@ -3444,7 +3465,7 @@ def run_closeout_child(
         "--mode",
         mode,
         "--target",
-        str(target.resolve()),
+        str(resolved_target),
     ]
     for denied_root in prepared.denied_roots:
         command.extend(("--denied-root", denied_root))
@@ -3470,14 +3491,18 @@ def run_closeout_child(
             roots=(str(checkout_root), str(scratch_root), *prepared.denied_roots),
         )
         raise CloseoutError(
-            "child_failed", {"process": diagnostic or "process_failure"}
+            "child_failed",
+            {
+                "target": target_identity,
+                "process": diagnostic or "process_failure",
+            },
         ) from None
     if completed.returncode == CONTAINMENT_EXIT_STATUS:
         return ChildRunResult(
             returncode=completed.returncode,
             error="containment_failure",
             result_path=None,
-            details={"returncode": completed.returncode},
+            details={"returncode": completed.returncode, "target": target_identity},
         )
 
     result_path = scratch_root / (
@@ -3493,6 +3518,8 @@ def run_closeout_child(
         if completed.returncode or result_problem
         else None
     )
+    if details is not None:
+        details["target"] = target_identity
     child_error: str | None = None
     if result_problem is not None:
         assert details is not None

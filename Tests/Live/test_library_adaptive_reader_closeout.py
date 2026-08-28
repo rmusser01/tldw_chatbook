@@ -2994,12 +2994,56 @@ def test_child_nonzero_diagnostics_are_bounded_and_sanitized(tmp_path, monkeypat
 
     assert result.error == "child_failed"
     assert result.details["returncode"] == 7
+    assert result.details["target"] == "synthetic_scenarios.py"
     assert result.details["stdout"] == "partial output"
     assert len(result.details["stderr"]) <= module.MAX_DIAGNOSTIC_TEXT
     assert str(checkout) not in result.details["stderr"]
     assert secret not in result.details["stderr"]
     assert "<path>" in result.details["stderr"]
     assert "<redacted>" in result.details["stderr"]
+
+
+def test_child_failure_keeps_sanitized_traceback_tail_within_existing_cap(
+    tmp_path, monkeypatch
+):
+    module = _load_runner()
+    checkout = tmp_path / "Checkout With Spaces"
+    target = checkout / "Tests/Chat/test_failure.py"
+    target.parent.mkdir(parents=True)
+    target.write_text("def test_failure(): pass\n", encoding="utf-8")
+    secret = "tail-secret"
+    stderr = (
+        "config startup "
+        + "x" * module.MAX_DIAGNOSTIC_TEXT
+        + f"\n  File {checkout}/private.py\nAPI_TOKEN={secret}\n"
+        + "RuntimeError: terminal traceback"
+    )
+
+    monkeypatch.setattr(
+        module,
+        "_run_bounded_process",
+        lambda command, **_kwargs: subprocess.CompletedProcess(
+            command, 1, stdout="", stderr=stderr
+        ),
+    )
+
+    result = module.run_closeout_child(
+        checkout=checkout,
+        scratch=tmp_path / "scratch",
+        mode="pytest",
+        target=target,
+        environ={"HOME": str(tmp_path / "home"), "API_TOKEN": secret},
+    )
+
+    assert result.error == "child_failed"
+    assert result.details["target"] == "Tests/Chat/test_failure.py"
+    assert "config startup" in result.details["stderr"]
+    assert "RuntimeError: terminal traceback" in result.details["stderr"]
+    assert "<path>" in result.details["stderr"]
+    assert "<redacted>" in result.details["stderr"]
+    assert str(checkout) not in result.details["stderr"]
+    assert secret not in result.details["stderr"]
+    assert len(result.details["stderr"].encode("utf-8")) <= (module.MAX_DIAGNOSTIC_TEXT)
 
 
 @pytest.mark.parametrize(
@@ -3046,6 +3090,7 @@ def test_child_result_failures_are_stably_classified(
     assert result.error == "child_failed"
     assert result.details == {
         "returncode": returncode,
+        "target": "synthetic_scenarios.py",
         "stdout": f"{name} stdout",
         "stderr": f"{name} stderr",
         "result_parse": parse_detail,
