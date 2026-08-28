@@ -145,9 +145,9 @@ integers are the same identity.
 ## Refresh flow
 
 1. `RunsPane` posts `RefreshRunsRequested`.
-2. The screen increments the Runs refresh generation for every accepted
-   Refresh, then captures the current backend, selected run id, and that new
-   generation token.
+2. The screen claims the Runs list-publication token for every accepted
+   authoritative list/load or explicit Refresh, then captures the current
+   backend, selected run id, and that new token.
 3. An exclusive `wc_runs` worker requests the latest 100 rows into local
    staged values. Nothing is published yet.
 4. If the selected id is present, that fresh row becomes the candidate
@@ -159,9 +159,9 @@ integers are the same identity.
    - a transient lookup failure aborts the refresh and preserves the mounted
      snapshot.
 6. Before publication, the worker verifies that the backend is unchanged and
-   the captured generation still equals the screen's current generation.
-   Every newer accepted Refresh supersedes the older token immediately;
-   obsolete results are discarded silently.
+   the captured list-publication token still equals the screen's current token.
+   Every newer accepted authoritative list/load or Refresh supersedes the older
+   token immediately; obsolete results are discarded silently.
 7. Rows and selection publish together.
 8. The selected fresh record is loaded through an exclusive
    `wc_run_detail` worker. A cleared selection schedules the same grouped
@@ -171,6 +171,16 @@ If the initial row request fails, the existing type-only error notification is
 shown and rows, selection, detail, and action state remain unchanged. A detail
 query failure does not roll back a successful row refresh; the existing run
 detail failure note and toast explain that narrower failure.
+
+### Split Runs publication authorities
+
+Authoritative list/load work and explicit Refresh own the list-publication token
+and pending authority. Accepting that work invalidates older periodic ticks, and
+the pending marker suppresses ticks until the authoritative request settles so a
+tick cannot discard a user Refresh or newly added/deleted rows. Periodic ticks
+use a separate newest-wins epoch, with backend and selection ABA guards before
+publishing their selected-row update. A backend transition invalidates both the
+list authority and the tick epoch.
 
 "Authoritative not found" is intentionally narrow:
 
@@ -203,9 +213,10 @@ for this purpose and retain the complete mounted snapshot.
    - raised exception: a stated error and warning log.
 7. `finally` removes both shared and Re-run-origin state and repaints the
    button, even on unexpected failure or screen/layout changes.
-8. Completion uses the same generation-advancing Refresh dispatcher as the
-   toolbar action, which schedules the authoritative reload in `wc_runs`; it
-   does not call the loader inline from the mutation worker.
+8. Completion uses the same authoritative list-publication Refresh dispatcher
+   as the toolbar action, which claims the list token, invalidates older ticks,
+   and schedules the reload in `wc_runs`; it does not call the loader inline
+   from the mutation worker.
 
 Different targets may execute concurrently. Repeated local work for the same
 source is refused regardless of whether it originated from Sources, Inspector,
@@ -294,6 +305,8 @@ Reason: the repair establishes a cross-module/runtime identity and publication
 boundary: canonical local subscription keys, distinct server source/job
 namespaces, controller forwarding through the existing scope seam, and
 screen-owned concurrency plus monotonic Runs publication/selection authority.
+The list-publication token and pending authority are distinct from the
+newest-wins periodic-tick epoch; both are invalidated on backend transition.
 
 The 2026-08-27 amendment to ADR-042 records this boundary; it introduces no
 new backend API, storage, or navigation architecture.

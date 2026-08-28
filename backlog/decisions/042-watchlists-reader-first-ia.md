@@ -77,9 +77,13 @@ within the existing Watchlists screen:
 - The backend controller forwards `source_id` and `job_id` through the existing
   scope-service seam; no new backend API is introduced.
 - `WatchlistsCollectionsScreen` owns shared operation concurrency and monotonic
-  Runs publication/selection authority across refresh, load, tick, and backend
-  changes. Stale generations and obsolete backend results are discarded before
-  publication.
+  Runs publication/selection authority. Authoritative list/load/explicit
+  Refresh intents own the list-publication token and pending authority; accepting
+  authoritative list work invalidates older ticks. Periodic ticks use a separate
+  newest-wins epoch and remain guarded by backend and selection ABA checks, and
+  are suppressed while authoritative list work is pending so they cannot discard
+  a user Refresh or added/deleted rows. A backend transition invalidates both
+  authorities before any result may publish.
 
 ## Context
 

@@ -4,7 +4,7 @@
 
 **Goal:** Make the Watchlists Runs toolbar reload authoritative rows/detail and make Re-run source visibly busy, honestly reported, duplicate-safe, and automatically refreshed.
 
-**Architecture:** Keep `RunsPane` as a presentation/message surface and keep `WatchlistsCollectionsScreen` as the lifecycle, worker, notification, and publication owner. Reuse the existing controller/scope `launch_run` seam, Check-now outcome helpers, canonical Watchlists ids, `wc_runs`, and `wc_run_detail`; add only the backend-specific job forwarding, staged generation-checked refresh, and narrow Re-run-origin presentation state required by the approved design.
+**Architecture:** Keep `RunsPane` as a presentation/message surface and keep `WatchlistsCollectionsScreen` as the lifecycle, worker, notification, and publication owner. Reuse the existing controller/scope `launch_run` seam, Check-now outcome helpers, canonical Watchlists ids, `wc_runs`, and `wc_run_detail`; add only the backend-specific job forwarding, staged list-publication-token-checked refresh, separate newest-wins tick epoch, and narrow Re-run-origin presentation state required by the approved design.
 
 **Tech Stack:** Python 3.11+, Textual 8.x messages/reactives/workers, existing Watchlists controller/scope services, pytest/pytest-asyncio, Ruff.
 
@@ -283,6 +283,12 @@ def _request_runs_refresh(self) -> None:
 
 `handle_refresh_runs_requested()` stops the message and calls this dispatcher.
 
+The authority split is deliberate: authoritative list/load/explicit Refresh
+intents claim the list-publication token and pending marker, and accepting one
+invalidates older ticks. Periodic ticks use a separate newest-wins epoch with
+backend/selection ABA guards; pending authoritative list work suppresses ticks.
+Backend transitions invalidate both authorities.
+
 - [ ] **Step 4: Implement staged acquisition and narrow not-found classification**
 
 Add helpers with explicit inputs rather than rereading mutable screen state mid-worker:
@@ -522,6 +528,7 @@ destination-shell nodes below are the gate.
   Tests/UI/test_watchlists_check_now_progress.py \
   Tests/UI/test_watchlists_check_now_skipped.py \
   Tests/UI/test_watchlists_check_now_failure.py \
+  Tests/UI/test_watchlists_destination_shell.py::test_mounted_server_run_deep_link_reseeds_server_rerun_identity \
   Tests/UI/test_watchlists_destination_shell.py::test_rerun_busy_state_survives_a_mounted_runs_pane_rebuild \
   Tests/UI/test_watchlists_destination_shell.py::test_unmounting_during_rerun_cleans_state_without_refreshing \
   Tests/UI/test_watchlists_destination_shell.py::test_external_local_check_now_paints_the_selected_run_as_checking \
@@ -581,7 +588,12 @@ Expected: no whitespace errors anywhere in the branch; only intentional task/imp
 
 Inspect `git diff origin/dev...HEAD` and confirm:
 
-- Refresh stages before publication and advances generation on every accepted request;
+- authoritative list/load/explicit Refresh work stages before publication and
+  owns the list-publication token/pending authority; accepting it invalidates
+  older ticks;
+- periodic ticks use a separate newest-wins epoch with backend/selection ABA
+  guards and are suppressed while authoritative list work is pending;
+- backend transitions invalidate both publication authorities;
 - only local `KeyError` and server 404 clear an absent selected run;
 - backend/generation/detail guards precede publication;
 - local Check now/Re-run share a canonical source key;
@@ -598,7 +610,9 @@ Update all acceptance criteria to checked, add concise Implementation Notes incl
 ```bash
 git add "backlog/tasks/task-2331 - Runs-toolbar-Refresh-reloads-and-Re-run-gives-feedback.md"
 git add Docs/superpowers/plans/2026-08-27-watchlists-runs-refresh-rerun-feedback.md
-git commit -m "docs: record Watchlists runs authority"
+git add Docs/superpowers/specs/2026-08-27-watchlists-runs-refresh-rerun-feedback-design.md
+git add backlog/decisions/042-watchlists-reader-first-ia.md
+git commit -m "docs: finalize Watchlists run authority"
 git diff --check origin/dev...HEAD
 git status --short
 ```
