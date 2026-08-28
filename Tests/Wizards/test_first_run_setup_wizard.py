@@ -13095,3 +13095,87 @@ def test_malformed_entry_in_the_tail_is_still_rejected():
 
     with pytest.raises(ValueError, match="discovery"):
         _model_ids_from_discovery_result(replace(result, models=poisoned))
+
+
+# ---------------------------------------------------------------------------
+# TASK-23091: ModelStep's handoff paths flattened every failure to
+# "request failed", so an authentication rejection told the user to check
+# whether their server was running. That wording masked the real cause for
+# most of the TASK-23089 investigation.
+# ---------------------------------------------------------------------------
+
+
+def _errored_discovery_result(kind: str):
+    from tldw_chatbook.LLM_Provider_Catalog.model_discovery_contracts import (
+        ModelDiscoveryError,
+        ModelDiscoveryResult,
+    )
+
+    return ModelDiscoveryResult(
+        provider="openai",
+        provider_list_key="openai",
+        endpoint_fingerprint="https://api.openai.com/v1",
+        status="error",
+        error=ModelDiscoveryError(
+            kind=kind,
+            message="The models endpoint rejected the configured credentials.",
+            recovery_hint="Check the API key configured for this provider.",
+        ),
+    )
+
+
+def test_handed_off_auth_failure_keeps_its_authentication_category():
+    """A rejected key must not be reported as an unreachable server.
+
+    ProviderStep records the typed outcome even on handoff paths where
+    ModelStep never receives one directly. Flattening those to
+    "request failed" rendered "Couldn't reach the server ... Check it's
+    running" for a 401 -- unactionable, and the opposite of the fix the
+    user needs (the key lives one step Back).
+    """
+    from tldw_chatbook.UI.Wizards import first_run_setup_state as wizard_state
+    from tldw_chatbook.UI.Wizards.FirstRunSetupWizard import (
+        _handed_off_failure_category,
+    )
+
+    key = object()
+    owner = SimpleNamespace(
+        _selected_provider_outcomes={key: _errored_discovery_result(
+            "missing_credentials"
+        )}
+    )
+
+    category = _handed_off_failure_category(owner, key)
+
+    assert category == "authentication"
+    # The category is only useful if it still reaches the auth copy branch.
+    assert wizard_state.classify_discovery_failure("connection_failed", category) == (
+        wizard_state.PROVIDER_PROBE_AUTH
+    )
+
+
+def test_handed_off_failure_without_a_recorded_outcome_stays_generic():
+    """Without a typed outcome there is nothing more specific to say."""
+    from tldw_chatbook.UI.Wizards import first_run_setup_state as wizard_state
+    from tldw_chatbook.UI.Wizards.FirstRunSetupWizard import (
+        _handed_off_failure_category,
+    )
+
+    for owner in (None, SimpleNamespace(_selected_provider_outcomes={})):
+        category = _handed_off_failure_category(owner, object())
+        assert category == "request failed"
+        assert wizard_state.classify_discovery_failure(
+            "connection_failed", category
+        ) == wizard_state.PROVIDER_PROBE_CONNECTION
+
+
+def test_handed_off_failure_category_survives_a_malformed_outcome():
+    """A junk recorded outcome degrades to the generic wording, never raises."""
+    from tldw_chatbook.UI.Wizards.FirstRunSetupWizard import (
+        _handed_off_failure_category,
+    )
+
+    key = object()
+    owner = SimpleNamespace(_selected_provider_outcomes={key: object()})
+
+    assert _handed_off_failure_category(owner, key) == "request failed"
