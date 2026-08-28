@@ -937,21 +937,26 @@ def _model_ids_from_discovery_result(result: object) -> tuple[str, ...]:
     if type(result.models) is not tuple:
         raise ValueError("Model discovery result is invalid.")
     # Bound this typed path by the *discovery* limit, not the probe's
-    # MODEL_IDS_MAX_COUNT sample. Two incidents, one line: rejecting an
-    # over-bound result turned a successful 128-model discovery into
-    # "Couldn't reach the server" (the caller folds any raise into a failed
-    # discovery), and truncating to 100 instead silently dropped the newest
-    # 28 -- api.openai.com returns models in roughly chronological order, so
-    # a 100-cap hides exactly the flagship models a user came for
-    # (gpt-5.4, gpt-5.4-pro, gpt-5.3-chat-latest were all lost). Discovery
-    # already fails closed above DISCOVERED_MODEL_MAX_COUNT, so this is a
-    # defensive ceiling rather than a routine trim. The legacy/local probe
-    # seam (_legacy_model_ids) keeps the smaller sample bound.
+    # MODEL_IDS_MAX_COUNT sample. Two incidents, one line: bounding at 100
+    # rejected a successful 128-model discovery outright, which the caller
+    # folds into a failed discovery ("Couldn't reach the server"), and
+    # truncating to 100 instead silently dropped the newest 28 --
+    # api.openai.com returns models in roughly chronological order, so a
+    # 100-cap hides exactly the flagship models a user came for (gpt-5.4,
+    # gpt-5.4-pro, gpt-5.3-chat-latest were all lost).
+    #
+    # Reject rather than truncate above the ceiling, and validate every
+    # entry: discovery itself fails closed above DISCOVERED_MODEL_MAX_COUNT,
+    # so an over-ceiling typed result did not come from that path and is
+    # genuinely anomalous. Truncating instead would leave the tail
+    # unvalidated and quietly break this helper's reject-malformed contract.
+    # The legacy/local probe seam (_legacy_model_ids) keeps the smaller
+    # sample bound.
+    if len(result.models) > DISCOVERED_MODEL_MAX_COUNT:
+        raise ValueError("Model discovery result is invalid.")
     model_ids: list[str] = []
     seen: set[str] = set()
     for discovered in result.models:
-        if len(model_ids) >= DISCOVERED_MODEL_MAX_COUNT:
-            break
         if type(discovered) is not DiscoveredModel:
             raise ValueError("Model discovery result is invalid.")
         try:

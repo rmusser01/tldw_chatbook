@@ -13052,8 +13052,16 @@ def test_real_sized_provider_catalog_reaches_the_picker_intact():
     assert len(set(model_ids)) == len(model_ids)
 
 
-def test_typed_catalog_is_still_ceilinged_by_the_discovery_bound():
-    """The relaxed bound is a ceiling, not an absence of one."""
+def test_typed_catalog_over_the_discovery_ceiling_is_rejected():
+    """The relaxed bound is a ceiling, and it fails closed above it.
+
+    Rejecting rather than truncating is deliberate (Qodo review, PR #2158):
+    a truncating loop would stop validating once the ceiling was reached,
+    so a malformed DiscoveredModel in the tail would slip past this
+    helper's reject-malformed contract. Discovery itself fails closed above
+    DISCOVERED_MODEL_MAX_COUNT, so an over-ceiling typed result never came
+    from that path.
+    """
     from tldw_chatbook.LLM_Provider_Catalog.openai_compatible_model_discovery import (
         DISCOVERED_MODEL_MAX_COUNT,
     )
@@ -13066,6 +13074,24 @@ def test_typed_catalog_is_still_ceilinged_by_the_discovery_bound():
         *[f"model-{index}" for index in range(DISCOVERED_MODEL_MAX_COUNT + 25)],
     )
 
-    assert len(_model_ids_from_discovery_result(oversized)) == (
-        DISCOVERED_MODEL_MAX_COUNT
+    with pytest.raises(ValueError, match="discovery"):
+        _model_ids_from_discovery_result(oversized)
+
+
+def test_malformed_entry_in_the_tail_is_still_rejected():
+    """Every entry is validated, not just those before a truncation point."""
+    from dataclasses import replace
+
+    from tldw_chatbook.UI.Wizards.FirstRunSetupWizard import (
+        _model_ids_from_discovery_result,
     )
+
+    result = _typed_model_discovery_result(
+        "openai", *[f"model-{index}" for index in range(128)]
+    )
+    poisoned = result.models[:-1] + (
+        replace(result.models[-1], model_id="unsafe\nmodel"),
+    )
+
+    with pytest.raises(ValueError, match="discovery"):
+        _model_ids_from_discovery_result(replace(result, models=poisoned))
