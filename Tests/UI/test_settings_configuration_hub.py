@@ -10222,6 +10222,18 @@ def test_state_banner_leads_with_persistence_badge():
         assert text.startswith(f"State: {badge} | "), (category, text)
 
 
+def test_state_banner_text_has_exactly_one_state_segment():
+    """TASK-23104: scope strings used to embed their own "State: ..." on top
+    of the badge prefix, so domain categories and Overview rendered
+    "State: Read-only here | State: Active | ..." -- two contracts colliding
+    in one line."""
+    app = _build_test_app()
+    screen = SettingsScreen(app)
+    for category in SettingsCategoryId:
+        text = screen._category_state_banner_text(category)
+        assert text.count("State:") == 1, (category, text)
+
+
 def test_state_banner_dirty_branch_keeps_priority():
     """Unsaved changes outrank the badge -- the dirty banner is the model
     talking, and its copy must stay the strongest signal."""
@@ -10350,8 +10362,17 @@ async def test_every_category_renders_the_state_banner():
             screen._select_category(summary.category.value)
             await pilot.pause()
             await pilot.pause()
-            banner = screen.query_one("#settings-category-state-banner", Static)
-            assert str(banner.renderable).startswith("State: "), summary.category
+            # TASK-23104: exactly ONE banner -- Overview and the domain
+            # categories used to compose a second in-card copy on top of
+            # the pinned one, doubling the save-contract line.
+            banners = screen.query(".settings-state-banner")
+            assert len(banners) == 1, (
+                summary.category,
+                [str(b.renderable) for b in banners],
+            )
+            banner_text = str(banners.first(Static).renderable)
+            assert banner_text.startswith("State: "), summary.category
+            assert banner_text.count("State:") == 1, (summary.category, banner_text)
 
 
 # ---- critique round-4 batch: tasks 1644 and 1714-1716 ----

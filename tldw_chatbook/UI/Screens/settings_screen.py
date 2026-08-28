@@ -6583,6 +6583,8 @@ class SettingsScreen(BaseAppScreen):
             return "Defaults affect future Library/RAG retrieval and display."
         if category is SettingsCategoryId.IMAGE_GENERATION:
             return "Defaults affect future Console image generations."
+        if category is SettingsCategoryId.VIDEO_GENERATION:
+            return "Defaults affect future Console video generations."
         if category is SettingsCategoryId.DIAGNOSTICS:
             return "Validation and reload expose status without writing raw TOML."
         if category is SettingsCategoryId.APPEARANCE:
@@ -6604,13 +6606,14 @@ class SettingsScreen(BaseAppScreen):
             return "Use the editor's Apply/Save/Reset buttons below."
         if category is SettingsCategoryId.INTERNAL_PROMPTS:
             return "Each prompt saves and resets on its own."
+        # TASK-23104: the badge already leads the banner with "State: ..." --
+        # scope text must never embed a second "State:" segment of its own
+        # (domain categories used to render "State: Read-only here | State:
+        # Read-only | ...").
         if category in DOMAIN_SETTINGS_CATEGORY_IDS:
             contract = self._domain_category_contract(category)
-            return (
-                "State: Read-only | "
-                f"{contract.owner_destination} owns workflow actions and setup."
-            )
-        return "State: Active | Review readiness across Settings categories."
+            return f"{contract.owner_destination} owns workflow actions and setup."
+        return "Review readiness across Settings categories."
 
     def _render_category_state_banner(self, category: SettingsCategoryId) -> Static:
         banner = Static(
@@ -12534,8 +12537,10 @@ class SettingsScreen(BaseAppScreen):
     def _render_overview_detail(self) -> ComposeResult:
         presentation = self._settings_overview_presentation()
         yield Static("Overview", classes="destination-section settings-column-title")
+        # TASK-23104: no in-card State banner -- the detail-pane region already
+        # pins one above the scroll body for every category; a second copy
+        # here rendered the contract line twice.
         with Vertical(id="settings-overview-card", classes="settings-focus-card"):
-            yield self._render_category_state_banner(SettingsCategoryId.OVERVIEW)
             yield Static("Status", classes="destination-section")
             with Vertical(id="settings-overview-primary"):
                 for row in presentation.primary_rows:
@@ -15335,10 +15340,11 @@ class SettingsScreen(BaseAppScreen):
         yield Static(
             contract.title, classes="destination-section settings-column-title"
         )
+        # TASK-23104: no in-card State banner -- the detail-pane region already
+        # pins one above the scroll body for every category.
         with Vertical(
             id=f"settings-{category.value}-card", classes="settings-focus-card"
         ):
-            yield self._render_category_state_banner(category)
             yield Static("How this page works", classes="destination-section")
             yield self._detail_row("Owner destination", contract.owner_destination)
             yield self._detail_row(
