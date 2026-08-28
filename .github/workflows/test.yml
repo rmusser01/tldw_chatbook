@@ -510,24 +510,36 @@ jobs:
     steps:
     - uses: actions/checkout@v4
     
+    # TASK-22250: every step that consumes shard OUTPUT is gated on the
+    # detector. On a docs/backlog-only PR the shards never ran, so there are no
+    # artifacts -- and `download-artifact@v4` ERRORS when its pattern matches
+    # nothing, which would turn "nothing to test" into a red summary. The
+    # verdict step below is deliberately NOT gated: it still has to report.
     - name: Download all test results
+      if: needs.changes.outputs.code == 'true'
       uses: actions/download-artifact@v4
       with:
         pattern: '*-test-results*'
         merge-multiple: true
     
     - name: Set up Python
+      if: needs.changes.outputs.code == 'true'
       uses: actions/setup-python@v5
       with:
         python-version: "3.12"
     
     - name: Generate test summary
+      if: needs.changes.outputs.code == 'true'
       run: |
         pip install pytest-json-report
         python .github/scripts/generate_test_summary.py
     
+    - name: Note skipped suite
+      if: needs.changes.outputs.code != 'true'
+      run: echo "Docs/backlog-only change -- no test shards ran, nothing to summarise."
+    
     - name: Comment PR with results
-      if: github.event_name == 'pull_request'
+      if: github.event_name == 'pull_request' && needs.changes.outputs.code == 'true'
       continue-on-error: true
       uses: actions/github-script@v7
       with:
