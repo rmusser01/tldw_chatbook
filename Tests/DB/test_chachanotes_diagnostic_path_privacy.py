@@ -51,13 +51,6 @@ def _enclosing_exception_handlers(
     return tuple(handlers)
 
 
-def _nearest_exception_handler(
-    node: ast.AST, parent_by_node: dict[int, ast.AST]
-) -> ast.ExceptHandler | None:
-    handlers = _enclosing_exception_handlers(node, parent_by_node)
-    return handlers[0] if handlers else None
-
-
 def _is_safe_exception_type_name(node: ast.AST, tainted_names: set[str]) -> bool:
     if not (
         isinstance(node, ast.Attribute)
@@ -86,36 +79,94 @@ def _contains_raw_exception_payload(node: ast.AST, tainted_names: set[str]) -> b
     )
 
 
-def _handler_chain_derived_exception_names(
-    handlers: tuple[ast.ExceptHandler, ...],
+def _lexical_scope(
+    node: ast.AST, parent_by_node: dict[int, ast.AST]
+) -> ast.Module | ast.FunctionDef | ast.AsyncFunctionDef | ast.ClassDef:
+    ancestor: ast.AST | None = node
+    while ancestor is not None:
+        if isinstance(
+            ancestor, (ast.Module, ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)
+        ):
+            return ancestor
+        ancestor = parent_by_node.get(id(ancestor))
+    raise AssertionError("AST node has no lexical scope")
+
+
+def _assignment_parts(node: ast.AST) -> tuple[set[str], ast.AST] | None:
+    if isinstance(node, ast.Assign):
+        targets = {name for target in node.targets for name in _target_names(target)}
+        return targets, node.value
+    if isinstance(node, (ast.AnnAssign, ast.NamedExpr)) and node.value is not None:
+        return _target_names(node.target), node.value
+    return None
+
+
+def _ends_before(node: ast.AST, later: ast.AST) -> bool:
+    end_line = getattr(node, "end_lineno", None) or node.lineno
+    end_column = getattr(node, "end_col_offset", None) or node.col_offset
+    return (end_line, end_column) <= (later.lineno, later.col_offset)
+
+
+def _comes_from_mutually_exclusive_handler(
+    node: ast.AST,
+    call_handlers: tuple[ast.ExceptHandler, ...],
+    parent_by_node: dict[int, ast.AST],
+) -> bool:
+    for handler in _enclosing_exception_handlers(node, parent_by_node):
+        handler_try = parent_by_node.get(id(handler))
+        if not isinstance(handler_try, (ast.Try, ast.TryStar)):
+            continue
+        if any(
+            other is not handler and parent_by_node.get(id(other)) is handler_try
+            for other in call_handlers
+        ):
+            return True
+    return False
+
+
+def _exception_payload_names_at_call(
+    call: ast.Call,
     parent_by_node: dict[int, ast.AST],
 ) -> set[str]:
-    tainted_names = {handler.name for handler in handlers if handler.name is not None}
-    assignments: list[tuple[set[str], ast.AST]] = []
-    for handler in handlers:
-        for node in ast.walk(handler):
-            if (
-                node is handler
-                or _nearest_exception_handler(node, parent_by_node) is not handler
-            ):
-                continue
-            if isinstance(node, ast.Assign):
-                targets = {
-                    name for target in node.targets for name in _target_names(target)
-                }
-                assignments.append((targets, node.value))
-            elif isinstance(node, (ast.AnnAssign, ast.NamedExpr)):
-                assignments.append((_target_names(node.target), node.value))
+    """Return lexical exception aliases visible before one diagnostic call.
 
-    changed = True
-    while changed:
-        changed = False
-        for targets, value in assignments:
-            if targets - tainted_names and _contains_raw_exception_payload(
-                value, tainted_names
-            ):
-                tainted_names.update(targets)
-                changed = True
+    The model is source-ordered and branch-insensitive, except that handlers on the
+    same ``try`` are mutually exclusive. Handler targets are ephemeral inputs to
+    assignments and are never exported; names derived from them remain tainted.
+    """
+    scope = _lexical_scope(call, parent_by_node)
+    call_handlers = _enclosing_exception_handlers(call, parent_by_node)
+    tainted_names: set[str] = set()
+    assignments: list[ast.AST] = []
+
+    for node in ast.walk(scope):
+        if (
+            _assignment_parts(node) is not None
+            and _lexical_scope(node, parent_by_node) is scope
+            and _ends_before(node, call)
+            and not _comes_from_mutually_exclusive_handler(
+                node, call_handlers, parent_by_node
+            )
+        ):
+            assignments.append(node)
+
+    for assignment in sorted(
+        assignments, key=lambda node: (node.lineno, node.col_offset)
+    ):
+        parts = _assignment_parts(assignment)
+        assert parts is not None
+        targets, value = parts
+        active_handler_names = {
+            handler.name
+            for handler in _enclosing_exception_handlers(assignment, parent_by_node)
+            if handler.name is not None
+        }
+        if _contains_raw_exception_payload(value, tainted_names | active_handler_names):
+            tainted_names.update(targets - active_handler_names)
+
+    tainted_names.update(
+        handler.name for handler in call_handlers if handler.name is not None
+    )
     return tainted_names
 
 
@@ -160,7 +211,6 @@ def _scan_exception_diagnostic_offenders(
         for parent in ast.walk(tree)
         for child in ast.iter_child_nodes(parent)
     }
-    handler_chain_taint: dict[tuple[int, ...], set[str]] = {}
     offenders: list[dict[str, object]] = []
 
     for node in ast.walk(tree):
@@ -174,13 +224,8 @@ def _scan_exception_diagnostic_offenders(
         if capture is not None:
             reasons.append(capture)
 
-        handlers = _enclosing_exception_handlers(node, parent_by_node)
-        handler_ids = tuple(id(handler) for handler in handlers)
-        if handler_ids not in handler_chain_taint:
-            handler_chain_taint[handler_ids] = _handler_chain_derived_exception_names(
-                handlers, parent_by_node
-            )
-        if _contains_raw_exception_payload(node, handler_chain_taint[handler_ids]):
+        tainted_names = _exception_payload_names_at_call(node, parent_by_node)
+        if _contains_raw_exception_payload(node, tainted_names):
             reasons.append("raw_exception_payload")
 
         if reasons:
@@ -345,29 +390,216 @@ def test_exception_diagnostic_scanner_counts_one_call_with_outer_and_inner_paylo
     assert "Outer only" in offenders[1]["call"]
 
 
-def test_exception_diagnostic_scanner_does_not_share_taint_between_siblings() -> None:
+@pytest.mark.parametrize(
+    "source",
+    [
+        pytest.param(
+            dedent(
+                """
+                try:
+                    run_first_database_operation()
+                except Exception as first_exc:
+                    first_details = repr(first_exc)
+                try:
+                    run_second_database_operation()
+                except Exception:
+                    logger.error("Earlier details: {}", first_details)
+                """
+            ),
+            id="module",
+        ),
+        pytest.param(
+            dedent(
+                """
+                def run_operations():
+                    try:
+                        run_first_database_operation()
+                    except Exception as first_exc:
+                        first_details = repr(first_exc)
+                    try:
+                        run_second_database_operation()
+                    except Exception:
+                        logger.error("Earlier details: {}", first_details)
+                """
+            ),
+            id="function",
+        ),
+    ],
+)
+def test_exception_diagnostic_scanner_flags_alias_from_earlier_sequential_handler(
+    source: str,
+) -> None:
+    offenders = _scan_exception_diagnostic_offenders(
+        source, filename="sequential_handlers.py"
+    )
+
+    assert len(offenders) == 1
+    assert offenders[0]["reasons"] == ("raw_exception_payload",)
+    assert "first_details" in offenders[0]["call"]
+
+
+def test_exception_diagnostic_scanner_flags_transitive_persisted_aliases() -> None:
+    source = dedent(
+        """
+        try:
+            run_first_database_operation()
+        except Exception as first_exc:
+            first_details = repr(first_exc)
+        rendered_details = first_details
+        try:
+            run_second_database_operation()
+        except Exception:
+            final_details = rendered_details
+            logger.error("Earlier details: {}", final_details)
+        """
+    )
+
+    offenders = _scan_exception_diagnostic_offenders(
+        source, filename="transitive_sequential.py"
+    )
+
+    assert len(offenders) == 1
+    assert offenders[0]["reasons"] == ("raw_exception_payload",)
+    assert "final_details" in offenders[0]["call"]
+
+
+def test_exception_diagnostic_scanner_keeps_bound_exception_only_while_enclosing() -> (
+    None
+):
     source = dedent(
         """
         try:
             run_outer_database_operation()
         except Exception as outer_exc:
             try:
-                run_first_inner_database_operation()
-            except Exception as first_exc:
-                first_details = repr(first_exc)
-            try:
-                run_second_inner_database_operation()
+                run_inner_database_operation()
             except Exception:
-                logger.error("Outer failure: {}", outer_exc)
-                logger.error("First sibling details: {}", first_details)
+                logger.error("Live outer exception: {}", outer_exc)
+        try:
+            run_later_database_operation()
+        except Exception:
+            logger.error("Cleared outer exception: {}", outer_exc)
         """
     )
 
-    offenders = _scan_exception_diagnostic_offenders(source, filename="siblings.py")
+    offenders = _scan_exception_diagnostic_offenders(
+        source, filename="cleared_exception_target.py"
+    )
 
     assert len(offenders) == 1
-    assert "Outer failure" in offenders[0]["call"]
-    assert "first_details" not in offenders[0]["call"]
+    assert "Live outer exception" in offenders[0]["call"]
+    assert "Cleared outer exception" not in offenders[0]["call"]
+
+
+def test_exception_diagnostic_scanner_isolates_persisted_aliases_by_lexical_scope() -> (
+    None
+):
+    source = dedent(
+        """
+        def log_from_function():
+            try:
+                run_function_database_operation()
+            except Exception as function_exc:
+                function_details = repr(function_exc)
+            logger.error("Function details: {}", function_details)
+
+        class LogFromClass:
+            try:
+                run_class_database_operation()
+            except Exception as class_exc:
+                class_details = repr(class_exc)
+            logger.error("Class details: {}", class_details)
+
+        logger.error(
+            "Outer details: {} {}",
+            function_details,
+            class_details,
+        )
+        """
+    )
+
+    offenders = _scan_exception_diagnostic_offenders(
+        source, filename="persisted_scope_boundaries.py"
+    )
+
+    assert len(offenders) == 2
+    assert "Function details" in offenders[0]["call"]
+    assert "Class details" in offenders[1]["call"]
+    assert all("Outer details" not in offender["call"] for offender in offenders)
+
+
+def test_exception_diagnostic_scanner_does_not_flow_taint_backward() -> None:
+    source = dedent(
+        """
+        logger.error("Before handler: {}", later_details)
+        try:
+            run_database_operation()
+        except Exception as exc:
+            logger.error("Before assignment: {}", later_details)
+            later_details = repr(exc)
+            logger.error("After assignment: {}", later_details)
+        """
+    )
+
+    offenders = _scan_exception_diagnostic_offenders(source, filename="ordered.py")
+
+    assert len(offenders) == 1
+    assert "After assignment" in offenders[0]["call"]
+
+
+def test_exception_diagnostic_scanner_does_not_share_aliases_between_same_try_handlers() -> (
+    None
+):
+    source = dedent(
+        """
+        try:
+            run_database_operation()
+        except FirstError as first_exc:
+            first_details = repr(first_exc)
+        except SecondError:
+            logger.error("Mutually exclusive details: {}", first_details)
+        """
+    )
+
+    assert (
+        _scan_exception_diagnostic_offenders(
+            source, filename="mutually_exclusive_handlers.py"
+        )
+        == []
+    )
+
+
+def test_exception_diagnostic_scanner_reports_one_call_for_persisted_alias_set() -> (
+    None
+):
+    source = dedent(
+        """
+        try:
+            run_first_database_operation()
+        except Exception as first_exc:
+            first_details = repr(first_exc)
+            rendered_details = first_details
+        try:
+            run_second_database_operation()
+        except Exception:
+            logger.error(
+                "Earlier details: {} {}",
+                first_details,
+                rendered_details,
+            )
+        """
+    )
+
+    offenders = _scan_exception_diagnostic_offenders(
+        source, filename="persisted_whole_set.py"
+    )
+    report = _format_exception_diagnostic_offenders(offenders)
+
+    assert len(offenders) == 1
+    assert offenders[0]["reasons"] == ("raw_exception_payload",)
+    assert "1 offending diagnostic calls" in report
+    assert "raw_exception_payload=1" in report
+    assert report.count("line ") == 1
 
 
 def test_exception_diagnostic_scanner_stops_taint_at_nested_scope_boundaries() -> None:
