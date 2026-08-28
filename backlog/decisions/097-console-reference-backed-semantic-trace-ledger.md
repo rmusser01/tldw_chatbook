@@ -1,10 +1,10 @@
 # ADR-097: Use a reference-backed semantic trace ledger
 
-Status: Proposed
+Status: Accepted
 
 Date: 2026-08-28
 
-Related Task: [TASK-23026](../tasks/task-23026%20-%20Exchange-capture-stores-the-whole-conversation-on-every-send-forever.md)
+Originating Task: [TASK-23026](../tasks/task-23026%20-%20Exchange-capture-stores-the-whole-conversation-on-every-send-forever.md), completed by the superseded bounded-retention implementation
 
 Related Spec: [Console Reference-Backed Semantic Trace Ledger](../../Docs/superpowers/specs/2026-08-28-console-reference-backed-semantic-trace-ledger-design.md)
 
@@ -43,6 +43,10 @@ project-instruction bodies never enter default durable capture.
    destroy referenced content, the required sanitized trace projection is materialized
    once per unique disclosure policy in the same transaction. Failure aborts the edit
    or deletion.
+
+   Semantic revision identity is an opaque transactional identity, not a persisted
+   raw, salted, or keyed digest of canonical conversation text. Ephemeral comparison
+   fingerprints are discarded before commit.
 
 3. **Add one append-only semantic trace ledger.** Typed events record turn/call
    boundaries, model-surface append/replacement, tool traffic, request-header
@@ -106,9 +110,12 @@ project-instruction bodies never enter default durable capture.
 13. **Offer irreversible trace PII masking.** Built-in detectors and validated user-
     authored regex rules produce immutable Unicode-span projections. Custom regex runs
     in a bounded killable subprocess because CPython `re` has no portable hard timeout.
-    Historical projections retain detector/rule IDs and a ruleset fingerprint, never
-    matched values or regex source. PII masking protects traces but does not silently
-    rewrite canonical conversation messages.
+    Historical projections retain source identity, start/end codepoint ranges,
+    detector/rule IDs, and an opaque ruleset revision identity, never matched values,
+    value hashes, surrounding text, or regex source. Ranges necessarily reveal matched position and
+    codepoint count; this is accepted so referenced canonical messages can be masked
+    without copying them. PII masking protects traces but does not silently rewrite
+    canonical conversation messages.
 
 14. **Normalize legacy captures automatically and resumably.** A fast schema step
     enables normalized writes and dual reads. After UI readiness, idle bounded batches
@@ -118,10 +125,14 @@ project-instruction bodies never enter default durable capture.
     legacy artifacts. ADR-096 aggregate markers become explicit irreversible legacy
     omissions.
 
-15. **Keep capture best-effort and independently idempotent.** Trace settlement cannot
-    roll back a provider result or assistant message. Failed writes enter a bounded
-    best-effort settlement queue; process death may leave an honest gap or interrupted
-    call rather than invented content.
+15. **Reserve Capture On calls before provider dispatch.** A minimal content-free call
+    reservation containing identity, lineage, and frozen capture policy commits before
+    each Capture On dispatch. Reservation failure blocks automatic dispatch and offers
+    Retry or an explicit one-shot Send without capture action. After reservation,
+    component capture and sealing remain best-effort and independently idempotent: they
+    cannot roll back a provider result or assistant message. Failed writes enter a
+    bounded settlement queue; process death leaves a durable open/incomplete call that
+    cold recovery closes honestly.
 
 16. **Use shared-owner garbage collection and honest physical maintenance.** Deletion
     detaches one conversation root. Background mark/sweep reclaims unreachable objects
@@ -153,6 +164,9 @@ project-instruction bodies never enter default durable capture.
   reclamation with one ownership system instead of parallel exceptions.
 - Current messages remain unduplicated until an edit or deletion makes one historical
   copy necessary. Repeated calls and forks reuse that copy.
+- Capture On adds one small synchronous reservation write before each provider call.
+  Users may explicitly bypass a reservation failure for one send, which is recorded as
+  a deliberate Capture Off admission rather than an unexplained trace loss.
 - A trace with intentional masking or legacy omission is structurally reconstructable
   but not content-complete, and the UI must say so.
 - Source hard deletion may fail safely when required historical materialization cannot
@@ -163,9 +177,10 @@ project-instruction bodies never enter default durable capture.
   retroactively rewrite legacy traces without explicit later work.
 - Legacy logical reclamation occurs in the background; allocated database bytes may
   remain until automatic physical compaction is admitted.
-- Implementation requires multiple dependency-ordered Backlog work packages under
-  TASK-23026. The approved spec defines their boundaries; exact IDs are created during
-  implementation planning.
+- TASK-23026 remains the completed historical record of ADR-096's implementation.
+  Implementation requires a new umbrella task and multiple dependency-ordered Backlog
+  work packages. The approved spec defines their boundaries; exact IDs are created
+  during implementation planning.
 
 ## Alternatives considered
 

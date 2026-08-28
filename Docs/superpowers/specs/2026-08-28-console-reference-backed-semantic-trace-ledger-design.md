@@ -4,7 +4,7 @@
 
 **Status:** Design approved; written-spec review pending
 
-**Task:** [TASK-23026](../../../backlog/tasks/task-23026%20-%20Exchange-capture-stores-the-whole-conversation-on-every-send-forever.md)
+**Originating task:** [TASK-23026](../../../backlog/tasks/task-23026%20-%20Exchange-capture-stores-the-whole-conversation-on-every-send-forever.md), completed by the now-superseded bounded-retention implementation
 
 **Decision:** [ADR-097](../../../backlog/decisions/097-console-reference-backed-semantic-trace-ledger.md)
 
@@ -73,8 +73,9 @@ authority.
 ## Goals
 
 - Store ordinary conversation content once and reference immutable semantic revisions from trace.
-- Reconstruct the sanitized semantic request and response for every provider call, including
-  retries, tool loops, failures, stopped calls, and abandoned generations.
+- Reconstruct the sanitized semantic request and response—or an explicit incomplete-call record—for
+  every provider call admitted with Capture On, including retries, tool loops, failures, stopped
+  calls, and abandoned generations.
 - Preserve historical call meaning across message edits, regeneration, forks, soft deletion, and
   source hard deletion.
 - Persist provider-only material exactly once per sanitized semantic identity.
@@ -103,6 +104,7 @@ authority.
 - Forensic erasure from filesystem snapshots, backups, exports, or already copied databases.
 - One-action lineage-wide purge. Each conversation owner is detached explicitly.
 - Replacing all conversation persistence with a new event-sourced application model.
+- Recording calls deliberately sent with Capture Off.
 
 ## Fidelity contract
 
@@ -150,6 +152,9 @@ byte-for-byte or complete semantic reconstruction for that call.
    the same transaction that removes a live source, or deletion aborts.
 10. **Every destructive sweep rechecks ownership.** Garbage collection uses an ownership epoch and
     aborts when its captured root set has changed.
+11. **Capture On reserves before dispatch.** Every dispatched Capture On call already has a durable,
+    content-free reservation. A crash or later capture failure may leave an incomplete record, but
+    never a completely invisible dispatched call.
 
 ## Conceptual storage model
 
@@ -165,7 +170,7 @@ Each semantic revision records:
 
 - stable revision identity;
 - source conversation and message identities;
-- normalized role/content shape and a semantic digest;
+- normalized structural role/content kind without a persisted content digest;
 - creation reason and time;
 - whether content currently resolves through the live message row or a materialized artifact; and
 - the source revision it replaces, when any.
@@ -174,6 +179,12 @@ Creating a trace reference to the current message creates metadata only. Before 
 deletion overwrites/removes the referenced content, the old sanitized trace projection is
 materialized once per unique disclosure projection, then the live locator changes atomically.
 Repeated calls referencing the same revision and policy reuse it.
+
+Ordinary conversation text is never assigned a persisted raw, salted, or keyed content fingerprint
+for trace identity. Revision equality is its opaque revision identity maintained transactionally by
+the message write path. Capture-time comparison with provider values may use an ephemeral in-memory
+digest, but that value is discarded before persistence. This prevents a deleted or masked message
+from leaving a durable guess-verification oracle in trace metadata.
 
 ### Trace lineage and segments
 
@@ -259,13 +270,21 @@ components, and provider responses that differ from the saved assistant revision
 Binary bodies remain external or stubbed according to the existing attachment boundary. A digest
 may verify an existing immutable attachment, but trace capture does not duplicate its bytes.
 
+Artifact content identities are computed only over the sanitized body that the artifact itself
+stores. They are never computed over a withheld credential, masked PII value, canonical conversation
+text, or omission marker. Because anyone who can read the artifact already has its sanitized body,
+its internal deduplication identity reveals no additional omitted content.
+
 ### Redaction projections
 
-Redaction projections are content-addressed by source semantic digest plus credential-detector
-version, PII-enabled state, and PII ruleset fingerprint. They store only normalized Unicode
-codepoint ranges, category, stable rule IDs, detector versions, and outcomes. They never store
-matched values, value hashes, captured substrings, lengths of the secret itself, exception text,
-or user-authored regex source.
+Redaction projections are keyed by opaque source revision/artifact identity plus an immutable policy
+identity containing credential-detector version, PII-enabled state, and an opaque PII ruleset
+revision identity.
+They store normalized Unicode codepoint ranges, category, stable rule IDs, detector versions, and
+outcomes. They never store matched values, value hashes, captured substrings, exception text, or
+user-authored regex source. Start/end ranges necessarily disclose the matched codepoint count and
+position; that limited leakage is accepted because exact ranges are required to mask a referenced
+canonical message without copying it. No separate value length or surrounding text is stored.
 
 The same revision referenced repeatedly under the same frozen policy reuses one projection.
 
@@ -287,8 +306,8 @@ filesystem authority, and do not alter token counting or context selection.
 
 Provider adaptation must preserve a binding between every final semantic value and its descriptor.
 Immediately before dispatch, the gateway independently verifies that resolving the descriptors
-reconstructs the final captured kwargs. A mismatch fails trace capture for the affected component
-or call; it never falls back to persisting the raw kwargs wholesale.
+reconstructs the final captured kwargs. A mismatch marks the affected component unavailable on the
+already-reserved call; it never falls back to persisting the raw kwargs wholesale.
 
 ## Runtime flow
 
@@ -297,20 +316,25 @@ or call; it never falls back to persisting the raw kwargs wholesale.
 2. **Prepare semantics and provenance.** Build the semantic request and parallel descriptors.
 3. **Adapt to the provider boundary.** Apply provider transformations while carrying content-slot
    provenance into the final kwargs.
-4. **Open the call.** Allocate conversation/turn/run/call identity and append the open boundary.
-5. **Advance the surface.** Append only new semantic items or explicit replacements. Reuse existing
+4. **Reserve before dispatch.** Allocate conversation/turn/run/call identity and synchronously
+   commit a minimal content-free `reserved` call carrying lineage identity and frozen capture-policy
+   provenance. If this reservation fails, Capture On does not dispatch automatically: the UI offers
+   Retry or an explicit one-shot **Send without capture** action that admits a new Capture Off call.
+5. **Open and advance the surface.** Append only new semantic items or explicit replacements. Reuse existing
    revision/artifact references.
 6. **Select the header.** Reuse the prior header if value-identical; otherwise record a new complete
    logical header containing content references.
-7. **Bind the call.** Store the surface boundary and header identity before dispatch when possible.
-   Capture failure cannot prevent provider dispatch.
+7. **Bind the call.** Store the surface boundary and header identity on the reservation. If binding,
+   sanitization, or descriptor verification fails after reservation, retain the reservation as
+   incomplete with content-free status when writable; dispatch may proceed because the durable row
+   already proves that the call existed.
 8. **Observe the response.** Accumulate the bounded semantic response required by the current
    Inspector. Raw token chunks remain out of scope.
 9. **Seal independently.** Commit response reference/artifact, outcome, usage, omissions, and policy
    provenance in an idempotent trace transaction independent of conversation-message settlement.
-10. **Settle failures honestly.** A failed trace write enters a bounded best-effort settlement queue.
-    Process death may leave a sequence gap; recovery records an interrupted/gap marker rather than
-    inventing missing content.
+10. **Settle failures honestly.** A failed post-dispatch trace write enters a bounded best-effort
+    settlement queue. Process death leaves the durable reservation open or incomplete; cold recovery
+    closes it as interrupted/gap rather than inventing missing content.
 
 If the sanitized assembled response exactly equals the saved assistant semantic revision, the call
 references that revision. If display filtering, reasoning separation, tool payloads, synthetic
@@ -407,11 +431,11 @@ time are capped. The parent kills the process on timeout and treats crash, malfo
 matches, or deadline as a fail-closed redaction failure for affected components. A worker is never
 reused across unrelated captures.
 
-Candidate spans use Unicode codepoint offsets over the exact semantic revision fingerprint. They
-are sorted deterministically and overlapping ranges are unioned. A union with multiple categories
+Candidate spans use Unicode codepoint offsets over the exact source content bound to the recorded
+revision or artifact identity. They are sorted deterministically and overlapping ranges are unioned. A union with multiple categories
 uses `mixed`; credential filtering has already occurred and cannot be weakened by a PII rule.
-Changing or deleting a rule never changes historical masks. Trace rows retain stable rule IDs and a
-ruleset fingerprint, not the pattern source.
+Changing or deleting a rule never changes historical masks. Trace rows retain stable rule IDs and
+an opaque ruleset revision identity, not a hash or the pattern source.
 
 ## Viewer, search, copy, export, and purge
 
@@ -438,6 +462,8 @@ not imply forensic erasure.
 ## Failure, integrity, and concurrency
 
 - Call/open and call/seal operations are idempotent under immutable call identity.
+- Every Capture On provider dispatch requires a committed content-free call reservation. Reservation
+  failure blocks automatic dispatch until Retry or an explicit one-shot Capture Off confirmation.
 - A call may remain open after a crash; cold recovery closes it as interrupted without deleting
   already durable events.
 - Provider success and assistant-message persistence are not transactional with trace settlement.
@@ -463,7 +489,7 @@ For each legacy exchange:
 2. Apply the current mandatory credential filter. Optional PII is not retroactively applied.
 3. Split request history into independently classifiable semantic components.
 4. Match ordinary rows to unique historical message revisions using role, order, structural shape,
-   and sanitized semantic fingerprint.
+   and an ephemeral sanitized semantic fingerprint that is discarded before commit.
 5. Store exact matches as revision references.
 6. Store unmatched provider-only rows as independently content-addressed artifacts.
 7. Preserve ambiguous rows as individual sanitized legacy artifacts with an ambiguity marker; never
@@ -538,8 +564,11 @@ size after the eligible compaction step.
 
 ## Rollout and implementation decomposition
 
-TASK-23026 is the umbrella requirement. Before implementation, the writing plan must create
-dependency-ordered, atomic Backlog work packages suitable for single pull requests:
+TASK-23026 is the originating finding but is already Done on `origin/dev` under ADR-096's
+superseded bounded-retention implementation. Its checked acceptance criteria and implementation
+notes remain historical evidence and must not be rewritten. Before implementation, the writing
+plan must create a new umbrella task for ADR-097 and dependency-ordered, atomic Backlog work
+packages suitable for single pull requests:
 
 1. schema, semantic revisions, artifact identity, trace lineage, and dual-read foundation;
 2. provenance-aware request preparation and normalized new-call capture;
@@ -564,7 +593,11 @@ Implementation follows test-driven development. Targeted coverage must include:
 - source soft deletion, successful hard deletion, and injected materialization failure rollback;
 - shared-owner purge disclosure and ownership-epoch garbage-collection races;
 - credential fields, URLs, nested values, recognized free-text formats, sanitizer failure, and
-  absence from every table, artifact, log, exception, preview, clipboard, and export path;
+  absence from trace-owned tables/artifacts and every trace-derived log, exception, preview,
+  clipboard, and export path; canonical conversation rows are explicitly outside this absence
+  assertion;
+- durable pre-dispatch reservation, reservation failure Retry/Send-without-capture behavior,
+  post-reservation binding failure, seal failure, and crash recovery to an incomplete call;
 - built-in and custom PII rules, Unicode spans, overlaps, `mixed` classification, invalid patterns,
   subprocess timeout/crash/malformed output, ruleset changes, and Safe/Full behavior;
 - dual reads, all legacy capture variants, ambiguous matches, old aggregate markers, corruption,
