@@ -31,3 +31,22 @@ With Console branching (Phase A, PR #799), regenerate forks a new empty sibling 
 - [ ] #2 Chosen approach (e.g. auto-restore the anchor as active on failed regenerate, or surface a one-key swipe-back/retry hint on the failed sibling) is documented and unit-covered
 - [ ] #3 Verified in the live TUI: regenerate → force a failure → confirm the good answer is recoverable in one obvious step
 <!-- AC:END -->
+
+## Implementation Plan
+
+<!-- SECTION:PLAN:BEGIN -->
+
+ADR required: no
+
+ADR path: N/A
+
+Reason: this is a routine recovery correction within the existing active-leaf and sibling-branch contracts. It changes no schema, persistence boundary, service contract, security policy, dependency, or long-lived application structure.
+
+1. Pin transport-failure and empty-stream recovery with red controller tests that assert the original answer returns to the active path and provider context while the failed sibling remains stored.
+2. Add the minimal `regenerate_message` postcondition using the existing `set_active_leaf` contract; retain current successful and stopped-regenerate behavior.
+3. Exercise the real mounted Console regenerate action with a controlled post-validation provider failure and assert automatic recovery.
+4. Update the branching guide, run focused tests and static checks, self-review the diff, then record implementation evidence and close the task.
+
+Detailed TDD steps: `Docs/superpowers/plans/2026-08-27-console-failed-regenerate-auto-restore.md`
+
+<!-- SECTION:PLAN:END -->
