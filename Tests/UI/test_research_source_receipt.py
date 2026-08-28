@@ -109,6 +109,9 @@ async def test_enabled_receipt_retry_emits_exact_operation_and_failed_stage() ->
         await pilot.pause()
         receipts = app.query_one(ResearchSourceReceiptList)
         receipts.sync_operations((_operation(),), incomplete=False)
+        # TASK-23024: the first sync mounts the demand-grown slot; let it
+        # settle before pressing the retry button inside it.
+        await pilot.pause()
         receipts.query_one("#research-source-receipt-retry-0", Button).press()
         await pilot.pause()
 
