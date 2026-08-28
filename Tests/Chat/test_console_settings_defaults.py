@@ -67,6 +67,8 @@ def _ready_openai_config(*, section: str = "OpenAI") -> dict[str, object]:
 def _reset_default_generation(monkeypatch):
     monkeypatch.setattr(defaults_module, "_LATEST_INTENT_GENERATION", None)
     monkeypatch.setattr(defaults_module, "_LATEST_INTENT_FINGERPRINT", None)
+    monkeypatch.setattr(defaults_module, "_LATEST_INTENT_LIFECYCLE", None, raising=False)
+    monkeypatch.setattr(defaults_module, "_ACTIVE_INTENT_CALLS", set(), raising=False)
     monkeypatch.setattr(defaults_module, "_PENDING_RETRY_STATE", None, raising=False)
 
 
@@ -568,6 +570,193 @@ def test_cache_failure_is_saved_and_refresh_continuation_never_rewrites(
     assert refreshed.failure_phase is None
 
 
+def test_writer_error_after_visible_replace_is_cache_only_and_refresh_never_writes(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    config_path = tmp_path / "config.toml"
+    _write_config(config_path, _ready_openai_config())
+    monkeypatch.setenv("TLDW_CONFIG_PATH", str(config_path))
+    real_write = config_module.atomic_private_write_text
+    real_load = config_module.load_settings
+    load_calls = 0
+
+    def write_then_raise(*args, **kwargs):
+        real_write(*args, **kwargs)
+        raise OSError("post-rename detail")
+
+    def unexpected_publication(*args, **kwargs):
+        nonlocal load_calls
+        load_calls += 1
+        raise AssertionError("uncertain writer outcome must not publish caches")
+
+    monkeypatch.setattr(
+        config_module,
+        "atomic_private_write_text",
+        write_then_raise,
+    )
+    monkeypatch.setattr(config_module, "load_settings", unexpected_publication)
+
+    outcome = apply_console_default_intent(_intent())
+
+    assert outcome.file_replaced is True
+    assert outcome.runtime_published is False
+    assert outcome.settings_view is None
+    assert outcome.failure_phase is ConsoleDefaultSavePhase.CACHE_PUBLICATION
+    assert load_calls == 0
+    saved = tomllib.loads(config_path.read_text(encoding="utf-8"))
+    assert saved["api_settings"]["OpenAI"]["model_defaults"][LITERAL_MODEL][
+        "temperature"
+    ] == 0.25
+    monkeypatch.setattr(
+        config_module,
+        "atomic_private_write_text",
+        lambda *args, **kwargs: (_ for _ in ()).throw(
+            AssertionError("cache-only recovery must not write")
+        ),
+    )
+    monkeypatch.setattr(config_module, "load_settings", real_load)
+
+    refreshed = refresh_console_runtime_after_saved_default()
+
+    assert refreshed.published is True
+    assert refreshed.settings_view is not None
+    assert refreshed.failure_phase is None
+
+
+def test_duplicate_intent_after_success_is_terminal_and_never_rewrites(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    config_path = tmp_path / "config.toml"
+    _write_config(config_path, _ready_openai_config())
+    monkeypatch.setenv("TLDW_CONFIG_PATH", str(config_path))
+    real_write = config_module.atomic_private_write_text
+    writes = 0
+
+    def counted_write(*args, **kwargs):
+        nonlocal writes
+        writes += 1
+        return real_write(*args, **kwargs)
+
+    monkeypatch.setattr(config_module, "atomic_private_write_text", counted_write)
+    intent = _intent()
+
+    first = apply_console_default_intent(intent)
+    committed = config_path.read_bytes()
+    duplicate = apply_console_default_intent(intent)
+
+    assert first.runtime_published is True
+    assert duplicate.file_replaced is False
+    assert duplicate.runtime_published is False
+    assert duplicate.settings_view is None
+    assert duplicate.failure_phase is ConsoleDefaultSavePhase.BEFORE_REPLACE
+    assert writes == 1
+    assert config_path.read_bytes() == committed
+
+
+def test_retry_after_cache_failure_is_terminal_and_never_rewrites(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    config_path = tmp_path / "config.toml"
+    _write_config(config_path, _ready_openai_config())
+    monkeypatch.setenv("TLDW_CONFIG_PATH", str(config_path))
+    real_write = config_module.atomic_private_write_text
+    real_load = config_module.load_settings
+    writes = 0
+
+    def counted_write(*args, **kwargs):
+        nonlocal writes
+        writes += 1
+        return real_write(*args, **kwargs)
+
+    monkeypatch.setattr(config_module, "atomic_private_write_text", counted_write)
+    monkeypatch.setattr(
+        config_module,
+        "load_settings",
+        lambda *args, **kwargs: (_ for _ in ()).throw(RuntimeError("cache detail")),
+    )
+    intent = _intent()
+
+    failed_publication = apply_console_default_intent(intent)
+    committed = config_path.read_bytes()
+    monkeypatch.setattr(config_module, "load_settings", real_load)
+    disk_retry = apply_console_default_intent(intent)
+
+    assert failed_publication.failure_phase is ConsoleDefaultSavePhase.CACHE_PUBLICATION
+    assert disk_retry.file_replaced is False
+    assert disk_retry.runtime_published is False
+    assert disk_retry.settings_view is None
+    assert disk_retry.failure_phase is ConsoleDefaultSavePhase.BEFORE_REPLACE
+    assert writes == 1
+    assert config_path.read_bytes() == committed
+
+
+def test_concurrent_duplicate_is_rejected_and_failed_retry_remains_retryable(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    config_path = tmp_path / "config.toml"
+    _write_config(config_path, _ready_openai_config())
+    monkeypatch.setenv("TLDW_CONFIG_PATH", str(config_path))
+    real_write = config_module.atomic_private_write_text
+    first_write_started = threading.Event()
+    release_first_write = threading.Event()
+    duplicate_invoked = threading.Event()
+    duplicate_done = threading.Event()
+    attempts = 0
+    outcomes = {}
+
+    def controlled_write(*args, **kwargs):
+        nonlocal attempts
+        attempts += 1
+        if attempts == 1:
+            first_write_started.set()
+            if not release_first_write.wait(timeout=5):
+                raise AssertionError("first writer was not released")
+            raise OSError("initial before-replace failure")
+        if attempts == 2:
+            raise OSError("retry before-replace failure")
+        return real_write(*args, **kwargs)
+
+    monkeypatch.setattr(config_module, "atomic_private_write_text", controlled_write)
+    intent = _intent()
+
+    worker_a = threading.Thread(
+        target=lambda: outcomes.setdefault("initial", apply_console_default_intent(intent))
+    )
+
+    def invoke_duplicate() -> None:
+        duplicate_invoked.set()
+        outcomes.setdefault("duplicate", apply_console_default_intent(intent))
+        duplicate_done.set()
+
+    worker_b = threading.Thread(target=invoke_duplicate)
+    worker_a.start()
+    assert first_write_started.wait(timeout=5)
+    worker_b.start()
+    assert duplicate_invoked.wait(timeout=5)
+    duplicate_finished_while_initial_active = duplicate_done.wait(timeout=0.25)
+    release_first_write.set()
+    worker_a.join(timeout=5)
+    worker_b.join(timeout=5)
+
+    assert not worker_a.is_alive()
+    assert not worker_b.is_alive()
+    assert duplicate_finished_while_initial_active is True
+    assert outcomes["initial"].failure_phase is ConsoleDefaultSavePhase.BEFORE_REPLACE
+    assert outcomes["duplicate"].failure_phase is ConsoleDefaultSavePhase.BEFORE_REPLACE
+    assert attempts == 1
+
+    failed_retry = apply_console_default_intent(intent)
+    successful_retry = apply_console_default_intent(intent)
+
+    assert failed_retry.failure_phase is ConsoleDefaultSavePhase.BEFORE_REPLACE
+    assert successful_retry.runtime_published is True
+    assert attempts == 3
+
+
 def test_noop_disk_state_cache_failure_still_requires_cache_only_recovery(
     tmp_path: Path,
     monkeypatch,
@@ -872,6 +1061,20 @@ def test_build_default_intent_quick_materializes_displayed_effective_values() ->
         ("192.168.1.20:8443/v1", "192.168.1.20:8443", "LAN"),
         ("http://[::1]:9000/v1", "[::1]:9000", "Local"),
         ("https://8.8.8.8/v1", "8.8.8.8", "Remote"),
+        ("https://10.1.2.3/v1", "10.1.2.3", "LAN"),
+        ("https://172.16.0.1/v1", "172.16.0.1", "LAN"),
+        ("https://192.168.1.20/v1", "192.168.1.20", "LAN"),
+        ("https://192.0.2.1/v1", "192.0.2.1", "Remote/unknown"),
+        ("https://224.0.0.1/v1", "224.0.0.1", "Remote/unknown"),
+        ("https://0.0.0.0/v1", "0.0.0.0", "Remote/unknown"),
+        ("http://[fc00::1]/v1", "[fc00::1]", "LAN"),
+        ("http://[fe80::1]/v1", "[fe80::1]", "LAN"),
+        ("http://[2001:db8::1]/v1", "[2001:db8::1]", "Remote/unknown"),
+        (
+            "http://[2606:4700:4700::1111]/v1",
+            "[2606:4700:4700::1111]",
+            "Remote",
+        ),
         ("host.example:443/path", "host.example:443", "Remote/unknown"),
         ("printer.local/api", "printer.local", "LAN"),
     ],

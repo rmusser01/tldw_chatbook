@@ -1283,3 +1283,95 @@ def test_literal_transaction_contains_builder_exception_and_invokes_once(
     assert tomllib.loads(config_path.read_text(encoding="utf-8")) == {
         "chat_defaults": {"model": "old"}
     }
+
+
+def test_literal_transaction_detaches_builder_owned_containers_before_validation(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    config_path = tmp_path / "config.toml"
+    _write_config(
+        config_path,
+        {"shared": {"remove": "old", "late_delete": "preserved"}},
+    )
+    monkeypatch.setenv("TLDW_CONFIG_PATH", str(config_path))
+    path = ("shared",)
+    values = {"payload": {"nested": ["original"]}}
+    deletes = ["remove"]
+    section_values = {path: values}
+    delete_keys = {path: deletes}
+    real_validate = config_module._validate_literal_config_mutation_targets
+
+    def validate_then_mutate_originals(mutation):
+        real_validate(mutation)
+        values["payload"]["nested"].append("mutated-after-return")
+        values["late"] = "injected-after-validation"
+        deletes.append("late_delete")
+
+    monkeypatch.setattr(
+        config_module,
+        "_validate_literal_config_mutation_targets",
+        validate_then_mutate_originals,
+    )
+
+    result = config_module.apply_literal_settings_transaction_to_cli_config(
+        lambda _snapshot: config_module.LiteralSettingsMutation(
+            section_values=section_values,
+            delete_keys=delete_keys,
+        )
+    )
+
+    assert result.caches_reloaded is True
+    assert values == {
+        "payload": {"nested": ["original", "mutated-after-return"]},
+        "late": "injected-after-validation",
+    }
+    assert deletes == ["remove", "late_delete"]
+    assert tomllib.loads(config_path.read_text(encoding="utf-8")) == {
+        "shared": {
+            "late_delete": "preserved",
+            "payload": {"nested": ["original"]},
+        }
+    }
+
+
+def test_legacy_dotted_mutation_detaches_inputs_before_entering_writer(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    config_path = tmp_path / "config.toml"
+    _write_config(
+        config_path,
+        {"shared": {"remove": "old", "late_delete": "preserved"}},
+    )
+    monkeypatch.setenv("TLDW_CONFIG_PATH", str(config_path))
+    values = {"payload": {"nested": ["original"]}}
+    deletes = ["remove"]
+    section_values = {"shared": values}
+    delete_keys = {"shared": deletes}
+    real_apply = config_module._apply_literal_settings_transaction_locked
+
+    def mutate_then_enter_writer(builder, **kwargs):
+        values["payload"]["nested"].append("mutated-before-writer")
+        values["late"] = "injected-before-writer"
+        deletes.append("late_delete")
+        return real_apply(builder, **kwargs)
+
+    monkeypatch.setattr(
+        config_module,
+        "_apply_literal_settings_transaction_locked",
+        mutate_then_enter_writer,
+    )
+
+    result = config_module.apply_settings_mutation_to_cli_config(
+        section_values,
+        delete_keys=delete_keys,
+    )
+
+    assert result.caches_reloaded is True
+    assert tomllib.loads(config_path.read_text(encoding="utf-8")) == {
+        "shared": {
+            "late_delete": "preserved",
+            "payload": {"nested": ["original"]},
+        }
+    }
