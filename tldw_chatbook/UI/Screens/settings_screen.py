@@ -22119,9 +22119,9 @@ class SettingsScreen(BaseAppScreen):
             )
         except QueryError:
             return
-        button.disabled = False
         live_enabled = not enabled
         if not mutation.file_replaced:
+            button.disabled = False
             status.update(
                 "Global briefing schedules were not changed. Retry, or review "
                 "[scheduling].briefing_schedules_enabled in Advanced Config."
@@ -22129,9 +22129,11 @@ class SettingsScreen(BaseAppScreen):
             button.label = self._briefing_schedules_toggle_label(live_enabled)
             return
         if runtime_applied:
+            button.disabled = False
             live_enabled = enabled
             status.update(self._briefing_schedules_gate_copy(enabled))
         else:
+            button.disabled = True
             state = "Enabled" if enabled else "Disabled"
             status.update(
                 f"Global briefing schedules were saved to disk as {state}, but are "

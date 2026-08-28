@@ -1189,6 +1189,22 @@ def test_settings_domain_category_contracts_are_explicit_about_mutation_scope():
     )
 
 
+def _painted_settings_widget(screen, widget) -> str:
+    """Return normalized text actually painted inside one widget's region."""
+    strips = screen._compositor.render_strips()
+    return " ".join(
+        "\n".join(
+            "".join(segment.text for segment in strips[row])[
+                widget.region.x : widget.region.x + widget.region.width
+            ]
+            for row in range(
+                widget.region.y,
+                min(widget.region.y + widget.region.height, len(strips)),
+            )
+        ).split()
+    )
+
+
 @pytest.mark.asyncio
 @pytest.mark.parametrize("size", [(180, 50), (100, 30)])
 async def test_settings_schedules_gate_is_painted_and_persists_recovery_action(
@@ -1217,18 +1233,8 @@ async def test_settings_schedules_gate_is_painted_and_persists_recovery_action(
 
         status = screen.query_one("#settings-briefing-schedules-status", Static)
         button = screen.query_one("#settings-briefing-schedules-toggle", Button)
-        strips = screen._compositor.render_strips()
-        status_painted = " ".join(
-            "\n".join(
-                "".join(segment.text for segment in strips[row])[
-                    status.region.x : status.region.x + status.region.width
-                ]
-                for row in range(
-                    status.region.y,
-                    min(status.region.y + status.region.height, len(strips)),
-                )
-            ).split()
-        )
+        button.active_effect_duration = 0
+        status_painted = _painted_settings_widget(screen, status)
         assert "Global briefing schedules: Disabled" in status_painted
         assert "Stored collection cadences stay saved but inactive" in status_painted
         assert "Chatbook is open" in status_painted
@@ -1238,27 +1244,33 @@ async def test_settings_schedules_gate_is_painted_and_persists_recovery_action(
         await host.workers.wait_for_complete()
         await pilot.pause()
 
-        strips = screen._compositor.render_strips()
-        status_painted = " ".join(
-            "\n".join(
-                "".join(segment.text for segment in strips[row])[
-                    status.region.x : status.region.x + status.region.width
-                ]
-                for row in range(
-                    status.region.y,
-                    min(status.region.y + status.region.height, len(strips)),
-                )
-            ).split()
-        )
+        status_painted = _painted_settings_widget(screen, status)
         assert "Global briefing schedules: Enabled" in status_painted
         assert "Disable scheduled briefings" in str(button.label)
+        assert button.disabled is False
         assert app.scheduler_loop.queue.briefing_projection is not None
+        assert (
+            config_module.get_cli_setting(
+                "scheduling", "briefing_schedules_enabled", False
+            )
+            is True
+        )
+
+        assert await pilot.click(button)
+        await host.workers.wait_for_complete()
+        await pilot.pause()
+
+        status_painted = _painted_settings_widget(screen, status)
+        assert "Global briefing schedules: Disabled" in status_painted
+        assert "Enable scheduled briefings" in str(button.label)
+        assert button.disabled is False
+        assert app.scheduler_loop.queue.briefing_projection is None
 
     assert (
         config_module.get_cli_setting(
-            "scheduling", "briefing_schedules_enabled", False
+            "scheduling", "briefing_schedules_enabled", True
         )
-        is True
+        is False
     )
 
 
@@ -1318,27 +1330,14 @@ async def test_settings_schedules_gate_reports_durable_cache_publish_failure(
         await host.workers.wait_for_complete()
         await pilot.pause()
 
-        strips = screen._compositor.render_strips()
-        status_painted = " ".join(
-            "\n".join(
-                "".join(segment.text for segment in strips[row])[
-                    status.region.x : status.region.x + status.region.width
-                ]
-                for row in range(
-                    status.region.y,
-                    min(
-                        status.region.y + status.region.height,
-                        len(strips),
-                    ),
-                )
-            ).split()
-        )
+        status_painted = _painted_settings_widget(screen, status)
         expected = (
             "Global briefing schedules were saved to disk as Enabled, but are "
             "not active in this run. Restart Chatbook to apply the saved gate."
         )
         assert status_painted == expected
         assert button in screen._compositor.visible_widgets
+        assert button.disabled is True
         assert str(button.label) == "Enable scheduled briefings"
         assert failure_detail not in status_painted
         assert str(config_path) not in status_painted
@@ -1347,6 +1346,93 @@ async def test_settings_schedules_gate_reports_durable_cache_publish_failure(
     assert saved["scheduling"]["briefing_schedules_enabled"] is True
     assert app.scheduler_loop.queue.briefing_projection is None
     apply_live_gate.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_settings_schedules_gate_disables_retry_after_live_apply_failure(
+    monkeypatch, tmp_path
+):
+    """A restart-required gate cannot be inverted by a second press."""
+    config_path = tmp_path / "config.toml"
+    config_path.write_text(
+        "[scheduling]\nbriefing_schedules_enabled = false\n",
+        encoding="utf-8",
+    )
+    monkeypatch.setenv("TLDW_CONFIG_PATH", str(config_path))
+
+    app = _build_test_app()
+    app.apply_briefing_schedules_enabled(False)
+    assert app.scheduler_loop.queue.briefing_projection is None
+    failure_detail = f"private live apply failure at {config_path}"
+    apply_live_gate = Mock(side_effect=RuntimeError(failure_detail))
+    monkeypatch.setattr(
+        app, "apply_briefing_schedules_enabled", apply_live_gate
+    )
+
+    host = StyledSettingsDestinationHarness(app, "settings")
+    async with host.run_test(size=(100, 30)) as pilot:
+        screen = _active_destination_screen(host)
+        await _select_settings_category(
+            screen,
+            pilot,
+            SettingsCategoryId.SCHEDULES,
+            selector="#settings-briefing-schedules-toggle",
+        )
+        status = screen.query_one(
+            "#settings-briefing-schedules-status", Static
+        )
+        button = screen.query_one(
+            "#settings-briefing-schedules-toggle", Button
+        )
+        button.active_effect_duration = 0
+        real_atomic_write = config_module.atomic_private_write_text
+        writes = []
+
+        def counted_atomic_write(*args, **kwargs):
+            writes.append(args[0])
+            return real_atomic_write(*args, **kwargs)
+
+        monkeypatch.setattr(
+            config_module, "atomic_private_write_text", counted_atomic_write
+        )
+
+        assert await pilot.click(button)
+        await host.workers.wait_for_complete()
+        await pilot.pause()
+
+        first_saved = tomllib.loads(config_path.read_text(encoding="utf-8"))
+        first_runtime_projection = app.scheduler_loop.queue.briefing_projection
+        first_apply_count = apply_live_gate.call_count
+        first_write_count = len(writes)
+        first_disabled = button.disabled
+        first_visible = button in screen._compositor.visible_widgets
+        first_label = str(button.label)
+        first_status = _painted_settings_widget(screen, status)
+
+        second_clicked = await pilot.click(button)
+        await host.workers.wait_for_complete()
+        await pilot.pause()
+
+        expected = (
+            "Global briefing schedules were saved to disk as Enabled, but are "
+            "not active in this run. Restart Chatbook to apply the saved gate."
+        )
+        assert first_saved["scheduling"]["briefing_schedules_enabled"] is True
+        assert first_runtime_projection is None
+        assert first_apply_count == 1
+        assert first_write_count == 1
+        assert first_visible is True
+        assert first_disabled is True
+        assert first_label == "Enable scheduled briefings"
+        assert first_status == expected
+        assert failure_detail not in first_status
+        assert str(config_path) not in first_status
+        assert second_clicked is True
+        saved = tomllib.loads(config_path.read_text(encoding="utf-8"))
+        assert saved["scheduling"]["briefing_schedules_enabled"] is True
+        assert app.scheduler_loop.queue.briefing_projection is None
+        assert apply_live_gate.call_count == 1
+        assert len(writes) == 1
 
 
 def test_settings_domain_category_ids_are_derived_from_contract_mapping():
