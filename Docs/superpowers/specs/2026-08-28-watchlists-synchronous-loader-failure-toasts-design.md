@@ -2,7 +2,7 @@
 
 **Task:** TASK-2340 — Silent loader failures contradict TASK-1090's toast premise
 
-**Status:** User-approved design; written specification under review
+**Status:** Ready for user review
 
 ## Context
 
