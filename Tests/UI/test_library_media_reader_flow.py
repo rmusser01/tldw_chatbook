@@ -16,6 +16,7 @@ from Tests.UI.test_library_media_side_by_side import (
     _open_media_list,
 )
 from Tests.UI.test_library_shell import (
+    LibraryGlobalKeyProductionCSSHarness,
     LibraryProductionCSSHarness,
     StaticLibraryMediaScopeService,
     _seed_conversations,
@@ -89,6 +90,27 @@ def _row_identity(row: Button) -> tuple[str, int, str]:
     backing_id = int(canonical_id.rsplit(":", 1)[-1])
     title = str(row._library_media_title)
     return canonical_id, backing_id, title
+
+
+@pytest.mark.asyncio
+async def test_media_global_f6_reaches_permanent_work_region() -> None:
+    app = _build_media_test_app()
+    _seed_conversations(app, _two_conversations(), media=_many_media_items(3))
+    host = LibraryGlobalKeyProductionCSSHarness(app)
+
+    async with host.run_test(size=WIDE_SIZE) as pilot:
+        screen = await _open_media_list(host, pilot)
+        screen.query_one("#library-media-row-0", Button).press()
+        find = await _wait_for_selector(screen, pilot, "#library-media-reader-find")
+        rail = screen.query_one("#library-search-input", Input)
+        items = screen.query_one("#library-media-filter", Input)
+        rail.focus()
+        await pilot.pause()
+
+        for expected in (items, find, rail):
+            await pilot.press("f6")
+            await pilot.pause()
+            assert screen.focused is expected
 
 
 async def _wait_for_detail_call(

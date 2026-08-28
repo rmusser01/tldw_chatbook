@@ -2360,6 +2360,34 @@ class LibraryScreen(BaseAppScreen):
             ),
         ),
     )
+    _MEDIA_WORKBENCH_FOCUS_TARGETS = (
+        WorkbenchPaneTarget("library-rail", ("library-search-input",)),
+        WorkbenchPaneTarget("library-canvas", ("library-media-filter",)),
+        WorkbenchPaneTarget(
+            "library-media-viewer",
+            ("library-media-reader-find", "library-media-back"),
+        ),
+    )
+    _NOTES_WORKBENCH_FOCUS_TARGETS = (
+        WorkbenchPaneTarget("library-rail", ("library-search-input",)),
+        WorkbenchPaneTarget("library-canvas", ("library-notes-filter",)),
+        WorkbenchPaneTarget(
+            "library-note-work-pane",
+            (
+                "library-note-title",
+                "library-note-preview-region",
+                "library-note-context-region",
+            ),
+        ),
+    )
+    _PROMPTS_WORKBENCH_FOCUS_TARGETS = (
+        WorkbenchPaneTarget("library-rail", ("library-search-input",)),
+        WorkbenchPaneTarget("library-canvas", ("library-prompts-filter",)),
+        WorkbenchPaneTarget(
+            "library-prompt-work-pane",
+            ("library-prompt-name", "library-prompt-detail-retry"),
+        ),
+    )
     _SKILLS_WORKBENCH_FOCUS_TARGETS = (
         WorkbenchPaneTarget("library-rail", ("library-search-input",)),
         WorkbenchPaneTarget("library-canvas", ("library-skills-filter",)),
@@ -3887,6 +3915,7 @@ class LibraryScreen(BaseAppScreen):
         self._library_note_load_message: str = ""
         self._library_note_autosave_state: str = "idle"
         self._library_notes_autosave_timer: Timer | None = None
+        self._library_note_autosave_generation: int = 0
         self._library_note_confirming_delete: bool = False
         self._library_note_preview: bool = False
         self._library_note_context: bool = False
@@ -7852,9 +7881,7 @@ class LibraryScreen(BaseAppScreen):
             )
             self._focus_library_note_conflict_callout()
             return
-        if self._library_notes_autosave_timer is not None:
-            self._library_notes_autosave_timer.stop()
-            self._library_notes_autosave_timer = None
+        self._invalidate_library_note_autosave()
         await self._save_library_note(explicit=True)
 
     async def action_library_notes_escape(self) -> None:
@@ -8173,8 +8200,14 @@ class LibraryScreen(BaseAppScreen):
         self,
     ) -> tuple[WorkbenchPaneTarget, ...]:
         """Return the active destination's stable global focus regions."""
+        if self._library_selected_row_id == LIBRARY_ROW_BROWSE_MEDIA:
+            return self._MEDIA_WORKBENCH_FOCUS_TARGETS
         if self._library_selected_row_id == LIBRARY_ROW_BROWSE_CONVERSATIONS:
             return self._CONVERSATION_WORKBENCH_FOCUS_TARGETS
+        if self._library_selected_row_id == LIBRARY_ROW_BROWSE_NOTES:
+            return self._NOTES_WORKBENCH_FOCUS_TARGETS
+        if self._library_selected_row_id == LIBRARY_ROW_BROWSE_PROMPTS:
+            return self._PROMPTS_WORKBENCH_FOCUS_TARGETS
         if self._library_selected_row_id in {
             LIBRARY_ROW_BROWSE_SKILLS,
             LIBRARY_ROW_CREATE_SKILL,
@@ -8436,9 +8469,7 @@ class LibraryScreen(BaseAppScreen):
         workspace = self._library_file_notes_workspace
         if workspace is not None:
             await workspace.shutdown()
-        if self._library_notes_autosave_timer is not None:
-            self._library_notes_autosave_timer.stop()
-            self._library_notes_autosave_timer = None
+        self._invalidate_library_note_autosave()
         self._library_prompt_collections_controller.invalidate()
         self._clear_library_prompt_selection(announce=False)
         self._library_prompt_mutation_disabled_states.clear()
@@ -17532,9 +17563,7 @@ class LibraryScreen(BaseAppScreen):
         # (P0) A full editor reset ends the session the pristine-title
         # marker belonged to; the next note starts untouched again.
         self._library_note_title_user_edited = False
-        if self._library_notes_autosave_timer is not None:
-            self._library_notes_autosave_timer.stop()
-            self._library_notes_autosave_timer = None
+        self._invalidate_library_note_autosave()
 
     def _reset_library_ingest_transient_state(self) -> None:
         """Clear the ingest canvas's form to defaults on rail re-entry.
@@ -19275,16 +19304,24 @@ class LibraryScreen(BaseAppScreen):
 
     # ----- Notes editor: save, autosave, conflict policy -----------------
 
+    def _invalidate_library_note_autosave(self) -> None:
+        """Cancel the debounce and fence off any autosave already queued."""
+        self._library_note_autosave_generation += 1
+        if self._library_notes_autosave_timer is not None:
+            self._library_notes_autosave_timer.stop()
+            self._library_notes_autosave_timer = None
+
     def _schedule_library_note_autosave(self) -> None:
         """Rearm debounce after one genuine coordinator-owned draft mutation."""
         snapshot = self._library_note_session.snapshot
         if snapshot is None or snapshot.in_conflict or snapshot.saving:
             return
         self._library_note_autosave_state = "idle"
-        if self._library_notes_autosave_timer is not None:
-            self._library_notes_autosave_timer.stop()
+        self._invalidate_library_note_autosave()
+        generation = self._library_note_autosave_generation
         self._library_notes_autosave_timer = self.set_timer(
-            LIBRARY_NOTES_AUTOSAVE_SECONDS, self._fire_library_note_autosave
+            LIBRARY_NOTES_AUTOSAVE_SECONDS,
+            lambda: self._fire_library_note_autosave(generation),
         )
 
     @on(Input.Changed, "#library-note-title")
@@ -19366,13 +19403,18 @@ class LibraryScreen(BaseAppScreen):
             self._schedule_library_note_autosave()
             self._apply_library_note_presentation_state()
 
-    def _fire_library_note_autosave(self) -> None:
+    def _fire_library_note_autosave(self, generation: int) -> None:
         """Debounce-timer callback: kick the actual autosave worker."""
+        if generation != self._library_note_autosave_generation:
+            return
         self._library_notes_autosave_timer = None
         if not self._library_note_dirty:
             return
         self.run_worker(
-            self._save_library_note(explicit=False),
+            self._save_library_note(
+                explicit=False,
+                autosave_generation=generation,
+            ),
             exclusive=True,
             group="library_note_save",
         )
@@ -19388,9 +19430,7 @@ class LibraryScreen(BaseAppScreen):
         # docstring for why autosave alone must NOT clear it).
         self._library_note_pending_blank_gc_id = None
         self._library_note_session_blank_id = None
-        if self._library_notes_autosave_timer is not None:
-            self._library_notes_autosave_timer.stop()
-            self._library_notes_autosave_timer = None
+        self._invalidate_library_note_autosave()
         self.run_worker(
             self._save_library_note(explicit=True),
             exclusive=True,
@@ -19531,9 +19571,7 @@ class LibraryScreen(BaseAppScreen):
             self._library_note_autosave_state = "conflict"
             self._library_note_preview = False
             self._library_note_context = False
-            if self._library_notes_autosave_timer is not None:
-                self._library_notes_autosave_timer.stop()
-                self._library_notes_autosave_timer = None
+            self._invalidate_library_note_autosave()
             if self.is_mounted:
                 self._apply_library_note_presentation_state()
                 self.call_after_refresh(self._focus_library_note_conflict_callout)
@@ -19551,7 +19589,12 @@ class LibraryScreen(BaseAppScreen):
         self._update_library_note_meta_static(content=snapshot.body)
         self._focus_library_note_validation_field(validation_field)
 
-    async def _save_library_note(self, *, explicit: bool) -> None:
+    async def _save_library_note(
+        self,
+        *,
+        explicit: bool,
+        autosave_generation: int | None = None,
+    ) -> None:
         """Ask the portable coordinator to serialize the canonical draft.
 
         Args:
@@ -19559,7 +19602,14 @@ class LibraryScreen(BaseAppScreen):
                 (``True``) or the autosave debounce/flush (``False``). The
                 coordinator uses an explicit no-op Save to acknowledge an
                 untouched newly created note without calling persistence.
+            autosave_generation: Timer generation captured before queuing an
+                autosave, or ``None`` for deliberate save/flush authority.
         """
+        if (
+            autosave_generation is not None
+            and autosave_generation != self._library_note_autosave_generation
+        ):
+            return
         snapshot = self._library_note_session.snapshot
         if (
             self._library_notes_view != "editor"
@@ -19570,14 +19620,17 @@ class LibraryScreen(BaseAppScreen):
         self._library_note_shortcut_status = ""
         self._library_note_autosave_state = "saving"
         self._update_library_note_meta_static(content=snapshot.body)
+        if (
+            autosave_generation is not None
+            and autosave_generation != self._library_note_autosave_generation
+        ):
+            return
         outcome = await self._library_note_session.request_save(explicit=explicit)
         self._apply_library_note_save_outcome(outcome)
 
     async def _flush_library_note_save(self) -> NoteFlushOutcome:
         """Cross the coordinator's pending-work barrier before navigation."""
-        if self._library_notes_autosave_timer is not None:
-            self._library_notes_autosave_timer.stop()
-            self._library_notes_autosave_timer = None
+        self._invalidate_library_note_autosave()
         if (
             self._library_note_session_blank_id
             and self._library_note_session_blank_id == self._selected_note_id
@@ -21291,14 +21344,15 @@ class LibraryScreen(BaseAppScreen):
         that the single source of selection truth (``_library_selected_row_id``)
         always drives the recomposed canvas.
 
-        A dirty note edit is flushed first (awaited) so leaving via the rail
-        never silently discards unsaved text; any unsaved edit surviving the
-        flush aborts the row switch entirely. Dirty prompt and skill edits
-        are vetoed the same way (see ``_flush_library_prompt_save`` /
-        ``_flush_library_skill_save`` -- both explicit-Save-only, so there
-        is nothing to flush, only to veto on). task-448: the skill guard was
-        originally omitted here, so a rail switch silently discarded dirty
-        skill edits while Back/row-switch exits vetoed them.
+        A Notes working session is retained only while cycling among the five
+        reader destinations. Every other Notes exit flushes first (awaited),
+        so it never silently discards unsaved text. A dirty Prompt working copy
+        has the same retained-reader boundary; every destructive Prompt exit
+        remains vetoed. Dirty skill edits are vetoed (see
+        ``_flush_library_skill_save`` -- explicit-Save-only, so there is nothing
+        to flush, only to veto on). task-448: the skill guard was originally
+        omitted here, so a rail switch silently discarded dirty skill edits
+        while Back/row-switch exits vetoed them.
         """
         if self._library_prompts_mutation_in_flight:
             return
@@ -21320,10 +21374,66 @@ class LibraryScreen(BaseAppScreen):
         """Recompose a rail destination while source admission is held."""
         if self._library_prompts_mutation_in_flight:
             return
-        note_flush = await self._flush_library_note_save()
-        if note_flush.kind is not NoteFlushOutcomeKind.PERMITTED:
-            return
-        if not await self._flush_library_prompt_save():
+        retained_reader_rows = {
+            LIBRARY_ROW_BROWSE_MEDIA,
+            LIBRARY_ROW_BROWSE_CONVERSATIONS,
+            LIBRARY_ROW_BROWSE_NOTES,
+            LIBRARY_ROW_BROWSE_PROMPTS,
+            LIBRARY_ROW_BROWSE_SKILLS,
+        }
+        note_snapshot = self._library_note_session.snapshot
+        retain_note_session = (
+            self._library_selected_row_id in retained_reader_rows
+            and row_id in retained_reader_rows
+            and not (
+                self._library_selected_row_id == LIBRARY_ROW_BROWSE_NOTES
+                and row_id == LIBRARY_ROW_BROWSE_NOTES
+            )
+            and self._library_notes_source == LIBRARY_NOTES_SOURCE_DATABASE
+            and self._library_notes_view == "editor"
+            and self._library_note_load_state == "loaded"
+            and note_snapshot is not None
+            and note_snapshot.note_id == self._selected_note_id
+            and not note_snapshot.saving
+            and not note_snapshot.in_conflict
+            and self._library_note_autosave_state in {"idle", "saved"}
+            and not self._library_note_confirming_delete
+            and not self._library_note_session.destructive_running
+            and self._library_note_session.destructive_admission is None
+            and not self._library_note_session.conflict_resolution_running
+        )
+        if retain_note_session:
+            self._invalidate_library_note_autosave()
+        else:
+            note_flush = await self._flush_library_note_save()
+            if note_flush.kind is not NoteFlushOutcomeKind.PERMITTED:
+                return
+        retain_prompt_draft = (
+            self._library_prompt_dirty
+            and self._library_prompts_view == "editor"
+            and row_id in retained_reader_rows
+        )
+        if retain_prompt_draft:
+            if self._library_selected_row_id == LIBRARY_ROW_BROWSE_PROMPTS:
+                fields = self._read_library_prompt_editor_fields()
+                if fields is None or not isinstance(
+                    self._library_prompt_detail, Mapping
+                ):
+                    return
+                name, author, details, system, user, keywords = fields
+                detail = dict(self._library_prompt_detail)
+                detail.update(
+                    {
+                        "name": name,
+                        "author": author,
+                        "details": details,
+                        "system_prompt": system,
+                        "user_prompt": user,
+                        "keywords": keywords,
+                    }
+                )
+                self._library_prompt_detail = detail
+        elif not await self._flush_library_prompt_save():
             return
         if not await self._flush_library_skill_save():
             self._notify_skill_dirty_veto()
@@ -21409,8 +21519,10 @@ class LibraryScreen(BaseAppScreen):
         self._library_notes_filter_records = None
         self._library_notes_tree_search_page = None
         self._library_notes_browse_return_receipt = None
-        self._reset_library_note_editor_state()
-        self._reset_library_prompt_editor_state()
+        if not retain_note_session:
+            self._reset_library_note_editor_state()
+        if not retain_prompt_draft:
+            self._reset_library_prompt_editor_state()
         self._reset_library_skills_import_state()
         # Review finding (Spec 1 T5): this rail-switch reset block does NOT
         # route through _reset_library_skill_editor_state() (skill-editor
@@ -21500,6 +21612,12 @@ class LibraryScreen(BaseAppScreen):
             replaced = True
         if not replaced:
             await self.recompose()
+        if (
+            retain_note_session
+            and row_id == LIBRARY_ROW_BROWSE_NOTES
+            and note_snapshot.dirty
+        ):
+            self._schedule_library_note_autosave()
         if self._library_ordinary_route_active():
             try:
                 width = self.query_one("#library-shell-grid").region.width
@@ -28907,10 +29025,10 @@ class LibraryScreen(BaseAppScreen):
         the prompt editor is explicit-Save-only: there is no pending
         background save to wait for or silently trigger here. This simply
         reports whether it is safe to proceed -- ``False`` whenever
-        ``_library_prompt_dirty`` is set, so the caller (``flush_pending_work``,
-        prompt-row selection, Back, rail-row selection) aborts the
-        navigation/switch and leaves the user's edit in place for them to
-        explicitly Save or abandon, mirroring the veto shape
+        ``_library_prompt_dirty`` is set, so destructive callers
+        (``flush_pending_work``, prompt-row selection, Back, and non-reader
+        rail selection) abort the navigation/switch and leave the user's edit
+        in place for them to explicitly Save or abandon, mirroring the veto shape
         ``_flush_library_note_save`` gives ``flush_pending_work`` on a
         genuine save failure.
 
