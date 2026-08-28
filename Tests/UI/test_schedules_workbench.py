@@ -1185,6 +1185,15 @@ async def test_sync_strip_fields_do_not_abut():
             ]
         }
     )
+    # task-23105: a local-owner bar with no server collapses these fields
+    # away entirely; give the harness a live server so they render and the
+    # original task-2723 geometry claim stays testable.
+    app.scheduling_service.server_client = _MockServerClient(
+        notifications_service=object()
+    )
+    app.runtime_policy = SimpleNamespace(
+        state=SimpleNamespace(active_server_id="example.com")
+    )
 
     async with app.run_test(size=(200, 40)) as pilot:
         workbench = SchedulesWorkbench(app_instance=pilot.app)

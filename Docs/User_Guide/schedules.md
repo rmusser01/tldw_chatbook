@@ -15,6 +15,15 @@ panels for the Schedule Queue, Task Detail, and Inspector.
 - Press **Ctrl+7**, click **⌃7 Schedules** in the nav bar, or press
   **Ctrl+P** → "Tab Navigation: Switch to Schedules".
 
+## Sync bar honesty
+
+Pressing **s** reports what actually happened: "Sync completed." only
+when a pull or push was recorded (the Last pull/push timestamps update),
+and "Sync finished — nothing was pulled or pushed." otherwise. With a
+Local owner and no scheduling server connected, the bar collapses to a
+single line ("Local schedules — no scheduling server connected; sync is
+off"), and the **Clear** button only appears once a sync error exists.
+
 ## Creating a scheduled task
 
 Press **c** to open the create form. The form scrolls when the terminal

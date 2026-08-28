@@ -853,7 +853,15 @@ class SchedulesWorkbench(BaseAppScreen):
     @on(SyncCompleted)
     def _on_sync_completed(self, event: SyncCompleted) -> None:
         self._sync_running = False
-        self.app_instance.notify("Sync completed.", severity="information")
+        if event.transferred is False:
+            # Honest outcome (task-23105): the attempt finished but
+            # recorded neither a pull nor a push.
+            self.app_instance.notify(
+                "Sync finished — nothing was pulled or pushed.",
+                severity="information",
+            )
+        else:
+            self.app_instance.notify("Sync completed.", severity="information")
         self._refresh_owner_select()
         self.run_worker(self.load_tasks, exclusive=True, group="schedules-load-tasks")
         self._refresh_conflicts_tab()
@@ -1095,9 +1103,23 @@ class SchedulesWorkbench(BaseAppScreen):
             self.query_one(btn_id, Button).disabled = True
         try:
             owner_id = service.owner_id
+            # task-23105: a sync that records neither a pull nor a push
+            # (e.g. a runtime-policy refusal the engine treats as "not
+            # applicable") must not toast "Sync completed." while the bar
+            # still reads "Last pull: —".
+            before = service.db.get_sync_state(owner_id) or {}
+            before_marks = (before.get("last_pull_at"), before.get("last_push_at"))
             await service.sync_now(owner_id)
+            after = service.db.get_sync_state(owner_id) or {}
+            after_marks = (after.get("last_pull_at"), after.get("last_push_at"))
             conflicts = service.db.get_conflicts(owner_id, primitive="reminder_task")
-            self.post_message(SyncCompleted(owner_id, conflict_count=len(conflicts)))
+            self.post_message(
+                SyncCompleted(
+                    owner_id,
+                    conflict_count=len(conflicts),
+                    transferred=after_marks != before_marks,
+                )
+            )
         except Exception as exc:  # noqa: BLE001
             logger.exception("Sync failed")
             self.post_message(SyncFailed(service.owner_id, str(exc)))

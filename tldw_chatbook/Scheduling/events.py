@@ -59,12 +59,24 @@ class RunReminderNowRequested(Message):
 
 
 class SyncCompleted(Message):
-    """Posted when a sync attempt completes."""
+    """Posted when a sync attempt completes.
 
-    def __init__(self, owner_id: str, conflict_count: int) -> None:
+    ``transferred`` reports whether the sync recorded a pull or push
+    (task-23105): None means unknown (legacy senders), False means the
+    attempt finished without pulling or pushing anything -- e.g. a
+    runtime-policy refusal the engine treats as "not applicable".
+    """
+
+    def __init__(
+        self,
+        owner_id: str,
+        conflict_count: int,
+        transferred: bool | None = None,
+    ) -> None:
         super().__init__()
         self.owner_id = owner_id
         self.conflict_count = conflict_count
+        self.transferred = transferred
 
 
 class SyncFailed(Message):
