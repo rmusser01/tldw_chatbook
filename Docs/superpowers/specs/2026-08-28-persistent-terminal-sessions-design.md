@@ -125,6 +125,8 @@ The Terminal arm disclosure states that:
 - the starting workspace or home directory is not confinement;
 - Chatbook starts from a scrubbed environment, but normal shell profiles may
   reload credentials, aliases, environment variables, and arbitrary commands;
+- omitted ambient integrations such as credential-agent sockets, proxies, or
+  custom module paths may remain unavailable unless startup files restore them;
 - shells and programs may persist their own history, files, logs, caches, and
   side effects even though Chatbook does not persist terminal content;
 - closing or disarming attempts bounded cleanup, but intentionally detached
@@ -273,8 +275,8 @@ The v1 Windows dependency contract is `pywinpty==3.0.5` using the low-level
 `winpty.PTY` API constructed with `backend=winpty.Backend.ConPTY`. The
 high-level `PtyProcess` wrapper is forbidden because it creates its own reader
 thread and loopback socket outside Chatbook's credit protocol. Changing the
-version or API level requires rerunning the named qualification artifact and an
-ADR-099 review before lockfile admission.
+version or API level requires rerunning the named qualification artifact and a
+new or superseding ADR decision before lockfile admission.
 
 The worker owns the low-level ConPTY read, write, resize, and close calls. One
 dedicated thread performs `PTY.read(blocking=True)` while an independent bounded
@@ -313,13 +315,32 @@ their normal interactive startup behavior applies. PowerShell remains
 interactive and does not receive `-NoProfile` or `-NonInteractive`. CMD remains
 interactive rather than using `/C`.
 
-The initial environment starts from the raw CLI's reviewed allowlist of
-platform-essential path, home/profile, temporary-directory, locale, and Windows
-system values. Chatbook sets `TERM=linux` and, on POSIX, `SHELL` to the resolved
-shell executable. It does not set `COLORTERM` or xterm-identifying markers;
-rows/columns come from the PTY or ConPTY size rather than inherited environment
-values. Provider keys, proxy credentials, tracing values, Python injection
-values, and unrelated ambient variables are not inherited. Startup files may
+Terminal has its own scrubbed-environment contract. It keeps the raw CLI's
+reviewed deny posture but does not reuse that one-shot environment builder
+unchanged because interactive shells and startup profiles have different
+usability requirements. The allowed initial values are:
+
+- on POSIX: validated `PATH`, account-derived `HOME`, `USER`, `LOGNAME`, and
+  `SHELL`, temporary-directory values, and locale categories;
+- on Windows: validated `PATH`, account-derived `USERPROFILE`, `HOMEDRIVE`,
+  `HOMEPATH`, and `USERNAME`; OS-derived `APPDATA`, `LOCALAPPDATA`,
+  `PROGRAMDATA`, `ProgramFiles`, optional `ProgramFiles(x86)`/`ProgramW6432`,
+  `SYSTEMROOT`, `WINDIR`, `COMSPEC`, and `PATHEXT`; temporary-directory and
+  locale values.
+
+Account and OS-derived values come from the current OS account and platform
+APIs, not arbitrary caller overrides. Missing optional values are omitted
+rather than invented. Chatbook sets `TERM=linux` and does not set `COLORTERM` or
+other xterm-identifying markers; rows and columns come from PTY/ConPTY size
+rather than inherited environment values. Ambient `PSModulePath` is not copied;
+PowerShell reconstructs its documented defaults and startup profiles may extend
+them. Provider keys, proxy credentials, tracing values, Python injection values,
+credential-agent sockets, and unrelated ambient variables are never inherited.
+The dependency qualification artifact records the exact per-platform variable
+set and proves normal Bash/Zsh, PowerShell, and CMD profile and command/module
+discovery behavior from that environment. Here, normal startup means the
+standard account startup files execute; it does not promise parity with every
+ambient variable available in an external terminal. Startup files may
 repopulate any value and are covered by the disclosure.
 
 The starting directory is validated as an existing directory immediately
@@ -373,7 +394,8 @@ The surface always shows:
   actions when applicable;
 - current terminal dimensions and visible clamping when the host allocation
   exceeds 300 columns or 120 rows;
-- `Ctrl+] Release input` while the viewport owns keyboard input.
+- `Ctrl+] Release input` while the viewport owns keyboard input, or the
+  scrollback-navigation keys and `Enter Focus terminal` while input is released.
 
 ### 6.2 Session creation
 
@@ -401,10 +423,18 @@ Only a visible selected session repaints. Hidden sessions retain their last
 dimensions. Selecting or remounting one sends one debounced resize to the new
 visible allocation without resetting screen state.
 
-Normal PageUp/PageDown remain terminal input. Local wheel scrolling and the
-released-focus controls navigate normal-screen scrollback. Leaving the live
-bottom freezes the viewed position while output continues and exposes a new-
-output count plus Jump live. Alternate-screen content never enters scrollback.
+While terminal input is focused, normal PageUp/PageDown remain terminal input.
+`Ctrl+]` consumes the chord and switches the viewport into scrollback-navigation
+mode without changing the selected session. In that mode no navigation key is
+forwarded: Up/Down move one retained line, PageUp/PageDown move one visible page,
+Home moves to the oldest retained line, End invokes Jump live, Enter returns
+terminal input focus without sending a newline, and Tab moves through the
+visible session and workspace actions. The visible Focus action provides the
+same return path. Local wheel scrolling also enters or continues navigation
+mode. Leaving the live bottom freezes the viewed position while output
+continues and exposes a new-output count plus Jump live. Alternate-screen
+content never enters scrollback; local scroll keys are harmless no-ops there
+and the visible status explains that no normal-screen history is available.
 
 Nested-program mouse reporting is excluded from v1. TASK-23114 owns mode-aware
 mouse forwarding and the real-terminal event-shape work it requires.
@@ -413,9 +443,10 @@ mouse forwarding and the real-terminal event-shape work it requires.
 
 Closing a running session confirms that its shell and programs will be
 terminated. Closing an exited session does not confirm. Close stops new input,
-sets an out-of-band cleanup signal, drains bounded final output, and runs the
-platform cleanup ladder. The record disappears only after proven closure;
-uncertain cleanup becomes a visible retained receipt.
+sets an out-of-band cleanup signal, and starts output draining concurrently with
+the platform cleanup ladder under the same monotonic deadline. The record
+disappears only after proven closure; uncertain cleanup becomes a visible
+retained receipt.
 
 Disarm confirms once for all live sessions and runs cleanup in parallel. App
 shutdown does not display interactive confirmations and has one bounded global
@@ -442,11 +473,14 @@ Bounds per session:
   50 ms;
 - viewport: 5-300 columns and 2-120 rows.
 
-Pasted text rejects NUL, ESC, DEL, and C0/C1 controls other than tab, carriage
-return, and line feed before bracketed-paste markers are applied. This prevents
+Paste validation is atomic. If pasted text contains NUL, ESC, DEL, or a C0/C1
+control other than tab, carriage return, or line feed, Chatbook refuses the
+entire paste before applying bracketed-paste markers or queueing any bytes. The
+Terminal surface shows a content-free reason that a prohibited control class
+was present; it neither logs nor echoes the rejected content. This prevents
 pasted content from forging the bracketed-paste terminator or injecting
-terminal-protocol bytes. Keyboard events remain byte-accurate for supported
-keys.
+terminal-protocol bytes without silently altering what the user intended to
+send. Keyboard events remain byte-accurate for supported keys.
 
 When pending input is full, paste is refused as a whole and key input reports
 `input_backpressure`; nothing is silently truncated or claimed as delivered.
@@ -527,12 +561,26 @@ PTY closure/hangup, foreground/session-aware signalling, and validated recursive
 descendant observation. For Windows it closes ConPTY and terminates/waits the
 admitted Job Object generation.
 
-The bounded ladder is:
+Each ordinary close has one five-second monotonic deadline. The stages use
+absolute no-later-than boundaries from its start so slow early stages cannot
+consume the proof reserve:
 
-1. stop input and request normal terminal hangup, wait up to 1 second;
-2. terminate remaining owned processes, wait up to 2 seconds;
-3. force-kill remaining owned processes, wait up to 2 seconds;
-4. perform platform death proof and report `closed` only when it succeeds.
+1. stop input, request normal terminal hangup, and allow an initial healthy
+   drain/settlement window until no later than T+0.75 seconds;
+2. terminate remaining owned processes until no later than T+2.25 seconds;
+3. force-kill remaining owned processes until no later than T+3.75 seconds;
+4. reserve the remaining 1.25 seconds for bounded final drain, handle/reaper
+   settlement, and platform death proof, reporting `closed` only when proof
+   succeeds.
+
+Any stage advances immediately when its condition is satisfied; it never waits
+merely to reach a boundary. Healthy output draining continues concurrently
+through later stages and cannot delay the priority cleanup actor. POSIX's two
+stable scans and EOF observation, and Windows' process/Job queries plus bounded
+EOF observation, must fit in the final proof reserve. Within one cleanup
+attempt, no internal I/O retry, read, scan, or backend wait resets the deadline.
+An explicit user Retry action starts a fresh five-second attempt against the
+retained, revalidated cleanup authority.
 
 Proven closure releases all handles and removes the record. If proof fails, the
 record becomes `cleanup_unproven`. On Windows the receipt retains the parent-
@@ -550,22 +598,28 @@ persisting, or model exposure. Observed EOF sets `stream_closed=true` while
 `cleanup_unproven`. Retry re-enumerates and revalidates before signalling.
 Receipt actions remain available while locked or unarmed.
 
-All sessions clean up concurrently during disarm/shutdown, with a five-second
-overall app deadline rather than five seconds multiplied by session count. At
-the final app-shutdown deadline, the parent closes any retained Windows Job
-handles as the kill-on-close fallback and closes remaining platform handles;
-there is no cross-restart cleanup claim.
+All sessions clean up concurrently during disarm/shutdown and share one
+five-second monotonic global deadline rather than receiving five seconds each.
+Their stage boundaries are calculated from the same global T0. Joining an
+already-running close, settlement, or cleanup attempt is idempotent and uses the
+earlier of its existing deadline and the new global deadline; Disarm or Shutdown
+never extends an attempt. At the final app-shutdown deadline, the parent closes
+any retained Windows Job handles as the kill-on-close fallback and closes
+remaining platform handles; there is no cross-restart cleanup claim.
 
 ### 8.2 Shell exit and output draining
 
 The exact shell exit does not by itself prove terminal completion because a
 descendant may retain the slave/ConPTY stream. Shell exit disables further user
-input and enters `draining`. The owner performs a bounded final drain and
-validates ordinary descendants. Remaining owned processes enter `closing` and
-the cleanup ladder. When process death is proven, the record becomes `exited`;
-`stream_closed` is true only after EOF, and `output_complete` also requires the
-healthy parser path to have consumed all admitted bytes. On Windows, Job Object
-and waitable-process proof may establish zero owned processes even when ConPTY
+input, enters `draining`, and starts a five-second monotonic settlement deadline.
+Healthy output drain and descendant validation run concurrently. If death and
+stream settlement are not proven by T+0.75 seconds, remaining owned processes
+enter `closing` and use the terminate, force-kill, and proof boundaries above
+without resetting the deadline. When process death is proven, the record becomes
+`exited`. `stream_closed` is true only after EOF, and `output_complete` also
+requires the healthy parser path to have consumed all admitted bytes. On
+Windows, Job Object and waitable-process proof may establish zero owned
+processes even when ConPTY
 fails to report EOF; that produces the visible, content-free
 `output_incomplete` reason rather than claiming all trailing output was
 captured. On POSIX, missing PTY EOF prevents the stronger death proof and
@@ -636,9 +690,13 @@ or parser from shipping.
 - locked/unarmed/armed truth table and launch-reset behavior;
 - independent raw CLI and Terminal arms;
 - atomic four-record reservation and release races;
-- name, shell, directory, environment, and argv validation;
+- name, shell, directory, terminal-specific environment, and argv validation,
+  including proof that the one-shot raw environment builder is not reused
+  unchanged;
 - lifecycle/reason/output-complete transition matrix, cleanup retry cycles, and
   idempotent priority cleanup;
+- absolute cleanup-stage boundaries, reserved proof time, a fresh deadline only
+  for explicit user Retry, and one shared deadline for parallel shutdown;
 - stream-closed versus output-complete semantics, including parser-failure raw
   cleanup drain with zero content projection or persistence;
 - input, paste, reply, output, viewport, scrollback, and memory bounds;
@@ -646,7 +704,7 @@ or parser from shipping.
   control sequences;
 - unterminated and oversized CSI/control strings, excessive CSI parameters and
   digits, repeated cursor saves, and cross-chunk limit handling;
-- bracketed paste and paste-control filtering;
+- bracketed paste and atomic paste-control refusal with a content-free notice;
 - alternate-screen and scrollback separation;
 - parser failure closes the session;
 - view projections survive widget destruction and remounting;
@@ -660,6 +718,8 @@ or parser from shipping.
 - interactive input, Unicode, resize/SIGWINCH, alternate screen, and the pyte
   qualification matrix;
 - foreground/background job-control process groups;
+- terminal-specific environment and ordinary Bash/Zsh profile behavior without
+  ambient credential, proxy, tracing, injection, or agent-socket inheritance;
 - exited group leaders, numeric PGID reuse, mixed/unrelated group membership,
   enumeration failure, and individually validated signalling fallback;
 - exact death proof with two stable descendant scans and PTY EOF;
@@ -678,8 +738,9 @@ or parser from shipping.
 - worker, shell, and helper Job membership plus parent-only Job-handle ownership;
 - bounded low-level read/internal buffers, one-credit output, and concurrent
   write/resize/`cancel_io`/priority-close while read is blocked;
-- interactive PowerShell and CMD startup, profiles, Unicode, resize, and
-  alternate-screen behavior;
+- terminal-specific Windows environment derivation plus interactive PowerShell
+  and CMD startup, profiles, default/custom profile module discovery, Unicode,
+  resize, and alternate-screen behavior;
 - descendant cleanup, exact-shell-exit drain, worker failure, app failure, and
   unavailable-backend refusal;
 - bounded waits around ConPTY EOF and output draining, including known
@@ -691,7 +752,8 @@ or parser from shipping.
 - Terminal rail action and command-palette entry;
 - unlock/arm/disarm states and persistent red danger copy;
 - create, rename, list, focus, close, Retry cleanup, and Jump live;
-- Ctrl+] release and preserved Chatbook globals;
+- Ctrl+] release, keyboard-only scrollback navigation/focus return, harmless
+  alternate-screen local scrolling, and preserved Chatbook globals;
 - continued sessions and output across conversation/screen navigation;
 - no process restart or duplication across recompose/remount;
 - stale view-generation resize/focus/repaint callbacks are ignored;

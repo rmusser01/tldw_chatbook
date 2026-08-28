@@ -61,34 +61,53 @@ every mutable pyte collection. Pyte must pass the design's shell, full-screen,
 Unicode, resize, alternate-screen, paste, terminal-query, and hostile-sequence
 qualification matrix before UI integration continues.
 
-The app starts the normal interactive account shell from a scrubbed parent
-environment. Normal startup files may reload credentials, environment values,
-and arbitrary behavior; the danger disclosure states this. The active local
-workspace, or real home when none is selected, is only the starting directory
-and is never described as confinement.
+The app starts the normal interactive account shell from a dedicated
+terminal-specific scrubbed environment rather than reusing the one-shot raw CLI
+builder unchanged. It admits only validated path, account/home, temporary,
+locale, and required platform-system values; terminal qualification records the
+exact per-platform set and proves shell profile and command/module discovery.
+Ambient provider, proxy, tracing, Python-injection, credential-agent, and
+unrelated values remain excluded. Normal startup files may reload credentials,
+environment values, and arbitrary behavior; the danger disclosure states this.
+The active local workspace, or real home when none is selected, is only the
+starting directory and is never described as confinement.
 
 The runtime enforces explicit bounds, including four retained session records,
 a 300x120 active viewport, 5,000 lines and 4 MiB of normal-screen scrollback per
 session, 512 KiB pending input and output per session, and a 256 KiB atomic paste
-limit. Stateful terminal output applies operating-system backpressure instead
-of being discarded. Close, Disarm, and Shutdown use an out-of-band idempotent
-signal that cannot wait behind saturated input. Four full sessions are limited
-to 256 MiB incremental managed-runtime RSS across the Chatbook parent,
-app-owned workers/helpers, and IPC, excluding user shell/program RSS.
+limit. A paste containing prohibited terminal controls is refused as a whole
+with a content-free local reason; it is never silently rewritten. Stateful
+terminal output applies operating-system backpressure instead of being
+discarded. Close, Disarm, and Shutdown use an out-of-band idempotent signal that
+cannot wait behind saturated input. Four full sessions are limited to 256 MiB
+incremental managed-runtime RSS across the Chatbook parent, app-owned
+workers/helpers, and IPC, excluding user shell/program RSS.
 
-Closing uses bounded hangup, terminate, and force-kill stages plus platform
-identity validation. Exact shell exit is followed by bounded output draining
-and descendant settlement. `exited` proves the root reaped and zero owned
-processes. Stream closure requires EOF; output completeness additionally
-requires every admitted byte to pass the healthy parser path. After process
-death, a failed parser uses a bounded raw drain that discards content without
-projection or persistence so EOF can still be proven while output remains
-incomplete. Cleanup uncertainty is retained visibly, keeps its cleanup authority
-where possible, continues occupying a session slot, and remains actionable
-while locked or unarmed. App failure relies on ordinary PTY-master closure on
-POSIX and final Job Object handle closure on Windows. These are operational
-cleanup mechanisms, not a sandbox or universal guarantee against deliberately
-detached host-authority processes.
+Closing uses one five-second monotonic deadline: the initial hangup/settlement
+window ends no later than T+0.75 seconds, terminate no later than T+2.25,
+force-kill no later than T+3.75, and the final 1.25 seconds are reserved for
+drain settlement and platform death proof. Healthy drain continues concurrently
+without delaying priority cleanup. Disarm and Shutdown run sessions concurrently
+against one shared deadline and cannot extend an attempt already in progress.
+Exact shell exit starts the same bounded settlement rather than resetting stage
+timers; only an explicit user Retry starts a fresh attempt against revalidated
+cleanup authority. `exited` proves the root reaped and zero owned processes.
+Stream closure requires EOF; output completeness additionally requires every
+admitted byte to pass the healthy parser path. After process death, a failed
+parser uses a bounded raw drain that discards content without projection or
+persistence so EOF can still be proven while output remains incomplete. Cleanup
+uncertainty is retained visibly, keeps its cleanup authority where possible,
+continues occupying a session slot, and remains actionable while locked or
+unarmed. App failure relies on ordinary PTY-master closure on POSIX and final
+Job Object handle closure on Windows. These are operational cleanup mechanisms,
+not a sandbox or universal guarantee against deliberately detached host-
+authority processes.
+
+While terminal input is focused, terminal-convention keys are forwarded except
+for Chatbook's reserved globals and Ctrl+]. Ctrl+] enters a local keyboard-
+accessible scrollback mode whose line, page, oldest, Jump-live, focus-return,
+and Tab navigation actions are never forwarded to the shell. Nested-program
+mouse reporting remains deferred.
 
 ## Context
 
@@ -153,6 +172,10 @@ license notices.
   advanced terminal applications may degrade or remain unsupported.
 - Normal interactive startup files can restore secrets and arbitrary behavior
   that environment scrubbing removed.
+- Deliberately omitted ambient values can make credential agents, proxies, or
+  custom module paths unavailable until a startup profile restores them;
+  standard profile execution is promised, not complete external-terminal
+  environment parity.
 - Chatbook's global Ctrl+P, Ctrl+Q, F1, and F6 plus the Ctrl+] release chord
   remain unavailable to nested terminal programs in v1.
 - Python object overhead may exceed logical scrollback bytes; measured four-
