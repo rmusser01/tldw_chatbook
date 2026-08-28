@@ -62,8 +62,13 @@ _REPO_ROOT = Path(__file__).resolve().parents[2]
 #: Always MEASURE after the final rebase. Wave 3 set its budget twice from a
 #: pre-rebase measurement and both landed red, because dev moved underneath
 #: it -- a budget derived from a stale base fails the moment it merges.
+#: Lowered 2026-08-27 by TASK-3070.14 after the amended Wave 6 realtime and
+#: review/selection extractions merged and the final tree measured exactly.
+#: The first closeout measurement was 16,968/562; dev then advanced through
+#: PR #2125 and subsequent Console work through PR #2147 before this ratchet
+#: landed. The final live measurement is: 17,727/593 -> 17,037/565.
 _BUDGETS: dict[str, tuple[str, int, int]] = {
-    "tldw_chatbook/UI/Screens/chat_screen.py": ("ChatScreen", 17026, 566),
+    "tldw_chatbook/UI/Screens/chat_screen.py": ("ChatScreen", 17037, 565),
 }
 
 # Task 22507.4 started from this reviewed measurement. The repository-wide

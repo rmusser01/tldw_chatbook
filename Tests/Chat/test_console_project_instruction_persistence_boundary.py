@@ -141,7 +141,10 @@ def test_automatic_nested_body_is_absent_from_every_durable_and_diagnostic_surfa
         "scopes": ("pkg",),
         "outcome_codes": (),
     }
-    assert EXPLICIT_READ in repr(db.list_runs("conv"))
+    # Explicit tool content remains available to the live run, while the
+    # durable run summary intentionally keeps tool bodies out of storage.
+    assert EXPLICIT_READ in repr(outcome.steps)
+    assert EXPLICIT_READ not in repr(db.list_runs("conv"))
     assert MODEL_QUOTATION in repr(store.messages_for_session(session.id))
 
 

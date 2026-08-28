@@ -7,7 +7,6 @@ the defect fails on the mechanism rather than on a symptom.
 
 from __future__ import annotations
 
-import asyncio
 from unittest.mock import patch
 
 import pytest
@@ -212,43 +211,24 @@ async def test_canvas_sync_suppresses_its_screen_fallback_inside_a_projection() 
 
 @pytest.mark.asyncio
 async def test_slow_canvas_swap_is_not_raced_by_the_media_browse_sync() -> None:
-    """A media browse landing mid-swap must not recompose or duplicate the canvas.
-
-    The delay is injected INSIDE the guarded region (the host's
-    ``remove_children`` await) because that is where the real race lives:
-    `_exit_library_media_viewer` kicks the list reload one line before
-    scheduling the swap, so a reload slower than the swap resolves while
-    the canvas is detached. The shipped tests missed it because their
-    in-memory service always won the race.
-    """
+    """An overlapping Media browse settlement keeps the retained canvas."""
     host = _media_app_host()
     async with host.run_test(size=LIBRARY_TEST_SIZE) as pilot:
         screen = await _boot_media_library(host, pilot)
         screen.query_one("#library-media-row-0", Button).press()
         await _wait_for_selector(screen, pilot, "#library-media-content-search")
 
-        canvas_host = screen.query_one("#library-canvas")
-        original_remove = canvas_host.remove_children
         fired: list[str] = []
 
-        async def slow_remove(*args, **kwargs):
-            result = await original_remove(*args, **kwargs)
-            # Mid-window: the browse projection lands here in production.
+        calls, spy = _screen_recompose_spy()
+        with patch.object(BaseAppScreen, "refresh", spy):
+            # Items and Reader are retained siblings now. Settle the page in
+            # the same pump window as the scheduled Reader exit continuation.
+            screen._exit_library_media_viewer()
             screen._sync_library_media_browse_state(None)
             fired.append("browse-sync")
-            await asyncio.sleep(0.02)
-            return result
-
-        canvas_host.remove_children = slow_remove
-        try:
-            calls, spy = _screen_recompose_spy()
-            with patch.object(BaseAppScreen, "refresh", spy):
-                screen.query_one("#library-media-back", Button).press()
-                await _wait_for_selector(screen, pilot, "#library-media-row-0")
-                for _ in range(15):
-                    await pilot.pause(0.02)
-        finally:
-            canvas_host.remove_children = original_remove
+            for _ in range(15):
+                await pilot.pause(0.02)
 
         assert fired, "the mid-swap browse sync never ran -- window not hit"
         assert calls == [], (
@@ -269,20 +249,7 @@ async def test_slow_canvas_swap_is_not_raced_by_the_media_browse_sync() -> None:
 
 @pytest.mark.asyncio
 async def test_routine_snapshot_midswap_still_runs_the_projection_follow_up() -> None:
-    """A generation-only supersede must still run the projection's follow-up.
-
-    ``_library_entry_reconcile_is_current`` compares BOTH the route key and
-    ``_library_snapshot_state_generation``, and the ordinary local-source
-    snapshot bumps that generation -- which ``_exit_library_media_viewer``
-    kicks one line before scheduling the swap. So a routine snapshot landing
-    mid-await returned SUPERSEDED, and the open-surface seam skipped
-    ``then()``: the task-2856 AC1 first-row focus AND the media_return
-    scroll restore were both dropped, where the pre-conversion code armed
-    them unconditionally.
-
-    The route did NOT change here -- only the snapshot generation moved --
-    so the destination is still ours and the follow-up is still meaningful.
-    """
+    """A generation-only update still runs the retained exit follow-up."""
     host = _media_app_host()
     async with host.run_test(size=LIBRARY_TEST_SIZE) as pilot:
         screen = await _boot_media_library(host, pilot)
@@ -298,26 +265,15 @@ async def test_routine_snapshot_midswap_still_runs_the_projection_follow_up() ->
 
         screen._arm_library_list_entry_focus = spy_arm
 
-        canvas_host = screen.query_one("#library-canvas")
-        original_remove = canvas_host.remove_children
         route_before: list[tuple] = []
 
-        async def bumping_remove(*args, **kwargs):
-            result = await original_remove(*args, **kwargs)
-            # A routine snapshot lands mid-window: generation moves, route
-            # key does NOT.
-            route_before.append(screen._library_entry_route_key())
-            screen._library_snapshot_state_generation += 1
-            return result
-
-        canvas_host.remove_children = bumping_remove
-        try:
-            screen.query_one("#library-media-back", Button).press()
-            await _wait_for_selector(screen, pilot, "#library-media-row-0")
-            for _ in range(15):
-                await pilot.pause(0.02)
-        finally:
-            canvas_host.remove_children = original_remove
+        screen._exit_library_media_viewer()
+        # A routine snapshot lands before the scheduled retained-reader exit
+        # continuation: generation moves, route key does not.
+        route_before.append(screen._library_entry_route_key())
+        screen._library_snapshot_state_generation += 1
+        for _ in range(15):
+            await pilot.pause(0.02)
 
         assert route_before, "the mid-swap snapshot bump never ran"
         assert screen._library_entry_route_key() == route_before[0], (

@@ -764,7 +764,7 @@ def _message_record(
     conversation_id = (
         _optional_text(_field(row, "conversation_id")) or m.conversation_id
     )
-    is_system = kind == KIND_SYSTEM
+    system_message = kind == KIND_SYSTEM
     metadata = _parse_payload(_field(row, "payload_json")) or {}
     completion_observed_at = _parse_timestamp(_field(row, "completed_at"))
     completed_v2_assistant = (
@@ -779,7 +779,7 @@ def _message_record(
         turn_id=turn_id,
         message_id=m.mid,
         content_preview=(
-            "System context attached" if is_system else _preview(m.content)
+            "System context attached" if system_message else _preview(m.content)
         ),
         usage=usage,
         step_started_at=_field(row, "step_started_at") if row is not None else None,
@@ -809,11 +809,11 @@ def _message_record(
         observed_at=completion_observed_at if completed_v2_assistant else m.ts,
         field_states=_field_state_map(
             row,
-            default={"content_preview": "omitted" if is_system else "observed"},
+            default={"content_preview": "omitted" if system_message else "observed"},
         ),
         sensitivity=(
             _optional_text(_field(row, "sensitivity"))
-            or ("system_context" if is_system else "conversation_content")
+            or ("system_context" if system_message else "conversation_content")
         ),
     )
 

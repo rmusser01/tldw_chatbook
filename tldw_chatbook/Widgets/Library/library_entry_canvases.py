@@ -363,7 +363,11 @@ class LibraryLandingCanvas(_RetainedSyncCallback, Vertical):
         if not self._deferred_sync_is_current(serial):
             self._discard_stale_deferred_sync(serial)
             return
-        recents = self.query_one("#library-hub-recents", Vertical)
+        recents_query = self.query("#library-hub-recents")
+        if not recents_query:
+            self._discard_stale_deferred_sync(serial)
+            return
+        recents = recents_query.first(Vertical)
         if not self._deferred_sync_is_current(serial):
             self._discard_stale_deferred_sync(serial)
             return

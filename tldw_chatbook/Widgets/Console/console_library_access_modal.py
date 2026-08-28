@@ -33,9 +33,7 @@ class ConsoleLibraryPolicySaveOutcome:
     copy: str
 
 
-class ConsoleLibraryAccessModal(
-    SafeModalDismissMixin, ModalScreen[None]
-):
+class ConsoleLibraryAccessModal(SafeModalDismissMixin, ModalScreen[None]):
     """Edit automatic retrieval and assistant access as independent axes."""
 
     SAFE_MODAL_CONTENT = "#console-library-access"
@@ -136,17 +134,14 @@ class ConsoleLibraryAccessModal(
             )
             yield Static(
                 "Stored only on this device. This conversation policy is not synced.",
-                classes="console-library-access-local",
                 markup=False,
             )
             with VerticalScroll(id="console-library-access-body"):
                 yield Static(
                     "Automatic retrieval",
-                    classes="console-library-access-axis-title",
                 )
                 yield Static(
                     "Choose whether the app searches your Library before each send.",
-                    classes="console-library-access-axis-copy",
                     markup=False,
                 )
                 with RadioSet(
@@ -156,8 +151,7 @@ class ConsoleLibraryAccessModal(
                     yield RadioButton(
                         "Never",
                         value=(
-                            self._snapshot.auto_retrieve
-                            is ConsoleAutoRetrieve.NEVER
+                            self._snapshot.auto_retrieve is ConsoleAutoRetrieve.NEVER
                         ),
                         id="library-auto-never",
                         disabled=not self._state.editing_enabled,
@@ -173,12 +167,10 @@ class ConsoleLibraryAccessModal(
                     )
                 yield Static(
                     "Assistant Library access",
-                    classes="console-library-access-axis-title",
                 )
                 yield Static(
                     "Choose whether the assistant may use the built-in Library "
                     "capability during its work.",
-                    classes="console-library-access-axis-copy",
                     markup=False,
                 )
                 with RadioSet(
@@ -312,12 +304,10 @@ class ConsoleLibraryAccessModal(
                 snapshot.auto_retrieve is ConsoleAutoRetrieve.AUTOMATIC
             )
             self.query_one("#library-agent-blocked", RadioButton).value = (
-                snapshot.assistant_access
-                is ConsoleAssistantLibraryAccess.BLOCKED
+                snapshot.assistant_access is ConsoleAssistantLibraryAccess.BLOCKED
             )
             self.query_one("#library-agent-allowed", RadioButton).value = (
-                snapshot.assistant_access
-                is ConsoleAssistantLibraryAccess.ALLOWED
+                snapshot.assistant_access is ConsoleAssistantLibraryAccess.ALLOWED
             )
         finally:
             self._suppress_changes = False

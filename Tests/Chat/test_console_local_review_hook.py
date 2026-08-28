@@ -23,8 +23,23 @@ from tldw_chatbook.Chat.console_chat_controller import (
     build_local_review_hook,
 )
 from tldw_chatbook.Chat.console_chat_models import ConsoleProviderSelection
+from tldw_chatbook.Chat.console_dispatch_checkpoint import (
+    ConsoleEgressClass,
+    ConsoleLibraryItemScopeSnapshot,
+    ConsoleProviderIntent,
+    ConsoleResolvedDestination,
+    ConsoleTurnLibraryAuthority,
+)
+from tldw_chatbook.Chat.console_library_policy import (
+    ConsoleAssistantLibraryAccess,
+    ConsoleAutoRetrieve,
+    ConsoleLibraryPolicySnapshot,
+)
 from tldw_chatbook.Chat.console_scratch_space import ConsoleScratchSpaceManager
-from tldw_chatbook.Chat.console_turn_context import ConsoleTurnExecutionContext
+from tldw_chatbook.Chat.console_turn_context import (
+    ConsoleTurnConfigurationSnapshot,
+    ConsoleTurnExecutionContext,
+)
 from tldw_chatbook.DB.Subscriptions_DB import SubscriptionsDB
 from tldw_chatbook.MCP.permission_store import EffectiveToolState
 from tldw_chatbook.runtime_policy.bootstrap import default_runtime_policy_path
@@ -189,6 +204,43 @@ class _FakeService:
         )
 
 
+def _test_execution_context(
+    scratch_snapshot,
+    *,
+    session_id="test-chat",
+    tool_configuration=None,
+):
+    """Build the complete immutable turn authority production now requires."""
+    provider_selection = ConsoleProviderSelection(provider="deepseek")
+    return ConsoleTurnExecutionContext(
+        configuration=ConsoleTurnConfigurationSnapshot.capture(
+            session_id=session_id,
+            provider_selection=provider_selection,
+            scratch_space=scratch_snapshot,
+            tool_configuration=tool_configuration or {},
+        ),
+        library_authority=ConsoleTurnLibraryAuthority(
+            policy=ConsoleLibraryPolicySnapshot(
+                auto_retrieve=ConsoleAutoRetrieve.NEVER,
+                assistant_access=ConsoleAssistantLibraryAccess.BLOCKED,
+                policy_revision=0,
+                source="test",
+            ),
+            direct_library_tools=False,
+            source_types=(),
+            scope_snapshot=ConsoleLibraryItemScopeSnapshot((), (), False),
+            provider_intent=ConsoleProviderIntent("deepseek", None, None),
+            attempt_id="test-attempt",
+        ),
+        resolved_destination=ConsoleResolvedDestination(
+            provider="deepseek",
+            model=None,
+            endpoint_identity="test",
+            egress_class=ConsoleEgressClass.PUBLIC_NETWORK,
+        ),
+    )
+
+
 def _bare_controller(app):
     """A controller instance with only what _compose_local_provider touches."""
     controller = object.__new__(ConsoleChatController)
@@ -199,10 +251,8 @@ def _bare_controller(app):
     scratch_spaces = ConsoleScratchSpaceManager()
     scratch_snapshot = scratch_spaces.snapshot("test-chat")
     controller._scratch_spaces = scratch_spaces
-    controller._test_turn_context = ConsoleTurnExecutionContext.capture(
-        session_id="test-chat",
-        provider_selection=ConsoleProviderSelection(provider="deepseek"),
-        scratch_space=scratch_snapshot,
+    controller._test_turn_context = _test_execution_context(
+        scratch_snapshot,
         tool_configuration={
             "local_tools_enabled": controller_mod.get_cli_setting(
                 "console",
@@ -382,10 +432,9 @@ def test_default_chat_local_provider_uses_scratch_not_config_or_cwd(
     )
     scratch_spaces = ConsoleScratchSpaceManager(temp_parent=tmp_path)
     snapshot = scratch_spaces.snapshot("chat-a")
-    context = ConsoleTurnExecutionContext.capture(
+    context = _test_execution_context(
+        snapshot,
         session_id="chat-a",
-        provider_selection=ConsoleProviderSelection(provider="deepseek"),
-        scratch_space=snapshot,
         tool_configuration={
             "local_tools_enabled": True,
             "workspace_root": str(configured),
@@ -408,10 +457,9 @@ def test_default_chat_local_provider_uses_scratch_not_config_or_cwd(
 def test_default_chat_local_provider_rejects_after_scratch_close(tmp_path):
     scratch_spaces = ConsoleScratchSpaceManager(temp_parent=tmp_path)
     snapshot = scratch_spaces.snapshot("chat-a")
-    context = ConsoleTurnExecutionContext.capture(
+    context = _test_execution_context(
+        snapshot,
         session_id="chat-a",
-        provider_selection=ConsoleProviderSelection(provider="deepseek"),
-        scratch_space=snapshot,
         tool_configuration={"local_tools_enabled": True},
     )
     controller = _bare_controller(

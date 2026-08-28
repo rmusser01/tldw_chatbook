@@ -30,7 +30,9 @@ def _rows_for(message, spec):
     transcript = ConsoleTranscript()
     transcript.set_messages([message])
     transcript.set_video_card_specs({message.id: spec} if spec is not None else {})
-    return transcript._transcript_rows()
+    # Media rows are adjuncts nested into the top-level assistant-turn row;
+    # exercise the flat row planner that owns the video-card projection.
+    return transcript._flat_transcript_rows()
 
 
 def test_video_message_renders_video_card_row():

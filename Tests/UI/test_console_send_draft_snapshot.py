@@ -15,6 +15,8 @@ from textual.widgets import Button
 
 from Tests.UI.test_console_native_chat_flow import (
     BlockedGateway,
+    _build_console_send_test_app,
+    _persist_console_provider_config,
     _select_llamacpp_console,
 )
 from Tests.UI.test_destination_shells import _build_test_app, _wait_for_selector
@@ -42,9 +44,13 @@ async def _wait_for_text(console, pilot, needle: str, tries: int = 40) -> None:
 
 
 def _ready_openai_app(monkeypatch, reply: str):
-    app = _build_test_app()
-    app.app_config["chat_defaults"] = {"provider": "openai", "model": "gpt-4.1"}
-    app.app_config["api_settings"] = {"openai": {"api_key": DUMMY_OPENAI_API_KEY}}
+    app = _build_console_send_test_app()
+    _persist_console_provider_config(
+        app,
+        provider="openai",
+        model="gpt-4.1",
+        provider_settings={"api_key": DUMMY_OPENAI_API_KEY},
+    )
 
     def fake_chat_api_call(**_kwargs):
         return reply

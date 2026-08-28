@@ -262,6 +262,7 @@ def test_options_persist_to_config(monkeypatch):
     # bumps it to invalidate in-flight pre-flights (stale-helper repair,
     # task-3300).
     screen._library_ingest_preflight_generation = 0
+    screen._library_ingest_start_consent = None
     screen.refresh = lambda **_kwargs: None
     # Submit schedules the scroll-receipt-into-view callback (task-3304);
     # the real method posts a message this unmounted shortcut cannot.
@@ -346,6 +347,7 @@ def test_snapshot_coerces_display_string_chunk_numbers(monkeypatch):
     )
     screen._cancel_library_ingest_preflight = lambda: None
     screen._library_ingest_preflight_generation = 0
+    screen._library_ingest_start_consent = None
     screen.refresh = lambda **_kwargs: None
     # Submit schedules the scroll-receipt-into-view callback (task-3304);
     # the real method posts a message this unmounted shortcut cannot.

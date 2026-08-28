@@ -147,6 +147,18 @@ async def _open_inspector_and_get_row(console, pilot):
     return row
 
 
+async def _click_scope_action(console, pilot, button_id: str) -> None:
+    """Scroll a scope action through the pinned fold cue before clicking it."""
+    button = console.query_one(f"#{button_id}", Button)
+    button.scroll_visible(animate=False, immediate=True)
+    await pilot.pause()
+    landed = await pilot.click(
+        button,
+        offset=(max(0, button.region.width // 2), 0),
+    )
+    assert landed, f"scope action #{button_id} remained obscured after reveal"
+
+
 @pytest.mark.asyncio
 async def test_retrieval_scope_row_sits_directly_below_sources_tray_above_run_inspector():
     """Placement pinned: sibling of the tray in the Inspector rail body,
@@ -315,7 +327,7 @@ async def test_narrow_button_opens_modal_with_real_listers_wired():
         console = host.screen_stack[-1]
         await _open_inspector_and_get_row(console, pilot)
 
-        await pilot.click(f"#{NARROW_BTN_ID}")
+        await _click_scope_action(console, pilot, NARROW_BTN_ID)
         await pilot.pause()
         for _ in range(20):
             await pilot.pause(0.02)
@@ -422,7 +434,7 @@ async def test_edit_button_seeds_modal_from_held_scope():
         console._sync_console_retrieval_scope_row()
         await pilot.pause()
 
-        await pilot.click(f"#{EDIT_BTN_ID}")
+        await _click_scope_action(console, pilot, EDIT_BTN_ID)
         await pilot.pause()
         for _ in range(20):
             await pilot.pause(0.02)
@@ -692,7 +704,7 @@ async def test_clear_button_unpersisted_session():
         console._sync_console_retrieval_scope_row()
         await pilot.pause()
 
-        await pilot.click(f"#{CLEAR_BTN_ID}")
+        await _click_scope_action(console, pilot, CLEAR_BTN_ID)
         await pilot.pause()
         for _ in range(20):
             await pilot.pause(0.02)
@@ -725,7 +737,7 @@ async def test_clear_button_persisted_session():
             row = console.query_one(f"#{ROW_ID}")
             assert list(row.query(f"#{CLEAR_BTN_ID}"))
 
-            await pilot.click(f"#{CLEAR_BTN_ID}")
+            await _click_scope_action(console, pilot, CLEAR_BTN_ID)
             await pilot.pause()
             for _ in range(20):
                 await pilot.pause(0.02)
@@ -1251,7 +1263,7 @@ async def test_conversation_picker_universe_is_workspace_scope_when_set():
         )
         await _open_inspector_and_get_row(console, pilot)
 
-        await pilot.click(f"#{NARROW_BTN_ID}")
+        await _click_scope_action(console, pilot, NARROW_BTN_ID)
         await pilot.pause()
         for _ in range(20):
             await pilot.pause(0.02)

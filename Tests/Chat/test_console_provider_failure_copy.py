@@ -8,7 +8,6 @@ same undiagnosable 500 (UX review finding
 j3-provider-error-discards-detail-poisons-conversation, REGRESSION).
 """
 
-from types import SimpleNamespace
 
 import httpx
 import pytest
@@ -93,7 +92,9 @@ async def test_agent_failure_row_carries_body_and_image_recovery_hint(tmp_path):
         agent_bridge=bridge,
         agent_runtime_enabled=True,
     )
-    session = store.ensure_session(title="Chat 1")
+    # This regression exercises provider failure rendering, not durable-chat
+    # publication. A temporary chat is the supported persistence-free path.
+    session = store.create_session(title="Chat 1", ephemeral=True)
     store.append_message(
         session.id,
         role=ConsoleMessageRole.USER,

@@ -99,10 +99,10 @@ async def test_improvement_recovery_row_tracks_exact_composer_lifecycle() -> Non
         assert_recovery(False)
 
 
-def _ready_console_host() -> ConsoleHarness:
+def _ready_console_host() -> _BundledConsoleGeometryHarness:
     app = _build_test_app()
     _configure_native_ready_console(app)
-    return ConsoleHarness(app)
+    return _BundledConsoleGeometryHarness(app)
 
 
 async def _mounted_console(host: ConsoleHarness, pilot):

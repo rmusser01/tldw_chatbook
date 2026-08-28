@@ -1929,10 +1929,11 @@ class ConsoleChatStore:
         """Read one normalized conversation-owned replay preference."""
 
         persistence = self.persistence
-        if persistence is None or persistence.db is None:
+        db = getattr(persistence, "db", None)
+        if db is None:
             return "auto"
         try:
-            conversation = persistence.db.get_conversation_by_id(conversation_id)
+            conversation = db.get_conversation_by_id(conversation_id)
         except Exception:
             logger.warning("thinking_history_policy_read_failed")
             return "auto"
@@ -4518,6 +4519,11 @@ class ConsoleChatStore:
         if self._message_session_index.get(user.id) != session_id:
             raise RuntimeError("Committed USER owner changed sessions.")
         user.persisted_message_id = commit.user_message_id
+        # The atomic acceptance transaction creates the durable USER row, but
+        # the optimistic live echo accumulated its trajectory observations
+        # before it had that durable identity. Publish the sidecar owner now so
+        # pending retrieval/context events are not silently discarded.
+        self._write_trajectory_row_for_message(user)
         try:
             assistant = self._message_or_raise(commit.assistant_message_id)
         except KeyError:

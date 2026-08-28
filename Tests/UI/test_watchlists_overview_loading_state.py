@@ -44,6 +44,10 @@ class SlowWatchlistsScopeService:
         await self.release.wait()
         return list(self.watch_items)
 
+    async def get_overview_data(self, **kwargs):
+        await self.release.wait()
+        return {"total_sources": 0}
+
 
 def test_profile_state_names_all_three_states():
     assert OverviewPane.profile_state({}) == "loading", (
@@ -64,9 +68,8 @@ async def test_the_overview_shows_a_loading_state_while_the_request_is_in_flight
     """AC#1 and AC#3, with a deliberately slow backend (AC#5)."""
     app = _build_test_app()
     service = SlowWatchlistsScopeService()
-    app.watchlist_scope_service = service
-
     host = DestinationHarness(app, "watchlists_collections")
+    host.context_screen._controller.get_overview_data = service.get_overview_data
     async with host.run_test(size=(180, 50)) as pilot:
         await pilot.pause(0.3)
         screen = _active_destination_screen(host)

@@ -104,12 +104,21 @@ def test_state_survives_create_update_delete_and_undelete_projection(
             payload_hash=upsert_hash,
         )
 
-        assert [
+        statuses = [
             created["status"],
             updated["status"],
             deleted["status"],
             undeleted["status"],
-        ] == ["enqueued"] * 4
+        ]
+        expected_undelete = (
+            "skipped"
+            if state == AssistantGenerationState.CONTINUATION_ACTIVE.value
+            else "enqueued"
+        )
+        # Tombstones erase private continuation owners. A direct SQL undelete
+        # cannot reconstruct an active continuation, so that one state must
+        # remain unprojectable while ordinary closed states still round-trip.
+        assert statuses == ["enqueued", "enqueued", "enqueued", expected_undelete]
         entries = repo.list_sync_v2_outbox_entries(
             **scope, dataset_id="dataset-1"
         )
@@ -120,7 +129,11 @@ def test_state_survives_create_update_delete_and_undelete_projection(
             for entry in entries
             if entry["envelope"]["operation"] == "upsert"
         ]
-        assert projected == [expected_payload]
+        assert projected == (
+            []
+            if state == AssistantGenerationState.CONTINUATION_ACTIVE.value
+            else [expected_payload]
+        )
         delete_envelope = next(
             entry["envelope"]
             for entry in entries
@@ -585,7 +598,7 @@ def test_visible_edit_keeps_checkpoint_on_its_exact_new_message_version(
         db.close_connection()
 
 
-def test_delete_is_not_resumable_and_undelete_projects_new_whole_version(
+def test_delete_is_not_resumable_and_private_owner_undelete_is_rejected(
     tmp_path,
 ) -> None:
     db, message_id, first_hash = _source_message(tmp_path)
@@ -626,15 +639,12 @@ def test_delete_is_not_resumable_and_undelete_projects_new_whole_version(
                 (db._get_current_utc_timestamp_iso(), message_id),
             )
         undeleted_hash = _current_message_payload_hash(db, message_id)
-        assert (
-            producer.reconcile_chat_message_intent(
-                **scope,
-                message_id=message_id,
-                message_version=3,
-                payload_hash=undeleted_hash,
-            )["status"]
-            == "enqueued"
-        )
+        assert producer.reconcile_chat_message_intent(
+            **scope,
+            message_id=message_id,
+            message_version=3,
+            payload_hash=undeleted_hash,
+        ) == {"status": "skipped", "reason": "source_intent_unavailable"}
         with repo._get_connection() as conn:
             versions = [
                 row[0]
@@ -643,7 +653,7 @@ def test_delete_is_not_resumable_and_undelete_projects_new_whole_version(
                     "ORDER BY source_version"
                 ).fetchall()
             ]
-        assert versions == [1, 3]
+        assert versions == [1]
     finally:
         db.close_connection()
 

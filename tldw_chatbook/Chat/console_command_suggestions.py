@@ -31,6 +31,7 @@ _COMMAND_DESCRIPTIONS: dict[str, str] = {
     "prompt": "Insert a saved prompt into the composer",
     "system": "Apply a saved system prompt to this session",
     "skills": "List or run a skill",
+    "fewer-permission-prompts": "Reduce approval prompts for trusted tool actions",
     "prefill": "Prepare the start of the assistant's reply",
     "generate-image": "Generate an image (optionally via a chosen backend)",
     "generate-video": "Generate a video (optionally via a chosen backend)",

@@ -490,7 +490,7 @@ async def test_task_16001_console_directional_rail_buttons_visual_sweep(
                 button_selector=inspector_selector,
                 open_state=effective_inspector_open,
                 handle_width=11,
-                content_width=9,
+                content_width=10,
             )
             transcript = app.screen.query_one("#console-transcript-region")
             assert transcript.region.width > 0

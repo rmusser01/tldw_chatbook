@@ -656,7 +656,10 @@ class LibraryPromptsListCanvas(PostRecomposeCallback, Vertical):
                     classes="library-toolbar-count",
                     markup=False,
                 )
-            receipt_actions = Horizontal(classes="ds-toolbar")
+            receipt_actions = Horizontal(
+                id="library-prompts-delete-receipt-actions",
+                classes="ds-toolbar",
+            )
             receipt_actions.styles.height = "auto"
             with receipt_actions:
                 yield Button(

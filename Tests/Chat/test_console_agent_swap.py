@@ -554,7 +554,6 @@ async def test_agent_run_records_persisted_assistant_message_id(tmp_path):
     id -- so a later resume can anchor markers by ``persisted_message_id``.
     The native id create_run recorded is corrected to the persisted id here.
     """
-    from Tests.Chat.test_console_chat_store import FakePersistence
 
     # A REAL persistence: `FakePersistence` predates `commit_durable_turn`
     # (a26cdafd8 / 56db75386) and cannot satisfy the durable-turn gate, so
@@ -618,14 +617,13 @@ async def test_stopped_run_records_persisted_id_not_stale_native(tmp_path):
     never recorded anything). GREEN with both halves: NULL at create, persisted
     id recorded on the stopped path.
     """
-    from Tests.Chat.test_console_chat_store import FakePersistence
 
     # A REAL persistence: `FakePersistence` predates `commit_durable_turn`
     # (a26cdafd8 / 56db75386) and cannot satisfy the durable-turn gate, so
     # every send through it was refused before reaching the agent swap under
     # test. These tests never assert on the double itself -- only on persisted
     # ids, which a real service supplies.
-    store = persisted_console_store()
+    store = persisted_console_store(db_path=tmp_path / "chat.db")
     gateway = _Gateway([["Tok", "yo."]])
     db = AgentRunsDB(tmp_path / "runs.db", client_id="t")
     bridge = ConsoleAgentBridge(agent_runs_db=db, store=store, provider_gateway=gateway)
@@ -675,7 +673,6 @@ async def test_failed_run_records_persisted_id_on_run(tmp_path):
     regression, exercising ``_finalize_agent_failure`` instead of the
     ``stopped_now`` branch. RED on HEAD (only the success path recorded).
     """
-    from Tests.Chat.test_console_chat_store import FakePersistence
 
     # A REAL persistence: `FakePersistence` predates `commit_durable_turn`
     # (a26cdafd8 / 56db75386) and cannot satisfy the durable-turn gate, so
@@ -851,7 +848,11 @@ async def test_stop_during_parked_bridge_thread_persists_cancelled_not_done(tmp_
     surviving thread still observes the cancellation correctly.
     """
     gateway = _ParkingGateway()
-    store = ConsoleChatStore()
+    store = ConsoleChatStore(
+        persistence=ChatPersistenceService(
+            CharactersRAGDB(str(tmp_path / "chat.db"), "test")
+        )
+    )
     db = AgentRunsDB(tmp_path / "runs.db", client_id="t")
     bridge = ConsoleAgentBridge(agent_runs_db=db, store=store, provider_gateway=gateway)
     controller = ConsoleChatController(
@@ -1463,6 +1464,9 @@ async def test_agent_runtime_gate_refreshes_without_screen_teardown():
 
     fake_bridge = _FakeBridge()
     screen = ChatScreen(app)
+    store = ConsoleChatStore()
+    store.create_session(ephemeral=True)
+    screen._console_chat_store = store
     screen._ensure_console_agent_bridge = lambda: fake_bridge
 
     class _FakeGateway:
@@ -1486,7 +1490,6 @@ async def test_agent_runtime_gate_refreshes_without_screen_teardown():
     result = await controller.submit_draft("hello")
     assert result.accepted is True
     assert fake_bridge.calls == 0  # legacy path used, not the agent bridge
-    store = screen._ensure_console_chat_store()
     messages = store.messages_for_session(store.active_session_id)
     assert messages[-1].content == "legacy answer."
 
@@ -2077,7 +2080,6 @@ async def test_stopped_via_cancel_records_persisted_id_on_run(tmp_path):
     ``run_reply``, which made this gap invisible. RED pre-fix: the run row
     stays NULL and falls to the ordinal fallback on resume.
     """
-    from Tests.Chat.test_console_chat_store import FakePersistence
 
     class _YieldThenParkGateway(_ParkingGateway):
         """Streams ONE chunk before parking: a zero-chunk stop never persists

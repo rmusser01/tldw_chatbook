@@ -205,12 +205,20 @@ def test_prepared_continuation_still_reports_a_real_destination_change():
 
 
 def test_prepared_continuation_allows_an_unchanged_destination():
-    from tldw_chatbook.Chat.console_chat_controller import ConsoleResolvedDestination
+    from tldw_chatbook.Chat.console_dispatch_checkpoint import (
+        ConsoleEgressClass,
+        ConsoleResolvedDestination,
+    )
 
     controller = ConsoleChatController(
         store=ConsoleChatStore(), provider_gateway=_HangingGateway()
     )
-    destination = ConsoleResolvedDestination.__new__(ConsoleResolvedDestination)
+    destination = ConsoleResolvedDestination(
+        provider="llama_cpp",
+        model="test-model",
+        endpoint_identity="http://127.0.0.1:9099",
+        egress_class=ConsoleEgressClass.ON_DEVICE,
+    )
     copy = controller._prepared_continuation_block_copy(
         _resolution(ready=True, resolved_destination=destination),
         expected_destination=destination,

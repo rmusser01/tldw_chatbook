@@ -91,8 +91,8 @@ def _resume_into_fresh_store(db: CharactersRAGDB, conversation_id: str):
 
 
 @pytest.mark.asyncio
-async def test_console_branching_full_lifecycle_persist_resume_swipe():
-    db = CharactersRAGDB(":memory:", "test_client")
+async def test_console_branching_full_lifecycle_persist_resume_swipe(tmp_path):
+    db = CharactersRAGDB(str(tmp_path / "chat.db"), "test_client")
     try:
         store, controller, session = _new_controller(
             db, replies=["A1", "A1-prime", "A2"]

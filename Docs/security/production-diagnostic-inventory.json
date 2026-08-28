@@ -629,7 +629,7 @@
     },
     {
       "call_count": 344,
-      "diagnostic_digest": "0caa6900f357703db384",
+      "diagnostic_digest": "abf56190bb4fdc289314",
       "owner": "TASK-494",
       "path": "tldw_chatbook/DB/Client_Media_DB_v2.py",
       "reason": "remaining Chatbook production diagnostic owner"
@@ -2624,7 +2624,7 @@
     },
     {
       "call_count": 124,
-      "diagnostic_digest": "aa78882971179ebf86b0",
+      "diagnostic_digest": "0c14000924413ee25def",
       "owner": "TASK-494",
       "path": "tldw_chatbook/UI/Screens/library_screen.py",
       "reason": "remaining Chatbook production diagnostic owner"

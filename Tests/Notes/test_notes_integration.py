@@ -2,8 +2,6 @@
 # Integration tests for Notes functionality using real database
 
 import pytest
-import tempfile
-import os
 import uuid
 from pathlib import Path
 
@@ -20,17 +18,12 @@ pytestmark = pytest.mark.integration
 
 
 @pytest.fixture
-def test_db():
+def test_db(tmp_path: Path):
     """Create a real CharactersRAGDB instance for testing"""
-    tmp = tempfile.NamedTemporaryFile(suffix=".db", delete=False)
-    tmp.close()
-    db_path = Path(tmp.name).resolve(strict=True)
+    db_path = tmp_path / "notes.sqlite"
 
     db = CharactersRAGDB(db_path, "test_client")
     yield db
-
-    # Databases don't have close() method anymore
-    os.unlink(db_path)
 
 
 @pytest.fixture

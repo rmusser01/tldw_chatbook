@@ -12,7 +12,6 @@ from tldw_chatbook.Chat.console_display_state import (
     ConsoleControlState,
     ConsoleInspectorState,
 )
-from tldw_chatbook.Widgets.Console.console_run_inspector import ConsoleRunInspector
 from tldw_chatbook.Widgets.Console.console_workbench_state import (
     build_console_workbench_state,
 )
@@ -68,13 +67,6 @@ def test_inspector_live_work_and_status_reflect_active_run():
     assert "No active work" not in rows["Live work"].value
     assert "Generating" in rows["Live work"].value
 
-    inspector_status = ConsoleRunInspector._status_summary(
-        ConsoleRunInspector, running
-    )
-    assert "Generating" in inspector_status
-    assert inspector_status != "Status: Ready"
-
-
 def test_inspector_returns_to_ready_when_run_inactive():
     idle = ConsoleInspectorState.from_values(
         provider_label="llama_cpp",
@@ -84,21 +76,16 @@ def test_inspector_returns_to_ready_when_run_inactive():
     )
     rows = {row.label: row for row in idle.rows}
     assert rows["Live work"].value == "No active work"
-    assert (
-        ConsoleRunInspector._status_summary(ConsoleRunInspector, idle)
-        == "Status: Ready"
-    )
+    assert rows["Provider"].status == "ready"
 
 
-def test_inspector_blocked_still_wins_over_running():
-    """A mid-run provider block (or pending approval) is more important to
-    surface than the generic running state."""
+def test_inspector_surfaces_blocked_provider_during_run():
+    """A mid-run provider block remains explicit beside live work."""
     blocked = ConsoleInspectorState.from_values(
         provider_ready=False,
         provider_recovery="Configure a provider before sending.",
         run_active=True,
     )
-    assert (
-        ConsoleRunInspector._status_summary(ConsoleRunInspector, blocked)
-        == "Status: Blocked"
-    )
+    rows = {row.label: row for row in blocked.rows}
+    assert rows["Provider"].status == "blocked"
+    assert rows["Live work"].value == "Generating…"

@@ -807,7 +807,7 @@ def test_generic_ancestor_edit_atomically_tombstones_all_descendant_checkpoints(
     assert rows[root_id]["content"] == "edited prompt"
     assert rows[root_id]["version"] == versions_before[root_id] + 1
     for message_id in (visible_id, variant_id, blank_id):
-        assert rows[message_id]["provider_continuation_json"] is not None
+        assert rows[message_id]["provider_continuation_json"] is None
         assert rows[message_id]["version"] == versions_before[message_id] + 1
         assert rows[message_id]["deleted"] == 1
     assert _message_sync_entries(db, visible_id)[-1]["operation"] == "delete"

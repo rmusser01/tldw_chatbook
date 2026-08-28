@@ -1022,6 +1022,30 @@ def _sanitize_summary_value(value: Any, depth: int = 0) -> tuple[Any, bool]:
 
 def _safe_bounded_summary(content: str) -> tuple[str, bool]:
     """Keep useful output while replacing private lines/blocks."""
+    stripped = content.strip()
+    if stripped.startswith("{"):
+        try:
+            full_structured = json.loads(content)
+        except (
+            json.JSONDecodeError,
+            MemoryError,
+            RecursionError,
+            TypeError,
+            ValueError,
+        ):
+            pass
+        else:
+            if (
+                isinstance(full_structured, Mapping)
+                and "content" in full_structured
+                and any(
+                    re.sub(r"[\s-]+", "_", str(key).lower())
+                    in _LOCAL_PATH_FIELD_NAMES
+                    for key in full_structured
+                )
+            ):
+                return "[local path withheld]", True
+
     sanitized = redact_log_line(content, max_length=_DURABLE_SUMMARY_MAX_CHARS)
     redaction_altered = sanitized != content
     content = sanitized

@@ -3356,6 +3356,9 @@ def test_invalid_audio_request_allows_next_job_to_dispatch(
     app._ingest_heavy_lane_max_workers = lambda: 1  # type: ignore[method-assign]
     app._ingest_parse_pool_generation = 1
     app._ingest_parse_jobs_by_generation = {1: set()}
+    app._ingest_parse_pool_mode = None
+    app._ingest_parse_pool_retiring = False
+    app._ingest_parse_pool_retirement_error = None
     app._ingest_local_stt_jobs = {}
     warning_messages: list[str] = []
     monkeypatch.setattr(
@@ -3390,7 +3393,7 @@ def test_invalid_audio_request_allows_next_job_to_dispatch(
     pool = _Pool()
     pool_creation_calls = 0
 
-    def ensure_pool() -> _Pool:
+    def ensure_pool(_mode: str) -> _Pool:
         nonlocal pool_creation_calls
         pool_creation_calls += 1
         return pool

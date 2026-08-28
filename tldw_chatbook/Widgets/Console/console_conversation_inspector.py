@@ -111,9 +111,6 @@ from tldw_chatbook.Widgets.Console.console_capture_policy_dialog import (
     CapturePolicyBindings,
     ConsoleCapturePolicyDialog,
 )
-from tldw_chatbook.Widgets.Console.console_exchange_export_dialog import (
-    ConsoleExchangeExportDialog,
-)
 
 MODAL_ID = "console-inspector-modal"
 CLOSE_BUTTON_ID = "console-inspector-close"
@@ -1481,6 +1478,13 @@ class ConsoleConversationInspector(SafeModalDismissMixin, ModalScreen[None]):
             self._open_exchange_export(call_key)
 
     def _open_exchange_export(self, call_key: str) -> bool:
+        # Keep the trajectory export family off the Chat first-paint import
+        # closure. It is needed only after the user opens this disclosure
+        # dialog, not while the conversation inspector module is imported.
+        from tldw_chatbook.Widgets.Console.console_exchange_export_dialog import (
+            ConsoleExchangeExportDialog,
+        )
+
         """Open the governor for the exact loaded call and capture revision."""
         if not self._capture_revision_is_current():
             return False

@@ -83,11 +83,15 @@ def test_layout_intent_dataclasses_use_pascal_case_names() -> None:
 
 
 def test_layout_width_uses_only_positive_screen_allocation() -> None:
-    receiver = SimpleNamespace(size=Size(145, 50))
+    receiver = SimpleNamespace(size=Size(145, 50), is_mounted=True)
 
     assert WatchlistsCollectionsScreen._available_layout_width(receiver) == 145
 
     receiver.size = Size(0, 50)
+    assert WatchlistsCollectionsScreen._available_layout_width(receiver) is None
+
+    receiver.is_mounted = False
+    receiver.size = Size(145, 50)
     assert WatchlistsCollectionsScreen._available_layout_width(receiver) is None
 
 
@@ -662,6 +666,7 @@ async def test_failed_switch_to_local_retries_the_normal_load_path() -> None:
         ]
     )
     app = _build_test_app()
+    app.notify = Mock()
     bundle = app.watchlist_bundle_service
     source_id = bundle._db.add_subscription(
         name="Recovery local source",
@@ -670,7 +675,6 @@ async def test_failed_switch_to_local_retries_the_normal_load_path() -> None:
     )
     watchlist = bundle.create("Recovery local watchlist")
     bundle.add_source(watchlist["id"], source_id)
-    app.notify = Mock()
     host = DestinationHarness(app, "watchlists_collections")
 
     async with host.run_test(size=(180, 50)) as pilot:

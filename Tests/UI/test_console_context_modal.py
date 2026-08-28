@@ -33,6 +33,7 @@ from textual.app import App, ComposeResult
 from textual.containers import Horizontal, Vertical
 from textual.widgets import Button, Collapsible, Label, Static, TextArea
 
+from Tests.UI.consolidated_css import ConsolidatedCSSApp
 from tldw_chatbook.Chat.console_chat_models import (
     ConsoleChatMessage,
     ConsoleContextSnapshot,
@@ -127,7 +128,7 @@ def _inspector(snapshot_factory=_snapshot_factory, **overrides: object) -> Conso
     return ConsoleConversationInspector(**kwargs)
 
 
-class ModalHarness(App):
+class ModalHarness(ConsolidatedCSSApp):
     def compose(self) -> ComposeResult:
         yield Static("background")
 
@@ -237,7 +238,7 @@ async def test_context_modal_in_progress_warning():
         assert app.focused is modal.query_one(f"#{CLOSE_BUTTON_ID}", Button)
 
 
-class ActionHarness(App):
+class ActionHarness(ConsolidatedCSSApp):
     def compose(self) -> ComposeResult:
         yield Static("background")
 

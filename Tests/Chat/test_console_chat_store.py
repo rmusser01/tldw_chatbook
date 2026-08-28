@@ -5465,7 +5465,7 @@ def test_an_empty_transcript_placeholder_persists_through_the_deferred_create():
     create, and a follow-up metadata-only patch (mirroring the "final" case's own
     two-step order: content write, then status write) marks it "empty"."""
     from tldw_chatbook.Chat.message_metadata import MessageMetadata
-    from tldw_chatbook.UI.Screens.chat_screen import (
+    from tldw_chatbook.UI.Console_Modules.realtime import (
         CONSOLE_REALTIME_EMPTY_TRANSCRIPT_PLACEHOLDER,
     )
 
@@ -5518,7 +5518,7 @@ def test_empty_transcript_placeholder_reaches_a_real_db_through_the_deferred_cre
     write_and_leaves_version_unchanged`) for exactly this kind of durability
     claim."""
     from tldw_chatbook.Chat.message_metadata import MessageMetadata
-    from tldw_chatbook.UI.Screens.chat_screen import (
+    from tldw_chatbook.UI.Console_Modules.realtime import (
         CONSOLE_REALTIME_EMPTY_TRANSCRIPT_PLACEHOLDER,
     )
 

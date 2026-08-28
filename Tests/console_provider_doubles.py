@@ -22,6 +22,7 @@ this helper attaches it only when ``ready`` is true.
 from __future__ import annotations
 
 import dataclasses
+from pathlib import Path
 from types import SimpleNamespace
 from typing import Any, TypeVar
 
@@ -75,7 +76,12 @@ def provider_resolution(
     return resolution
 
 
-def persisted_console_store(**kwargs: Any):
+def persisted_console_store(
+    *,
+    db_path: str | Path = ":memory:",
+    workspace_registry: Any | None = None,
+    **kwargs: Any,
+):
     """A `ConsoleChatStore` wired to persistence, as production always is.
 
     A bare `ConsoleChatStore()` has `persistence is None`. Since `a26cdafd8`,
@@ -89,6 +95,8 @@ def persisted_console_store(**kwargs: Any):
     only some bare-store rigs were affected.
 
     Args:
+        db_path: Backing database. Use a file for cross-thread controller tests.
+        workspace_registry: Optional durable workspace authority.
         **kwargs: Passed through to `ConsoleChatStore`.
 
     Returns:
@@ -101,7 +109,8 @@ def persisted_console_store(**kwargs: Any):
 
     return ConsoleChatStore(
         persistence=ChatPersistenceService(
-            CharactersRAGDB(":memory:", "console-doubles")
+            CharactersRAGDB(str(db_path), "console-doubles"),
+            workspace_registry=workspace_registry,
         ),
         **kwargs,
     )

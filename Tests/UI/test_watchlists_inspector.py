@@ -83,15 +83,16 @@ def _assert_visible_in_viewport(
 
 def _app_with_watchlists(watch_items):
     app = _build_test_app()
-    app.watchlist_scope_service = SimpleNamespace(
-        list_watch_items=StaticWatchlistsScopeService(watch_items).list_watch_items,
+    app.watchlist_scope_service.list_watch_items = (
+        StaticWatchlistsScopeService(watch_items).list_watch_items
     )
     return app
 
 
 @pytest.mark.asyncio
 async def test_inspector_pane_mounts_in_screen():
-    app = _app_with_watchlists([])
+    """The production destination mounts its Inspector pane."""
+    app = _build_test_app()
     host = DestinationHarness(app, "watchlists_collections")
     async with host.run_test(size=(180, 50)) as pilot:
         await pilot.pause(0.2)

@@ -505,6 +505,7 @@ class _PartialMoveService(_MutationService):
 
 def _mutation_fake(service: _MutationService):
     fake = _screen_fake(service)  # type: ignore[arg-type]
+    fake._library_note_import_execution_active = lambda: False
     fake._library_notes_mutation_in_flight = False
     fake._library_notes_notice = ""
     fake._library_notes_deleted_folder_receipt = None

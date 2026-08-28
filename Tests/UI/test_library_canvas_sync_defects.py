@@ -580,7 +580,7 @@ async def test_entry_canvas_sync_does_not_focus_an_unrelated_replacement_row():
     async with host.run_test(size=LIBRARY_TEST_SIZE) as pilot:
         screen = _active_library_screen(host)
         await _wait_for_library_shell(screen, pilot)
-        await screen._select_library_rail_row(LIBRARY_ROW_BROWSE_CONVERSATIONS)
+        screen.query_one("#library-row-browse-conversations").press()
         row = await _wait_for_selector(screen, pilot, "#library-conversation-row-0")
         row.focus()
         await pilot.pause()
@@ -595,6 +595,7 @@ async def test_entry_canvas_sync_does_not_focus_an_unrelated_replacement_row():
             },
             conversations[1],
         )
+        screen._library_conversation_page_records = records["conversations"]
         screen._apply_local_source_snapshot(
             records,
             dict(screen._local_source_counts),

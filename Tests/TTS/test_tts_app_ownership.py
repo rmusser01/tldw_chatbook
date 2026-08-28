@@ -920,6 +920,12 @@ async def test_app_lifecycle_shutdown_drains_all_owners_in_authority_order() -> 
     async def notes_sync_shutdown() -> None:
         calls.append("notes-sync")
 
+    async def actor_pack_import_shutdown() -> None:
+        calls.append("actor-pack-import")
+
+    async def actor_pack_export_shutdown() -> None:
+        calls.append("actor-pack-export")
+
     async def persona_buddy_shutdown() -> None:
         calls.append("persona-buddy")
 
@@ -930,6 +936,8 @@ async def test_app_lifecycle_shutdown_drains_all_owners_in_authority_order() -> 
         _audio_cpp_artifact_lease_coordinator=Coordinator(),
         audio_cpp_model_install_owner=InstallOwner(),
         _shutdown_notes_sync_runtime=notes_sync_shutdown,
+        _shutdown_actor_pack_import=actor_pack_import_shutdown,
+        _shutdown_actor_pack_export=actor_pack_export_shutdown,
         _shutdown_console_image_edits=image_shutdown,
         _shutdown_console_runtime=console_runtime_shutdown,
         _shutdown_persona_buddy=persona_buddy_shutdown,
@@ -940,6 +948,8 @@ async def test_app_lifecycle_shutdown_drains_all_owners_in_authority_order() -> 
 
     assert calls == [
         "notes-sync",
+        "actor-pack-import",
+        "actor-pack-export",
         "console-runtime",
         "persona-buddy",
         "coordinator",
@@ -1234,7 +1244,9 @@ def test_app_forwards_provider_configuration_change_to_stts_handler() -> None:
 def test_existing_mount_binds_before_screen_work() -> None:
     method = _method_node(REPO_ROOT / "tldw_chatbook/app.py", "TldwCli", "on_mount")
     bind_calls = _self_method_calls(method, "_bind_tts_service")
-    restore_calls = _self_method_calls(method, "_restore_ingest_jobs")
+    restore_calls = _self_method_calls(
+        method, "_restore_ingest_jobs_and_schedule_research_sources"
+    )
 
     assert len(bind_calls) == 1
     assert len(restore_calls) == 1

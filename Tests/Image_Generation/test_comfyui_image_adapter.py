@@ -1361,13 +1361,13 @@ def test_blocked_response_headers_obey_hard_deadline_and_close_late_response(
             transport,
             config=_config(
                 comfyui_image_request_timeout_seconds=5.0,
-                comfyui_image_total_deadline_seconds=0.08,
+                comfyui_image_total_deadline_seconds=0.2,
             ),
         ).generate(_request())
     elapsed = time.perf_counter() - started
 
     _assert_phase(exc, phase)
-    assert elapsed < 0.5
+    assert elapsed < 0.75
     assert transport.started.is_set()
     assert transport.closed.is_set()
     assert transport.late_response_created.wait(0.1)

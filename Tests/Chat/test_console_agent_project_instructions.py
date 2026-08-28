@@ -38,7 +38,6 @@ from tldw_chatbook.Chat.console_chat_controller import (
     project_instruction_authority_is_current,
     resolve_project_instruction_binding,
 )
-from tldw_chatbook.Chat.console_chat_store import ConsoleChatStore
 from tldw_chatbook.Chat.console_provider_gateway import ConsoleProviderResolution
 from tldw_chatbook.Chat.console_project_instructions import (
     ProjectInstructionControlState,
@@ -46,7 +45,9 @@ from tldw_chatbook.Chat.console_project_instructions import (
     project_instruction_notice_key,
 )
 from tldw_chatbook.DB.AgentRuns_DB import AgentRunsDB
+from tldw_chatbook.DB.Workspace_DB import WorkspaceDB
 from tldw_chatbook.MCP.permission_store import EffectiveToolState
+from tldw_chatbook.Workspaces import LocalWorkspaceRegistryService
 from tldw_chatbook.Workspaces.models import WorkspaceRuntimeBinding
 from Tests.console_provider_doubles import with_destination
 from Tests.console_provider_doubles import persisted_console_store
@@ -884,8 +885,14 @@ async def test_controller_notice_uses_owning_session_and_drift_cancels_bridge_se
 ):
     (tmp_path / "AGENTS.md").write_text(SENTINEL)
     binding = _binding(tmp_path)
-    registry = _BindingRegistry([binding])
-    store = persisted_console_store()
+    registry = LocalWorkspaceRegistryService(
+        WorkspaceDB(tmp_path / "workspaces.db", client_id="instruction-drift")
+    )
+    registry.create_workspace(workspace_id="w1", name="Workspace 1")
+    registry.save_runtime_binding(binding)
+    store = persisted_console_store(
+        db_path=tmp_path / "chat.db", workspace_registry=registry
+    )
     session = store.create_session(workspace_id="w1")
     notices = []
     owning_loop_calls = []
@@ -967,7 +974,13 @@ async def test_controller_notice_uses_owning_session_and_drift_cancels_bridge_se
 async def test_folderless_session_skips_optional_project_instructions_and_runs(
     tmp_path,
 ):
-    store = persisted_console_store()
+    registry = LocalWorkspaceRegistryService(
+        WorkspaceDB(tmp_path / "workspaces.db", client_id="folderless")
+    )
+    registry.ensure_default_workspace()
+    store = persisted_console_store(
+        db_path=tmp_path / "chat.db", workspace_registry=registry
+    )
     session = store.create_session(workspace_id="workspace-default")
     bridge_calls = []
     setup_calls = []
@@ -1003,7 +1016,7 @@ async def test_folderless_session_skips_optional_project_instructions_and_runs(
         select_project_instruction_binding=select_binding,
     )
     controller.app = SimpleNamespace(
-        workspace_registry_service=_BindingRegistry([]),
+        workspace_registry_service=registry,
     )
 
     result = await controller.submit_draft("question")
@@ -1051,10 +1064,16 @@ def test_disabled_session_does_not_consult_registry(tmp_path):
 
 
 @pytest.mark.asyncio
-async def test_project_instruction_disable_terminalizes_and_allows_retry():
+async def test_project_instruction_disable_terminalizes_and_allows_retry(tmp_path):
     """Disabling unavailable instructions must not strand the Console run."""
 
-    store = persisted_console_store()
+    registry = LocalWorkspaceRegistryService(
+        WorkspaceDB(tmp_path / "workspaces.db", client_id="instruction-disable")
+    )
+    registry.create_workspace(workspace_id="w1", name="Workspace 1")
+    store = persisted_console_store(
+        db_path=tmp_path / "chat.db", workspace_registry=registry
+    )
     session = store.create_session(workspace_id="w1")
     store.set_session_project_instruction_state(
         session.id,
@@ -1098,7 +1117,7 @@ async def test_project_instruction_disable_terminalizes_and_allows_retry():
         select_project_instruction_binding=disable,
     )
     controller.app = SimpleNamespace(
-        workspace_registry_service=_BindingRegistry([]),
+        workspace_registry_service=registry,
         call_from_thread=lambda callback: callback(),
     )
 

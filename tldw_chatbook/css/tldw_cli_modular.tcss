@@ -3344,6 +3344,13 @@ ConsoleRunLogModal {
     color: $ds-action-focus;
 }
 
+#library-conversations-reader-shell #library-canvas {
+    padding: 0;
+    margin: 0;
+    border: none;
+    overflow-x: hidden;
+}
+
 #library-conversation-reader {
     width: 1fr;
     min-width: 0;
@@ -3467,8 +3474,23 @@ ConsoleRunLogModal {
 }
 
 #library-conversations-canvas {
+    width: 100%;
+    min-width: 0;
+    max-width: 100%;
     height: 100%;
     min-height: 0;
+}
+
+#library-conversations-canvas > .ds-toolbar {
+    width: 100%;
+    min-width: 0;
+    max-width: 100%;
+}
+
+#library-conversations-canvas > .ds-toolbar > .library-toolbar-count,
+#library-conversations-canvas > .ds-toolbar > .library-canvas-action {
+    width: 1fr;
+    min-width: 0;
 }
 
 #library-conversations-list {
@@ -3484,8 +3506,9 @@ ConsoleRunLogModal {
 }
 
 .library-source-pager {
-    width: 100%;
+    width: 1fr;
     min-width: 0;
+    max-width: 100%;
     height: auto;
     min-height: 0;
 }
@@ -3501,8 +3524,9 @@ ConsoleRunLogModal {
 }
 
 .library-source-pager-controls {
-    width: 100%;
+    width: 1fr;
     min-width: 0;
+    max-width: 100%;
     height: auto;
     align: center middle;
 }
@@ -4553,6 +4577,16 @@ with stray left-edge border fragments), and padding 0 1 so the full
 
 #library-prompts-selection-management-actions > .library-canvas-action,
 #library-shell-grid.library-notes-compact #library-prompts-selection-management-actions > .library-canvas-action {
+    width: 1fr;
+    min-width: 0;
+}
+
+#library-prompts-delete-receipt-actions {
+    width: 100%;
+    min-width: 0;
+}
+
+#library-prompts-delete-receipt-actions > .library-canvas-action {
     width: 1fr;
     min-width: 0;
 }

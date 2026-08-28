@@ -232,11 +232,15 @@ async def test_prompt_and_skill_row_handlers_route_to_their_canvas() -> None:
     )
     prompt_screen = SimpleNamespace(
         _library_prompts_mutation_in_flight=False,
+        _library_prompt_browse_controller=SimpleNamespace(freshness="fresh"),
         _flush_library_prompt_save=permitted,
+        _acknowledge_library_destination_change=Mock(),
         _invalidate_library_prompts_browse=Mock(),
         _clear_library_prompt_selection=Mock(),
         _reset_library_prompt_editor_state=Mock(),
         _refresh_library_prompt_detail=Mock(return_value=object()),
+        _library_prompt_detail=None,
+        _library_prompt_detail_selected_name="",
         _selected_prompt_id=None,
         _library_prompt_select_mode=False,
         _library_selected_row_id="",
@@ -262,7 +266,7 @@ async def test_prompt_and_skill_row_handlers_route_to_their_canvas() -> None:
 
 @pytest.mark.asyncio
 async def test_real_prompt_and_skill_rows_keep_their_canvas_identity(tmp_path) -> None:
-    """Real service-backed list-to-editor loads avoid the screen fallback."""
+    """Real service-backed list-to-work-pane loads avoid screen fallback."""
     prompt_path = tmp_path / "prompts"
     prompt_path.mkdir()
     prompt_db, prompt_service = _real_prompt_scope_service(prompt_path)
@@ -318,7 +322,7 @@ async def test_real_prompt_and_skill_rows_keep_their_canvas_identity(tmp_path) -
         calls, spy = _screen_recompose_spy()
         with patch.object(BaseAppScreen, "refresh", spy):
             row.press()
-            await _wait_for_selector(screen, pilot, "#library-skill-name")
+            await _wait_for_selector(screen, pilot, "#library-skill-overview-region")
         assert calls == []
         assert screen.query_one("#library-skills-canvas") is canvas
 
