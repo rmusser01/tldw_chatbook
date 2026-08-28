@@ -13003,34 +13003,69 @@ async def test_summary_consent_reaches_the_app_seam_through_the_real_chain():
     assert reached == ["app"], "consent never reached the app's refresh seam"
 
 
-def test_real_sized_provider_catalog_is_bounded_not_rejected():
-    """A catalog larger than the picker bound must degrade, not fail.
+def test_real_sized_provider_catalog_reaches_the_picker_intact():
+    """A production-sized catalog must arrive whole, not rejected or trimmed.
 
-    Live incident: api.openai.com returns 128 models for an ordinary
-    account. This extractor raised ValueError on any result over
-    MODEL_IDS_MAX_COUNT (100), and its caller folds a raise into a failed
-    discovery -- so a *successful* 128-model discovery surfaced on the
-    Model step as "Couldn't reach the server (request failed)", with a
-    valid API key. Every fixture in this file is far under the bound, so
-    nothing caught it. Malformed-shape rejection is unchanged and still
-    covered by test_model_discovery_result_rejects_malformed_payloads.
+    Two live incidents in one line. api.openai.com returns 128 models for
+    an ordinary account; this extractor bounded itself by the *probe's*
+    MODEL_IDS_MAX_COUNT (100) rather than the discovery limit.
+
+    First it raised ValueError on the over-bound result, and the caller
+    folds any raise into a failed discovery -- so a successful 128-model
+    discovery surfaced on the Model step as "Couldn't reach the server
+    (request failed)" with a valid API key.
+
+    Truncating to 100 instead was still wrong: OpenAI returns models in
+    roughly chronological order, so the 28 dropped were the newest --
+    gpt-5.4, gpt-5.4-pro and gpt-5.3-chat-latest were all lost, i.e.
+    exactly the models a user opens the picker to find.
+
+    Every fixture in this file is far under the bound, so nothing caught
+    either one. Malformed-shape rejection is unchanged and still covered
+    by test_model_discovery_result_rejects_malformed_payloads.
     """
     from tldw_chatbook.Chat.local_server_discovery import MODEL_IDS_MAX_COUNT
+    from tldw_chatbook.LLM_Provider_Catalog.openai_compatible_model_discovery import (
+        DISCOVERED_MODEL_MAX_COUNT,
+    )
     from tldw_chatbook.UI.Wizards.FirstRunSetupWizard import (
         _model_ids_from_discovery_result,
     )
 
     observed_openai_catalog_size = 128
     assert observed_openai_catalog_size > MODEL_IDS_MAX_COUNT, (
-        "this regression only bites when the real catalog exceeds the bound"
+        "this regression only bites when the real catalog exceeds the probe bound"
     )
-    result = _typed_model_discovery_result(
-        "openai",
-        *[f"model-{index}" for index in range(observed_openai_catalog_size)],
+    assert observed_openai_catalog_size <= DISCOVERED_MODEL_MAX_COUNT, (
+        "the discovery bound must stay above real provider catalogs"
     )
+    newest_model = "gpt-5.4-pro"
+    ids = [f"model-{index}" for index in range(observed_openai_catalog_size - 1)]
+    ids.append(newest_model)  # newest last, as the real API orders them
+    result = _typed_model_discovery_result("openai", *ids)
 
     model_ids = _model_ids_from_discovery_result(result)
 
-    assert len(model_ids) == MODEL_IDS_MAX_COUNT
+    assert len(model_ids) == observed_openai_catalog_size
     assert model_ids[0] == "model-0"
+    assert newest_model in model_ids, "a trim would drop the newest models first"
     assert len(set(model_ids)) == len(model_ids)
+
+
+def test_typed_catalog_is_still_ceilinged_by_the_discovery_bound():
+    """The relaxed bound is a ceiling, not an absence of one."""
+    from tldw_chatbook.LLM_Provider_Catalog.openai_compatible_model_discovery import (
+        DISCOVERED_MODEL_MAX_COUNT,
+    )
+    from tldw_chatbook.UI.Wizards.FirstRunSetupWizard import (
+        _model_ids_from_discovery_result,
+    )
+
+    oversized = _typed_model_discovery_result(
+        "openai",
+        *[f"model-{index}" for index in range(DISCOVERED_MODEL_MAX_COUNT + 25)],
+    )
+
+    assert len(_model_ids_from_discovery_result(oversized)) == (
+        DISCOVERED_MODEL_MAX_COUNT
+    )

@@ -922,10 +922,12 @@ async def _probe_first_run_provider_connection(
 def _model_ids_from_discovery_result(result: object) -> tuple[str, ...]:
     """Extract exact typed catalog IDs without accepting duck-typed payloads."""
 
-    from tldw_chatbook.Chat.local_server_discovery import MODEL_IDS_MAX_COUNT
     from tldw_chatbook.LLM_Provider_Catalog.model_discovery_contracts import (
         DiscoveredModel,
         ModelDiscoveryResult,
+    )
+    from tldw_chatbook.LLM_Provider_Catalog.openai_compatible_model_discovery import (
+        DISCOVERED_MODEL_MAX_COUNT,
     )
 
     if type(result) is not ModelDiscoveryResult:
@@ -934,16 +936,21 @@ def _model_ids_from_discovery_result(result: object) -> tuple[str, ...]:
         return ()
     if type(result.models) is not tuple:
         raise ValueError("Model discovery result is invalid.")
-    # A catalog larger than the picker's bound is normal, not malformed:
-    # api.openai.com returns 128 models for an ordinary account. Rejecting
-    # the whole result turned a *successful* discovery into "Couldn't reach
-    # the server" on the Model step, because the caller folds any raise into
-    # a failed discovery. Bound the list instead; the adjacent "Or enter a
-    # model name" input remains the escape hatch for anything not shown.
+    # Bound this typed path by the *discovery* limit, not the probe's
+    # MODEL_IDS_MAX_COUNT sample. Two incidents, one line: rejecting an
+    # over-bound result turned a successful 128-model discovery into
+    # "Couldn't reach the server" (the caller folds any raise into a failed
+    # discovery), and truncating to 100 instead silently dropped the newest
+    # 28 -- api.openai.com returns models in roughly chronological order, so
+    # a 100-cap hides exactly the flagship models a user came for
+    # (gpt-5.4, gpt-5.4-pro, gpt-5.3-chat-latest were all lost). Discovery
+    # already fails closed above DISCOVERED_MODEL_MAX_COUNT, so this is a
+    # defensive ceiling rather than a routine trim. The legacy/local probe
+    # seam (_legacy_model_ids) keeps the smaller sample bound.
     model_ids: list[str] = []
     seen: set[str] = set()
     for discovered in result.models:
-        if len(model_ids) >= MODEL_IDS_MAX_COUNT:
+        if len(model_ids) >= DISCOVERED_MODEL_MAX_COUNT:
             break
         if type(discovered) is not DiscoveredModel:
             raise ValueError("Model discovery result is invalid.")
