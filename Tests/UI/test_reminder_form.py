@@ -473,6 +473,66 @@ async def test_editing_task_with_uncommon_zone_keeps_it_selectable():
 
 
 @pytest.mark.asyncio
+async def test_unrecognized_stored_zone_round_trips_on_unrelated_edit():
+    """Review F4 (live-verified): a stored zone that doesn't resolve in
+    local tzdata was silently replaced by the system zone when the edit
+    form opened, so ANY unrelated save rewrote the task's timezone and
+    shifted its recurrence. The stored zone must stay selected (labeled
+    as unrecognized) and survive an unrelated edit-save."""
+    task = ReminderTask(
+        id="task-tz2",
+        title="Server zone",
+        schedule_kind=ScheduleKind.RECURRING,
+        cron="0 9 * * *",
+        timezone="Mars/Phobos",  # not in local tzdata
+    )
+    app = FormTestApp()
+    async with app.run_test(size=(120, 40)) as pilot:
+        await app.push_screen(ReminderForm(task))
+        await pilot.pause()
+        form = pilot.app.screen
+        tz_select = form.query_one("#reminder-timezone", Select)
+        # Stored zone selected, offered as an explicitly labeled option.
+        assert tz_select.value == "Mars/Phobos"
+        labels = {str(prompt) for prompt, _value in tz_select._options}
+        assert any(
+            "Mars/Phobos" in label and "not recognized" in label
+            for label in labels
+        ), labels
+
+        # An unrelated edit (title) round-trips the zone untouched.
+        form.query_one("#reminder-title", Input).value = "Renamed"
+        await pilot.click("#reminder-save")
+        await pilot.pause()
+
+        assert app.submitted is not None
+        assert app.submitted["timezone"] == "Mars/Phobos"
+
+
+@pytest.mark.asyncio
+async def test_undetected_machine_zone_is_labeled_honestly(monkeypatch):
+    """Review F7: when the machine zone cannot be detected the default is
+    UTC -- the UI must say so instead of claiming it is the machine's."""
+    import tldw_chatbook.UI.Screens.scheduling.forms.reminder_form as form_mod
+
+    monkeypatch.setattr(form_mod, "detect_system_timezone", lambda: None)
+    app = FormTestApp()
+    async with app.run_test(size=(120, 40)) as pilot:
+        await app.push_screen(ReminderForm())
+        await pilot.pause()
+        form = pilot.app.screen
+        tz_select = form.query_one("#reminder-timezone", Select)
+        assert tz_select.value == "UTC"
+        labels = {str(prompt) for prompt, _value in tz_select._options}
+        assert any("not detected" in label for label in labels), labels
+
+        from textual.widgets import Static
+
+        helper = form.query_one("#reminder-timezone-helper", Static)
+        assert "not detected" in str(helper.render()).lower()
+
+
+@pytest.mark.asyncio
 async def test_reminder_form_preserves_enabled_state_when_editing():
     """Editing a disabled reminder preserves its enabled state in the payload."""
     app = FormTestApp()

@@ -73,12 +73,14 @@ def _is_valid_zone(name: str) -> bool:
     return True
 
 
-def system_timezone_name() -> str:
-    """Best-effort IANA name for the machine's local timezone.
+def detect_system_timezone() -> str | None:
+    """Best-effort IANA name for the machine's local timezone, or None.
 
     Checks ``TZ`` first, then the ``/etc/localtime`` symlink (macOS and
-    Linux both point it into a ``zoneinfo`` tree). Falls back to UTC when
-    neither yields a valid zone -- the selector always offers UTC anyway.
+    Linux both point it into a ``zoneinfo`` tree). Returns None where
+    neither yields a valid zone (copied-file distros, containers,
+    Windows) so callers can label the UTC fallback honestly instead of
+    claiming it is the machine's zone (review F7).
     """
     tz_env = os.environ.get("TZ", "").strip()
     if tz_env and _is_valid_zone(tz_env):
@@ -91,7 +93,12 @@ def system_timezone_name() -> str:
         name = localtime.split("/zoneinfo/", 1)[1]
         if _is_valid_zone(name):
             return name
-    return _DEFAULT_TIMEZONE
+    return None
+
+
+def system_timezone_name() -> str:
+    """The detected machine zone, or UTC when detection fails."""
+    return detect_system_timezone() or _DEFAULT_TIMEZONE
 
 
 def parse_forgiving_datetime(raw: str) -> tuple[datetime | None, bool]:
@@ -306,9 +313,18 @@ class ReminderForm(ModalScreen):
         #: footer's height budget (task-23100).
         self._error_line_count = 0
 
-    def _timezone_options(self) -> list[str]:
-        """System zone first, then curated zones, then task-used zones."""
-        zones = [system_timezone_name()]
+    def _timezone_options(self) -> list[tuple[str, str]]:
+        """(label, zone) options: system zone first, then curated zones,
+        then task-used zones, then this task's stored zone.
+
+        The edited task's OWN stored zone is always offered -- even when
+        it does not resolve in local tzdata -- labeled as unrecognized,
+        so an unrelated edit round-trips it instead of silently rewriting
+        the task's timezone to the system zone (review F4). An undetected
+        machine zone is labeled honestly (review F7).
+        """
+        detected = detect_system_timezone()
+        zones = [detected or _DEFAULT_TIMEZONE]
         candidates = list(_CURATED_TIMEZONES) + [
             zone for zone in self._known_timezones if zone
         ]
@@ -318,14 +334,36 @@ class ReminderForm(ModalScreen):
         for zone in candidates:
             if zone not in zones and _is_valid_zone(zone):
                 zones.append(zone)
-        return zones
+
+        options: list[tuple[str, str]] = []
+        for zone in zones:
+            if detected is None and zone == _DEFAULT_TIMEZONE:
+                options.append((f"{zone} — machine zone not detected", zone))
+            else:
+                options.append((zone, zone))
+        if task_zone and task_zone not in zones:
+            options.append(
+                (f"{task_zone} — stored on this task, not recognized here", task_zone)
+            )
+        return options
 
     def _initial_timezone(self) -> str:
-        """The zone preselected on open: the task's own, else the system's."""
+        """The zone preselected on open: the task's own, else the system's.
+
+        The stored zone wins even when it does not resolve locally
+        (review F4): replacing it on open is what caused unrelated saves
+        to shift the recurrence.
+        """
         task_zone = getattr(self._reminder_task, "timezone", None)
-        if task_zone and _is_valid_zone(task_zone):
+        if task_zone:
             return task_zone
         return system_timezone_name()
+
+    def _timezone_helper_copy(self) -> str:
+        """Helper copy that does not over-claim detection (review F7)."""
+        if detect_system_timezone() is None:
+            return "Machine timezone not detected — defaulting to UTC."
+        return "Defaults to this machine's timezone."
 
     def action_dismiss(self) -> None:
         """Dismiss the modal when the Escape key is pressed."""
@@ -414,13 +452,14 @@ class ReminderForm(ModalScreen):
                 with Vertical(id="reminder-timezone-group"):
                     yield Label("Timezone:", classes="form-label")
                     yield Select(
-                        [(zone, zone) for zone in self._timezone_options()],
+                        self._timezone_options(),
                         allow_blank=False,
                         value=self._initial_timezone(),
                         id="reminder-timezone",
                     )
                     yield Static(
-                        "Defaults to this machine's timezone.",
+                        self._timezone_helper_copy(),
+                        id="reminder-timezone-helper",
                         classes="form-helper",
                     )
 
@@ -709,9 +748,13 @@ class ReminderForm(ModalScreen):
             if not timezone:
                 errors.append("Timezone is required for recurring tasks")
             else:
-                try:
-                    ZoneInfo(timezone)
-                except ZoneInfoNotFoundError:
+                # The Select only offers vetted zones plus the edited
+                # task's own stored zone; that stored zone must round-trip
+                # even when local tzdata cannot resolve it (review F4).
+                # The unknown-zone error stays as a defensive backstop for
+                # programmatic value assignment only.
+                stored_zone = getattr(self._reminder_task, "timezone", None)
+                if timezone != stored_zone and not _is_valid_zone(timezone):
                     errors.append(f"Unknown timezone: {timezone}")
 
         if errors:
