@@ -753,6 +753,64 @@ def _candidate_detail(candidate: dict[str, object]) -> str:
     )
 
 
+def _lexical_function_has_path_state(
+    scope: ast.AST,
+    assignments: dict[int, list[tuple[ast.AST, ast.AST]]],
+    aliases: set[str],
+    log_sanitizer_qualifiers: frozenset[tuple[str, ...]],
+    shadowed_names: frozenset[str],
+) -> bool:
+    """Return whether one function frame can retain a raw path value."""
+    if not isinstance(scope, (ast.FunctionDef, ast.AsyncFunctionDef)):
+        return False
+
+    arguments = scope.args
+    parameters = [
+        *arguments.posonlyargs,
+        *arguments.args,
+        *arguments.kwonlyargs,
+    ]
+    if arguments.vararg is not None:
+        parameters.append(arguments.vararg)
+    if arguments.kwarg is not None:
+        parameters.append(arguments.kwarg)
+    if any(
+        _expression_path_state(
+            ast.Name(id=parameter.arg, ctx=ast.Load()),
+            aliases,
+            log_sanitizer_qualifiers,
+            shadowed_names,
+        )
+        is _PathState.TAINTED
+        for parameter in parameters
+    ):
+        return True
+
+    for target, value in assignments.get(id(scope), []):
+        value_state = _expression_path_state(
+            value,
+            aliases,
+            log_sanitizer_qualifiers,
+            shadowed_names,
+        )
+        if value_state is _PathState.TAINTED:
+            return True
+        if value_state is _PathState.PROVEN_SAFE:
+            continue
+        if (
+            _expression_path_state(
+                target,
+                aliases,
+                log_sanitizer_qualifiers,
+                shadowed_names,
+            )
+            is _PathState.TAINTED
+        ):
+            return True
+
+    return False
+
+
 def _traceback_capture_calls(source: str, *, filename: str) -> list[dict[str, object]]:
     """Return traceback captures in path-bearing exception regions."""
     tree = ast.parse(source, filename=filename)
@@ -834,17 +892,26 @@ def _traceback_capture_calls(source: str, *, filename: str) -> list[dict[str, ob
 
         scope_id = id(lexical_scopes[id(node)])
         log_sanitizer_qualifiers, shadowed_names = safe_transform_contexts[scope_id]
+        aliases = aliases_by_scope.get(scope_id, set())
         region = [*operation.body, *handler.body]
-        if not any(
+        region_has_path_state = any(
             _expression_path_state(
                 statement,
-                aliases_by_scope.get(scope_id, set()),
+                aliases,
                 log_sanitizer_qualifiers,
                 shadowed_names,
             )
             is _PathState.TAINTED
             for statement in region
-        ):
+        )
+        function_has_path_state = _lexical_function_has_path_state(
+            lexical_scopes[id(node)],
+            assignments,
+            aliases,
+            log_sanitizer_qualifiers,
+            shadowed_names,
+        )
+        if not region_has_path_state and not function_has_path_state:
             continue
 
         captures.append(
@@ -899,6 +966,97 @@ def test_traceback_capture_flags_path_bearing_logger_exception() -> None:
     assert [capture["capture"] for capture in captures] == ["logger.exception"]
 
 
+def test_traceback_capture_flags_constructor_path_state_for_delegated_call() -> None:
+    source = dedent(
+        """
+        class Store:
+            def __init__(self, db_path):
+                self.db_path_str = str(db_path)
+                self._db_diagnostic_ref = content_fingerprint(self.db_path_str)
+                try:
+                    self._initialize_schema()
+                except Exception:
+                    logger.opt(exception=True).critical(
+                        "database initialization failed db_sha256={}",
+                        self._db_diagnostic_ref,
+                    )
+        """
+    )
+
+    captures = _traceback_capture_calls(source, filename="constructor.py")
+
+    assert [capture["capture"] for capture in captures] == [
+        "logger.opt(exception=True)"
+    ]
+
+
+def test_traceback_capture_flags_retained_path_parameter_for_delegated_call() -> None:
+    source = dedent(
+        """
+        def emit(workspace_root):
+            retained = workspace_root
+            try:
+                run_check()
+            except Exception:
+                logger.exception("check failed")
+        """
+    )
+
+    captures = _traceback_capture_calls(source, filename="retained_parameter.py")
+
+    assert [capture["capture"] for capture in captures] == ["logger.exception"]
+
+
+def test_traceback_capture_ignores_path_state_in_nested_child_function() -> None:
+    source = dedent(
+        """
+        def emit():
+            def child(input_path):
+                retained = input_path
+                return retained
+
+            try:
+                run_check()
+            except Exception:
+                logger.exception("check failed")
+        """
+    )
+
+    assert _traceback_capture_calls(source, filename="nested_child.py") == []
+
+
+def test_traceback_capture_ignores_path_state_in_nested_child_class() -> None:
+    source = dedent(
+        """
+        def emit():
+            class Child:
+                output_path = Path.home()
+
+            try:
+                run_check()
+            except Exception:
+                logger.exception("check failed")
+        """
+    )
+
+    assert _traceback_capture_calls(source, filename="nested_class.py") == []
+
+
+def test_traceback_capture_preserves_safe_local_path_transform() -> None:
+    source = dedent(
+        """
+        def emit(value):
+            workspace_root = content_fingerprint(value)
+            try:
+                run_check()
+            except Exception:
+                logger.exception("check failed")
+        """
+    )
+
+    assert _traceback_capture_calls(source, filename="safe_local.py") == []
+
+
 @pytest.mark.parametrize("exception_option", ["False", "None"])
 def test_traceback_capture_ignores_disabled_loguru_options(
     exception_option: str,
@@ -916,10 +1074,11 @@ def test_traceback_capture_ignores_disabled_loguru_options(
     assert _traceback_capture_calls(source, filename="disabled.py") == []
 
 
-def test_traceback_capture_ignores_unrelated_failure_region() -> None:
+def test_traceback_capture_ignores_unrelated_url_only_failure_region() -> None:
     source = dedent(
         """
         def emit(url):
+            retained_url = url
             try:
                 app.open_url(url)
             except Exception:
