@@ -1,10 +1,10 @@
 ---
 id: TASK-22509
 title: Read-only virtual CLI with independent command permissions
-status: To Do
+status: In Progress
 assignee: []
 created_date: '2026-08-27 04:52'
-updated_date: '2026-08-27 04:52'
+updated_date: '2026-08-28 14:13'
 labels:
   - console
   - tools
@@ -36,3 +36,9 @@ Give models a compact shell-like read-only interface over existing workspace and
 - [ ] #9 Focused tests cover schema and argv validation, unknown flags and commands, per-command permission isolation, reservation filtering, path confinement, sensitive paths, output sanitization, and mounted Tools behavior
 - [ ] #10 The Console tools guide documents the virtual command set, read-only boundary, independent permissions, and absence of shell syntax
 <!-- AC:END -->
+
+## Implementation Plan
+
+<!-- SECTION:PLAN:BEGIN -->
+Follow Docs/superpowers/plans/2026-08-26-read-only-virtual-cli.md using focused red-green cycles: 1. Add the fixed argv parser and direct read-only dispatch registry. 2. Reserve __virtual_cli__ at external-profile seams. 3. Add one model schema with per-command HubTool permissions and per-call identity. 4. Register the provider under existing local-tool/global gates. 5. Expose independent command rows in the canonical Tools UI. 6. Document and verify the boundary. ADR required: yes. ADR path: backlog/decisions/094-raw-and-virtual-cli-execution-boundaries.md. Reason: ADR-094 defines the synthetic principal, no-shell boundary, default Ask state, and independent command authority.
+<!-- SECTION:PLAN:END -->
