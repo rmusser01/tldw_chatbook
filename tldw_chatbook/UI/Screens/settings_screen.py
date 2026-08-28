@@ -3276,30 +3276,85 @@ class SettingsScreen(BaseAppScreen):
                 logger.debug("Settings post-pane-swap callback failed.")
 
     def action_show_workbench_help(self) -> None:
-        """F1 help: list the ACTIVE category's working shortcuts (task-1340).
+        """F1 help: the ACTIVE category's contract and working shortcuts.
 
         app.py delegates F1 to the screen when this handler exists. Listing
         the per-category set (not the static BINDINGS superset) keeps help
         truthful, and keeps the bindings discoverable at narrow widths where
-        the footer collapses the screen hints to an ellipsis.
+        the footer collapses the screen hints to an ellipsis (task-1340).
         """
         from ..Workbench.help import (  # noqa: PLC0415 -- lazy: only needed on F1; keeps the help panel off the module import path (mirrors base_app_screen's local-import convention)
             WorkbenchHelpPanel,
+        )
+
+        self.app.push_screen(
+            WorkbenchHelpPanel(
+                self._workbench_help_state(self._active_category_id())
+            )
+        )
+
+    def _workbench_help_state(self, category: SettingsCategoryId):
+        """Build the F1 help content for one category (TASK-23110).
+
+        Every category gets a non-empty body: the save contract, ownership,
+        and verbs already maintained for the State banner, the footer, and
+        the Scope Inspector -- previously a category with no shortcuts
+        (e.g. Schedules) opened an entirely empty scroll body.
+
+        Args:
+            category: The Settings category to describe.
+
+        Returns:
+            A ``WorkbenchHelpState`` ready for ``WorkbenchHelpPanel``.
+        """
+        from ..Workbench.help import (  # noqa: PLC0415 -- lazy, see action_show_workbench_help
             WorkbenchHelpState,
         )
 
-        category = self._active_category_id()
         summary = self._category_summary_by_id(category)
         shortcuts = self._category_footer_shortcuts(category)
         if category is SettingsCategoryId.LIBRARY_RAG:
             # Same gating the footer applies: a/c/b only act in LIBRARY_RAG.
             shortcuts = shortcuts + self.LIBRARY_RAG_SHORTCUTS
-        state = WorkbenchHelpState(
+        return WorkbenchHelpState(
             route_id="settings",
             title=f"Settings: {summary.title}",
+            notes_heading="How this category works",
+            notes=self._category_help_notes(category),
             shortcuts=shortcuts,
         )
-        self.app.push_screen(WorkbenchHelpPanel(state))
+
+    def _category_help_notes(
+        self, category: SettingsCategoryId
+    ) -> tuple[str, ...]:
+        """Category-contract notes for the F1 help panel (TASK-23110).
+
+        Reuses copy the screen already maintains -- the persistence badge
+        (save contract), the State-banner scope line, and the ownership
+        matrix -- so the help body cannot drift from the surfaces it
+        summarizes and never falls back to an empty scroll.
+
+        Args:
+            category: The Settings category to describe.
+
+        Returns:
+            Non-empty tuple of plain-text help lines.
+        """
+        ownership = self._ownership_record(category)
+        notes = [
+            f"Save contract: {self._persistence_badge(category)}.",
+            f"Scope: {self._category_state_scope_text(category)}",
+            f"Runtime owner: {ownership.runtime_owner}.",
+            "Writes here: "
+            + ("yes." if ownership.writes_allowed else "no — view-only."),
+        ]
+        if ownership.boundary_copy:
+            notes.append(f"Boundary: {ownership.boundary_copy}")
+        if ownership.recovery_copy:
+            notes.append(f"Recovery: {ownership.recovery_copy}")
+        if not self._category_footer_shortcuts(category):
+            notes.append("No shortcut keys are specific to this category.")
+        return tuple(notes)
 
     def on_mount(self) -> None:
         # No super().on_mount(): the dispatcher already invokes

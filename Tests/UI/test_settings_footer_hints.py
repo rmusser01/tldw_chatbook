@@ -316,6 +316,36 @@ async def test_narrow_footer_collapses_but_f1_help_stays_truthful():
             assert label not in help_text
 
 
+def test_f1_help_has_contract_content_for_every_category():
+    """TASK-23110: every category's F1 help body carries the save contract,
+    ownership, and verbs -- no category may open an empty (title-only)
+    scroll body, as Schedules did."""
+    app = _build_test_app()
+    screen = SettingsScreen(app)
+    members = tuple(SettingsCategoryId)
+    assert len(members) == 26
+    for category in members:
+        state = screen._workbench_help_state(category)
+        body = state.render_text()
+        assert body.strip() != state.title.strip(), category
+        assert state.notes, category
+        assert all(note.strip() for note in state.notes), category
+        assert any(
+            note.startswith("Save contract: ") for note in state.notes
+        ), category
+        assert any(
+            note.startswith("Runtime owner: ") for note in state.notes
+        ), category
+        # Verbs: either real category shortcuts, or an explicit statement
+        # that none exist here.
+        assert state.shortcuts or any(
+            note.startswith("No shortcut keys") for note in state.notes
+        ), category
+        # The ownership matrix must actually cover the category -- the
+        # missing-record placeholder is developer copy, not help.
+        assert "Ownership record missing" not in body, category
+
+
 _TEST_STUB_TOAST = "No test action is available"
 _SAVE_STUB_TOAST = "has no save action yet"
 
