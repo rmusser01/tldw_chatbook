@@ -1,5 +1,0 @@
-{
-  "kind": "automated",
-  "result_name": "Tests/Library/test_library_adaptive_reader_state.py::test_shared_resolution_uses_adaptive_width_classes[120-expected_geometry1]",
-  "status": "PASS"
-}
