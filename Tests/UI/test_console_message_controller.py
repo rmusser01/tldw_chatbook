@@ -96,6 +96,13 @@ async def test_console_message_action_delete_removes_persisted_row():
         message = store.append_message(
             session.id, role=ConsoleMessageRole.ASSISTANT, content="answer"
         )
+        child = store.append_message(
+            session.id, role=ConsoleMessageRole.USER, content="follow-up"
+        )
+        invalidate_media = Mock(
+            wraps=console._image.invalidate_console_fork_image_selections
+        )
+        console._image.invalidate_console_fork_image_selections = invalidate_media
         await console._sync_native_console_chat_ui()
         # `_sync_console_pending_delete_confirmation` resets the armed id the
         # moment it disagrees with the transcript's own selection -- an
@@ -105,9 +112,7 @@ async def test_console_message_action_delete_removes_persisted_row():
         await console._sync_native_console_chat_ui()
 
         event = SimpleNamespace(
-            button=SimpleNamespace(
-                id=f"console-message-action-delete-{message.id}"
-            ),
+            button=SimpleNamespace(id=f"console-message-action-delete-{message.id}"),
             stop=Mock(),
         )
         # First press only arms the confirmation -- nothing removed yet.
@@ -120,6 +125,8 @@ async def test_console_message_action_delete_removes_persisted_row():
         assert handled_again is True
 
     assert message not in store.messages_for_session(session.id)
+    assert child not in store.messages_for_session(session.id)
+    invalidate_media.assert_called_once_with((message.id, child.id))
 
 
 @pytest.mark.asyncio
@@ -295,3 +302,37 @@ async def test_roleplay_character_greeting_actions_use_live_presentation():
     chatbook_payload = app.local_chatbook_service.create_chatbook.await_args.kwargs
     assert chatbook_payload["metadata"]["content"] == "Hello Captain Rowan."
     assert chatbook_payload["metadata"]["message_role"] == "Alraune"
+
+
+@pytest.mark.asyncio
+async def test_fork_requested_dispatches_to_the_named_session_callback_once():
+    """The message controller remains a narrow action-to-session seam."""
+
+    app = _build_test_app()
+    host = ConsoleHarness(app)
+
+    async with host.run_test(size=(100, 30)) as pilot:
+        screen = host.screen_stack[-1]
+        await _wait_for_selector(screen, pilot, "#console-native-transcript")
+        store = screen._ensure_console_chat_store()
+        session = store.create_session(
+            title="Source",
+            settings=screen._session._default_console_session_settings(),
+            ephemeral=True,
+        )
+        message = store.append_message(
+            session.id,
+            role=ConsoleMessageRole.USER,
+            content="fork through here",
+        )
+        await screen._sync_native_console_chat_ui()
+        request = Mock()
+        screen._message._request_console_chat_fork_fn = request
+
+        event = SimpleNamespace(
+            button=SimpleNamespace(id=f"console-message-action-fork-{message.id}"),
+            stop=Mock(),
+        )
+        assert await screen.handle_console_message_action(event) is True
+
+    request.assert_called_once_with(message.id)

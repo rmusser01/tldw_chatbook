@@ -1581,6 +1581,236 @@ class CitationTraceRepository:
             timestamp=datetime.now(UTC).isoformat(),
         )
 
+    def link_fork_message_owner(
+        self,
+        cursor: sqlite3.Cursor,
+        *,
+        source_message_id: str,
+        source_message_revision: int,
+        source_message_body: str,
+        target_message_id: str,
+        target_message_revision: int,
+        target_message_body: str,
+        confirmed_state: str,
+        confirmed_trace_id: str | None = None,
+    ) -> None:
+        """Link a fork owner only from the source message's active trace."""
+
+        if confirmed_state in {"unavailable", "none"}:
+            if confirmed_trace_id is not None:
+                raise CitationPersistenceUnavailable("fork_citation_state_invalid")
+            return
+        if (
+            confirmed_state != "active_required"
+            or type(confirmed_trace_id) is not str
+            or not confirmed_trace_id
+        ):
+            raise CitationPersistenceUnavailable("fork_citation_state_invalid")
+        identity = self._require_active_write_cursor(cursor)
+        codec = self._fingerprint_codec
+        if codec is None:
+            raise CitationPersistenceUnavailable("fingerprint_key_unavailable")
+        message = cursor.execute(
+            """
+            SELECT version, content
+            FROM messages
+            WHERE id = ? AND deleted = 0
+            """,
+            (source_message_id,),
+        ).fetchone()
+        owners = cursor.execute(
+            """
+            SELECT profile_id, trace_id, state, body_fingerprint
+            FROM rag_message_trace_owners
+            WHERE message_id = ? AND message_revision = ?
+            ORDER BY profile_id, trace_id
+            """,
+            (source_message_id, source_message_revision),
+        ).fetchall()
+        if any(owner["state"] == "body_mismatch" for owner in owners):
+            raise CitationPersistenceUnavailable("fork_source_owner_unavailable")
+        active = [owner for owner in owners if owner["state"] == "active"]
+        source = active[0] if len(active) == 1 else None
+        expected_fingerprint = codec.fingerprint(
+            CitationFingerprintDomain.MESSAGE_BODY,
+            source_message_body,
+        )
+        if (
+            source is None
+            or source["profile_id"] != identity.profile_id
+            or source["trace_id"] != confirmed_trace_id
+            or message is None
+            or message["version"] != source_message_revision
+            or message["content"] != source_message_body
+            or target_message_body != source_message_body
+            or type(source["body_fingerprint"]) is not str
+            or not hmac.compare_digest(
+                source["body_fingerprint"],
+                expected_fingerprint,
+            )
+        ):
+            raise CitationPersistenceUnavailable("fork_source_owner_unavailable")
+        if not self._trace_payloads_available(
+            identity.profile_id,
+            source["trace_id"],
+            cursor=cursor,
+        ):
+            raise CitationPersistenceUnavailable("fork_source_payload_unavailable")
+        self.link_cache_message_owner(
+            cursor,
+            local_trace_namespace(identity, trace_id=source["trace_id"]),
+            message_id=target_message_id,
+            message_revision=target_message_revision,
+            message_body=target_message_body,
+        )
+
+    def classify_fork_message_owner(
+        self,
+        *,
+        message_id: str,
+        message_revision: int,
+        source_message_body: str,
+        target_message_body: str,
+    ) -> tuple[str, str | None]:
+        """Confirm the authoritative citation state captured by a fork fence."""
+
+        if (
+            type(message_id) is not str
+            or not message_id
+            or type(message_revision) is not int
+            or message_revision < 1
+            or type(source_message_body) is not str
+            or type(target_message_body) is not str
+        ):
+            raise CitationPersistenceUnavailable("fork_source_owner_unverifiable")
+        connection = self.db.get_connection()
+        message = connection.execute(
+            """
+            SELECT version, content, deleted
+            FROM messages
+            WHERE id = ?
+            """,
+            (message_id,),
+        ).fetchone()
+        if (
+            message is None
+            or message["deleted"]
+            or message["version"] != message_revision
+            or message["content"] != source_message_body
+        ):
+            raise CitationPersistenceUnavailable("fork_source_owner_unverifiable")
+        owners = connection.execute(
+            """
+            SELECT profile_id, trace_id, state, body_fingerprint
+            FROM rag_message_trace_owners
+            WHERE message_id = ? AND message_revision = ?
+            ORDER BY profile_id, trace_id
+            """,
+            (message_id, message_revision),
+        ).fetchall()
+        if any(row["state"] == "body_mismatch" for row in owners):
+            raise CitationPersistenceUnavailable("fork_source_owner_body_mismatch")
+        active = [row for row in owners if row["state"] == "active"]
+        if not active:
+            if not owners:
+                return "none", None
+            identity = self.identity_context
+            if identity is None or any(
+                row["profile_id"] != identity.profile_id for row in owners
+            ):
+                raise CitationPersistenceUnavailable(
+                    "fork_source_owner_authority_ambiguous"
+                )
+            if all(row["state"] == "deleted" for row in owners):
+                return "unavailable", None
+            raise CitationPersistenceUnavailable(
+                "fork_source_owner_authority_ambiguous"
+            )
+        identity = self.identity_context
+        codec = self._fingerprint_codec
+        if (
+            len(active) != 1
+            or not self.local_citation_writes_ready
+            or identity is None
+            or codec is None
+            or active[0]["profile_id"] != identity.profile_id
+        ):
+            raise CitationPersistenceUnavailable(
+                "fork_source_owner_authority_ambiguous"
+            )
+        owner = active[0]
+        expected_fingerprint = codec.fingerprint(
+            CitationFingerprintDomain.MESSAGE_BODY,
+            source_message_body,
+        )
+        if type(owner["body_fingerprint"]) is not str or not hmac.compare_digest(
+            owner["body_fingerprint"],
+            expected_fingerprint,
+        ):
+            raise CitationPersistenceUnavailable("fork_source_owner_unverifiable")
+        trace = connection.execute(
+            """
+            SELECT trace.origin, trace.origin_scope_id,
+                   trace.visibility_state, trace.completeness_at_seal,
+                   payload.redaction_state, payload.answer_body,
+                   payload.body_integrity_hmac, payload.purged_at
+            FROM rag_citation_traces AS trace
+            LEFT JOIN rag_answer_attempt_payloads AS payload
+              ON payload.profile_id = trace.profile_id
+             AND payload.trace_id = trace.trace_id
+             AND payload.attempt_id = trace.selected_attempt_id
+            WHERE trace.profile_id = ? AND trace.trace_id = ?
+            """,
+            (identity.profile_id, owner["trace_id"]),
+        ).fetchone()
+        if trace is None:
+            raise CitationPersistenceUnavailable("fork_source_owner_unverifiable")
+        if (
+            trace["origin"] != "local"
+            or trace["origin_scope_id"] != identity.profile_id
+        ):
+            raise CitationPersistenceUnavailable(
+                "fork_source_owner_authority_ambiguous"
+            )
+        if (
+            trace["visibility_state"] != "active"
+            or trace["completeness_at_seal"] != "complete"
+            or trace["redaction_state"] != "available"
+            or trace["answer_body"] is None
+            or trace["body_integrity_hmac"] is None
+            or trace["purged_at"] is not None
+            or not self._trace_payloads_available(
+                identity.profile_id,
+                owner["trace_id"],
+            )
+        ):
+            return "unavailable", None
+        if (
+            trace["answer_body"] != source_message_body
+            or type(trace["body_integrity_hmac"]) is not str
+            or not hmac.compare_digest(
+                trace["body_integrity_hmac"],
+                expected_fingerprint,
+            )
+        ):
+            raise CitationPersistenceUnavailable("fork_source_owner_unverifiable")
+        namespace = local_trace_namespace(identity, trace_id=owner["trace_id"])
+        try:
+            summary = self.get_trace_summary(namespace)
+        except (TypeError, ValueError):
+            raise CitationPersistenceUnavailable(
+                "fork_source_owner_unverifiable"
+            ) from None
+        if summary is None or not self._trace_row_identities_match(
+            summary,
+            profile_id=identity.profile_id,
+            trace_id=owner["trace_id"],
+        ):
+            raise CitationPersistenceUnavailable("fork_source_owner_unverifiable")
+        if target_message_body != source_message_body:
+            return "unavailable", None
+        return "active_required", owner["trace_id"]
+
     def get_active_trace_for_current_message(
         self,
         message_id: str,
@@ -3356,13 +3586,14 @@ class CitationTraceRepository:
         self,
         profile_id: str,
         trace_id: str,
+        *,
+        cursor: sqlite3.Cursor | None = None,
     ) -> bool:
         """Recheck current governed access before issuing or verifying trust."""
 
-        row = (
-            self.db.get_connection()
-            .execute(
-                """
+        reader = cursor if cursor is not None else self.db.get_connection()
+        row = reader.execute(
+            """
                 SELECT 1
                 FROM rag_citation_traces AS trace
                 JOIN rag_answer_attempt_payloads AS selected
@@ -3425,13 +3656,14 @@ class CitationTraceRepository:
                   AND NOT EXISTS (
                       SELECT 1
                       FROM rag_trace_evidence_refs AS reference
-                      JOIN rag_evidence_snapshots AS snapshot
+                      LEFT JOIN rag_evidence_snapshots AS snapshot
                         ON snapshot.profile_id = reference.profile_id
                        AND snapshot.payload_id = reference.snapshot_payload_id
                       WHERE reference.profile_id = trace.profile_id
                         AND reference.trace_id = trace.trace_id
                         AND (
-                            snapshot.redaction_state != 'available'
+                            snapshot.payload_id IS NULL
+                            OR snapshot.redaction_state != 'available'
                             OR snapshot.purged_at IS NOT NULL
                             OR (
                                 snapshot.storage_mode = 'embedded'
@@ -3449,10 +3681,8 @@ class CitationTraceRepository:
                         )
                   )
                 """,
-                (profile_id, trace_id),
-            )
-            .fetchone()
-        )
+            (profile_id, trace_id),
+        ).fetchone()
         return row is not None
 
     def _active_presentation_warning(

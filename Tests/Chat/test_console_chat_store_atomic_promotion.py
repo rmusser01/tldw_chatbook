@@ -1,20 +1,32 @@
 from dataclasses import FrozenInstanceError
+from io import BytesIO
 
 import pytest
+from PIL import Image as PILImage
 
 from tldw_chatbook.Chat.chat_persistence_service import ChatPersistenceService
+from tldw_chatbook.Chat.chat_conversation_service import ChatConversationService
 from tldw_chatbook.Chat.console_chat_models import (
     ConsoleMessageRole,
     MessageAttachment,
 )
 from tldw_chatbook.Chat import console_chat_store as console_store_module
 from tldw_chatbook.Chat.console_chat_store import ConsoleChatStore
+from tldw_chatbook.Chat.console_conversation_hydration import (
+    console_messages_from_conversation_tree,
+)
+from tldw_chatbook.Chat.console_context_policy import (
+    ConsoleContextPolicyOverrides,
+    ContextCompactionMode,
+)
 from tldw_chatbook.Chat.console_library_policy import (
     ConsoleAssistantLibraryAccess,
     ConsoleAutoRetrieve,
     ConsoleLibraryPolicyCandidate,
     ConsoleLibraryPolicyDefaults,
 )
+from tldw_chatbook.Chat.console_session_settings import ConsoleSessionSettings
+from tldw_chatbook.Chat.message_metadata import MessageMetadata
 from tldw_chatbook.Chat.rag_scope import RagScope, ScopeItem
 from tldw_chatbook.DB.ChaChaNotes_DB import CharactersRAGDB
 from tldw_chatbook.DB.Workspace_DB import WorkspaceDB
@@ -61,6 +73,12 @@ def _store(tmp_path, name="promotion.db"):
     return db, service, store
 
 
+def _png_bytes():
+    buffer = BytesIO()
+    PILImage.new("RGB", (2, 2), (0, 0, 0)).save(buffer, format="PNG")
+    return buffer.getvalue()
+
+
 def _memory_state(store, session_id):
     session = next(item for item in store.sessions() if item.id == session_id)
     messages = store._tree_nodes_parent_first(session_id)
@@ -95,7 +113,9 @@ def _memory_state(store, session_id):
 
 
 def _conversation_count(db):
-    return db.get_connection().execute("SELECT COUNT(*) FROM conversations").fetchone()[0]
+    return (
+        db.get_connection().execute("SELECT COUNT(*) FROM conversations").fetchone()[0]
+    )
 
 
 def _bundle_counts(db):
@@ -235,14 +255,130 @@ def test_promotion_is_atomic_for_policy_lineage_attachments_and_contribution(
     ]
     assert rows[1]["parent_message_id"] == live_user.persisted_message_id
     attachments = db.get_attachments_for_messages([live_user.persisted_message_id])
-    assert [row["position"] for row in attachments[live_user.persisted_message_id]] == [1]
-    trajectory = db.get_connection().execute(
-        "SELECT message_id, seq FROM message_trajectory_metadata WHERE conversation_id = ?",
-        (conversation_id,),
-    ).fetchone()
+    assert [row["position"] for row in attachments[live_user.persisted_message_id]] == [
+        1
+    ]
+    trajectory = (
+        db.get_connection()
+        .execute(
+            "SELECT message_id, seq FROM message_trajectory_metadata WHERE conversation_id = ?",
+            (conversation_id,),
+        )
+        .fetchone()
+    )
     assert tuple(trajectory) == (live_assistant.persisted_message_id, 1)
     with pytest.raises(RuntimeError, match="active contribution"):
         contribution.writer.next_trajectory_sequence()
+
+
+@pytest.mark.parametrize("terminal_status", ("stopped", "failed"))
+def test_temporary_fork_promotion_reloads_status_and_position_zero_label(
+    tmp_path,
+    terminal_status,
+):
+    db, _service, store = _store(tmp_path, f"fork-metadata-{terminal_status}.db")
+    source = store.create_session(
+        title="Temporary source",
+        settings=ConsoleSessionSettings(provider="openai", model="gpt-test"),
+        ephemeral=True,
+    )
+    store.append_message(
+        source.id,
+        role=ConsoleMessageRole.USER,
+        content="look",
+        attachments=(
+            MessageAttachment(_png_bytes(), "image/png", "original-name.png", 0),
+        ),
+    )
+    assistant = store.append_message(
+        source.id,
+        role=ConsoleMessageRole.ASSISTANT,
+        content="partial answer",
+    )
+    store._nodes_by_session[source.id][assistant.id].status = terminal_status
+    snapshot = store.stage_fork_snapshot(
+        store.issue_fork_fence(assistant.id),
+        title="Temporary fork",
+        fork_session_id=f"temporary-fork-{terminal_status}",
+        fork_conversation_id=None,
+    )
+    fork = store.register_fork_snapshot(snapshot, activate=False)
+
+    conversation_id = store.promote_ephemeral_session(fork.id)
+
+    assert conversation_id is not None
+    tree = ChatConversationService(db).get_conversation_tree(
+        conversation_id,
+        depth_cap=100,
+        root_limit=100,
+    )
+    hydrated = console_messages_from_conversation_tree(tree, db=db)
+    assert [message.status for message in hydrated] == ["complete", terminal_status]
+    assert hydrated[0].attachments[0].display_name == "original-name.png"
+    assert hydrated[0].attachment_label == "original-name.png"
+
+
+@pytest.mark.parametrize("terminal_status", ("stopped", "failed"))
+def test_ordinary_temporary_promotion_preserves_message_metadata(
+    tmp_path,
+    terminal_status,
+):
+    db, _service, store = _store(tmp_path, f"ordinary-metadata-{terminal_status}.db")
+    session = store.create_session(title="Ordinary temporary", ephemeral=True)
+    message = store.append_message(
+        session.id,
+        role=ConsoleMessageRole.ASSISTANT,
+        content="partial answer",
+        attachments=(
+            MessageAttachment(_png_bytes(), "image/png", "ordinary-name.png", 0),
+        ),
+    )
+    ordinary_metadata = MessageMetadata(engine="realtime")
+    live = store._nodes_by_session[session.id][message.id]
+    live.status = terminal_status
+    live.metadata = ordinary_metadata
+
+    conversation_id = store.promote_ephemeral_session(session.id)
+
+    assert conversation_id is not None
+    row = db.get_message_by_id(live.persisted_message_id)
+    assert row is not None
+    assert row["metadata_json"] == ordinary_metadata.to_json()
+    assert MessageMetadata.from_json(row["metadata_json"]) == ordinary_metadata
+
+
+def test_temporary_fork_promotion_rejects_conflicting_fork_and_ordinary_metadata(
+    tmp_path,
+):
+    db, _service, store = _store(tmp_path, "fork-metadata-conflict.db")
+    source = store.create_session(
+        title="Temporary source",
+        settings=ConsoleSessionSettings(provider="openai", model="gpt-test"),
+        ephemeral=True,
+    )
+    message = store.append_message(
+        source.id,
+        role=ConsoleMessageRole.ASSISTANT,
+        content="partial answer",
+    )
+    live = store._nodes_by_session[source.id][message.id]
+    live.status = "stopped"
+    snapshot = store.stage_fork_snapshot(
+        store.issue_fork_fence(message.id),
+        title="Temporary fork",
+        fork_session_id="temporary-fork-conflict",
+        fork_conversation_id=None,
+    )
+    fork = store.register_fork_snapshot(snapshot, activate=False)
+    fork_message = store._nodes_by_session[fork.id][
+        snapshot.messages[0].native_message_id
+    ]
+    fork_message.metadata = MessageMetadata(engine="realtime")
+
+    with pytest.raises(ValueError, match="metadata shape"):
+        store.promote_ephemeral_session(fork.id)
+
+    assert _conversation_count(db) == 0
 
 
 def test_contribution_failure_rolls_back_bundle_and_preserves_retryability(tmp_path):
@@ -270,6 +406,64 @@ def test_contribution_failure_rolls_back_bundle_and_preserves_retryability(tmp_p
     assert _conversation_count(db) == 1
 
 
+def test_promotion_persists_sparse_context_policy_inside_the_bundle(
+    tmp_path, monkeypatch
+):
+    db, service, store = _store(tmp_path, "context-policy.db")
+    session = store.create_session(title="Context policy", ephemeral=True)
+    session.context_policy_overrides = ConsoleContextPolicyOverrides(
+        compaction_mode=ContextCompactionMode.OFF,
+    )
+    store.append_message(session.id, role=ConsoleMessageRole.USER, content="hello")
+    transaction_states = []
+    original = service.context_repository.save_policy
+
+    def recording_save(conversation_id, overrides):
+        transaction_states.append(db.get_connection().in_transaction)
+        return original(conversation_id, overrides)
+
+    monkeypatch.setattr(service.context_repository, "save_policy", recording_save)
+    monkeypatch.setattr(
+        store,
+        "_flush_context_policy_on_first_persist",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(
+            AssertionError("postcommit context-policy write")
+        ),
+    )
+
+    conversation_id = store.promote_ephemeral_session(session.id)
+
+    assert transaction_states == [True]
+    assert service.get_conversation_context_policy(conversation_id).overrides == (
+        session.context_policy_overrides
+    )
+
+
+def test_promotion_context_policy_failure_rolls_back_without_publication(
+    tmp_path, monkeypatch
+):
+    db, service, store = _store(tmp_path, "context-policy-failure.db")
+    session = store.create_session(title="Context policy", ephemeral=True)
+    session.context_policy_overrides = ConsoleContextPolicyOverrides(
+        compaction_mode=ContextCompactionMode.OFF,
+    )
+    store.append_message(session.id, role=ConsoleMessageRole.USER, content="hello")
+    before = _memory_state(store, session.id)
+    monkeypatch.setattr(
+        service.context_repository,
+        "save_policy",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(
+            RuntimeError("injected context policy failure")
+        ),
+    )
+
+    with pytest.raises(RuntimeError, match="injected context policy failure"):
+        store.promote_ephemeral_session(session.id)
+
+    assert _memory_state(store, session.id) == before
+    assert _conversation_count(db) == 0
+
+
 def test_promotion_rejects_unresolved_operation_before_any_write(tmp_path):
     db, _service, store = _store(tmp_path, "unresolved.db")
     session = store.create_session(ephemeral=True)
@@ -294,7 +488,9 @@ def _workspace_store(tmp_path):
     return db, registry, service, ConsoleChatStore(persistence=service)
 
 
-@pytest.mark.parametrize("failure_point", ("policy", "message", "attachment", "contribution"))
+@pytest.mark.parametrize(
+    "failure_point", ("policy", "message", "attachment", "contribution")
+)
 def test_chat_failure_never_projects_cross_database_workspace_membership(
     tmp_path, monkeypatch, failure_point
 ):
@@ -314,19 +510,25 @@ def test_chat_failure_never_projects_cross_database_workspace_membership(
         monkeypatch.setattr(
             service.console_library_policy_repository,
             "insert",
-            lambda *_args, **_kwargs: (_ for _ in ()).throw(RuntimeError("policy fail")),
+            lambda *_args, **_kwargs: (_ for _ in ()).throw(
+                RuntimeError("policy fail")
+            ),
         )
     elif failure_point == "message":
         monkeypatch.setattr(
             service,
             "create_message",
-            lambda *_args, **_kwargs: (_ for _ in ()).throw(RuntimeError("message fail")),
+            lambda *_args, **_kwargs: (_ for _ in ()).throw(
+                RuntimeError("message fail")
+            ),
         )
     elif failure_point == "attachment":
         monkeypatch.setattr(
             db,
             "set_message_attachments",
-            lambda *_args, **_kwargs: (_ for _ in ()).throw(RuntimeError("attachment fail")),
+            lambda *_args, **_kwargs: (_ for _ in ()).throw(
+                RuntimeError("attachment fail")
+            ),
         )
 
     with pytest.raises(RuntimeError):
@@ -362,7 +564,9 @@ def test_workspace_projection_failure_keeps_commit_and_retries_idempotently(
     assert store.has_pending_workspace_projection(session.id)
     assert store.promote_ephemeral_session(session.id) is None
     assert not store.has_pending_workspace_projection(session.id)
-    assert [row.item_id for row in registry.list_workspace_conversations("workspace-a")] == [conversation_id]
+    assert [
+        row.item_id for row in registry.list_workspace_conversations("workspace-a")
+    ] == [conversation_id]
     assert store.retry_pending_workspace_projection(session.id)
     assert store.promote_ephemeral_session(session.id) is None
     assert _conversation_count(db) == 1

@@ -3,9 +3,11 @@
 from __future__ import annotations
 
 import functools
+import json
+import math
 import os
 import re
-from dataclasses import dataclass, replace
+from dataclasses import dataclass, fields, replace
 from typing import Callable, Mapping, Sequence
 from urllib.parse import urlparse, urlunparse
 
@@ -206,6 +208,76 @@ class ConsoleSessionSettings:
     #: persisted per-conversation in conversations.metadata (one-shot
     #: prefill is transient store state, not settings).
     pinned_prefill: str | None = None
+
+
+def parse_persisted_console_session_settings(
+    raw_metadata: object,
+) -> ConsoleSessionSettings | None:
+    """Decode one complete versioned settings snapshot without partial fallback."""
+
+    try:
+        metadata = json.loads(raw_metadata or "{}")
+    except (TypeError, ValueError, RecursionError):
+        return None
+    if not isinstance(metadata, dict):
+        return None
+    payload = metadata.get("console_session_settings")
+    field_names = {field.name for field in fields(ConsoleSessionSettings)}
+    if (
+        not isinstance(payload, dict)
+        or set(payload) != {"version", *field_names}
+        or type(payload.get("version")) is not int
+        or payload["version"] != 1
+    ):
+        return None
+
+    required_text = {"provider", "character_label", "source"}
+    optional_text = {
+        "model",
+        "base_url",
+        "reasoning_effort",
+        "reasoning_summary",
+        "verbosity",
+        "thinking_effort",
+        "system_prompt",
+        "pinned_prefill",
+    }
+    required_float = {"temperature", "top_p"}
+    optional_float = {"min_p", "presence_penalty", "frequency_penalty"}
+    optional_int = {"top_k", "max_tokens", "seed", "thinking_budget_tokens"}
+    values = {name: payload[name] for name in field_names}
+    if any(type(values[name]) is not str for name in required_text):
+        return None
+    if not values["provider"]:
+        return None
+    if any(type(values[name]) not in {str, type(None)} for name in optional_text):
+        return None
+    if any(type(values[name]) not in {int, float} for name in required_float):
+        return None
+    if any(
+        type(values[name]) not in {int, float, type(None)} for name in optional_float
+    ):
+        return None
+    if any(type(values[name]) not in {int, type(None)} for name in optional_int):
+        return None
+    if type(values["streaming"]) is not bool:
+        return None
+    for name in required_float | optional_float:
+        if values[name] is not None:
+            try:
+                normalized = float(values[name])
+            except OverflowError:
+                return None
+            if not math.isfinite(normalized):
+                return None
+            values[name] = normalized
+    try:
+        settings = ConsoleSessionSettings(**values)
+    except TypeError:
+        return None
+    if _console_session_settings_structural_errors(settings):
+        return None
+    return settings
 
 
 @dataclass(frozen=True, slots=True)
@@ -631,30 +703,19 @@ def console_settings_warnings(settings: ConsoleSessionSettings) -> list[str]:
     return warnings
 
 
-def validate_console_session_settings(
+def _console_session_settings_structural_errors(
     settings: ConsoleSessionSettings,
-    *,
-    app_config: Mapping[str, object],
 ) -> list[str]:
-    """Return user-facing validation errors for Console settings."""
+    """Return pure shape/range errors shared by live and persisted settings."""
     errors: list[str] = []
-    provider_key = provider_config_key(settings.provider)
-    provider_settings = _provider_settings(app_config, provider_key)
-
-    if not provider_key:
-        errors.append("Provider is required.")
-    if provider_key not in NATIVE_CONSOLE_PROVIDER_KEYS and not _string_value(
-        settings.model
-    ):
-        errors.append("Model is required.")
-
-    base_url = _string_value(settings.base_url)
     if (
-        base_url
-        and _is_url_based_provider(provider_key, provider_settings)
-        and not _valid_base_url(provider_key, base_url)
+        type(settings.provider) is not str
+        or not settings.provider.strip()
+        or settings.provider != settings.provider.strip()
     ):
-        errors.append("Base URL must be a valid http(s) URL.")
+        errors.append("Provider is required.")
+    if settings.source not in {"derived", "user"}:
+        errors.append("Settings source must be derived or user.")
 
     if not _float_in_range(settings.temperature, 0.0, 2.0):
         errors.append("Temperature must be between 0 and 2.")
@@ -714,6 +775,32 @@ def validate_console_session_settings(
         settings.thinking_budget_tokens
     ) and not _optional_int_at_least(settings.thinking_budget_tokens, 1024):
         errors.append("Thinking budget tokens must be at least 1024.")
+
+    return errors
+
+
+def validate_console_session_settings(
+    settings: ConsoleSessionSettings,
+    *,
+    app_config: Mapping[str, object],
+) -> list[str]:
+    """Return user-facing validation errors for Console settings."""
+    errors = _console_session_settings_structural_errors(settings)
+    provider_key = provider_config_key(settings.provider)
+    provider_settings = _provider_settings(app_config, provider_key)
+
+    if provider_key not in NATIVE_CONSOLE_PROVIDER_KEYS and not _string_value(
+        settings.model
+    ):
+        errors.append("Model is required.")
+
+    base_url = _string_value(settings.base_url)
+    if (
+        base_url
+        and _is_url_based_provider(provider_key, provider_settings)
+        and not _valid_base_url(provider_key, base_url)
+    ):
+        errors.append("Base URL must be a valid http(s) URL.")
 
     return errors
 

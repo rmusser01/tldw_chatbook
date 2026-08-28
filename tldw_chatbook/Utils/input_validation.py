@@ -8,11 +8,53 @@ import time
 from typing import Union, Optional
 from urllib.parse import urlparse
 
+from pydantic import BaseModel, ConfigDict, Field, field_validator
+
+from tldw_chatbook.Chat.console_chat_models import derive_console_session_title
+
 from ..Metrics.metrics_logger import log_counter, log_histogram
 
 
 PROVIDER_API_KEY_MAX_LENGTH = 4096
 CONSOLE_DRAFT_MAX_LENGTH = 100_000
+CONSOLE_FORK_TITLE_MAX_LENGTH = 60
+
+
+def validate_console_fork_title(value: object) -> str:
+    """Return one normalized, bounded Console fork title.
+
+    Args:
+        value: Raw value received from the Console naming dialog.
+
+    Returns:
+        A nonblank title normalized by the shared Console title helper.
+
+    Raises:
+        ValueError: If ``value`` is not text or normalizes to blank.
+    """
+
+    if type(value) is not str:
+        raise ValueError("Fork title must be text.")
+    normalized = derive_console_session_title(
+        value,
+        max_length=CONSOLE_FORK_TITLE_MAX_LENGTH,
+    )
+    if not normalized:
+        raise ValueError("Fork title cannot be blank.")
+    return normalized
+
+
+class ConsoleForkTitleInput(BaseModel):
+    """Strict shared validation boundary for the Console fork naming dialog."""
+
+    model_config = ConfigDict(extra="forbid", frozen=True, strict=True)
+
+    title: str = Field(min_length=1, max_length=CONSOLE_FORK_TITLE_MAX_LENGTH)
+
+    @field_validator("title", mode="before")
+    @classmethod
+    def _normalize_title(cls, value: object) -> str:
+        return validate_console_fork_title(value)
 
 
 def validate_email(email: str) -> bool:

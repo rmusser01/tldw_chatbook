@@ -126,12 +126,11 @@ class ConsoleEditMessageModal(
             elif self._can_resend:
                 context_copy = (
                     "Editing existing transcript message. Save keeps the edit in "
-                    "place; Edit & resend forks a new branch and gets a fresh reply."
+                    "place; Edit & resend creates a new response branch in this chat "
+                    "and gets a fresh reply."
                 )
             else:
-                context_copy = (
-                    "Editing existing transcript message. This will not create a new prompt."
-                )
+                context_copy = "Editing existing transcript message. This will not create a new prompt."
             yield Static(
                 context_copy,
                 id="console-edit-message-context",

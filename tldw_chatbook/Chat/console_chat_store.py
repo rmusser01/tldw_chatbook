@@ -6,11 +6,12 @@ import asyncio
 import hashlib
 import inspect
 import json
+import math
 import threading
 import time
 from collections import OrderedDict, deque
 from contextlib import contextmanager
-from dataclasses import dataclass, field, fields, is_dataclass, replace
+from dataclasses import asdict, dataclass, field, fields, is_dataclass, replace
 from datetime import datetime, timezone
 from enum import Enum
 from types import MappingProxyType
@@ -34,7 +35,7 @@ from tldw_chatbook.Agents.agent_models import (
     ToolCallFinished,
 )
 from tldw_chatbook.Agents.session_todo_store import SessionTodoStore
-from tldw_chatbook.Chat.attachment_core import PendingAttachment
+from tldw_chatbook.Chat.attachment_core import MAX_ATTACHMENT_BYTES, PendingAttachment
 from tldw_chatbook.DB.ChaChaNotes_DB import TrajectoryRowWrite
 from tldw_chatbook.Chat.citation_trace_models import (
     ANSWER_ATTEMPT_BODY_UTF8_BYTES_MAX,
@@ -62,6 +63,25 @@ from tldw_chatbook.Chat.console_chat_models import (
     GenerationVariantMeta,
     MessageAttachment,
     console_dispatch_recovery_from_checkpoint,
+)
+from tldw_chatbook.Chat.console_chat_fork import (
+    CONSOLE_FORK_VIDEO_TOMBSTONE_CONTENT,
+    ConsoleChatForkSnapshot,
+    ConsoleForkCitationLink,
+    ConsoleForkConfigurationSnapshot,
+    ConsoleForkEligibility,
+    ConsoleForkFence,
+    ConsoleForkImageSelectionFence,
+    ConsoleForkLineageFence,
+    ConsoleForkProjectedAttachment,
+    ConsoleForkProjectedGeneration,
+    ConsoleForkProjectedMessage,
+    ConsoleForkProjectedVideoTombstone,
+    encode_console_fork_message_metadata,
+    fingerprint_console_fork_configuration,
+    fingerprint_console_fork_selected_image,
+    normalize_fork_title,
+    validate_console_fork_image_payload,
 )
 from tldw_chatbook.Chat.console_context_policy import ConsoleContextPolicyOverrides
 from tldw_chatbook.Chat.console_dispatch_checkpoint import (
@@ -128,6 +148,7 @@ from tldw_chatbook.Chat.console_project_instructions import (
     ProjectInstructionControlState,
     decode_project_context_json,
     encode_project_context_json,
+    sanitize_fork_project_instruction_state,
 )
 from tldw_chatbook.Chat.console_speech import (
     ConsoleSpeechSnapshotRejected,
@@ -162,7 +183,10 @@ from tldw_chatbook.TTS.profile_errors import ProfileValidationError
 from tldw_chatbook.TTS.profile_types import CharacterRef
 from tldw_chatbook.Utils.log_sanitizer import REDACTION_MARKER, redact_log_line
 from tldw_chatbook.Video_Generation.video_metadata import VideoGenerationMetadata
-from tldw_chatbook.Video_Generation.video_store import video_content_marker
+from tldw_chatbook.Video_Generation.video_store import (
+    parse_video_marker,
+    video_content_marker,
+)
 
 if TYPE_CHECKING:
     # Annotation-only: ``from __future__ import annotations`` (top of file)
@@ -480,6 +504,15 @@ class ConsoleChatPersistence(Protocol):
     def create_conversation(self, **kwargs) -> str:
         """Create a persisted conversation and return its ID."""
 
+    def get_console_fork_citation_state(
+        self,
+        message_id: str,
+        revision: int,
+        source_body: str,
+        target_body: str,
+    ) -> str:
+        """Confirm one durable source message's citation ownership state."""
+
     def create_message(
         self,
         *,
@@ -632,6 +665,14 @@ class ConsoleChatPersistence(Protocol):
             cannot provide a trustworthy version fence.
         """
 
+    def get_console_fork_source_message(
+        self, message_id: str
+    ) -> tuple[int, str] | None:
+        """Return one exact persisted source revision/body pair for a fork fence."""
+
+    def get_console_fork_active_leaf(self, conversation_id: str) -> str | None:
+        """Return the canonical durable active leaf used by a fork fence."""
+
     def get_conversation_version(self, conversation_id: str) -> int | None:
         """Return the current positive durable conversation row version."""
 
@@ -692,6 +733,14 @@ class ConsoleChatPersistence(Protocol):
         pinned_prefill: str | None,
     ) -> bool:
         """Set or clear the pinned response prefill on a conversation."""
+
+    def update_conversation_console_session_settings(
+        self,
+        *,
+        conversation_id: str,
+        settings: ConsoleSessionSettings,
+    ) -> bool:
+        """Persist the latest complete Console settings snapshot."""
 
     def update_conversation_title(
         self,
@@ -826,9 +875,7 @@ class StagedCapturePurge:
     expected_revision: int
     durable_keys: frozenset[tuple[str, str, int]]
     message_swaps: tuple[tuple[ConsoleChatMessage, tuple["ExchangeCapture", ...]], ...]
-    blob_cache: tuple[
-        tuple[str, Mapping[tuple[str, int, str], bytes]], ...
-    ]
+    blob_cache: tuple[tuple[str, Mapping[tuple[str, int, str], bytes]], ...]
     abandoned_tags: tuple[tuple[str, frozenset[str]], ...]
     capture_revisions: tuple[tuple[ConsoleChatSession, int], ...]
     removed_count: int
@@ -907,6 +954,8 @@ class ConsoleChatSession:
     assistant_kind: str | None = "generic"
     assistant_id: str | None = "console"
     assistant_authority_id: str | None = None
+    #: Persona-owned memory behavior persisted with persona conversations.
+    persona_memory_mode: str | None = None
     #: Local-only numeric compatibility/display projection. Server character
     #: IDs remain opaque in ``assistant_id`` and never populate this field.
     character_id: int | None = None
@@ -932,6 +981,10 @@ class ConsoleChatSession:
     #: writing, which is the whole reason the guard lives at the id and not
     #: at the 43 sites that consult ``self.persistence``.
     ephemeral: bool = False
+    #: Process-local proof that this session was atomically published from a
+    #: validated fork snapshot. Ordinary temporary sessions must not inherit
+    #: fork-only durable metadata conventions during promotion.
+    fork_projection: bool = False
 
     def __post_init__(self) -> None:
         """Normalize nullable/legacy optional thinking replay preference."""
@@ -1414,6 +1467,7 @@ class ConsoleChatStore:
         assistant_kind: str | None = "generic",
         assistant_id: str | None = "console",
         assistant_authority_id: str | None = None,
+        persona_memory_mode: str | None = None,
         character_id: int | None = None,
         character_name: str | None = None,
         ephemeral: bool = False,
@@ -1478,6 +1532,7 @@ class ConsoleChatStore:
             assistant_kind=assistant_kind,
             assistant_id=assistant_id,
             assistant_authority_id=assistant_authority_id,
+            persona_memory_mode=persona_memory_mode,
             character_id=character_id,
             character_name=character_name,
             ephemeral=ephemeral,
@@ -1784,6 +1839,7 @@ class ConsoleChatStore:
         assistant_kind: str | None = "generic",
         assistant_id: str | None = "console",
         assistant_authority_id: str | None = None,
+        persona_memory_mode: str | None = None,
         character_id: int | None = None,
         character_name: str | None = None,
         ephemeral: bool = False,
@@ -1861,6 +1917,7 @@ class ConsoleChatStore:
             assistant_kind=assistant_kind,
             assistant_id=assistant_id,
             assistant_authority_id=assistant_authority_id,
+            persona_memory_mode=persona_memory_mode,
             character_id=character_id,
             character_name=character_name,
             project_instruction_state=project_instruction_state,
@@ -3178,9 +3235,7 @@ class ConsoleChatStore:
         unanchored = self._pending_trajectory_tool_rows.get("__unanchored__")
         if unanchored is not None:
             retained = [
-                entry
-                for entry in unanchored
-                if entry.get("session_id") != session_id
+                entry for entry in unanchored if entry.get("session_id") != session_id
             ]
             if retained:
                 self._pending_trajectory_tool_rows["__unanchored__"] = retained
@@ -3984,6 +4039,7 @@ class ConsoleChatStore:
                     "assistant_kind": session.assistant_kind,
                     "assistant_id": session.assistant_id,
                     "assistant_authority_id": session.assistant_authority_id,
+                    "persona_memory_mode": session.persona_memory_mode,
                     "character_id": local_character_id,
                     "character_name": (
                         session.character_name
@@ -4285,9 +4341,7 @@ class ConsoleChatStore:
             raise TypeError("fingerprint must be ConsoleDurableAcceptanceFingerprint")
         if self._durable_fingerprint_by_preparation.get(preparation_id) != fingerprint:
             if self._durable_retired_locked(preparation_id, fingerprint):
-                raise ConsoleDurableAcceptanceRetired(
-                    "Durable acceptance was retired."
-                )
+                raise ConsoleDurableAcceptanceRetired("Durable acceptance was retired.")
             raise RuntimeError("Durable postcommit fingerprint changed.")
 
     def _durable_retired_locked(
@@ -4568,6 +4622,1347 @@ class ConsoleChatStore:
         session.title = identity.title
         self._flush_staged_capture_policy(session)
 
+    @staticmethod
+    def _fork_durability(session: ConsoleChatSession) -> str:
+        if session.ephemeral:
+            return "temporary"
+        if session.persisted_conversation_id is not None:
+            return "durable"
+        return "unsaved_persistable"
+
+    @staticmethod
+    def _fork_message_state_is_eligible(role: object, status: object) -> bool:
+        if type(role) is not ConsoleMessageRole or type(status) is not str:
+            return False
+        if role is ConsoleMessageRole.USER:
+            return status == "complete"
+        return role is ConsoleMessageRole.ASSISTANT and status in {
+            "complete",
+            "stopped",
+            "failed",
+        }
+
+    def _fork_configuration_snapshot(
+        self,
+        session: ConsoleChatSession,
+    ) -> ConsoleForkConfigurationSnapshot:
+        settings = session.settings
+        if not isinstance(settings, ConsoleSessionSettings):
+            raise ValueError("Console fork settings are unavailable.")
+        return ConsoleForkConfigurationSnapshot(
+            workspace_id=session.workspace_id,
+            settings=replace(settings, pinned_prefill=None),
+            rag_scope=session.rag_scope_holder.scope,
+            context_policy_overrides=session.context_policy_overrides,
+            library_policy=self.session_library_policy_candidate(session.id),
+            runtime_backend=session.runtime_backend,
+            assistant_kind=session.assistant_kind,
+            assistant_id=session.assistant_id,
+            assistant_authority_id=session.assistant_authority_id,
+            persona_memory_mode=session.persona_memory_mode,
+            character_id=session.character_id,
+            character_name=session.character_name,
+            user_display_name_override=session.user_display_name_override,
+            character_system_template=session.character_system_template,
+            speech_preferences=session.speech_preferences,
+            project_instruction_state=sanitize_fork_project_instruction_state(
+                session.project_instruction_state
+            ),
+        )
+
+    def _fork_configuration_fingerprint(
+        self,
+        configuration: ConsoleForkConfigurationSnapshot,
+        *,
+        validate_destination: bool,
+    ) -> str:
+        fingerprint = fingerprint_console_fork_configuration(configuration)
+        validator = getattr(
+            self.persistence,
+            "validate_console_conversation_identity",
+            None,
+        )
+        if validate_destination and callable(validator):
+            validator(
+                runtime_backend=configuration.runtime_backend,
+                assistant_kind=configuration.assistant_kind,
+                assistant_id=configuration.assistant_id,
+                assistant_authority_id=configuration.assistant_authority_id,
+                persona_memory_mode=configuration.persona_memory_mode,
+                character_id=configuration.character_id,
+            )
+        return fingerprint
+
+    @staticmethod
+    def _fork_visible_selection(
+        message: ConsoleChatMessage,
+    ) -> tuple[str, str | None]:
+        if type(message.content) is not str:
+            raise ValueError("Console fork message content is unavailable.")
+        variants = message.variants
+        if variants is None:
+            return message.content, None
+        try:
+            current = variants.current
+        except (AttributeError, IndexError):
+            raise ValueError("Console fork text selection is unavailable.") from None
+        if (
+            type(current.id) is not str
+            or not current.id
+            or type(current.content) is not str
+            or current.content != message.content
+        ):
+            raise ValueError("Console fork text selection is unavailable.")
+        return current.content, current.id
+
+    @staticmethod
+    def _fork_attachment_fingerprint(
+        attachments: Sequence[MessageAttachment | ConsoleForkProjectedAttachment],
+        generation: Sequence[GenerationVariantMeta | ConsoleForkProjectedGeneration],
+    ) -> str:
+        payload: list[dict[str, object]] = []
+        if generation and len(generation) != len(attachments):
+            raise ValueError("Console fork generation metadata is unavailable.")
+        for index, attachment in enumerate(attachments):
+            if (
+                type(attachment)
+                not in {MessageAttachment, ConsoleForkProjectedAttachment}
+                or type(attachment.data) is not bytes
+                or not attachment.data
+                or len(attachment.data) > MAX_ATTACHMENT_BYTES
+                or type(attachment.mime_type) is not str
+                or not attachment.mime_type
+                or type(attachment.display_name) is not str
+                or attachment.position != index
+            ):
+                raise ValueError("Console fork attachment is unavailable.")
+            if attachment.mime_type.startswith("image/") or generation:
+                validate_console_fork_image_payload(
+                    attachment.data,
+                    attachment.mime_type,
+                )
+            metadata = generation[index] if index < len(generation) else None
+            metadata_payload: dict[str, object] | None = None
+            if metadata is not None:
+                if (
+                    type(metadata)
+                    not in {GenerationVariantMeta, ConsoleForkProjectedGeneration}
+                    or type(metadata.prompt) is not str
+                    or type(metadata.negative_prompt) is not str
+                    or type(metadata.backend) is not str
+                    or type(metadata.model) not in {str, type(None)}
+                    or type(metadata.seed) not in {int, type(None)}
+                    or type(metadata.style) not in {str, type(None)}
+                ):
+                    raise ValueError("Console fork generation metadata is unavailable.")
+                if type(metadata) is GenerationVariantMeta:
+                    if type(metadata.params) is not dict:
+                        raise ValueError(
+                            "Console fork generation metadata is unavailable."
+                        )
+                    try:
+                        params_json = json.dumps(
+                            metadata.params,
+                            allow_nan=False,
+                            ensure_ascii=False,
+                            separators=(",", ":"),
+                            sort_keys=True,
+                        )
+                    except (TypeError, ValueError):
+                        raise ValueError(
+                            "Console fork generation metadata is unavailable."
+                        ) from None
+                elif (
+                    type(metadata) is ConsoleForkProjectedGeneration
+                    and metadata.position == index
+                    and type(metadata.params_json) is str
+                ):
+                    params_json = metadata.params_json
+                else:
+                    raise ValueError("Console fork generation metadata is unavailable.")
+                metadata_payload = {
+                    "prompt": metadata.prompt,
+                    "negative_prompt": metadata.negative_prompt,
+                    "backend": metadata.backend,
+                    "model": metadata.model,
+                    "seed": metadata.seed,
+                    "style": metadata.style,
+                    "params_json": params_json,
+                }
+            payload.append(
+                {
+                    "position": attachment.position,
+                    "data_sha256": hashlib.sha256(attachment.data).hexdigest(),
+                    "mime_type": attachment.mime_type,
+                    "display_name": attachment.display_name,
+                    "generation": metadata_payload,
+                }
+            )
+        canonical = json.dumps(
+            payload,
+            allow_nan=False,
+            ensure_ascii=False,
+            separators=(",", ":"),
+            sort_keys=True,
+        ).encode("utf-8")
+        return hashlib.sha256(b"console-fork-attachments-v1\0" + canonical).hexdigest()
+
+    @staticmethod
+    def _validate_fork_image_selections(
+        nodes: Mapping[str, ConsoleChatMessage],
+        prefix: Sequence[str],
+        selections: Sequence[ConsoleForkImageSelectionFence],
+    ) -> bool:
+        generated_ids = {
+            native_id for native_id in prefix if nodes[native_id].generation_metadata
+        }
+        if (
+            any(
+                nodes[native_id].role is not ConsoleMessageRole.ASSISTANT
+                for native_id in generated_ids
+            )
+            or len(selections) != len(generated_ids)
+            or any(
+                type(item) is not ConsoleForkImageSelectionFence for item in selections
+            )
+            or len(selections) != len({item.native_message_id for item in selections})
+            or {item.native_message_id for item in selections} != generated_ids
+        ):
+            return False
+        try:
+            for item in selections:
+                message = nodes[item.native_message_id]
+                if (
+                    type(item.selected_position) is not int
+                    or item.selected_position < 0
+                    or type(item.browse_revision) is not int
+                    or item.browse_revision < 0
+                    or item.selected_position >= len(message.attachments)
+                    or item.selected_position >= len(message.generation_metadata)
+                    or fingerprint_console_fork_selected_image(
+                        message.attachments[item.selected_position],
+                        message.generation_metadata[item.selected_position],
+                    )
+                    != item.attachment_meta_fingerprint
+                ):
+                    return False
+        except (KeyError, TypeError, ValueError):
+            return False
+        return True
+
+    @staticmethod
+    def _fork_video_fingerprint(video: VideoGenerationMetadata) -> str:
+        if type(video) is not VideoGenerationMetadata:
+            raise ValueError("Console fork video metadata is unavailable.")
+        text_fields = (
+            video.name,
+            video.prompt,
+            video.negative_prompt,
+            video.backend,
+            video.container,
+        )
+        optional_text = (video.model, video.ratio, video.source_image_message_id)
+        numeric = (video.duration_seconds, video.fps)
+        integer = (video.seed, video.width, video.height)
+        if (
+            any(type(value) is not str for value in text_fields)
+            or not video.name
+            or not video.backend
+            or any(type(value) not in {str, type(None)} for value in optional_text)
+            or any(type(value) not in {int, float, type(None)} for value in numeric)
+            or any(type(value) not in {int, type(None)} for value in integer)
+            or any(value is not None and not math.isfinite(value) for value in numeric)
+            or type(video.is_unavailable_tombstone) is not bool
+        ):
+            raise ValueError("Console fork video metadata is unavailable.")
+        payload = video.to_json().encode("utf-8")
+        if len(payload) > 64 * 1024:
+            raise ValueError("Console fork video metadata is unavailable.")
+        return hashlib.sha256(b"console-fork-video-v1\0" + payload).hexdigest()
+
+    @classmethod
+    def _fork_media_fingerprint(cls, message: ConsoleChatMessage) -> str:
+        if message.video_metadata is None:
+            if type(message.content) is str and (
+                parse_video_marker(message.content) is not None
+                or message.content == CONSOLE_FORK_VIDEO_TOMBSTONE_CONTENT
+            ):
+                raise ValueError("Console fork video metadata is unavailable.")
+            return cls._fork_attachment_fingerprint(
+                message.attachments,
+                message.generation_metadata,
+            )
+        if message.attachments or message.generation_metadata:
+            raise ValueError("Console fork video payload is unavailable.")
+        fingerprint = cls._fork_video_fingerprint(message.video_metadata)
+        expected_content = (
+            CONSOLE_FORK_VIDEO_TOMBSTONE_CONTENT
+            if message.video_metadata.is_unavailable_tombstone
+            else video_content_marker(message.video_metadata.name)
+        )
+        if message.content != expected_content:
+            raise ValueError("Console fork video marker is unavailable.")
+        return fingerprint
+
+    def _fork_persisted_message_state(
+        self,
+        persisted_message_id: str | None,
+    ) -> tuple[int, str] | None:
+        if persisted_message_id is None:
+            return None
+        reader = getattr(self.persistence, "get_console_fork_source_message", None)
+        if not callable(reader):
+            raise ValueError("Saved message state is unavailable.")
+        state = reader(persisted_message_id)
+        if (
+            type(state) is not tuple
+            or len(state) != 2
+            or type(state[0]) is not int
+            or state[0] < 1
+            or type(state[1]) is not str
+        ):
+            raise ValueError("Saved message state is unavailable.")
+        return state
+
+    def _fork_conversation_version(
+        self,
+        conversation_id: str | None,
+    ) -> int | str | None:
+        if conversation_id is None:
+            return None
+        reader = getattr(self.persistence, "get_conversation_version", None)
+        if not callable(reader):
+            raise ValueError("Saved conversation version is unavailable.")
+        version = reader(conversation_id)
+        if not (
+            (type(version) is int and version >= 1)
+            or (type(version) is str and bool(version))
+        ):
+            raise ValueError("Saved conversation version is unavailable.")
+        return version
+
+    def _fork_database_active_leaf(
+        self,
+        session_id: str,
+        boundary_message_id: str,
+    ) -> str:
+        session = self._sessions[session_id]
+        conversation_id = session.persisted_conversation_id
+        reader = getattr(self.persistence, "get_console_fork_active_leaf", None)
+        if conversation_id is None or not callable(reader):
+            raise ValueError("Saved active leaf is unavailable.")
+        active_leaf_id = reader(conversation_id)
+        if type(active_leaf_id) is not str or not active_leaf_id:
+            raise ValueError("Saved active leaf is unavailable.")
+        active_path = self.active_path_message_ids(session_id)
+        boundary_index = active_path.index(boundary_message_id)
+        try:
+            leaf_index = next(
+                index
+                for index, native_id in enumerate(active_path)
+                if self._nodes_by_session[session_id][native_id].persisted_message_id
+                == active_leaf_id
+            )
+        except StopIteration as exc:
+            raise ValueError("Saved active leaf lineage is unavailable.") from exc
+        if leaf_index < boundary_index:
+            raise ValueError("Saved active leaf lineage is unavailable.")
+        previous_id = self._nodes_by_session[session_id][
+            boundary_message_id
+        ].persisted_message_id
+        for native_id in active_path[boundary_index + 1 : leaf_index + 1]:
+            message = self._nodes_by_session[session_id][native_id]
+            if (
+                type(message.persisted_message_id) is not str
+                or not message.persisted_message_id
+                or message.parent_message_id != previous_id
+            ):
+                raise ValueError("Saved active leaf lineage is unavailable.")
+            previous_id = message.persisted_message_id
+        return active_leaf_id
+
+    def _fork_lineage_entry(
+        self,
+        session_id: str,
+        message: ConsoleChatMessage,
+        *,
+        durable: bool,
+    ) -> ConsoleForkLineageFence:
+        if not self._fork_message_state_is_eligible(message.role, message.status):
+            raise ValueError("Console fork message state is unavailable.")
+        content, variant_id = self._fork_visible_selection(message)
+        parent_id = self._native_parent_by_message.get(message.id)
+        expected_persisted_parent = (
+            self._nodes_by_session[session_id][parent_id].persisted_message_id
+            if parent_id is not None
+            else None
+        )
+        if durable and message.parent_message_id != expected_persisted_parent:
+            raise ValueError("Saved Console fork parent is unavailable.")
+        siblings = tuple(
+            self._children_by_parent.get(session_id, {}).get(parent_id, ())
+        )
+        persisted_state = (
+            self._fork_persisted_message_state(message.persisted_message_id)
+            if durable
+            else None
+        )
+        return ConsoleForkLineageFence(
+            native_message_id=message.id,
+            persisted_message_id=message.persisted_message_id,
+            native_parent_id=parent_id,
+            turn_id=message.turn_id,
+            role=message.role,
+            status=message.status,
+            visible_content=content,
+            visible_variant_id=variant_id,
+            sibling_identity=siblings,
+            persisted_revision=(persisted_state[0] if persisted_state else None),
+            persisted_content=(persisted_state[1] if persisted_state else None),
+            attachment_fingerprint=self._fork_media_fingerprint(message),
+        )
+
+    def fork_eligibility(self, message_id: str) -> ConsoleForkEligibility:
+        """Return store-owned eligibility for one canonical fork boundary."""
+        session_id = self._message_session_index.get(message_id)
+        if session_id is None:
+            return ConsoleForkEligibility(False, "Message is not forkable.")
+        nodes = self._nodes_by_session.get(session_id, {})
+        if message_id not in nodes:
+            return ConsoleForkEligibility(False, "Message is not forkable.")
+        active_ids = self.active_path_message_ids(session_id)
+        if message_id not in active_ids:
+            return ConsoleForkEligibility(False, "Message is not on the active path.")
+        prefix = active_ids[: active_ids.index(message_id) + 1]
+        session = self._sessions[session_id]
+        durability = self._fork_durability(session)
+        durable = durability == "durable"
+        if durable and not session.library_policy_hydrated:
+            return ConsoleForkEligibility(
+                False,
+                "Durable Console Library policy is not loaded.",
+            )
+        for native_id in prefix:
+            message = nodes.get(native_id)
+            if message is None or not self._fork_message_state_is_eligible(
+                message.role,
+                message.status,
+            ):
+                return ConsoleForkEligibility(
+                    False,
+                    "Only user and assistant messages can be forked.",
+                )
+            try:
+                content, _ = self._fork_visible_selection(message)
+            except ValueError as exc:
+                return ConsoleForkEligibility(False, str(exc))
+            if not content.strip():
+                return ConsoleForkEligibility(
+                    False,
+                    "Message must contain stable completed text before forking.",
+                )
+            if durable and not message.persisted_message_id:
+                return ConsoleForkEligibility(
+                    False,
+                    "Every message through the selected boundary must be saved before forking.",
+                )
+        if durable:
+            try:
+                self._fork_database_active_leaf(session_id, message_id)
+            except (KeyError, TypeError, ValueError) as exc:
+                return ConsoleForkEligibility(False, str(exc))
+        try:
+            self._fork_configuration_fingerprint(
+                self._fork_configuration_snapshot(session),
+                validate_destination=durability != "temporary",
+            )
+        except (TypeError, ValueError) as exc:
+            return ConsoleForkEligibility(False, str(exc))
+        return ConsoleForkEligibility(True)
+
+    def issue_fork_fence(
+        self,
+        message_id: str,
+        *,
+        image_selections: Sequence[ConsoleForkImageSelectionFence] = (),
+    ) -> ConsoleForkFence:
+        """Capture one immutable active-lineage fence without mutating its source."""
+        eligibility = self.fork_eligibility(message_id)
+        if not eligibility.eligible:
+            raise ValueError(eligibility.reason)
+        session_id = self._message_session_index[message_id]
+        session = self._sessions[session_id]
+        active_ids = self.active_path_message_ids(session_id)
+        prefix = active_ids[: active_ids.index(message_id) + 1]
+        durability = self._fork_durability(session)
+        durable = durability == "durable"
+        selections = tuple(image_selections)
+        if any(type(item) is not ConsoleForkImageSelectionFence for item in selections):
+            raise TypeError("image selections must be ConsoleForkImageSelectionFence")
+        if not self._validate_fork_image_selections(
+            self._nodes_by_session[session_id],
+            prefix,
+            selections,
+        ):
+            raise ValueError("Console fork image selection is unavailable.")
+        configuration = self._fork_configuration_snapshot(session)
+        active_leaf_persisted_id = (
+            self._fork_database_active_leaf(session.id, message_id) if durable else None
+        )
+        return ConsoleForkFence(
+            source_session_id=session.id,
+            source_conversation_id=session.persisted_conversation_id,
+            source_conversation_version=(
+                self._fork_conversation_version(session.persisted_conversation_id)
+                if durable
+                else None
+            ),
+            source_active_leaf_persisted_message_id=(
+                active_leaf_persisted_id if durable else None
+            ),
+            source_durability=durability,
+            source_title=session.title,
+            source_configuration_fingerprint=(
+                self._fork_configuration_fingerprint(
+                    configuration,
+                    validate_destination=durability != "temporary",
+                )
+            ),
+            boundary_message_id=message_id,
+            lineage=tuple(
+                self._fork_lineage_entry(
+                    session_id,
+                    self._nodes_by_session[session_id][native_id],
+                    durable=durable,
+                )
+                for native_id in prefix
+            ),
+            image_selections=selections,
+        )
+
+    def validate_fork_fence(
+        self,
+        fence: ConsoleForkFence,
+        *,
+        image_selections: Sequence[ConsoleForkImageSelectionFence] = (),
+    ) -> bool:
+        """Re-read all captured source facts and return whether they still match."""
+        if type(fence) is not ConsoleForkFence:
+            return False
+        session = self._sessions.get(fence.source_session_id)
+        if session is None:
+            return False
+        try:
+            eligibility = self.fork_eligibility(fence.boundary_message_id)
+            if not eligibility.eligible:
+                return False
+            active_ids = self.active_path_message_ids(session.id)
+            boundary_index = active_ids.index(fence.boundary_message_id)
+            prefix = active_ids[: boundary_index + 1]
+            if tuple(prefix) != tuple(item.native_message_id for item in fence.lineage):
+                return False
+            if not self._validate_fork_image_selections(
+                self._nodes_by_session[session.id],
+                prefix,
+                image_selections,
+            ):
+                return False
+            durability = self._fork_durability(session)
+            if (
+                session.title != fence.source_title
+                or session.persisted_conversation_id != fence.source_conversation_id
+                or durability != fence.source_durability
+                or tuple(image_selections) != fence.image_selections
+            ):
+                return False
+            durable = durability == "durable"
+            active_leaf_persisted_id = (
+                self._fork_database_active_leaf(session.id, fence.boundary_message_id)
+                if durable
+                else None
+            )
+            if (
+                active_leaf_persisted_id if durable else None
+            ) != fence.source_active_leaf_persisted_message_id:
+                return False
+            if (
+                self._fork_conversation_version(session.persisted_conversation_id)
+                if durable
+                else None
+            ) != fence.source_conversation_version:
+                return False
+            configuration = self._fork_configuration_snapshot(session)
+            if (
+                self._fork_configuration_fingerprint(
+                    configuration,
+                    validate_destination=durability != "temporary",
+                )
+                != fence.source_configuration_fingerprint
+            ):
+                return False
+            current_lineage = tuple(
+                self._fork_lineage_entry(
+                    session.id,
+                    self._nodes_by_session[session.id][native_id],
+                    durable=durable,
+                )
+                for native_id in prefix
+            )
+        except (KeyError, TypeError, ValueError):
+            return False
+        return current_lineage == fence.lineage
+
+    def stage_fork_snapshot(
+        self,
+        fence: ConsoleForkFence,
+        *,
+        title: str,
+        fork_session_id: str,
+        fork_conversation_id: str | None,
+    ) -> ConsoleChatForkSnapshot:
+        """Project a validated fence into independently owned immutable values."""
+        if not self.validate_fork_fence(
+            fence,
+            image_selections=fence.image_selections,
+        ):
+            raise ValueError("Console fork source changed.")
+        normalized_title = normalize_fork_title(title)
+        if type(fork_session_id) is not str or not fork_session_id.strip():
+            raise ValueError("Fork session id is invalid.")
+        durable = fence.source_durability != "temporary"
+        if durable and (
+            type(fork_conversation_id) is not str or not fork_conversation_id.strip()
+        ):
+            raise ValueError("A saved fork requires a conversation id.")
+        if not durable and fork_conversation_id is not None:
+            raise ValueError("A temporary fork cannot own a conversation id.")
+        session = self._sessions[fence.source_session_id]
+        nodes = self._nodes_by_session[session.id]
+        native_ids = {entry.native_message_id: str(uuid4()) for entry in fence.lineage}
+        persisted_ids = {
+            entry.native_message_id: str(uuid4()) if durable else None
+            for entry in fence.lineage
+        }
+        selection_by_message = {
+            selection.native_message_id: selection
+            for selection in fence.image_selections
+        }
+        turn_ids: dict[str, str] = {}
+        projected: list[ConsoleForkProjectedMessage] = []
+        projected_image_ids: dict[str, str] = {}
+        previous_native: str | None = None
+        previous_persisted: str | None = None
+        for entry in fence.lineage:
+            source = nodes[entry.native_message_id]
+            target_native = native_ids[entry.native_message_id]
+            target_persisted = persisted_ids[entry.native_message_id]
+            target_turn: str | None = None
+            if entry.turn_id is not None:
+                target_turn = turn_ids.setdefault(entry.turn_id, str(uuid4()))
+            target_variant = (
+                str(uuid4()) if entry.visible_variant_id is not None else None
+            )
+            attachments: list[ConsoleForkProjectedAttachment] = []
+            generation_rows: list[ConsoleForkProjectedGeneration] = []
+            message_has_image = False
+            selection = selection_by_message.get(source.id)
+            source_positions = (
+                (selection.selected_position,)
+                if selection is not None
+                else tuple(range(len(source.attachments)))
+            )
+            for target_position, source_position in enumerate(source_positions):
+                attachment = source.attachments[source_position]
+                if (
+                    type(attachment.data) is not bytes
+                    or not attachment.data
+                    or len(attachment.data) > MAX_ATTACHMENT_BYTES
+                    or type(attachment.mime_type) is not str
+                    or not attachment.mime_type
+                    or type(attachment.display_name) is not str
+                ):
+                    raise ValueError("Fork attachment bytes are unavailable.")
+                if attachment.mime_type.startswith("image/"):
+                    validate_console_fork_image_payload(
+                        attachment.data,
+                        attachment.mime_type,
+                    )
+                    message_has_image = True
+                attachments.append(
+                    ConsoleForkProjectedAttachment(
+                        owner_native_message_id=target_native,
+                        owner_persisted_message_id=target_persisted,
+                        position=target_position,
+                        data=bytes(attachment.data),
+                        mime_type=attachment.mime_type,
+                        display_name=attachment.display_name,
+                    )
+                )
+                if source_position < len(source.generation_metadata):
+                    metadata = source.generation_metadata[source_position]
+                    generation_rows.append(
+                        ConsoleForkProjectedGeneration(
+                            owner_native_message_id=target_native,
+                            owner_persisted_message_id=target_persisted,
+                            position=target_position,
+                            prompt=metadata.prompt,
+                            negative_prompt=metadata.negative_prompt,
+                            backend=metadata.backend,
+                            model=metadata.model,
+                            seed=metadata.seed,
+                            style=metadata.style,
+                            params_json=json.dumps(
+                                metadata.params,
+                                allow_nan=False,
+                                ensure_ascii=False,
+                                separators=(",", ":"),
+                                sort_keys=True,
+                            ),
+                        )
+                    )
+            video_tombstone: ConsoleForkProjectedVideoTombstone | None = None
+            if source.video_metadata is not None:
+                video = source.video_metadata
+                source_image_target = projected_image_ids.get(
+                    video.source_image_message_id or ""
+                )
+                video_tombstone = ConsoleForkProjectedVideoTombstone(
+                    owner_native_message_id=target_native,
+                    owner_persisted_message_id=target_persisted,
+                    source_fingerprint=self._fork_video_fingerprint(video),
+                    prompt=video.prompt,
+                    negative_prompt=video.negative_prompt,
+                    backend=video.backend,
+                    model=video.model,
+                    seed=video.seed,
+                    duration_seconds=video.duration_seconds,
+                    fps=video.fps,
+                    width=video.width,
+                    height=video.height,
+                    ratio=video.ratio,
+                    source_image_message_id=source_image_target,
+                    container=video.container,
+                )
+            projected.append(
+                ConsoleForkProjectedMessage(
+                    source_native_message_id=entry.native_message_id,
+                    source_persisted_message_id=entry.persisted_message_id,
+                    source_persisted_revision=entry.persisted_revision,
+                    source_persisted_content=entry.persisted_content,
+                    native_message_id=target_native,
+                    persisted_message_id=target_persisted,
+                    native_parent_id=previous_native,
+                    persisted_parent_id=previous_persisted,
+                    turn_id=target_turn,
+                    visible_variant_id=target_variant,
+                    role=entry.role,
+                    status=entry.status,
+                    content=(
+                        CONSOLE_FORK_VIDEO_TOMBSTONE_CONTENT
+                        if video_tombstone is not None
+                        else entry.visible_content
+                    ),
+                    attachments=tuple(attachments),
+                    generation_metadata=tuple(generation_rows),
+                    video_tombstone=video_tombstone,
+                )
+            )
+            if message_has_image:
+                projected_image_id = target_persisted or target_native
+                projected_image_ids[source.id] = projected_image_id
+                if source.persisted_message_id is not None:
+                    projected_image_ids[source.persisted_message_id] = (
+                        projected_image_id
+                    )
+            previous_native = target_native
+            previous_persisted = target_persisted
+        configuration = self._fork_configuration_snapshot(session)
+        configuration_fingerprint = self._fork_configuration_fingerprint(
+            configuration,
+            validate_destination=durable,
+        )
+        citation_links = self._fork_citation_links(tuple(projected), durable=durable)
+        candidate = ConsoleChatForkSnapshot(
+            fork_session_id=fork_session_id,
+            fork_conversation_id=fork_conversation_id,
+            title=normalized_title,
+            source_session_id=fence.source_session_id,
+            source_conversation_id=fence.source_conversation_id,
+            source_conversation_version=fence.source_conversation_version,
+            source_active_leaf_persisted_message_id=(
+                fence.source_active_leaf_persisted_message_id
+            ),
+            source_boundary_persisted_message_id=(
+                fence.lineage[-1].persisted_message_id
+            ),
+            durable=durable,
+            messages=tuple(projected),
+            configuration=configuration,
+            citation_links=citation_links,
+        )
+        candidate_matches_fence = len(candidate.messages) == len(fence.lineage)
+        for entry, message in zip(
+            fence.lineage,
+            candidate.messages,
+        ):
+            candidate_matches_fence = candidate_matches_fence and (
+                message.source_native_message_id == entry.native_message_id
+                and message.source_persisted_message_id == entry.persisted_message_id
+                and message.source_persisted_revision == entry.persisted_revision
+                and message.native_message_id == native_ids[entry.native_message_id]
+                and message.persisted_message_id
+                == persisted_ids[entry.native_message_id]
+                and message.native_parent_id == native_ids.get(entry.native_parent_id)
+                and message.persisted_parent_id
+                == persisted_ids.get(entry.native_parent_id)
+                and message.turn_id == turn_ids.get(entry.turn_id)
+                and (message.visible_variant_id is None)
+                == (entry.visible_variant_id is None)
+                and message.role is entry.role
+                and message.status == entry.status
+                and message.content
+                == (
+                    CONSOLE_FORK_VIDEO_TOMBSTONE_CONTENT
+                    if message.video_tombstone is not None
+                    else entry.visible_content
+                )
+            )
+            if not candidate_matches_fence:
+                break
+            selection = selection_by_message.get(entry.native_message_id)
+            if message.video_tombstone is not None:
+                candidate_matches_fence = (
+                    message.video_tombstone.source_fingerprint
+                    == entry.attachment_fingerprint
+                )
+            elif selection is not None:
+                candidate_matches_fence = (
+                    len(message.attachments) == 1
+                    and len(message.generation_metadata) == 1
+                    and fingerprint_console_fork_selected_image(
+                        message.attachments[0],
+                        message.generation_metadata[0],
+                    )
+                    == selection.attachment_meta_fingerprint
+                )
+            else:
+                candidate_matches_fence = (
+                    self._fork_attachment_fingerprint(
+                        message.attachments,
+                        message.generation_metadata,
+                    )
+                    == entry.attachment_fingerprint
+                )
+            if not candidate_matches_fence:
+                break
+        source_still_matches = self.validate_fork_fence(
+            fence,
+            image_selections=fence.image_selections,
+        )
+        if (
+            not source_still_matches
+            or not candidate_matches_fence
+            or configuration_fingerprint != fence.source_configuration_fingerprint
+        ):
+            raise ValueError("Console fork source changed.")
+        return candidate
+
+    def _fork_citation_links(
+        self,
+        messages: tuple[ConsoleForkProjectedMessage, ...],
+        *,
+        durable: bool,
+    ) -> tuple[ConsoleForkCitationLink, ...]:
+        """Freeze confirmed governed-owner states for a durable source path."""
+
+        if not durable or not any(
+            message.source_persisted_message_id is not None for message in messages
+        ):
+            return ()
+        reader = getattr(self.persistence, "get_console_fork_citation_state", None)
+        if not callable(reader):
+            raise ValueError("Console fork citation authority is unavailable.")
+        links: list[ConsoleForkCitationLink] = []
+        for message in messages:
+            source_id = message.source_persisted_message_id
+            source_revision = message.source_persisted_revision
+            source_body = message.source_persisted_content
+            if (
+                source_id is None
+                or type(source_revision) is not int
+                or type(source_body) is not str
+            ):
+                raise ValueError("Console fork citation authority is unavailable.")
+            try:
+                classified = reader(
+                    source_id,
+                    source_revision,
+                    source_body,
+                    message.content,
+                )
+            except CitationPersistenceUnavailable as exc:
+                raise ValueError(
+                    "Console fork citation authority is unavailable."
+                ) from exc
+            if type(classified) is not tuple or len(classified) != 2:
+                raise ValueError("Console fork citation authority is unavailable.")
+            state, trace_id = classified
+            if (
+                state not in {"active_required", "unavailable", "none"}
+                or (
+                    state == "active_required"
+                    and (type(trace_id) is not str or not trace_id)
+                )
+                or (state != "active_required" and trace_id is not None)
+            ):
+                raise ValueError("Console fork citation authority is unavailable.")
+            links.append(
+                ConsoleForkCitationLink(
+                    source_persisted_message_id=source_id,
+                    source_revision=source_revision,
+                    state=state,
+                    trace_id=trace_id,
+                )
+            )
+        return tuple(links)
+
+    def register_fork_snapshot(
+        self,
+        snapshot: ConsoleChatForkSnapshot,
+        *,
+        activate: bool = False,
+    ) -> ConsoleChatSession:
+        """Publish one fully built fork session to all store indices at once."""
+        if type(snapshot) is not ConsoleChatForkSnapshot:
+            raise TypeError("snapshot must be ConsoleChatForkSnapshot")
+        if type(activate) is not bool:
+            raise TypeError("activate must be a bool")
+        if (
+            type(snapshot.fork_session_id) is not str
+            or not snapshot.fork_session_id
+            or snapshot.fork_session_id != snapshot.fork_session_id.strip()
+            or len(snapshot.fork_session_id) > 256
+        ):
+            raise ValueError("Fork session id is invalid.")
+        if snapshot.fork_session_id in self._sessions:
+            raise ValueError("Fork session id already exists.")
+        if normalize_fork_title(snapshot.title) != snapshot.title:
+            raise ValueError("Fork title is not normalized.")
+        self._fork_configuration_fingerprint(
+            snapshot.configuration,
+            validate_destination=snapshot.durable,
+        )
+        existing_conversation_ids = {
+            session.persisted_conversation_id
+            for session in self._sessions.values()
+            if session.persisted_conversation_id is not None
+        }
+        if snapshot.durable:
+            if (
+                type(snapshot.fork_conversation_id) is not str
+                or not snapshot.fork_conversation_id.strip()
+                or snapshot.fork_conversation_id in existing_conversation_ids
+            ):
+                raise ValueError("Fork conversation id is invalid or already exists.")
+        elif snapshot.fork_conversation_id is not None:
+            raise ValueError("A temporary fork cannot own a conversation id.")
+        messages = snapshot.messages
+        if type(messages) is not tuple or any(
+            type(message) is not ConsoleForkProjectedMessage for message in messages
+        ):
+            raise TypeError("Fork messages must be projected message records.")
+        native_ids = [message.native_message_id for message in messages]
+        if (
+            any(
+                type(native_id) is not str or not native_id.strip()
+                for native_id in native_ids
+            )
+            or len(native_ids) != len(set(native_ids))
+            or any(native_id in self._message_session_index for native_id in native_ids)
+        ):
+            raise ValueError("Fork message id already exists.")
+        persisted_ids = [
+            message.persisted_message_id
+            for message in messages
+            if message.persisted_message_id is not None
+        ]
+        existing_persisted_ids = {
+            node.persisted_message_id
+            for nodes in self._nodes_by_session.values()
+            for node in nodes.values()
+            if node.persisted_message_id is not None
+        }
+        if (
+            (snapshot.durable and len(persisted_ids) != len(messages))
+            or (not snapshot.durable and persisted_ids)
+            or any(
+                type(persisted_id) is not str or not persisted_id.strip()
+                for persisted_id in persisted_ids
+            )
+            or len(persisted_ids) != len(set(persisted_ids))
+            or any(
+                persisted_id in existing_persisted_ids for persisted_id in persisted_ids
+            )
+        ):
+            raise ValueError("Fork persisted message id already exists.")
+        existing_ownership_ids = set(self._sessions)
+        existing_ownership_ids.update(existing_conversation_ids)
+        existing_ownership_ids.update(self._message_session_index)
+        existing_ownership_ids.update(existing_persisted_ids)
+        existing_turn_ids: set[str] = set()
+        existing_variant_ids: set[str] = set()
+        for session_nodes in self._nodes_by_session.values():
+            for node in session_nodes.values():
+                if node.turn_id is not None:
+                    existing_turn_ids.add(node.turn_id)
+                if node.variants is not None:
+                    existing_turn_ids.add(node.variants.turn_id)
+                    existing_variant_ids.update(
+                        variant.id for variant in node.variants.variants
+                    )
+        existing_ownership_ids.update(existing_turn_ids)
+        existing_ownership_ids.update(existing_variant_ids)
+        turn_ids = [
+            message.turn_id for message in messages if message.turn_id is not None
+        ]
+        variant_ids = [
+            message.visible_variant_id
+            for message in messages
+            if message.visible_variant_id is not None
+        ]
+        if any(
+            type(ownership_id) is not str or not ownership_id.strip()
+            for ownership_id in (*turn_ids, *variant_ids)
+        ):
+            raise ValueError("Fork ownership ids must be nonblank.")
+        target_turn_ids = set(turn_ids)
+        target_variant_ids = set(variant_ids)
+        target_native_ids = set(native_ids)
+        target_persisted_ids = set(persisted_ids)
+        if any(
+            message.persisted_message_id in target_native_ids
+            and message.persisted_message_id != message.native_message_id
+            for message in messages
+        ):
+            raise ValueError("Fork message ownership ids must correspond.")
+        target_ownership_ids: set[str] = set()
+        target_domains = (
+            {snapshot.fork_session_id},
+            (
+                {snapshot.fork_conversation_id}
+                if snapshot.fork_conversation_id is not None
+                else set()
+            ),
+            target_native_ids | target_persisted_ids,
+            target_turn_ids,
+            target_variant_ids,
+        )
+        for domain in target_domains:
+            if target_ownership_ids & domain:
+                raise ValueError("Fork ownership ids must be disjoint.")
+            target_ownership_ids.update(domain)
+        if (
+            target_ownership_ids & existing_ownership_ids
+            or target_turn_ids & existing_turn_ids
+            or target_variant_ids & existing_variant_ids
+            or len(target_variant_ids) != len(variant_ids)
+        ):
+            raise ValueError("Fork ownership id already exists.")
+        expected_parent: str | None = None
+        expected_persisted_parent: str | None = None
+        built_messages: list[ConsoleChatMessage] = []
+        fork_image_reference_ids: set[str] = set()
+        for projected in messages:
+            if (
+                projected.native_parent_id != expected_parent
+                or projected.persisted_parent_id != expected_persisted_parent
+            ):
+                raise ValueError("Fork message parent relationship is invalid.")
+            if (
+                not self._fork_message_state_is_eligible(
+                    projected.role,
+                    projected.status,
+                )
+                or type(projected.content) is not str
+                or not projected.content.strip()
+                or type(projected.turn_id) not in {str, type(None)}
+                or type(projected.visible_variant_id) not in {str, type(None)}
+            ):
+                raise ValueError("Fork message content or state is invalid.")
+            if (
+                projected.video_tombstone is None
+                and parse_video_marker(projected.content) is not None
+            ):
+                raise ValueError("Fork video tombstone is invalid.")
+            if not snapshot.durable and (
+                projected.persisted_message_id is not None
+                or projected.persisted_parent_id is not None
+            ):
+                raise ValueError("Temporary fork ancestry is invalid.")
+            attachments: list[MessageAttachment] = []
+            message_has_image = False
+            for index, attachment in enumerate(projected.attachments):
+                if (
+                    type(attachment) is not ConsoleForkProjectedAttachment
+                    or attachment.owner_native_message_id != projected.native_message_id
+                    or attachment.owner_persisted_message_id
+                    != projected.persisted_message_id
+                    or attachment.position != index
+                    or type(attachment.data) is not bytes
+                    or type(attachment.mime_type) is not str
+                    or type(attachment.display_name) is not str
+                ):
+                    raise ValueError("Fork attachment ownership is invalid.")
+                if attachment.mime_type.startswith("image/"):
+                    validate_console_fork_image_payload(
+                        attachment.data,
+                        attachment.mime_type,
+                    )
+                    message_has_image = True
+                attachments.append(
+                    MessageAttachment(
+                        data=attachment.data,
+                        mime_type=attachment.mime_type,
+                        display_name=attachment.display_name,
+                        position=attachment.position,
+                    )
+                )
+            generation_metadata: list[GenerationVariantMeta] = []
+            for index, metadata in enumerate(projected.generation_metadata):
+                if (
+                    type(metadata) is not ConsoleForkProjectedGeneration
+                    or metadata.owner_native_message_id != projected.native_message_id
+                    or metadata.owner_persisted_message_id
+                    != projected.persisted_message_id
+                    or metadata.position != index
+                    or index >= len(attachments)
+                    or type(metadata.prompt) is not str
+                    or type(metadata.negative_prompt) is not str
+                    or type(metadata.backend) is not str
+                    or type(metadata.model) not in {str, type(None)}
+                    or type(metadata.seed) not in {int, type(None)}
+                    or type(metadata.style) not in {str, type(None)}
+                    or type(metadata.params_json) is not str
+                ):
+                    raise ValueError("Fork generation ownership is invalid.")
+                try:
+                    params = json.loads(metadata.params_json)
+                except (TypeError, ValueError):
+                    raise ValueError("Fork generation metadata is invalid.") from None
+                if type(params) is not dict:
+                    raise ValueError("Fork generation metadata is invalid.")
+                generation_metadata.append(
+                    GenerationVariantMeta(
+                        prompt=metadata.prompt,
+                        negative_prompt=metadata.negative_prompt,
+                        backend=metadata.backend,
+                        model=metadata.model,
+                        seed=metadata.seed,
+                        style=metadata.style,
+                        params=params,
+                    )
+                )
+            self._fork_attachment_fingerprint(attachments, generation_metadata)
+            video_metadata: VideoGenerationMetadata | None = None
+            tombstone = projected.video_tombstone
+            if tombstone is not None:
+                if (
+                    type(tombstone) is not ConsoleForkProjectedVideoTombstone
+                    or tombstone.owner_native_message_id != projected.native_message_id
+                    or tombstone.owner_persisted_message_id
+                    != projected.persisted_message_id
+                    or attachments
+                    or generation_metadata
+                    or type(tombstone.source_fingerprint) is not str
+                    or len(tombstone.source_fingerprint) != 64
+                    or any(
+                        character not in "0123456789abcdef"
+                        for character in tombstone.source_fingerprint
+                    )
+                    or type(tombstone.prompt) is not str
+                    or type(tombstone.negative_prompt) is not str
+                    or type(tombstone.backend) is not str
+                    or not tombstone.backend
+                    or type(tombstone.model) not in {str, type(None)}
+                    or type(tombstone.seed) not in {int, type(None)}
+                    or type(tombstone.duration_seconds) not in {int, float, type(None)}
+                    or type(tombstone.fps) not in {int, float, type(None)}
+                    or type(tombstone.width) not in {int, type(None)}
+                    or type(tombstone.height) not in {int, type(None)}
+                    or type(tombstone.ratio) not in {str, type(None)}
+                    or type(tombstone.source_image_message_id) not in {str, type(None)}
+                    or (
+                        tombstone.source_image_message_id is not None
+                        and tombstone.source_image_message_id
+                        not in fork_image_reference_ids
+                    )
+                    or type(tombstone.container) is not str
+                    or projected.content != CONSOLE_FORK_VIDEO_TOMBSTONE_CONTENT
+                ):
+                    raise ValueError("Fork video tombstone is invalid.")
+                video_metadata = VideoGenerationMetadata(
+                    name=f"forked-video-{projected.native_message_id}",
+                    prompt=tombstone.prompt,
+                    negative_prompt=tombstone.negative_prompt,
+                    backend=tombstone.backend,
+                    model=tombstone.model,
+                    seed=tombstone.seed,
+                    duration_seconds=tombstone.duration_seconds,
+                    fps=tombstone.fps,
+                    width=tombstone.width,
+                    height=tombstone.height,
+                    ratio=tombstone.ratio,
+                    source_image_message_id=tombstone.source_image_message_id,
+                    container=tombstone.container,
+                    is_unavailable_tombstone=True,
+                )
+                self._fork_video_fingerprint(video_metadata)
+            variants = (
+                ConsoleVariantSet(
+                    turn_id=projected.turn_id or projected.native_message_id,
+                    variants=[
+                        ConsoleVariant(
+                            content=projected.content,
+                            id=projected.visible_variant_id,
+                        )
+                    ],
+                )
+                if projected.visible_variant_id is not None
+                else None
+            )
+            built_messages.append(
+                ConsoleChatMessage(
+                    id=projected.native_message_id,
+                    role=projected.role,
+                    content=projected.content,
+                    turn_id=projected.turn_id,
+                    status=projected.status,
+                    persisted_message_id=projected.persisted_message_id,
+                    parent_message_id=projected.persisted_parent_id,
+                    variants=variants,
+                    image_data=attachments[0].data if attachments else None,
+                    image_mime_type=(attachments[0].mime_type if attachments else None),
+                    attachment_label=(
+                        attachments[0].display_name if attachments else None
+                    ),
+                    attachments=tuple(attachments),
+                    generation_metadata=tuple(generation_metadata),
+                    video_metadata=video_metadata,
+                )
+            )
+            if message_has_image:
+                image_reference_id = (
+                    projected.persisted_message_id
+                    if snapshot.durable
+                    else projected.native_message_id
+                )
+                if image_reference_id is None:
+                    raise ValueError("Fork image ownership is invalid.")
+                fork_image_reference_ids.add(image_reference_id)
+            expected_parent = projected.native_message_id
+            expected_persisted_parent = projected.persisted_message_id
+
+        configuration = snapshot.configuration
+        holder = SessionScopeHolder()
+        holder.set(configuration.rag_scope)
+        policy = configuration.library_policy
+        policy_snapshot = (
+            normalize_policy_read(None).snapshot
+            if snapshot.durable
+            else ConsoleLibraryPolicySnapshot(
+                auto_retrieve=policy.auto_retrieve,
+                assistant_access=policy.assistant_access,
+                policy_revision=None,
+                source="temporary",
+            )
+        )
+        session = ConsoleChatSession(
+            id=snapshot.fork_session_id,
+            title=snapshot.title,
+            workspace_id=configuration.workspace_id,
+            persisted_conversation_id=snapshot.fork_conversation_id,
+            settings=configuration.settings,
+            context_policy_overrides=configuration.context_policy_overrides,
+            library_policy_holder=ConsoleLibraryPolicyHolder(policy_snapshot),
+            library_policy_hydrated=not snapshot.durable,
+            rag_scope_holder=holder,
+            runtime_backend=configuration.runtime_backend,
+            assistant_kind=configuration.assistant_kind,
+            assistant_id=configuration.assistant_id,
+            assistant_authority_id=configuration.assistant_authority_id,
+            persona_memory_mode=configuration.persona_memory_mode,
+            character_id=configuration.character_id,
+            character_name=configuration.character_name,
+            user_display_name_override=configuration.user_display_name_override,
+            character_system_template=configuration.character_system_template,
+            speech_preferences=configuration.speech_preferences,
+            project_instruction_state=configuration.project_instruction_state,
+            ephemeral=not snapshot.durable,
+            fork_projection=True,
+        )
+        nodes = {message.id: message for message in built_messages}
+        parent_by_message = {
+            message.native_message_id: message.native_parent_id for message in messages
+        }
+        children: dict[str | None, list[str]] = {}
+        for message in messages:
+            children.setdefault(message.native_parent_id, []).append(
+                message.native_message_id
+            )
+        coordinator = self.library_policy_coordinator
+        coordinator_registered = False
+        prior_active_session_id = self.active_session_id
+        try:
+            if coordinator is not None:
+                coordinator.register_holder(
+                    session.id,
+                    session.persisted_conversation_id,
+                    session.library_policy_holder,
+                )
+                coordinator_registered = True
+            self._sessions[session.id] = session
+            self._nodes_by_session[session.id] = nodes
+            self._children_by_parent[session.id] = children
+            self._native_parent_by_message.update(parent_by_message)
+            self._message_session_index.update(
+                {message.id: session.id for message in built_messages}
+            )
+            self._messages_by_session[session.id] = built_messages.copy()
+            self._active_leaf_by_session[session.id] = (
+                built_messages[-1].id if built_messages else None
+            )
+            self._context_summary_by_session[session.id] = (None, None)
+            self._conversation_context_epochs[session.id] = 0
+            self._payload_revisions[session.id] = 0
+            for message in built_messages:
+                self._message_speech_revisions[message.id] = 0
+                self._message_completion_generations[message.id] = 0
+            if activate:
+                self._activate_session(session.id)
+        except Exception:
+            self._sessions.pop(session.id, None)
+            self._nodes_by_session.pop(session.id, None)
+            self._children_by_parent.pop(session.id, None)
+            self._messages_by_session.pop(session.id, None)
+            self._active_leaf_by_session.pop(session.id, None)
+            self._context_summary_by_session.pop(session.id, None)
+            self._conversation_context_epochs.pop(session.id, None)
+            self._payload_revisions.pop(session.id, None)
+            for message in built_messages:
+                self._native_parent_by_message.pop(message.id, None)
+                self._message_session_index.pop(message.id, None)
+                self._message_speech_revisions.pop(message.id, None)
+                self._message_completion_generations.pop(message.id, None)
+            if self.active_session_id == session.id:
+                self.active_session_id = prior_active_session_id
+            if coordinator is not None and coordinator_registered:
+                try:
+                    coordinator.unregister_holder(session.id)
+                except Exception:
+                    logger.warning("Console fork policy registration rollback failed")
+            raise
+        return session
+
     def session_settings(self, session_id: str) -> ConsoleSessionSettings | None:
         """Return in-memory settings for a native Console session."""
         return self._session_or_raise(session_id).settings
@@ -4782,9 +6177,10 @@ class ConsoleChatStore:
         mark_user_work: bool = True,
         canonical_settings_baseline: ConsoleSessionSettings | None = None,
     ) -> ConsoleChatSession:
-        """Replace in-memory settings for a native Console session."""
+        """Replace settings and refresh an existing durable resume snapshot."""
         session = self._session_or_raise(session_id)
-        if mark_user_work and session.settings != settings:
+        changed = session.settings != settings
+        if mark_user_work and changed:
             session.has_user_work = True
         elif not mark_user_work:
             if canonical_settings_baseline != settings:
@@ -4794,6 +6190,30 @@ class ConsoleChatStore:
             session.canonical_settings_baseline = canonical_settings_baseline
         session.settings = settings
         self._bump_payload_revision(session_id)
+        if (
+            changed
+            and session.persisted_conversation_id is not None
+            and self.persistence is not None
+        ):
+            update_settings = getattr(
+                self.persistence,
+                "update_conversation_console_session_settings",
+                None,
+            )
+            if callable(update_settings):
+                try:
+                    update_settings(
+                        conversation_id=session.persisted_conversation_id,
+                        settings=settings,
+                    )
+                except Exception:
+                    logger.bind(
+                        session_id=session_id,
+                        conversation_id=session.persisted_conversation_id,
+                    ).exception(
+                        "Failed to persist Console settings snapshot; "
+                        "in-memory session keeps the applied settings."
+                    )
         return session
 
     def session_draft(self, session_id: str) -> str:
@@ -4894,8 +6314,7 @@ class ConsoleChatStore:
                 message_swaps.append((message, exchanges))
             remaining_run_tags[message.id] = {capture.run_tag for capture in exchanges}
             remaining_capture_keys[message.id] = {
-                (capture.run_tag, capture.seq, capture.status)
-                for capture in exchanges
+                (capture.run_tag, capture.seq, capture.status) for capture in exchanges
             }
 
         blob_cache = tuple(
@@ -4961,7 +6380,9 @@ class ConsoleChatStore:
             target_session.capture_revision = revision
         return stage.removed_count
 
-    def hydrate_session_capture_policy(self, session_id: str) -> CapturePolicyReadResult:
+    def hydrate_session_capture_policy(
+        self, session_id: str
+    ) -> CapturePolicyReadResult:
         """Hydrate a persisted conversation override into process-local state."""
         with self._capture_policy_lock:
             session = self._session_or_raise(session_id)
@@ -7610,6 +9031,14 @@ class ConsoleChatStore:
             self._bump_conversation_context_epoch(session_id)
         return self._snapshot(message)
 
+    def subtree_message_ids(self, message_id: str) -> tuple[str, ...]:
+        """Return the current native ids removed by deleting ``message_id``."""
+
+        session_id = self._message_session_index.get(message_id)
+        if session_id is None:
+            raise KeyError(f"Unknown Console message: {message_id}")
+        return tuple(self._subtree_ids(session_id, message_id))
+
     def session_id_for_message(self, message_id: str) -> str:
         """Return the owning session ID for a message."""
         if message_id not in self._message_session_index:
@@ -10107,6 +11536,7 @@ class ConsoleChatStore:
             "assistant_kind": session.assistant_kind,
             "assistant_id": session.assistant_id,
             "assistant_authority_id": session.assistant_authority_id,
+            "persona_memory_mode": session.persona_memory_mode,
             "character_id": local_character_id,
             "character_name": (
                 session.character_name if local_character_id is not None else None
@@ -10413,8 +11843,27 @@ class ConsoleChatStore:
                 ]
             if message.usage is not None:
                 create_kwargs["usage_json"] = message.usage.to_json()
+            attachment_display_name = (
+                message.attachments[0].display_name if message.attachments else ""
+            )
+            fork_metadata_json = (
+                encode_console_fork_message_metadata(
+                    message.status,
+                    attachment_display_name,
+                )
+                if session.fork_projection
+                else None
+            )
             if message.video_metadata is not None:
+                if fork_metadata_json is not None or (
+                    message.metadata is not None and not message.metadata.is_empty
+                ):
+                    raise ValueError("Console video metadata shape is invalid.")
                 create_kwargs["metadata_json"] = message.video_metadata.to_json()
+            elif fork_metadata_json is not None:
+                if message.metadata is not None and not message.metadata.is_empty:
+                    raise ValueError("Console message metadata shape is invalid.")
+                create_kwargs["metadata_json"] = fork_metadata_json
             elif message.metadata is not None and not message.metadata.is_empty:
                 create_kwargs["metadata_json"] = message.metadata.to_json()
             prepared_messages.append(
@@ -10423,6 +11872,11 @@ class ConsoleChatStore:
 
         scope_type, workspace_id = self._persistence_scope(session)
         metadata: dict[str, object] = {}
+        if session.settings is not None:
+            metadata["console_session_settings"] = {
+                "version": 1,
+                **asdict(session.settings),
+            }
         if session.rag_scope_holder.scope is not None:
             metadata["rag_scope"] = serialize_scope(session.rag_scope_holder.scope)
         pinned_prefill = (
@@ -10462,6 +11916,7 @@ class ConsoleChatStore:
             "assistant_kind": session.assistant_kind,
             "assistant_id": session.assistant_id,
             "assistant_authority_id": session.assistant_authority_id,
+            "persona_memory_mode": session.persona_memory_mode,
             "character_id": local_character_id,
             "character_name": (
                 session.character_name if local_character_id is not None else None
@@ -10493,6 +11948,10 @@ class ConsoleChatStore:
                 if boundary_native_id is not None
                 else None
             ),
+            project_context_json=encode_project_context_json(
+                session.project_instruction_state
+            ),
+            context_policy_overrides=session.context_policy_overrides,
             contributions=contributions,
         )
 
@@ -10521,7 +11980,6 @@ class ConsoleChatStore:
                 self.on_scope_flushed(identity.conversation_id, held_scope)
             except Exception:
                 logger.exception("on_scope_flushed callback failed after promotion.")
-        self._persist_project_instruction_state(session)
         return identity.conversation_id
 
     def set_session_system_prompt(
@@ -11185,9 +12643,7 @@ class ConsoleChatStore:
             logger.bind(
                 message_id=message.id,
                 error_type=type(exc).__name__,
-            ).warning(
-                "exchange_flush_failed"
-            )
+            ).warning("exchange_flush_failed")
 
     def _persist_metadata_only(self, message: ConsoleChatMessage) -> None:
         """Flush a persisted message's metadata without a version bump.

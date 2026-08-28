@@ -44,7 +44,13 @@ from tldw_chatbook.Chat.console_chat_models import (
     ConsoleMessageRole,
     MessageAttachment,
 )
-from tldw_chatbook.Chat.console_session_settings import ConsoleSessionSettings
+from tldw_chatbook.Chat.console_chat_fork import (
+    parse_console_fork_message_metadata,
+)
+from tldw_chatbook.Chat.console_session_settings import (
+    ConsoleSessionSettings,
+    parse_persisted_console_session_settings,
+)
 from tldw_chatbook.Chat.console_prefill import (
     pinned_prefill_from_conversation_metadata,
 )
@@ -63,6 +69,7 @@ __all__ = [
     "hydrate_console_session",
     "load_console_conversation_tree",
 ]
+
 
 class ConversationServiceUnavailable(RuntimeError):
     """The app has no conversation service that can load a tree."""
@@ -200,9 +207,14 @@ def console_messages_from_conversation_tree(
         # shapes never co-write one row; persistence prefers the video
         # payload so a later edit cannot clobber it).
         video_metadata = VideoGenerationMetadata.from_json(raw_metadata_json)
-        metadata = (
+        fork_metadata = (
             None
             if video_metadata is not None
+            else parse_console_fork_message_metadata(raw_metadata_json)
+        )
+        metadata = (
+            None
+            if video_metadata is not None or fork_metadata is not None
             else MessageMetadata.from_json(raw_metadata_json)
         )
         raw_id = node.get("id")
@@ -223,7 +235,7 @@ def console_messages_from_conversation_tree(
                     MessageAttachment(
                         data=image_data,
                         mime_type=image_mime_type or "",
-                        display_name="",
+                        display_name=(fork_metadata[1] if fork_metadata else ""),
                         position=0,
                     ),
                 )
@@ -234,18 +246,21 @@ def console_messages_from_conversation_tree(
                 ConsoleChatMessage(
                     role=_console_message_role_from_persisted(node),
                     content=content,
-                    status="complete",
+                    status=fork_metadata[0] if fork_metadata else "complete",
                     persisted_message_id=node_persisted_id,
                     parent_message_id=parent_persisted_id,
                     image_data=image_data,
                     image_mime_type=image_mime_type,
+                    attachment_label=(
+                        fork_metadata[1]
+                        if fork_metadata is not None and fork_metadata[1]
+                        else None
+                    ),
                     attachments=attachments,
                     usage=usage,
                     metadata=metadata,
                     assistant_generation_state=(
-                        str(generation_state)
-                        if generation_state is not None
-                        else None
+                        str(generation_state) if generation_state is not None else None
                     ),
                     video_metadata=video_metadata,
                 )
@@ -310,13 +325,11 @@ async def load_console_conversation_tree(
 def apply_resume_settings_overrides(
     settings: ConsoleSessionSettings, conversation: Mapping[str, Any]
 ) -> ConsoleSessionSettings:
-    """Overlay what the CONVERSATION ROW contributes to a resumed session.
+    """Restore one saved settings snapshot plus canonical row-owned fields.
 
-    Only ``system_prompt`` and ``pinned_prefill`` come from the persisted
-    conversation; every other field is inherited from whatever base the
-    caller supplied (the screen: the active session's settings; a launch:
-    the config defaults). A saved system prompt is never seeded from
-    ``[chat_defaults]``, which is why it has to travel this way.
+    A complete valid versioned snapshot replaces the caller's provider and
+    generation defaults. Invalid metadata is ignored as one unit. The row's
+    ``system_prompt`` and top-level pinned-prefill metadata remain canonical.
 
     Blank/whitespace-only prompt text collapses to "no system prompt";
     anything else is restored verbatim (leading/trailing whitespace and
@@ -328,7 +341,8 @@ def apply_resume_settings_overrides(
         conversation: The persisted conversation row.
 
     Returns:
-        The same settings with the conversation's two contributions applied.
+        Persisted settings, or the base snapshot on malformed metadata, with
+        canonical prompt and pinned-prefill fields applied.
     """
     raw_system_prompt = conversation.get("system_prompt")
     system_prompt = (
@@ -339,7 +353,12 @@ def apply_resume_settings_overrides(
     pinned_prefill = pinned_prefill_from_conversation_metadata(
         conversation.get("metadata")
     )
-    return replace(settings, system_prompt=system_prompt, pinned_prefill=pinned_prefill)
+    persisted = parse_persisted_console_session_settings(conversation.get("metadata"))
+    return replace(
+        persisted or settings,
+        system_prompt=system_prompt,
+        pinned_prefill=pinned_prefill,
+    )
 
 
 async def hydrate_console_session(
@@ -383,9 +402,7 @@ async def hydrate_console_session(
     if not isinstance(conversation, dict):
         conversation = {}
     roleplay_context = parse_console_roleplay_context(conversation.get("metadata"))
-    active_workspace_id = str(
-        store.workspace_context.active_workspace_id or ""
-    ).strip()
+    active_workspace_id = str(store.workspace_context.active_workspace_id or "").strip()
     persisted_workspace_id = (
         str(conversation.get("workspace_id")).strip()
         if conversation.get("workspace_id") is not None
@@ -413,7 +430,9 @@ async def hydrate_console_session(
     # navigable (swipe) right after resume.
     db = getattr(app, "chachanotes_db", None)
     all_nodes = console_messages_from_conversation_tree(tree, db=db)
-    active_leaf_id = getattr(db, "get_conversation_active_leaf", lambda _c: None)(target)
+    active_leaf_id = getattr(db, "get_conversation_active_leaf", lambda _c: None)(
+        target
+    )
     raw_runtime_backend = conversation.get("runtime_backend")
     if type(raw_runtime_backend) is str:
         runtime_backend = raw_runtime_backend
@@ -425,10 +444,19 @@ async def hydrate_console_session(
     assistant_id = raw_assistant_id if type(raw_assistant_id) is str else None
     raw_assistant_authority_id = conversation.get("assistant_authority_id")
     assistant_authority_id = (
-        raw_assistant_authority_id
-        if type(raw_assistant_authority_id) is str
-        else None
+        raw_assistant_authority_id if type(raw_assistant_authority_id) is str else None
     )
+    raw_persona_memory_mode = conversation.get("persona_memory_mode")
+    persona_memory_mode = (
+        raw_persona_memory_mode if type(raw_persona_memory_mode) is str else None
+    )
+    if assistant_kind is None:
+        # Conversation metadata normalizes the legacy/default ``generic`` kind
+        # to the canonical unscoped form. Keep the rest of that identity in
+        # the same form instead of hydrating an impossible mixed identity.
+        assistant_id = None
+        assistant_authority_id = None
+        persona_memory_mode = None
     raw_character_id = conversation.get("character_id")
     character_id = (
         raw_character_id
@@ -460,6 +488,7 @@ async def hydrate_console_session(
         assistant_kind=assistant_kind,
         assistant_id=assistant_id,
         assistant_authority_id=assistant_authority_id,
+        persona_memory_mode=persona_memory_mode,
         character_id=character_id,
         character_name=character_name,
         activate=False,

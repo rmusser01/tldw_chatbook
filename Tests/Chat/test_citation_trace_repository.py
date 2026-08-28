@@ -14,6 +14,7 @@ import weakref
 import pytest
 from pydantic import ValidationError
 
+from tldw_chatbook.Chat.chat_persistence_service import ChatPersistenceService
 from tldw_chatbook.Chat.citation_provenance_runtime import (
     CitationProvenanceRuntimePolicy,
 )
@@ -2068,6 +2069,488 @@ def test_cache_reuse_adds_an_idempotent_owner_without_cloning_trace(
         """
     ).fetchone()[0]
     assert hmac.compare_digest(owners[0]["body_fingerprint"], selected_hmac)
+
+
+def test_fork_owner_links_the_target_to_the_same_immutable_trace(
+    db: CharactersRAGDB,
+) -> None:
+    repository = _repository(db)
+    _persist(db, repository)
+    conversation_id = _conversation(db)
+    db.add_message(
+        {
+            "id": "fork-message",
+            "conversation_id": conversation_id,
+            "sender": "assistant",
+            "content": "Answer [S1].",
+            "client_id": db.client_id,
+        }
+    )
+
+    with db.transaction(immediate=True) as cursor:
+        repository.link_fork_message_owner(
+            cursor,
+            source_message_id="message-1",
+            source_message_revision=1,
+            source_message_body="Answer [S1].",
+            target_message_id="fork-message",
+            target_message_revision=1,
+            target_message_body="Answer [S1].",
+            confirmed_state="active_required",
+            confirmed_trace_id="trace-1",
+        )
+
+    connection = db.get_connection()
+    assert (
+        connection.execute("SELECT COUNT(*) FROM rag_citation_traces").fetchone()[0]
+        == 1
+    )
+    assert (
+        connection.execute(
+            "SELECT COUNT(*) FROM rag_answer_attempt_payloads"
+        ).fetchone()[0]
+        == 1
+    )
+    owners = connection.execute(
+        "SELECT message_id, trace_id FROM rag_message_trace_owners ORDER BY message_id"
+    ).fetchall()
+    assert [tuple(row) for row in owners] == [
+        ("fork-message", "trace-1"),
+        ("message-1", "trace-1"),
+    ]
+
+
+def test_fork_owner_link_rolls_back_with_its_outer_transaction(
+    db: CharactersRAGDB,
+) -> None:
+    repository = _repository(db)
+    _persist(db, repository)
+    conversation_id = _conversation(db)
+    db.add_message(
+        {
+            "id": "fork-message",
+            "conversation_id": conversation_id,
+            "sender": "assistant",
+            "content": "Answer [S1].",
+            "client_id": db.client_id,
+        }
+    )
+
+    with pytest.raises(RuntimeError, match="after citation link"):
+        with db.transaction(immediate=True) as cursor:
+            repository.link_fork_message_owner(
+                cursor,
+                source_message_id="message-1",
+                source_message_revision=1,
+                source_message_body="Answer [S1].",
+                target_message_id="fork-message",
+                target_message_revision=1,
+                target_message_body="Answer [S1].",
+                confirmed_state="active_required",
+                confirmed_trace_id="trace-1",
+            )
+            raise RuntimeError("after citation link")
+
+    owners = (
+        db.get_connection()
+        .execute("SELECT message_id FROM rag_message_trace_owners ORDER BY message_id")
+        .fetchall()
+    )
+    assert [row["message_id"] for row in owners] == ["message-1"]
+
+
+@pytest.mark.parametrize("confirmed_state", ("unavailable", "none"))
+def test_fork_owner_omits_only_a_confirmed_non_active_state(
+    db: CharactersRAGDB,
+    confirmed_state: str,
+) -> None:
+    repository = _repository(db)
+    _persist(db, repository)
+    conversation_id = _conversation(db)
+    db.add_message(
+        {
+            "id": "fork-message",
+            "conversation_id": conversation_id,
+            "sender": "assistant",
+            "content": "Answer [S1].",
+            "client_id": db.client_id,
+        }
+    )
+
+    with db.transaction(immediate=True) as cursor:
+        repository.link_fork_message_owner(
+            cursor,
+            source_message_id="message-1",
+            source_message_revision=1,
+            source_message_body="Answer [S1].",
+            target_message_id="fork-message",
+            target_message_revision=1,
+            target_message_body="Answer [S1].",
+            confirmed_state=confirmed_state,
+        )
+
+    owners = (
+        db.get_connection()
+        .execute("SELECT message_id FROM rag_message_trace_owners ORDER BY message_id")
+        .fetchall()
+    )
+    assert [row["message_id"] for row in owners] == ["message-1"]
+
+
+def test_fork_owner_active_required_fails_when_source_owner_is_revoked(
+    db: CharactersRAGDB,
+) -> None:
+    repository = _repository(db)
+    _persist(db, repository)
+    conversation_id = _conversation(db)
+    db.add_message(
+        {
+            "id": "fork-message",
+            "conversation_id": conversation_id,
+            "sender": "assistant",
+            "content": "Answer [S1].",
+            "client_id": db.client_id,
+        }
+    )
+    with db.transaction() as cursor:
+        cursor.execute(
+            """
+            INSERT INTO rag_payload_tombstones VALUES (
+                ?, 'local_payload_v1', 'snapshot-1', 'snapshot-1',
+                'revoked', 'fork-race-policy',
+                '2026-08-27T00:00:00+00:00', '2027-08-27T00:00:00+00:00'
+            )
+            """,
+            (_identity(db).profile_id,),
+        )
+
+    with pytest.raises(CitationPersistenceUnavailable):
+        with db.transaction(immediate=True) as cursor:
+            repository.link_fork_message_owner(
+                cursor,
+                source_message_id="message-1",
+                source_message_revision=1,
+                source_message_body="Answer [S1].",
+                target_message_id="fork-message",
+                target_message_revision=1,
+                target_message_body="Answer [S1].",
+                confirmed_state="active_required",
+                confirmed_trace_id="trace-1",
+            )
+
+    assert (
+        db.get_connection()
+        .execute(
+            "SELECT COUNT(*) FROM rag_message_trace_owners "
+            "WHERE message_id = 'fork-message'"
+        )
+        .fetchone()[0]
+        == 0
+    )
+
+
+@pytest.mark.parametrize(
+    "revocation",
+    ("evidence-run", "snapshot", "answer", "tombstone"),
+)
+def test_fork_owner_rechecks_the_entire_governed_payload_graph_in_transaction(
+    db: CharactersRAGDB,
+    revocation: str,
+) -> None:
+    repository = _repository(db)
+    _persist(db, repository)
+    conversation_id = _conversation(db)
+    db.add_message(
+        {
+            "id": "fork-message",
+            "conversation_id": conversation_id,
+            "sender": "assistant",
+            "content": "Answer [S1].",
+            "client_id": db.client_id,
+        }
+    )
+    with db.transaction(immediate=True) as cursor:
+        if revocation == "evidence-run":
+            cursor.execute(
+                """
+                UPDATE rag_evidence_runs
+                SET redaction_state = 'purged', run_payload_json = NULL,
+                    purged_at = ?
+                WHERE trace_id = 'trace-1'
+                """,
+                (NOW.isoformat(),),
+            )
+        elif revocation == "snapshot":
+            cursor.execute(
+                """
+                UPDATE rag_evidence_snapshots
+                SET redaction_state = 'redacted'
+                WHERE payload_id = 'snapshot-1'
+                """
+            )
+        elif revocation == "answer":
+            cursor.execute(
+                """
+                UPDATE rag_answer_attempt_payloads
+                SET redaction_state = 'purged', answer_body = NULL,
+                    body_integrity_hmac = NULL, purged_at = ?
+                WHERE trace_id = 'trace-1'
+                """,
+                (NOW.isoformat(),),
+            )
+        else:
+            cursor.execute(
+                """
+                INSERT INTO rag_payload_tombstones VALUES (
+                    ?, 'local_payload_v1', 'snapshot-1', 'snapshot-1',
+                    'revoked', 'fork-race-policy',
+                    '2026-08-27T00:00:00+00:00',
+                    '2027-08-27T00:00:00+00:00'
+                )
+                """,
+                (_identity(db).profile_id,),
+            )
+
+        with pytest.raises(CitationPersistenceUnavailable):
+            repository.link_fork_message_owner(
+                cursor,
+                source_message_id="message-1",
+                source_message_revision=1,
+                source_message_body="Answer [S1].",
+                target_message_id="fork-message",
+                target_message_revision=1,
+                target_message_body="Answer [S1].",
+                confirmed_state="active_required",
+                confirmed_trace_id="trace-1",
+            )
+
+    target_owners = (
+        db.get_connection()
+        .execute(
+            "SELECT COUNT(*) FROM rag_message_trace_owners WHERE message_id = ?",
+            ("fork-message",),
+        )
+        .fetchone()[0]
+    )
+    assert target_owners == 0
+
+
+def test_fork_owner_payload_recheck_uses_the_governed_cursor(
+    db: CharactersRAGDB,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    repository = _repository(db)
+    _persist(db, repository)
+    conversation_id = _conversation(db)
+    db.add_message(
+        {
+            "id": "fork-message",
+            "conversation_id": conversation_id,
+            "sender": "assistant",
+            "content": "Answer [S1].",
+            "client_id": db.client_id,
+        }
+    )
+    connection = db.get_connection()
+    original_available = repository._trace_payloads_available
+    governed_cursor = None
+
+    def require_governed_cursor(profile_id, trace_id, *, cursor=None):
+        assert cursor is governed_cursor
+        return original_available(profile_id, trace_id, cursor=cursor)
+
+    monkeypatch.setattr(
+        repository,
+        "_trace_payloads_available",
+        require_governed_cursor,
+    )
+
+    with db.transaction(immediate=True) as cursor:
+        governed_cursor = cursor
+        repository.link_fork_message_owner(
+            cursor,
+            source_message_id="message-1",
+            source_message_revision=1,
+            source_message_body="Answer [S1].",
+            target_message_id="fork-message",
+            target_message_revision=1,
+            target_message_body="Answer [S1].",
+            confirmed_state="active_required",
+            confirmed_trace_id="trace-1",
+        )
+
+    owner = connection.execute(
+        "SELECT trace_id FROM rag_message_trace_owners WHERE message_id = ?",
+        ("fork-message",),
+    ).fetchone()
+    assert owner["trace_id"] == "trace-1"
+
+
+@pytest.mark.parametrize(
+    "mismatch",
+    (
+        "source-revision",
+        "source-body",
+        "target-body",
+        "fingerprint",
+        "fingerprint-type",
+    ),
+)
+def test_fork_owner_active_required_revalidates_message_identity(
+    db: CharactersRAGDB,
+    mismatch: str,
+) -> None:
+    repository = _repository(db)
+    _persist(db, repository)
+    conversation_id = _conversation(db)
+    db.add_message(
+        {
+            "id": "fork-message",
+            "conversation_id": conversation_id,
+            "sender": "assistant",
+            "content": "Answer [S1].",
+            "client_id": db.client_id,
+        }
+    )
+    if mismatch in {"fingerprint", "fingerprint-type"}:
+        with db.transaction() as cursor:
+            cursor.execute(
+                """
+                UPDATE rag_message_trace_owners
+                SET body_fingerprint = ?
+                WHERE message_id = 'message-1'
+                """,
+                (b"invalid" if mismatch == "fingerprint-type" else "invalid",),
+            )
+    source_revision = 2 if mismatch == "source-revision" else 1
+    source_body = "Changed source" if mismatch == "source-body" else "Answer [S1]."
+    target_body = "Changed target" if mismatch == "target-body" else "Answer [S1]."
+
+    with pytest.raises(CitationPersistenceUnavailable):
+        with db.transaction(immediate=True) as cursor:
+            repository.link_fork_message_owner(
+                cursor,
+                source_message_id="message-1",
+                source_message_revision=source_revision,
+                source_message_body=source_body,
+                target_message_id="fork-message",
+                target_message_revision=1,
+                target_message_body=target_body,
+                confirmed_state="active_required",
+                confirmed_trace_id="trace-1",
+            )
+
+    target_owners = (
+        db.get_connection()
+        .execute(
+            "SELECT COUNT(*) FROM rag_message_trace_owners WHERE message_id = ?",
+            ("fork-message",),
+        )
+        .fetchone()[0]
+    )
+    assert target_owners == 0
+
+
+def test_fork_snapshot_state_rejects_a_malformed_fingerprint_type(
+    db: CharactersRAGDB,
+) -> None:
+    repository = _repository(db)
+    _persist(db, repository)
+    with db.transaction() as cursor:
+        cursor.execute(
+            """
+            UPDATE rag_message_trace_owners
+            SET body_fingerprint = ?
+            WHERE message_id = 'message-1'
+            """,
+            (b"invalid",),
+        )
+
+    with pytest.raises(CitationPersistenceUnavailable, match="unverifiable"):
+        repository.classify_fork_message_owner(
+            message_id="message-1",
+            message_revision=1,
+            source_message_body="Answer [S1].",
+            target_message_body="Answer [S1].",
+        )
+
+
+def test_fork_snapshot_state_distinguishes_active_unavailable_and_none(
+    db: CharactersRAGDB,
+) -> None:
+    repository = _repository(db)
+    _persist(db, repository)
+    service = ChatPersistenceService(db, citation_repository=repository)
+    no_owner_conversation = _conversation(db)
+    db.add_message(
+        {
+            "id": "message-without-owner",
+            "conversation_id": no_owner_conversation,
+            "sender": "assistant",
+            "content": "No citations.",
+            "client_id": db.client_id,
+        }
+    )
+
+    assert service.get_console_fork_citation_state(
+        "message-1",
+        1,
+        "Answer [S1].",
+        "Answer [S1].",
+    ) == ("active_required", "trace-1")
+    assert service.get_console_fork_citation_state(
+        "message-without-owner",
+        1,
+        "No citations.",
+        "No citations.",
+    ) == ("none", None)
+    with pytest.raises(CitationPersistenceUnavailable, match="unverifiable"):
+        service.get_console_fork_citation_state(
+            "message-without-owner",
+            1,
+            "Different body.",
+            "Different body.",
+        )
+    with pytest.raises(CitationPersistenceUnavailable, match="unverifiable"):
+        service.get_console_fork_citation_state(
+            "message-1",
+            1,
+            "Different body.",
+            "Different body.",
+        )
+    with pytest.raises(CitationPersistenceUnavailable, match="authority_ambiguous"):
+        ChatPersistenceService(db).get_console_fork_citation_state(
+            "message-1",
+            1,
+            "Answer [S1].",
+            "Answer [S1].",
+        )
+
+    assert service.get_console_fork_citation_state(
+        "message-1",
+        1,
+        "Answer [S1].",
+        "Visible variant [S1].",
+    ) == ("unavailable", None)
+
+    with db.transaction() as cursor:
+        cursor.execute(
+            """
+            INSERT INTO rag_payload_tombstones VALUES (
+                ?, 'local_payload_v1', 'snapshot-1', 'snapshot-1',
+                'revoked', 'fork-snapshot-policy',
+                '2026-08-27T00:00:00+00:00', '2027-08-27T00:00:00+00:00'
+            )
+            """,
+            (_identity(db).profile_id,),
+        )
+
+    assert service.get_console_fork_citation_state(
+        "message-1",
+        1,
+        "Answer [S1].",
+        "Answer [S1].",
+    ) == ("unavailable", None)
 
 
 @pytest.mark.parametrize(

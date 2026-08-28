@@ -293,6 +293,18 @@ def test_image_specs_exclude_card_messages():
     assert plain_message.id in specs
 
 
+def test_hidden_generation_message_keeps_card_spec_for_view_control():
+    screen = _bare_screen()
+    message = _generation_message(variant_count=3)
+    state, _cache = screen._ensure_console_image_view()
+    default_mode = screen._console_image_default_mode
+    state.set_mode(message.id, "hidden", default=default_mode)
+
+    specs = screen._image._build_generation_card_specs([message])
+
+    assert specs[message.id].mode == "hidden"
+
+
 # --- 4. Details block renders every field -------------------------------------
 
 
@@ -316,6 +328,38 @@ def test_generation_card_details_text_contains_all_fields():
     assert "Negative: oversaturated" in text
     assert "Model: sdxl_base_1.0" in text
     assert "2/3" in text  # n/N indicator, 1-based
+
+
+def test_generation_card_owns_image_actions():
+    card = ConsoleGenerationCard(_card_spec("gen-1", browsed_index=1, variant_count=3))
+
+    ids = [action.action_id for action in card.actions]
+
+    assert ids == [
+        "variant-previous",
+        "variant-next",
+        "keep",
+        "toggle-image-view",
+        "save-image",
+    ]
+
+
+def test_hidden_generation_card_exposes_only_view_control():
+    card = ConsoleGenerationCard(
+        _card_spec(
+            "gen-hidden",
+            browsed_index=1,
+            variant_count=3,
+            mode="hidden",
+            decoded=False,
+        )
+    )
+
+    children = list(card.compose())
+
+    assert [action.action_id for action in card.actions] == ["toggle-image-view"]
+    assert len(children) == 1
+    assert children[0].has_class("console-media-card-actions")
 
 
 def test_generation_card_details_text_omits_model_row_when_absent():
@@ -398,9 +442,10 @@ def test_generation_card_widget_builds_for_pixels_and_graphics_modes():
     # `test_console_native_transcript.py`'s `list(transcript.compose())`.
     pixels_card = ConsoleGenerationCard(_card_spec("gen-1", mode="pixels"))
     assert pixels_card.id == "console-generation-card-gen-1"
-    image_widget, details_widget = list(pixels_card.compose())
+    image_widget, details_widget, actions_widget = list(pixels_card.compose())
     assert image_widget.id == "console-generation-card-image-gen-1"
     assert details_widget.id == "console-generation-card-details-gen-1"
+    assert actions_widget.has_class("console-media-card-actions")
 
     graphics_card = ConsoleGenerationCard(_card_spec("gen-1", mode="graphics"))
     graphics_image_widget = next(iter(graphics_card.compose()))

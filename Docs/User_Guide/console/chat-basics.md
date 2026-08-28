@@ -4,7 +4,8 @@
 
 This page covers the Console's core chat loop: typing into the composer,
 sending, watching a reply stream in, stopping it mid-generation, and acting
-on individual messages (copy, speak, edit, save, rate, delete, and more).
+on individual messages (copy, speak, edit, fork, regenerate, save, rate,
+delete, and more).
 For an orientation to the whole screen — rails, tabs, status chips, setup —
 start with the [Console overview](../console.md).
 
@@ -28,9 +29,10 @@ task...".
   with j/k) selects it and shows a row of action buttons directly beneath
   it, plus a one-line guide that names the row's icon buttons in words —
   e.g. for an assistant reply: "Guide: j/k select · c Copy · 🔊 Speak ·
-  e Edit · r ♻ Regenerate · ---> Continue · 👍/👎 Rate · 🗑 Delete ·
-  Esc clear". The guide follows the row: a message without the 🔊 button
-  does not list "Speak".
+  e Edit · f Fork · r ♻ Regenerate · ---> Continue · Esc clear". The guide
+  follows the row: a message without the 🔊 button does not list "Speak".
+  Lower-frequency actions are in the labelled **More…** menu, and image or
+  video controls stay on their media card.
 - **Composer** — the slim input bar near the bottom, floating one blank
   line clear of the status row above and the footer below. Its one-column
   left edge shows its state (muted at rest, green with a draft, thick blue
@@ -252,24 +254,32 @@ to conversation history, prompt history, screen snapshots, or the database.
 Click a message, or press **j**/**k** (down/up also work) to move the
 selection through the transcript. **Enter** shows the selected message's
 actions; **Tab**/**Shift+Tab** cycle through the row, **Enter** activates
-the focused action, and **Esc** clears the selection. Three shortcuts act
-on the selected message directly: **c** Copy, **e** Edit, **r** Regenerate.
+the focused action, and **Esc** clears the selection. Four shortcuts act
+on the selected message directly: **c** Copy, **e** Edit, **f** Fork, and
+**r** Regenerate.
 While a reply is still generating, every action is disabled with the
 tooltip "Wait for response to finish before using message actions."
+
+The stable direct row is **Copy**, **Speak/Stop** when available, **Edit**,
+text-response **< / >** controls when applicable, **Fork**,
+**Regenerate/Retry** when applicable, **Continue** when applicable, and
+**More…**. The menu contains **Save as…**, **Helpful**, **Not helpful**, and
+**Delete** when those actions are available; the diagnostic **View original**
+also appears there when an original attempt can be shown safely.
 
 | Action | What it does | Where it appears |
 |---|---|---|
 | Copy | Copies the message body to the clipboard. | All messages |
 | 🔊 / ⏹ | Speaks the reply aloud; playback starts automatically, and while it plays the button becomes ⏹ to stop ("Stopped speaking."). Text-to-speech provider setup lives in Settings. | Completed assistant replies |
 | Edit | Opens the "Edit Message" editor; editing one of your own messages can also fork and resend — see [branching & rewind](branching-and-rewind.md). | All messages |
-| Save as... | Choose a destination: Chatbook, Note, Media, or Prompt. Chatbook is available only for assistant replies. | All messages |
 | < > | Step between regenerated variants — see [branching & rewind](branching-and-rewind.md). | Messages with variants |
+| Fork | Opens a focused naming dialog, then creates a new independent chat containing the active conversation path through this message, inclusive. Press **f** for the same action — see [branching & rewind](branching-and-rewind.md). | Stable User and Assistant messages |
 | ♻ | Regenerate — fork another assistant variant for this turn; the old answer is kept, not overwritten — see [branching & rewind](branching-and-rewind.md). | Assistant replies |
 | ---> | Continue — extend the selected message with more generated text. | All messages |
-| 👍 / 👎 | Rate the message; feedback is stored per message. | All messages |
-| 🗑 | Delete, with a two-press confirm: the first press shows "Press Delete again to remove this message.", the second removes the message **and every message under it**. | All messages |
-| Try | Retry a failed reply (replaces the whole row on "[failed]" replies). | Failed assistant replies |
-| View / Save Image | Cycle how an inline image renders / save the message's images to disk — see [attachments, images & voice](attachments-images-voice.md). | Messages with images |
+| Retry | Retry a failed reply. | Failed assistant replies |
+| More… | Opens the captured message's **Save as…**, **Helpful**, **Not helpful**, and **Delete** actions. Delete still requires confirmation and removes the message plus everything under it. | User and Assistant messages with an available overflow action |
+| View / Save Image | Cycle how an inline image renders / save the message's images to disk. These controls live on the image card — see [attachments, images & voice](attachments-images-voice.md). | Messages with images |
+| Play / Save copy | Play a generated video or save its ephemeral bytes. These controls live on the video card. | Generated videos while their bytes remain available |
 
 ## Common tasks
 
@@ -294,14 +304,24 @@ tooltip "Wait for response to finish before using message actions."
 2. Click **Try** — the reply is retried in place.
 
 ### Delete a message and its follow-ups
-1. Select the message and click **🗑** once — "Press Delete again to remove
-   this message."
-2. Click **🗑** again. The message and everything beneath it are removed.
+1. Select the message, click **More…**, then choose **Delete** — "Press Delete
+   again to remove this message."
+2. Open **More…** and choose **Delete** again. The message and everything
+   beneath it are removed.
 
 ### Save a reply as a Note
-1. Select the assistant reply and click **Save as...**.
+1. Select the assistant reply, click **More…**, then choose **Save as…**.
 2. Choose **Note** — toast: "Saved message as Note." It appears in
    Library ▸ Notes.
+
+### Fork a chat from a message
+1. Select a stable User or Assistant message and press **f**, or click
+   **Fork**.
+2. Type a replacement name, or press **Enter** immediately to accept the
+   selected default.
+3. The fork opens in its own Console tab. The original stays open and
+   unchanged; see [branching & rewind](branching-and-rewind.md) for the exact
+   boundary and copied-state rules.
 
 ## Keyboard & commands
 
@@ -329,7 +349,7 @@ Transcript:
 | j / k (or down / up) | Select the next / previous message |
 | Enter | Show the selected message's actions; activate a focused action |
 | Tab / Shift+Tab | Cycle through the action row |
-| c / e / r | Copy / Edit / Regenerate the selected message |
+| c / e / f / r | Copy / Edit / Fork chat / Regenerate the selected message |
 | Esc | Clear the selection |
 
 ## Related settings & docs
@@ -358,8 +378,8 @@ prior exports, or backups. See [Context, RAG, and exchange capture](context-and-
   (default `50` characters) — also editable in **Settings > Console
   Behavior**.
 - [Console overview](../console.md) — layout, setup, session settings, help.
-- [Branching & rewind](branching-and-rewind.md) — what ♻ and the < >
-  variant arrows really do, and their limitations.
+- [Branching & rewind](branching-and-rewind.md) — how **Fork chat**, ♻, and
+  the < > variant arrows differ, and their ownership rules.
 - [Attachments, images & voice](attachments-images-voice.md) — the 📎
   indicator, the Attach and Mic buttons, and image messages.
 - [Guide index](../index.md) — global navigation keys.
@@ -396,3 +416,5 @@ current turn).* *The "What the next send will cost" section was added against
 dev @ 40ba8fe74d — 2026-08-27 (TASK-23018: the estimate shipped in #2114 was
 undocumented and was being re-derived on every keystroke; it is now derived on
 hover, and the tooltip content above was read off a live 400-message session).*
+*Fork, More…, and media-card action ownership were verified against
+TASK-23088's production-shaped provider-free journey on 2026-08-27.*

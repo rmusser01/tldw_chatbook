@@ -403,6 +403,8 @@ from ...Widgets.Console import (
     ConsoleTranscript,
     ConsoleWorkspaceContextTray,
     ConsoleWorkspaceTree,
+    dismiss_message_more_menus,
+    message_more_menus_on_screen,
     WorkspaceTreeConversationSelected,
     WorkspaceTreeExpansionChanged,
     WorkspaceTreeLoadMoreRequested,
@@ -450,7 +452,6 @@ from ...Widgets.Console.console_selection_menu import (
     ConsoleSideChatRequested,
     selection_menus_on_screen,
 )
-
 from ...Widgets.Console.console_side_chat_modal import ConsoleSideChatModal
 from ...Widgets.Console import console_project_instructions as project_instruction_ui
 from ...Widgets.Console.console_conversation_inspector import (
@@ -1040,7 +1041,9 @@ CONSOLE_WORKBENCH_SHORTCUT_GROUPS = (
             ("Enter", "show the selected message's actions"),
             ("c", "copy the selected message"),
             ("e", "edit the selected message"),
+            ("f", "fork from the selected message"),
             ("r", "regenerate the selected message"),
+            ("More…", "Save as, feedback, delete, and diagnostics"),
             ("Escape", "clear the selection"),
         ),
     ),
@@ -9263,7 +9266,7 @@ class ChatScreen(BaseAppScreen):
             ),
             ConsoleDisplayRow(
                 "Message actions",
-                "Copy, Edit, Save as..., Regenerate, Continue, Feedback, Delete",
+                "Copy, Edit, Fork, Regenerate/Retry, Continue, More…",
             ),
             ConsoleDisplayRow(
                 "Keyboard",
@@ -10867,9 +10870,7 @@ class ChatScreen(BaseAppScreen):
         self._apply_focus_chrome()
         if not hasattr(self, "_console_h3_terminal_generations"):
             self._console_h3_terminal_generations: set[str] = set()
-        ordered_resume_pending = (
-            self._pending_resume_local_conversation_id is not None
-        )
+        ordered_resume_pending = self._pending_resume_local_conversation_id is not None
         self._resume_navigation_startup_in_progress = ordered_resume_pending
         # This handoff is session/config only and does not need mounted DOM.
         # Consume it before ordinary UI restoration can create a competing
@@ -11455,8 +11456,7 @@ class ChatScreen(BaseAppScreen):
             raise
         except Exception as exc:
             logger.warning(
-                "Chat handoff acquisition failed "
-                "(channel={}, exception_category={})",
+                "Chat handoff acquisition failed (channel={}, exception_category={})",
                 HandoffChannel.CHAT.value,
                 type(exc).__name__,
             )
@@ -12069,6 +12069,9 @@ class ChatScreen(BaseAppScreen):
         if region := self._console_transcript_region_or_none():
             region.sync_recovery()
         if transcript is not None:
+            selected_id, selected_fork_eligibility = (
+                self._message.sync_selected_fork_eligibility(transcript)
+            )
             transcript.set_presentation_context(self._console_presentation_context())
             # Turn file card spec: keeps the mounted transcript's provider
             # factory current every tick -- late-bound so a session switch
@@ -12199,6 +12202,7 @@ class ChatScreen(BaseAppScreen):
             refresh_key = (
                 id(transcript),
                 self._native_console_transcript_fingerprint(messages),
+                (selected_id, selected_fork_eligibility),
                 image_signature,
                 card_signature,
                 video_signature,
@@ -16022,8 +16026,11 @@ class ChatScreen(BaseAppScreen):
         while node is not None:
             if isinstance(node, (ConsoleTranscript, ConsoleSelectionMenu)):
                 return  # the transcript/menu own their in-area interaction
+            if getattr(node, "id", None) == "console-message-more-menu":
+                return  # the transcript/menu own their in-area interaction
             node = getattr(node, "parent", None)
         menus = selection_menus_on_screen(self)
+        more_menus = message_more_menus_on_screen(self)
         # Only transcripts the cleanup would actually change; on the rest,
         # all three steps below are provable no-ops (see
         # ``ConsoleTranscript.has_pending_selection_ui``).
@@ -16032,7 +16039,7 @@ class ChatScreen(BaseAppScreen):
             for transcript in console_transcripts_on_screen(self)
             if transcript.has_pending_selection_ui
         ]
-        if not menus and not transcripts:
+        if not menus and not more_menus and not transcripts:
             return  # the common case: no selection UI anywhere on the screen
         # Menus mount on the screen now; route the dismissal through every
         # transcript's centralized selection-UI cleanup (clears highlight +
@@ -16045,6 +16052,7 @@ class ChatScreen(BaseAppScreen):
         for menu in menus:
             if not getattr(menu, "_pruning", False):
                 menu.remove()
+        dismiss_message_more_menus(more_menus)
 
     def on_mouse_down(self, event: MouseDown) -> None:
         """Dismiss selection UI before descendants may consume the click."""

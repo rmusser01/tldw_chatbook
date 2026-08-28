@@ -29,21 +29,28 @@ from tldw_chatbook.Chat.console_message_actions import (
     ConsoleMessageActionService,
     ConsoleSaveDestination,
 )
+from tldw_chatbook.Chat.console_chat_fork import ConsoleForkEligibility
 from tldw_chatbook.Chat.console_onboarding_state import ConsoleSetupCardState
 from tldw_chatbook.Chat.console_roleplay_identity import (
     ConsolePresentationContext,
     ConsoleTranscriptStyle,
     resolve_console_message_presentation,
 )
+from tldw_chatbook.Video_Generation.video_metadata import VideoGenerationMetadata
 from tldw_chatbook.Widgets.Console.console_save_as_modal import ConsoleSaveAsModal
 from tldw_chatbook.Widgets.Console.console_assistant_turn import (
     ConsoleActivityDisclosure,
     ConsoleAssistantTurnWidget,
 )
+from tldw_chatbook.Widgets.Console.console_generation_card import (
+    ConsoleGenerationCardSpec,
+)
+from tldw_chatbook.Widgets.Console.console_video_card import ConsoleVideoCardSpec
 import tldw_chatbook.Widgets.Console.console_transcript as transcript_module
 from tldw_chatbook.Widgets.Console.console_transcript import (
     ConsoleMarkdownMessage,
     ConsoleMessageHeader,
+    ConsoleReviewNotesRequested,
     ConsoleTranscript,
     ConsoleTranscriptMessage,
 )
@@ -167,7 +174,10 @@ _BUNDLE = (
 
 
 def _roleplay_context(
-    *, user_name: str = "Captain [Rowan]", character_name: str = "Alraune", revision: int = 1
+    *,
+    user_name: str = "Captain [Rowan]",
+    character_name: str = "Alraune",
+    revision: int = 1,
 ) -> ConsolePresentationContext:
     return ConsolePresentationContext(
         user_name=user_name,
@@ -773,18 +783,20 @@ async def test_activity_keyboard_toggle_preserves_header_identity_and_focus() ->
         await pilot.press("enter")
         await pilot.pause()
         assert transcript.query_one(f"#console-activity-header-{tool.id}") is header
-        assert transcript.query_one(
-            f"#console-activity-disclosure-{tool.id}"
-        ) is disclosure
+        assert (
+            transcript.query_one(f"#console-activity-disclosure-{tool.id}")
+            is disclosure
+        )
         assert header.has_focus
         assert tool.id in transcript._expanded_tool_output_ids
 
         await pilot.press("space")
         await pilot.pause()
         assert transcript.query_one(f"#console-activity-header-{tool.id}") is header
-        assert transcript.query_one(
-            f"#console-activity-disclosure-{tool.id}"
-        ) is disclosure
+        assert (
+            transcript.query_one(f"#console-activity-disclosure-{tool.id}")
+            is disclosure
+        )
         assert header.has_focus
         assert tool.id not in transcript._expanded_tool_output_ids
 
@@ -865,8 +877,12 @@ def test_standalone_message_widgets_keep_headers_by_default() -> None:
         role=ConsoleMessageRole.ASSISTANT, content="answer", id="default-header"
     )
 
-    assert isinstance(next(iter(ConsoleTranscriptMessage(message).compose())), ConsoleMessageHeader)
-    assert isinstance(next(iter(ConsoleMarkdownMessage(message).compose())), ConsoleMessageHeader)
+    assert isinstance(
+        next(iter(ConsoleTranscriptMessage(message).compose())), ConsoleMessageHeader
+    )
+    assert isinstance(
+        next(iter(ConsoleMarkdownMessage(message).compose())), ConsoleMessageHeader
+    )
 
 
 @pytest.mark.asyncio
@@ -896,9 +912,7 @@ async def test_headerless_plain_sync_still_updates_body() -> None:
         )
         plain.sync_message(
             updated,
-            resolve_console_message_presentation(
-                updated, ConsolePresentationContext()
-            ),
+            resolve_console_message_presentation(updated, ConsolePresentationContext()),
         )
         await pilot.pause()
 
@@ -931,9 +945,7 @@ async def test_headerless_markdown_sync_updates_stream_and_footer() -> None:
 
         markdown_row.sync_message(
             updated,
-            resolve_console_message_presentation(
-                updated, ConsolePresentationContext()
-            ),
+            resolve_console_message_presentation(updated, ConsolePresentationContext()),
         )
         await pilot.pause()
 
@@ -964,11 +976,16 @@ def test_roleplay_plain_text_uses_literal_names_and_generic_rows_gain_accents():
         ConsolePresentationContext(user_name="Builder", revision=2)
     )
     generic_rows = {
-        row.id: row for row in _planned_message_widgets(transcript) if row.id is not None
+        row.id: row
+        for row in _planned_message_widgets(transcript)
+        if row.id is not None
     }
     assert "Builder" in transcript.to_plain_text(width=80)
     assert "Assistant" in transcript.to_plain_text(width=80)
-    assert "console-transcript-message-role-user" in generic_rows["console-message-u1"].classes
+    assert (
+        "console-transcript-message-role-user"
+        in generic_rows["console-message-u1"].classes
+    )
     assert (
         "console-transcript-message-role-assistant"
         in generic_rows["console-message-a1"].classes
@@ -996,7 +1013,9 @@ def test_chat_screen_transcript_fingerprint_tracks_presentation_revision():
 
     holder = {"context": _roleplay_context(revision=1)}
     screen = SimpleNamespace(
-        _ensure_console_chat_store=lambda: SimpleNamespace(active_session_id="session-1"),
+        _ensure_console_chat_store=lambda: SimpleNamespace(
+            active_session_id="session-1"
+        ),
         _console_presentation_context=lambda: holder["context"],
     )
     message = ConsoleChatMessage(
@@ -1020,9 +1039,7 @@ async def test_plain_roleplay_identity_revision_updates_rows_in_place():
         transcript.set_presentation_context(_roleplay_context())
         transcript.set_messages(
             [
-                ConsoleChatMessage(
-                    role=ConsoleMessageRole.USER, content="Hi", id="u1"
-                ),
+                ConsoleChatMessage(role=ConsoleMessageRole.USER, content="Hi", id="u1"),
                 ConsoleChatMessage(
                     role=ConsoleMessageRole.ASSISTANT, content="Hello", id="a1"
                 ),
@@ -1040,7 +1057,10 @@ async def test_plain_roleplay_identity_revision_updates_rows_in_place():
         assert "console-transcript-roleplay-user-label" in user_label.classes
         assert "console-transcript-roleplay-character-label" in assistant_label.classes
         assert "console-transcript-message-roleplay-user" in original_user.classes
-        assert "console-transcript-message-roleplay-character" in original_assistant.classes
+        assert (
+            "console-transcript-message-roleplay-character"
+            in original_assistant.classes
+        )
 
         transcript.select_message("a1")
         await transcript.refresh_messages()
@@ -1062,10 +1082,7 @@ async def test_plain_roleplay_identity_revision_updates_rows_in_place():
             _speaker_label_for(transcript, "u1").renderable.plain
             == "Captain [bold red]"
         )
-        assert (
-            _speaker_label_for(transcript, "a1").renderable.plain
-            == "Cecelia"
-        )
+        assert _speaker_label_for(transcript, "a1").renderable.plain == "Cecelia"
 
 
 @pytest.mark.asyncio
@@ -1301,6 +1318,17 @@ class GenerationActionRowHarness(ConsolidatedCSSApp):
         transcript.set_messages([self._message])
         if self._browsed_index:
             self.screen._generation_browse = {self._message.id: self._browsed_index}
+        transcript.set_generation_card_specs(
+            {
+                self._message.id: ConsoleGenerationCardSpec(
+                    message_id=self._message.id,
+                    browsed_index=self._browsed_index,
+                    variant_count=len(self._message.generation_metadata),
+                    meta=self._message.generation_metadata[self._browsed_index],
+                    mode="pixels",
+                )
+            }
+        )
         transcript.select_message(self._message.id)
 
 
@@ -1520,10 +1548,7 @@ async def test_console_transcript_selection_update_preserves_message_rows():
             if message.role is ConsoleMessageRole.ASSISTANT
             else f"message:{message.id}"
         )
-        assert (
-            after_counts[key]
-            == before_counts[key]
-        )
+        assert after_counts[key] == before_counts[key]
     assert "actions:m-user" not in transcript.row_render_signatures()
     assert assistant_actions_mounted == 1
 
@@ -1626,7 +1651,9 @@ async def test_console_transcript_selection_onto_turn_file_card_does_not_rebuild
         card_after_deselect = transcript.query_one(
             f"#console-turn-file-card-{card_message.id}", ConsoleTurnFileCard
         )
-        assert card_after_deselect is card, "deselecting the card row rebuilt the widget"
+        assert card_after_deselect is card, (
+            "deselecting the card row rebuilt the widget"
+        )
         assert not card.has_class("console-turn-file-card-selected")
         assert card.query(".console-turn-file-diff").first().display, (
             "expanded diff lost on deselection"
@@ -1713,7 +1740,7 @@ def test_console_transcript_selected_message_shows_action_row():
 
     plain = transcript.to_plain_text(width=80)
 
-    assert "Copy 🔊 Edit Save as... ♻ ---> 👍 👎 🗑" in plain
+    assert "Copy 🔊 Edit Fork ♻ ---> More…" in plain
     assert "|" not in plain
 
 
@@ -1770,7 +1797,7 @@ def test_console_transcript_action_row_stays_within_terminal_width_budget():
         if line.startswith("Copy")
     )
 
-    assert action_row == "Copy 🔊 Edit Save as... ♻ ---> 👍 👎 🗑"
+    assert action_row == "Copy 🔊 Edit Fork ♻ ---> More…"
     assert len(action_row) <= 48
 
 
@@ -1784,18 +1811,19 @@ def test_console_transcript_selected_message_explains_icon_actions():
 
     rendered = transcript.to_plain_text(width=80)
 
-    assert "Copy 🔊 Edit Save as... ♻ ---> 👍 👎 🗑" in rendered
+    assert "Copy 🔊 Edit Fork ♻ ---> More…" in rendered
     # TASK-362 AC#2: the guide names the single-key shortcuts, not just icons.
     assert "Guide:" in rendered
-    assert "c Copy" in rendered and "e Edit" in rendered and "r ♻ Regenerate" in rendered
+    assert (
+        "c Copy" in rendered and "e Edit" in rendered and "r ♻ Regenerate" in rendered
+    )
     assert "j/k select" in rendered
     # task-2154.14 (DS-01): the guide also names each glyph-only button in
     # words, derived from the row's own actions, so the meaning is on screen
     # instead of behind a tooltip.
     assert "🔊 Speak" in rendered
     assert "---> Continue" in rendered
-    assert "👍/👎 Rate" in rendered
-    assert "🗑 Delete" in rendered
+    assert "More…" in rendered
 
 
 def test_console_transcript_variant_navigation_changes_displayed_content():
@@ -1825,8 +1853,7 @@ def test_console_transcript_variant_navigation_changes_displayed_content():
     rendered = transcript.to_plain_text(width=80)
     assert "second" in rendered
     assert "first" not in rendered
-    assert " < " in f" {rendered} "
-    assert " > " in f" {rendered} "
+    assert "More…" in rendered
 
 
 def test_console_transcript_variant_action_row_stays_within_terminal_width_budget():
@@ -1846,8 +1873,8 @@ def test_console_transcript_variant_action_row_stays_within_terminal_width_budge
         if line.startswith("Copy")
     )
 
-    assert action_row == "Copy 🔊 Edit Save as... < > ♻ ---> 👍 👎 🗑"
-    assert len(action_row) <= 52
+    assert action_row == "Copy 🔊 Edit < > Fork ♻ ---> More…"
+    assert len(action_row) <= 48
 
 
 def test_console_transcript_failed_action_row_includes_retry_without_exceeding_budget():
@@ -1867,8 +1894,8 @@ def test_console_transcript_failed_action_row_includes_retry_without_exceeding_b
         if line.startswith("Copy")
     )
 
-    assert action_row == "Copy Edit Save as... Retry ♻ ---> 👍 👎 🗑"
-    assert len(action_row) <= 52
+    assert action_row == "Copy Edit Fork Retry ---> More…"
+    assert len(action_row) <= 48
 
 
 @pytest.mark.asyncio
@@ -1876,16 +1903,14 @@ async def test_console_transcript_enter_selects_first_message_when_none_selected
     app = TranscriptHarness()
 
     async with app.run_test(size=(100, 32)) as pilot:
-        transcript = app.query_one(
-            "#console-native-transcript", ConsoleTranscript
-        )
+        transcript = app.query_one("#console-native-transcript", ConsoleTranscript)
         transcript.focus()
 
         await pilot.press("enter")
         await pilot.pause()
 
         assert transcript.selected_message_id == "m1"
-        assert "Save as..." in _visible_text(app)
+        assert "More…" in _visible_text(app)
 
 
 @pytest.mark.asyncio
@@ -1893,21 +1918,19 @@ async def test_console_transcript_enter_clears_keyboard_selected_message():
     app = TranscriptHarness()
 
     async with app.run_test(size=(100, 32)) as pilot:
-        transcript = app.query_one(
-            "#console-native-transcript", ConsoleTranscript
-        )
+        transcript = app.query_one("#console-native-transcript", ConsoleTranscript)
         transcript.focus()
 
         await pilot.press("down")
         await pilot.pause()
         assert transcript.selected_message_id == "m1"
-        assert "Save as..." in _visible_text(app)
+        assert "More…" in _visible_text(app)
 
         await pilot.press("enter")
         await pilot.pause()
 
         assert transcript.selected_message_id is None
-        assert "Save as..." not in _visible_text(app)
+        assert "More…" not in _visible_text(app)
 
 
 @pytest.mark.asyncio
@@ -1915,9 +1938,7 @@ async def test_console_transcript_boundary_navigation_keeps_last_message_selecte
     app = TranscriptHarness()
 
     async with app.run_test(size=(100, 32)) as pilot:
-        transcript = app.query_one(
-            "#console-native-transcript", ConsoleTranscript
-        )
+        transcript = app.query_one("#console-native-transcript", ConsoleTranscript)
         transcript.focus()
 
         await pilot.press("down")
@@ -1926,7 +1947,7 @@ async def test_console_transcript_boundary_navigation_keeps_last_message_selecte
         await pilot.pause()
 
         assert transcript.selected_message_id == "m2"
-        assert "Save as..." in _visible_text(app)
+        assert "More…" in _visible_text(app)
 
 
 @pytest.mark.asyncio
@@ -1934,9 +1955,7 @@ async def test_console_transcript_enter_on_action_button_preserves_selection():
     app = TranscriptHarness()
 
     async with app.run_test(size=(100, 32)) as pilot:
-        transcript = app.query_one(
-            "#console-native-transcript", ConsoleTranscript
-        )
+        transcript = app.query_one("#console-native-transcript", ConsoleTranscript)
         await pilot.click("#console-message-m2")
         transcript.focus_action("m2", "copy")
         await pilot.pause()
@@ -1948,7 +1967,7 @@ async def test_console_transcript_enter_on_action_button_preserves_selection():
         await pilot.pause()
 
         assert transcript.selected_message_id == "m2"
-        assert "Save as..." in _visible_text(app)
+        assert "More…" in _visible_text(app)
 
 
 @pytest.mark.asyncio
@@ -1960,15 +1979,593 @@ async def test_console_transcript_click_selects_message_and_shows_actions():
         text = _visible_text(app)
 
     assert "Copy" in text
-    assert "Save as..." in text
+    assert "Fork" in text
     assert "♻" in text
-    assert "👍" in text
-    assert "👎" in text
-    assert "🗑" in text
+    assert "More…" in text
     assert "Guide:" in text and "r ♻ Regenerate" in text
     # task-2154.14 (DS-01): the legend names the glyph-only buttons in words.
-    assert "🔊 Speak" in text and "🗑 Delete" in text
+    assert "🔊 Speak" in text and "f Fork" in text
     assert "|" not in text
+
+
+@pytest.mark.asyncio
+async def test_console_transcript_more_menu_captures_message_and_closes_before_choice():
+    app = TranscriptHarness(css_path=str(_BUNDLE))
+
+    async with app.run_test(size=(80, 24)) as pilot:
+        transcript = app.query_one("#console-native-transcript", ConsoleTranscript)
+        await pilot.click("#console-message-m2")
+        await pilot.click("#console-message-action-more-m2")
+        await pilot.pause()
+
+        menu = app.query_one("#console-message-more-menu")
+        assert menu.message_id == "m2"
+        assert [button.label.plain for button in menu.query(Button)] == [
+            "Save as…",
+            "Helpful",
+            "Not helpful",
+            "Delete",
+        ]
+
+        await pilot.press("down", "enter")
+        await pilot.pause()
+
+        assert not app.query("#console-message-more-menu")
+        assert transcript.selected_message_id == "m2"
+
+
+@pytest.mark.parametrize(
+    ("dismissal", "expected_selection"),
+    (
+        ("selection-change", "m1"),
+        ("row-recompose", "m2"),
+        ("row-removal", None),
+        ("refresh", "m2"),
+        ("escape", "m2"),
+    ),
+)
+@pytest.mark.asyncio
+async def test_console_more_menu_lifecycle_dismisses_without_dispatch(
+    monkeypatch, dismissal, expected_selection
+):
+    app = TranscriptHarness(css_path=str(_BUNDLE))
+
+    async with app.run_test(size=(80, 24)) as pilot:
+        transcript = app.query_one(ConsoleTranscript)
+        await pilot.click("#console-message-m2")
+        await pilot.click("#console-message-action-more-m2")
+        await _wait_for_selector(app, pilot, "#console-message-more-menu")
+        dispatched = []
+        monkeypatch.setattr(
+            transcript,
+            "dispatch_captured_message_action",
+            lambda *args, **kwargs: dispatched.append((args, kwargs)),
+        )
+
+        if dismissal == "selection-change":
+            transcript.select_message("m1")
+            await pilot.pause()
+        elif dismissal == "row-recompose":
+            transcript._messages[1].content = "recomposed answer"
+            transcript.set_messages(transcript._messages)
+            await transcript.refresh_messages()
+        elif dismissal == "row-removal":
+            transcript.set_messages([transcript._messages[0]])
+            await transcript.refresh_messages()
+        elif dismissal == "refresh":
+            await transcript.refresh_messages()
+        else:
+            await pilot.press("escape")
+            await pilot.pause()
+
+        assert not app.query("#console-message-more-menu")
+        assert transcript.selected_message_id == expected_selection
+        assert dispatched == []
+        if dismissal == "escape":
+            assert app.query_one("#console-message-action-more-m2").has_focus
+        elif dismissal == "selection-change":
+            assert transcript.has_focus
+            assert transcript.selected_message_id == "m1"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("click_target", "expected_selection"),
+    (
+        ("#console-message-action-copy-m2", "m2"),
+        ("#console-message-m2", None),
+    ),
+)
+async def test_console_more_menu_closes_on_in_transcript_click_without_dispatch(
+    monkeypatch, click_target, expected_selection
+):
+    app = TranscriptHarness(css_path=str(_BUNDLE))
+
+    async with app.run_test(size=(80, 24)) as pilot:
+        transcript = app.query_one(ConsoleTranscript)
+        await pilot.click("#console-message-m2")
+        await pilot.click("#console-message-action-more-m2")
+        await _wait_for_selector(app, pilot, "#console-message-more-menu")
+        dispatched = []
+        monkeypatch.setattr(
+            transcript,
+            "dispatch_captured_message_action",
+            lambda *args, **kwargs: dispatched.append((args, kwargs)),
+        )
+
+        await pilot.click(click_target)
+        await pilot.pause()
+
+        assert not app.query("#console-message-more-menu")
+        assert transcript.selected_message_id == expected_selection
+        assert dispatched == []
+
+
+@pytest.mark.asyncio
+async def test_console_more_menu_closes_before_annotation_stops_click(monkeypatch):
+    class AnnotationHarness(TranscriptHarness):
+        def __init__(self, **kwargs):
+            super().__init__(**kwargs)
+            self.review_note_requests: list[str] = []
+
+        def on_console_review_notes_requested(
+            self, event: ConsoleReviewNotesRequested
+        ) -> None:
+            self.review_note_requests.append(event.anchor_message_id)
+
+    app = AnnotationHarness(css_path=str(_BUNDLE))
+
+    async with app.run_test(size=(80, 24)) as pilot:
+        transcript = app.query_one(ConsoleTranscript)
+        transcript.set_annotation_previews({"m2": ("Review note",)})
+        await transcript.refresh_messages()
+        await pilot.click("#console-message-m2")
+        await pilot.click("#console-message-action-more-m2")
+        await _wait_for_selector(app, pilot, "#console-message-more-menu")
+        opener = app.query_one("#console-message-action-more-m2", Button)
+        dispatched = []
+        monkeypatch.setattr(
+            transcript,
+            "dispatch_captured_message_action",
+            lambda *args, **kwargs: dispatched.append((args, kwargs)),
+        )
+
+        # The marker stops Click propagation after posting its own event, so
+        # More must detach on the earlier transcript-owned pointer seam.
+        await pilot.click("#console-annotations-m2")
+        await pilot.pause()
+
+        assert not app.query("#console-message-more-menu")
+        assert transcript.selected_message_id == "m2"
+        assert dispatched == []
+        assert app.review_note_requests == ["m2"]
+        assert opener.has_focus
+
+
+@pytest.mark.asyncio
+async def test_console_real_recompose_closes_more_and_restores_opener(monkeypatch):
+    app = TranscriptHarness(css_path=str(_BUNDLE))
+
+    async with app.run_test(size=(80, 24)) as pilot:
+        transcript = app.query_one(ConsoleTranscript)
+        await pilot.click("#console-message-m2")
+        await pilot.click("#console-message-action-more-m2")
+        await _wait_for_selector(app, pilot, "#console-message-more-menu")
+        dispatched = []
+        monkeypatch.setattr(
+            transcript,
+            "dispatch_captured_message_action",
+            lambda *args, **kwargs: dispatched.append((args, kwargs)),
+        )
+
+        transcript.refresh(recompose=True)
+        await pilot.pause()
+
+        assert not app.query("#console-message-more-menu")
+        assert transcript.selected_message_id == "m2"
+        assert app.query_one("#console-message-action-more-m2").has_focus
+        assert dispatched == []
+
+
+@pytest.mark.asyncio
+async def test_console_more_choice_keeps_captured_target_after_selection_race(
+    monkeypatch,
+):
+    app = TranscriptHarness(css_path=str(_BUNDLE))
+
+    async with app.run_test(size=(80, 24)) as pilot:
+        transcript = app.query_one(ConsoleTranscript)
+        await pilot.click("#console-message-m2")
+        await pilot.click("#console-message-action-more-m2")
+        await _wait_for_selector(app, pilot, "#console-message-more-feedback-up")
+        captured = []
+
+        def dispatch(message_id, action_id, *, opener_button_id):
+            captured.append(
+                (
+                    message_id,
+                    action_id,
+                    opener_button_id,
+                    bool(app.query("#console-message-more-menu")),
+                    transcript.selected_message_id,
+                )
+            )
+
+        monkeypatch.setattr(transcript, "dispatch_captured_message_action", dispatch)
+        choice = app.query_one("#console-message-more-feedback-up", Button)
+        choice.press()
+        transcript.selected_message_id = "m1"
+        await pilot.pause()
+
+        assert captured == [
+            ("m2", "feedback-up", "console-message-action-more-m2", False, "m1")
+        ]
+
+
+@pytest.mark.asyncio
+async def test_console_more_choice_claims_first_activation_only(monkeypatch):
+    app = TranscriptHarness(css_path=str(_BUNDLE))
+
+    async with app.run_test(size=(80, 24)) as pilot:
+        transcript = app.query_one(ConsoleTranscript)
+        await pilot.click("#console-message-m2")
+        await pilot.click("#console-message-action-more-m2")
+        await _wait_for_selector(app, pilot, "#console-message-more-delete")
+        captured = []
+
+        async def choose(message_id, action_id, *, opener_button_id):
+            captured.append((message_id, action_id, opener_button_id))
+
+        monkeypatch.setattr(transcript, "choose_captured_message_more_action", choose)
+        menu = app.query_one("#console-message-more-menu")
+        delete = app.query_one("#console-message-more-delete", Button)
+
+        delete.press()
+        delete.press()
+        await pilot.pause()
+
+        assert captured == [("m2", "delete", "console-message-action-more-m2")]
+        assert all(button.disabled for button in menu.query(Button))
+
+
+@pytest.mark.asyncio
+async def test_console_more_keyboard_traversal_skips_disabled_and_restores_opener():
+    app = TranscriptHarness(css_path=str(_BUNDLE))
+
+    async with app.run_test(size=(80, 24)) as pilot:
+        await pilot.click("#console-message-m2")
+        await pilot.click("#console-message-action-more-m2")
+        await _wait_for_selector(app, pilot, "#console-message-more-menu")
+
+        save = app.query_one("#console-message-more-save-as", Button)
+        helpful = app.query_one("#console-message-more-feedback-up", Button)
+        not_helpful = app.query_one("#console-message-more-feedback-down", Button)
+        save.disabled = True
+        helpful.focus(scroll_visible=False)
+        await pilot.pause()
+        assert save.disabled
+        assert helpful.has_focus
+        await pilot.press("down")
+        assert not_helpful.has_focus
+        await pilot.press("up")
+        assert helpful.has_focus
+        await pilot.press("escape")
+        await pilot.pause()
+
+        assert not app.query("#console-message-more-menu")
+        assert app.query_one("#console-message-action-more-m2").has_focus
+
+
+@pytest.mark.asyncio
+async def test_console_more_tab_traversal_stays_inside_menu_at_80_columns():
+    app = TranscriptHarness(css_path=str(_BUNDLE))
+
+    async with app.run_test(size=(80, 24)) as pilot:
+        await pilot.click("#console-message-m2")
+        await pilot.click("#console-message-action-more-m2")
+        await _wait_for_selector(app, pilot, "#console-message-more-menu")
+
+        save = app.query_one("#console-message-more-save-as", Button)
+        helpful = app.query_one("#console-message-more-feedback-up", Button)
+        delete = app.query_one("#console-message-more-delete", Button)
+        assert save.has_focus
+
+        await pilot.press("tab")
+        assert helpful.has_focus
+        assert app.query("#console-message-more-menu")
+
+        await pilot.press("shift+tab")
+        assert save.has_focus
+        await pilot.press("shift+tab")
+        assert delete.has_focus
+        await pilot.press("tab")
+        assert save.has_focus
+        assert app.query("#console-message-more-menu")
+
+
+@pytest.mark.asyncio
+async def test_console_more_focus_falls_back_to_composer_after_row_removal():
+    class ComposerFallbackHarness(ConsolidatedCSSApp):
+        CSS_PATH = str(_BUNDLE)
+
+        def compose(self) -> ComposeResult:
+            transcript = ConsoleTranscript(id="console-native-transcript")
+            transcript.set_messages(
+                [
+                    ConsoleChatMessage(
+                        role=ConsoleMessageRole.ASSISTANT,
+                        content="answer",
+                        id="removed-message",
+                    )
+                ]
+            )
+            yield transcript
+            yield Button("Composer", id="console-native-composer")
+
+    app = ComposerFallbackHarness()
+    async with app.run_test(size=(100, 30)) as pilot:
+        transcript = app.query_one(ConsoleTranscript)
+        transcript.select_message("removed-message")
+        await transcript.refresh_messages()
+        opener = app.query_one("#console-message-action-more-removed-message", Button)
+        await transcript._open_message_more_menu("removed-message", opener)
+        await _wait_for_selector(app, pilot, "#console-message-more-menu")
+
+        transcript.set_messages([])
+        await transcript.refresh_messages()
+        await pilot.pause()
+
+        assert not app.query("#console-message-more-menu")
+        assert transcript.selected_message_id is None
+        assert app.query_one("#console-native-composer").has_focus
+
+
+@pytest.mark.parametrize("size", ((120, 35), (100, 30), (80, 24)))
+@pytest.mark.parametrize(
+    ("message", "expected_actions"),
+    (
+        (
+            ConsoleChatMessage(
+                role=ConsoleMessageRole.USER, content="question", id="row-user"
+            ),
+            ("copy", "edit", "fork", "regenerate", "continue", "more"),
+        ),
+        (
+            ConsoleChatMessage(
+                role=ConsoleMessageRole.ASSISTANT,
+                content="answer",
+                id="row-assistant",
+            ),
+            ("copy", "speak", "edit", "fork", "regenerate", "continue", "more"),
+        ),
+        (
+            ConsoleChatMessage(
+                role=ConsoleMessageRole.ASSISTANT,
+                content="stopped",
+                status="stopped",
+                id="row-stopped",
+            ),
+            ("copy", "edit", "fork", "regenerate", "continue", "more"),
+        ),
+        (
+            ConsoleChatMessage(
+                role=ConsoleMessageRole.ASSISTANT,
+                content="failed",
+                status="failed",
+                id="row-failed",
+            ),
+            ("copy", "edit", "fork", "retry", "continue", "more"),
+        ),
+        (
+            ConsoleChatMessage(
+                role=ConsoleMessageRole.TOOL,
+                content="tool preview",
+                tool_output_full="full output",
+                id="row-tool",
+            ),
+            ("tool-output",),
+        ),
+    ),
+)
+@pytest.mark.asyncio
+async def test_console_selected_action_rows_fit_reference_terminals(
+    size, message, expected_actions
+):
+    app = MutableTranscriptHarness(css_path=str(_BUNDLE))
+
+    async with app.run_test(size=size) as pilot:
+        transcript = app.query_one(ConsoleTranscript)
+        transcript.set_messages([message])
+        transcript.select_message(message.id)
+        await transcript.refresh_messages()
+        await pilot.pause()
+        buttons = list(transcript.query(".console-transcript-action-button"))
+
+        assert tuple(button.console_action_id for button in buttons) == expected_actions
+        assert transcript.max_scroll_x == 0
+        assert all(
+            0 <= button.region.x < button.region.right <= size[0] for button in buttons
+        )
+
+
+@pytest.mark.parametrize("size", ((120, 35), (100, 30), (80, 24)))
+@pytest.mark.parametrize("media_kind", ("generated-image", "video"))
+@pytest.mark.asyncio
+async def test_console_media_card_actions_fit_reference_terminals(size, media_kind):
+    app = MutableTranscriptHarness(css_path=str(_BUNDLE))
+
+    async with app.run_test(size=size) as pilot:
+        transcript = app.query_one(ConsoleTranscript)
+        if media_kind == "generated-image":
+            message = _generation_message(variant_count=3, message_id="fit-image")
+            app.screen._generation_browse = {message.id: 1}
+            transcript.set_generation_card_specs(
+                {
+                    message.id: ConsoleGenerationCardSpec(
+                        message_id=message.id,
+                        browsed_index=1,
+                        variant_count=3,
+                        meta=message.generation_metadata[1],
+                        mode="pixels",
+                    )
+                }
+            )
+            card_selector = f"#console-generation-card-{message.id}"
+            expected_actions = (
+                "variant-previous",
+                "variant-next",
+                "keep",
+                "toggle-image-view",
+                "save-image",
+            )
+        else:
+            meta = VideoGenerationMetadata(
+                name="fit-video",
+                prompt="a red dragon",
+                backend="minimax",
+            )
+            message = ConsoleChatMessage(
+                role=ConsoleMessageRole.ASSISTANT,
+                content="[video] a red dragon",
+                video_metadata=meta,
+                id="fit-video",
+            )
+            transcript.set_video_card_specs(
+                {
+                    message.id: ConsoleVideoCardSpec(
+                        message_id=message.id,
+                        meta=meta,
+                        status="ready",
+                        file_path="/tmp/fit-video.mp4",
+                    )
+                }
+            )
+            card_selector = f"#console-video-card-{message.id}"
+            expected_actions = ("video-play", "video-save-copy")
+
+        transcript.set_messages([message])
+        transcript.select_message(message.id)
+        await transcript.refresh_messages()
+        await pilot.pause()
+
+        card = app.query_one(card_selector)
+        action_row = card.query_one(".console-media-card-actions")
+        buttons = list(card.query(".console-media-card-action"))
+        assert tuple(button.console_action_id for button in buttons) == expected_actions
+        if media_kind == "generated-image":
+            assert tuple(button.label.plain for button in buttons) == (
+                "<",
+                ">",
+                "Keep",
+                "View",
+                "Save",
+            )
+        assert transcript.max_scroll_x == 0
+        assert action_row.region.height == 1
+        assert all(button.region.height == 1 for button in buttons)
+        assert all(
+            card.region.x <= button.region.x < button.region.right <= card.region.right
+            for button in buttons
+        )
+        assert all(
+            button.content_region.width >= len(button.label.plain) for button in buttons
+        )
+
+
+@pytest.mark.asyncio
+async def test_console_hidden_generation_card_keeps_view_reachable_at_80_columns():
+    app = MutableTranscriptHarness(css_path=str(_BUNDLE))
+
+    async with app.run_test(size=(80, 24)) as pilot:
+        transcript = app.query_one(ConsoleTranscript)
+        message = _generation_message(variant_count=3, message_id="hidden-image")
+        transcript.set_messages([message])
+        transcript.set_generation_card_specs(
+            {
+                message.id: ConsoleGenerationCardSpec(
+                    message_id=message.id,
+                    browsed_index=1,
+                    variant_count=3,
+                    meta=message.generation_metadata[1],
+                    mode="hidden",
+                )
+            }
+        )
+        await transcript.refresh_messages()
+        await pilot.pause()
+
+        card = app.query_one(f"#console-generation-card-{message.id}")
+        buttons = list(card.query(".console-media-card-action"))
+        assert [button.console_action_id for button in buttons] == ["toggle-image-view"]
+        assert [button.label.plain for button in buttons] == ["View"]
+        assert not card.query(f"#console-generation-card-image-{message.id}")
+        assert not card.query(f"#console-generation-card-details-{message.id}")
+        assert transcript.max_scroll_x == 0
+        assert all(
+            0 <= button.region.x < button.region.right <= 80 for button in buttons
+        )
+
+
+@pytest.mark.asyncio
+async def test_console_generation_card_reconciles_save_eligibility_change():
+    app = MutableTranscriptHarness(css_path=str(_BUNDLE))
+    ephemeral = True
+
+    async with app.run_test(size=(80, 24)) as pilot:
+        app.screen._console_active_session_is_ephemeral = lambda: ephemeral
+        transcript = app.query_one(ConsoleTranscript)
+        message = _generation_message(variant_count=1, message_id="save-state-image")
+        spec = ConsoleGenerationCardSpec(
+            message_id=message.id,
+            browsed_index=0,
+            variant_count=1,
+            meta=message.generation_metadata[0],
+            mode="pixels",
+        )
+        transcript.set_messages([message])
+        transcript.set_generation_card_specs({message.id: spec})
+        await transcript.refresh_messages()
+        await pilot.pause()
+
+        save = app.query_one(f"#console-message-action-save-image-{message.id}", Button)
+        assert save.disabled
+
+        ephemeral = False
+        await transcript.refresh_messages()
+        await pilot.pause()
+
+        save = app.query_one(f"#console-message-action-save-image-{message.id}", Button)
+        assert not save.disabled
+
+
+@pytest.mark.asyncio
+async def test_console_ineligible_fork_reason_is_visible_and_repeated_by_f(
+    monkeypatch,
+):
+    reason = "Save this chat before forking from the selected message."
+    app = TranscriptHarness(css_path=str(_BUNDLE))
+
+    async with app.run_test(size=(80, 24)) as pilot:
+        transcript = app.query_one(ConsoleTranscript)
+        transcript.select_message("m2")
+        transcript.set_fork_eligibilities({"m2": ConsoleForkEligibility(False, reason)})
+        await transcript.refresh_messages()
+        await pilot.pause()
+        fork = app.query_one("#console-message-action-fork-m2", Button)
+        notices = []
+        monkeypatch.setattr(
+            transcript,
+            "notify",
+            lambda message, **kwargs: notices.append((message, kwargs)),
+        )
+        transcript.focus()
+        await pilot.press("f")
+        await pilot.pause()
+
+        assert fork.disabled
+        assert str(fork.tooltip) == reason
+        assert f"Fork unavailable — {reason}" in _visible_text(app)
+        assert notices == [(reason, {"severity": "warning"})]
 
 
 @pytest.mark.asyncio
@@ -1976,20 +2573,18 @@ async def test_console_transcript_click_selected_message_clears_selection():
     app = TranscriptHarness()
 
     async with app.run_test(size=(100, 32)) as pilot:
-        transcript = app.query_one(
-            "#console-native-transcript", ConsoleTranscript
-        )
+        transcript = app.query_one("#console-native-transcript", ConsoleTranscript)
 
         await pilot.click("#console-message-m2")
         await pilot.pause()
         assert transcript.selected_message_id == "m2"
-        assert "Save as..." in _visible_text(app)
+        assert "More…" in _visible_text(app)
 
         await pilot.click("#console-message-m2")
         await pilot.pause()
 
         assert transcript.selected_message_id is None
-        assert "Save as..." not in _visible_text(app)
+        assert "More…" not in _visible_text(app)
 
 
 @pytest.mark.asyncio
@@ -1998,13 +2593,13 @@ async def test_console_transcript_click_background_clears_selection():
 
     async with app.run_test(size=(100, 32)) as pilot:
         await pilot.click("#console-message-m2")
-        assert "Save as..." in _visible_text(app)
+        assert "More…" in _visible_text(app)
 
         # Click empty space below the rendered messages.
         await pilot.click("#console-native-transcript", offset=(5, 20))
         await pilot.pause()
 
-        assert "Save as..." not in _visible_text(app)
+        assert "More…" not in _visible_text(app)
 
 
 @pytest.mark.asyncio
@@ -2013,12 +2608,12 @@ async def test_console_transcript_click_action_button_preserves_selection():
 
     async with app.run_test(size=(100, 32)) as pilot:
         await pilot.click("#console-message-m2")
-        assert "Save as..." in _visible_text(app)
+        assert "More…" in _visible_text(app)
 
         await pilot.click("#console-message-action-copy-m2")
         await pilot.pause()
 
-        assert "Save as..." in _visible_text(app)
+        assert "More…" in _visible_text(app)
 
 
 @pytest.mark.asyncio
@@ -2027,12 +2622,12 @@ async def test_console_transcript_click_rule_separator_preserves_selection():
 
     async with app.run_test(size=(100, 32)) as pilot:
         await pilot.click("#console-message-m2")
-        assert "Save as..." in _visible_text(app)
+        assert "More…" in _visible_text(app)
 
         await pilot.click(".console-transcript-rule")
         await pilot.pause()
 
-        assert "Save as..." in _visible_text(app)
+        assert "More…" in _visible_text(app)
 
 
 @pytest.mark.asyncio
@@ -2061,7 +2656,9 @@ async def test_console_transcript_rule_spans_full_width_on_wide_terminals():
 async def test_console_transcript_click_scrollbar_does_not_clear_selection():
     app = MutableTranscriptHarness()
     messages = [
-        ConsoleChatMessage(role=ConsoleMessageRole.USER, content=f"message {index}", id=f"m{index}")
+        ConsoleChatMessage(
+            role=ConsoleMessageRole.USER, content=f"message {index}", id=f"m{index}"
+        )
         for index in range(30)
     ]
 
@@ -2088,15 +2685,17 @@ async def test_console_transcript_click_action_row_background_preserves_selectio
     async with app.run_test(size=(100, 32)) as pilot:
         await pilot.click("#console-message-m2")
         await pilot.pause()
-        assert "Save as..." in _visible_text(app)
+        assert "More…" in _visible_text(app)
 
         # Route a container-background click without stale screen coordinates.
         action_row = app.query_one("#console-message-actions-m2")
         transcript = app.query_one(ConsoleTranscript)
-        transcript.on_click(SimpleNamespace(control=action_row, stop=lambda: None))
+        await transcript.on_click(
+            SimpleNamespace(control=action_row, stop=lambda: None)
+        )
         await pilot.pause()
 
-        assert "Save as..." in _visible_text(app)
+        assert "More…" in _visible_text(app)
 
 
 @pytest.mark.asyncio
@@ -2106,12 +2705,12 @@ async def test_console_transcript_click_action_help_preserves_selection():
     async with app.run_test(size=(100, 32)) as pilot:
         await pilot.click("#console-message-m2")
         await pilot.pause()
-        assert "Save as..." in _visible_text(app)
+        assert "More…" in _visible_text(app)
 
         await pilot.click(".console-transcript-action-guide")
         await pilot.pause()
 
-        assert "Save as..." in _visible_text(app)
+        assert "More…" in _visible_text(app)
 
 
 @pytest.mark.asyncio
@@ -2148,16 +2747,15 @@ async def test_console_transcript_action_buttons_have_stable_ids():
     async with app.run_test(size=(100, 32)) as pilot:
         await pilot.click("#console-message-m2")
         await _wait_for_selector(app, pilot, "#console-message-action-copy-m2")
-        await _wait_for_selector(app, pilot, "#console-message-action-save-as-m2")
+        await _wait_for_selector(app, pilot, "#console-message-action-fork-m2")
+        await _wait_for_selector(app, pilot, "#console-message-action-more-m2")
         await _wait_for_selector(app, pilot, "#console-message-action-regenerate-m2")
         text = _visible_text(app)
 
     assert "Copy" in text
-    assert "Save as..." in text
+    assert "Fork" in text
     assert "♻" in text
-    assert "👍" in text
-    assert "👎" in text
-    assert "🗑" in text
+    assert "More…" in text
     assert "|" not in text
 
 
@@ -2215,7 +2813,9 @@ async def test_console_transcript_single_variant_generation_message_hides_nav_an
     app = GenerationActionRowHarness(message, browsed_index=0)
 
     async with app.run_test(size=(100, 32)) as pilot:
-        await _wait_for_selector(app, pilot, f"#console-message-action-regenerate-{message.id}")
+        await _wait_for_selector(
+            app, pilot, f"#console-message-action-regenerate-{message.id}"
+        )
         nav_buttons = app.query(
             f"#console-message-action-variant-previous-{message.id}"
         )
@@ -2281,10 +2881,10 @@ async def test_console_transcript_action_tooltips_explain_compact_labels():
         await pilot.click("#console-message-m2")
         await _wait_for_selector(app, pilot, "#console-message-action-continue-m2")
         continue_action = app.query_one("#console-message-action-continue-m2")
-        save_action = app.query_one("#console-message-action-save-as-m2")
+        more_action = app.query_one("#console-message-action-more-m2")
 
     assert "extend" in str(continue_action.tooltip).lower()
-    assert "destination" in str(save_action.tooltip).lower()
+    assert "more message" in str(more_action.tooltip).lower()
 
 
 @pytest.mark.asyncio
@@ -2293,11 +2893,11 @@ async def test_console_transcript_escape_collapses_selected_action_row():
 
     async with app.run_test(size=(100, 32)) as pilot:
         await pilot.click("#console-message-m2")
-        assert "Save as..." in _visible_text(app)
+        assert "More…" in _visible_text(app)
 
         await pilot.press("escape")
 
-        assert "Save as..." not in _visible_text(app)
+        assert "More…" not in _visible_text(app)
 
 
 @pytest.mark.asyncio
@@ -2441,7 +3041,9 @@ async def test_mounted_console_repaints_when_transcript_style_changes():
         assert "console-transcript-message-role-assistant" not in assistant_row.classes
 
         app.app_config["appearance"]["console_transcript_style"] = "role_accents"
-        assert console._console_transcript_style() is ConsoleTranscriptStyle.ROLE_ACCENTS
+        assert (
+            console._console_transcript_style() is ConsoleTranscriptStyle.ROLE_ACCENTS
+        )
         for _ in range(400):
             if not console._console_sync_in_progress:
                 break
@@ -2452,8 +3054,7 @@ async def test_mounted_console_repaints_when_transcript_style_changes():
             assistant_row = transcript.query_one(f"#console-message-{assistant.id}")
             if (
                 "console-transcript-message-role-user" in user_row.classes
-                and "console-transcript-message-role-assistant"
-                in assistant_row.classes
+                and "console-transcript-message-role-assistant" in assistant_row.classes
             ):
                 break
             await pilot.pause(0.01)
@@ -2787,11 +3388,14 @@ async def test_original_attempt_availability_updates_action_and_message_signatur
         transcript.set_messages([message])
         transcript.select_message(message.id)
         await transcript.refresh_messages()
+        await pilot.pause()
+        await pilot.click(f"#console-message-action-more-{message.id}")
         await _wait_for_selector(
             app,
             pilot,
-            f"#console-message-action-view-original-attempt-{message.id}",
+            "#console-message-more-view-original-attempt",
         )
+        await transcript.dismiss_message_more_menu()
         before = transcript.row_render_signatures()
         before_actions = next(
             row.signature
@@ -2813,14 +3417,11 @@ async def test_original_attempt_availability_updates_action_and_message_signatur
             if row.key == f"actions:{message.id}"
         )
 
+    assert len(app.query("#console-message-more-view-original-attempt")) == 0
     assert (
-        len(app.query(f"#console-message-action-view-original-attempt-{message.id}"))
-        == 0
+        before[f"assistant-turn:{message.id}"] != after[f"assistant-turn:{message.id}"]
     )
-    assert before[f"assistant-turn:{message.id}"] != after[
-        f"assistant-turn:{message.id}"
-    ]
-    assert before_actions != after_actions
+    assert before_actions == after_actions
 
 
 def test_checking_citations_uses_active_jump_pill_copy():
@@ -3285,8 +3886,12 @@ async def test_reconcile_rows_branch_navigation_replaces_suffix_in_order():
         ConsoleChatMessage(role=ConsoleMessageRole.ASSISTANT, content="a2", id="m3"),
     ]
     sibling_tail = [
-        ConsoleChatMessage(role=ConsoleMessageRole.USER, content="q2 (sibling)", id="m2b"),
-        ConsoleChatMessage(role=ConsoleMessageRole.ASSISTANT, content="a2 (sibling)", id="m3b"),
+        ConsoleChatMessage(
+            role=ConsoleMessageRole.USER, content="q2 (sibling)", id="m2b"
+        ),
+        ConsoleChatMessage(
+            role=ConsoleMessageRole.ASSISTANT, content="a2 (sibling)", id="m3b"
+        ),
     ]
 
     async with app.run_test(size=(100, 32)):
@@ -3448,7 +4053,9 @@ def test_console_transcript_empty_state_is_centered_in_stylesheets():
         Path("tldw_chatbook/css/tldw_cli_modular.tcss"),
     ):
         css = css_path.read_text(encoding="utf-8")
-        panel_rule = css.split(".console-transcript-empty-panel {", 1)[1].split("}", 1)[0]
+        panel_rule = css.split(".console-transcript-empty-panel {", 1)[1].split("}", 1)[
+            0
+        ]
         assert "align: center middle" in panel_rule, css_path
         body_rule = css.split(".console-transcript-empty-body {", 1)[1].split("}", 1)[0]
         assert "text-align: center" in body_rule, css_path
