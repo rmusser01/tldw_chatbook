@@ -36,6 +36,7 @@ from tldw_chatbook.Chat.console_exchange_capture import (
     CaptureDetail,
     ExchangeCapture,
     build_request_capture,
+    compact_safe_history_rows,
     sanitize_capture_value,
 )
 from tldw_chatbook.Chat.console_project_instructions import (
@@ -3112,13 +3113,18 @@ class ConsoleProviderGateway:
 
                 def capture_wire_payload(
                     raw_wire: Mapping[str, Any], detail: CaptureDetail
-                ) -> Any:
+                ) -> tuple[Any, tuple[str, ...]]:
+                    """Returns the sanitized wire capture plus the Safe
+                    history-elision inventory (task-23026) — the same
+                    O(n²)-copy bound the generic path gets from
+                    ``build_request_capture``, applied to this branch's
+                    literal ``messages`` list."""
                     captured = deepcopy(raw_wire)
                     if detail is not CaptureDetail.SAFE:
-                        return sanitize_capture_value(captured)
+                        return sanitize_capture_value(captured), ()
                     captured_messages = captured.get("messages")
                     if not isinstance(captured_messages, list):
-                        return sanitize_capture_value(captured)
+                        return sanitize_capture_value(captured), ()
                     semantic_messages = [
                         thaw_json(item)
                         for item in prepared.semantic.flattened_messages()
@@ -3153,7 +3159,17 @@ class ConsoleProviderGateway:
                                     "[project instruction body omitted by "
                                     f"capture policy -- {len(content)} chars]"
                                 )
-                    return sanitize_capture_value(captured)
+                    sanitized = sanitize_capture_value(captured)
+                    if isinstance(sanitized, dict):
+                        compacted_rows, elided_paths = compact_safe_history_rows(
+                            sanitized.get("messages"),
+                            detail,
+                            path="wire_payload.messages",
+                        )
+                        if elided_paths:
+                            sanitized["messages"] = compacted_rows
+                        return sanitized, elided_paths
+                    return sanitized, ()
 
                 # This branch builds its own HTTP body -- the one place
                 # capture IS the literal wire payload (spec Non-goals).
@@ -3181,7 +3197,7 @@ class ConsoleProviderGateway:
                             capture_detail=call_signals.capture_detail,
                             budget=budget,
                         )
-                        sanitized_wire = capture_wire_payload(
+                        sanitized_wire, wire_elided = capture_wire_payload(
                             wire, call_signals.capture_detail
                         )
                         capture_request["wire_payload"] = (
@@ -3189,6 +3205,7 @@ class ConsoleProviderGateway:
                             if budget.retain(sanitized_wire)
                             else {"truncated": True}
                         )
+                        omitted = tuple(sorted(set(omitted).union(wire_elided)))
                         call_signals.begin_exchange(
                             provider=str(resolution.provider or ""),
                             model=str(resolution.model or ""),
@@ -3272,7 +3289,7 @@ class ConsoleProviderGateway:
                         capture_detail=retry_signals.capture_detail,
                         budget=budget,
                     )
-                    sanitized_wire = capture_wire_payload(
+                    sanitized_wire, wire_elided = capture_wire_payload(
                         wire_payload, retry_signals.capture_detail
                     )
                     capture_request["wire_payload"] = (
@@ -3280,6 +3297,7 @@ class ConsoleProviderGateway:
                         if budget.retain(sanitized_wire)
                         else {"truncated": True}
                     )
+                    omitted = tuple(sorted(set(omitted).union(wire_elided)))
                     capture_request["retry_of"] = (
                         "llama.cpp stream produced no content; retried non-streaming"
                     )

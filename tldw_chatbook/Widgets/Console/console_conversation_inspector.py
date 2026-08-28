@@ -97,7 +97,10 @@ from tldw_chatbook.Chat.console_chat_models import ConsoleContextSnapshot
 from tldw_chatbook.Chat.console_cost_tracker import ConsoleCostRow, ConsoleCostRowTotals
 from tldw_chatbook.Chat.console_display_state import ConsoleProjectInstructionState
 from tldw_chatbook.Chat.console_ephemeral import blocked_reason
-from tldw_chatbook.Chat.console_exchange_capture import ExchangeCapture
+from tldw_chatbook.Chat.console_exchange_capture import (
+    ExchangeCapture,
+    history_elision_marker,
+)
 from tldw_chatbook.Chat.console_project_instructions import EPHEMERAL_ORIGIN_KEY
 from tldw_chatbook.Chat.provider_usage import ProviderUsage
 from tldw_chatbook.LLM_Calls.pricing_catalog import get_pricing_catalog
@@ -1093,7 +1096,18 @@ class ConsoleConversationInspector(SafeModalDismissMixin, ModalScreen[None]):
     ) -> Collapsible:
         messages = capture.request.get("messages_payload")
         count = len(messages) if isinstance(messages, list) else 0
-        title = f"Messages ({count})"
+        # ADR-096: a Safe capture's stored list is COMPACTED — the physical
+        # count alone would under-state what the call actually sent, so the
+        # aggregate marker's original/omitted counts are surfaced in the
+        # title rather than presenting the compacted list as complete.
+        marker = history_elision_marker(messages)
+        if marker is not None:
+            title = (
+                f"Messages ({marker['original_rows']} sent; "
+                f"{marker['omitted_rows']} elided by capture policy)"
+            )
+        else:
+            title = f"Messages ({count})"
         return Collapsible(
             title=Content.from_text(title, markup=False),
             collapsed=True,

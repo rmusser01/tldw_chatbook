@@ -572,7 +572,7 @@ class CharactersRAGDB:
         db_path_str (str): String representation of the database path for SQLite connection.
     """
 
-    _CURRENT_SCHEMA_VERSION = 52  # Console thinking evidence and replay policy.
+    _CURRENT_SCHEMA_VERSION = 53  # Safe exchange-capture history trim (task-23026).
     _SCHEMA_NAME = "rag_char_chat_schema"  # Used for the db_schema_version table
     _ALLOWED_CONVERSATION_STATES = ("in-progress", "resolved", "backlog", "non-viable")
     _DEFAULT_CONVERSATION_STATE = "in-progress"
@@ -6906,6 +6906,127 @@ UPDATE db_schema_version
                 f"Migration from V51 to V52 failed for '{self._SCHEMA_NAME}': {exc}"
             ) from exc
 
+    #: v52→v53 keyset-page size: bounds how many Safe capture blobs are
+    #: resident at once during the one-time rewrite (ADR-096: bounded
+    #: batches, never every row ID or blob in memory).
+    _V53_SAFE_CAPTURE_BATCH_ROWS = 100
+
+    def _migrate_from_v52_to_v53(self, conn: sqlite3.Connection) -> None:
+        """Compact stored Safe exchange captures' per-turn history copy.
+
+        ADR-096 / task-23026: every Safe (default-on) exchange capture
+        used to persist the ENTIRE conversation-so-far verbatim — 21.33 MB
+        for one 200-turn conversation, with no retention path (the only
+        purge is user-invoked and Full-filtered). ``build_request_capture``
+        now bounds Safe retention at capture time (first system row, last
+        user row, final eight rows, one content-free aggregate marker);
+        this step applies the identical compaction
+        (``trim_safe_capture_blob``, a pure helper) to every already-stored
+        Safe blob so existing databases reclaim the space without the user
+        knowing a manual purge exists. Full captures are the deliberate,
+        consent-gated, purgeable verbatim mode (ADR-092) and are never
+        rewritten; small and already-compacted Safe blobs stay
+        byte-identical.
+
+        DML-only (no DDL, so no ``.sql`` file, ``VALID_TABLES`` entry, or
+        index-census row). Keyset-pages Safe rows in bounded batches
+        (``_V53_SAFE_CAPTURE_BATCH_ROWS``), inside ``_initialize_schema``'s
+        outer immediate transaction: a crash or SIGKILL anywhere in the
+        walk rolls the blob rewrites AND the version stamp back to v52
+        together, and the deterministic compaction re-runs on the next
+        open (idempotent — a recognized marker is a fixed point). Only the
+        ``CaptureUnavailableError``/``CaptureCorruptError`` family is a
+        per-row skip (retrying unreadable data cannot reclaim it, so the
+        version may still advance); any unexpected programming or SQLite
+        error aborts and rolls back everything. Diagnostics report
+        aggregate counts only — never capture bodies, blob bytes, row
+        identifiers, or exception values.
+
+        Args:
+            conn: The active connection, inside ``_initialize_schema``'s
+                outer immediate transaction.
+
+        Raises:
+            SchemaError: If the entry version is wrong, the rewrite hits an
+                unexpected error, or the guarded version update fails.
+        """
+        self._require_migration_entry_version(conn, 52, "V52→V53")
+        logger.info(
+            f"Migrating schema from V52 to V53 for '{self._SCHEMA_NAME}' in DB: {self.db_path_str}..."
+        )
+        from tldw_chatbook.Chat.console_exchange_capture import (
+            CaptureUnavailableError,
+            trim_safe_capture_blob,
+        )
+
+        examined = changed = skipped = 0
+        try:
+            with self.transaction() as cursor:
+                last_row_id = 0
+                while True:
+                    cursor.execute(
+                        """
+                        SELECT id, capture_blob FROM message_exchanges
+                         WHERE capture_detail = 'safe'
+                           AND id > ?
+                         ORDER BY id
+                         LIMIT ?
+                        """,
+                        (last_row_id, self._V53_SAFE_CAPTURE_BATCH_ROWS),
+                    )
+                    batch = cursor.fetchall()
+                    if not batch:
+                        break
+                    for row_id, blob in batch:
+                        last_row_id = int(row_id)
+                        if blob is None:
+                            continue
+                        examined += 1
+                        try:
+                            new_blob = trim_safe_capture_blob(bytes(blob))
+                        except CaptureUnavailableError:
+                            # Recognized undecodable blob (corrupt or over
+                            # the safety limits): left byte-identical and
+                            # counted — retrying cannot reclaim it. Any
+                            # OTHER exception propagates and rolls back the
+                            # whole step (ADR-096 decision 8).
+                            skipped += 1
+                            continue
+                        if new_blob is None:
+                            continue
+                        cursor.execute(
+                            "UPDATE message_exchanges SET capture_blob = ? WHERE id = ?",
+                            (new_blob, row_id),
+                        )
+                        changed += 1
+                version_cursor = cursor.execute(
+                    """
+                    UPDATE db_schema_version
+                       SET version = 53
+                     WHERE schema_name = ?
+                       AND version = 52
+                    """,
+                    (self._SCHEMA_NAME,),
+                )
+                if version_cursor.rowcount != 1:
+                    raise SchemaError(
+                        f"[{self._SCHEMA_NAME} V52→V53] Migration version update was not applied"
+                    )
+            if self._get_db_version(conn) != 53:
+                raise SchemaError(
+                    f"[{self._SCHEMA_NAME} V52→V53] Migration version check failed"
+                )
+            logger.info(
+                f"[{self._SCHEMA_NAME} V52→V53] Migration completed for DB: "
+                f"{self.db_path_str} (examined {examined}, compacted {changed}, "
+                f"skipped {skipped} unreadable)."
+            )
+        except (OSError, sqlite3.Error, CharactersRAGDBError, SchemaError) as exc:
+            raise SchemaError(
+                f"Migration from V52 to V53 failed for '{self._SCHEMA_NAME}': "
+                f"{type(exc).__name__}"
+            ) from exc
+
     def _migrate_from_v18_to_v19(self, conn: sqlite3.Connection):
         """
         Migrates the database schema from version 18 to version 19.
@@ -7106,6 +7227,7 @@ UPDATE db_schema_version
                     49: self._migrate_from_v49_to_v50,
                     50: self._migrate_from_v50_to_v51,
                     51: self._migrate_from_v51_to_v52,
+                    52: self._migrate_from_v52_to_v53,
                 }
 
                 if current_db_version == 0:

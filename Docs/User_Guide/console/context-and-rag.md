@@ -613,13 +613,30 @@ Inspector or a live Trace to change exactly one future scope: **Next send**
 On/Off and Safe/Full setting. Turning Capture **Off** does not erase a dormant
 Full choice; turning it back on warns before Full resumes.
 
-Safe retains bounded routing/provenance, status, usage, and omission/truncation
-inventories. Full may retain semantic provider input and output: for Anthropic
-that includes system, messages, and tools, plus injected AGENTS/workspace
-instructions, RAG snippets, tool schemas, arguments, and results. Capture
-occurs at the semantic provider-adapter boundary, not raw HTTP; llama.cpp is
-the documented exception because its adapter payload is the literal outgoing
-request.
+Safe retains routing/provenance, status, usage, omission/truncation
+inventories, the system prompt, tools, sampling parameters, the response, and
+a **bounded** excerpt of the request's message history: the initial system
+context row, the latest user request, and the newest eight message rows —
+verbatim — with all older context represented by one **content-free aggregate
+marker** (how many rows were sent, how many were elided, and their role
+counts; deliberately no content, snippets, per-row sizes, or hashes, so
+nothing stored can be used to confirm guesses about the omitted text). Safe
+history elided at capture time cannot be recovered later by the Inspector or
+its exports. Full is the explicit choice for exact semantic diagnostic
+history: it may retain the entire provider input and output verbatim — for
+Anthropic that includes system, messages, and tools, plus injected
+AGENTS/workspace instructions, RAG snippets, tool schemas, arguments, and
+results — and it keeps ADR-092's privacy warning and scoped purge boundaries.
+Capture occurs at the semantic provider-adapter boundary, not raw HTTP;
+llama.cpp is the documented exception because its adapter payload is the
+literal outgoing request (its Safe capture bounds the wire `messages` list
+the same way). Elision shows up on the same "Omitted by capture policy" line
+as everything else capture withholds (`messages_payload.history`), and the
+Exchange tab's Messages title states both the sent and elided counts.
+Databases holding older, unbounded Safe captures are compacted once,
+automatically, the first time the app opens them after upgrading — no manual
+purge needed — though corrupt/unreadable records can't be rewritten, and
+compaction does not erase prior backups or exports.
 
 Structured credential fields are excluded and credential-bearing endpoint
 userinfo, query, and fragments are removed. That structural protection cannot
@@ -730,3 +747,10 @@ lives on unchanged as the Next Send tab. Docs pass against shipped
 code/tests (`console_conversation_inspector.py`, `console_exchange_
 capture.py`, the design spec's UI and Risks sections); live verification of
 the Exchange tab against a real provider is a separate, later pass.*
+
+*Verified against the task-23026 working tree — 2026-08-27 (ADR-096 Safe
+capture retention: text above matches `console_exchange_capture.py`'s
+`compact_safe_history_rows`/`CAPTURE_SAFE_HISTORY_TAIL_ROWS`, the Inspector's
+Messages-title counts, and the v52→v53 one-time compaction in
+`ChaChaNotes_DB.py`; code-level pass backed by the pure, gateway, migration,
+and inspector test suites — not a live-provider walkthrough).*

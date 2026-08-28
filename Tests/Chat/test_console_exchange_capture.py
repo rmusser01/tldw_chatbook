@@ -2,6 +2,7 @@
 import json
 import zlib
 
+import pytest
 from hypothesis import given, strategies as st
 
 from tldw_chatbook.Chat.console_exchange_capture import (
@@ -532,3 +533,460 @@ def test_stub_gate_still_fires_at_canonical_length_over_threshold():
 
     assert stubbed["content"] != canonical
     assert stubbed["content"].startswith("[")
+
+
+# ---------------------------------------------------------------------------
+# task-23026 / ADR-096: a Safe capture must not persist the whole
+# conversation per turn. Every send's payload carries the entire history so
+# far; storing it verbatim per turn re-stored the conversation O(n²)
+# (21.33 MB measured for one 200-turn conversation through the real gateway
+# path), default-on, with no retention path. Under Safe the retained set is
+# first-system ∪ last-user ∪ final-eight rows; everything else becomes ONE
+# content-free aggregate marker (spec:
+# Docs/superpowers/specs/2026-08-27-console-safe-capture-retention-design.md).
+# ---------------------------------------------------------------------------
+import hashlib as _hashlib
+
+from tldw_chatbook.Chat.console_exchange_capture import (
+    CAPTURE_HISTORY_ELISION_KIND,
+    CAPTURE_HISTORY_ELISION_VERSION,
+    CAPTURE_HISTORY_MARKER_KEYS,
+    CAPTURE_HISTORY_MARKER_ROLES,
+    CAPTURE_SAFE_HISTORY_TAIL_ROWS,
+    compact_safe_history_rows,
+    history_elision_marker,
+    trim_safe_capture_blob,
+)
+
+_TAIL = CAPTURE_SAFE_HISTORY_TAIL_ROWS
+
+
+def _incompressible_filler(seed: str, chars: int) -> str:
+    """Semi-incompressible prose-like filler (hex words). A repeated-word
+    filler compresses ~100x inside the blob's zlib, which lets a
+    disabled-compaction mutant slip under byte-size assertions — proven by
+    mutation M1 during task-23026."""
+    words = []
+    counter = 0
+    while sum(len(w) + 1 for w in words) < chars:
+        words.append(
+            _hashlib.sha256(f"{seed}:{counter}".encode()).hexdigest()[:10]
+        )
+        counter += 1
+    return " ".join(words)[:chars]
+
+
+def _history_rows(count: int) -> list[dict]:
+    return [
+        {
+            "role": "user" if i % 2 == 0 else "assistant",
+            "content": f"HISTORY-BODY-{i:03d} " + _incompressible_filler(f"r{i}", 180),
+        }
+        for i in range(count)
+    ]
+
+
+def _tool_loop_rows() -> list[dict]:
+    """A payload whose first system row AND last user row both sit outside
+    the final eight physical rows (a long assistant/tool loop) — the two
+    retention rules the tail alone cannot satisfy."""
+    rows = [{"role": "system", "content": "SYS-FRAMING " + _incompressible_filler("s", 80)}]
+    rows += _history_rows(10)
+    rows.append({"role": "user", "content": "LAST-USER-REQUEST " + _incompressible_filler("u", 80)})
+    for i in range(10):
+        rows.append({"role": "assistant", "content": f"TOOL-CALL-{i:02d} " + _incompressible_filler(f"a{i}", 80)})
+        rows.append({"role": "tool", "content": f"TOOL-RESULT-{i:02d} " + _incompressible_filler(f"t{i}", 80)})
+    return rows
+
+
+def test_safe_capture_retains_contract_set_and_inserts_one_marker():
+    rows = _tool_loop_rows()
+    request, omitted = build_request_capture(
+        {**_kwargs(), "messages_payload": rows},
+        capture_detail=CaptureDetail.SAFE,
+    )
+
+    payload = request["messages_payload"]
+    marker = history_elision_marker(payload)
+    assert marker is not None
+    markers = [row for row in payload if history_elision_marker([row])]
+    assert markers == [marker], "exactly one aggregate marker"
+
+    # Retained set: first system row, last user row, final eight rows —
+    # deduplicated, original order, values untouched.
+    expected_retained = [rows[0], rows[11]] + rows[-_TAIL:]
+    assert [row for row in payload if not history_elision_marker([row])] == expected_retained
+    # Marker sits at the position of the first omitted row (right after
+    # the retained system row).
+    assert history_elision_marker([payload[1]]) == marker
+
+    # Marker contents: counts + retained positions only.
+    total = len(rows)
+    retained_positions = sorted({0, 11} | set(range(total - _TAIL, total)))
+    assert marker["original_rows"] == total
+    assert marker["omitted_rows"] == total - len(retained_positions)
+    assert marker["retained_positions"] == retained_positions
+    omitted_rows = [
+        row for pos, row in enumerate(rows) if pos not in retained_positions
+    ]
+    for role in ("system", "user", "assistant", "tool"):
+        assert marker["omitted_roles"][role] == sum(
+            1 for row in omitted_rows if row.get("role") == role
+        )
+
+    # No omitted body survives, and the withholding is named through the
+    # STABLE inventory path (never an ever-changing range string).
+    rendered = json.dumps(payload)
+    for row in omitted_rows:
+        assert row["content"] not in rendered
+    assert "messages_payload.history" in omitted
+
+
+def test_safe_capture_keeps_first_system_and_last_user_outside_tail():
+    rows = _tool_loop_rows()
+    compacted, elided = compact_safe_history_rows(rows, CaptureDetail.SAFE)
+    assert elided == ("messages_payload.history",)
+    kept = [row for row in compacted if not history_elision_marker([row])]
+    assert kept[0] == rows[0] and kept[0]["role"] == "system"
+    assert kept[1] == rows[11] and kept[1]["role"] == "user"
+    assert kept[2:] == rows[-_TAIL:]
+
+
+def test_full_capture_retains_the_whole_history_verbatim():
+    """Full is the explicit, consent-gated, purgeable verbatim mode
+    (ADR-092) — compaction must never touch it."""
+    rows = _history_rows(_TAIL + 12)
+    request, omitted = build_request_capture(
+        {**_kwargs(), "messages_payload": rows},
+        capture_detail=CaptureDetail.FULL,
+    )
+    assert request["messages_payload"] == rows
+    assert not any("history" in entry for entry in omitted)
+
+
+def test_fully_retained_safe_payload_is_untouched_with_no_marker():
+    # 8 rows: the tail covers everything.
+    rows = _history_rows(_TAIL)
+    request, omitted = build_request_capture(
+        {**_kwargs(), "messages_payload": rows},
+        capture_detail=CaptureDetail.SAFE,
+    )
+    assert request["messages_payload"] == rows
+    assert not any("history" in entry for entry in omitted)
+
+    # 10 rows where the two head rows are the first system and last user:
+    # union covers everything, so the list is unchanged and no marker is
+    # added even though it is longer than the tail.
+    rows = [
+        {"role": "system", "content": "sys"},
+        {"role": "user", "content": "ask"},
+    ] + [{"role": "assistant", "content": f"a{i}"} for i in range(_TAIL)]
+    compacted, elided = compact_safe_history_rows(rows, CaptureDetail.SAFE)
+    assert compacted == rows
+    assert elided == ()
+
+
+def test_reprojection_of_a_compacted_payload_is_a_fixed_point():
+    """The export path re-runs build_request_capture over a STORED request
+    (project_exchange_export): the compacted list must map to itself —
+    no nested markers, no changed counts, no new inventory entries."""
+    rows = _tool_loop_rows()
+    first, _ = build_request_capture(
+        {"messages_payload": rows}, capture_detail=CaptureDetail.SAFE
+    )
+    second, omitted = build_request_capture(
+        {"messages_payload": first["messages_payload"]},
+        capture_detail=CaptureDetail.SAFE,
+    )
+    assert second["messages_payload"] == first["messages_payload"]
+    assert not any("history" in entry for entry in omitted)
+
+
+def test_input_marker_never_disables_compaction_of_surrounding_rows():
+    stale_marker = {
+        "kind": CAPTURE_HISTORY_ELISION_KIND,
+        "version": CAPTURE_HISTORY_ELISION_VERSION,
+        "original_rows": 40,
+        "omitted_rows": 30,
+        "omitted_roles": {role: 6 for role in CAPTURE_HISTORY_MARKER_ROLES},
+        "retained_positions": [0, 1],
+    }
+    rows = [stale_marker] + _history_rows(_TAIL + 12)
+    compacted, elided = compact_safe_history_rows(rows, CaptureDetail.SAFE)
+    assert elided == ("messages_payload.history",)
+    markers = [row for row in compacted if history_elision_marker([row])]
+    assert len(markers) == 1
+    fresh = markers[0]
+    # The fresh marker describes THIS pass over the real rows, not the
+    # stale metadata.
+    assert fresh["original_rows"] == _TAIL + 12
+    assert fresh is not stale_marker and fresh != stale_marker
+    kept = [row for row in compacted if not history_elision_marker([row])]
+    assert kept[-_TAIL:] == rows[-_TAIL:]
+
+
+def test_malformed_marker_lookalike_is_an_ordinary_row():
+    lookalike = {
+        "kind": CAPTURE_HISTORY_ELISION_KIND,
+        "version": CAPTURE_HISTORY_ELISION_VERSION,
+        "original_rows": 40,
+        "omitted_rows": 30,
+        "omitted_roles": {role: 6 for role in CAPTURE_HISTORY_MARKER_ROLES},
+        "retained_positions": [0, 1],
+        "sha256": "ab12cd34",  # extra key: NOT a valid marker
+    }
+    assert history_elision_marker([lookalike]) is None
+    # In the omitted prefix it is compacted away like any ordinary row and
+    # counts toward `other` (no `role` key).
+    rows = [lookalike] + _history_rows(_TAIL + 12)
+    compacted, _ = compact_safe_history_rows(rows, CaptureDetail.SAFE)
+    marker = history_elision_marker(compacted)
+    assert marker is not None
+    assert marker["omitted_roles"]["other"] >= 1
+    assert "ab12cd34" not in json.dumps(compacted)
+    # In the tail it is retained verbatim like any ordinary row.
+    rows = _history_rows(_TAIL + 12) + [lookalike]
+    compacted, _ = compact_safe_history_rows(rows, CaptureDetail.SAFE)
+    assert compacted[-1] == lookalike
+
+
+def test_marker_shape_guard_a_digest_cannot_be_reintroduced_silently():
+    """ADR-096 explicitly forbids the marker carrying content, snippets,
+    per-row lengths, hashes/digests, IDs, or timestamps — a sha256 prefix
+    would let anyone with DB access confirm guesses about omitted private
+    text. This guard pins the marker's EXACT shape: any new key, any
+    string value beyond the kind discriminator, or any non-count payload
+    turns it red."""
+    rows = _tool_loop_rows()
+    compacted, _ = compact_safe_history_rows(rows, CaptureDetail.SAFE)
+    marker = history_elision_marker(compacted)
+    assert marker is not None
+
+    # Exact frozen key set — a silently added digest key fails here.
+    assert set(marker.keys()) == CAPTURE_HISTORY_MARKER_KEYS
+    # The ONLY string anywhere in the marker is the kind discriminator —
+    # a digest/snippet VALUE fails here.
+    def _strings(value):
+        if isinstance(value, str):
+            yield value
+        elif isinstance(value, dict):
+            for key, nested in value.items():
+                yield key
+                yield from _strings(nested)
+        elif isinstance(value, (list, tuple)):
+            for nested in value:
+                yield from _strings(nested)
+    string_values = set(_strings(marker)) - CAPTURE_HISTORY_MARKER_KEYS - set(
+        CAPTURE_HISTORY_MARKER_ROLES
+    )
+    assert string_values == {CAPTURE_HISTORY_ELISION_KIND}
+    # Counts are plain ints; positions are plain ints.
+    assert type(marker["original_rows"]) is int
+    assert type(marker["omitted_rows"]) is int
+    assert all(type(v) is int for v in marker["omitted_roles"].values())
+    assert all(type(v) is int for v in marker["retained_positions"])
+    # And nothing digest-shaped appears anywhere in the compacted output.
+    assert "sha256" not in json.dumps(compacted)
+
+
+def test_unknown_roles_count_only_toward_other_and_never_reach_the_marker():
+    rows = (
+        [
+            {"role": None, "content": "NULL-ROLE-BODY"},
+            {"role": 123, "content": "INT-ROLE-BODY"},
+            {"role": "wizard", "content": "CUSTOM-ROLE-BODY"},
+        ]
+        + _history_rows(_TAIL + 4)
+    )
+    compacted, _ = compact_safe_history_rows(rows, CaptureDetail.SAFE)
+    marker = history_elision_marker(compacted)
+    assert marker is not None
+    assert marker["omitted_roles"]["other"] == 3
+    rendered = json.dumps(compacted)
+    assert "wizard" not in rendered
+    assert "NULL-ROLE-BODY" not in rendered
+
+
+def test_non_mapping_rows_are_eligible_only_through_the_tail():
+    rows = ["BARE-PREFIX-STRING"] + _history_rows(_TAIL + 4) + ["BARE-TAIL-STRING"]
+    compacted, _ = compact_safe_history_rows(rows, CaptureDetail.SAFE)
+    rendered = json.dumps(compacted)
+    assert "BARE-PREFIX-STRING" not in rendered
+    assert compacted[-1] == "BARE-TAIL-STRING"
+    marker = history_elision_marker(compacted)
+    assert marker is not None and marker["omitted_roles"]["other"] >= 1
+
+
+def test_project_instruction_body_never_survives_safe_compaction():
+    """C1 continuity: an instruction row in the omitted region disappears
+    entirely (redaction metadata in omitted_keys remains); one in the tail
+    keeps only its redaction marker, never the body."""
+    rows = _history_rows(_TAIL + 3)
+    rows[0] = _project_instruction_row()
+    request, omitted = build_request_capture(
+        {"messages_payload": rows}, capture_detail=CaptureDetail.SAFE
+    )
+    assert _PROJECT_INSTRUCTION_SENTINEL not in json.dumps(request)
+    # The redaction step recorded its path before compaction; the design
+    # keeps that metadata visible even though the row is now omitted.
+    assert "messages_payload[0].content" in omitted
+    assert "messages_payload.history" in omitted
+
+    tail_instruction = _history_rows(_TAIL + 3)
+    tail_instruction[-1] = _project_instruction_row()
+    request, _ = build_request_capture(
+        {"messages_payload": tail_instruction},
+        capture_detail=CaptureDetail.SAFE,
+    )
+    assert _PROJECT_INSTRUCTION_SENTINEL not in json.dumps(request)
+    assert "omitted by capture policy" in request["messages_payload"][-1]["content"]
+
+
+def test_non_list_rows_pass_through_compaction():
+    assert compact_safe_history_rows(None, CaptureDetail.SAFE) == (None, ())
+    assert compact_safe_history_rows("x", CaptureDetail.SAFE) == ("x", ())
+
+
+def test_per_turn_blob_size_growth_is_marker_sized_not_content_sized():
+    """The blob for a deep-history turn grows only by the aggregate
+    marker's retained-position list (O(1)), never by re-copied content:
+    100 extra history rows of ~190 chars each (~19 KB of content) must add
+    almost nothing to the stored blob."""
+
+    def blob_for(row_count: int) -> int:
+        request, omitted = build_request_capture(
+            {**_kwargs(), "messages_payload": _history_rows(row_count)},
+            capture_detail=CaptureDetail.SAFE,
+        )
+        cap = ExchangeCapture(
+            run_tag="r1", seq=0, created_at="t", provider="p", model="m",
+            endpoint=None, request=request, response={"content": "pong"},
+            status="complete", usage_json=None, omitted_keys=omitted,
+        )
+        return len(capture_to_blob(cap))
+
+    shallow = blob_for(20)
+    deep = blob_for(120)
+    per_row_cost = (deep - shallow) / 100
+    assert per_row_cost < 5, (
+        f"deep-history turns re-store content: {per_row_cost:.1f} bytes per "
+        "omitted row (the aggregate marker should cost ~0)"
+    )
+
+
+def test_trim_safe_capture_blob_compacts_stored_safe_blobs():
+    """The v52→v53 migration's pure helper: a pre-compaction stored Safe
+    blob is compacted to exactly the shape build_request_capture now
+    produces, with everything not deliberately compacted preserved
+    value-identical."""
+    rows = _history_rows(_TAIL + 12)
+    # A pre-task-23026 capture: history verbatim (built at FULL to bypass
+    # compaction, then stamped safe — the historical builder retained
+    # ordinary rows verbatim under Safe).
+    request, omitted = build_request_capture(
+        {**_kwargs(), "messages_payload": rows},
+        capture_detail=CaptureDetail.FULL,
+    )
+    legacy = ExchangeCapture(
+        run_tag="r1", seq=3, created_at="t", provider="p", model="m",
+        endpoint="https://example.test/v1", request=request,
+        response={"content": "pong", "tool_calls": [], "synthetic_fallback": False},
+        status="stopped", usage_json='{"input": 5}', omitted_keys=omitted,
+        capture_detail=CaptureDetail.SAFE,
+    )
+    trimmed_blob = trim_safe_capture_blob(capture_to_blob(legacy))
+
+    assert trimmed_blob is not None
+    restored = capture_from_blob(trimmed_blob)
+    payload = restored.request["messages_payload"]
+    marker = history_elision_marker(payload)
+    assert marker is not None
+    assert marker["original_rows"] == _TAIL + 12
+    kept = [row for row in payload if not history_elision_marker([row])]
+    assert kept == rows[-_TAIL:]
+    assert "HISTORY-BODY-000" not in json.dumps(payload)
+    # Everything not deliberately compacted is value-identical.
+    assert restored.response == legacy.response
+    assert restored.status == legacy.status
+    assert restored.usage_json == legacy.usage_json
+    assert restored.run_tag == legacy.run_tag
+    assert restored.seq == legacy.seq
+    assert restored.provider == legacy.provider
+    assert restored.endpoint == legacy.endpoint
+    assert restored.capture_detail is CaptureDetail.SAFE
+    untouched = {
+        k: v for k, v in restored.request.items() if k != "messages_payload"
+    }
+    # JSON-normalized comparison: the blob round-trip renders tuples (e.g.
+    # truncation_inventory) as lists; the VALUES must be identical.
+    assert json.loads(json.dumps(untouched, default=str)) == json.loads(
+        json.dumps(
+            {k: v for k, v in legacy.request.items() if k != "messages_payload"},
+            default=str,
+        )
+    )
+    # The stable elision path is folded into the stored omission inventory.
+    assert "messages_payload.history" in restored.omitted_keys
+    assert set(legacy.omitted_keys).issubset(set(restored.omitted_keys))
+    # Fixed point: compacting the compacted blob changes nothing.
+    assert trim_safe_capture_blob(trimmed_blob) is None
+
+
+def test_trim_safe_capture_blob_returns_none_when_nothing_to_compact():
+    request, omitted = build_request_capture(
+        _kwargs(), capture_detail=CaptureDetail.SAFE
+    )
+    cap = ExchangeCapture(
+        run_tag="r1", seq=0, created_at="t", provider="p", model="m",
+        endpoint=None, request=request, response={}, status="complete",
+        usage_json=None, omitted_keys=omitted,
+    )
+    assert trim_safe_capture_blob(capture_to_blob(cap)) is None
+
+
+def test_trim_safe_capture_blob_never_touches_full_blobs():
+    rows = _history_rows(_TAIL + 12)
+    request, omitted = build_request_capture(
+        {**_kwargs(), "messages_payload": rows},
+        capture_detail=CaptureDetail.FULL,
+    )
+    cap = ExchangeCapture(
+        run_tag="r1", seq=0, created_at="t", provider="p", model="m",
+        endpoint=None, request=request, response={}, status="complete",
+        usage_json=None, omitted_keys=omitted,
+        capture_detail=CaptureDetail.FULL,
+    )
+    assert trim_safe_capture_blob(capture_to_blob(cap)) is None
+
+
+def test_trim_safe_capture_blob_compacts_llamacpp_wire_messages():
+    wire_rows = _history_rows(_TAIL + 6)
+    cap = ExchangeCapture(
+        run_tag="r1", seq=0, created_at="t", provider="llama_cpp", model="m",
+        endpoint=None,
+        request={
+            "model": "m",
+            "wire_payload": {"model": "m", "messages": wire_rows, "stream": True},
+            "truncation_inventory": (),
+        },
+        response={}, status="complete", usage_json=None, omitted_keys=(),
+    )
+    trimmed_blob = trim_safe_capture_blob(capture_to_blob(cap))
+
+    assert trimmed_blob is not None
+    restored = capture_from_blob(trimmed_blob)
+    wire = restored.request["wire_payload"]
+    marker = history_elision_marker(wire["messages"])
+    assert marker is not None
+    kept = [row for row in wire["messages"] if not history_elision_marker([row])]
+    assert kept == wire_rows[-_TAIL:]
+    assert "HISTORY-BODY-000" not in json.dumps(wire)
+    assert wire["stream"] is True
+    assert "wire_payload.messages.history" in restored.omitted_keys
+
+
+def test_trim_safe_capture_blob_raises_capture_unavailable_on_corrupt_blob():
+    from tldw_chatbook.Chat.console_exchange_capture import CaptureUnavailableError
+
+    with pytest.raises(CaptureUnavailableError):
+        trim_safe_capture_blob(b"not-a-zlib-blob")
