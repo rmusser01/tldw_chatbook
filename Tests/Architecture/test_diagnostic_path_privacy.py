@@ -11,8 +11,13 @@ from textwrap import dedent
 import pytest
 
 from scripts.check_persistent_diagnostic_inventory import (
+    _PathState,
+    _expression_path_state,
     _is_diagnostic_call,
     _logger_symbols,
+    _safe_transform_contexts,
+    _scope_contexts,
+    _scope_path_aliases,
     render_diff,
     scan_path_diagnostic_candidates,
 )
@@ -749,10 +754,24 @@ def _candidate_detail(candidate: dict[str, object]) -> str:
 
 
 def _traceback_capture_calls(source: str, *, filename: str) -> list[dict[str, object]]:
-    """Return complete source locations for diagnostics that retain tracebacks."""
+    """Return traceback captures in path-bearing exception regions."""
     tree = ast.parse(source, filename=filename)
     logger_symbols = _logger_symbols(tree)
-    captures: list[dict[str, object]] = []
+    (
+        scope_names,
+        lexical_scopes,
+        assignments,
+        definition_parent_scopes,
+    ) = _scope_contexts(tree)
+    safe_transform_contexts = _safe_transform_contexts(
+        tree, lexical_scopes, definition_parent_scopes
+    )
+    parent_by_node = {
+        id(child): parent
+        for parent in ast.walk(tree)
+        for child in ast.iter_child_nodes(parent)
+    }
+    capture_calls: list[tuple[ast.Call, str]] = []
 
     for node in ast.walk(tree):
         if not isinstance(node, ast.Call) or not _is_diagnostic_call(
@@ -785,19 +804,179 @@ def _traceback_capture_calls(source: str, *, filename: str) -> list[dict[str, ob
                     capture = f"logger.opt(exception={ast.unparse(exception_option)})"
 
         if capture is not None:
-            captures.append(
-                {
-                    "line": node.lineno,
-                    "column": node.col_offset + 1,
-                    "method": method,
-                    "capture": capture,
-                }
+            capture_calls.append((node, capture))
+
+    active_scope_ids = {
+        id(lexical_scopes[id(node)]) for node, _capture in capture_calls
+    }
+    aliases_by_scope = _scope_path_aliases(
+        assignments,
+        active_scope_ids,
+        safe_transform_contexts,
+    )
+    captures: list[dict[str, object]] = []
+
+    for node, capture in capture_calls:
+        method = node.func.attr
+        ancestor = parent_by_node.get(id(node))
+        handler: ast.ExceptHandler | None = None
+        operation: ast.Try | ast.TryStar | None = None
+        while ancestor is not None:
+            if isinstance(ancestor, ast.ExceptHandler):
+                candidate_operation = parent_by_node.get(id(ancestor))
+                if isinstance(candidate_operation, (ast.Try, ast.TryStar)):
+                    handler = ancestor
+                    operation = candidate_operation
+                    break
+            ancestor = parent_by_node.get(id(ancestor))
+        if handler is None or operation is None:
+            continue
+
+        scope_id = id(lexical_scopes[id(node)])
+        log_sanitizer_qualifiers, shadowed_names = safe_transform_contexts[scope_id]
+        region = [*operation.body, *handler.body]
+        if not any(
+            _expression_path_state(
+                statement,
+                aliases_by_scope.get(scope_id, set()),
+                log_sanitizer_qualifiers,
+                shadowed_names,
             )
+            is _PathState.TAINTED
+            for statement in region
+        ):
+            continue
+
+        captures.append(
+            {
+                "line": node.lineno,
+                "column": node.col_offset + 1,
+                "scope": scope_names.get(id(node)) or "<module>",
+                "method": method,
+                "capture": capture,
+            }
+        )
 
     return sorted(
         captures,
         key=lambda entry: (entry["line"], entry["column"], entry["method"]),
     )
+
+
+def test_traceback_capture_flags_path_bearing_loguru_opt() -> None:
+    source = dedent(
+        """
+        def emit(root):
+            try:
+                provider.current_status(root)
+            except Exception:
+                logger.opt(exception=True).warning(
+                    "status failed root_sha256={}", content_fingerprint(root)
+                )
+        """
+    )
+
+    captures = _traceback_capture_calls(source, filename="path_opt.py")
+
+    assert [capture["capture"] for capture in captures] == [
+        "logger.opt(exception=True)"
+    ]
+
+
+def test_traceback_capture_flags_path_bearing_logger_exception() -> None:
+    source = dedent(
+        """
+        def emit(database_path):
+            try:
+                connect_private_sqlite(database_path)
+            except Exception:
+                logger.exception("database connection failed")
+        """
+    )
+
+    captures = _traceback_capture_calls(source, filename="path_exception.py")
+
+    assert [capture["capture"] for capture in captures] == ["logger.exception"]
+
+
+@pytest.mark.parametrize("exception_option", ["False", "None"])
+def test_traceback_capture_ignores_disabled_loguru_options(
+    exception_option: str,
+) -> None:
+    source = dedent(
+        f"""
+        def emit(root):
+            try:
+                provider.current_status(root)
+            except Exception:
+                logger.opt(exception={exception_option}).warning("status failed")
+        """
+    )
+
+    assert _traceback_capture_calls(source, filename="disabled.py") == []
+
+
+def test_traceback_capture_ignores_unrelated_failure_region() -> None:
+    source = dedent(
+        """
+        def emit(url):
+            try:
+                app.open_url(url)
+            except Exception:
+                logger.opt(exception=True).warning("open_url failed")
+        """
+    )
+
+    assert _traceback_capture_calls(source, filename="unrelated.py") == []
+
+
+def test_traceback_capture_conservatively_flags_dynamic_enabled_option() -> None:
+    source = dedent(
+        """
+        def emit(root, capture_exception):
+            try:
+                provider.pr_url(root)
+            except Exception:
+                logger.opt(exception=capture_exception).warning("PR link failed")
+        """
+    )
+
+    captures = _traceback_capture_calls(source, filename="dynamic.py")
+
+    assert [capture["capture"] for capture in captures] == [
+        "logger.opt(exception=capture_exception)"
+    ]
+
+
+def test_traceback_capture_preserves_complete_path_bearing_evidence() -> None:
+    source = dedent(
+        """
+        def commit(root):
+            try:
+                provider.current_status(root)
+            except Exception:
+                logger.opt(exception=True).warning("commit preflight failed")
+
+        def connect(db_path):
+            try:
+                connect_private_sqlite(db_path)
+            except Exception:
+                logger.exception("database connection failed")
+
+        def browse(url):
+            try:
+                app.open_url(url)
+            except Exception:
+                logger.exception("open_url failed")
+        """
+    )
+
+    captures = _traceback_capture_calls(source, filename="complete.py")
+
+    assert [capture["capture"] for capture in captures] == [
+        "logger.opt(exception=True)",
+        "logger.exception",
+    ]
 
 
 def test_path_candidate_report_preserves_all_files_and_duplicate_findings() -> None:
