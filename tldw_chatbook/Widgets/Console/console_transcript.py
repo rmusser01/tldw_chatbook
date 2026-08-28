@@ -536,9 +536,7 @@ def _inline_markdown_spans(line: str) -> list:
     for match in _INLINE_MD_RE.finditer(line):
         if match.start() > pos:
             out.append(line[pos : match.start()])
-        bold, code, quote, curly_quote, thought, curly_thought, action = (
-            match.groups()
-        )
+        bold, code, quote, curly_quote, thought, curly_thought, action = match.groups()
         if bold is not None:
             out.append((bold, _BOLD_STYLE))
         elif code is not None:
@@ -631,7 +629,9 @@ def _roleplay_flavor_content(content: Content) -> Content:
         return remaining
 
     flavor_spans: list[Span] = []
-    speech_ranges = [match.span() for match in _ROLEPLAY_SPEECH_RE.finditer(content.plain)]
+    speech_ranges = [
+        match.span() for match in _ROLEPLAY_SPEECH_RE.finditer(content.plain)
+    ]
     for match_start, match_end in speech_ranges:
         flavor_spans.extend(
             Span(start, end, f".{_CONSOLE_RP_SPEECH_COMPONENT}")
@@ -3223,9 +3223,9 @@ class ConsoleTranscript(VerticalScroll):
     ) -> tuple[tuple[int, int, str, tuple[str, ...]], ...]:
         """Build one causal span lookup entry per message index."""
         index_by_id = {message.id: offset for offset, message in enumerate(messages)}
-        spans: list[tuple[int, int, str, tuple[str, ...]] | None] = [
-            None
-        ] * len(messages)
+        spans: list[tuple[int, int, str, tuple[str, ...]] | None] = [None] * len(
+            messages
+        )
         if units is None:
             units = group_console_transcript_messages(messages)
         for unit in units:
@@ -3999,8 +3999,7 @@ class ConsoleTranscript(VerticalScroll):
                     (turn.assistant.id, block.block_id) for block in envelope.blocks
                 )
             if live_block_id is not None and any(
-                activity.id not in previous_activity_ids
-                for activity in turn.activities
+                activity.id not in previous_activity_ids for activity in turn.activities
             ):
                 self._closed_live_thinking_blocks.add(
                     (turn.assistant.id, live_block_id)

@@ -471,7 +471,9 @@ def test_completion_generation_remains_monotonic_across_same_id_restore() -> Non
     assert store.message_completion_generation(message.id) > before_restore
 
 
-def test_message_completed_subscription_add_variant_emits_but_selection_does_not() -> None:
+def test_message_completed_subscription_add_variant_emits_but_selection_does_not() -> (
+    None
+):
     store = ConsoleChatStore()
     session = store.create_session()
     observed: list[tuple[str, str]] = []
@@ -488,7 +490,9 @@ def test_message_completed_subscription_add_variant_emits_but_selection_does_not
     assert observed == [(session.id, message.id)]
 
 
-def test_message_completed_subscription_duplicate_variant_finalize_fails_closed() -> None:
+def test_message_completed_subscription_duplicate_variant_finalize_fails_closed() -> (
+    None
+):
     store = ConsoleChatStore()
     session = store.create_session()
     observed: list[tuple[str, str]] = []
@@ -1623,12 +1627,8 @@ def _populate_native_owned_cleanup_state(
         store._character_emote_captures[message_id] = object()
         store._trajectory_timing[message_id] = {"step_started_at": 1.0}
         store._trajectory_written_ids.add(message_id)
-        store._pending_trajectory_tool_rows[message_id] = [
-            {"session_id": session.id}
-        ]
-        store._pending_trajectory_event_rows[message_id] = [
-            {"event_kind": "test"}
-        ]
+        store._pending_trajectory_tool_rows[message_id] = [{"session_id": session.id}]
+        store._pending_trajectory_event_rows[message_id] = [{"event_kind": "test"}]
 
     preparation = SimpleNamespace(
         preparation_id=f"prep-{session.id}",
@@ -1710,9 +1710,7 @@ def _assert_native_owned_cleanup_state_absent(
         store._deferred_project_instruction_state_session_ids,
     )
     assert all(session_id not in owner for owner in (*session_maps, *session_sets))
-    assert all(
-        owner != session_id for owner in store._message_session_index.values()
-    )
+    assert all(owner != session_id for owner in store._message_session_index.values())
     assert all(
         preparation.session_id != session_id
         for preparation in store._preparations_by_id.values()
@@ -1794,9 +1792,7 @@ def test_rollback_restored_session_purges_exact_native_state_without_durable_mut
     assert store.switch_session(prior.id) is prior
     assert prior.settings is prior_settings
     assert prior.draft == "keep this draft"
-    _assert_native_owned_cleanup_state_absent(
-        store, restored.id, owned_message_ids
-    )
+    _assert_native_owned_cleanup_state_absent(store, restored.id, owned_message_ids)
     assert restored.id not in coordinator._holders
     assert store._pending_trajectory_tool_rows["__unanchored__"] == [
         {"session_id": prior.id, "payload_json": "keep"}
@@ -1848,6 +1844,7 @@ def test_restore_persisted_session_is_atomic_after_create(
     monkeypatch,
 ):
     """Every post-create failure purges only the new runtime session."""
+
     class DurableObserver:
         def __init__(self) -> None:
             self.mutations: list[tuple[str, str]] = []
@@ -2129,7 +2126,9 @@ def test_unsaved_session_stages_all_reply_speech_preferences():
     assert session.speech_preferences.paused is False
 
 
-def test_reply_speech_preference_epoch_advances_only_after_successful_mutation() -> None:
+def test_reply_speech_preference_epoch_advances_only_after_successful_mutation() -> (
+    None
+):
     store = ConsoleChatStore()
     session = store.ensure_session()
 
@@ -2280,9 +2279,10 @@ def test_persisted_reply_speech_noop_reconciles_external_durable_change(tmp_path
         assert updated is session
         assert persisted is True
         assert session.speech_preferences == ConsoleSpeechPreferences()
-        assert service.get_conversation_speech_preferences(
-            conversation_id
-        ) == ConsoleSpeechPreferences()
+        assert (
+            service.get_conversation_speech_preferences(conversation_id)
+            == ConsoleSpeechPreferences()
+        )
         assert db.get_conversation_by_id(conversation_id)["version"] == 3
     finally:
         db.close_connection()
@@ -2378,9 +2378,9 @@ def test_real_persistence_round_trips_roleplay_and_reply_speech_metadata(tmp_pat
         )
 
         assert restored.speech_preferences == session.speech_preferences
-        assert parse_console_roleplay_context(record["metadata"]).user_name_override == (
-            "Rowan"
-        )
+        assert parse_console_roleplay_context(
+            record["metadata"]
+        ).user_name_override == ("Rowan")
     finally:
         db.close_connection()
 
@@ -2462,9 +2462,9 @@ def test_create_conversation_rejects_non_object_metadata_before_db_add(
             return original_add(conversation_data)
 
         monkeypatch.setattr(db, "add_conversation", recording_add)
-        before_rows = db.execute_query(
-            "SELECT COUNT(*) FROM conversations"
-        ).fetchone()[0]
+        before_rows = db.execute_query("SELECT COUNT(*) FROM conversations").fetchone()[
+            0
+        ]
         before_events = db.execute_query(
             "SELECT COUNT(*) FROM sync_log WHERE entity = 'conversations'"
         ).fetchone()[0]
@@ -2517,12 +2517,16 @@ def test_service_metadata_rejection_is_nonmutating_in_caller_transaction(tmp_pat
             )
 
         connection.commit()
-        assert connection.execute(
-            "SELECT COUNT(*) FROM conversations"
-        ).fetchone()[0] == before_rows
-        assert connection.execute(
-            "SELECT COUNT(*) FROM sync_log WHERE entity = 'conversations'"
-        ).fetchone()[0] == before_events
+        assert (
+            connection.execute("SELECT COUNT(*) FROM conversations").fetchone()[0]
+            == before_rows
+        )
+        assert (
+            connection.execute(
+                "SELECT COUNT(*) FROM sync_log WHERE entity = 'conversations'"
+            ).fetchone()[0]
+            == before_events
+        )
     finally:
         db.close_connection()
 
@@ -2546,9 +2550,9 @@ def test_add_conversation_rejects_non_object_metadata_without_writes(
 ):
     db = CharactersRAGDB(tmp_path / "speech-invalid-db.db", "speech-test")
     try:
-        before_rows = db.execute_query(
-            "SELECT COUNT(*) FROM conversations"
-        ).fetchone()[0]
+        before_rows = db.execute_query("SELECT COUNT(*) FROM conversations").fetchone()[
+            0
+        ]
         before_events = db.execute_query(
             "SELECT COUNT(*) FROM sync_log WHERE entity = 'conversations'"
         ).fetchone()[0]
@@ -2586,12 +2590,16 @@ def test_direct_metadata_rejection_is_nonmutating_in_caller_transaction(tmp_path
             db.add_conversation({"title": "Invalid metadata", "metadata": "[]"})
 
         connection.commit()
-        assert connection.execute(
-            "SELECT COUNT(*) FROM conversations"
-        ).fetchone()[0] == before_rows
-        assert connection.execute(
-            "SELECT COUNT(*) FROM sync_log WHERE entity = 'conversations'"
-        ).fetchone()[0] == before_events
+        assert (
+            connection.execute("SELECT COUNT(*) FROM conversations").fetchone()[0]
+            == before_rows
+        )
+        assert (
+            connection.execute(
+                "SELECT COUNT(*) FROM sync_log WHERE entity = 'conversations'"
+            ).fetchone()[0]
+            == before_events
+        )
     finally:
         db.close_connection()
 
@@ -2702,9 +2710,10 @@ def test_future_speech_metadata_blocks_store_mutation_without_state_change(tmp_p
         assert session.speech_preferences is before_preferences
         assert after_record["version"] == before_record["version"]
         assert json.loads(after_record["metadata"]) == future_metadata
-        assert service.get_conversation_speech_preferences(
-            conversation_id
-        ) == ConsoleSpeechPreferences()
+        assert (
+            service.get_conversation_speech_preferences(conversation_id)
+            == ConsoleSpeechPreferences()
+        )
     finally:
         db.close_connection()
 
@@ -5925,7 +5934,9 @@ def test_first_persist_context_failure_does_not_force_atomic_promotion_legacy_pa
 def test_generic_roleplay_context_does_not_capture_a_character_name():
     persistence = FakePersistence()
     store = ConsoleChatStore(persistence=persistence)
-    session = store.create_session(settings=ConsoleSessionSettings(provider="llama_cpp"))
+    session = store.create_session(
+        settings=ConsoleSessionSettings(provider="llama_cpp")
+    )
     session.user_display_name_override = "Rowan"
 
     conversation_id = store.persist_session_if_needed(session.id)

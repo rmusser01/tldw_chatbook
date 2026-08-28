@@ -2217,9 +2217,7 @@ class ChatPersistenceService:
         if feedback is not None:
             # TASK-22226: version-only readback -- never rehydrate the BLOB
             # that was just written.
-            created_message = self.db.get_message_by_id_without_blob(
-                created_message_id
-            )
+            created_message = self.db.get_message_by_id_without_blob(created_message_id)
             self.db.update_message(
                 created_message_id,
                 {"feedback": feedback},

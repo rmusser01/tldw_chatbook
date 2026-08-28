@@ -402,9 +402,7 @@ async def hydrate_console_session(
     if not isinstance(conversation, dict):
         conversation = {}
     roleplay_context = parse_console_roleplay_context(conversation.get("metadata"))
-    active_workspace_id = str(
-        store.workspace_context.active_workspace_id or ""
-    ).strip()
+    active_workspace_id = str(store.workspace_context.active_workspace_id or "").strip()
     persisted_workspace_id = (
         str(conversation.get("workspace_id")).strip()
         if conversation.get("workspace_id") is not None

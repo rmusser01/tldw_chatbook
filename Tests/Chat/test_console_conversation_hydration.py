@@ -454,9 +454,7 @@ async def test_a_launch_hydrated_session_matches_a_screen_resumed_one(tmp_path):
         f"launch={launch_session.settings!r}\nscreen={screen_session.settings!r}"
     )
     assert launch_session.settings is not None
-    assert launch_session.settings.system_prompt == (
-        "  You are Alraune.\n"
-    ), (
+    assert launch_session.settings.system_prompt == ("  You are Alraune.\n"), (
         "the saved system prompt must be restored VERBATIM -- the comparison "
         "above is worthless if both sides restored nothing"
     )
@@ -649,9 +647,7 @@ async def test_hydration_restores_v2_local_character_snapshot_for_future_project
     assert session.settings is not None
     assert session.settings.character_label == "Alraune"
     assert session.settings.system_prompt == "Saved prompt for Alraune."
-    store._materialize_roleplay_projections_live(
-        session.id, global_default="User"
-    )
+    store._materialize_roleplay_projections_live(session.id, global_default="User")
     assert session.settings.system_prompt == "Alraune speaks with Captain Rowan."
     assert "Renamed current card" not in session.settings.system_prompt
 

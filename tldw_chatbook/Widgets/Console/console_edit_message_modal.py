@@ -130,9 +130,7 @@ class ConsoleEditMessageModal(
                     "and gets a fresh reply."
                 )
             else:
-                context_copy = (
-                    "Editing existing transcript message. This will not create a new prompt."
-                )
+                context_copy = "Editing existing transcript message. This will not create a new prompt."
             yield Static(
                 context_copy,
                 id="console-edit-message-context",

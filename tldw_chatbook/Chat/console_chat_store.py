@@ -867,9 +867,7 @@ class StagedCapturePurge:
     expected_revision: int
     durable_keys: frozenset[tuple[str, str, int]]
     message_swaps: tuple[tuple[ConsoleChatMessage, tuple["ExchangeCapture", ...]], ...]
-    blob_cache: tuple[
-        tuple[str, Mapping[tuple[str, int, str], bytes]], ...
-    ]
+    blob_cache: tuple[tuple[str, Mapping[tuple[str, int, str], bytes]], ...]
     abandoned_tags: tuple[tuple[str, frozenset[str]], ...]
     capture_revisions: tuple[tuple[ConsoleChatSession, int], ...]
     removed_count: int
@@ -3229,9 +3227,7 @@ class ConsoleChatStore:
         unanchored = self._pending_trajectory_tool_rows.get("__unanchored__")
         if unanchored is not None:
             retained = [
-                entry
-                for entry in unanchored
-                if entry.get("session_id") != session_id
+                entry for entry in unanchored if entry.get("session_id") != session_id
             ]
             if retained:
                 self._pending_trajectory_tool_rows["__unanchored__"] = retained
@@ -4337,9 +4333,7 @@ class ConsoleChatStore:
             raise TypeError("fingerprint must be ConsoleDurableAcceptanceFingerprint")
         if self._durable_fingerprint_by_preparation.get(preparation_id) != fingerprint:
             if self._durable_retired_locked(preparation_id, fingerprint):
-                raise ConsoleDurableAcceptanceRetired(
-                    "Durable acceptance was retired."
-                )
+                raise ConsoleDurableAcceptanceRetired("Durable acceptance was retired.")
             raise RuntimeError("Durable postcommit fingerprint changed.")
 
     def _durable_retired_locked(
@@ -6287,8 +6281,7 @@ class ConsoleChatStore:
                 message_swaps.append((message, exchanges))
             remaining_run_tags[message.id] = {capture.run_tag for capture in exchanges}
             remaining_capture_keys[message.id] = {
-                (capture.run_tag, capture.seq, capture.status)
-                for capture in exchanges
+                (capture.run_tag, capture.seq, capture.status) for capture in exchanges
             }
 
         blob_cache = tuple(
@@ -6354,7 +6347,9 @@ class ConsoleChatStore:
             target_session.capture_revision = revision
         return stage.removed_count
 
-    def hydrate_session_capture_policy(self, session_id: str) -> CapturePolicyReadResult:
+    def hydrate_session_capture_policy(
+        self, session_id: str
+    ) -> CapturePolicyReadResult:
         """Hydrate a persisted conversation override into process-local state."""
         with self._capture_policy_lock:
             session = self._session_or_raise(session_id)
@@ -12615,9 +12610,7 @@ class ConsoleChatStore:
             logger.bind(
                 message_id=message.id,
                 error_type=type(exc).__name__,
-            ).warning(
-                "exchange_flush_failed"
-            )
+            ).warning("exchange_flush_failed")
 
     def _persist_metadata_only(self, message: ConsoleChatMessage) -> None:
         """Flush a persisted message's metadata without a version bump.

@@ -87,8 +87,8 @@ async def test_character_handoff_reuses_untouched_chat_one(monkeypatch):
     sync = AsyncMock()
     focus_calls: list[bool] = []
     screen._session._sync_native_console_chat_ui_fn = sync
-    screen._session._focus_composer_if_needed_fn = (
-        lambda *, force=False: focus_calls.append(force)
+    screen._session._focus_composer_if_needed_fn = lambda *, force=False: (
+        focus_calls.append(force)
     )
 
     assert await screen._session._start_character_console_session(
@@ -596,9 +596,7 @@ async def test_apply_console_switcher_choice_activate_uses_shared_activation_pat
         await pilot.pause()
 
         assert store.active_session_id == target.id
-        assert registry_service.get_active_workspace().workspace_id == (
-            "ws-switcher"
-        )
+        assert registry_service.get_active_workspace().workspace_id == ("ws-switcher")
 
 
 @pytest.mark.asyncio
@@ -1013,9 +1011,10 @@ async def test_durable_fork_orders_commit_projection_registration_and_activation
             assert store.active_session_id == fork.id
             assert source in store.sessions()
             assert dict(db.get_conversation_by_id(source_id)) == source_before
-            assert tuple(
-                dict(row) for row in db.get_messages_for_conversation(source_id)
-            ) == messages_before
+            assert (
+                tuple(dict(row) for row in db.get_messages_for_conversation(source_id))
+                == messages_before
+            )
     finally:
         db.close()
 
@@ -1134,7 +1133,9 @@ async def test_ambiguous_durable_collision_fails_closed_without_publication(tmp_
             assert {session.id for session in store.sessions()} == original_session_ids
             assert request.snapshot is not None
             assert request.snapshot.fork_conversation_id == request.fork_conversation_id
-            assert request.modal.query_one("#console-fork-chat-confirm").display is False
+            assert (
+                request.modal.query_one("#console-fork-chat-confirm").display is False
+            )
             assert "Close" in str(
                 request.modal.query_one("#console-fork-chat-status").render()
             )
@@ -1193,13 +1194,16 @@ async def test_workspace_projection_failure_keeps_one_open_fork_pending_retry(tm
             assert store.active_session_id == fork_session_id
             assert store.has_pending_workspace_projection(fork_session_id)
             assert db.get_conversation_by_id(fork_conversation_id) is not None
-            assert len(
-                [
-                    session
-                    for session in store.sessions()
-                    if session.persisted_conversation_id == fork_conversation_id
-                ]
-            ) == 1
+            assert (
+                len(
+                    [
+                        session
+                        for session in store.sessions()
+                        if session.persisted_conversation_id == fork_conversation_id
+                    ]
+                )
+                == 1
+            )
             commit.assert_called_once()
     finally:
         db.close()
@@ -1250,9 +1254,16 @@ async def test_temporary_registration_retry_reuses_id_and_publishes_once():
 
         assert registration_ids == [registration_ids[0], registration_ids[0]]
         assert store.active_session_id == registration_ids[0]
-        assert len(
-            [session for session in store.sessions() if session.id == registration_ids[0]]
-        ) == 1
+        assert (
+            len(
+                [
+                    session
+                    for session in store.sessions()
+                    if session.id == registration_ids[0]
+                ]
+            )
+            == 1
+        )
 
 
 @pytest.mark.asyncio
@@ -1292,9 +1303,16 @@ async def test_temporary_activation_failure_open_reuses_registered_id_once():
         await pilot.press("enter")
         await _wait_for_fork_modal_state(pilot, modal, "created_not_opened")
 
-        assert len(
-            [session for session in store.sessions() if session.id == request.fork_session_id]
-        ) == 1
+        assert (
+            len(
+                [
+                    session
+                    for session in store.sessions()
+                    if session.id == request.fork_session_id
+                ]
+            )
+            == 1
+        )
         modal.query_one("#console-fork-chat-open").press()
         for _ in range(300):
             if host.screen_stack[-1] is console:
@@ -1303,9 +1321,16 @@ async def test_temporary_activation_failure_open_reuses_registered_id_once():
 
         assert activation_ids == [request.fork_session_id, request.fork_session_id]
         assert store.active_session_id == request.fork_session_id
-        assert len(
-            [session for session in store.sessions() if session.id == request.fork_session_id]
-        ) == 1
+        assert (
+            len(
+                [
+                    session
+                    for session in store.sessions()
+                    if session.id == request.fork_session_id
+                ]
+            )
+            == 1
+        )
 
 
 @pytest.mark.asyncio
@@ -1355,12 +1380,14 @@ async def test_ambiguous_durable_commit_reconciles_without_second_bundle(tmp_pat
                 session
                 for session in store.sessions()
                 if session.persisted_conversation_id
-                and session.persisted_conversation_id != source.persisted_conversation_id
+                and session.persisted_conversation_id
+                != source.persisted_conversation_id
             ]
             assert len(durable_forks) == 1
-            assert db.get_conversation_by_id(
-                durable_forks[0].persisted_conversation_id
-            ) is not None
+            assert (
+                db.get_conversation_by_id(durable_forks[0].persisted_conversation_id)
+                is not None
+            )
     finally:
         db.close()
 
@@ -1403,7 +1430,9 @@ async def test_postcommit_registration_failure_open_retry_reuses_identity(tmp_pa
             modal = host.screen_stack[-1]
             await pilot.press("enter")
             await _wait_for_fork_modal_state(pilot, modal, "created_not_opened")
-            committed_id = console._session._active_fork_request.snapshot.fork_conversation_id
+            committed_id = (
+                console._session._active_fork_request.snapshot.fork_conversation_id
+            )
             assert committed_id is not None
             assert db.get_conversation_by_id(committed_id) is not None
 
@@ -1415,12 +1444,15 @@ async def test_postcommit_registration_failure_open_retry_reuses_identity(tmp_pa
 
             assert registration_ids == [registration_ids[0], registration_ids[0]]
             assert store.active_session_id == registration_ids[0]
-            assert len(
-                [
-                    session
-                    for session in store.sessions()
-                    if session.persisted_conversation_id == committed_id
-                ]
-            ) == 1
+            assert (
+                len(
+                    [
+                        session
+                        for session in store.sessions()
+                        if session.persisted_conversation_id == committed_id
+                    ]
+                )
+                == 1
+            )
     finally:
         db.close()

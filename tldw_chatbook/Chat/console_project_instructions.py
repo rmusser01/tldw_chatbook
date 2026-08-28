@@ -94,9 +94,7 @@ def sanitize_fork_project_instruction_state(
     return ProjectInstructionControlState(
         project_instructions_enabled=source.project_instructions_enabled,
         working_folder_binding_id=source.working_folder_binding_id,
-        working_folder_locator_fingerprint=(
-            source.working_folder_locator_fingerprint
-        ),
+        working_folder_locator_fingerprint=(source.working_folder_locator_fingerprint),
         project_instruction_notice_key=None,
     )
 

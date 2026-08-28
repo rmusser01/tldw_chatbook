@@ -10883,9 +10883,7 @@ class ChatScreen(BaseAppScreen):
         self._apply_focus_chrome()
         if not hasattr(self, "_console_h3_terminal_generations"):
             self._console_h3_terminal_generations: set[str] = set()
-        ordered_resume_pending = (
-            self._pending_resume_local_conversation_id is not None
-        )
+        ordered_resume_pending = self._pending_resume_local_conversation_id is not None
         self._resume_navigation_startup_in_progress = ordered_resume_pending
         # This handoff is session/config only and does not need mounted DOM.
         # Consume it before ordinary UI restoration can create a competing
@@ -11471,8 +11469,7 @@ class ChatScreen(BaseAppScreen):
             raise
         except Exception as exc:
             logger.warning(
-                "Chat handoff acquisition failed "
-                "(channel={}, exception_category={})",
+                "Chat handoff acquisition failed (channel={}, exception_category={})",
                 HandoffChannel.CHAT.value,
                 type(exc).__name__,
             )

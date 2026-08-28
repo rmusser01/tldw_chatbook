@@ -2512,12 +2512,15 @@ def test_update_roleplay_context_retries_once_and_preserves_concurrent_sibling()
     db = _RoleplayConflictDB(conflicts=1)
     service = ChatPersistenceService(db)
 
-    assert service.update_conversation_roleplay_context(
-        conversation_id="conv-1",
-        user_name_override="Rowan",
-        character_system_template="Speak to {{user}}.",
-        character_name_snapshot="Alraune",
-    ) is True
+    assert (
+        service.update_conversation_roleplay_context(
+            conversation_id="conv-1",
+            user_name_override="Rowan",
+            character_system_template="Speak to {{user}}.",
+            character_name_snapshot="Alraune",
+        )
+        is True
+    )
 
     assert db.update_attempts == 2
     saved = json.loads(db.row["metadata"])

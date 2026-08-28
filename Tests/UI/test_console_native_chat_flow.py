@@ -228,10 +228,7 @@ def test_native_ready_console_config_survives_cache_invalidating_reload() -> Non
 
     assert reloaded["chat_defaults"]["provider"] == "llama_cpp"
     assert reloaded["chat_defaults"]["model"] == "prepared-model"
-    assert (
-        reloaded["api_settings"]["llama_cpp"]["api_url"]
-        == "http://127.0.0.1:9099"
-    )
+    assert reloaded["api_settings"]["llama_cpp"]["api_url"] == "http://127.0.0.1:9099"
     assert reloaded["api_settings"]["llama_cpp"]["model"] == "prepared-model"
 
 
