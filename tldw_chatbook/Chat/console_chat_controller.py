@@ -29,6 +29,7 @@ from typing import (
     TypedDict,
 )
 from uuid import uuid4
+import weakref
 
 from loguru import logger
 from rich.markup import escape as escape_markup
@@ -273,6 +274,11 @@ from tldw_chatbook.Agents.session_todo_store import (
     TodoChangeCallback,
 )
 from tldw_chatbook.Agents.tool_catalog import BuiltinToolProvider
+from tldw_chatbook.Agents.raw_shell_tool_provider import (
+    RAW_SHELL_SERVER_KEY,
+    RAW_SHELL_TOOL_NAME,
+    RawShellToolProvider,
+)
 from tldw_chatbook.Agents.virtual_cli_provider import VirtualCliProvider
 from tldw_chatbook.config import (
     ConfigMutationResult,
@@ -1609,6 +1615,43 @@ def build_virtual_cli_review_hook(
     return review_tool_calls
 
 
+def build_raw_shell_review_hook(
+    provider: "RawShellToolProvider",
+    request_approvals: Callable[[list["MCPPendingCall"]], dict[str, str]],
+) -> Callable[[list["ToolCall"], str], dict[str, str]]:
+    """Gate model-authored host-shell calls independently by native call id."""
+
+    def review_tool_calls(calls: list["ToolCall"], run_id: str) -> dict[str, str]:
+        authority_generation = provider.authority_generation
+        provider.apply_batch_decisions(run_id, {})
+        pending = [
+            row
+            for call in calls
+            if (row := provider.pending_gate_for(call)) is not None
+        ]
+        if not pending:
+            return {}
+        decisions = request_approvals(pending)
+        provider.apply_batch_decisions(
+            run_id,
+            decisions,
+            pending,
+            authority_generation=authority_generation,
+        )
+        verdicts: dict[str, str] = {}
+        for row in pending:
+            key = row.call_id or row.llm_name
+            decision = decisions.get(key)
+            verdicts[key] = (
+                "proceed"
+                if decision in {"approve_once", "approve_session"}
+                else USER_DENIED_REFUSAL.format(name=row.llm_name)
+            )
+        return verdicts
+
+    return review_tool_calls
+
+
 def build_combined_review_hook(
     hooks: list[Callable[[list["ToolCall"]], dict[str, str]]],
 ) -> Callable[[list["ToolCall"]], dict[str, str]]:
@@ -2682,6 +2725,9 @@ class ConsoleChatController:
         #: whose id was stamped onto the card the user actually decided --
         #: never "whichever session happens to be active right now".
         self._pending_approval_rounds: dict[str, dict[str, Any]] = {}
+        self._raw_shell_providers: weakref.WeakSet[RawShellToolProvider] = (
+            weakref.WeakSet()
+        )
         #: PR0: retained payload per ROUND (was per session), keyed by
         #: `round_id`. `switch_session` and every teardown re-derive the
         #: mounted card from this map's FIFO head for the session, so a
@@ -2758,7 +2804,9 @@ class ConsoleChatController:
 
     def capture_policy_snapshot(self, session_id: str) -> CapturePolicySnapshot:
         """Resolve the future policy for one immutable session identity."""
-        session = next((item for item in self.store.sessions() if item.id == session_id), None)
+        session = next(
+            (item for item in self.store.sessions() if item.id == session_id), None
+        )
         if session is None:
             raise KeyError(session_id)
         self._hydrate_capture_policy(session)
@@ -2786,7 +2834,8 @@ class ConsoleChatController:
             active_run_detail=self._active_capture_details.get(session_id),
             queued_consumer=bool(getattr(queue, "entries", ())),
             save_pending=state.save_pending,
-            error_code=self._capture_policy_hydration_errors.get(session_id) or (
+            error_code=self._capture_policy_hydration_errors.get(session_id)
+            or (
                 "invalid_" + "_".join(effective.invalid_sources)
                 if effective.invalid_sources
                 else None
@@ -2797,9 +2846,7 @@ class ConsoleChatController:
         """Return the authoritative process-local capture revision."""
         return self.store.capture_revision(session_id)
 
-    def capture_purge_availability(
-        self, session_id: str
-    ) -> CapturePurgeAvailability:
+    def capture_purge_availability(self, session_id: str) -> CapturePurgeAvailability:
         """Report the first bounded writer reason preventing quiescence."""
         try:
             self.store.capture_revision(session_id)
@@ -2854,9 +2901,7 @@ class ConsoleChatController:
                 )
             reason = self._capture_purge_blocker(session_id, include_lease=True)
             if reason is not None:
-                return CapturePurgeResult.blocked(
-                    revision, reason
-                )
+                return CapturePurgeResult.blocked(revision, reason)
             if revision != expected_capture_revision:
                 return CapturePurgeResult(
                     CapturePurgeStatus.STALE,
@@ -2980,10 +3025,7 @@ class ConsoleChatController:
             reconciliation_cancelled = False
             try:
                 session_only = False
-                if (
-                    has_durable_identity
-                    and self._capture_policy_repository is not None
-                ):
+                if has_durable_identity and self._capture_policy_repository is not None:
                     repository = self._capture_policy_repository
                     repository_settled = asyncio.Event()
                     repository_result: list[Any] = []
@@ -3087,9 +3129,7 @@ class ConsoleChatController:
                     else CapturePolicyMutationStatus.APPLIED,
                     self.capture_policy_snapshot(session_id),
                     session_only and has_durable_identity,
-                    "save_failed"
-                    if session_only and has_durable_identity
-                    else None,
+                    "save_failed" if session_only and has_durable_identity else None,
                 )
                 if reconciliation_cancelled:
                     raise asyncio.CancelledError
@@ -3178,7 +3218,9 @@ class ConsoleChatController:
                 "stale_config_generation",
                 config_result,
             )
-        active = not enabled or detail is CaptureDetail.SAFE or config_result.file_replaced
+        active = (
+            not enabled or detail is CaptureDetail.SAFE or config_result.file_replaced
+        )
         if not active:
             self.store.abandon_capture_policy_mutation(reservation)
             return CapturePolicyMutationResult(
@@ -3326,9 +3368,7 @@ class ConsoleChatController:
             try:
                 return os.path.normcase(str(Path(value).expanduser().resolve()))
             except OSError:
-                return os.path.normcase(
-                    os.path.abspath(os.path.expanduser(str(value)))
-                )
+                return os.path.normcase(os.path.abspath(os.path.expanduser(str(value))))
 
         target = _canonical(root)
         with self._active_workspace_roots_lock:
@@ -6517,8 +6557,7 @@ class ConsoleChatController:
             # work itself succeeded; there is simply no ledger left to record
             # it in. Closing a chat is not an error.
             logger.debug(
-                "Durable postcommit effect completed after retirement "
-                "(effect={})",
+                "Durable postcommit effect completed after retirement (effect={})",
                 effect_name,
             )
         return result
@@ -8698,6 +8737,9 @@ class ConsoleChatController:
             # The verdict keys this round must answer for -- what `revoke_
             # approval_rounds_for_run` fills with "deny".
             "names": tuple(unique_keys),
+            # Provider-homogeneous rows retained for narrowly scoped
+            # authority revocation without disturbing sibling rounds.
+            "calls": tuple(pending),
             # Flipped by revocation. Re-read after the wait below so a
             # decision that lands in `decisions` AFTER the revoke (the
             # `ApprovalDecided` message is async, and `resolve_pending_
@@ -8733,6 +8775,9 @@ class ConsoleChatController:
                     "options": list(call.options),
                     "path_precheck_failed": call.path_precheck_failed,
                     "call_id": call.call_id,
+                    "full_command": call.full_command,
+                    "warning": call.warning,
+                    "scope_notice": call.scope_notice,
                 }
                 for call in pending
             ],
@@ -9693,6 +9738,86 @@ class ConsoleChatController:
         )
         return provider, build_virtual_cli_review_hook(provider, bound_request)
 
+    def _compose_raw_shell_provider(
+        self,
+        session_id: str | None = None,
+        turn_context: ConsoleTurnExecutionContext | None = None,
+        *,
+        project_root: Path | None = None,
+    ) -> tuple[
+        RawShellToolProvider | None,
+        Callable[[list["ToolCall"], str], dict[str, str]] | None,
+    ]:
+        """Compose model raw shell only while every live safety gate is open."""
+        configured = (
+            turn_context.tool_configuration.get(
+                "local_tools_enabled", LOCAL_TOOLS_DEFAULT_ENABLED
+            )
+            if turn_context is not None
+            else get_cli_setting(
+                "console", "local_tools_enabled", LOCAL_TOOLS_DEFAULT_ENABLED
+            )
+        )
+        local_enabled = coerce_bool_setting(
+            configured, LOCAL_TOOLS_DEFAULT_ENABLED
+        )
+        if not local_enabled or not session_id:
+            return None, None
+        service = getattr(self.app, "unified_mcp_service", None)
+        runtime = getattr(self.app, "raw_cli_runtime", None)
+        if service is None or runtime is None:
+            return None, None
+        try:
+            if (
+                runtime.permitted is not True
+                or runtime.armed is not True
+                or service.get_kill_switch()
+            ):
+                return None, None
+        except Exception:
+            return None, None
+
+        if project_root is not None:
+            initial_directory = project_root
+        else:
+            snapshot = turn_context.scratch_space if turn_context is not None else None
+            if snapshot is None:
+                return None, None
+            initial_directory = snapshot.root
+
+        def kill_switch() -> bool:
+            try:
+                return bool(service.get_kill_switch())
+            except Exception:
+                return True
+
+        bound_request = functools.partial(
+            self.request_mcp_approvals, session_id=session_id
+        )
+        agent_bridge = getattr(self, "_agent_bridge", None)
+        provider = RawShellToolProvider(
+            runtime=runtime,
+            console_session_id=session_id,
+            initial_directory=lambda: initial_directory,
+            resolve_state=service.gate_tool_test,
+            local_tools_enabled=lambda: local_enabled,
+            kill_switch=kill_switch,
+            progress_sink=(
+                agent_bridge.raw_shell_progress_sink
+                if agent_bridge is not None
+                else None
+            ),
+        )
+        providers = getattr(self, "_raw_shell_providers", None)
+        if providers is None:
+            providers = weakref.WeakSet()
+            self._raw_shell_providers = providers
+        providers.add(provider)
+        runtime.set_model_authority_revoker(self.revoke_raw_shell_authority)
+        if not provider.catalog_enabled():
+            return None, None
+        return provider, build_raw_shell_review_hook(provider, bound_request)
+
     def _todo_wiring(self, session_id: str | None) -> _TodoWiring:
         """The todo_store/on_todo_change kwargs for ``_compose_local_provider``.
 
@@ -9936,6 +10061,50 @@ class ConsoleChatController:
         if total:
             logger.info("Revoked pending approval rounds for cancelled run")
         return total
+
+    def revoke_raw_shell_authority(self) -> int:
+        """Fail closed only raw-shell stamps and approval rounds on disarm."""
+        providers = getattr(self, "_raw_shell_providers", ())
+        for provider in tuple(providers):
+            provider.revoke_approval_stamps()
+
+        revoked: list[tuple[str, str | None]] = []
+        with self._approval_state_lock:
+            for round_id, state in list(self._pending_approval_rounds.items()):
+                calls = tuple(state.get("calls") or ())
+                if not calls or not all(
+                    call.server_key == RAW_SHELL_SERVER_KEY
+                    and call.tool_name == RAW_SHELL_TOOL_NAME
+                    for call in calls
+                ):
+                    continue
+                state["revoked"] = True
+                decisions = state.get("decisions")
+                if isinstance(decisions, dict):
+                    for name in state.get("names") or ():
+                        decisions[name] = "deny"
+                self._pending_approval_rounds.pop(round_id, None)
+                session_id = state.get("session_id") or None
+                revoked.append((round_id, session_id))
+                event = state.get("event")
+                if event is not None:
+                    event.set()
+
+        for round_id, session_id in revoked:
+            self._unpark_round_payload(self._parked_approval_payloads, round_id)
+            if session_id is not None:
+                self.discard_pending_round(session_id, round_id)
+            try:
+                self._remount_head(
+                    self._parked_approval_payloads,
+                    self.set_pending_approval,
+                    session_id,
+                )
+            except Exception:  # noqa: BLE001 -- revocation must continue
+                logger.debug("Failed to remount after raw shell revocation")
+        if revoked:
+            logger.info("Revoked pending raw shell approval rounds on disarm")
+        return len(revoked)
 
     def _revoke_tool_approval_rounds(self, run_id: str) -> list[tuple[str, str | None]]:
         """Fail this run's tool-approval rounds closed. Registry work only.
@@ -12312,9 +12481,7 @@ class ConsoleChatController:
             scratch_snapshot,
         )
         try:
-            resolution = await self._resolve_for_send_bounded(
-                owning_provider_selection
-            )
+            resolution = await self._resolve_for_send_bounded(owning_provider_selection)
         except Exception:  # noqa: BLE001 - preview failure stays content-free
             return None
         if not getattr(resolution, "ready", True):
@@ -12382,6 +12549,13 @@ class ConsoleChatController:
                 project_root_identity=selection.root_identity,
             )
         )
+        raw_shell_provider, _raw_shell_review_hook = (
+            self._compose_raw_shell_provider(
+                session_id=session_id,
+                turn_context=turn_context,
+                project_root=selection.root,
+            )
+        )
         try:
             preview_result = await asyncio.to_thread(
                 bridge.build_project_instruction_preview_request,
@@ -12399,6 +12573,7 @@ class ConsoleChatController:
                 builtin_gate=builtin_gate,
                 local_provider=local_provider,
                 virtual_cli_provider=virtual_cli_provider,
+                raw_shell_provider=raw_shell_provider,
                 scratch_root=scratch_snapshot.root,
                 scratch_lease=scratch_lease,
                 turn_skill_bindings=turn_skill_bindings,
@@ -15638,9 +15813,7 @@ class ConsoleChatController:
             logger.bind(
                 message_id=assistant_message_id,
                 error_type=type(exc).__name__,
-            ).warning(
-                "exchange_attach_failed"
-            )
+            ).warning("exchange_attach_failed")
         payloads = self._usage_payloads(stream_signals)
         provider = str(getattr(resolution, "provider", "") or "")
         model = str(getattr(resolution, "model", "") or "")
@@ -16844,6 +17017,15 @@ class ConsoleChatController:
                 project_root_guard=project_authority_guard,
             )
         )
+        raw_shell_provider, raw_shell_review_hook = (
+            self._compose_raw_shell_provider(
+                session_id=session_id,
+                turn_context=turn_context,
+                project_root=(
+                    project_selection.root if project_selection is not None else None
+                ),
+            )
+        )
         self._mcp_provider = mcp_provider
 
         # task-545/T6: build THIS run's built-in permission gate and hand
@@ -16907,6 +17089,10 @@ class ConsoleChatController:
         if virtual_cli_review_hook is not None:
             review_hook = build_combined_review_hook(
                 [review_hook, virtual_cli_review_hook]
+            )
+        if raw_shell_review_hook is not None:
+            review_hook = build_combined_review_hook(
+                [review_hook, raw_shell_review_hook]
             )
 
         # task-1337: THIS run's Library retrieval provider (direct tools or
@@ -16989,6 +17175,7 @@ class ConsoleChatController:
                 review_tool_calls=review_hook,
                 local_provider=local_provider,
                 virtual_cli_provider=virtual_cli_provider,
+                raw_shell_provider=raw_shell_provider,
                 library_provider=library_provider,
                 library_authority=library_provider_authority,
                 native_tools_enabled=bool(

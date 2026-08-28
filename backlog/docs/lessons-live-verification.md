@@ -308,6 +308,26 @@ regression with `fileno() == -1`; an ordinary executor test may reuse an already
 running resource tracker and cannot prove first-launch behavior. Finish with a
 mounted command that reaches the actual subprocess, not only a synthetic executor.
 
+## A spawned worker replays package initializers in a fresh import order (TASK-22510, 2026-08-28)
+
+**What happened.** The model raw-shell suites passed because their pytest process
+had already imported Chatbook's Chat package. The first real command from a mounted
+Console still failed inside the spawned worker before shell launch. In the fresh
+interpreter, `raw_cli_executor` imported the general `input_validation` module;
+that module eagerly imported `Chat.console_chat_models`, which executed the eager
+`Chat/__init__.py` and `Library/__init__.py` chains. Library then imported
+`sanitize_string` from the still-partially initialized validation module and raised
+a circular-import `ImportError`. Preloading Chat made the same executor import pass,
+which is why ordinary in-process coverage hid the defect.
+
+**What to do.** Treat every spawn target's transitive imports as a fresh-interpreter
+contract. Keep a subprocess regression that imports the target with the repository
+root explicitly first on `sys.path`, and verify one mounted first launch as well as
+the in-process suite. General boundary modules should not eagerly import feature
+packages with nontrivial `__init__.py` files; defer the feature-specific dependency
+behind the narrow function that needs it while preserving any established patch
+seam.
+
 ## Credentials in a live run
 
 A live credential pasted into a session is a real secret. Keep it in an env var for the

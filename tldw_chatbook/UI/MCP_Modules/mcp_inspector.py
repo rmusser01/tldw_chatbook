@@ -1680,9 +1680,21 @@ class MCPInspector(Vertical):
                     )
                 )
             else:
+                phase_note = "Server-source tools are display-only."
+                # Keep this UI-only identity check lightweight. Importing
+                # the raw-shell provider here pulls its executor and input-
+                # validation graph into the generic inspector, creating a
+                # Chat/Library import cycle during test and app startup.
+                if tool.tool_id == "local:__local__::shell_exec":
+                    phase_note = (
+                        "Policy only — raw shell commands run from Console "
+                        "under its separate approval flow."
+                    )
+                elif tool.source != "server":
+                    phase_note = "Tool testing is unavailable from this policy view."
                 widgets.append(
                     Static(
-                        "Server-source tools are display-only.",
+                        phase_note,
                         id="mcp-inspector-tool-phase-note",
                         classes="ds-field-row", markup=False,
                     )

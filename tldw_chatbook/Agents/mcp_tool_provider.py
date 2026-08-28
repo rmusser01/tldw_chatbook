@@ -127,6 +127,14 @@ class MCPPendingCall:
     #: dispatch) -- it must never be used to auto-deny. Always `False` for
     #: MCP rows and every non-file builtin tool.
     path_precheck_failed: bool = False
+    #: Optional complete command for approval surfaces that must not use the
+    #: generic compact argument summary. Raw shell is currently the only
+    #: producer; ordinary rows leave this empty.
+    full_command: str = ""
+    #: Optional plain-text danger copy rendered beside the complete command.
+    warning: str = ""
+    #: Optional plain-text explanation of a broader approval scope.
+    scope_notice: str = ""
 
 
 def _has_non_text_content(value: Any) -> bool:
@@ -204,9 +212,7 @@ class MCPToolProvider:
         self._service = service
         self._main_loop = main_loop
         self._approval_callback = approval_callback
-        self._builtin_raw_name_exclusions = frozenset(
-            builtin_raw_name_exclusions or ()
-        )
+        self._builtin_raw_name_exclusions = frozenset(builtin_raw_name_exclusions or ())
         self._catalog: list[ToolCatalogEntry] = []
         # llm_name -> (HubTool, EffectiveToolState as resolved at composition
         # time). Built ONCE by compose_catalog() so list_catalog()/
@@ -719,9 +725,7 @@ class MCPToolProvider:
             # (and the model-facing execution record) distinct so Findings
             # mode can tell "server default was allow" apart from "the
             # user approved this session".
-            return self._execute(
-                tool, call_args, decision=APPROVED_SESSION_DECISION
-            )
+            return self._execute(tool, call_args, decision=APPROVED_SESSION_DECISION)
 
         # state == "ask"
         if self._approval_callback is None:
@@ -809,9 +813,7 @@ class MCPToolProvider:
                 tool,
                 what="approve_for_session",
             )
-            decision = (
-                APPROVED_SESSION_DECISION if already_approved else "approved"
-            )
+            decision = APPROVED_SESSION_DECISION if already_approved else "approved"
             return self._execute(tool, args, decision=decision)
         if verdict == "always_allow":
             self._safe_side_effect(
