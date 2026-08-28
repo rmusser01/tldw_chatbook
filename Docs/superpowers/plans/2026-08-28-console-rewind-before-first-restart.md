@@ -21,6 +21,8 @@
 | `tldw_chatbook/DB/migrations/chachanotes_v53_to_v54_active_leaf_before_message.sql` | Guarded v53→v54 version stamp for the local-only cursor companion. |
 | `tldw_chatbook/DB/ChaChaNotes_DB.py` | Register v54 and expose atomic two-column cursor APIs while preserving scalar APIs. |
 | `Tests/DB/test_chachanotes_v54_before_first_cursor.py` | Migration, cursor round-trip, missing-row, and local-only invariants. |
+| `Tests/DB/test_chachanotes_v53_safe_capture_trim.py` | Keep v53 behavior tests valid when the current end-of-chain version becomes 54. |
+| `Tests/DB/test_chachanotes_console_thinking_migration.py` | Keep the v52 behavior test pinned to the current end-of-chain version rather than literal 53. |
 | `tldw_chatbook/Chat/console_chat_store.py` | Dedicated before-message mutation, validation, tri-state resume, draft hydration, and repair. |
 | `Tests/Chat/test_console_chat_store_before_first.py` | Focused store mutation/resume state-machine tests. |
 | `tldw_chatbook/Chat/console_conversation_hydration.py` | Read and pass both cursor components through production hydration. |
@@ -41,6 +43,8 @@ No export, import, Sync payload, fork snapshot, trajectory format, attachment-re
 - Create: `tldw_chatbook/DB/migrations/chachanotes_v53_to_v54_active_leaf_before_message.sql`
 - Modify: `tldw_chatbook/DB/ChaChaNotes_DB.py:575,6872-7031,7190-7233,10872-10898`
 - Create: `Tests/DB/test_chachanotes_v54_before_first_cursor.py`
+- Modify: `Tests/DB/test_chachanotes_v53_safe_capture_trim.py:183-417`
+- Modify: `Tests/DB/test_chachanotes_console_thinking_migration.py:254-270`
 
 - [ ] **Step 1: Write failing v53→v54 migration tests.**
 
@@ -140,6 +144,8 @@ def _migrate_from_v53_to_v54(self, conn: sqlite3.Connection) -> None:
 ```
 
 Do not add trigger DDL: omission from the conversation triggers is the local-only boundary.
+
+Update only the end-of-chain assertions in the two directly affected historical migration suites. A database opened through current `CharactersRAGDB` now lands on `_CURRENT_SCHEMA_VERSION == 54`; the tests still prove their v52→v53 transformation through the capture/thinking assertions. Preserve assertions that intentionally inspect a database stopped at v52. In the safe-capture suite replace current-open literals at lines 194, 297, 394, and 417 with `CharactersRAGDB._CURRENT_SCHEMA_VERSION`; rename the fresh-database test from `lands_on_v53` to `lands_on_current`. In the thinking migration suite remove the trailing literal `== 53` while retaining equality with `_CURRENT_SCHEMA_VERSION`.
 
 - [ ] **Step 4: Run Step 2 and verify GREEN.**
 
@@ -259,7 +265,9 @@ def get_conversation_active_leaf(self, conversation_id: str) -> str | None:
 ```bash
 ../../.venv/bin/python -m pytest \
   Tests/DB/test_chachanotes_v54_before_first_cursor.py \
-  Tests/DB/test_chachanotes_active_leaf_migration.py -q
+  Tests/DB/test_chachanotes_active_leaf_migration.py \
+  Tests/DB/test_chachanotes_v53_safe_capture_trim.py \
+  Tests/DB/test_chachanotes_console_thinking_migration.py -q
 ```
 
 - [ ] **Step 9: Commit the schema/API unit.**
@@ -267,7 +275,9 @@ def get_conversation_active_leaf(self, conversation_id: str) -> str | None:
 ```bash
 git add tldw_chatbook/DB/ChaChaNotes_DB.py \
   tldw_chatbook/DB/migrations/chachanotes_v53_to_v54_active_leaf_before_message.sql \
-  Tests/DB/test_chachanotes_v54_before_first_cursor.py
+  Tests/DB/test_chachanotes_v54_before_first_cursor.py \
+  Tests/DB/test_chachanotes_v53_safe_capture_trim.py \
+  Tests/DB/test_chachanotes_console_thinking_migration.py
 git commit -m "feat(console): add durable before-first cursor"
 ```
 
@@ -337,7 +347,8 @@ Add these equally explicit tests:
 - persisted conversation + target without `persisted_message_id` returns `False`, performs no DB call, and still empties the in-memory path;
 - writer returns false and writer raises: both return `False` after applying the rewind;
 - persistence DB or writer unavailable returns `False` after applying the rewind;
-- wrong role or `message.parent_message_id is not None` raises `ValueError` without mutation;
+- wrong role or a durable restored node with `message.parent_message_id is not None` raises `ValueError` without mutation;
+- temporary `U1→A1→U2` rejects U2 even though its persisted-parent field is null, because its native parent is A1;
 - unknown message raises `KeyError` without mutation.
 
 - [ ] **Step 2: Run tests to verify RED.**
@@ -356,10 +367,16 @@ def set_active_path_before(self, session_id: str, message_id: str) -> bool:
     node = self._nodes_by_session.get(session_id, {}).get(message_id)
     if node is None:
         raise KeyError(f"Unknown Console message: {message_id}")
-    if (
-        node.role is not ConsoleMessageRole.USER
-        or node.parent_message_id is not None
-    ):
+    has_durable_ancestry = (
+        session.persisted_conversation_id is not None
+        and node.persisted_message_id is not None
+    )
+    parent_id = (
+        node.parent_message_id
+        if has_durable_ancestry
+        else self._native_parent_by_message.get(message_id)
+    )
+    if node.role is not ConsoleMessageRole.USER or parent_id is not None:
         raise ValueError("Before-first target must be a root user message.")
 
     previous_leaf = self._active_leaf_by_session.get(session_id)
@@ -407,6 +424,8 @@ def set_active_path_before(self, session_id: str, message_id: str) -> bool:
 ```
 
 Do not change `set_active_leaf(..., None)` semantics. It remains generic unset; its scalar DB setter now clears both columns.
+
+The ancestry split is load-bearing: durable restored nodes use the imported pre-repair `parent_message_id`, while temporary/native-only nodes use `_native_parent_by_message`. A persisted conversation whose target lacks a durable message ID also uses native-parent validation, then returns `False` after applying a valid root rewind because no restart cursor can be written.
 
 - [ ] **Step 4: Run Step 2 and verify GREEN.**
 
@@ -877,7 +896,7 @@ In `Tests/UI/test_console_resume_active_path.py` add explicit tests for:
 - legacy flat conversation rewound before U1, followed by one new persisted root and restart: every original row plus the new row still exists; assert durable row IDs/count, not a sibling shape;
 - marker target content changed before hydration: restored draft uses the loaded row's current content, proving the ID is not a snapshot.
 
-- [ ] **Step 5: Run new integration and real-DB tests to verify RED.**
+- [ ] **Step 5: Run the new integration and real-DB verification.**
 
 ```bash
 ../../.venv/bin/python -m pytest \
@@ -885,7 +904,7 @@ In `Tests/UI/test_console_resume_active_path.py` add explicit tests for:
   Tests/integration/test_console_rewind_e2e.py -q
 ```
 
-Expected initially: remaining cursor-pair helper or lifecycle gaps fail. Product behavior should already exist from Tasks 1–4; fix only genuine omissions.
+Expected: PASS because Tasks 1–4 already implement the unit-level behavior. If a new end-to-end test fails, trace the real integration gap and fix only that omission; do not force an artificial RED state or broaden scope.
 
 - [ ] **Step 6: Re-run Step 5 and verify GREEN.**
 
@@ -909,6 +928,8 @@ git commit -m "test(console): cover before-first restart lifecycle"
 ../../.venv/bin/python -m pytest \
   Tests/DB/test_chachanotes_v54_before_first_cursor.py \
   Tests/DB/test_chachanotes_active_leaf_migration.py \
+  Tests/DB/test_chachanotes_v53_safe_capture_trim.py \
+  Tests/DB/test_chachanotes_console_thinking_migration.py \
   Tests/Chat/test_console_chat_store_before_first.py \
   Tests/Chat/test_console_chat_store_tree.py \
   Tests/Chat/test_console_conversation_hydration.py \
@@ -949,7 +970,10 @@ Inspect `git diff origin/dev...HEAD` and verify:
 Check all five acceptance criteria only after focused evidence is green. Add concise notes naming the migration/API, store/hydration behavior, UI warning, atomic acceptance clear, legacy limitation, focused command, and ADR-098. Add a lesson only if implementation produces a genuine reusable incident.
 
 ```bash
-backlog task edit 574 -s Done --notes "Added the v54 local explicit-before-first cursor, atomic cursor API, store/hydration resume semantics, honest UI warning, and acceptance-time marker clear. Covered canonical restart/resend, legacy non-deletion, invalid repair, temporary sessions, and attachment-only text behavior with focused tests. ADR: backlog/decisions/098-console-active-path-before-first-cursor.md."
+backlog task edit 574 \
+  --check-ac 1 --check-ac 2 --check-ac 3 --check-ac 4 --check-ac 5 \
+  -s Done \
+  --notes "Added the v54 local explicit-before-first cursor, atomic cursor API, store/hydration resume semantics, honest UI warning, and acceptance-time marker clear. Covered canonical restart/resend, legacy non-deletion, invalid repair, temporary sessions, and attachment-only text behavior with focused tests. ADR: backlog/decisions/098-console-active-path-before-first-cursor.md."
 backlog task 574 --plain
 ```
 
