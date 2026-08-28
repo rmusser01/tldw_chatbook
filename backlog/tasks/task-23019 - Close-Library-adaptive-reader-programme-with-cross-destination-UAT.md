@@ -56,11 +56,11 @@ Reason: verifies ADR-086 without changing its storage, service-authority, securi
 
 <!-- SECTION:NOTES:BEGIN -->
 Closed the cross-reader verification matrix against subject
-`64279f4a42b7a41ab46c60430ae630a26856fc80`, tree
-`152ee9e1e4d342a8936bffdf6303a4e1104cef6f`. The retained TASK-23019 bundle records 60
+`ad67d5032714f6385fe3003b75f47b7049faecf0`, tree
+`ca4d27d5bb89f8ccc49031bf243c2b2c82e3dc52`. The retained TASK-23019 bundle records 60
 automated and 32 live PASS results, 92 fact files, and 16 captures across all five readers and
 the 160x50 / 120x35 / 100x30 / 80x24 live matrix. `hashes.json` covers 114 files with SHA-256;
-`manifest.json` hashes to `9f601187f111840d3e451e68f030b2290c48efa710e23f8f28f7a5ec511d8d73`
+`manifest.json` hashes to `f3762a73ca008d5351c5649a269ec6fb712fd79039486bd671987313674c69a6`
 and `summary.json` to `b9fdf4e2f9ed1a4a8b79aaf4e3412f16811a225231f16ba00eaeb34c402c7866`.
 
 The task-local runner, child containment boundary, live scenarios, and closeout tests provide the
