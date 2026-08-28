@@ -7,6 +7,7 @@ import json
 import os
 import shutil
 import socket
+import stat
 import subprocess
 import sys
 import textwrap
@@ -4436,6 +4437,7 @@ def test_generated_readme_is_the_canonical_closeout_runbook(tmp_path):
 
     readme = (kwargs["destination"] / "README.md").read_text(encoding="utf-8")
     assert (
+        "PYTHONDONTWRITEBYTECODE=1 "
         f'TASK23019_SUBJECT_REVISION="{kwargs["subject"].commit}" '
         "../../.venv/bin/python "
         "Docs/superpowers/reviews/evidence/task-23019/task23019_closeout.py "
@@ -4446,7 +4448,7 @@ def test_generated_readme_is_the_canonical_closeout_runbook(tmp_path):
     assert "clean detached subject worktree" in readme
     assert 'TASK23019_SUBJECT_REVISION="$(git rev-parse HEAD)"' not in readme
     assert (
-        "../../.venv/bin/python "
+        "PYTHONDONTWRITEBYTECODE=1 ../../.venv/bin/python "
         "Docs/superpowers/reviews/evidence/task-23019/task23019_closeout.py "
         "--verify-evidence Docs/superpowers/reviews/evidence/task-23019"
     ) in readme
@@ -4472,6 +4474,41 @@ def test_generated_readme_is_the_canonical_closeout_runbook(tmp_path):
         f"- `{kwargs['subject'].commit[:10]}`: frozen subject including current "
         "visible-control remount settling"
     ) in readme
+
+
+def test_exact_verifier_is_repeatable_without_adjacent_bytecode(tmp_path):
+    module = _load_runner()
+    kwargs = _promote_fixture(module, tmp_path)
+    module.promote_evidence(**kwargs)
+    for path in (kwargs["destination"], *kwargs["destination"].rglob("*")):
+        path.chmod(path.stat().st_mode | stat.S_IWUSR)
+    verifier = kwargs["destination"] / "task23019_closeout.py"
+    command = [
+        sys.executable,
+        str(verifier),
+        "--verify-evidence",
+        str(kwargs["destination"]),
+    ]
+
+    environment = {**os.environ, "PYTHONDONTWRITEBYTECODE": "1"}
+    first = subprocess.run(
+        command,
+        cwd=REPO_ROOT,
+        env=environment,
+        capture_output=True,
+        text=True,
+    )
+    second = subprocess.run(
+        command,
+        cwd=REPO_ROOT,
+        env=environment,
+        capture_output=True,
+        text=True,
+    )
+
+    assert first.returncode == 0, first.stderr
+    assert second.returncode == 0, second.stderr
+    assert not (kwargs["destination"] / "__pycache__").exists()
 
 
 def _write_source_bootstrap(destination: Path, sources: dict[str, bytes]) -> None:

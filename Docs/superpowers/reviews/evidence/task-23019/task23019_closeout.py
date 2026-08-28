@@ -22,6 +22,8 @@ from collections.abc import Collection, Mapping
 from dataclasses import dataclass
 from pathlib import Path
 
+sys.dont_write_bytecode = True
+
 
 class CloseoutError(Exception):
     """A stable semantic failure from the closeout runner."""
@@ -1748,11 +1750,12 @@ def _canonical_readme(subject: Subject, summary: Mapping[str, object]) -> bytes:
         'cd "$SUBJECT_ROOT"\n'
         'test -z "$(git status --porcelain)"\n'
         'test -z "$(git symbolic-ref -q HEAD)"\n'
+        "PYTHONDONTWRITEBYTECODE=1 "
         f'TASK23019_SUBJECT_REVISION="{subject.commit}" '
         "../../.venv/bin/python "
         "Docs/superpowers/reviews/evidence/task-23019/task23019_closeout.py "
         f'--subject-revision "{subject.commit}" --promote\n'
-        "../../.venv/bin/python "
+        "PYTHONDONTWRITEBYTECODE=1 ../../.venv/bin/python "
         "Docs/superpowers/reviews/evidence/task-23019/task23019_closeout.py "
         "--verify-evidence Docs/superpowers/reviews/evidence/task-23019\n"
         "```\n\n"
