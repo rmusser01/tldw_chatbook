@@ -26,6 +26,10 @@ from Tests.UI.test_library_shell import (
     _wait_for_library_shell,
     _wait_for_selector,
 )
+from tldw_chatbook.Library.library_shell_state import (
+    LIBRARY_ROW_BROWSE_SKILLS,
+    LIBRARY_ROW_CREATE_PROMPT,
+)
 from tldw_chatbook.Widgets.Library import (
     LibraryAdaptiveReaderShell,
     LibraryPromptWorkPane,
@@ -416,6 +420,45 @@ async def test_dirty_prompt_draft_survives_reader_route_and_revisit(tmp_path) ->
     assert after["name"] == persisted["name"]
     assert after["details"] == persisted["details"]
     assert after["version"] == persisted["version"]
+
+
+@pytest.mark.asyncio
+async def test_dirty_create_prompt_draft_vetoes_reader_route(tmp_path) -> None:
+    """A not-yet-saved Create draft stays put until saved or abandoned."""
+    _db, service = _real_prompt_scope_service(tmp_path)
+    app = _build_test_app()
+    _wire_empty_non_prompt_services(app)
+    app.prompt_scope_service = service
+    host = LibraryHarness(app)
+
+    async with host.run_test(size=LIBRARY_TEST_SIZE) as pilot:
+        screen = _active_library_screen(host)
+        await _wait_for_library_shell(screen, pilot)
+        screen.query_one(f"#library-row-{LIBRARY_ROW_CREATE_PROMPT}", Button).press()
+        await _wait_for_selector(screen, pilot, "#library-prompt-name")
+        await _wait_for_condition(
+            pilot,
+            lambda: screen._library_prompt_editor_armed,
+            message="Create Prompt editor did not arm",
+        )
+        name = screen.query_one("#library-prompt-name", Input)
+        name.value = "Unsaved Create draft"
+        await _wait_for_condition(
+            pilot,
+            lambda: screen._library_prompt_dirty,
+            message="Create Prompt draft did not become dirty",
+        )
+
+        screen.query_one(f"#library-row-{LIBRARY_ROW_BROWSE_SKILLS}", Button).press()
+        await pilot.pause()
+
+        assert screen._library_selected_row_id == LIBRARY_ROW_CREATE_PROMPT
+        assert screen._library_prompts_view == "editor"
+        assert screen._library_prompt_dirty is True
+        assert screen.query_one("#library-prompt-name", Input).value == (
+            "Unsaved Create draft"
+        )
+        assert not screen.query("#library-skills-reader-shell")
 
 
 @pytest.mark.asyncio

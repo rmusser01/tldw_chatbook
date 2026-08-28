@@ -816,6 +816,14 @@ def main(arguments: list[str] | None = None) -> int:
     global DENIED_ROOTS
 
     parsed = _parse_arguments(arguments)
+    # These paths are capability grants from the task-local parent process,
+    # not end-user path selections. The child intentionally remains stdlib-only
+    # until `_install_boundary` has installed its pre-import tripwires; importing
+    # the application's Pydantic/path-validation graph here would perform
+    # uncontained filesystem reads before that boundary exists. The parent owns
+    # subject/worktree validation and passes only its resolved checkout, scratch,
+    # target, and denial roots. Direct execution of this internal helper grants
+    # no authority beyond that already held by the invoking Python process.
     checkout = Path(parsed.checkout).resolve()
     scratch = Path(parsed.scratch).resolve()
     target = Path(parsed.target).resolve()

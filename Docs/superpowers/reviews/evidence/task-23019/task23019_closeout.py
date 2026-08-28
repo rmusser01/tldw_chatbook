@@ -3760,7 +3760,18 @@ def build_parser() -> argparse.ArgumentParser:
 
 
 def parse_options(arguments: list[str] | None = None) -> ParentOptions:
-    """Parse syntax with argparse, then reject semantic misuse stably."""
+    """Parse syntax with argparse, then reject semantic misuse stably.
+
+    Args:
+        arguments: Optional argument vector. Uses ``sys.argv`` when omitted.
+
+    Returns:
+        The validated parent-runner options.
+
+    Raises:
+        CloseoutError: The parsed options select an invalid mode or an
+            incompatible combination of modes.
+    """
     parsed = build_parser().parse_args(arguments)
     subject_revision_provided = parsed.subject_revision is not None
     live_case_provided = parsed.live_case is not None

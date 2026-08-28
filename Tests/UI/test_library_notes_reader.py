@@ -30,7 +30,8 @@ from tldw_chatbook.Widgets.Library import (
 
 
 @pytest.mark.asyncio
-async def test_notes_global_f6_leaves_work_for_visible_items_region() -> None:
+async def test_notes_global_f6_cycles_only_visible_regions_when_library_collapsed() -> None:
+    """At 120 columns the hidden Library region is skipped by the F6 cycle."""
     app = _build_test_app()
     _seed_conversations(app, _two_conversations(), notes=_two_notes())
     host = LibraryGlobalKeyProductionCSSHarness(app)
@@ -41,6 +42,10 @@ async def test_notes_global_f6_leaves_work_for_visible_items_region() -> None:
         screen.query_one("#library-row-browse-notes", Button).press()
         await _wait_for_selector(screen, pilot, "#library-notes-row-0")
         await _open_note_editor(screen, pilot)
+        shell = screen.query_one(
+            "#library-notes-reader-shell", LibraryAdaptiveReaderShell
+        )
+        assert shell.effective_layout.library_open is False
         screen.query_one("#library-note-title", Input).focus()
         await pilot.pause()
 

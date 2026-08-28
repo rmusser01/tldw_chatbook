@@ -21411,6 +21411,7 @@ class LibraryScreen(BaseAppScreen):
         retain_prompt_draft = (
             self._library_prompt_dirty
             and self._library_prompts_view == "editor"
+            and self._library_selected_row_id in retained_reader_rows
             and row_id in retained_reader_rows
         )
         if retain_prompt_draft:
@@ -21434,6 +21435,7 @@ class LibraryScreen(BaseAppScreen):
                 )
                 self._library_prompt_detail = detail
         elif not await self._flush_library_prompt_save():
+            self._notify_prompt_dirty_veto()
             return
         if not await self._flush_library_skill_save():
             self._notify_skill_dirty_veto()
