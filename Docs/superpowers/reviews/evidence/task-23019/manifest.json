@@ -1,0 +1,194 @@
+{
+  "bundle_role": "complete-evidence",
+  "catalogue": {
+    "CO-01": {
+      "automated": [
+        "Tests/UI/test_library_conversation_reader.py::test_progressive_reader_paints_first_page_then_completes_find_off_loop",
+        "Tests/UI/test_library_conversation_reader.py::test_reader_info_is_explicit_and_truthful"
+      ],
+      "live": [
+        "conversations_capability"
+      ]
+    },
+    "CO-02": {
+      "automated": [
+        "Tests/UI/test_library_conversation_reader.py::test_open_console_requires_final_complete_error_free_match",
+        "Tests/UI/test_library_conversation_reader.py::test_authoritative_refresh_marks_selected_conversation_deleted_without_fallback"
+      ],
+      "live": [
+        "conversations_capability"
+      ]
+    },
+    "ME-01": {
+      "automated": [
+        "Tests/UI/test_library_media_reader_flow.py::test_reader_defaults_to_read_and_keeps_mode_across_local_items",
+        "Tests/UI/test_library_media_reader_flow.py::test_progress_restores_after_loaded_content_mounts"
+      ],
+      "live": [
+        "media_capability"
+      ]
+    },
+    "ME-02": {
+      "automated": [
+        "Tests/UI/test_library_multiselect_media.py::test_confirming_bulk_delete_swaps_toolbar_for_confirm_row",
+        "Tests/UI/test_library_multiselect_media.py::test_delete_selection_soft_deletes_via_real_db_and_updates_records_and_counts"
+      ],
+      "live": [
+        "media_capability"
+      ]
+    },
+    "NO-01": {
+      "automated": [
+        "Tests/UI/test_library_notes_reader.py::test_list_and_work_identity_survive_open_preview_info_and_edit"
+      ],
+      "live": [
+        "notes_capability"
+      ]
+    },
+    "NO-02": {
+      "automated": [
+        "Tests/Library/test_library_notes_session.py::test_conflict_stops_chaining_and_preserves_the_newest_draft",
+        "Tests/UI/test_library_multiselect_notes.py::test_permanent_navigator_tasks_respect_dirty_draft_veto"
+      ],
+      "live": [
+        "notes_capability"
+      ]
+    },
+    "PR-01": {
+      "automated": [
+        "Tests/UI/test_library_prompts_reader.py::test_basic_save_preserves_advanced_only_prompt_fields",
+        "Tests/UI/test_library_prompts_reader.py::test_invalid_advanced_block_routes_save_focus_to_its_owner"
+      ],
+      "live": [
+        "prompts_capability"
+      ]
+    },
+    "PR-02": {
+      "automated": [
+        "Tests/UI/test_library_prompts_reader.py::test_import_replaces_only_work_content_and_keeps_list_mounted",
+        "Tests/UI/test_library_prompts_reader.py::test_detail_failure_keeps_prior_prompt_locked_and_retry_loads_selection"
+      ],
+      "live": [
+        "prompts_capability"
+      ]
+    },
+    "SH-01": {
+      "automated": [
+        "Tests/UI/test_library_adaptive_reader_shell.py::test_sync_layout_retains_every_mounted_child_identity",
+        "Tests/UI/test_library_media_reader_shell.py::test_media_shell_mounts_library_items_reader_and_two_five_column_grips",
+        "Tests/UI/test_library_conversation_reader.py::test_conversations_mount_three_retained_roles_once",
+        "Tests/UI/test_library_notes_reader.py::test_database_notes_mount_three_retained_roles_once",
+        "Tests/UI/test_library_prompts_reader.py::test_prompts_mount_three_retained_roles_once",
+        "Tests/UI/test_library_skills_reader.py::test_skills_mount_three_retained_roles_and_default_to_overview"
+      ],
+      "live": [
+        "common_matrix",
+        "single_app_route_cycle"
+      ]
+    },
+    "SH-02": {
+      "automated": [
+        "Tests/Library/test_library_adaptive_reader_state.py::test_shared_resolution_uses_adaptive_width_classes",
+        "Tests/UI/test_library_adaptive_reader_shell.py::test_all_five_regions_remain_inside_representative_media_widths"
+      ],
+      "live": [
+        "common_matrix"
+      ]
+    },
+    "SH-03": {
+      "automated": [
+        "Tests/UI/test_library_media_reader_shell.py::test_shared_library_pane_choice_round_trips_between_media_and_conversations",
+        "Tests/UI/test_library_adaptive_reader_closeout.py::test_closeout_preferences_restore_in_fresh_screen",
+        "Tests/UI/test_library_adaptive_reader_closeout.py::test_closeout_single_app_route_cycle"
+      ],
+      "live": [
+        "preferences_fresh_reload",
+        "single_app_route_cycle"
+      ]
+    },
+    "SH-04": {
+      "automated": [
+        "Tests/UI/test_library_adaptive_reader_shell.py::test_hiding_focused_pane_moves_focus_to_truthful_restore_grip",
+        "Tests/UI/test_library_media_reader_flow.py::test_footer_advertises_only_working_current_actions",
+        "Tests/UI/test_library_conversation_reader.py::test_conversations_global_f6_cycles_visible_destination_roles",
+        "Tests/UI/test_library_skills_reader.py::test_skills_reader_f6_reaches_items_and_work_regions"
+      ],
+      "live": [
+        "common_matrix",
+        "single_app_route_cycle"
+      ]
+    },
+    "SH-05": {
+      "automated": [
+        "Tests/UI/test_library_media_reader_flow.py::test_late_completion_for_a_cannot_replace_loaded_b_or_show_error",
+        "Tests/UI/test_library_conversation_reader.py::test_late_previous_selection_cannot_overwrite_current_reader",
+        "Tests/Library/test_library_notes_session.py::test_stale_open_session_cannot_replace_a_newer_loaded_session",
+        "Tests/UI/test_library_prompts_reader.py::test_same_prompt_older_detail_load_cannot_overwrite_newer_generation",
+        "Tests/UI/test_library_skills_reader.py::test_same_skill_older_detail_result_cannot_replace_newer_generation"
+      ],
+      "live": [
+        "media_capability",
+        "conversations_capability",
+        "notes_capability",
+        "prompts_capability",
+        "skills_capability"
+      ]
+    },
+    "SH-06": {
+      "automated": [
+        "Tests/Library/test_library_adaptive_reader_state.py::test_resolution_never_mutates_saved_preferences",
+        "Tests/UI/test_library_media_reader_shell.py::test_media_shell_resize_uses_resolver_without_reads_or_recompose",
+        "Tests/UI/test_library_adaptive_reader_closeout.py::test_closeout_resize_is_presentation_only"
+      ],
+      "live": [
+        "resize_purity"
+      ]
+    },
+    "SH-07": {
+      "automated": [
+        "Tests/UI/test_library_adaptive_reader_closeout.py::test_closeout_single_app_route_cycle"
+      ],
+      "live": [
+        "single_app_route_cycle"
+      ]
+    },
+    "SK-01": {
+      "automated": [
+        "Tests/UI/test_library_skills_reader.py::test_skill_modes_preserve_list_work_and_one_live_draft",
+        "Tests/UI/test_library_skills_reader.py::test_skills_trust_mode_identifies_exact_review_snapshot"
+      ],
+      "live": [
+        "skills_capability"
+      ]
+    },
+    "SK-02": {
+      "automated": [
+        "Tests/UI/test_library_skills_reader.py::test_skills_files_mode_is_read_only_and_labels_binary_files",
+        "Tests/UI/test_library_skills_reader.py::test_same_skill_older_trust_review_cannot_patch_newer_generation",
+        "Tests/UI/test_library_skills_reader.py::test_same_skill_older_delete_cannot_reset_a_newer_work_generation"
+      ],
+      "live": [
+        "skills_capability"
+      ]
+    }
+  },
+  "hashes_excluded": [
+    "hashes.json"
+  ],
+  "ownership_marker": "task-23019-complete-evidence-v1",
+  "retained_paths": [
+    "task23019_closeout.py",
+    "task23019_closeout_child.py",
+    "task23019_scenarios.py",
+    "README.md",
+    "manifest.json",
+    "summary.json",
+    "hashes.json",
+    "facts/*.json",
+    "captures/*.txt",
+    "captures/*.svg"
+  ],
+  "subject_commit": "02bb98c201a252966fd566f4b8395761c1ee780a",
+  "subject_tree": "d1f9c8c9501ac35d20b05bd6f91404f0c6d9b2f9",
+  "task": "TASK-23019"
+}

@@ -1,0 +1,5 @@
+{
+  "kind": "automated",
+  "result_name": "Tests/UI/test_library_media_reader_flow.py::test_late_completion_for_a_cannot_replace_loaded_b_or_show_error[late_outcome1]",
+  "status": "PASS"
+}
