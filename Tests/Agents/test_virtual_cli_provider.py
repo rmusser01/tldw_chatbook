@@ -209,31 +209,55 @@ def test_permission_is_rechecked_after_review(tmp_path):
     assert not result.ok and result.outcome == "blocked"
 
 
-def test_callback_failures_log_only_exception_types(tmp_path):
-    private_canary = "/private/console-secret/note-42 https://internal.example/token"
+@pytest.mark.parametrize(
+    ("callback_name", "callback_kwarg", "event_label"),
+    [
+        pytest.param(
+            "_persist",
+            "persist_approval",
+            "Virtual CLI approval persistence failed",
+            id="persist",
+        ),
+        pytest.param(
+            "_record",
+            "record_decision",
+            "Virtual CLI decision audit failed",
+            id="record",
+        ),
+    ],
+)
+def test_callback_failure_logs_only_safe_fixed_metadata(
+    tmp_path, callback_name, callback_kwarg, event_label
+):
+    exception_sentinel = "/private/customer/secret-project/token=exception-sentinel"
+    callback_input_sentinel = "/private/customer/secret-project/input-sentinel"
+    traceback_local_sentinel = "/private/customer/secret-project/traceback-local"
+
+    class DistinctiveCallbackFailure(RuntimeError):
+        pass
 
     def fail_callback(*_args):
-        raise RuntimeError(private_canary)
+        traceback_local = traceback_local_sentinel
+        assert traceback_local
+        raise DistinctiveCallbackFailure(exception_sentinel)
 
-    messages = []
-    sink_id = logger.add(
-        lambda message: messages.append(str(message)),
-        level="WARNING",
-        format="{message}",
-    )
-    provider = make_provider(
-        tmp_path,
-        persist_approval=fail_callback,
-        record_decision=fail_callback,
-    )
-    hub = provider.hub_tool_for("ls")
-
+    provider = make_provider(tmp_path, **{callback_kwarg: fail_callback})
+    records = []
+    sink_id = logger.add(records.append, level="WARNING", format="{message}")
     try:
-        provider._persist(hub, "always_allow")
-        provider._record(hub, "denied")
+        getattr(provider, callback_name)(
+            provider.hub_tool_for("ls"), callback_input_sentinel
+        )
     finally:
         logger.remove(sink_id)
 
-    joined = "".join(messages)
-    assert private_canary not in joined
-    assert joined.count("RuntimeError") == 2
+    assert len(records) == 1
+    record = records[0].record
+    assert record["message"] == (
+        f"{event_label} (exception_type=DistinctiveCallbackFailure)"
+    )
+    assert record["exception"] is None
+    rendered = str(records[0])
+    assert exception_sentinel not in rendered
+    assert callback_input_sentinel not in rendered
+    assert traceback_local_sentinel not in rendered
