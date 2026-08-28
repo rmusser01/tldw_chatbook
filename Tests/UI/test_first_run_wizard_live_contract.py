@@ -3521,6 +3521,12 @@ async def test_provider_test_button_requests_identity_encoding_from_a_real_peer(
     of view, through the step's own button, which is the only vantage point
     that would have caught it: the unit tests assert the same contract but
     against httpx.MockTransport, which never compresses.
+
+    Args:
+        monkeypatch: Pytest fixture used to isolate config/HOME state via
+            ``_build_fresh_wizard_app``.
+        tmp_path: Pytest fixture providing the throwaway profile directory
+            the fresh wizard app is built against.
     """
     with _RecordingModelsServer([f"model-{index}" for index in range(128)]) as server:
         app = _build_fresh_wizard_app(monkeypatch, tmp_path)
