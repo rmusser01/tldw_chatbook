@@ -200,6 +200,15 @@ def _expected_live_keys(root: str) -> set[str]:
             for destination in ("media", "conversations", "notes", "prompts", "skills")
             for width, height in ((160, 50), (120, 35), (100, 30), (80, 24))
         }
+    if root == "resize_purity":
+        return {
+            f"{destination}-resize-purity"
+            for destination in ("media", "conversations", "notes", "prompts", "skills")
+        }
+    if root == "preferences_fresh_reload":
+        return {"preferences-fresh-reload"}
+    if root == "single_app_route_cycle":
+        return {"single-app-route-cycle"}
     return {root}
 
 
@@ -416,7 +425,7 @@ def test_catalogue_contains_the_exact_declared_contract_mapping():
                 "Tests/UI/test_library_adaptive_reader_closeout.py::test_closeout_preferences_restore_in_fresh_screen",
                 "Tests/UI/test_library_adaptive_reader_closeout.py::test_closeout_single_app_route_cycle",
             ),
-            ("single_app_route_cycle",),
+            ("preferences_fresh_reload", "single_app_route_cycle"),
         ),
         "SH-04": contract(
             (
@@ -832,15 +841,42 @@ def test_verify_evidence_is_exclusive_with_execution_options(conflicting):
     assert error.value.category == "verify_evidence_mode_conflict"
 
 
-@pytest.mark.parametrize("durable_key", ("resize_purity", "single_app_route_cycle"))
-def test_catalogue_durable_key_is_not_accepted_as_a_live_scenario(durable_key):
+@pytest.mark.parametrize(
+    "durable_key",
+    ("resize_purity", "preferences_fresh_reload", "single_app_route_cycle"),
+)
+def test_catalogue_durable_key_is_a_concrete_live_scenario(durable_key):
     module = _load_runner()
 
-    with pytest.raises(module.CloseoutError, match="scenario_not_defined"):
-        module.parse_options(["--development-run", "--live-case", durable_key])
+    options = module.parse_options(["--development-run", "--live-case", durable_key])
 
-    assert durable_key in module.DURABLE_EVIDENCE_ALIASES
-    assert module.DURABLE_EVIDENCE_ALIASES[durable_key]
+    assert options.live_cases == (durable_key,)
+    assert module.EXPECTED_LIVE_RESULT_KEYS[durable_key] == frozenset(
+        _expected_live_keys(durable_key)
+    )
+
+
+def test_complete_live_inventory_includes_durable_oracles():
+    module = _load_runner()
+    expected = {
+        *(_expected_live_keys("common_matrix")),
+        *(_expected_live_keys("media_capability")),
+        *(_expected_live_keys("conversations_capability")),
+        *(_expected_live_keys("notes_capability")),
+        *(_expected_live_keys("prompts_capability")),
+        *(_expected_live_keys("skills_capability")),
+        *(_expected_live_keys("resize_purity")),
+        *(_expected_live_keys("preferences_fresh_reload")),
+        *(_expected_live_keys("single_app_route_cycle")),
+    }
+
+    assert module.EXPECTED_CONCRETE_LIVE_RESULTS == frozenset(expected)
+    assert len(expected) == 32
+    for contract_id in ("SH-03", "SH-06", "SH-07"):
+        assert all(
+            module._live_result_names(root)
+            for root in module.CATALOGUE[contract_id].live_cases
+        )
 
 
 @pytest.mark.parametrize("arguments", [["--not-an-option"], ["--subject-revision"]])
@@ -2748,7 +2784,7 @@ def test_parent_rejects_duplicate_live_roots(monkeypatch, tmp_path):
     assert _error_category(error) == "live_result_duplicate"
 
 
-def test_parent_live_only_requires_and_returns_exact_25_results(monkeypatch, tmp_path):
+def test_parent_live_only_requires_and_returns_exact_32_results(monkeypatch, tmp_path):
     module = _load_runner()
 
     def fake_child(**kwargs):
@@ -2770,7 +2806,7 @@ def test_parent_live_only_requires_and_returns_exact_25_results(monkeypatch, tmp
     expected = set().union(
         *(_expected_live_keys(root) for root in module.EXECUTABLE_LIVE_ROOTS)
     )
-    assert len(results) == len(expected) == 25
+    assert len(results) == len(expected) == 32
     assert set(results) == expected
 
 
@@ -3536,8 +3572,146 @@ def _canonical_promotion_results(module):
         for contract in module.CATALOGUE.values()
         for selector in contract.automated_nodes
     }
-    live = {name: "PASS" for name in module.EXPECTED_CONCRETE_LIVE_RESULTS}
+    live = {
+        name: _rich_live_result(module, name)
+        for name in module.EXPECTED_CONCRETE_LIVE_RESULTS
+    }
     return automated, live
+
+
+def _rich_live_result(module, name: str) -> dict[str, object]:
+    metadata = module.LIVE_RESULT_METADATA[name]
+    destination = metadata["destination"]
+    width, height = metadata["terminal_size"]
+    result = {
+        "status": "PASS",
+        "destination": destination,
+        "final_destination": metadata["final_destination"],
+        "terminal_size": list(metadata["terminal_size"]),
+        "contained": True,
+        "regions": {
+            "library": {"x": 0, "y": 0, "width": 20, "height": height},
+            "items": {"x": 20, "y": 0, "width": 20, "height": height},
+            "work": {"x": 40, "y": 0, "width": width - 40, "height": height},
+        },
+        "identities": dict(metadata["identities"]),
+        "focus_owner": "work",
+        "record": {
+            "selected": "record-2",
+            "pending": None,
+            "loaded": "record-2",
+            "mode": "read",
+        },
+        "preferences": {
+            "requested_library_open": True,
+            "requested_items_open": True,
+            "effective_library_open": True,
+            "effective_items_open": True,
+        },
+        "host_worker_groups": [],
+        "visible_controls": ["library-grip", "items-grip"],
+        "compositor_text": f"structured compositor for {name}",
+        "cleanup_owner_counts": {
+            "host_worker_leaks": 0,
+            "host_task_leaks": 0,
+            "host_thread_worker_leaks": 0,
+        },
+    }
+    if name in module._CAPABILITY_OBSERVATION_KEYS:
+        result.update(
+            {
+                "regions_do_not_intersect": True,
+                "selected_row": {},
+                "grips": {},
+                "primary_actions": {},
+                "footer_shortcuts": [],
+                "f6_route": [],
+                "observations": {
+                    key: ([] if key == "catalogue_ids" else "fixture")
+                    for key in module._CAPABILITY_OBSERVATION_KEYS[name]
+                },
+            }
+        )
+    elif name in module._DURABLE_OBSERVATION_KEYS:
+        observations = {key: True for key in module._DURABLE_OBSERVATION_KEYS[name]}
+        if name.endswith("-resize-purity"):
+            observations["resize_sequence"] = [
+                [120, 35],
+                [100, 30],
+                [80, 24],
+                [160, 50],
+            ]
+        elif name == "preferences-fresh-reload":
+            observations["first_host_cleanup_owner_counts"] = {
+                "host_workers_before": 0,
+                "host_workers_owned": 0,
+                "host_worker_leaks": 0,
+                "host_task_leaks": 0,
+                "host_thread_worker_leaks": 0,
+            }
+        else:
+            selected = {
+                "media": "media-2",
+                "conversations": "chat-b",
+                "notes": "note-2",
+                "prompts": 2,
+                "skills": "review-skill",
+            }
+            modes = {
+                "media": "info",
+                "conversations": "read",
+                "notes": "preview",
+                "prompts": "info",
+                "skills": "edit",
+            }
+            item_states = {
+                destination: destination != "notes"
+                for destination in module.DESTINATIONS
+            }
+            observations["shared_library_open"] = False
+            observations["destination_items_open"] = item_states
+            observations["revisit_receipts"] = {
+                destination: {
+                    "preferences": {
+                        "requested_library_open": False,
+                        "requested_items_open": item_states[destination],
+                        "effective_library_open": False,
+                        "effective_items_open": item_states[destination],
+                    },
+                    "record": {
+                        "selected": selected[destination],
+                        "pending": None,
+                        "loaded": selected[destination],
+                        "mode": modes[destination],
+                    },
+                    "focus": {"region": "work", "owner": "work"},
+                    "identities": dict(module._PRODUCTION_IDENTITIES[destination]),
+                    "draft": {
+                        "dirty": destination in {"notes", "prompts"},
+                        "retained_without_save": destination in {"notes", "prompts"},
+                        "value": "draft"
+                        if destination in {"notes", "prompts"}
+                        else None,
+                    },
+                    "worker_fenced": True,
+                }
+                for destination in module.DESTINATIONS
+            }
+        result["observations"] = observations
+    else:
+        result.update(
+            {
+                "regions_do_not_intersect": True,
+                "selected_row": {},
+                "grips": {},
+                "primary_actions": {},
+                "footer_shortcuts": [],
+                "f6_route": [],
+                "items_comfort_expansion": {},
+                "restoration_paths": {},
+            }
+        )
+    return result
 
 
 def _raw_promotion_artifacts(
@@ -3573,8 +3747,11 @@ def _raw_promotion_artifacts(
     ]
     for index, (kind, name, value) in enumerate(sorted(inventory)):
         status = value if isinstance(value, str) else value["status"]
+        fact = {"kind": kind, "result_name": name, "status": status}
+        if kind == "live" and isinstance(value, dict):
+            fact.update(value)
         (root / f"facts/result-{index:03}.json").write_text(
-            json.dumps({"kind": kind, "result_name": name, "status": status}),
+            json.dumps(fact),
             encoding="utf-8",
         )
     expected = {
@@ -3586,10 +3763,39 @@ def _raw_promotion_artifacts(
         if not isinstance(status, str):
             status = status["status"]
         (root / f"captures/{stem}.txt").write_text(
-            f"result_name: {identity[1]}\nstatus: {status}\nrepresentative frame {summary}\n",
+            f"result_name: {identity[1]}\nstatus: {status}\n"
+            f"{live_results[identity[1]]['compositor_text']}",
+            encoding="utf-8",
+        )
+        (root / f"captures/{stem}.svg").write_text(
+            f'<svg data-result-name="{identity[1]}" data-status="{status}">'
+            f"<text>representative frame {summary}</text></svg>",
             encoding="utf-8",
         )
     return module.collect_raw_artifacts(root)
+
+
+def _rich_raw_promotion_artifacts(module, root: Path, automated, live):
+    artifacts = _raw_promotion_artifacts(
+        module,
+        root,
+        automated_results=automated,
+        live_results=live,
+    )
+    for relative, payload in tuple(artifacts.items()):
+        if not relative.startswith("facts/"):
+            continue
+        fact = json.loads(payload)
+        if fact["kind"] == "live":
+            fact.update(live[fact["result_name"]])
+            artifacts[relative] = module._json_bytes(fact)
+    for stem, (kind, name) in module.REPRESENTATIVE_CAPTURES.items():
+        status = automated[name] if kind == "automated" else live[name]["status"]
+        artifacts[f"captures/{stem}.svg"] = (
+            f'<svg data-result-name="{name}" data-status="{status}">'
+            f"<text>{stem} structured frame</text></svg>"
+        ).encode()
+    return artifacts
 
 
 def _valid_contract_results(module):
@@ -3603,6 +3809,13 @@ def _promote_fixture(module, tmp_path: Path, *, summary: str = "first"):
     raw = tmp_path / f"raw-{summary}"
     catalogue = module.CATALOGUE
     automated, live = _canonical_promotion_results(module)
+    live = {
+        name: {
+            **result,
+            "compositor_text": f"{result['compositor_text']} {summary}",
+        }
+        for name, result in live.items()
+    }
     artifacts = _raw_promotion_artifacts(
         module,
         raw,
@@ -3628,6 +3841,324 @@ def _promote_fixture(module, tmp_path: Path, *, summary: str = "first"):
             "scratch": raw,
         },
     }
+
+
+def test_status_only_live_facts_are_rejected(tmp_path):
+    module = _load_runner()
+    kwargs = _promote_fixture(module, tmp_path)
+    kwargs["raw_artifacts"] = dict(kwargs["raw_artifacts"])
+    for relative, payload in tuple(kwargs["raw_artifacts"].items()):
+        if not relative.startswith("facts/"):
+            continue
+        fact = json.loads(payload)
+        if fact["kind"] == "live":
+            kwargs["raw_artifacts"][relative] = module._json_bytes(
+                {
+                    "kind": "live",
+                    "result_name": fact["result_name"],
+                    "status": "PASS",
+                }
+            )
+
+    with pytest.raises(module.CloseoutError) as error:
+        module.promote_evidence(**kwargs)
+
+    assert error.value.category == "evidence_inventory_invalid"
+
+
+def test_live_oracle_rejects_undeclared_top_level_and_nested_keys(tmp_path):
+    module = _load_runner()
+    for field, value in (
+        ("undeclared", "extension"),
+        (
+            "preferences",
+            {
+                "requested_library_open": True,
+                "requested_items_open": True,
+                "effective_library_open": True,
+                "effective_items_open": True,
+                "undeclared": True,
+            },
+        ),
+    ):
+        kwargs = _promote_fixture(module, tmp_path / field)
+        name = "media-160x50"
+        kwargs["live_results"][name] = {
+            **kwargs["live_results"][name],
+            field: value,
+        }
+        for relative, payload in tuple(kwargs["raw_artifacts"].items()):
+            if not relative.startswith("facts/"):
+                continue
+            fact = json.loads(payload)
+            if fact.get("kind") == "live" and fact.get("result_name") == name:
+                fact[field] = value
+                kwargs["raw_artifacts"][relative] = module._json_bytes(fact)
+                break
+
+        with pytest.raises(module.CloseoutError) as error:
+            module.promote_evidence(**kwargs)
+
+        assert error.value.category == "evidence_inventory_invalid"
+
+
+@pytest.mark.parametrize("mutation", ("wrong-size", "fake-identities"))
+def test_live_oracle_must_match_canonical_result_metadata(tmp_path, mutation):
+    module = _load_runner()
+    kwargs = _promote_fixture(module, tmp_path)
+    name = "notes_capability"
+    field, value = (
+        ("terminal_size", [160, 50])
+        if mutation == "wrong-size"
+        else (
+            "identities",
+            {"shell": "fake-shell", "items": "fake-items", "work": "fake-work"},
+        )
+    )
+    kwargs["live_results"][name] = {
+        **kwargs["live_results"][name],
+        field: value,
+    }
+    for relative, payload in tuple(kwargs["raw_artifacts"].items()):
+        if not relative.startswith("facts/"):
+            continue
+        fact = json.loads(payload)
+        if fact.get("kind") == "live" and fact.get("result_name") == name:
+            fact[field] = value
+            kwargs["raw_artifacts"][relative] = module._json_bytes(fact)
+            break
+
+    with pytest.raises(module.CloseoutError) as error:
+        module.promote_evidence(**kwargs)
+
+    assert error.value.category == "evidence_inventory_invalid"
+
+
+@pytest.mark.parametrize(
+    "field,value",
+    (
+        ("preferences", {}),
+        (
+            "preferences",
+            {
+                "requested_library_open": False,
+                "requested_items_open": "yes",
+                "effective_library_open": False,
+                "effective_items_open": True,
+            },
+        ),
+        ("record", {}),
+        (
+            "record",
+            {
+                "selected": "record-a",
+                "pending": "record-a",
+                "loaded": "record-b",
+                "mode": "",
+            },
+        ),
+    ),
+)
+def test_route_receipts_reject_empty_or_malformed_truth(tmp_path, field, value):
+    module = _load_runner()
+    kwargs = _promote_fixture(module, tmp_path)
+    name = "single-app-route-cycle"
+    result = kwargs["live_results"][name]
+    result["observations"]["revisit_receipts"]["media"][field] = value
+    for relative, payload in tuple(kwargs["raw_artifacts"].items()):
+        if not relative.startswith("facts/"):
+            continue
+        fact = json.loads(payload)
+        if fact.get("kind") == "live" and fact.get("result_name") == name:
+            fact["observations"] = result["observations"]
+            kwargs["raw_artifacts"][relative] = module._json_bytes(fact)
+            break
+
+    with pytest.raises(module.CloseoutError) as error:
+        module.promote_evidence(**kwargs)
+
+    assert error.value.category == "evidence_inventory_invalid"
+
+
+@pytest.mark.parametrize("identity", ("", 2))
+def test_route_receipts_reject_non_string_notes_identity(tmp_path, identity):
+    module = _load_runner()
+    kwargs = _promote_fixture(module, tmp_path)
+    name = "single-app-route-cycle"
+    result = kwargs["live_results"][name]
+    record = result["observations"]["revisit_receipts"]["notes"]["record"]
+    record["selected"] = identity
+    record["loaded"] = identity
+    for relative, payload in tuple(kwargs["raw_artifacts"].items()):
+        if not relative.startswith("facts/"):
+            continue
+        fact = json.loads(payload)
+        if fact.get("kind") == "live" and fact.get("result_name") == name:
+            fact["observations"] = result["observations"]
+            kwargs["raw_artifacts"][relative] = module._json_bytes(fact)
+            break
+
+    with pytest.raises(module.CloseoutError) as error:
+        module.promote_evidence(**kwargs)
+
+    assert error.value.category == "evidence_inventory_invalid"
+
+
+@pytest.mark.parametrize(
+    "field,value",
+    (
+        ("destination", "notes"),
+        ("identities", {"shell": "same", "items": "same", "work": "same"}),
+        (
+            "regions",
+            {
+                "library": {"x": -1, "y": 0, "width": 20, "height": 50},
+                "items": {"x": 21, "y": 0, "width": 40, "height": 50},
+                "work": {"x": 62, "y": 0, "width": 98, "height": 50},
+            },
+        ),
+        (
+            "preferences",
+            {
+                "requested_library_open": "yes",
+                "requested_items_open": True,
+                "effective_library_open": True,
+                "effective_items_open": True,
+            },
+        ),
+        ("focus_owner", None),
+        ("visible_controls", [1]),
+        (
+            "cleanup_owner_counts",
+            {
+                "host_worker_leaks": 1,
+                "host_task_leaks": 0,
+                "host_thread_worker_leaks": 0,
+            },
+        ),
+    ),
+)
+def test_live_oracle_schema_rejects_invalid_structured_truth(tmp_path, field, value):
+    module = _load_runner()
+    kwargs = _promote_fixture(module, tmp_path)
+    name = "media-160x50"
+    kwargs["live_results"][name] = {
+        **kwargs["live_results"][name],
+        field: value,
+    }
+    for relative, payload in tuple(kwargs["raw_artifacts"].items()):
+        if not relative.startswith("facts/"):
+            continue
+        fact = json.loads(payload)
+        if fact.get("kind") == "live" and fact.get("result_name") == name:
+            fact[field] = value
+            kwargs["raw_artifacts"][relative] = module._json_bytes(fact)
+            break
+
+    with pytest.raises(module.CloseoutError) as error:
+        module.promote_evidence(**kwargs)
+
+    assert error.value.category == "evidence_inventory_invalid"
+
+
+def test_rich_live_facts_and_paired_text_svg_captures_are_retained(tmp_path):
+    module = _load_runner()
+    kwargs = _promote_fixture(module, tmp_path)
+    automated = kwargs["automated_results"]
+    live = {
+        name: _rich_live_result(module, name)
+        for name in module.EXPECTED_CONCRETE_LIVE_RESULTS
+    }
+    raw = tmp_path / "rich-raw"
+    kwargs["live_results"] = live
+    kwargs["raw_artifacts"] = _rich_raw_promotion_artifacts(
+        module, raw, automated, live
+    )
+
+    module.promote_evidence(**kwargs)
+
+    destination = kwargs["destination"]
+    retained_live = []
+    for path in (destination / "facts").glob("*.json"):
+        fact = json.loads(path.read_text(encoding="utf-8"))
+        if fact["kind"] == "live":
+            retained_live.append(fact)
+    assert len(retained_live) == 32
+    required = {
+        "contained",
+        "regions",
+        "identities",
+        "focus_owner",
+        "record",
+        "preferences",
+        "host_worker_groups",
+        "visible_controls",
+        "compositor_text",
+        "cleanup_owner_counts",
+    }
+    assert all(required.issubset(fact) for fact in retained_live)
+    assert {
+        path.suffix
+        for path in (destination / "captures").iterdir()
+        if path.stem == "media-160x50"
+    } == {".txt", ".svg"}
+
+
+@pytest.mark.parametrize("mutation", ("unrelated-body", "non-svg"))
+def test_representative_capture_must_match_live_oracle_and_be_svg_root(
+    tmp_path, mutation
+):
+    module = _load_runner()
+    kwargs = _promote_fixture(module, tmp_path)
+    if mutation == "unrelated-body":
+        kwargs["raw_artifacts"]["captures/media-160x50.txt"] = (
+            b"result_name: media-160x50\nstatus: PASS\nunrelated body"
+        )
+    else:
+        kwargs["raw_artifacts"]["captures/media-160x50.svg"] = (
+            b'<html data-result-name="media-160x50" data-status="PASS"></html>'
+        )
+
+    with pytest.raises(module.CloseoutError) as error:
+        module.promote_evidence(**kwargs)
+
+    assert error.value.category == "evidence_inventory_invalid"
+
+
+def test_generated_readme_is_the_canonical_closeout_runbook(tmp_path):
+    module = _load_runner()
+    kwargs = _promote_fixture(module, tmp_path)
+
+    module.promote_evidence(**kwargs)
+
+    readme = (kwargs["destination"] / "README.md").read_text(encoding="utf-8")
+    assert (
+        f'TASK23019_SUBJECT_REVISION="{kwargs["subject"].commit}" '
+        "../../.venv/bin/python "
+        "Docs/superpowers/reviews/evidence/task-23019/task23019_closeout.py "
+        f'--subject-revision "{kwargs["subject"].commit}" --promote'
+    ) in readme
+    assert 'SUBJECT_ROOT="$(git rev-parse --show-toplevel)"' in readme
+    assert 'cd "$SUBJECT_ROOT"' in readme
+    assert "clean detached subject worktree" in readme
+    assert 'TASK23019_SUBJECT_REVISION="$(git rev-parse HEAD)"' not in readme
+    assert (
+        "../../.venv/bin/python "
+        "Docs/superpowers/reviews/evidence/task-23019/task23019_closeout.py "
+        "--verify-evidence Docs/superpowers/reviews/evidence/task-23019"
+    ) in readme
+    for literal in (
+        kwargs["subject"].commit,
+        kwargs["subject"].tree,
+        f"{len(kwargs['automated_results'])} automated results",
+        "32 live results",
+        "a92000229b",
+        "471da9f9db",
+        "d81e231f26",
+        "c9b8a7e002",
+        "raw TemporaryDirectory exited before repository promotion",
+    ):
+        assert literal in readme
 
 
 def _write_source_bootstrap(destination: Path, sources: dict[str, bytes]) -> None:
@@ -4096,37 +4627,40 @@ def test_json_credential_keys_reject_the_whole_bundle(tmp_path, payload):
 
 def test_json_credential_key_detection_allows_benign_prose_keys(tmp_path):
     module = _load_runner()
-    kwargs = _promote_fixture(module, tmp_path)
-    fact_name = next(
-        name for name in kwargs["raw_artifacts"] if name.startswith("facts/")
-    )
-    fact = json.loads(kwargs["raw_artifacts"][fact_name])
-    fact.update(
-        {
-            "description": "Explains API key handling without retaining a value.",
-            "state": {
-                "revision_token": "revision-3",
-                "continuation_token": "continue-4",
-                "worker_token": "worker-5",
-                "page_token": "page-6",
-                "next_token": "next-7",
-            },
-            "analysis": [
-                {
-                    "tokenizer": "standard",
-                    "token_count": 42,
-                    "secret_recipe": "ordinary prose key",
-                    "summary": "The API key and access token were not retained.",
-                }
-            ],
-        }
-    )
-    kwargs["raw_artifacts"] = dict(kwargs["raw_artifacts"])
-    kwargs["raw_artifacts"][fact_name] = json.dumps(fact).encode()
+    payload = {
+        "facts/benign.json": module._json_bytes(
+            {
+                "kind": "diagnostic",
+                "description": "Explains API key handling without retaining a value.",
+                "state": {
+                    "revision_token": "revision-3",
+                    "continuation_token": "continue-4",
+                    "worker_token": "worker-5",
+                    "page_token": "page-6",
+                    "next_token": "next-7",
+                },
+                "analysis": [
+                    {
+                        "tokenizer": "standard",
+                        "token_count": 42,
+                        "secret_recipe": "ordinary prose key",
+                        "summary": "The API key and access token were not retained.",
+                    }
+                ],
+            }
+        )
+    }
 
-    module.promote_evidence(**kwargs)
+    normalized = module.normalize_artifacts(
+        payload,
+        roots={
+            "checkout": tmp_path / "checkout",
+            "runtime": tmp_path / "runtime",
+            "scratch": tmp_path / "scratch",
+        },
+    )
 
-    assert (kwargs["destination"] / fact_name).is_file()
+    assert normalized == payload
 
 
 def test_promotion_rejects_a_substituted_canonical_catalogue_selector(tmp_path):
@@ -4160,6 +4694,12 @@ def test_not_applicable_reason_is_scanned_before_manifest_generation(
     contract = kwargs["catalogue"]["SH-06"]
     for selector in contract.automated_nodes:
         kwargs["automated_results"][selector] = "NOT_APPLICABLE"
+    for live_case in contract.live_cases:
+        for result_name in module.EXPECTED_LIVE_RESULT_KEYS[live_case]:
+            kwargs["live_results"][result_name] = {
+                **kwargs["live_results"][result_name],
+                "status": "NOT_APPLICABLE",
+            }
     for name, payload in tuple(kwargs["raw_artifacts"].items()):
         if not name.startswith("facts/"):
             continue
@@ -4167,6 +4707,14 @@ def test_not_applicable_reason_is_scanned_before_manifest_generation(
         if (
             fact["kind"] == "automated"
             and fact["result_name"] in contract.automated_nodes
+        ):
+            fact["status"] = "NOT_APPLICABLE"
+            kwargs["raw_artifacts"][name] = json.dumps(fact).encode()
+        elif (
+            fact["kind"] == "live"
+            and fact["result_name"] in kwargs["live_results"]
+            and kwargs["live_results"][fact["result_name"]]["status"]
+            == "NOT_APPLICABLE"
         ):
             fact["status"] = "NOT_APPLICABLE"
             kwargs["raw_artifacts"][name] = json.dumps(fact).encode()
@@ -5562,12 +6110,17 @@ def _install_passing_production_main_fakes(module, monkeypatch):
     def run_live(*, checkout, scratch, live_cases):
         observed["live_cases"].append(live_cases)
         observed["live_scratch"].append(scratch)
-        captures = scratch / "raw-results/common_matrix/raw-evidence/captures"
-        captures.mkdir(parents=True)
         for stem, (kind, _name) in module.REPRESENTATIVE_CAPTURES.items():
             if kind == "live":
-                (captures / f"{stem}.txt").write_text(
+                root, source_stem = module.REPRESENTATIVE_CAPTURE_SOURCES[stem]
+                captures = scratch / f"raw-results/{root}/raw-evidence/captures"
+                captures.mkdir(parents=True, exist_ok=True)
+                (captures / f"{source_stem}.txt").write_text(
                     f"production compositor for {stem}\n", encoding="utf-8"
+                )
+                (captures / f"{source_stem}.svg").write_text(
+                    '<svg xmlns="http://www.w3.org/2000/svg"></svg>\n',
+                    encoding="utf-8",
                 )
         return live
 
@@ -5625,7 +6178,11 @@ def test_production_main_runs_complete_subject_and_promotes_after_raw_cleanup(
     )
     assert {
         path for path in promoted["raw_artifacts"] if path.startswith("captures/")
-    } == {f"captures/{stem}.txt" for stem in module.REPRESENTATIVE_CAPTURES}
+    } == {
+        f"captures/{stem}{suffix}"
+        for stem in module.REPRESENTATIVE_CAPTURES
+        for suffix in (".txt", ".svg")
+    }
     assert all(not scratch.exists() for scratch in observed["live_scratch"])
     assert json.loads(capsys.readouterr().out)["status"] == "PASS"
 

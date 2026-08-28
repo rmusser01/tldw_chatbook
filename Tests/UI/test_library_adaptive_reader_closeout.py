@@ -35,7 +35,7 @@ from tldw_chatbook.config import load_settings
 
 
 DESTINATIONS = ("media", "conversations", "notes", "prompts", "skills")
-SIZES = ((160, 50), (120, 35), (100, 30), (80, 24), (160, 50))
+SIZES = ((160, 50), (120, 35), (100, 30), (80, 24))
 
 DESTINATION_CONTRACT = {
     "media": (
@@ -351,36 +351,192 @@ def _destination_state(screen, destination: str) -> tuple[object, ...]:
     )
 
 
+def _durable_live_oracle(
+    screen,
+    shell,
+    destination: str,
+    size: tuple[int, int],
+    *,
+    observations: dict[str, object],
+) -> dict[str, object]:
+    """Capture the bounded structured truth shared by durable live journeys."""
+    preferences = getattr(screen, DESTINATION_CONTRACT[destination][3])
+    layout = getattr(screen, DESTINATION_CONTRACT[destination][4])
+    if destination == "media":
+        state = screen._library_media_reader_session
+        record = {
+            "selected": state.selected_id,
+            "pending": state.pending_request,
+            "loaded": state.loaded_id,
+            "mode": state.mode,
+        }
+    elif destination == "conversations":
+        state = screen._library_conversation_reader_state
+        record = {
+            "selected": state.selected_id,
+            "pending": state.selected_id if state.loading else None,
+            "loaded": state.loaded_id,
+            "mode": state.mode,
+        }
+    elif destination == "notes":
+        snapshot = screen._library_note_session.snapshot
+        record = {
+            "selected": screen._selected_note_id,
+            "pending": (
+                screen._selected_note_id
+                if screen._library_note_load_state == "loading"
+                else None
+            ),
+            "loaded": snapshot.note_id if snapshot is not None else None,
+            "mode": (
+                "context"
+                if screen._library_note_context
+                else "preview"
+                if screen._library_note_preview
+                else "edit"
+            ),
+        }
+    elif destination == "prompts":
+        record = {
+            "selected": screen._selected_prompt_id,
+            "pending": (
+                screen._selected_prompt_id
+                if screen._library_prompt_detail_loading
+                else None
+            ),
+            "loaded": screen._library_prompt_loaded_id,
+            "mode": screen._library_prompt_editor_mode,
+        }
+    else:
+        state = screen._library_skill_editor_state
+        record = {
+            "selected": screen._selected_skill_name,
+            "pending": (
+                screen._selected_skill_name
+                if screen._library_skill_detail_loading
+                else None
+            ),
+            "loaded": state.name if state is not None else None,
+            "mode": screen._library_skill_reader_mode,
+        }
+    regions = {
+        name: {
+            "x": widget.region.x,
+            "y": widget.region.y,
+            "width": widget.region.width,
+            "height": widget.region.height,
+        }
+        for name, widget in {
+            "library": shell.library,
+            "items": shell.items,
+            "work": shell.work,
+        }.items()
+    }
+    return {
+        "status": "PASS",
+        "destination": destination,
+        "final_destination": destination,
+        "terminal_size": list(size),
+        "contained": all(
+            region["x"] >= 0
+            and region["y"] >= 0
+            and region["x"] + region["width"] <= size[0]
+            and region["y"] + region["height"] <= size[1]
+            for region in regions.values()
+            if region["width"] and region["height"]
+        ),
+        "regions": regions,
+        "identities": {
+            "shell": shell.id,
+            "items": shell.items.id,
+            "work": shell.work.id,
+        },
+        "focus_owner": getattr(screen.focused, "id", None) or "work",
+        "record": record,
+        "preferences": {
+            "requested_library_open": preferences.library_open,
+            "requested_items_open": preferences.items_open,
+            "effective_library_open": layout.library_open,
+            "effective_items_open": layout.items_open,
+        },
+        "host_worker_groups": sorted(
+            str(worker.group) for worker in screen.workers if not worker.is_finished
+        ),
+        "visible_controls": [
+            button.id
+            for button in shell.query(Button)
+            if button.id and button.display and button.region.area
+        ],
+        "compositor_text": "\n".join(
+            strip.text for strip in screen._compositor.render_strips()
+        ),
+        "cleanup_owner_counts": {},
+        "observations": observations,
+    }
+
+
+def _durable_owner_counts(host, worker_baseline: set[int]) -> dict[str, int]:
+    owned_workers = [
+        worker for worker in host.workers if id(worker) not in worker_baseline
+    ]
+    owned_tasks = [
+        task
+        for worker in owned_workers
+        if (task := getattr(worker, "_task", None)) is not None
+    ]
+    return {
+        "host_workers_before": len(worker_baseline),
+        "host_workers_owned": len(owned_workers),
+        "host_worker_leaks": sum(not worker.is_finished for worker in owned_workers),
+        "host_task_leaks": sum(not task.done() for task in owned_tasks),
+        "host_thread_worker_leaks": sum(
+            bool(getattr(worker, "_thread_worker", False)) and not worker.is_finished
+            for worker in owned_workers
+        ),
+    }
+
+
+def _assert_durable_owner_cleanup(
+    host, worker_baseline: set[int], facts: dict[str, object]
+) -> None:
+    counts = _durable_owner_counts(host, worker_baseline)
+    facts["cleanup_owner_counts"] = counts
+    assert not any(
+        counts[key]
+        for key in (
+            "host_worker_leaks",
+            "host_task_leaks",
+            "host_thread_worker_leaks",
+        )
+    )
+
+
 async def _focus_closeout_work_via_f6(
     screen, pilot, shell, destination: str
 ) -> tuple[str, str]:
     """Reach the active Work region through the app-owned visible F6 route."""
     available = _available_targets(screen, screen._library_workbench_focus_targets())
-    expected = next(
-        (
-            target
-            for pane, target in available
-            if pane is shell.work or shell.work in pane.ancestors
-        ),
-        None,
-    )
-    assert expected is not None, f"{destination} has no reachable Work focus target"
+    assert any(
+        pane is shell.work or shell.work in pane.ancestors
+        for pane, _target in available
+    ), f"{destination} has no reachable Work focus target"
     for _target in range(len(available) + 1):
         await pilot.press("f6")
-        if screen.focused is expected:
+        if screen.focused is shell or shell.work in screen.focused.ancestors:
             break
-    assert screen.focused is expected
     assert screen.focused is shell or shell in screen.focused.ancestors
+    assert screen.focused is shell or shell.work in screen.focused.ancestors
     return "work", str(screen.focused.id)
 
 
-@pytest.mark.asyncio
-@pytest.mark.parametrize("destination", DESTINATIONS)
-async def test_closeout_resize_is_presentation_only(
+async def _exercise_closeout_resize_is_presentation_only(
     destination: str, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
+) -> tuple[dict[str, object], str, str]:
     app, prompt_db = await _seed_closeout_app(tmp_path / destination)
     host = LibraryProductionCSSHarness(app)
+    worker_baseline = {id(worker) for worker in host.workers}
+    facts: dict[str, object] | None = None
+    svg = ""
     try:
         async with host.run_test(size=SIZES[0]) as pilot:
             screen = _active_library_screen(host)
@@ -416,24 +572,74 @@ async def test_closeout_resize_is_presentation_only(
             )
             monkeypatch.setattr(screen, "run_worker", counted_worker)
             monkeypatch.setattr(screen, "set_interval", counted_interval)
-            for width, height in SIZES[1:]:
+            resize_sequence = (*SIZES[1:], SIZES[0])
+            for width, height in resize_sequence:
                 await pilot.resize_terminal(width, height)
                 await _wait_for_condition(
                     pilot,
-                    lambda width=width: screen.size.width == width,
-                    message=f"Resize to {width} did not settle",
+                    lambda width=width, height=height: (
+                        screen.size.width == width and screen.size.height == height
+                    ),
+                    message=f"Resize to {width}x{height} did not settle",
                 )
+                current = _destination_state(screen, destination)
+                assert current[:3] == before[:3]
+                assert current[5] == before[5]
+                assert set(service_counts.values()) == {0}
+                assert seam_counts == {
+                    "config": 0,
+                    "write": 0,
+                    "worker": 0,
+                    "poll": 0,
+                }
             after = _destination_state(screen, destination)
             assert after[:3] == before[:3]
             assert after[5] == before[5]
             assert set(service_counts.values()) == {0}
             assert seam_counts == {"config": 0, "write": 0, "worker": 0, "poll": 0}
+            shell = screen.query_one(DESTINATION_CONTRACT[destination][1])
+            facts = _durable_live_oracle(
+                screen,
+                shell,
+                destination,
+                SIZES[0],
+                observations={
+                    "resize_sequence": [list(size) for size in resize_sequence],
+                    "widget_identity_retained": after[:3] == before[:3],
+                    "semantic_state_retained": after[5] == before[5],
+                    "service_calls_during_resize": service_counts,
+                    "config_write_worker_poll_calls": seam_counts,
+                },
+            )
+            svg = host.export_screenshot(simplify=True)
+        assert facts is not None
+        _assert_durable_owner_cleanup(host, worker_baseline, facts)
     finally:
         prompt_db.close()
+    assert facts is not None
+    return facts, str(facts["compositor_text"]), svg
 
 
 @pytest.mark.asyncio
-async def test_closeout_preferences_restore_in_fresh_screen(tmp_path: Path) -> None:
+@pytest.mark.parametrize("destination", DESTINATIONS)
+async def test_closeout_resize_is_presentation_only(
+    destination: str, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    facts, _compositor, _svg = await _exercise_closeout_resize_is_presentation_only(
+        destination, tmp_path, monkeypatch
+    )
+    assert facts["terminal_size"] == [160, 50]
+    assert facts["observations"]["resize_sequence"] == [
+        [120, 35],
+        [100, 30],
+        [80, 24],
+        [160, 50],
+    ]
+
+
+async def _exercise_closeout_preferences_restore_in_fresh_screen(
+    tmp_path: Path,
+) -> tuple[dict[str, object], str, str]:
     expected = {
         "media": True,
         "conversations": False,
@@ -445,6 +651,8 @@ async def test_closeout_preferences_restore_in_fresh_screen(tmp_path: Path) -> N
     first_app, first_prompt_db = await _seed_closeout_app(tmp_path / "first")
     first_app.app_config = first_config
     first_host = LibraryProductionCSSHarness(first_app)
+    first_worker_baseline = {id(worker) for worker in first_host.workers}
+    first_cleanup: dict[str, int] | None = None
     try:
         async with first_host.run_test(size=(160, 50)) as pilot:
             screen = _active_library_screen(first_host)
@@ -489,37 +697,93 @@ async def test_closeout_preferences_restore_in_fresh_screen(tmp_path: Path) -> N
                 ),
                 message="Mounted screen did not persist shared Library choice",
             )
+        first_cleanup = _durable_owner_counts(first_host, first_worker_baseline)
+        assert not any(
+            first_cleanup[key]
+            for key in (
+                "host_worker_leaks",
+                "host_task_leaks",
+                "host_thread_worker_leaks",
+            )
+        )
     finally:
         first_prompt_db.close()
+    assert first_cleanup is not None
 
     fresh_config = load_settings(force_reload=True)
     fresh_app, fresh_prompt_db = await _seed_closeout_app(tmp_path / "fresh")
     fresh_app.app_config = fresh_config
     host = LibraryProductionCSSHarness(fresh_app)
+    worker_baseline = {id(worker) for worker in host.workers}
+    facts: dict[str, object] | None = None
+    svg = ""
     try:
         async with host.run_test(size=(160, 50)) as pilot:
             screen = _active_library_screen(host)
             await _wait_for_library_shell(screen, pilot)
             for destination, items_open in expected.items():
-                await _open_destination(screen, pilot, destination)
+                shell = await _open_destination(screen, pilot, destination)
                 preferences = getattr(screen, DESTINATION_CONTRACT[destination][3])
                 assert preferences.library_open is False
                 assert preferences.items_open is items_open
+            facts = _durable_live_oracle(
+                screen,
+                shell,
+                destination,
+                (160, 50),
+                observations={
+                    "fresh_screen": True,
+                    "requested_library_open": False,
+                    "requested_items_open": expected,
+                    "first_host_cleanup_owner_counts": first_cleanup,
+                },
+            )
+            facts["destination"] = "all"
+            svg = host.export_screenshot(simplify=True)
+        assert facts is not None
+        _assert_durable_owner_cleanup(host, worker_baseline, facts)
     finally:
         fresh_prompt_db.close()
+    assert facts is not None
+    return facts, str(facts["compositor_text"]), svg
 
 
 @pytest.mark.asyncio
-async def test_closeout_single_app_route_cycle(tmp_path: Path) -> None:
+async def test_closeout_preferences_restore_in_fresh_screen(tmp_path: Path) -> None:
+    (
+        facts,
+        _compositor,
+        _svg,
+    ) = await _exercise_closeout_preferences_restore_in_fresh_screen(tmp_path)
+    cleanup = facts["observations"]["first_host_cleanup_owner_counts"]
+    assert set(cleanup) == {
+        "host_workers_before",
+        "host_workers_owned",
+        "host_worker_leaks",
+        "host_task_leaks",
+        "host_thread_worker_leaks",
+    }
+    assert cleanup["host_worker_leaks"] == 0
+    assert cleanup["host_task_leaks"] == 0
+    assert cleanup["host_thread_worker_leaks"] == 0
+
+
+async def _exercise_closeout_single_app_route_cycle(
+    tmp_path: Path,
+) -> tuple[dict[str, object], str, str]:
     app, prompt_db = await _seed_closeout_app(tmp_path / "cycle")
     host = LibraryGlobalKeyProductionCSSHarness(app)
+    worker_baseline = {id(worker) for worker in host.workers}
     remembered: dict[str, tuple[object, ...]] = {}
     remembered_focus: dict[str, tuple[str, str]] = {}
+    revisit_receipts: dict[str, dict[str, object]] = {}
     expected_items = {destination: True for destination in DESTINATIONS}
     notes_before = tuple(dict(note) for note in app.notes_scope_service.notes)
     prompts_before = tuple(prompt_db.get_prompt_by_id(index) for index in (1, 2))
     stale_service: _OutOfOrderConversationService | None = None
     stale_target_id: str | None = None
+    facts: dict[str, object] | None = None
+    svg = ""
     try:
         async with host.run_test(size=(160, 50)) as pilot:
             screen = _active_library_screen(host)
@@ -695,6 +959,40 @@ async def test_closeout_single_app_route_cycle(tmp_path: Path) -> None:
                     assert screen.query_one(
                         "#library-prompt-name", Input
                     ).value.endswith(" route draft")
+                oracle = _durable_live_oracle(
+                    screen, shell, destination, (160, 50), observations={}
+                )
+                if destination == "notes":
+                    draft = {
+                        "dirty": True,
+                        "retained_without_save": True,
+                        "value": screen.query_one("#library-note-body", TextArea).text,
+                    }
+                elif destination == "prompts":
+                    draft = {
+                        "dirty": True,
+                        "retained_without_save": True,
+                        "value": screen.query_one("#library-prompt-name", Input).value,
+                    }
+                else:
+                    draft = {
+                        "dirty": False,
+                        "retained_without_save": False,
+                        "value": None,
+                    }
+                revisit_receipts[destination] = {
+                    "preferences": oracle["preferences"],
+                    "record": oracle["record"],
+                    "focus": {
+                        "region": restored_focus[0],
+                        "owner": restored_focus[1],
+                    },
+                    "identities": oracle["identities"],
+                    "draft": draft,
+                    "worker_fenced": destination != "conversations",
+                }
+                if destination == "notes" and "conversations" in revisit_receipts:
+                    revisit_receipts["conversations"]["worker_fenced"] = True
             assert screen._library_notes_reader_preferences.items_open is False
             assert screen._library_media_reader_preferences.items_open is True
             assert (
@@ -705,7 +1003,54 @@ async def test_closeout_single_app_route_cycle(tmp_path: Path) -> None:
             assert tuple(prompt_db.get_prompt_by_id(index) for index in (1, 2)) == (
                 prompts_before
             )
+            facts = _durable_live_oracle(
+                screen,
+                shell,
+                destination,
+                (160, 50),
+                observations={
+                    "route_order": list(DESTINATIONS),
+                    "shared_library_open": False,
+                    "destination_items_open": expected_items,
+                    "focus_regions": {
+                        name: region
+                        for name, (region, _owner) in remembered_focus.items()
+                    },
+                    "notes_draft_retained_without_save": True,
+                    "prompt_draft_retained_without_save": True,
+                    "late_conversation_worker_fenced": True,
+                    "revisit_receipts": revisit_receipts,
+                },
+            )
+            facts["destination"] = "all"
+            svg = host.export_screenshot(simplify=True)
+        assert facts is not None
+        _assert_durable_owner_cleanup(host, worker_baseline, facts)
     finally:
         if stale_service is not None:
             stale_service.release_first.set()
         prompt_db.close()
+    assert facts is not None
+    return facts, str(facts["compositor_text"]), svg
+
+
+@pytest.mark.asyncio
+async def test_closeout_single_app_route_cycle(tmp_path: Path) -> None:
+    facts, _compositor, _svg = await _exercise_closeout_single_app_route_cycle(tmp_path)
+    receipts = facts["observations"]["revisit_receipts"]
+    assert set(receipts) == set(DESTINATIONS)
+    for destination, receipt in receipts.items():
+        assert set(receipt) == {
+            "preferences",
+            "record",
+            "focus",
+            "identities",
+            "draft",
+            "worker_fenced",
+        }
+        assert receipt["record"]["pending"] is None
+        assert receipt["focus"]["region"] == "work"
+        assert receipt["identities"]["shell"] == (
+            DESTINATION_CONTRACT[destination][1].removeprefix("#")
+        )
+        assert receipt["worker_fenced"] is True

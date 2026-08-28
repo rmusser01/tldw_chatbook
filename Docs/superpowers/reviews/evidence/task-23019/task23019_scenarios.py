@@ -9,6 +9,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
+import pytest
 from textual.widgets import Button, Input, Static, TextArea
 
 from tldw_chatbook.Widgets.workbench_focus import _available_targets
@@ -19,6 +20,9 @@ from Tests.Skills.test_skills_library_flow import (
 )
 from Tests.UI.test_library_adaptive_reader_closeout import (
     DESTINATION_CONTRACT,
+    _exercise_closeout_preferences_restore_in_fresh_screen,
+    _exercise_closeout_resize_is_presentation_only,
+    _exercise_closeout_single_app_route_cycle,
     _open_destination,
     _seed_closeout_app,
 )
@@ -389,6 +393,7 @@ def _facts(
     return {
         "status": "PASS",
         "destination": destination,
+        "final_destination": destination,
         "terminal_size": list(size),
         "contained": all(
             widget.region.x >= 0
@@ -407,9 +412,9 @@ def _facts(
         "regions": regions,
         "regions_do_not_intersect": _regions_do_not_intersect(regions),
         "identities": {
-            "shell": id(shell),
-            "items": id(shell.items),
-            "work": id(shell.work),
+            "shell": shell.id,
+            "items": shell.items.id,
+            "work": shell.work.id,
         },
         "preferences": {
             "requested_library_open": preferences.library_open,
@@ -691,22 +696,20 @@ def _capability_facts(
     size: tuple[int, int],
     observations: dict[str, Any],
 ) -> dict[str, Any]:
-    compositor = "\n".join(strip.text for strip in screen._compositor.render_strips())
-    return {
-        "status": "PASS",
-        "destination": destination,
-        "terminal_size": list(size),
-        "record": _identity_truth(screen, destination),
-        "identities": {
-            "shell": id(shell),
-            "items": id(shell.items),
-            "work": id(shell.work),
-        },
-        "observations": observations,
-        "visible_actions": _visible_action_facts(shell),
-        "compositor_text": compositor,
-        "cleanup_owner_counts": {},
-    }
+    facts = _facts(
+        screen,
+        shell,
+        destination,
+        size,
+        tuple(
+            button.id
+            for button in shell.query(Button)
+            if button.id and button.display and button.region.area
+        ),
+        (),
+    )
+    facts["observations"] = observations
+    return facts
 
 
 async def run_media_capability() -> dict[str, Any]:
@@ -1775,6 +1778,80 @@ async def run_skills_capability() -> dict[str, Any]:
     )
 
 
+async def run_resize_purity() -> dict[str, dict[str, Any]]:
+    """SH-06: execute and retain one no-side-effect resize oracle per reader."""
+    context = ScenarioContext.from_environment()
+    results = {}
+    for destination in DESTINATIONS:
+        name = f"{destination}-resize-purity"
+        monkeypatch = pytest.MonkeyPatch()
+        try:
+            (
+                facts,
+                compositor,
+                svg,
+            ) = await _exercise_closeout_resize_is_presentation_only(
+                destination,
+                context.case_root(destination, (160, 50)),
+                monkeypatch,
+            )
+            context.capture(name, facts, compositor, svg)
+            results[name] = facts
+        except Exception as error:
+            results[name] = {
+                "status": "FAIL",
+                "error_type": type(error).__name__,
+                "error": str(error),
+            }
+        finally:
+            monkeypatch.undo()
+    return results
+
+
+async def run_preferences_fresh_reload() -> dict[str, dict[str, Any]]:
+    """SH-03: retain requested preference truth from a fresh app screen."""
+    context = ScenarioContext.from_environment()
+    name = "preferences-fresh-reload"
+    try:
+        (
+            facts,
+            compositor,
+            svg,
+        ) = await _exercise_closeout_preferences_restore_in_fresh_screen(
+            context.case_root("preferences", (160, 50))
+        )
+        context.capture(name, facts, compositor, svg)
+        return {name: facts}
+    except Exception as error:
+        return {
+            name: {
+                "status": "FAIL",
+                "error_type": type(error).__name__,
+                "error": str(error),
+            }
+        }
+
+
+async def run_single_app_route_cycle() -> dict[str, dict[str, Any]]:
+    """SH-01/03/04/07: retain the sequential cross-reader isolation oracle."""
+    context = ScenarioContext.from_environment()
+    name = "single-app-route-cycle"
+    try:
+        facts, compositor, svg = await _exercise_closeout_single_app_route_cycle(
+            context.case_root("route-cycle", (160, 50))
+        )
+        context.capture(name, facts, compositor, svg)
+        return {name: facts}
+    except Exception as error:
+        return {
+            name: {
+                "status": "FAIL",
+                "error_type": type(error).__name__,
+                "error": str(error),
+            }
+        }
+
+
 SCENARIOS = {
     "common_matrix": run_common_matrix,
     "media_capability": run_media_capability,
@@ -1782,4 +1859,7 @@ SCENARIOS = {
     "notes_capability": run_notes_capability,
     "prompts_capability": run_prompts_capability,
     "skills_capability": run_skills_capability,
+    "resize_purity": run_resize_purity,
+    "preferences_fresh_reload": run_preferences_fresh_reload,
+    "single_app_route_cycle": run_single_app_route_cycle,
 }

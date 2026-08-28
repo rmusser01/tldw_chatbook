@@ -16,6 +16,7 @@ import sys
 import tempfile
 import threading
 import urllib.parse
+import xml.etree.ElementTree as ET
 from collections.abc import Collection, Mapping
 from dataclasses import dataclass
 from pathlib import Path
@@ -167,7 +168,7 @@ CATALOGUE: dict[str, Contract] = {
             "Tests/UI/test_library_adaptive_reader_closeout.py::test_closeout_preferences_restore_in_fresh_screen",
             "Tests/UI/test_library_adaptive_reader_closeout.py::test_closeout_single_app_route_cycle",
         ),
-        live_cases=("single_app_route_cycle",),
+        live_cases=("preferences_fresh_reload", "single_app_route_cycle"),
     ),
     "SH-04": Contract(
         automated_nodes=(
@@ -340,6 +341,9 @@ EXECUTABLE_LIVE_ROOTS = (
     "notes_capability",
     "prompts_capability",
     "skills_capability",
+    "resize_purity",
+    "preferences_fresh_reload",
+    "single_app_route_cycle",
 )
 EXPECTED_LIVE_RESULT_KEYS = {
     "common_matrix": frozenset(
@@ -347,20 +351,22 @@ EXPECTED_LIVE_RESULT_KEYS = {
         for destination in DESTINATIONS
         for width, height in SIZES
     ),
+    "resize_purity": frozenset(
+        f"{destination}-resize-purity" for destination in DESTINATIONS
+    ),
+    "preferences_fresh_reload": frozenset({"preferences-fresh-reload"}),
+    "single_app_route_cycle": frozenset({"single-app-route-cycle"}),
     **{
         root: frozenset({root})
         for root in EXECUTABLE_LIVE_ROOTS
-        if root != "common_matrix"
+        if root
+        not in {
+            "common_matrix",
+            "resize_purity",
+            "preferences_fresh_reload",
+            "single_app_route_cycle",
+        }
     },
-}
-DURABLE_PYTEST_SELECTORS = (
-    "Tests/UI/test_library_adaptive_reader_closeout.py::test_closeout_resize_is_presentation_only",
-    "Tests/UI/test_library_adaptive_reader_closeout.py::test_closeout_preferences_restore_in_fresh_screen",
-    "Tests/UI/test_library_adaptive_reader_closeout.py::test_closeout_single_app_route_cycle",
-)
-DURABLE_EVIDENCE_ALIASES = {
-    "resize_purity": (DURABLE_PYTEST_SELECTORS[0],),
-    "single_app_route_cycle": (DURABLE_PYTEST_SELECTORS[2],),
 }
 EXPECTED_CONCRETE_LIVE_RESULTS = frozenset(
     result_name
@@ -373,8 +379,112 @@ REPRESENTATIVE_CAPTURES = {
     "notes-100x30": ("live", "notes-100x30"),
     "prompts-80x24": ("live", "prompts-80x24"),
     "skills-80x24": ("live", "skills-80x24"),
-    "single-app-route-cycle": ("automated", DURABLE_PYTEST_SELECTORS[2]),
+    "conversations-capability": ("live", "conversations_capability"),
+    "preferences-fresh-reload": ("live", "preferences-fresh-reload"),
+    "single-app-route-cycle": ("live", "single-app-route-cycle"),
 }
+REPRESENTATIVE_CAPTURE_SOURCES = {
+    **{
+        stem: ("common_matrix", stem)
+        for stem in (
+            "media-160x50",
+            "conversations-120x35",
+            "notes-100x30",
+            "prompts-80x24",
+            "skills-80x24",
+        )
+    },
+    "conversations-capability": (
+        "conversations_capability",
+        "conversations-capability",
+    ),
+    "preferences-fresh-reload": (
+        "preferences_fresh_reload",
+        "preferences-fresh-reload",
+    ),
+    "single-app-route-cycle": (
+        "single_app_route_cycle",
+        "single-app-route-cycle",
+    ),
+}
+
+_PRODUCTION_IDENTITIES = {
+    "media": {
+        "shell": "library-media-reader-shell",
+        "items": "library-canvas",
+        "work": "library-media-viewer",
+    },
+    "conversations": {
+        "shell": "library-conversations-reader-shell",
+        "items": "library-canvas",
+        "work": "library-conversation-reader",
+    },
+    "notes": {
+        "shell": "library-notes-reader-shell",
+        "items": "library-canvas",
+        "work": "library-note-work-pane",
+    },
+    "prompts": {
+        "shell": "library-prompts-reader-shell",
+        "items": "library-canvas",
+        "work": "library-prompt-work-pane",
+    },
+    "skills": {
+        "shell": "library-skills-reader-shell",
+        "items": "library-canvas",
+        "work": "library-skill-work-pane",
+    },
+}
+_CAPABILITY_SIZES = {
+    "media_capability": (160, 50),
+    "conversations_capability": (160, 50),
+    "notes_capability": (120, 35),
+    "prompts_capability": (100, 30),
+    "skills_capability": (80, 24),
+}
+LIVE_RESULT_METADATA = {
+    **{
+        f"{destination}-{width}x{height}": {
+            "destination": destination,
+            "final_destination": destination,
+            "terminal_size": (width, height),
+            "identities": _PRODUCTION_IDENTITIES[destination],
+        }
+        for destination in DESTINATIONS
+        for width, height in SIZES
+    },
+    **{
+        name: {
+            "destination": name.removesuffix("_capability"),
+            "final_destination": name.removesuffix("_capability"),
+            "terminal_size": size,
+            "identities": _PRODUCTION_IDENTITIES[name.removesuffix("_capability")],
+        }
+        for name, size in _CAPABILITY_SIZES.items()
+    },
+    **{
+        f"{destination}-resize-purity": {
+            "destination": destination,
+            "final_destination": destination,
+            "terminal_size": (160, 50),
+            "identities": _PRODUCTION_IDENTITIES[destination],
+        }
+        for destination in DESTINATIONS
+    },
+    "preferences-fresh-reload": {
+        "destination": "all",
+        "final_destination": "skills",
+        "terminal_size": (160, 50),
+        "identities": _PRODUCTION_IDENTITIES["skills"],
+    },
+    "single-app-route-cycle": {
+        "destination": "all",
+        "final_destination": "skills",
+        "terminal_size": (160, 50),
+        "identities": _PRODUCTION_IDENTITIES["skills"],
+    },
+}
+assert set(LIVE_RESULT_METADATA) == EXPECTED_CONCRETE_LIVE_RESULTS
 
 _ABSOLUTE_PATH = re.compile(r"(?<!>)(?:[A-Za-z]:[\\/]|/)[^\s\"']+")
 _CREDENTIAL_ASSIGNMENT = re.compile(
@@ -382,7 +492,7 @@ _CREDENTIAL_ASSIGNMENT = re.compile(
     r"\s*[:=]\s*[^\s,;]+"
 )
 _HOST_PATH = re.compile(
-    r"(?<![A-Za-z0-9:<>/])(?:[A-Za-z]:[\\/]|\\\\[^\\\s]+\\|/(?!/)[^\s\"'<>]+)"
+    r"(?<![A-Za-z0-9:.<>/])(?:[A-Za-z]:[\\/]|\\\\[^\\\s]+\\|/(?!/)[^\s\"'<>]+)"
 )
 _HOST_URI = re.compile(
     r"(?i)\b(?:file|vscode-file|filesystem|local-file):(?://)?[^\s\"']*"
@@ -447,10 +557,7 @@ def validate_catalogue(catalogue: Mapping[str, Contract]) -> None:
             raise CloseoutError("live_cases_missing")
         if len(contract.live_cases) != len(set(contract.live_cases)):
             raise CloseoutError("live_key_duplicate")
-        if any(
-            key not in EXECUTABLE_LIVE_ROOTS and key not in DURABLE_EVIDENCE_ALIASES
-            for key in contract.live_cases
-        ):
+        if any(key not in EXECUTABLE_LIVE_ROOTS for key in contract.live_cases):
             raise CloseoutError("live_case_not_mapped")
     if dict(catalogue) != CATALOGUE:
         raise CloseoutError("catalogue_mapping_mismatch")
@@ -502,8 +609,6 @@ def _result_status(value: object) -> str | None:
 
 
 def _live_result_names(live_case: str) -> tuple[str, ...]:
-    if live_case in DURABLE_EVIDENCE_ALIASES:
-        return ()
     expected = EXPECTED_LIVE_RESULT_KEYS.get(live_case)
     return tuple(sorted(expected)) if expected is not None else (live_case,)
 
@@ -998,6 +1103,430 @@ def _result_inventory(
     }
 
 
+_LIVE_ORACLE_KEYS = frozenset(
+    {
+        "status",
+        "destination",
+        "final_destination",
+        "terminal_size",
+        "contained",
+        "regions",
+        "identities",
+        "focus_owner",
+        "record",
+        "preferences",
+        "host_worker_groups",
+        "visible_controls",
+        "compositor_text",
+        "cleanup_owner_counts",
+    }
+)
+_SCENARIO_ORACLE_KEYS = frozenset(
+    {
+        "regions_do_not_intersect",
+        "selected_row",
+        "grips",
+        "primary_actions",
+        "footer_shortcuts",
+        "f6_route",
+    }
+)
+_CAPABILITY_OBSERVATION_KEYS = {
+    "media_capability": frozenset(
+        {
+            "catalogue_ids",
+            "find_status",
+            "selected_loaded_identity",
+            "mode_after_round_trip",
+            "bulk_preview_copy",
+            "bulk_selected_count",
+            "item_count_after_cancel",
+            "destructive_boundary",
+        }
+    ),
+    "conversations_capability": frozenset(
+        {
+            "catalogue_ids",
+            "progressive_page_offsets",
+            "progressive_message_total",
+            "find_match_ids",
+            "stale_first_id",
+            "settled_target_id",
+            "retry_error",
+            "retry_recovered_id",
+            "retry_message_ids",
+            "info_copy",
+            "handoff_source_id",
+            "handoff_action_label",
+        }
+    ),
+    "notes_capability": frozenset(
+        {
+            "catalogue_ids",
+            "draft_note_id",
+            "preview_info_draft",
+            "save_calls_before_conflict",
+            "dirty_navigation_veto",
+            "conflict_copy",
+            "recovered_title",
+            "recovered_body",
+            "bulk_preview_copy",
+        }
+    ),
+    "prompts_capability": frozenset(
+        {
+            "catalogue_ids",
+            "import_boundary",
+            "bulk_preview_copy",
+            "retry_selected_id",
+            "retry_prior_loaded_id",
+            "structured_prompt_id",
+            "basic_draft",
+            "preserved_advanced_author",
+            "preserved_advanced_details",
+            "preserved_advanced_keywords",
+            "preserved_advanced_title_before_validation",
+            "preserved_advanced_mapping_hint",
+            "validation_status",
+            "validation_focus_owner",
+            "history_title",
+        }
+    ),
+    "skills_capability": frozenset(
+        {
+            "catalogue_ids",
+            "draft_after_overview_round_trip",
+            "review_id",
+            "review_manifest_generation",
+            "review_digest",
+            "review_identity_copy",
+            "stale_review_rejection",
+            "files_copy",
+            "delete_preview_copy",
+            "destructive_boundary",
+        }
+    ),
+}
+_DURABLE_OBSERVATION_KEYS = {
+    **{
+        f"{destination}-resize-purity": frozenset(
+            {
+                "resize_sequence",
+                "widget_identity_retained",
+                "semantic_state_retained",
+                "service_calls_during_resize",
+                "config_write_worker_poll_calls",
+            }
+        )
+        for destination in DESTINATIONS
+    },
+    "preferences-fresh-reload": frozenset(
+        {
+            "fresh_screen",
+            "requested_library_open",
+            "requested_items_open",
+            "first_host_cleanup_owner_counts",
+        }
+    ),
+    "single-app-route-cycle": frozenset(
+        {
+            "route_order",
+            "shared_library_open",
+            "destination_items_open",
+            "focus_regions",
+            "notes_draft_retained_without_save",
+            "prompt_draft_retained_without_save",
+            "late_conversation_worker_fenced",
+            "revisit_receipts",
+        }
+    ),
+}
+
+
+def _validate_route_receipts(
+    value: object,
+    *,
+    shared_library_open: object,
+    destination_items_open: object,
+) -> bool:
+    if (
+        not isinstance(shared_library_open, bool)
+        or not isinstance(destination_items_open, Mapping)
+        or set(destination_items_open) != set(DESTINATIONS)
+        or any(not isinstance(state, bool) for state in destination_items_open.values())
+        or not isinstance(value, Mapping)
+        or set(value) != set(DESTINATIONS)
+    ):
+        return False
+    for destination, receipt in value.items():
+        if not isinstance(receipt, Mapping) or set(receipt) != {
+            "preferences",
+            "record",
+            "focus",
+            "identities",
+            "draft",
+            "worker_fenced",
+        }:
+            return False
+        if receipt.get("worker_fenced") is not True:
+            return False
+        if receipt.get("identities") != _PRODUCTION_IDENTITIES[destination]:
+            return False
+        focus = receipt.get("focus")
+        draft = receipt.get("draft")
+        preferences = receipt.get("preferences")
+        record = receipt.get("record")
+        if (
+            not isinstance(preferences, Mapping)
+            or set(preferences)
+            != {
+                "requested_library_open",
+                "requested_items_open",
+                "effective_library_open",
+                "effective_items_open",
+            }
+            or any(not isinstance(state, bool) for state in preferences.values())
+            or preferences["requested_library_open"] is not shared_library_open
+            or preferences["effective_library_open"] is not shared_library_open
+            or preferences["requested_items_open"]
+            is not destination_items_open[destination]
+            or preferences["effective_items_open"]
+            is not destination_items_open[destination]
+            or not isinstance(record, Mapping)
+            or set(record) != {"selected", "pending", "loaded", "mode"}
+            or record["pending"] is not None
+            or record["selected"] != record["loaded"]
+            or not isinstance(record["mode"], str)
+            or not record["mode"]
+            or not isinstance(focus, Mapping)
+            or set(focus) != {"region", "owner"}
+            or focus.get("region") != "work"
+            or not isinstance(focus.get("owner"), str)
+            or not isinstance(draft, Mapping)
+            or set(draft) != {"dirty", "retained_without_save", "value"}
+        ):
+            return False
+        identity = record["selected"]
+        if destination == "prompts":
+            if (
+                isinstance(identity, bool)
+                or not isinstance(identity, int)
+                or identity <= 0
+            ):
+                return False
+        elif not isinstance(identity, str) or not identity:
+            return False
+        should_retain = destination in {"notes", "prompts"}
+        if (
+            draft.get("dirty") is not should_retain
+            or draft.get("retained_without_save") is not should_retain
+            or (should_retain and not isinstance(draft.get("value"), str))
+            or (not should_retain and draft.get("value") is not None)
+        ):
+            return False
+    return True
+
+
+def _validate_live_oracle(name: str, value: object) -> None:
+    """Require one complete, identity-bearing structured live oracle."""
+    if not isinstance(value, Mapping):
+        raise CloseoutError("evidence_inventory_invalid")
+    if value.get("status") == "NOT_APPLICABLE":
+        return
+    if value.get("status") != "PASS":
+        raise CloseoutError("evidence_inventory_invalid")
+    destination = value.get("destination")
+    size = value.get("terminal_size")
+    regions = value.get("regions")
+    identities = value.get("identities")
+    record = value.get("record")
+    preferences = value.get("preferences")
+    cleanup = value.get("cleanup_owner_counts")
+    metadata = LIVE_RESULT_METADATA.get(name)
+    if metadata is None:
+        raise CloseoutError("evidence_inventory_invalid")
+    if name in _CAPABILITY_OBSERVATION_KEYS:
+        expected_keys = _LIVE_ORACLE_KEYS | _SCENARIO_ORACLE_KEYS | {"observations"}
+    elif name in _DURABLE_OBSERVATION_KEYS:
+        expected_keys = _LIVE_ORACLE_KEYS | {"observations"}
+    else:
+        expected_keys = (
+            _LIVE_ORACLE_KEYS
+            | _SCENARIO_ORACLE_KEYS
+            | {
+                "items_comfort_expansion",
+                "restoration_paths",
+            }
+        )
+    required_regions = {"library", "items", "work"}
+    required_region_fields = {"x", "y", "width", "height"}
+    region_truth = (
+        isinstance(regions, Mapping)
+        and set(regions)
+        in (
+            {"library", "items", "work"},
+            {"library", "library_grip", "items", "items_grip", "work"},
+        )
+        and all(
+            isinstance(region, Mapping)
+            and set(region)
+            in (required_region_fields, required_region_fields | {"right", "bottom"})
+            and all(
+                isinstance(region[field], int) and region[field] >= 0
+                for field in required_region_fields
+            )
+            and region["x"] + region["width"] <= size[0]
+            and region["y"] + region["height"] <= size[1]
+            for region in (regions[key] for key in required_regions)
+        )
+        if isinstance(size, list)
+        and len(size) == 2
+        and all(isinstance(part, int) and part > 0 for part in size)
+        else False
+    )
+    if (
+        set(value) != expected_keys
+        or destination != metadata["destination"]
+        or value.get("final_destination") != metadata["final_destination"]
+        or not isinstance(size, list)
+        or len(size) != 2
+        or any(not isinstance(part, int) or part <= 0 for part in size)
+        or tuple(size) != metadata["terminal_size"]
+        or value.get("contained") is not True
+        or not region_truth
+        or not isinstance(identities, Mapping)
+        or identities != metadata["identities"]
+        or not isinstance(value.get("focus_owner"), str)
+        or not value["focus_owner"]
+        or not isinstance(record, Mapping)
+        or set(record) != {"selected", "pending", "loaded", "mode"}
+        or any(
+            record[key] is not None
+            and (
+                isinstance(record[key], bool) or not isinstance(record[key], (int, str))
+            )
+            for key in ("selected", "pending", "loaded")
+        )
+        or not isinstance(record.get("mode"), str)
+        or not record["mode"]
+        or not isinstance(preferences, Mapping)
+        or set(preferences)
+        not in (
+            {
+                "requested_library_open",
+                "requested_items_open",
+                "effective_library_open",
+                "effective_items_open",
+            },
+            {
+                "requested_library_open",
+                "requested_items_open",
+                "requested_custom_widths_enabled",
+                "requested_library_width",
+                "requested_items_width",
+                "effective_library_open",
+                "effective_items_open",
+                "effective_library_width",
+                "effective_items_width",
+                "effective_reader_width",
+                "effective_priority_pane",
+            },
+        )
+        or any(
+            not isinstance(preferences[key], bool)
+            for key in (
+                "requested_library_open",
+                "requested_items_open",
+                "effective_library_open",
+                "effective_items_open",
+            )
+        )
+        or not isinstance(value.get("host_worker_groups"), list)
+        or any(
+            not isinstance(group, str) or not group
+            for group in value["host_worker_groups"]
+        )
+        or not isinstance(value.get("visible_controls"), list)
+        or not value["visible_controls"]
+        or any(
+            not isinstance(control, str) or not control
+            for control in value["visible_controls"]
+        )
+        or not isinstance(value.get("compositor_text"), str)
+        or not value["compositor_text"].strip()
+        or not isinstance(cleanup, Mapping)
+        or not {
+            "host_worker_leaks",
+            "host_task_leaks",
+            "host_thread_worker_leaks",
+        }.issubset(cleanup)
+        or any(
+            cleanup.get(key) != 0
+            for key in (
+                "host_worker_leaks",
+                "host_task_leaks",
+                "host_thread_worker_leaks",
+            )
+        )
+        or set(cleanup)
+        not in (
+            {"host_worker_leaks", "host_task_leaks", "host_thread_worker_leaks"},
+            {
+                "host_workers_before",
+                "host_workers_owned",
+                "host_worker_leaks",
+                "host_task_leaks",
+                "host_thread_worker_leaks",
+            },
+        )
+    ):
+        raise CloseoutError("evidence_inventory_invalid")
+    observations = value.get("observations")
+    expected_observation_keys = _CAPABILITY_OBSERVATION_KEYS.get(
+        name
+    ) or _DURABLE_OBSERVATION_KEYS.get(name)
+    if expected_observation_keys is not None and (
+        not isinstance(observations, Mapping)
+        or set(observations) != expected_observation_keys
+    ):
+        raise CloseoutError("evidence_inventory_invalid")
+    if name.endswith("-resize-purity") and observations.get("resize_sequence") != [
+        [120, 35],
+        [100, 30],
+        [80, 24],
+        [160, 50],
+    ]:
+        raise CloseoutError("evidence_inventory_invalid")
+    if name == "preferences-fresh-reload":
+        first_cleanup = observations.get("first_host_cleanup_owner_counts")
+        if (
+            not isinstance(first_cleanup, Mapping)
+            or set(first_cleanup)
+            != {
+                "host_workers_before",
+                "host_workers_owned",
+                "host_worker_leaks",
+                "host_task_leaks",
+                "host_thread_worker_leaks",
+            }
+            or any(
+                first_cleanup[key] != 0
+                for key in (
+                    "host_worker_leaks",
+                    "host_task_leaks",
+                    "host_thread_worker_leaks",
+                )
+            )
+        ):
+            raise CloseoutError("evidence_inventory_invalid")
+    if name == "single-app-route-cycle" and not _validate_route_receipts(
+        observations.get("revisit_receipts"),
+        shared_library_open=observations.get("shared_library_open"),
+        destination_items_open=observations.get("destination_items_open"),
+    ):
+        raise CloseoutError("evidence_inventory_invalid")
+
+
 def _validate_evidence_inventory(
     artifacts: Mapping[str, bytes],
     *,
@@ -1006,6 +1535,7 @@ def _validate_evidence_inventory(
 ) -> None:
     expected = _result_inventory(automated_results, live_results)
     observed: dict[tuple[str, str], str] = {}
+    retained_facts: dict[tuple[str, str], Mapping[str, object]] = {}
     for relative, payload in artifacts.items():
         if not relative.startswith("facts/"):
             continue
@@ -1028,17 +1558,23 @@ def _validate_evidence_inventory(
         ):
             raise CloseoutError("evidence_inventory_invalid")
         observed[(kind, name)] = status_value
+        retained_facts[(kind, name)] = fact
+        if kind == "live":
+            expected_live = live_results.get(name)
+            _validate_live_oracle(name, expected_live)
+            if fact != {"kind": "live", "result_name": name, **expected_live}:
+                raise CloseoutError("evidence_inventory_invalid")
+        elif set(fact) != {"kind", "result_name", "status"}:
+            raise CloseoutError("evidence_inventory_invalid")
     if observed != expected or set(live_results) != EXPECTED_CONCRETE_LIVE_RESULTS:
         raise CloseoutError("evidence_inventory_invalid")
 
-    captures: dict[str, str] = {}
+    captures: dict[str, set[str]] = {}
     for relative, payload in artifacts.items():
         if not relative.startswith("captures/"):
             continue
         path = Path(relative)
         stem = path.stem
-        if stem in captures:
-            raise CloseoutError("evidence_inventory_invalid")
         try:
             text = payload.decode("utf-8")
         except UnicodeError:
@@ -1051,19 +1587,26 @@ def _validate_evidence_inventory(
         if expected_status is None:
             raise CloseoutError("evidence_inventory_invalid")
         if path.suffix == ".txt":
-            identity_ok = (
-                f"result_name: {result_name}\n" in text
-                and f"status: {expected_status}\n" in text
-            )
+            prefix = f"result_name: {result_name}\nstatus: {expected_status}\n"
+            fact = retained_facts.get((kind, result_name), {})
+            identity_ok = text == prefix + str(fact.get("compositor_text", ""))
         else:
-            identity_ok = (
-                f'data-result-name="{result_name}"' in text
-                and f'data-status="{expected_status}"' in text
-            )
+            try:
+                root = ET.fromstring(text)
+            except (ET.ParseError, RecursionError):
+                identity_ok = False
+            else:
+                identity_ok = (
+                    root.tag.rpartition("}")[2] == "svg"
+                    and root.attrib.get("data-result-name") == result_name
+                    and root.attrib.get("data-status") == expected_status
+                )
         if not identity_ok:
             raise CloseoutError("evidence_inventory_invalid")
-        captures[stem] = relative
-    if set(captures) != set(REPRESENTATIVE_CAPTURES):
+        captures.setdefault(stem, set()).add(path.suffix)
+    if set(captures) != set(REPRESENTATIVE_CAPTURES) or any(
+        suffixes != {".txt", ".svg"} for suffixes in captures.values()
+    ):
         raise CloseoutError("evidence_inventory_invalid")
 
 
@@ -1080,6 +1623,49 @@ def _canonical_summary(
         "live_results": len(live_results),
         "not_applicable_results": statuses.count("NOT_APPLICABLE"),
     }
+
+
+def _canonical_readme(subject: Subject, summary: Mapping[str, object]) -> bytes:
+    """Build the bounded, literal closeout runbook retained with evidence."""
+    return (
+        f"# {TASK_ID} adaptive-reader closeout evidence\n\n"
+        "## Subject and result\n\n"
+        f"Subject commit: `{subject.commit}`\n\n"
+        f"Subject tree: `{subject.tree}`\n\n"
+        f"Result: PASS — {summary['automated_results']} automated results, "
+        f"{summary['live_results']} live results, and "
+        f"{summary['not_applicable_results']} NOT_APPLICABLE results.\n\n"
+        "## Exact environment and commands\n\n"
+        "Run these commands from a clean detached subject worktree. The commands "
+        "resolve that worktree once, change to its repository root, and use the "
+        "repository-adjacent virtual environment interpreter.\n\n"
+        "The child runs with `PYTEST_DISABLE_PLUGIN_AUTOLOAD=1`, explicit "
+        "`pytest_asyncio.plugin`, scratch-owned HOME/XDG/config/database/temp paths, "
+        "read-only subject-checkout/runtime authority, and network/process denial.\n\n"
+        "```bash\n"
+        'SUBJECT_ROOT="$(git rev-parse --show-toplevel)"\n'
+        'cd "$SUBJECT_ROOT"\n'
+        'test -z "$(git status --porcelain)"\n'
+        'test -z "$(git symbolic-ref -q HEAD)"\n'
+        f'TASK23019_SUBJECT_REVISION="{subject.commit}" '
+        "../../.venv/bin/python "
+        "Docs/superpowers/reviews/evidence/task-23019/task23019_closeout.py "
+        f'--subject-revision "{subject.commit}" --promote\n'
+        "../../.venv/bin/python "
+        "Docs/superpowers/reviews/evidence/task-23019/task23019_closeout.py "
+        "--verify-evidence Docs/superpowers/reviews/evidence/task-23019\n"
+        "```\n\n"
+        "## Repair history\n\n"
+        "- `a92000229b`: retained-reader route contracts (focused product RED/GREEN).\n"
+        "- `471da9f9db`: production dispatch and cleanup boundary (harness RED/GREEN).\n"
+        "- `d81e231f26`: explicit hermetic async plugin (harness RED/GREEN).\n"
+        "- `c9b8a7e002`: scratch descriptor metadata hardening (harness RED/GREEN).\n\n"
+        "## Promotion and cleanup proof\n\n"
+        "All facts and captures were normalized and validated in memory; the raw "
+        "TemporaryDirectory exited before repository promotion. Promotion then "
+        "validated the subject bytes, canonical catalogue, hashes, limits, and "
+        "complete sibling transaction before the atomic destination swap.\n"
+    ).encode()
 
 
 def _normalization_replacements(
@@ -1187,11 +1773,7 @@ def _build_bundle(
             for contract_id, contract in sorted(catalogue.items())
         },
     }
-    artifacts["README.md"] = (
-        f"# {TASK_ID} adaptive-reader closeout evidence\n\n"
-        f"Subject commit: `{subject.commit}`\n\n"
-        f"Subject tree: `{subject.tree}`\n"
-    ).encode()
+    artifacts["README.md"] = _canonical_readme(subject, expected_summary)
     artifacts["manifest.json"] = _json_bytes(manifest)
     for relative in tuple(artifacts):
         if relative in SOURCE_ARTIFACTS:
@@ -1338,15 +1920,8 @@ def _validate_bundle_artifacts(
             raise CloseoutError(
                 "promotion_collision", {"reason": "subject_source_changed"}
             )
-    expected_readme = (
-        f"# {TASK_ID} adaptive-reader closeout evidence\n\n"
-        f"Subject commit: `{subject.commit}`\n\n"
-        f"Subject tree: `{subject.tree}`\n"
-    ).encode()
-    if artifacts["README.md"] != expected_readme:
-        raise CloseoutError("promotion_collision", {"reason": "readme_invalid"})
     automated: dict[str, str] = {}
-    live: dict[str, str] = {}
+    live: dict[str, object] = {}
     for relative, payload in artifacts.items():
         if not relative.startswith("facts/"):
             continue
@@ -1375,7 +1950,15 @@ def _validate_bundle_artifacts(
             raise CloseoutError(
                 "promotion_collision", {"reason": "evidence_inventory_invalid"}
             )
-        target[name] = status_value
+        target[name] = (
+            status_value
+            if kind == "automated"
+            else {
+                key: value
+                for key, value in fact.items()
+                if key not in {"kind", "result_name"}
+            }
+        )
     try:
         validate_complete_results(
             CATALOGUE, automated, live, not_applicable=not_applicable
@@ -1391,6 +1974,8 @@ def _validate_bundle_artifacts(
         raise CloseoutError("promotion_collision", {"reason": reason}) from None
     if summary != _canonical_summary(automated, live):
         raise CloseoutError("promotion_collision", {"reason": "summary_invalid"})
+    if artifacts["README.md"] != _canonical_readme(subject, summary):
+        raise CloseoutError("promotion_collision", {"reason": "readme_invalid"})
 
 
 def _validate_bundle_at(
@@ -3188,39 +3773,49 @@ def main(arguments: list[str] | None = None) -> int:
                 *(("live", name, value) for name, value in live_results.items()),
             ]
             for index, (kind, name, value) in enumerate(sorted(inventory)):
-                (facts / f"result-{index:03}.json").write_bytes(
-                    _json_bytes(
-                        {
-                            "kind": kind,
-                            "result_name": name,
-                            "status": _result_status(value),
-                        }
-                    )
-                )
-            live_capture_root = (
-                raw_root / "raw-results/common_matrix/raw-evidence/captures"
-            )
+                fact = {
+                    "kind": kind,
+                    "result_name": name,
+                    "status": _result_status(value),
+                }
+                if kind == "live":
+                    if not isinstance(value, Mapping):
+                        raise CloseoutError("evidence_inventory_invalid")
+                    fact.update(value)
+                (facts / f"result-{index:03}.json").write_bytes(_json_bytes(fact))
             results_by_kind = {
                 "automated": automated_results,
                 "live": live_results,
             }
             for stem, (kind, name) in REPRESENTATIVE_CAPTURES.items():
-                body = b"Automated route-cycle contract completed.\n"
-                if kind == "live":
-                    try:
-                        body = _read_regular_file(
-                            live_capture_root / f"{stem}.txt",
-                            limit=TEXT_ARTIFACT_BYTE_LIMIT,
-                        )
-                    except OSError:
-                        raise CloseoutError("representative_capture_missing") from None
-                (captures / f"{stem}.txt").write_bytes(
-                    (
-                        f"result_name: {name}\n"
-                        f"status: {_result_status(results_by_kind[kind][name])}\n"
-                    ).encode()
-                    + body
+                source_root, source_stem = REPRESENTATIVE_CAPTURE_SOURCES[stem]
+                raw_capture_root = (
+                    raw_root / "raw-results" / source_root / "raw-evidence/captures"
                 )
+                try:
+                    body = _read_regular_file(
+                        raw_capture_root / f"{source_stem}.txt",
+                        limit=TEXT_ARTIFACT_BYTE_LIMIT,
+                    )
+                    svg = _read_regular_file(
+                        raw_capture_root / f"{source_stem}.svg",
+                        limit=SVG_ARTIFACT_BYTE_LIMIT,
+                    ).decode("utf-8")
+                except (OSError, UnicodeError):
+                    raise CloseoutError("representative_capture_missing") from None
+                status = _result_status(results_by_kind[kind][name])
+                (captures / f"{stem}.txt").write_bytes(
+                    (f"result_name: {name}\nstatus: {status}\n").encode() + body
+                )
+                svg_index = svg.find("<svg")
+                if svg_index < 0:
+                    raise CloseoutError("representative_capture_invalid")
+                svg = (
+                    svg[: svg_index + 4]
+                    + f' data-result-name="{name}" data-status="{status}"'
+                    + svg[svg_index + 4 :]
+                )
+                (captures / f"{stem}.svg").write_text(svg, encoding="utf-8")
             raw_artifacts = collect_raw_artifacts(retained)
             normalization_roots = {
                 "checkout": checkout,
