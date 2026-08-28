@@ -1464,8 +1464,12 @@ def test_rag_backfill_worker_failure_notifies_and_clears_in_flight_without_raisi
     assert bulk_rag_slot_in_flight(BACKFILL_SLOT) is False
     message, severity = fake_app.notifications[-1]
     assert severity == "error"
+    # TASK-23108: the toast is plain language with a next step; the raw
+    # exception text stays in the log, only the type name reaches the user.
     assert "Backfill failed" in message
-    assert "kaboom" in message
+    assert "kaboom" not in message
+    assert "RuntimeError" in message
+    assert "Run Backfill again" in message
 
 
 # --- M5 (SP3 final review): the shared RAG service must be resolved OUTSIDE

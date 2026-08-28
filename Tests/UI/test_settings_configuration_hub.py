@@ -42,6 +42,7 @@ from tldw_chatbook.UI.Screens.provider_model_resolution import (
 from tldw_chatbook.UI.Screens.settings_screen import SettingsScreen
 from tldw_chatbook.UI.Screens.settings_config_adapter import (
     SettingsConfigAdapter,
+    failure_status_text,
     redact_secret_text,
 )
 from tldw_chatbook.UI.Screens.settings_config_models import (
@@ -8570,6 +8571,70 @@ async def test_settings_provider_model_discovery_shows_ambiguous_provider_recove
 
     assert "https://api.openai.com/v1" not in status_text
     assert "https://proxy.example.com/v1" not in status_text
+
+
+class _ExplodingDiscoveryScope:
+    """A scope service whose calls raise, for the unexpected-failure paths."""
+
+    def __init__(self, exc: BaseException) -> None:
+        self._exc = exc
+
+    async def discover_models(self, **kwargs):
+        raise self._exc
+
+    async def persist_discovered_models_to_settings(self, **kwargs):
+        raise self._exc
+
+
+@pytest.mark.asyncio
+async def test_model_discovery_crash_status_is_plain_language_without_raw_exception():
+    """TASK-23108: an unexpected discovery failure must not hand the raw
+    exception repr to the user -- plain summary, next step, type name only."""
+    app = _build_test_app()
+    app.app_config["chat_defaults"] = {"provider": "OpenAI", "model": "gpt-4.1"}
+    app.llm_provider_catalog_scope_service = _ExplodingDiscoveryScope(
+        RuntimeError("boom at https://api.example.com/v1 API_KEY=sk-super-secret")
+    )
+    screen = SettingsScreen(app)
+
+    await screen._discover_provider_models()
+
+    status = screen._model_discovery_status
+    assert "boom" not in status
+    assert "sk-super-secret" not in status
+    assert status.startswith("Model discovery failed (RuntimeError).")
+    assert "run Discover again" in status
+    assert "Logs (F8)" in status
+
+
+@pytest.mark.asyncio
+async def test_discovered_model_save_crash_status_is_plain_language():
+    """TASK-23108: same contract for the persistence path."""
+    app = _build_test_app()
+    app.app_config["chat_defaults"] = {"provider": "OpenAI", "model": "gpt-4.1"}
+    app.llm_provider_catalog_scope_service = _ExplodingDiscoveryScope(
+        OSError("disk sadness /home/user/.config/tldw_cli/config.toml")
+    )
+    screen = SettingsScreen(app)
+    screen._model_discovery_selected_model_ids = {"gpt-4o-mini"}
+
+    await screen._save_selected_discovered_provider_models()
+
+    status = screen._model_discovery_status
+    assert "disk sadness" not in status
+    assert status.startswith("Could not save the discovered models (OSError).")
+    assert "Try Save again" in status
+    assert "Logs (F8)" in status
+
+
+def test_failure_status_text_never_carries_raw_exception_text():
+    """The helper's guarantee: only the type name crosses into the UI."""
+    exc = ValueError("token=sk-live-1234 leaked into the message")
+    text = failure_status_text("Something failed", exc, next_step="Try again.")
+    assert text == (
+        "Something failed (ValueError). Try again. Details are in Logs (F8)."
+    )
+    assert "sk-live-1234" not in text
 
 
 @pytest.mark.asyncio

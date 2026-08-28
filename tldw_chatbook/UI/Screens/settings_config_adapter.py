@@ -46,6 +46,31 @@ def redact_secret_text(text: str) -> str:
     return _SECRET_ASSIGNMENT_PATTERN.sub(_replace, str(text))
 
 
+def failure_status_text(summary: str, exc: BaseException, *, next_step: str) -> str:
+    """Compose a plain-language failure line for user-facing Settings output.
+
+    TASK-23108: raw exception text must never be the primary user-facing
+    message -- it can embed URLs, header dumps, or secret fragments, and it
+    reads as developer output. The exception contributes only its type name;
+    the caller is responsible for logging the full (redacted) detail so it
+    stays reachable. The composed line still passes through
+    ``redact_secret_text`` as defence in depth.
+
+    Args:
+        summary: Plain-language statement of what failed, without trailing
+            punctuation (e.g. ``"Model discovery failed"``).
+        exc: The caught exception; only ``type(exc).__name__`` is shown.
+        next_step: The suggested user action, as a full sentence.
+
+    Returns:
+        ``"<summary> (<ExcType>). <next_step> Details are in Logs (F8)."``
+    """
+    kind = type(exc).__name__
+    return redact_secret_text(
+        f"{summary} ({kind}). {next_step} Details are in Logs (F8)."
+    )
+
+
 def _is_toml_scalar_value(text: str) -> bool:
     """Return whether text parses as a TOML value rather than a table."""
     try:

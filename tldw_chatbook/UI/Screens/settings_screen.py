@@ -185,7 +185,11 @@ from .provider_model_resolution import (
     EffectiveProviderModel,
     resolve_effective_provider_model,
 )
-from .settings_config_adapter import SettingsConfigAdapter, redact_secret_text
+from .settings_config_adapter import (
+    SettingsConfigAdapter,
+    failure_status_text,
+    redact_secret_text,
+)
 from .settings_context_memory import (
     CONTEXT_MEMORY_CONFIG_KEYS,
     SUMMARY_PROMPT_ID,
@@ -11017,10 +11021,20 @@ class SettingsScreen(BaseAppScreen):
             )
         except Exception as exc:
             # No traceback: the log file sink runs with diagnose=True, which would
-            # dump frame locals (api_key, headers) into the log file.
-            logger.warning(f"Provider model discovery failed: {type(exc).__name__}")
-            self._model_discovery_status = redact_secret_text(
-                f"Model discovery failed: {exc}"
+            # dump frame locals (api_key, headers) into the log file. The message
+            # text is redacted and logged so the detail stays reachable now that
+            # the status line is plain language (TASK-23108).
+            logger.warning(
+                "Provider model discovery failed: "
+                f"{type(exc).__name__}: {redact_secret_text(str(exc))}"
+            )
+            self._model_discovery_status = failure_status_text(
+                "Model discovery failed",
+                exc,
+                next_step=(
+                    "Check the provider endpoint and API key, then run "
+                    "Discover again."
+                ),
             )
             self._model_discovery_models = ()
             self._model_discovery_selected_model_ids = set()
@@ -11154,8 +11168,13 @@ class SettingsScreen(BaseAppScreen):
             )
         except Exception as exc:
             logger.exception("Provider model discovery persistence failed")
-            self._model_discovery_status = redact_secret_text(
-                f"Could not save discovered models: {exc}"
+            self._model_discovery_status = failure_status_text(
+                "Could not save the discovered models",
+                exc,
+                next_step=(
+                    "Try Save again; if it keeps failing, check that your "
+                    "config file is writable."
+                ),
             )
             self._refresh_model_discovery_widgets()
             return
@@ -14460,9 +14479,15 @@ class SettingsScreen(BaseAppScreen):
                 )
             )
         except Exception as e:
-            logger.error(f"RAG index backfill crashed: {e}")
+            logger.error(f"RAG index backfill crashed: {type(e).__name__}: {e}")
             self.app.call_from_thread(
-                self.app.notify, f"Backfill failed: {e}", severity="error"
+                self.app.notify,
+                failure_status_text(
+                    "Backfill failed before finishing",
+                    e,
+                    next_step="Run Backfill again — completed items are kept.",
+                ),
+                severity="error",
             )
             return
         finally:
