@@ -4,6 +4,7 @@ import inspect
 import re
 import time
 import builtins
+import tomllib
 from collections import UserDict
 from pathlib import Path
 from types import SimpleNamespace
@@ -1259,6 +1260,93 @@ async def test_settings_schedules_gate_is_painted_and_persists_recovery_action(
         )
         is True
     )
+
+
+@pytest.mark.asyncio
+async def test_settings_schedules_gate_reports_durable_cache_publish_failure(
+    monkeypatch, tmp_path
+):
+    """A replaced config is reported as saved even when live publish fails."""
+    config_path = tmp_path / "config.toml"
+    config_path.write_text(
+        "[scheduling]\nbriefing_schedules_enabled = false\n",
+        encoding="utf-8",
+    )
+    monkeypatch.setenv("TLDW_CONFIG_PATH", str(config_path))
+    assert (
+        config_module.get_cli_setting(
+            "scheduling", "briefing_schedules_enabled", True
+        )
+        is False
+    )
+
+    app = _build_test_app()
+    app.apply_briefing_schedules_enabled(False)
+    assert app.scheduler_loop.queue.briefing_projection is None
+    apply_live_gate = Mock(wraps=app.apply_briefing_schedules_enabled)
+    monkeypatch.setattr(
+        app, "apply_briefing_schedules_enabled", apply_live_gate
+    )
+    failure_detail = f"private cache failure at {config_path}"
+
+    def fail_runtime_config_publish(*_args, **_kwargs):
+        raise RuntimeError(failure_detail)
+
+    monkeypatch.setattr(
+        config_module,
+        "_publish_runtime_config_unlocked",
+        fail_runtime_config_publish,
+    )
+
+    host = StyledSettingsDestinationHarness(app, "settings")
+    async with host.run_test(size=(100, 30)) as pilot:
+        screen = _active_destination_screen(host)
+        await _select_settings_category(
+            screen,
+            pilot,
+            SettingsCategoryId.SCHEDULES,
+            selector="#settings-briefing-schedules-toggle",
+        )
+        status = screen.query_one(
+            "#settings-briefing-schedules-status", Static
+        )
+        button = screen.query_one(
+            "#settings-briefing-schedules-toggle", Button
+        )
+
+        assert await pilot.click(button)
+        await host.workers.wait_for_complete()
+        await pilot.pause()
+
+        strips = screen._compositor.render_strips()
+        status_painted = " ".join(
+            "\n".join(
+                "".join(segment.text for segment in strips[row])[
+                    status.region.x : status.region.x + status.region.width
+                ]
+                for row in range(
+                    status.region.y,
+                    min(
+                        status.region.y + status.region.height,
+                        len(strips),
+                    ),
+                )
+            ).split()
+        )
+        expected = (
+            "Global briefing schedules were saved to disk as Enabled, but are "
+            "not active in this run. Restart Chatbook to apply the saved gate."
+        )
+        assert status_painted == expected
+        assert button in screen._compositor.visible_widgets
+        assert str(button.label) == "Enable scheduled briefings"
+        assert failure_detail not in status_painted
+        assert str(config_path) not in status_painted
+
+    saved = tomllib.loads(config_path.read_text(encoding="utf-8"))
+    assert saved["scheduling"]["briefing_schedules_enabled"] is True
+    assert app.scheduler_loop.queue.briefing_projection is None
+    apply_live_gate.assert_not_called()
 
 
 def test_settings_domain_category_ids_are_derived_from_contract_mapping():

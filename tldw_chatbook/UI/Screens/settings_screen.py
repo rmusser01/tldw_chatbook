@@ -22087,15 +22087,15 @@ class SettingsScreen(BaseAppScreen):
     async def _persist_briefing_schedules_gate(self, enabled: bool) -> None:
         """Save the gate off-loop, then update the existing app-owned projection."""
         try:
-            saved = await asyncio.to_thread(
-                save_settings_to_cli_config,
+            mutation = await asyncio.to_thread(
+                apply_settings_mutation_to_cli_config,
                 {"scheduling": {"briefing_schedules_enabled": enabled}},
             )
         except Exception:  # noqa: BLE001 - fixed UI recovery copy
-            saved = False
+            mutation = ConfigMutationResult(False, False, "before_replace")
 
         runtime_applied = False
-        if saved:
+        if mutation.fully_applied:
             apply_gate = getattr(
                 self.app_instance, "apply_briefing_schedules_enabled", None
             )
@@ -22120,17 +22120,24 @@ class SettingsScreen(BaseAppScreen):
         except QueryError:
             return
         button.disabled = False
-        if not saved:
+        live_enabled = not enabled
+        if not mutation.file_replaced:
             status.update(
                 "Global briefing schedules were not changed. Retry, or review "
                 "[scheduling].briefing_schedules_enabled in Advanced Config."
             )
+            button.label = self._briefing_schedules_toggle_label(live_enabled)
             return
-        copy = self._briefing_schedules_gate_copy(enabled)
-        if not runtime_applied:
-            copy += " Restart Chatbook to apply the saved gate to the scheduler."
-        status.update(copy)
-        button.label = self._briefing_schedules_toggle_label(enabled)
+        if runtime_applied:
+            live_enabled = enabled
+            status.update(self._briefing_schedules_gate_copy(enabled))
+        else:
+            state = "Enabled" if enabled else "Disabled"
+            status.update(
+                f"Global briefing schedules were saved to disk as {state}, but are "
+                "not active in this run. Restart Chatbook to apply the saved gate."
+            )
+        button.label = self._briefing_schedules_toggle_label(live_enabled)
 
     @on(Button.Pressed, "#settings-discover-provider-models")
     def handle_discover_provider_models(self, event: Button.Pressed) -> None:
