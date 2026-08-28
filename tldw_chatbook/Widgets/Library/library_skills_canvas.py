@@ -736,6 +736,9 @@ class LibrarySkillsListCanvas(PostRecomposeCallback, VerticalScroll):
         import_status: Muted outcome line shown below the Import row
             (e.g. ``'Imported "executing-plans" · re-review it in the trust panel'``), or
             ``""`` when idle/not yet run.
+        import_in_flight: Whether an accepted import is still running. The
+            import controls are disabled while true; Library navigation is
+            owned by the surrounding screen and remains available.
         trust_posture: List-view only (Task 4). The Skills trust service's
             current posture (``SkillTrustService.trust_posture()``'s
             return value -- Task 3), used to render the adaptive trust
@@ -773,6 +776,7 @@ class LibrarySkillsListCanvas(PostRecomposeCallback, VerticalScroll):
         import_path: str = "",
         import_status: str = "",
         import_review_name: str = "",
+        import_in_flight: bool = False,
         sort_choices_visible: bool = False,
         editor_mode: str = "basic",
         tool_catalog: tuple[str, ...] = (),
@@ -809,6 +813,7 @@ class LibrarySkillsListCanvas(PostRecomposeCallback, VerticalScroll):
         self.import_path = import_path
         self.import_status = import_status
         self.import_review_name = import_review_name
+        self.import_in_flight = import_in_flight
         self.editor_mode = coerce_skill_editor_mode(editor_mode)
         self.tool_catalog = tuple(dict.fromkeys(tool_catalog))
         self.tool_filter = tool_filter
@@ -873,6 +878,7 @@ class LibrarySkillsListCanvas(PostRecomposeCallback, VerticalScroll):
         import_path: str,
         import_status: str,
         import_review_name: str,
+        import_in_flight: bool,
         sort_choices_visible: bool,
         editor_mode: str = "basic",
         tool_catalog: tuple[str, ...] = (),
@@ -907,6 +913,7 @@ class LibrarySkillsListCanvas(PostRecomposeCallback, VerticalScroll):
             import_path: Current skill import path.
             import_status: Current skill import outcome copy.
             import_review_name: Skill awaiting post-import trust review.
+            import_in_flight: Whether an accepted import is still running.
             sort_choices_visible: Whether the sort chooser is expanded.
         """
         header_only = bool(
@@ -942,6 +949,7 @@ class LibrarySkillsListCanvas(PostRecomposeCallback, VerticalScroll):
         self.import_path = import_path
         self.import_status = import_status
         self.import_review_name = import_review_name
+        self.import_in_flight = import_in_flight
         self.sort_choices_visible = sort_choices_visible
         self.editor_mode = coerce_skill_editor_mode(editor_mode)
         self.tool_catalog = tuple(dict.fromkeys(tool_catalog))
@@ -1399,6 +1407,7 @@ class LibrarySkillsListCanvas(PostRecomposeCallback, VerticalScroll):
             placeholder="SKILL.md file or skill folder path… or GitHub/zip URL",
             id="library-skills-import-path",
             value=self.import_path,
+            disabled=self.import_in_flight,
         )
         toolbar = Horizontal(classes="ds-toolbar")
         toolbar.styles.height = "auto"
@@ -1412,24 +1421,28 @@ class LibrarySkillsListCanvas(PostRecomposeCallback, VerticalScroll):
                 id="library-skills-import-browse",
                 classes="library-canvas-action",
                 compact=True,
+                disabled=self.import_in_flight,
             )
             yield Button(
                 "Browse folder…",
                 id="library-skills-import-browse-folder",
                 classes="library-canvas-action",
                 compact=True,
+                disabled=self.import_in_flight,
             )
             yield Button(
                 "Import",
                 id="library-skills-import-run",
                 classes="library-canvas-action",
                 compact=True,
+                disabled=self.import_in_flight,
             )
             yield Button(
                 "Cancel",
                 id="library-skills-import-cancel",
                 classes="library-canvas-action",
                 compact=True,
+                disabled=self.import_in_flight,
             )
         yield Static(
             self.import_status,
@@ -1444,6 +1457,7 @@ class LibrarySkillsListCanvas(PostRecomposeCallback, VerticalScroll):
                 id="library-skills-import-review",
                 classes="library-canvas-action",
                 compact=True,
+                disabled=self.import_in_flight,
             )
 
     def _compose_editor(self) -> ComposeResult:

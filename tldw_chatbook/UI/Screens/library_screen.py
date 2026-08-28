@@ -3943,6 +3943,8 @@ class LibraryScreen(BaseAppScreen):
         self._library_skills_import_open: bool = False
         self._library_skills_import_path: str = ""
         self._library_skills_import_status: str = ""
+        self._library_skills_import_in_flight: bool = False
+        self._library_skills_import_generation: int = 0
         # task-422: the last successful import's skill name -- backs the
         # "Review …" button that jumps straight to its trust panel.
         self._library_skills_import_review_name: str = ""
@@ -14710,6 +14712,7 @@ class LibraryScreen(BaseAppScreen):
                             import_path=self._library_skills_import_path,
                             import_status=self._library_skills_import_status,
                             import_review_name=self._library_skills_import_review_name,
+                            import_in_flight=self._library_skills_import_in_flight,
                             # Task 5: the adaptive trust header + its
                             # confirm-gated standalone Reset action, computed
                             # off-thread (see ``_refresh_library_skills_trust_posture``).
@@ -17310,6 +17313,7 @@ class LibraryScreen(BaseAppScreen):
             "import_path": "",
             "import_status": "",
             "import_review_name": "",
+            "import_in_flight": False,
             "sort_choices_visible": False,
             "editor_mode": self._library_skill_editor_mode,
             "tool_catalog": self._library_skill_tool_catalog,
@@ -17361,6 +17365,7 @@ class LibraryScreen(BaseAppScreen):
                 "import_path": self._library_skills_import_path,
                 "import_status": self._library_skills_import_status,
                 "import_review_name": self._library_skills_import_review_name,
+                "import_in_flight": self._library_skills_import_in_flight,
                 "sort_choices_visible": self._library_skills_sort_choices_visible,
             }
         )
@@ -22824,7 +22829,8 @@ class LibraryScreen(BaseAppScreen):
             self._reset_library_note_editor_state()
         if not retain_prompt_draft:
             self._reset_library_prompt_editor_state()
-        self._reset_library_skills_import_state()
+        if row_id != LIBRARY_ROW_BROWSE_SKILLS:
+            self._reset_library_skills_import_state()
         # Review finding (Spec 1 T5): this rail-switch reset block does NOT
         # route through _reset_library_skill_editor_state() (skill-editor
         # exits handle their own reset there), so the trust-reset confirm
@@ -25076,6 +25082,11 @@ class LibraryScreen(BaseAppScreen):
                 "Cancel" action.
         """
         event.stop()
+        if getattr(self, "_library_skills_import_in_flight", False):
+            self._apply_library_skills_import_status(
+                "An import is already in progress."
+            )
+            return
         self._library_skills_import_open = False
         self._library_skills_import_path = ""
         self._library_skills_import_status = ""
@@ -25105,9 +25116,20 @@ class LibraryScreen(BaseAppScreen):
             event: Button press event emitted by the "Browse…" action.
         """
         event.stop()
+        if getattr(self, "_library_skills_import_in_flight", False):
+            self._apply_library_skills_import_status(
+                "An import is already in progress."
+            )
+            return
+        browse_generation = getattr(self, "_library_skills_import_generation", 0)
 
         async def browse_callback(selected_path: Path | None) -> None:
-            if selected_path is None:
+            if (
+                selected_path is None
+                or getattr(self, "_library_skills_import_in_flight", False)
+                or browse_generation
+                != getattr(self, "_library_skills_import_generation", 0)
+            ):
                 return
             self._library_skills_import_path = str(selected_path)
             # Clear a prior import's success status + "Review …" button so
@@ -25135,9 +25157,20 @@ class LibraryScreen(BaseAppScreen):
                 action.
         """
         event.stop()
+        if getattr(self, "_library_skills_import_in_flight", False):
+            self._apply_library_skills_import_status(
+                "An import is already in progress."
+            )
+            return
+        browse_generation = getattr(self, "_library_skills_import_generation", 0)
 
         async def browse_callback(selected_path: Path | None) -> None:
-            if selected_path is None:
+            if (
+                selected_path is None
+                or getattr(self, "_library_skills_import_in_flight", False)
+                or browse_generation
+                != getattr(self, "_library_skills_import_generation", 0)
+            ):
                 return
             self._library_skills_import_path = str(selected_path)
             # Clear a prior import's success status + "Review …" button so
@@ -25165,10 +25198,20 @@ class LibraryScreen(BaseAppScreen):
                 "Review …" action.
         """
         event.stop()
+        if getattr(self, "_library_skills_import_in_flight", False):
+            self._apply_library_skills_import_status(
+                "An import is already in progress."
+            )
+            return
         name = self._library_skills_import_review_name
         if not name:
             return
         if not await self._flush_library_skill_save():
+            return
+        if getattr(self, "_library_skills_import_in_flight", False):
+            self._apply_library_skills_import_status(
+                "An import is already in progress."
+            )
             return
         self._reset_library_skill_editor_state()
         self._selected_skill_name = name
@@ -25190,6 +25233,8 @@ class LibraryScreen(BaseAppScreen):
             event: Input change event emitted by the Import row's path field.
         """
         event.stop()
+        if getattr(self, "_library_skills_import_in_flight", False):
+            return
         self._library_skills_import_path = event.value
 
     @on(Input.Submitted, "#library-skills-import-path")
@@ -25219,11 +25264,17 @@ class LibraryScreen(BaseAppScreen):
     def _start_library_skills_import(self) -> None:
         """Validate the Import row has a non-blank path, then run the import worker.
 
-        Worker-executed (exclusive, its own group) since it performs file
-        IO plus a service call -- never inline on the UI thread. A blank
+        Worker-executed since it performs file IO plus a service call --
+        never inline on the UI thread. Screen-owned admission makes the
+        operation single-flight before the worker is scheduled. A blank
         path is a quiet inline status line, matching
         ``_start_library_prompts_import``'s equivalent gate.
         """
+        if getattr(self, "_library_skills_import_in_flight", False):
+            self._apply_library_skills_import_status(
+                "An import is already in progress."
+            )
+            return
         if self._library_skills_view != "list":
             return
         self._library_skills_import_review_name = ""
@@ -25233,11 +25284,34 @@ class LibraryScreen(BaseAppScreen):
                 "Please enter a file or folder path."
             )
             return
+        self._library_skills_import_generation += 1
+        self._library_skills_import_in_flight = True
+        self._apply_library_skills_import_status("Inspecting/importing…")
+        _sync_library_canvas(self, "skills")
         self.run_worker(
-            self._run_library_skills_import(raw_path),
-            exclusive=True,
+            self._run_library_skills_import_single_flight(raw_path),
             group="library_skills_import",
         )
+
+    async def _run_library_skills_import_single_flight(self, raw_path: str) -> None:
+        """Run the accepted import and release its screen-owned admission."""
+        try:
+            await self._run_library_skills_import(raw_path)
+        except Exception:
+            logger.opt(exception=True).warning(
+                "Library skill import worker failed unexpectedly."
+            )
+            self._apply_library_skills_import_status(
+                "Could not import that skill."
+            )
+        finally:
+            self._library_skills_import_in_flight = False
+            if (
+                self.is_mounted
+                and self.app.screen is self
+                and self._library_selected_row_id == LIBRARY_ROW_BROWSE_SKILLS
+            ):
+                _sync_library_canvas(self, "skills")
 
     def _apply_library_skills_import_status(self, text: str) -> None:
         """Set and patch the Import row's one-line outcome in place."""
@@ -25807,11 +25881,13 @@ class LibraryScreen(BaseAppScreen):
     def _reset_library_skills_import_state(self) -> None:
         """Close the inline Import row and drop its path/outcome (task-422).
 
-        Called on every list re-entry (editor exits via
-        ``_reset_library_skill_editor_state``, fresh rail-row entries via
-        ``_select_library_rail_row``) so a stale import error can't
-        resurface minutes later (verified live in the UX review).
+        Editor exits and later departures clear stale outcomes. An accepted
+        import is retained across navigation because its threaded work cannot
+        be cancelled truthfully; re-entering Skills then shows its live or
+        terminal screen-owned state.
         """
+        if getattr(self, "_library_skills_import_in_flight", False):
+            return
         self._library_skills_import_open = False
         self._library_skills_import_path = ""
         self._library_skills_import_status = ""

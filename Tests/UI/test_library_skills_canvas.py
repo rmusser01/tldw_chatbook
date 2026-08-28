@@ -3635,6 +3635,74 @@ async def test_import_browse_file_clears_stale_status_and_review():
     assert fake._library_skills_import_review_name == ""
 
 
+@pytest.mark.asyncio
+async def test_late_skill_browse_callback_cannot_replace_accepted_import_outcome():
+    """A picker opened before admission cannot write after that generation ran."""
+    pushed: dict = {}
+    fake = SimpleNamespace(
+        _library_skills_import_generation=4,
+        _library_skills_import_in_flight=False,
+        _library_skills_import_path="/accepted",
+        _library_skills_import_status='Imported "accepted" · re-review it in the trust panel',
+        _library_skills_import_review_name="accepted",
+        refresh=lambda recompose=False: None,
+        app=SimpleNamespace(
+            push_screen=lambda dialog, cb=None: pushed.update(dialog=dialog, cb=cb)
+        ),
+    )
+    LibraryScreen.handle_library_skills_import_browse(
+        fake, SimpleNamespace(stop=lambda: None)
+    )
+    fake._library_skills_import_generation += 1
+
+    await pushed["cb"](Path("/stale/picker/SKILL.md"))
+
+    assert fake._library_skills_import_path == "/accepted"
+    assert (
+        fake._library_skills_import_status
+        == 'Imported "accepted" · re-review it in the trust panel'
+    )
+    assert fake._library_skills_import_review_name == "accepted"
+
+
+def test_skill_import_cancel_handler_fails_closed_while_operation_runs():
+    """The handler preserves accepted state even if a disabled event is forced."""
+    statuses: list[str] = []
+    fake = SimpleNamespace(
+        _library_skills_import_in_flight=True,
+        _library_skills_import_open=True,
+        _library_skills_import_path="/accepted",
+        _library_skills_import_status="Inspecting/importing…",
+        _library_skills_import_review_name="",
+        _apply_library_skills_import_status=statuses.append,
+    )
+
+    LibraryScreen.handle_library_skills_import_cancel(
+        fake, SimpleNamespace(stop=lambda: None)
+    )
+
+    assert fake._library_skills_import_open is True
+    assert fake._library_skills_import_path == "/accepted"
+    assert statuses == ["An import is already in progress."]
+
+
+@pytest.mark.asyncio
+async def test_skill_import_unexpected_failure_releases_admission_with_outcome():
+    """An unclassified worker failure cannot strand the running state."""
+    statuses: list[str] = []
+    fake = SimpleNamespace(
+        _library_skills_import_in_flight=True,
+        _run_library_skills_import=AsyncMock(side_effect=RuntimeError("boom")),
+        _apply_library_skills_import_status=statuses.append,
+        is_mounted=False,
+    )
+
+    await LibraryScreen._run_library_skills_import_single_flight(fake, "/skill")
+
+    assert fake._library_skills_import_in_flight is False
+    assert statuses == ["Could not import that skill."]
+
+
 # ---------------------------------------------------------------------------
 # PR #750 review (Qodo): aggregate cap on the trust preview so many changed
 # files can't build/render an unbounded string.

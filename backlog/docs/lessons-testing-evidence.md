@@ -196,6 +196,26 @@ settings through their normal synchronization path. Include one deliberate
 save/reload in the test so a future cache invalidation cannot silently erase the
 fixture.
 
+## A same-route rail press can invalidate the control a harness is about to press
+
+**TASK-613, 2026-08-28.** The Skills import integration helper pressed the Skills
+rail row and immediately queried the already-visible Import button. On an empty
+Library, Skills was already the active canvas, so the query returned the old button
+while the same-row rail event was scheduling its canvas recompose. The helper then
+pressed that about-to-be-detached instance; its event never reached the screen, and
+every import test spent 30 seconds waiting for a row that could not open. Directly
+calling the handler made the feature look healthy but weakened the intended UI-path
+evidence. Letting the route press settle before resolving the action restored the
+real Button path and cut the focused case from a timeout to about three seconds.
+
+**What to do.** In a mounted Textual flow, settle a route-changing press before
+querying a control owned by that route, even when the requested route is already
+visible. Resolve the control after settlement and then press that live instance;
+otherwise a green direct-handler substitute or a red stale-widget timeout says
+nothing about the production event path.
+
+---
+
 ## A privacy assertion must inspect every default durable owner, not only the primary database
 
 **TASK-19908, 2026-08-22.** Trace capture tests proved that AgentRunsDB and the

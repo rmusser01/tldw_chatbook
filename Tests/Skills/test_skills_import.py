@@ -20,9 +20,13 @@ committed as fixture files, to keep the fixtures directory small.
 
 from __future__ import annotations
 
+import asyncio
 import shutil
+import threading
 import time
+import zipfile
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 from textual.widgets import Button, Input
@@ -47,6 +51,15 @@ from Tests.UI.test_library_shell import (
 
 
 FIXTURES_DIR = Path(__file__).resolve().parents[1] / "fixtures" / "superpowers_skills"
+
+
+def _write_single_skill_zip(path: Path, *, name: str) -> None:
+    """Write one minimal importable skill archive for route-parity tests."""
+    with zipfile.ZipFile(path, "w") as archive:
+        archive.writestr(
+            "SKILL.md",
+            f"---\nname: {name}\ndescription: Route parity fixture.\n---\n\nBody.\n",
+        )
 
 
 def _real_skills_scope_service_with_trust(tmp_path):
@@ -88,8 +101,13 @@ async def _open_skills_import_row(screen, pilot) -> None:
     )
     assert isinstance(skills_row, Button)
     skills_row.press()
+    # The default empty Library can already be showing Skills. Let that
+    # same-row rail press settle before resolving the canvas action, or the
+    # query can return the about-to-be-recomposed button and its event is lost.
+    await pilot.pause()
     import_row = await _wait_for_selector(screen, pilot, "#library-skills-import")
     assert isinstance(import_row, Button)
+    assert import_row.disabled is False
     import_row.press()
     await _wait_for_selector(screen, pilot, "#library-skills-import-path")
 
@@ -133,6 +151,152 @@ async def _run_skills_import_via_ui(
                 return status_text
         await pilot.pause(0.02)
     return status_text
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("route", "second_trigger", "expected_name"),
+    (
+        ("loose", "enter", "loose-skill"),
+        ("folder", "button", "folder-skill"),
+        ("zip", "enter", "zip-skill"),
+        ("url", "button", "remote-skill"),
+    ),
+)
+async def test_skill_import_is_single_flight_across_every_route_and_navigation(
+    tmp_path, monkeypatch, route, second_trigger, expected_name
+):
+    """A second submit cannot replace a real blocked threaded import.
+
+    The service barrier proves that the first filesystem/network-shaped call is
+    still running while both the presentation and handler authorization gates
+    are exercised. Leaving Skills remains available; returning exposes the
+    accepted operation's actual terminal outcome rather than a cancelled or
+    replacement worker's status.
+    """
+    from tldw_chatbook.UI.Screens import library_screen
+
+    store_dir = tmp_path / "store"
+    source_dir = tmp_path / "source"
+    source_dir.mkdir()
+    _local_service, service = _real_skills_scope_service_with_trust(store_dir)
+    app = _build_test_app()
+    _wire_empty_non_skill_services(app)
+    app.skills_scope_service = service
+    host = LibraryHarness(app)
+
+    if route == "loose":
+        import_value = source_dir / "loose-skill.md"
+        import_value.write_text(
+            "---\ndescription: Loose route fixture.\n---\n\nBody.\n",
+            encoding="utf-8",
+        )
+        owner, attribute = service, "import_skill_file"
+    elif route == "folder":
+        import_value = source_dir / "folder-skill"
+        import_value.mkdir()
+        (import_value / "SKILL.md").write_text(
+            "---\nname: folder-skill\ndescription: Folder route fixture.\n---\n\nBody.\n",
+            encoding="utf-8",
+        )
+        owner, attribute = service, "import_skill_directory"
+    elif route == "zip":
+        import_value = source_dir / "zip-skill.zip"
+        _write_single_skill_zip(import_value, name="zip-skill")
+        owner, attribute = service, "import_skill_file"
+    else:
+        import_value = "https://github.com/example/remote-skill"
+        owner, attribute = library_screen, "install_skill_from_url"
+
+    original = getattr(owner, attribute)
+    first_started = threading.Event()
+    second_started = threading.Event()
+    release = threading.Event()
+    finished = threading.Event()
+    calls: list[int] = []
+    calls_lock = threading.Lock()
+
+    async def blocked_call(*args, **kwargs):
+        with calls_lock:
+            calls.append(len(calls) + 1)
+            call_number = len(calls)
+        (first_started if call_number == 1 else second_started).set()
+        await asyncio.to_thread(release.wait)
+        try:
+            if route == "url":
+                return {"name": "remote-skill"}
+            return await original(*args, **kwargs)
+        finally:
+            if call_number == 1:
+                finished.set()
+
+    monkeypatch.setattr(owner, attribute, blocked_call)
+
+    try:
+        async with host.run_test(size=LIBRARY_TEST_SIZE) as pilot:
+            screen = _active_library_screen(host)
+            await _wait_for_library_shell(screen, pilot)
+            screen.query_one("#library-row-browse-skills", Button).press()
+            await _wait_for_selector(screen, pilot, "#library-skills-import")
+            screen.handle_library_skills_import(SimpleNamespace(stop=lambda: None))
+            await _wait_for_selector(screen, pilot, "#library-skills-import-path")
+            path_input = screen.query_one("#library-skills-import-path", Input)
+            path_input.value = str(import_value)
+            await pilot.pause()
+            screen.query_one("#library-skills-import-run", Button).press()
+            assert await asyncio.to_thread(first_started.wait, 5)
+            await pilot.pause()
+
+            assert screen._library_skills_import_in_flight is True
+            assert screen._library_skills_import_status == "Inspecting/importing…"
+            for selector in (
+                "#library-skills-import-path",
+                "#library-skills-import-browse",
+                "#library-skills-import-browse-folder",
+                "#library-skills-import-run",
+                "#library-skills-import-cancel",
+            ):
+                assert screen.query_one(selector).disabled is True
+
+            event = SimpleNamespace(stop=lambda: None)
+            if second_trigger == "enter":
+                screen.handle_library_skills_import_path_submitted(event)
+            else:
+                screen.handle_library_skills_import_run(event)
+            await pilot.pause()
+            assert second_started.is_set() is False
+            assert calls == [1]
+            assert (
+                screen._library_skills_import_status
+                == "An import is already in progress."
+            )
+
+            media_row = screen.query_one("#library-row-browse-media", Button)
+            assert media_row.disabled is False
+            media_row.press()
+            await _wait_for_selector(screen, pilot, "#library-media-canvas")
+            assert screen._library_skills_import_in_flight is True
+
+            release.set()
+            assert await asyncio.to_thread(finished.wait, 10)
+            for _ in range(100):
+                if not screen._library_skills_import_in_flight:
+                    break
+                await pilot.pause()
+            assert screen._library_skills_import_in_flight is False
+
+            screen.query_one("#library-row-browse-skills", Button).press()
+            await _wait_for_selector(screen, pilot, "#library-skills-import-path")
+            status = str(
+                screen.query_one("#library-skills-import-status").renderable
+            )
+            assert (
+                status
+                == f'Imported "{expected_name}" · re-review it in the trust panel'
+            )
+            assert calls == [1]
+    finally:
+        release.set()
 
 
 @pytest.mark.asyncio
