@@ -1305,7 +1305,9 @@ class ConsoleMessageHeader(Horizontal):
             speaker = self.query_one(".console-transcript-speaker-label", Static)
         except NoMatches:
             return
-        speaker.update(self._speaker_copy())
+        # Elapsed ticker repaint of a `height: 1; min-height: 1` label --
+        # size is CSS-pinned, so no reflow (21692/21595 family).
+        speaker.update(self._speaker_copy(), layout=False)
 
     def _sync_raw_cli_timer(self) -> None:
         timer = self._raw_cli_elapsed_timer

@@ -780,6 +780,14 @@ worktree, and diff the failure **sets**. Counts across differing commands are
 meaningless. Machine load changes which tests lose a race — this repo regularly has
 10+ concurrent pytest processes from parallel agents.
 
+**Second incident, and it applies to inventories, not just failures (TASK-23028,
+2026-08-27).** The timer census pinned its clock-root COUNT (`>= 30`) plus a few
+named roots. In one merge window a 10 Hz clock left the census (renamed callee) and
+an unrelated root arrived — 35 → 35, every assertion green, and the blindness stayed
+invisible until a holistic perf review re-measured idle CPU. The census now pins the
+full root **set** (`EXPECTED_CLOCK_ROOTS`, equality with directional diffs). A
+census whose cardinality is the assertion cannot see an exchange.
+
 ---
 
 ## A low-rate intermittent needs a loop, not a rerun
