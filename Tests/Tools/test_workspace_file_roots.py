@@ -229,10 +229,11 @@ def test_all_consumers_share_validation_and_write_prefilters(
     rw_root = tmp_path / "rw"
     ro_root.mkdir()
     rw_root.mkdir()
+    monkeypatch.setenv("TLDW_CHANGE_REVIEW_ENABLED", "0")
     ro_binding = registry.add_folder_binding("ws-a", ro_root)
     rw_binding = registry.add_folder_binding("ws-a", rw_root, allow_write=True)
-    monkeypatch.setattr(wfr, "_registry_factory", lambda: registry)
     monkeypatch.setenv("TLDW_CHANGE_REVIEW_ENABLED", "1")
+    monkeypatch.setattr(wfr, "_registry_factory", lambda: registry)
     seen: list[tuple[str, ...]] = []
 
     def accept_all(bindings):
@@ -241,9 +242,7 @@ def test_all_consumers_share_validation_and_write_prefilters(
         for binding in materialized:
             yield binding, Path(binding.locator)
 
-    monkeypatch.setattr(
-        wfr, "_iter_valid_folder_bindings", accept_all, raising=False
-    )
+    monkeypatch.setattr(wfr, "_iter_valid_folder_bindings", accept_all, raising=False)
     sandbox = tmp_path / "sandbox"
     sandbox.mkdir()
 
@@ -267,6 +266,7 @@ def test_change_review_gates_precede_binding_validation(tmp_path, monkeypatch) -
     registry = _registry(tmp_path)
     root = tmp_path / "root"
     root.mkdir()
+    monkeypatch.setenv("TLDW_CHANGE_REVIEW_ENABLED", "0")
     registry.add_folder_binding("ws-a", root)
     monkeypatch.setenv("TLDW_CHANGE_REVIEW_ENABLED", "1")
     factory_calls = 0
@@ -284,9 +284,7 @@ def test_change_review_gates_precede_binding_validation(tmp_path, monkeypatch) -
             yield binding, Path(binding.locator)
 
     monkeypatch.setattr(wfr, "_registry_factory", registry_factory)
-    monkeypatch.setattr(
-        wfr, "_iter_valid_folder_bindings", accept_all, raising=False
-    )
+    monkeypatch.setattr(wfr, "_iter_valid_folder_bindings", accept_all, raising=False)
     assert wfr.folder_binding_roots("ws-a") == (root,)
     assert factory_calls == 1
     assert calls == 1
