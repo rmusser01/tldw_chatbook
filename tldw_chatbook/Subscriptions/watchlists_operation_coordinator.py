@@ -9,7 +9,6 @@ from typing import TYPE_CHECKING, Any
 from loguru import logger
 
 from .briefing_service import (
-    INTERRUPTED_ERROR,
     accept_briefing,
     execute_accepted_briefing,
 )
@@ -135,10 +134,6 @@ class WatchlistsOperationCoordinator:
 
         task.add_done_callback(consume)
 
-    def _has_live_executor(self, receipt_id: str) -> bool:
-        task = self._tasks.get(receipt_id)
-        return task is not None and not task.done()
-
     async def accept_checks(
         self, source_ids: Sequence[int]
     ) -> list[dict[str, Any]]:
@@ -149,8 +144,11 @@ class WatchlistsOperationCoordinator:
             run_id = int(receipt["run_id"])
             canonical_id = f"local:watchlist_run:{run_id}"
             claim_acquired = bool(receipt.pop("_claim_acquired"))
-            if claim_acquired or not self._has_live_executor(canonical_id):
+            owner = self._tasks.get(canonical_id)
+            if claim_acquired:
                 self._start(canonical_id, "check", self._run_check(run_id))
+            elif owner is not None and owner.done():
+                self._start_reconciliation(canonical_id, owner)
         return receipts
 
     async def accept_briefing(
@@ -172,14 +170,7 @@ class WatchlistsOperationCoordinator:
                 "briefing",
                 self._run_briefing(briefing_id),
             )
-        elif owner is None:
-            self._briefing_terminal_errors[canonical_id] = INTERRUPTED_ERROR
-            self._start(
-                canonical_id,
-                "briefing",
-                self._recover_orphaned_briefing(canonical_id),
-            )
-        elif owner.done():
+        elif owner is not None and owner.done():
             self._start_reconciliation(canonical_id, owner)
         return receipt
 
@@ -239,14 +230,6 @@ class WatchlistsOperationCoordinator:
             raise
         except BaseException:  # noqa: BLE001 - durable boundary owns terminal state
             await asyncio.to_thread(self._fail_briefing_if_active, briefing_id)
-
-    async def _recover_orphaned_briefing(self, receipt_id: str) -> None:
-        """Terminalize an unowned generating row without replaying its provider."""
-        await self._ensure_terminal(
-            receipt_id,
-            "briefing",
-            cancel_check=False,
-        )
 
     def _fail_briefing_if_active(
         self,

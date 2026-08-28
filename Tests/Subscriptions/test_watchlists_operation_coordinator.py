@@ -373,7 +373,77 @@ async def test_briefing_duplicate_retries_terminal_write_without_provider_replay
 
 
 @pytest.mark.asyncio
-async def test_duplicate_queued_check_without_live_task_is_adopted(tmp_path):
+async def test_ownerless_duplicate_does_not_interrupt_live_other_coordinator_briefing(
+    tmp_path,
+    monkeypatch,
+):
+    db_path = tmp_path / "subscriptions.db"
+    loser_db = SubscriptionsDB(db_path, "loser")
+    loser_boundary = capture_prior_process_boundary(loser_db)
+    winner_db = SubscriptionsDB(db_path, "winner")
+    watchlist_id = WatchlistBundleService(winner_db).create("Threat intel")["id"]
+    provider_entered = asyncio.Event()
+    provider_release = asyncio.Event()
+    provider_side_effects = 0
+    publish_succeeded: list[bool] = []
+
+    async def provider_path(db, briefing_id, **_kwargs):
+        nonlocal provider_side_effects
+        provider_side_effects += 1
+        provider_entered.set()
+        await provider_release.wait()
+        published = await asyncio.to_thread(
+            db.transition_briefing,
+            briefing_id,
+            status="empty",
+        )
+        publish_succeeded.append(published is not None)
+        return published
+
+    monkeypatch.setattr(
+        coordinator_module,
+        "execute_accepted_briefing",
+        provider_path,
+    )
+    winner = WatchlistsOperationCoordinator(
+        local_service=LocalWatchlistsService(db_factory=lambda: winner_db),
+        briefing_db=winner_db,
+    )
+    loser = WatchlistsOperationCoordinator(
+        local_service=LocalWatchlistsService(db_factory=lambda: loser_db),
+        briefing_db=loser_db,
+    )
+
+    first = await winner.accept_briefing(watchlist_id)
+    operation_id = f"local:briefing:{first['id']}"
+    await asyncio.wait_for(provider_entered.wait(), timeout=2)
+
+    try:
+        reconciled = await loser.reconcile_startup(loser_boundary)
+        duplicate = await loser.accept_briefing(watchlist_id)
+        await loser.wait_idle(timeout=2)
+
+        assert reconciled["briefings"] == 0
+        assert duplicate["id"] == first["id"]
+        assert provider_side_effects == 1
+        assert loser_db.get_briefing(first["id"])["status"] == "generating"
+        assert loser_db.get_briefing(first["id"])["error"] is None
+        assert loser.active_receipt_ids == ()
+        assert winner.active_receipt_ids == (operation_id,)
+    finally:
+        provider_release.set()
+        await winner.wait_idle(timeout=2)
+
+    assert provider_side_effects == 1
+    assert publish_succeeded == [True]
+    assert winner_db.get_briefing(first["id"])["status"] == "empty"
+    assert winner.active_receipt_ids == ()
+
+
+@pytest.mark.asyncio
+async def test_ownerless_queued_check_waits_for_startup_boundary_reconciliation(
+    tmp_path,
+):
     db = SubscriptionsDB(tmp_path / "subscriptions.db", "test")
     source_id = _source(db, 1)
     service = LocalWatchlistsService(
@@ -381,48 +451,105 @@ async def test_duplicate_queued_check_without_live_task_is_adopted(tmp_path):
         run_executor=lambda _source: asyncio.sleep(0, result={"items": []}),
     )
     check = (await service.accept_source_checks([source_id]))[0]
+    boundary = capture_prior_process_boundary(db)
     coordinator = WatchlistsOperationCoordinator(
         local_service=service,
         briefing_db=db,
     )
 
-    adopted_check = (await coordinator.accept_checks([source_id]))[0]
+    duplicate = (await coordinator.accept_checks([source_id]))[0]
     await coordinator.wait_idle(timeout=2)
 
-    assert adopted_check["run_id"] == check["run_id"]
-    assert (await service.get_run(check["run_id"]))["status"] == "completed"
+    assert duplicate["run_id"] == check["run_id"]
+    assert (await service.get_run(check["run_id"]))["status"] == "queued"
+    assert coordinator.active_receipt_ids == ()
+
+    reconciled = await coordinator.reconcile_startup(boundary)
+
+    assert reconciled["runs"] == 1
+    assert (await service.get_run(check["run_id"]))["status"] == "failed"
 
 
 @pytest.mark.asyncio
-async def test_duplicate_process_orphan_briefing_terminalizes_without_generation(
-    tmp_path,
-    monkeypatch,
-):
+async def test_startup_boundary_terminalizes_process_orphan_briefing(tmp_path):
     db = SubscriptionsDB(tmp_path / "subscriptions.db", "test")
     watchlist_id = WatchlistBundleService(db).create("Threat intel")["id"]
     orphan = await accept_briefing(db, watchlist_id, preset_id=None)
-    provider_side_effects = 0
-
-    async def provider_path(*_args, **_kwargs):
-        nonlocal provider_side_effects
-        provider_side_effects += 1
-        raise RuntimeError("orphan must not re-enter provider path")
-
-    monkeypatch.setattr(
-        coordinator_module,
-        "execute_accepted_briefing",
-        provider_path,
-    )
+    boundary = capture_prior_process_boundary(db)
     coordinator = WatchlistsOperationCoordinator(
         local_service=LocalWatchlistsService(db_factory=lambda: db),
         briefing_db=db,
     )
 
-    duplicate = await coordinator.accept_briefing(watchlist_id)
-    await coordinator.wait_idle(timeout=2)
+    reconciled = await coordinator.reconcile_startup(boundary)
 
-    assert duplicate["id"] == orphan["id"]
-    assert provider_side_effects == 0
+    assert reconciled["briefings"] == 1
     assert db.get_briefing(orphan["id"])["status"] == "failed"
     assert db.get_briefing(orphan["id"])["error"] == "interrupted"
     assert coordinator.active_receipt_ids == ()
+
+
+@pytest.mark.asyncio
+async def test_ownerless_duplicate_does_not_interrupt_live_other_coordinator_check(
+    tmp_path,
+):
+    db_path = tmp_path / "subscriptions.db"
+    loser_db = SubscriptionsDB(db_path, "loser")
+    winner_db = SubscriptionsDB(db_path, "winner")
+    source_id = _source(winner_db, 1)
+    winner_entered = asyncio.Event()
+    winner_release = asyncio.Event()
+    winner_effects = 0
+    loser_effects = 0
+
+    async def winner_executor(_subscription):
+        nonlocal winner_effects
+        winner_effects += 1
+        winner_entered.set()
+        await winner_release.wait()
+        return {"items": []}
+
+    async def loser_executor(_subscription):
+        nonlocal loser_effects
+        loser_effects += 1
+        return {"items": []}
+
+    winner_service = LocalWatchlistsService(
+        db_factory=lambda: winner_db,
+        run_executor=winner_executor,
+    )
+    loser_service = LocalWatchlistsService(
+        db_factory=lambda: loser_db,
+        run_executor=loser_executor,
+    )
+    winner = WatchlistsOperationCoordinator(
+        local_service=winner_service,
+        briefing_db=winner_db,
+    )
+    loser = WatchlistsOperationCoordinator(
+        local_service=loser_service,
+        briefing_db=loser_db,
+    )
+
+    first = (await winner.accept_checks([source_id]))[0]
+    operation_id = f"local:watchlist_run:{first['run_id']}"
+    await asyncio.wait_for(winner_entered.wait(), timeout=2)
+
+    try:
+        duplicate = (await loser.accept_checks([source_id]))[0]
+        await loser.wait_idle(timeout=2)
+
+        assert duplicate["run_id"] == first["run_id"]
+        assert winner_effects == 1
+        assert loser_effects == 0
+        assert (await loser_service.get_run(first["run_id"]))["status"] == "running"
+        assert loser.active_receipt_ids == ()
+        assert winner.active_receipt_ids == (operation_id,)
+    finally:
+        winner_release.set()
+        await winner.wait_idle(timeout=2)
+
+    assert winner_effects == 1
+    assert loser_effects == 0
+    assert (await winner_service.get_run(first["run_id"]))["status"] == "completed"
+    assert winner.active_receipt_ids == ()
