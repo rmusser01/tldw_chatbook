@@ -178,13 +178,19 @@ async def test_console_briefing_inspect_navigates_shell_to_exact_loaded_row():
             await app.handle_screen_navigation(posted[0])
             screen = app.screen
             assert isinstance(screen, WatchlistsCollectionsScreen)
-            for _ in range(100):
+            for _ in range(200):
                 await pilot.pause(0.01)
                 pane = screen.query_one("#watchlists-artifacts-pane", ArtifactsPane)
-                if pane.selected_briefing is not None:
+                table = pane.query_one("#artifacts-table", DataTable)
+                if (
+                    (screen._selected_briefing or {}).get("id") == target["id"]
+                    and (pane.selected_briefing or {}).get("id") == target["id"]
+                    and table.cursor_row == 1
+                ):
                     break
+            else:
+                pytest.fail("exact briefing row and cursor did not settle")
 
-            table = pane.query_one("#artifacts-table", DataTable)
             assert screen.tree_scope.watchlist_id == watchlist["id"]
             assert screen._selected_briefing["id"] == target["id"]
             assert pane.selected_briefing["id"] == target["id"]

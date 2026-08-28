@@ -495,6 +495,7 @@ async def test_ownerless_duplicate_does_not_interrupt_live_other_coordinator_che
 ):
     db_path = tmp_path / "subscriptions.db"
     loser_db = SubscriptionsDB(db_path, "loser")
+    loser_boundary = capture_prior_process_boundary(loser_db)
     winner_db = SubscriptionsDB(db_path, "winner")
     source_id = _source(winner_db, 1)
     winner_entered = asyncio.Event()
@@ -536,9 +537,11 @@ async def test_ownerless_duplicate_does_not_interrupt_live_other_coordinator_che
     await asyncio.wait_for(winner_entered.wait(), timeout=2)
 
     try:
+        reconciled = await loser.reconcile_startup(loser_boundary)
         duplicate = (await loser.accept_checks([source_id]))[0]
         await loser.wait_idle(timeout=2)
 
+        assert reconciled["runs"] == 0
         assert duplicate["run_id"] == first["run_id"]
         assert winner_effects == 1
         assert loser_effects == 0
