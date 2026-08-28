@@ -25,7 +25,9 @@ from tldw_chatbook.Chat.console_session_settings import (
 from tldw_chatbook.Chat.console_settings_apply import (
     FULL_MODEL_DEFAULT_FIELDS,
     QUICK_MODEL_DEFAULT_FIELDS,
+    ConsoleEndpointDraft,
     ConsoleSettingsAction,
+    ConsoleSettingsFieldDraft,
 )
 from tldw_chatbook.Chat.provider_readiness import provider_config_key
 from tldw_chatbook.model_capabilities import (
@@ -117,6 +119,55 @@ class ConsoleDefaultMutationOutcome:
     failure_phase: ConsoleDefaultSavePhase | None
 
 
+def build_console_default_intent(
+    *,
+    generation: int,
+    action: ConsoleSettingsAction,
+    provider_config_key: str,
+    literal_model_id: str,
+    field_drafts: tuple[ConsoleSettingsFieldDraft, ...],
+    field_mask: frozenset[str],
+    endpoint: ConsoleEndpointDraft | None,
+) -> ConsoleDefaultMutationIntent:
+    """Build immutable persistence values from one submitted settings draft."""
+
+    values: dict[str, object | None] = {}
+    exposed_names: set[str] = set()
+    for draft in field_drafts:
+        if not isinstance(draft, ConsoleSettingsFieldDraft):
+            raise TypeError("Default field drafts are invalid")
+        if draft.name in exposed_names:
+            raise ValueError("Default field drafts must have unique names")
+        exposed_names.add(draft.name)
+        if draft.name not in field_mask:
+            continue
+        values[draft.name] = (
+            draft.effective_value
+            if field_mask == QUICK_MODEL_DEFAULT_FIELDS
+            else draft.profile_override
+        )
+
+    endpoint_patch = (
+        None
+        if endpoint is None
+        else ConsoleEndpointPatch(
+            value=endpoint.value,
+            bound_provider_config_key=endpoint.bound_provider_config_key,
+            dirty=endpoint.dirty,
+            checked=endpoint.checked,
+        )
+    )
+    return ConsoleDefaultMutationIntent(
+        generation=generation,
+        action=action,
+        provider_config_key=provider_config_key,
+        literal_model_id=literal_model_id,
+        field_mask=field_mask,
+        values=values,
+        endpoint_patch=endpoint_patch,
+    )
+
+
 @dataclass(frozen=True, slots=True)
 class RuntimeConfigPublicationResult:
     """Cache-only publication outcome after a prior successful disk write."""
@@ -149,6 +200,18 @@ class ConsoleEndpointPreview:
 
     authority: str
     network_classification: str
+
+
+@dataclass(frozen=True, slots=True)
+class _PendingRetryState:
+    """Private optimistic baseline for the newest retryable disk intent."""
+
+    generation: int
+    fingerprint: str
+    owned_baseline: tuple[tuple[tuple[str, ...], str, str], ...]
+
+
+_PENDING_RETRY_STATE: _PendingRetryState | None = None
 
 
 def _supported_profile_fields(provider: str, model: str) -> frozenset[str]:
@@ -206,6 +269,7 @@ def _reserve_intent_generation(intent: ConsoleDefaultMutationIntent) -> str | No
     """Accept a new generation or the byte-equivalent retry of the newest one."""
 
     global _LATEST_INTENT_FINGERPRINT, _LATEST_INTENT_GENERATION
+    global _PENDING_RETRY_STATE
 
     fingerprint = _intent_fingerprint(intent)
     with _INTENT_GENERATION_LOCK:
@@ -215,6 +279,7 @@ def _reserve_intent_generation(intent: ConsoleDefaultMutationIntent) -> str | No
         ):
             _LATEST_INTENT_GENERATION = intent.generation
             _LATEST_INTENT_FINGERPRINT = fingerprint
+            _PENDING_RETRY_STATE = None
             return fingerprint
         if (
             intent.generation == _LATEST_INTENT_GENERATION
@@ -232,6 +297,59 @@ def _intent_is_current(generation: int, fingerprint: str) -> bool:
             generation == _LATEST_INTENT_GENERATION
             and fingerprint == _LATEST_INTENT_FINGERPRINT
         )
+
+
+def _owned_baseline_digest(*, present: bool, value: object = None) -> str:
+    """Hash one raw owned value so private retry state retains no payload."""
+
+    material = repr(
+        (
+            present,
+            type(value).__module__ if present else "",
+            type(value).__qualname__ if present else "",
+            value if present else "",
+        )
+    ).encode("utf-8", errors="replace")
+    return hashlib.sha256(material).hexdigest()
+
+
+def _raw_owned_value_digest(
+    raw_values: Mapping[str, object],
+    path: tuple[str, ...],
+    key: str,
+) -> str:
+    """Read and hash one exact raw path/key without creating mappings."""
+
+    current: object = raw_values
+    for part in path:
+        if not isinstance(current, Mapping) or part not in current:
+            return _owned_baseline_digest(present=False)
+        current = current[part]
+    if not isinstance(current, Mapping) or key not in current:
+        return _owned_baseline_digest(present=False)
+    return _owned_baseline_digest(present=True, value=current[key])
+
+
+def _capture_owned_baseline(
+    raw_values: Mapping[str, object],
+    mutation: config_module.LiteralSettingsMutation,
+) -> tuple[tuple[tuple[str, ...], str, str], ...]:
+    """Capture hashes for only the exact keys one immutable intent owns."""
+
+    targets = {
+        (path, key)
+        for path, values in mutation.section_values.items()
+        for key in values
+    }
+    targets.update(
+        (path, key)
+        for path, keys in mutation.delete_keys.items()
+        for key in keys
+    )
+    return tuple(
+        (path, key, _raw_owned_value_digest(raw_values, path, key))
+        for path, key in sorted(targets)
+    )
 
 
 def _raw_provider_section_name(
@@ -422,13 +540,12 @@ def apply_console_default_intent(
 ) -> ConsoleDefaultMutationOutcome:
     """Atomically apply one exact-model default intent and publish runtime config."""
 
+    global _PENDING_RETRY_STATE
+
     try:
         canonical_provider, literal_model = _validate_intent(intent)
         if not _endpoint_patch_is_authorized(intent, canonical_provider):
             raise ValueError("Endpoint patch is not authorized for this action")
-        fingerprint = _reserve_intent_generation(intent)
-        if fingerprint is None:
-            raise ValueError("Default intent has been superseded")
     except Exception:
         return ConsoleDefaultMutationOutcome(
             intent_generation=(
@@ -440,38 +557,88 @@ def apply_console_default_intent(
             failure_phase=ConsoleDefaultSavePhase.BEFORE_REPLACE,
         )
 
-    result = config_module.apply_literal_settings_transaction_to_cli_config(
-        lambda snapshot: _build_locked_default_mutation(
-            intent,
-            canonical_provider,
-            literal_model,
-            snapshot,
-        ),
-        mutation_precondition=lambda: _intent_is_current(
-            intent.generation,
-            fingerprint,
-        ),
-    )
-    if result.caches_reloaded and result.settings_view is not None:
+    # Task 8's application holder allocates generations synchronously before
+    # worker dispatch. This private lock only linearizes service observation of
+    # those generations with the complete config transaction.
+    with _INTENT_GENERATION_LOCK:
+        fingerprint = _reserve_intent_generation(intent)
+        if fingerprint is None:
+            return ConsoleDefaultMutationOutcome(
+                intent_generation=intent.generation,
+                file_replaced=False,
+                runtime_published=False,
+                settings_view=None,
+                failure_phase=ConsoleDefaultSavePhase.BEFORE_REPLACE,
+            )
+        retry_state = _PENDING_RETRY_STATE
+        if retry_state is not None and (
+            retry_state.generation != intent.generation
+            or retry_state.fingerprint != fingerprint
+        ):
+            retry_state = None
+        captured_baselines: list[
+            tuple[tuple[tuple[str, ...], str, str], ...]
+        ] = []
+
+        def build_mutation(
+            snapshot: config_module.AtomicLiteralMutationSnapshot,
+        ) -> config_module.LiteralSettingsMutation:
+            mutation = _build_locked_default_mutation(
+                intent,
+                canonical_provider,
+                literal_model,
+                snapshot,
+            )
+            baseline = _capture_owned_baseline(snapshot.raw_values, mutation)
+            captured_baselines.append(baseline)
+            if retry_state is not None and baseline != retry_state.owned_baseline:
+                raise ValueError("Retry target changed after the failed save")
+            return mutation
+
+        result = config_module.apply_literal_settings_transaction_to_cli_config(
+            build_mutation,
+            mutation_precondition=lambda: _intent_is_current(
+                intent.generation,
+                fingerprint,
+            ),
+        )
+        if result.caches_reloaded and result.settings_view is not None:
+            if _PENDING_RETRY_STATE is not None and (
+                _PENDING_RETRY_STATE.generation == intent.generation
+                and _PENDING_RETRY_STATE.fingerprint == fingerprint
+            ):
+                _PENDING_RETRY_STATE = None
+            return ConsoleDefaultMutationOutcome(
+                intent_generation=intent.generation,
+                file_replaced=result.file_replaced,
+                runtime_published=True,
+                settings_view=result.settings_view,
+                failure_phase=None,
+            )
+        phase = (
+            ConsoleDefaultSavePhase.CACHE_PUBLICATION
+            if result.failure_phase == "cache_reload"
+            else ConsoleDefaultSavePhase.BEFORE_REPLACE
+        )
+        if phase is ConsoleDefaultSavePhase.CACHE_PUBLICATION:
+            if _PENDING_RETRY_STATE is not None and (
+                _PENDING_RETRY_STATE.generation == intent.generation
+                and _PENDING_RETRY_STATE.fingerprint == fingerprint
+            ):
+                _PENDING_RETRY_STATE = None
+        elif captured_baselines and retry_state is None:
+            _PENDING_RETRY_STATE = _PendingRetryState(
+                generation=intent.generation,
+                fingerprint=fingerprint,
+                owned_baseline=captured_baselines[0],
+            )
         return ConsoleDefaultMutationOutcome(
             intent_generation=intent.generation,
             file_replaced=result.file_replaced,
-            runtime_published=True,
-            settings_view=result.settings_view,
-            failure_phase=None,
+            runtime_published=False,
+            settings_view=None,
+            failure_phase=phase,
         )
-    phase = (
-        ConsoleDefaultSavePhase.CACHE_PUBLICATION
-        if result.file_replaced
-        else ConsoleDefaultSavePhase.BEFORE_REPLACE
-    )
-    return ConsoleDefaultMutationOutcome(
-        intent_generation=intent.generation,
-        file_replaced=result.file_replaced,
-        runtime_published=False,
-        settings_view=None,
-        failure_phase=phase,
-    )
 
 
 def refresh_console_runtime_after_saved_default() -> RuntimeConfigPublicationResult:
@@ -491,7 +658,12 @@ def parse_console_endpoint_preview(value: str) -> ConsoleEndpointPreview | None:
     if not isinstance(value, str):
         return None
     candidate = value.strip()
-    if not candidate:
+    if (
+        not candidate
+        or not candidate.isprintable()
+        or any(character.isspace() for character in candidate)
+        or "\\" in candidate
+    ):
         return None
     try:
         parsed = urlsplit(candidate if "://" in candidate else f"//{candidate}")
@@ -507,12 +679,14 @@ def parse_console_endpoint_preview(value: str) -> ConsoleEndpointPreview | None:
         return None
 
     normalized_host = hostname.rstrip(".").lower()
-    if not normalized_host or any(character.isspace() for character in normalized_host):
+    if not normalized_host or "%" in normalized_host:
         return None
     try:
         address = ip_address(normalized_host)
     except ValueError:
         address = None
+    if address is None and not _is_valid_ascii_hostname(normalized_host):
+        return None
 
     if normalized_host == "localhost" or (address is not None and address.is_loopback):
         classification = "Local"
@@ -532,6 +706,21 @@ def parse_console_endpoint_preview(value: str) -> ConsoleEndpointPreview | None:
     rendered_host = f"[{normalized_host}]" if ":" in normalized_host else normalized_host
     authority = rendered_host if port is None else f"{rendered_host}:{port}"
     return ConsoleEndpointPreview(authority, classification)
+
+
+def _is_valid_ascii_hostname(hostname: str) -> bool:
+    """Return whether a non-IP host is a conservative ASCII DNS name."""
+
+    if not hostname.isascii() or len(hostname) > 253:
+        return False
+    labels = hostname.split(".")
+    return all(
+        1 <= len(label) <= 63
+        and label[0] != "-"
+        and label[-1] != "-"
+        and all(character.isascii() and (character.isalnum() or character == "-") for character in label)
+        for label in labels
+    )
 
 
 def format_console_endpoint_preview(value: str) -> str | None:

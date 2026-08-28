@@ -6427,8 +6427,8 @@ def refresh_runtime_config_from_cli_config() -> LiteralConfigMutationResult:
         )
         return LiteralConfigMutationResult(False, False, None, "cache_reload")
 
-    with _config_write_lock(config_path):
-        try:
+    try:
+        with _config_write_lock(config_path):
             raw = _read_raw_cli_config_unlocked(config_path)
             _invalidate_config_caches()
             _publish_runtime_config_unlocked(raw_config=raw)
@@ -6438,14 +6438,14 @@ def refresh_runtime_config_from_cli_config() -> LiteralConfigMutationResult:
                 _current_settings_view(),
                 None,
             )
-        except Exception as error:
-            logger.error(
-                "Configuration refresh failed "
-                "(phase=cache_reload, config_path={}, error_type={}).",
-                config_path,
-                type(error).__name__,
-            )
-            return LiteralConfigMutationResult(False, False, None, "cache_reload")
+    except Exception as error:
+        logger.error(
+            "Configuration refresh failed "
+            "(phase=cache_reload, config_path={}, error_type={}).",
+            config_path,
+            type(error).__name__,
+        )
+        return LiteralConfigMutationResult(False, False, None, "cache_reload")
 
 
 def apply_settings_mutation_to_cli_config(
